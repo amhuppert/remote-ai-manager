@@ -16504,3 +16504,16 @@ html[data-dev-tools-enabled] nextjs-portal {
     min-height: var(--touch-target-min);
   }
 }
+
+.markdown-fallback {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+}
+
+.virtuoso-fallback {
+  width: 100%;
+}

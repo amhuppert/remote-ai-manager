@@ -9,6 +9,7 @@ import MergeToastContainer from "@/components/MergeToastContainer";
 import InputNeededToastContainer from "@/components/InputNeededToastContainer";
 import PromptErrorToastContainer from "@/components/PromptErrorToastContainer";
 import DevToolsGate from "@/components/DevToolsGate";
+import ReactScanInstrumentation from "@/components/ReactScanInstrumentation";
 import "./globals.css";
 
 const anybody = Anybody({
@@ -77,6 +78,7 @@ export default function RootLayout({
           <PromptErrorToastContainer />
 
           <DevToolsGate />
+          <ReactScanInstrumentation />
           <GlobalHotkeyHelp />
           <TooltipProvider />
         </Providers>

@@ -12,7 +12,6 @@
  * page reload (in-memory only) and so a round-trip refetch is the source of
  * truth for everything the slice owns.
  */
-import { useMemo } from "react";
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 
@@ -136,15 +135,18 @@ export const useCollaborationStore = create<CollaborationStore>()(
   })),
 );
 
+// Stable empty-record sentinel so subscribers don't get a new reference each
+// time their workflow has no drafts.
+const EMPTY_ANSWER_DRAFTS: Record<string, string> = Object.freeze({});
+
 export const useUserAnswerDrafts = (
   projectName: string,
   sessionName: string,
   workflowId: string,
 ): Record<string, string> => {
-  const map = useCollaborationStore((s) => s.userAnswerDraftsByWorkflow);
-  return useMemo(
-    () => map[workflowKey(projectName, sessionName, workflowId)] ?? {},
-    [map, projectName, sessionName, workflowId],
+  const key = workflowKey(projectName, sessionName, workflowId);
+  return useCollaborationStore(
+    (s) => s.userAnswerDraftsByWorkflow[key] ?? EMPTY_ANSWER_DRAFTS,
   );
 };
 
@@ -153,12 +155,10 @@ export const useCollabConfigDraft = (
   sessionName: string,
   conversationId: string,
 ): CollabConfigDraft => {
-  const map = useCollaborationStore((s) => s.collabConfigDraftsByConversation);
-  return useMemo(
-    () =>
-      map[conversationKey(projectName, sessionName, conversationId)] ??
-      DEFAULT_COLLAB_CONFIG_DRAFT,
-    [map, projectName, sessionName, conversationId],
+  const key = conversationKey(projectName, sessionName, conversationId);
+  return useCollaborationStore(
+    (s) =>
+      s.collabConfigDraftsByConversation[key] ?? DEFAULT_COLLAB_CONFIG_DRAFT,
   );
 };
 

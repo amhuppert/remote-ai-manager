@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, useState, useCallback, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { ConversationState } from "@/types";
 import type { ActiveConversation } from "@/lib/api-client";
 import { useActiveConversationsQuery } from "@/lib/queries";
 import {
@@ -122,13 +121,12 @@ function SidebarRowItem({
 interface Props {
   projectName: string;
   sessionName: string;
-  conversations: ConversationState[];
   activeConversationId: string;
   mobileOpen?: boolean;
   onMobileClose?: () => void;
 }
 
-export default function ConversationSidebar({
+function ConversationSidebar({
   projectName,
   sessionName,
   activeConversationId,
@@ -738,3 +736,5 @@ export default function ConversationSidebar({
     </>
   );
 }
+
+export default memo(ConversationSidebar);

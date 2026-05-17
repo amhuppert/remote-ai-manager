@@ -2,7 +2,6 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { useLayoutEffect, useMemo } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { z } from "zod";
-import type { ConversationState } from "@/types";
 import {
   activeConversationsResponseSchema,
   type ActiveConversation,
@@ -128,8 +127,6 @@ const mixedResponse: ActiveConversationsResponse = {
   activeCollaborationExecutions: [],
 };
 
-const sessionConversations: ConversationState[] = [];
-
 // ---------------------------------------------------------------------------
 // Story harness
 // ---------------------------------------------------------------------------
@@ -204,7 +201,6 @@ function SidebarHarness({
         <ConversationSidebar
           projectName="remote-ai-manager"
           sessionName="conversation-ui-overhaul"
-          conversations={sessionConversations}
           activeConversationId={activeConversationId}
           mobileOpen={mobileOpen}
           onMobileClose={() => {}}

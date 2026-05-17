@@ -6,6 +6,7 @@ import {
   useEffect,
   useRef,
   useMemo,
+  memo,
   lazy,
   Suspense,
 } from "react";
@@ -18,7 +19,6 @@ import {
 import { useRouter } from "next/navigation";
 import {
   deriveSessionStatus,
-  deriveSessionPromptCount,
   findBusyOtherConversations,
 } from "@/lib/session-derived";
 import { buildConversationContext } from "@/lib/copy-context";
@@ -55,29 +55,19 @@ import {
   usePromptPlaceholder,
   usePromptError,
   usePromptCancelled,
-  useOptimisticMessages,
-  useMessageCountBeforeSubmit,
-  useShowDeleteConfirm,
-  useShowCommitDialog,
-  useShowMergeDialog,
-  useInfoExpanded,
   useSwitchLayout,
   useHydrateLayout,
   useSwitchMobilePanel,
   useDismissError,
   useDismissCancelled,
-  useReconcileMessages,
   useStartRecording,
   useStopRecording,
   useShowPlaceholderAction,
   useClearPlaceholder,
   useRequestCommit,
-  useCancelCommit,
   useRequestMerge,
-  useCancelMerge,
   useRequestDeleteSession,
   useCancelDeleteSessionDetail,
-  useToggleInfoStrip,
   useResetSessionDetailStore,
   useClearConversationMessages,
   usePendingQuestions,
@@ -98,11 +88,14 @@ import DebugModeToggle from "./DebugModeToggle";
 import DebugStatusStrip from "./DebugStatusStrip";
 import DebugActionCard from "./DebugActionCard";
 import RightPane from "./RightPane";
-import CommitDialog from "./CommitDialog";
-import SmartMergeDialog from "./SmartMergeDialog";
 import ConversationSidebar from "./ConversationSidebar";
+import ConversationDialogs from "./ConversationDialogs";
+import { FinishedBanner, IterationReadonlyBanner } from "./ConversationBanners";
+import SessionInfoStrip from "./SessionInfoStrip";
+import MobileInfoPanel from "./MobileInfoPanel";
 import SyntheticForkBadge from "./SyntheticForkBadge";
-import ConfirmDialog from "@/components/ConfirmDialog";
+import TypingIndicator from "./TypingIndicator";
+import { useDisplayMessages } from "./use-display-messages";
 import MessageContent from "@/components/MessageContent";
 import MessageActions from "@/components/MessageActions";
 import ConversationNav from "@/components/ConversationNav";
@@ -120,8 +113,6 @@ import ReasoningLevelSelector, {
 import MobilePromptToolbar from "./MobilePromptToolbar";
 import BackendToggle from "@/components/BackendToggle";
 import ConversationMcpConfig from "@/components/mcp/ConversationMcpConfig";
-import SessionMcpChip from "@/components/mcp/SessionMcpChip";
-import SessionMcpModal from "@/components/mcp/SessionMcpModal";
 import {
   type AgentBackendId,
   type EffortLevel,
@@ -134,9 +125,11 @@ import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 import { useImageIndexCountQuery } from "@/hooks/use-image-index-count";
 import ImageAttachmentPreview from "./ImageAttachmentPreview";
-import type { ImagePayload, TranscriptMessage } from "@/types";
-import CopyableId from "@/components/CopyableId";
-import InfoDetailsPopover from "./InfoDetailsPopover";
+import type {
+  ConversationState,
+  ImagePayload,
+  TranscriptMessage,
+} from "@/types";
 import MobileActionMenu from "@/components/MobileActionMenu";
 import DevServerDrawer from "@/components/DevServerDrawer";
 import { useDevServers } from "@/hooks/use-dev-servers";
@@ -178,47 +171,6 @@ interface Props {
   defaultModel: string;
   defaultEffort?: EffortLevel;
   autoFocus?: boolean;
-}
-
-function MobileInfoCopyRow({ label, value }: { label: string; value: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <div
-      className="mobile-info-row mobile-info-copyable"
-      onClick={() => {
-        void navigator.clipboard.writeText(value).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        });
-      }}
-      role="button"
-      tabIndex={0}
-    >
-      <span className="mobile-info-label">{label}</span>
-      <span className="mobile-info-value">{value}</span>
-      <span className="mobile-info-copy-icon">
-        {copied ? "\u2713" : "\u2398"}
-      </span>
-    </div>
-  );
-}
-
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-/** Extract directory name after `.worktrees/` for compact display. */
-function shortenWorktreePath(fullPath: string): string {
-  const marker = ".worktrees/";
-  const idx = fullPath.indexOf(marker);
-  if (idx === -1) return fullPath;
-  return fullPath.slice(idx + marker.length);
 }
 
 function hasCollabPrefix(text: string): boolean {
@@ -300,10 +252,10 @@ function latestFinalAnswerText(
 function dedupeCollabFinalTranscriptMessage(
   messages: readonly TranscriptMessage[],
   finalAnswerText: string | null,
-): TranscriptMessage[] {
-  if (!finalAnswerText) return [...messages];
+): readonly TranscriptMessage[] {
+  if (!finalAnswerText) return messages;
   const normalizedFinal = finalAnswerText.trim();
-  if (normalizedFinal.length === 0) return [...messages];
+  if (normalizedFinal.length === 0) return messages;
 
   let latestCollabUserIndex = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -314,7 +266,7 @@ function dedupeCollabFinalTranscriptMessage(
       break;
     }
   }
-  if (latestCollabUserIndex === -1) return [...messages];
+  if (latestCollabUserIndex === -1) return messages;
 
   const duplicateIndex = messages.findIndex((message, index) => {
     if (index <= latestCollabUserIndex || message.role !== "assistant") {
@@ -322,9 +274,85 @@ function dedupeCollabFinalTranscriptMessage(
     }
     return transcriptText(message)?.trim() === normalizedFinal;
   });
-  if (duplicateIndex === -1) return [...messages];
+  if (duplicateIndex === -1) return messages;
   return messages.filter((_, index) => index !== duplicateIndex);
 }
+
+interface MessageRowProps {
+  msg: TranscriptMessage;
+  messageIndex: number;
+  isLast: boolean;
+  selectedBackend: AgentBackendId;
+  worktreePath: string | undefined;
+  onFork: (messageIndex: number) => void;
+  /**
+   * Per-render extras consumed only by the final-message decorations
+   * (`DebugActionCard`). Non-last rows receive `null`, which is stable across
+   * renders and lets `memo()` skip reconciliation when the only state change
+   * is in a sibling row's debug context.
+   */
+  lastMessageExtras: {
+    projectName: string;
+    sessionName: string;
+    conversation: ConversationState;
+    onSendPrompt: (text: string) => Promise<void>;
+    isBusy: boolean;
+  } | null;
+}
+
+const MessageRow = memo(function MessageRow({
+  msg,
+  messageIndex,
+  isLast,
+  selectedBackend,
+  worktreePath,
+  onFork,
+  lastMessageExtras,
+}: MessageRowProps): React.JSX.Element {
+  const isUserMsg = msg.role === "user";
+  return (
+    <div className={`message ${msg.role}`} data-msg-index={messageIndex}>
+      <div className="message-role">
+        {isUserMsg ? "You" : selectedBackend === "codex" ? "Codex" : "Claude"}
+        {!isUserMsg && (msg.model || msg.effort) && (
+          <span className="message-meta">
+            <span className="message-meta-sep">&middot;</span>
+            {msg.model && (
+              <span className="message-meta-model">{msg.model}</span>
+            )}
+            {msg.model && msg.effort && (
+              <span className="message-meta-sep">&middot;</span>
+            )}
+            {msg.effort && (
+              <span
+                className={`message-meta-effort${msg.effort === "max" || msg.effort === "xhigh" ? " rainbow-text" : ""}`}
+              >
+                {msg.effort}
+              </span>
+            )}
+          </span>
+        )}
+      </div>
+      <div className="message-content">
+        <MessageContent content={msg.content} worktreePath={worktreePath} />
+      </div>
+      {isLast && !isUserMsg && lastMessageExtras && (
+        <DebugActionCard
+          projectName={lastMessageExtras.projectName}
+          sessionName={lastMessageExtras.sessionName}
+          conversation={lastMessageExtras.conversation}
+          onSendPrompt={lastMessageExtras.onSendPrompt}
+          isBusy={lastMessageExtras.isBusy}
+        />
+      )}
+      <MessageActions
+        messageIndex={messageIndex}
+        content={msg.content}
+        onFork={onFork}
+      />
+    </div>
+  );
+});
 
 export default function ConversationDetailPage({
   projectName,
@@ -355,12 +383,6 @@ export default function ConversationDetailPage({
   const promptPlaceholder = usePromptPlaceholder();
   const promptError = usePromptError();
   const promptCancelled = usePromptCancelled();
-  const optimisticMessages = useOptimisticMessages();
-  const messageCountBeforeSubmit = useMessageCountBeforeSubmit();
-  const showDeleteConfirm = useShowDeleteConfirm();
-  const showCommitDialog = useShowCommitDialog();
-  const showMergeDialog = useShowMergeDialog();
-  const infoExpanded = useInfoExpanded();
 
   // --- Zustand: actions ---
   const switchLayout = useSwitchLayout();
@@ -379,18 +401,14 @@ export default function ConversationDetailPage({
   );
   const dismissError = useDismissError();
   const dismissCancelled = useDismissCancelled();
-  const reconcileMessages = useReconcileMessages();
   const startRecording = useStartRecording();
   const stopRecording = useStopRecording();
   const showPlaceholder = useShowPlaceholderAction();
   const clearPlaceholder = useClearPlaceholder();
   const requestCommit = useRequestCommit();
-  const cancelCommit = useCancelCommit();
   const requestMerge = useRequestMerge();
-  const cancelMerge = useCancelMerge();
   const requestDelete = useRequestDeleteSession();
   const cancelDelete = useCancelDeleteSessionDetail();
-  const toggleInfoStrip = useToggleInfoStrip();
   const resetStore = useResetSessionDetailStore();
   const clearConversationMessages = useClearConversationMessages();
   const pendingQuestions = usePendingQuestions();
@@ -441,9 +459,14 @@ export default function ConversationDetailPage({
     sessionStatus === "waiting_for_input" ||
     !!pendingQuestions;
 
-  // Detect initialization conversation for focus confirmation bar
-  const activeConversation = session?.conversations.find(
-    (c) => c.id === conversationId,
+  // Detect initialization conversation for focus confirmation bar.
+  // TanStack Query's default structural sharing keeps `session.conversations`
+  // referentially stable across polls when content is unchanged, so memoizing
+  // on the array reference preserves activeConversation identity across
+  // polls — important for child memoization downstream.
+  const activeConversation = useMemo(
+    () => session?.conversations.find((c) => c.id === conversationId),
+    [session?.conversations, conversationId],
   );
   const isInitConversation = activeConversation?.role === "initialization";
   const contextPercent = computeContextFillPercent(
@@ -453,7 +476,6 @@ export default function ConversationDetailPage({
   const [focusConfirmLoading, setFocusConfirmLoading] = useState(false);
   // Flag: user clicked confirm, write-focus prompt was sent, waiting for it to finish
   const [awaitingFinalize, setAwaitingFinalize] = useState(false);
-  const [sessionMcpModalOpen, setSessionMcpModalOpen] = useState(false);
 
   // Conditional polling: refetch while session is active
   const messagesQuery = useConversationMessagesQuery(
@@ -682,6 +704,8 @@ export default function ConversationDetailPage({
   promptTextRef.current = promptText;
   const fireAndForgetRef = useRef(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const openMobileSidebar = useCallback(() => setMobileSidebarOpen(true), []);
+  const closeMobileSidebar = useCallback(() => setMobileSidebarOpen(false), []);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // --- Persistent pending prompt text ---
@@ -786,35 +810,7 @@ export default function ConversationDetailPage({
     return () => observer.disconnect();
   }, [collabRowEl]);
 
-  // Derive display messages: server messages + optimistic (non-overlapping).
-  // During streaming, the server transcript is written in real-time and polled
-  // every 3s, so server `messages` may already contain the assistant response
-  // that is also in `optimisticMessages`. To avoid duplicates, slice server
-  // messages to just before the current prompt and append optimistic instead.
-  const displayMessages = useMemo(() => {
-    if (optimisticMessages.length === 0) return messages;
-    return [
-      ...messages.slice(0, messageCountBeforeSubmit),
-      ...optimisticMessages,
-    ];
-  }, [messages, optimisticMessages, messageCountBeforeSubmit]);
-
-  // --- Reconciliation effect ---
-  // Clear optimistic messages once the stream is done and the server has the data.
-  // While sending, optimistic messages are the authoritative source (displayMessages
-  // slices server data to before the submit point), so no reconciliation is needed.
-  useEffect(() => {
-    if (optimisticMessages.length === 0) return;
-    if (!sending && messages.length > messageCountBeforeSubmit) {
-      reconcileMessages(messages.length);
-    }
-  }, [
-    messages.length,
-    optimisticMessages.length,
-    messageCountBeforeSubmit,
-    sending,
-    reconcileMessages,
-  ]);
+  const displayMessages = useDisplayMessages(messages);
 
   // --- Hydrate layout from localStorage on mount ---
   useEffect(() => {
@@ -1343,11 +1339,11 @@ export default function ConversationDetailPage({
     clearPersistedPendingPromptOnSubmit,
   ]);
 
-  const confirmConcurrentSubmission = useCallback(async () => {
+  const handleConcurrentConfirm = useCallback(() => {
     if (!pendingConcurrentSubmission) return;
     const { text, images } = pendingConcurrentSubmission;
     setPendingConcurrentSubmission(null);
-    await dispatchPrompt(text, images);
+    void dispatchPrompt(text, images);
   }, [pendingConcurrentSubmission, dispatchPrompt]);
 
   const cancelConcurrentSubmission = useCallback(() => {
@@ -1514,24 +1510,15 @@ export default function ConversationDetailPage({
   }, []);
 
   // --- Copy conversation context for debugging ---
-  const [contextCopied, setContextCopied] = useState(false);
-  const handleCopyContext = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      if (!session) return;
-      const text = buildConversationContext({
-        projectName,
-        sessionName,
-        session,
-        conversationId,
-      });
-      void navigator.clipboard.writeText(text).then(() => {
-        setContextCopied(true);
-        setTimeout(() => setContextCopied(false), 1500);
-      });
-    },
-    [session, conversationId, projectName, sessionName],
-  );
+  const buildContext = useCallback((): string | null => {
+    if (!session) return null;
+    return buildConversationContext({
+      projectName,
+      sessionName,
+      session,
+      conversationId,
+    });
+  }, [session, conversationId, projectName, sessionName]);
 
   // Lifted voice recorder hook
   const {
@@ -1603,73 +1590,45 @@ export default function ConversationDetailPage({
           ? "amber"
           : "";
 
+  const lastMessageIndex = displayMessages.length - 1;
+  const worktreePath = session?.worktreePath;
   const renderMessageRow = useCallback<
     ConversationVirtuosoListProps["renderMessage"]
   >(
     ({ row }) => {
       const { messageIndex, msg } = row;
-      const isUserMsg = msg.role === "user";
+      const isLast = messageIndex === lastMessageIndex;
+      const extras =
+        isLast && msg.role !== "user" && activeConversation
+          ? {
+              projectName,
+              sessionName,
+              conversation: activeConversation,
+              onSendPrompt: handleDebugPrompt,
+              isBusy,
+            }
+          : null;
       return (
-        <div className={`message ${msg.role}`} data-msg-index={messageIndex}>
-          <div className="message-role">
-            {isUserMsg
-              ? "You"
-              : selectedBackend === "codex"
-                ? "Codex"
-                : "Claude"}
-            {!isUserMsg && (msg.model || msg.effort) && (
-              <span className="message-meta">
-                <span className="message-meta-sep">&middot;</span>
-                {msg.model && (
-                  <span className="message-meta-model">{msg.model}</span>
-                )}
-                {msg.model && msg.effort && (
-                  <span className="message-meta-sep">&middot;</span>
-                )}
-                {msg.effort && (
-                  <span
-                    className={`message-meta-effort${msg.effort === "max" || msg.effort === "xhigh" ? " rainbow-text" : ""}`}
-                  >
-                    {msg.effort}
-                  </span>
-                )}
-              </span>
-            )}
-          </div>
-          <div className="message-content">
-            <MessageContent
-              content={msg.content}
-              worktreePath={session?.worktreePath}
-            />
-          </div>
-          {!isUserMsg &&
-            messageIndex === displayMessages.length - 1 &&
-            activeConversation && (
-              <DebugActionCard
-                projectName={projectName}
-                sessionName={sessionName}
-                conversation={activeConversation}
-                onSendPrompt={handleDebugPrompt}
-                isBusy={isBusy}
-              />
-            )}
-          <MessageActions
-            messageIndex={messageIndex}
-            content={msg.content}
-            onFork={handleFork}
-          />
-        </div>
+        <MessageRow
+          msg={msg}
+          messageIndex={messageIndex}
+          isLast={isLast}
+          selectedBackend={selectedBackend}
+          worktreePath={worktreePath}
+          onFork={handleFork}
+          lastMessageExtras={extras}
+        />
       );
     },
     [
       activeConversation,
-      displayMessages.length,
+      lastMessageIndex,
       handleDebugPrompt,
       handleFork,
       isBusy,
       projectName,
       selectedBackend,
-      session?.worktreePath,
+      worktreePath,
       sessionName,
     ],
   );
@@ -1750,41 +1709,17 @@ export default function ConversationDetailPage({
     setCollabUserAnswerDraft,
   ]);
 
-  const renderTypingIndicator = useCallback(() => {
-    if (hasActiveCollab) return null;
-    if (!sending && displayStatus !== "running") return null;
-    return optimisticMessages.some((m) => m.role === "assistant") ? (
-      <div className="streaming-indicator" data-backend={selectedBackend}>
-        <div className="typing-dots">
-          <span />
-          <span />
-          <span />
-        </div>
-      </div>
-    ) : (
-      <div
-        className="message assistant typing-indicator"
-        data-backend={selectedBackend}
-      >
-        <div className="message-role">
-          {selectedBackend === "codex" ? "Codex" : "Claude"}
-        </div>
-        <div className="message-content">
-          <div className="typing-dots">
-            <span />
-            <span />
-            <span />
-          </div>
-        </div>
-      </div>
-    );
-  }, [
-    displayStatus,
-    hasActiveCollab,
-    optimisticMessages,
-    selectedBackend,
-    sending,
-  ]);
+  const typingIndicatorVisible =
+    !hasActiveCollab && (sending || displayStatus === "running");
+  const renderTypingIndicator = useCallback(
+    () => (
+      <TypingIndicator
+        selectedBackend={selectedBackend}
+        visible={typingIndicatorVisible}
+      />
+    ),
+    [selectedBackend, typingIndicatorVisible],
+  );
 
   const isLoading = sessionQuery.isPending;
 
@@ -1892,100 +1827,18 @@ export default function ConversationDetailPage({
         <div
           className={`session-detail-layout stagger-in${isFinished ? " finished" : ""}`}
         >
-          {/* Info strip */}
-          <div
-            className={`session-info-strip${infoExpanded ? " expanded" : ""}`}
-            onClick={toggleInfoStrip}
-          >
-            <div className="si-summary">
-              <span
-                className={`status-dot ${statusDotClass}`}
-                style={{ width: 6, height: 6 }}
-              />
-              <span className="si-val">{session.branchName}</span>
-              <span className="si-expand-hint">
-                {infoExpanded ? "\u25B2" : "\u25BC"}
-              </span>
-            </div>
-            <div className="si-details">
-              {/* Branch — primary identifier */}
-              <CopyableId
-                label="Branch"
-                value={session.branchName}
-                truncateAt={999}
-              />
-              {/* Backend badge */}
-              {(() => {
-                const conv = session.conversations.find(
-                  (c) => c.id === conversationId,
-                );
-                if (!conv) return null;
-                return (
-                  <span className="cc-badge" data-backend={conv.agentBackend}>
-                    {conv.agentBackend}
-                  </span>
-                );
-              })()}
-              {/* Prompt count */}
-              <div className="si-item">
-                <span className="si-label">Prompts</span>
-                <span className="si-val si-val--bright">
-                  {deriveSessionPromptCount(session)}
-                </span>
-              </div>
-              {/* Worktree — shortened, click copies full path */}
-              <CopyableId
-                label="Worktree"
-                value={session.worktreePath}
-                displayValue={shortenWorktreePath(session.worktreePath)}
-              />
-              {/* Context fill indicator */}
-              {contextPercent != null && (
-                <ContextFillIndicator percentage={contextPercent} />
-              )}
-              {/* Copy context button */}
-              <button
-                className="si-copy-context-btn"
-                onClick={handleCopyContext}
-                data-tooltip={
-                  contextCopied ? "Copied!" : "Copy context to clipboard"
-                }
-              >
-                {contextCopied ? "\u2713" : "\u2398"} Context
-              </button>
-              {/* MCP servers summary chip */}
-              <SessionMcpChip
-                projectName={projectName}
-                sessionName={sessionName}
-                onClick={() => setSessionMcpModalOpen(true)}
-              />
-              {/* Details popover — Conv ID, Session Ref, Created, full Worktree */}
-              <InfoDetailsPopover
-                conversationId={conversationId}
-                backendRef={
-                  session.conversations.find((c) => c.id === conversationId)
-                    ?.backendRef ?? null
-                }
-                createdAt={session.createdAt}
-                worktreePath={session.worktreePath}
-                onOpenMcpServers={() => setSessionMcpModalOpen(true)}
-              />
-            </div>
-          </div>
-
-          <SessionMcpModal
+          <SessionInfoStrip
+            session={session}
+            activeConversation={activeConversation}
             projectName={projectName}
             sessionName={sessionName}
-            open={sessionMcpModalOpen}
-            onClose={() => setSessionMcpModalOpen(false)}
+            conversationId={conversationId}
+            statusDotClass={statusDotClass}
+            contextPercent={contextPercent}
+            buildContext={buildContext}
           />
 
-          {/* Finished banner */}
-          {isFinished && (
-            <div className="finished-banner">
-              This session has been merged into {targetBranch} and is read-only.
-            </div>
-          )}
+          {isFinished && <FinishedBanner targetBranch={targetBranch} />}
 
           {/* Sidebar expand button — rendered outside session-content-area to avoid overflow:hidden clipping */}
           {conversations && sidebarCollapsed && (
@@ -2008,10 +1861,9 @@ export default function ConversationDetailPage({
               <ConversationSidebar
                 projectName={projectName}
                 sessionName={session.sessionName}
-                conversations={conversations}
                 activeConversationId={conversationId}
                 mobileOpen={mobileSidebarOpen}
-                onMobileClose={() => setMobileSidebarOpen(false)}
+                onMobileClose={closeMobileSidebar}
               />
             )}
 
@@ -2021,7 +1873,7 @@ export default function ConversationDetailPage({
                 {conversations && (
                   <button
                     className="convo-sidebar-mobile-toggle"
-                    onClick={() => setMobileSidebarOpen(true)}
+                    onClick={openMobileSidebar}
                     title="Show conversations"
                   >
                     &#9776; Conversations
@@ -2119,10 +1971,7 @@ export default function ConversationDetailPage({
 
               {/* Prompt input OR question panel OR read-only indicator */}
               {isWorkflowManagedConversation ? (
-                <div className="iteration-readonly-banner">
-                  {"\u27F3"} This conversation is managed by a workflow
-                  execution and is read-only.
-                </div>
+                <IterationReadonlyBanner />
               ) : pendingQuestions && pendingQuestionId ? (
                 <AskQuestionPanel
                   questions={pendingQuestions}
@@ -2450,81 +2299,16 @@ export default function ConversationDetailPage({
               />
             )}
 
-            {/* Mobile info panel */}
             {mobilePanel === "info" && (
-              <div className="mobile-info-panel">
-                <div className="mobile-info-row">
-                  <span className="mobile-info-label">Status</span>
-                  <span className="mobile-info-value">
-                    <span
-                      className={`status-dot ${statusDotClass}`}
-                      style={{
-                        width: 6,
-                        height: 6,
-                        display: "inline-block",
-                        marginRight: 6,
-                      }}
-                    />
-                    {displayStatus}
-                  </span>
-                </div>
-                <MobileInfoCopyRow label="Branch" value={session.branchName} />
-                <div className="mobile-info-row">
-                  <span className="mobile-info-label">Created</span>
-                  <span className="mobile-info-value">
-                    {formatDate(session.createdAt)}
-                  </span>
-                </div>
-                <div className="mobile-info-row">
-                  <span className="mobile-info-label">Prompts</span>
-                  <span className="mobile-info-value">
-                    {deriveSessionPromptCount(session)}
-                  </span>
-                </div>
-                <MobileInfoCopyRow
-                  label="Worktree"
-                  value={session.worktreePath}
-                />
-                <MobileInfoCopyRow label="Conv ID" value={conversationId} />
-                {(() => {
-                  const conv = session.conversations.find(
-                    (c) => c.id === conversationId,
-                  );
-                  if (!conv) return null;
-                  const refDisplay = conv.backendRef
-                    ? conv.backendRef.backend === "claude"
-                      ? conv.backendRef.sessionId
-                      : conv.backendRef.backend === "codex"
-                        ? conv.backendRef.threadId
-                        : "\u2014"
-                    : "\u2014";
-                  return (
-                    <>
-                      <MobileInfoCopyRow
-                        label="Backend"
-                        value={conv.agentBackend}
-                      />
-                      <MobileInfoCopyRow
-                        label="Session Ref"
-                        value={refDisplay}
-                      />
-                    </>
-                  );
-                })()}
-                {contextPercent != null && (
-                  <div className="mobile-info-row">
-                    <span className="mobile-info-label">Context</span>
-                    <span className="mobile-info-value">
-                      <ContextFillIndicator percentage={contextPercent} />
-                    </span>
-                  </div>
-                )}
-                <div className="mobile-info-actions">
-                  <button className="btn btn-sm" onClick={handleCopyContext}>
-                    {contextCopied ? "\u2713 Copied" : "\u2398 Copy Context"}
-                  </button>
-                </div>
-              </div>
+              <MobileInfoPanel
+                session={session}
+                activeConversation={activeConversation}
+                conversationId={conversationId}
+                statusDotClass={statusDotClass}
+                displayStatus={displayStatus}
+                contextPercent={contextPercent}
+                buildContext={buildContext}
+              />
             )}
           </div>
         </div>
@@ -2582,52 +2366,17 @@ export default function ConversationDetailPage({
         />
       </div>
 
-      <ConfirmDialog
-        open={showDeleteConfirm}
-        title="Delete Session"
-        message={`This will remove the worktree and session state for "${session.sessionName}". The git branch and transcripts will be preserved. This action cannot be undone.`}
-        confirmLabel="Delete"
-        danger
-        onConfirm={handleDelete}
-        onCancel={cancelDelete}
-      />
-
-      <ConfirmDialog
-        open={pendingConcurrentSubmission !== null}
-        title="Another agent is working"
-        message={
-          pendingConcurrentSubmission
-            ? `${
-                pendingConcurrentSubmission.busyNames.length === 1
-                  ? `${pendingConcurrentSubmission.busyNames[0]} is currently running`
-                  : `${pendingConcurrentSubmission.busyNames.length} other conversations are currently running`
-              } in this session. If this new agent edits files, its changes can conflict with the other agent's work in the same worktree. Continue anyway?`
-            : ""
-        }
-        confirmLabel="Send anyway"
-        onConfirm={() => {
-          void confirmConcurrentSubmission();
-        }}
-        onCancel={cancelConcurrentSubmission}
-      />
-
-      <CommitDialog
-        open={showCommitDialog}
-        onClose={cancelCommit}
-        onSuccess={cancelCommit}
-        projectName={projectName}
-        sessionName={session.sessionName}
-      />
-
-      <SmartMergeDialog
-        open={showMergeDialog}
-        onClose={cancelMerge}
+      <ConversationDialogs
         projectName={projectName}
         sessionName={session.sessionName}
         branchName={session.branchName}
         targetBranch={targetBranch}
         commitCount={commits.length}
         hasUncommittedChanges={hasUncommittedChanges}
+        pendingConcurrentSubmission={pendingConcurrentSubmission}
+        onDeleteConfirm={handleDelete}
+        onConcurrentConfirm={handleConcurrentConfirm}
+        onConcurrentCancel={cancelConcurrentSubmission}
       />
     </div>
   );

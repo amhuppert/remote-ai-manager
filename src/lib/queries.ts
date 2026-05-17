@@ -107,7 +107,6 @@ export function useSessionsQuery(projectName: string) {
       );
       return data.sessions;
     },
-    refetchInterval: 10_000,
   });
 }
 
@@ -148,7 +147,6 @@ export function useSessionQuery(projectName: string, sessionName: string) {
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}`,
         sessionStateSchema,
       ),
-    refetchInterval: 10_000,
   });
 }
 
@@ -252,7 +250,6 @@ export function useActiveConversationsQuery() {
         activeConversationsResponseSchema,
       );
     },
-    refetchInterval: 10_000,
   });
 }
 

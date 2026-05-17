@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { memo, useCallback } from "react";
 import type { MessageContentBlock } from "@/types";
 import CopyMessageButton from "./CopyMessageButton";
 
@@ -19,7 +19,7 @@ interface MessageActionsProps {
  * Render inside a `.message` element — the parent must have
  * `position: relative` (already set by `.message` class).
  */
-export default function MessageActions({
+function MessageActions({
   messageIndex,
   content,
   onFork,
@@ -76,3 +76,5 @@ export default function MessageActions({
     </div>
   );
 }
+
+export default memo(MessageActions);

@@ -20,6 +20,7 @@
  * `src/hooks/use-send-prompt.ts`.
  */
 
+import { memo } from "react";
 import {
   useDebugModeToggleMutation,
   useDebugPhaseMutation,
@@ -70,7 +71,7 @@ Form a fresh set of 3-5 hypotheses (labeled H1, H2, …) about why the bug persi
 Return your work as JSON matching the hypothesis schema (debugHypothesisOutputSchema): \`hypotheses\` (array of objects with \`id\`, \`description\`, \`instrumentationPlan\`) and \`reproductionSteps\` (string[] of imperative actions, at least 2 entries).`;
 }
 
-export default function DebugActionCard({
+function DebugActionCard({
   projectName,
   sessionName,
   conversation,
@@ -201,3 +202,5 @@ export default function DebugActionCard({
     </div>
   );
 }
+
+export default memo(DebugActionCard);
