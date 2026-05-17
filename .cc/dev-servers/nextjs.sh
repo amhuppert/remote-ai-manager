@@ -7,24 +7,21 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 BASE_PORT=3000
 WORKTREE_DIR="$(pwd)"
+# Pass 1: adopt an externally started server anywhere in the scan range.
+# Prevents launching a duplicate when an owned server already runs on a
+# later port (e.g. base port free, but our server is on BASE+4).
+ADOPT_PORT=$(find_owned_port "$BASE_PORT" "$WORKTREE_DIR")
+if [ $? -eq 0 ]; then
+  echo "CC_PORT=$ADOPT_PORT"
+  exit 0
+fi
 
-check_port "$BASE_PORT" "$WORKTREE_DIR"
-case $? in
-  0) PORT="$BASE_PORT" ;;
-  1)
-    # Server already running for this worktree — report port and exit
-    echo "CC_PORT=$BASE_PORT"
-    exit 0
-    ;;
-  2)
-    PORT=$(find_available_port "$BASE_PORT" "$WORKTREE_DIR")
-    if [ $? -eq 1 ]; then
-      # Server already running for this worktree on a different port
-      echo "CC_PORT=$PORT"
-      exit 0
-    fi
-    ;;
-esac
+# Pass 2: no owned server — pick the lowest available port and start one.
+PORT=$(find_available_port "$BASE_PORT" "$WORKTREE_DIR")
+if [ $? -ne 0 ]; then
+  echo "ERROR: no available port for Next.js starting at $BASE_PORT" >&2
+  exit 1
+fi
 
 echo "CC_PORT=$PORT"
 rm -f ".next/dev/lock"

@@ -5,7 +5,11 @@ import {
 } from "./sse-broadcaster";
 import * as tailscale from "./tailscale";
 import { readConfig } from "./config";
-import { isPortAlive as defaultIsPortAlive } from "./dev-server-registry";
+import { defaultPortOwnershipService } from "./dev-server-port-ownership";
+import type {
+  PortOwnershipInput,
+  PortOwnershipResult,
+} from "./dev-server-port-ownership";
 import { getGlobalValue, setGlobalValue } from "./global-singleton";
 import type { DevServerEntry } from "./dev-server-registry";
 import type { DevServerStatusEvent } from "@/types";
@@ -20,8 +24,10 @@ const POLL_INTERVAL_MS = 5_000;
 
 export interface LivenessDeps {
   broadcast: BroadcastFn;
-  unregister: (port: number) => Promise<void>;
-  isPortAlive: (port: number) => Promise<boolean>;
+  unregister(port: number): Promise<void>;
+  classifyPortOwnership(
+    input: PortOwnershipInput,
+  ): Promise<PortOwnershipResult>;
 }
 
 let _deps: LivenessDeps | null = null;
@@ -31,7 +37,7 @@ function getDeps(): LivenessDeps {
     _deps = {
       broadcast: defaultBroadcast,
       unregister: tailscale.unregister,
-      isPortAlive: defaultIsPortAlive,
+      classifyPortOwnership: defaultPortOwnershipService.classifyPort,
     };
   }
   return _deps;
@@ -69,11 +75,28 @@ async function poll(): Promise<void> {
 
   for (const [, entry] of registryMap) {
     if (entry.status === "running" && entry.port) {
-      const alive = await d.isPortAlive(entry.port);
-      if (!alive) {
+      const result = await d.classifyPortOwnership({
+        port: entry.port,
+        worktreePath: entry.worktreePath,
+      });
+
+      // Unknown classification is never treated as dead — could be a flake
+      // in `ss`/`lsof` or a permission glitch. Phase 2 contract: unknown is
+      // never safe to act on destructively.
+      if (result.status === "unknown") {
+        logger.warn("dev-server.liveness_unknown", {
+          serverName: entry.serverName,
+          port: entry.port,
+          reason: result.reason,
+        });
+        continue;
+      }
+
+      if (result.status !== "owned") {
         logger.warn("dev-server.liveness_dead", {
           serverName: entry.serverName,
           port: entry.port,
+          ownership: result.status,
         });
 
         // Clean up Tailscale registration if enabled
@@ -88,6 +111,7 @@ async function poll(): Promise<void> {
         // Transition to stopped
         entry.status = "stopped";
         entry._process = null;
+        entry.ownedByThisSession = false;
 
         const event: DevServerStatusEvent = {
           type: "dev-server-status",
@@ -98,6 +122,10 @@ async function poll(): Promise<void> {
           port: entry.port,
           remoteUrl: null,
           errorMessage: null,
+          source: entry.source,
+          ownedByThisSession: entry.ownedByThisSession,
+          worktreePath: entry.worktreePath,
+          ownerPid: entry.ownerPid,
         };
         d.broadcast(event);
       }

@@ -10695,6 +10695,18 @@ textarea {
   color: var(--text-tertiary);
 }
 
+.ds-source-tag {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  padding: 1px 5px;
+  background: rgba(123, 137, 159, 0.08);
+}
+
 .ds-row-actions {
   flex-shrink: 0;
 }

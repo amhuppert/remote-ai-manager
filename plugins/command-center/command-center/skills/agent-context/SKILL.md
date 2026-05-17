@@ -46,6 +46,32 @@ If the session was created in **Focus mode**, your system prompt includes an `<o
 
 CC injects custom MCP tools into your session. These are in-process servers — no network calls.
 
+### Dev-Server Tools
+
+These tools are scoped to your session worktree. Use them before driving any browser, Playwright, visual, or Next.js MCP tooling — never assume a port like 3000 or 6006 belongs to your worktree, because parallel sessions get different ports.
+
+| Tool | Purpose |
+|---|---|
+| `get_dev_servers` | List configured dev servers and their reconciled runtime status (`status`, `port`, `localUrl`, `remoteUrl`, `ownedByThisSession`, `source`). |
+| `ensure_dev_server({ name?, wait?, timeout_ms? })` | Make sure a dev server is running for THIS session. Adopts an externally started owned server, starts a stopped/errored one, or waits for an already-starting one. Returns the `localUrl` and `remoteUrl` to use. |
+| `stop_dev_server({ name })` | Stop a named dev server. CC verifies worktree ownership before signalling so externally owned listeners are never killed. |
+
+**How to use them:**
+
+1. Before any browser / Playwright / Next.js MCP / visual verification, call `ensure_dev_server` (omit `name` if exactly one server is configured).
+2. Read the returned `localUrl` (typical: `http://localhost:<port>`) or `remoteUrl` and use that exact URL — do not guess.
+3. Only fall back to asking the user to start a server from the UI when `ensure_dev_server` returns `NO_DEV_SERVERS_CONFIGURED` or an unrecoverable start failure.
+
+**Error codes you may receive (in `isError: true` responses):**
+
+| Code | Meaning |
+|---|---|
+| `AMBIGUOUS_DEV_SERVER` | Multiple servers are configured; re-call with `name`. The error payload includes `availableNames`. |
+| `NO_DEV_SERVERS_CONFIGURED` | Project has no `devServers` in `CommandCenter.json`. Ask the user to configure one. |
+| `UNKNOWN_DEV_SERVER` | The `name` you supplied isn't in `CommandCenter.json`. |
+| `DEV_SERVER_START_FAILED` | The server failed to start; `recentOutput` is in the payload. |
+| `DEV_SERVER_WAIT_TIMEOUT` | Server didn't reach running within `timeoutMs`. Inspect status with `get_dev_servers`. |
+
 ## Project Configuration
 
 Projects can have a `CommandCenter.json` at the repository root. If present, it configures:
@@ -75,7 +101,7 @@ CC can launch dev servers for your session. Each entry has a `name` and `command
 
 Dev servers use the **CC_PORT protocol**: the script must print `CC_PORT=<port>` to stdout within 60 seconds. CC monitors liveness by polling the port every 5 seconds.
 
-**If your project has dev servers configured**, you can ask the user to start them from the CC UI. You don't launch dev servers yourself — CC manages their lifecycle.
+**How agents interact with dev servers**: use the `ensure_dev_server` MCP tool (see *Dev-Server Tools* above) to get a server running for your session worktree on demand. The tool returns the correct `localUrl` and `remoteUrl` for your worktree's port — do not assume defaults like 3000 or 6006.
 
 **Common dev servers:**
 
@@ -84,7 +110,7 @@ Dev servers use the **CC_PORT protocol**: the script must print `CC_PORT=<port>`
 | `nextjs` | 3000+ | Next.js development server |
 | `storybook` | 6006+ | Storybook component explorer |
 
-Ports may differ from defaults when multiple sessions run in parallel — each worktree gets its own port.
+Ports may differ from defaults when multiple sessions run in parallel — each worktree gets its own port. Always read the actual port from `ensure_dev_server` or `get_dev_servers`.
 
 ## What CC Manages (Not Your Concern)
 
@@ -103,11 +129,11 @@ These happen automatically — no action needed from you:
 | Working directory | User's chosen directory | Isolated git worktree |
 | Permissions | User-configured | `bypassPermissions` (full access) |
 | Session persistence | Local `~/.claude/` | CC manages its own transcripts |
-| Dev servers | User starts manually | CC manages lifecycle, port allocation |
+| Dev servers | User starts manually | CC manages lifecycle and port allocation; agents call `ensure_dev_server` |
 | Merge to main | User runs git commands | CC's merge workflow with validation |
 
 ## Tips
 
 - **Check `CommandCenter.json`** in the repo root to understand what's configured for this project.
-- **Don't worry about ports** — if a dev server is running, CC handles the port assignment.
+- **Call `ensure_dev_server` before browser/Playwright/Next.js MCP work** — the returned `localUrl` is the only URL you should hit. A common port responding does not mean it belongs to your worktree.
 - **Your branch is `csm/<session-name>`** — commits go here. CC handles merging to `main` when the user requests it.

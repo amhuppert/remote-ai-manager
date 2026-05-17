@@ -14,6 +14,10 @@ const stoppedNextDev: DevServerRuntimeState = {
   startedAt: null,
   errorMessage: null,
   recentOutput: [],
+  source: null,
+  ownedByThisSession: false,
+  worktreePath: null,
+  ownerPid: null,
 };
 
 const stoppedStorybook: DevServerRuntimeState = {
@@ -25,6 +29,10 @@ const stoppedStorybook: DevServerRuntimeState = {
   startedAt: null,
   errorMessage: null,
   recentOutput: [],
+  source: null,
+  ownedByThisSession: false,
+  worktreePath: null,
+  ownerPid: null,
 };
 
 const runningNextDev: DevServerRuntimeState = {
@@ -36,6 +44,10 @@ const runningNextDev: DevServerRuntimeState = {
   startedAt: new Date().toISOString(),
   errorMessage: null,
   recentOutput: [],
+  source: "cc-started",
+  ownedByThisSession: true,
+  worktreePath: "/home/alex/projects/app/.worktrees/feature",
+  ownerPid: 12345,
 };
 
 const runningStorybook: DevServerRuntimeState = {
@@ -47,6 +59,25 @@ const runningStorybook: DevServerRuntimeState = {
   startedAt: new Date().toISOString(),
   errorMessage: null,
   recentOutput: [],
+  source: "cc-started",
+  ownedByThisSession: true,
+  worktreePath: "/home/alex/projects/app/.worktrees/feature",
+  ownerPid: 12346,
+};
+
+const adoptedNextDev: DevServerRuntimeState = {
+  serverName: "nextjs",
+  command: "bun run dev",
+  status: "running",
+  port: 3004,
+  remoteUrl: "http://my-machine.tailnet.ts.net:3004",
+  startedAt: new Date().toISOString(),
+  errorMessage: null,
+  recentOutput: [],
+  source: "external-adopted",
+  ownedByThisSession: true,
+  worktreePath: "/home/alex/projects/app/.worktrees/feature",
+  ownerPid: 88421,
 };
 
 const startingNextDev: DevServerRuntimeState = {
@@ -58,6 +89,10 @@ const startingNextDev: DevServerRuntimeState = {
   startedAt: new Date().toISOString(),
   errorMessage: null,
   recentOutput: ["Compiling...", "Optimizing modules..."],
+  source: null,
+  ownedByThisSession: false,
+  worktreePath: "/home/alex/projects/app/.worktrees/feature",
+  ownerPid: null,
 };
 
 const errorNextDev: DevServerRuntimeState = {
@@ -70,6 +105,10 @@ const errorNextDev: DevServerRuntimeState = {
   errorMessage:
     "Process exited (code=1) before reporting CC_PORT.\nError: Cannot find module 'next'",
   recentOutput: [],
+  source: null,
+  ownedByThisSession: false,
+  worktreePath: "/home/alex/projects/app/.worktrees/feature",
+  ownerPid: null,
 };
 
 // ── Toolbar decorator (simulates topbar session controls) ────
@@ -317,6 +356,14 @@ export const OpenWithError = {
   args: {
     open: true,
     servers: [errorNextDev, stoppedStorybook],
+  },
+  decorators: [ToolbarDecorator],
+} satisfies Story;
+
+export const OpenWithAdopted = {
+  args: {
+    open: true,
+    servers: [adoptedNextDev, runningStorybook],
   },
   decorators: [ToolbarDecorator],
 } satisfies Story;

@@ -43,10 +43,12 @@ Read `package.json` and extract `dependencies` and `devDependencies`.
 
 ### 1.3 Frameworks (from dependencies)
 
-| Dependency | Framework | Dev Server | Base Port |
+| Dependency | Framework | Command Template | Base Port |
 |---|---|---|---|
-| `next` | Next.js | `.cc/dev-servers/nextjs.sh` | 3000 |
-| `storybook` or `@storybook/*` | Storybook | `.cc/dev-servers/storybook.sh` | 6006 |
+| `next` | Next.js | `npx next dev --port $CC_ASSIGNED_PORT` | 3000 |
+| `storybook` or `@storybook/*` | Storybook | `npx storybook dev --port $CC_ASSIGNED_PORT --no-open` | 6006 |
+
+These use the `cc-assigned` port strategy — CC picks the port and injects it via `$CC_ASSIGNED_PORT`. No shell helpers are written. See `references/dev-servers.md` for the legacy `stdout-cc-port` strategy if a project requires custom startup logic.
 
 ### 1.4 Tools (from dependencies + devDependencies)
 
@@ -120,8 +122,7 @@ Show each file that will be created, with full content in fenced code blocks. Th
 - `scripts/pre-merge-validate.sh` — validation pipeline with only the detected tools, in correct order (formatters → checkers → tests)
 
 **If frameworks detected:**
-- `.cc/dev-servers/_helpers.sh` — cross-platform port detection helpers
-- `.cc/dev-servers/<framework>.sh` — one script per detected framework
+- Add a `cc-assigned` entry per framework to `CommandCenter.json`. No shell scripts are written for the default presets.
 
 **If vitest/jest detected AND config doesn't already have CLAUDECODE detection:**
 - Proposed modification to the test runner config file
@@ -134,19 +135,24 @@ Show each file that will be created, with full content in fenced code blocks. Th
   "initScriptPath": "scripts/worktree-init.sh",
   "preMergeCommand": "scripts/pre-merge-validate.sh",
   "devServers": [
-    { "name": "<framework-id>", "command": ".cc/dev-servers/<framework-id>.sh" }
+    {
+      "name": "<framework-id>",
+      "command": "<framework command using $CC_ASSIGNED_PORT>",
+      "port": { "strategy": "cc-assigned", "base": <base-port>, "range": 100 }
+    }
   ]
 }
 ```
 - Set `initScriptPath` to `"scripts/worktree-init.sh"` if package.json exists, otherwise `null`
 - Set `preMergeCommand` to `"scripts/pre-merge-validate.sh"` if validation tools detected, otherwise omit
-- Set `devServers` array with an entry for each detected framework, otherwise omit
+- Set `devServers` array with one `cc-assigned` entry per detected framework using the commands from §1.3, otherwise omit
+- For monorepos, also set `cwd` on the entry to the subdirectory (e.g. `"cwd": "apps/web"`)
 
 **Init script:** Use the template from `references/init-script.md` matching the detected package manager. Add prisma generate if prisma detected. Add `.env.example` copy if the file exists.
 
 **Pre-merge script:** Use the template from `references/pre-merge-script.md`. Include only the tools that were detected. Order: Prettier → ESLint → TypeScript → Vitest/Jest.
 
-**Dev server scripts:** Use the exact scripts from `references/dev-servers.md`. Include `_helpers.sh` and one preset script per framework.
+**Dev server entries:** See `references/dev-servers.md` for the full field reference and the legacy `stdout-cc-port` flow. The default presets do not write shell scripts.
 
 **Test runner config:** Use the pattern from `references/ai-test-config.md`. For existing config files, show the modification as an addition to the existing config, not a replacement.
 
@@ -154,7 +160,7 @@ Show each file that will be created, with full content in fenced code blocks. Th
 
 If a monorepo was detected:
 - Ask the user which subdirectory contains the main application (e.g., `apps/web`)
-- Use the subdirectory variant of the dev server script from `references/dev-servers.md`
+- Set `cwd` on each dev server entry to that subdirectory — CC will spawn the command there and scope port-ownership checks to that directory
 - The init script runs at the repository root (workspace-level install handles all packages)
 
 ## Step 3: Get Approval
@@ -169,9 +175,9 @@ If the user wants changes, incorporate them and show the updated proposal before
 
 After approval:
 
-1. Create directories: `mkdir -p scripts .cc/dev-servers` (as needed)
+1. Create directories: `mkdir -p scripts` (and `.cc/dev-servers` only if the user opts in to the legacy `stdout-cc-port` strategy)
 2. Write each approved file using the Write tool
-3. Set executable permissions on all shell scripts: `chmod +x scripts/*.sh .cc/dev-servers/*.sh`
+3. Set executable permissions on shell scripts that were written: `chmod +x scripts/*.sh` (and `.cc/dev-servers/*.sh` if applicable)
 4. For test runner config modifications: use the Edit tool to add the AI detection block to the existing config file
 
 ## Step 5: Verify

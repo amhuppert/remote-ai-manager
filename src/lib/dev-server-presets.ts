@@ -1,7 +1,7 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { readRepoConfig } from "./repo-config";
-import type { PerRepoConfig } from "./schemas";
+import type { DevServerConfig, PerRepoConfig } from "./schemas";
 
 // ============================================================
 // Preset Definitions
@@ -51,6 +51,26 @@ export function getPresets(): DevServerPresetDefinition[] {
 
 export function getPreset(id: string): DevServerPresetDefinition | undefined {
   return PRESETS.find((p) => p.id === id);
+}
+
+/**
+ * Scan hint for status-reconciliation port discovery. Returned only for known
+ * presets — custom servers must wait until Phase 7's explicit config lands
+ * before reconciliation can guess port ranges on their behalf.
+ */
+export interface DevServerScanHint {
+  basePort: number;
+  rangeSize: number;
+}
+
+const DEFAULT_SCAN_RANGE_SIZE = 100;
+
+export function getPresetScanHint(
+  serverName: string,
+): DevServerScanHint | null {
+  const preset = PRESETS.find((p) => p.serverName === serverName);
+  if (!preset) return null;
+  return { basePort: preset.basePort, rangeSize: DEFAULT_SCAN_RANGE_SIZE };
 }
 
 // ============================================================
@@ -139,24 +159,51 @@ check_port() {
   return 2
 }
 
-# Scan from a base port upward to find the first available or owned port.
+# Scan the configured range (base port inclusive, then upward) for a port
+# already owned by this worktree. Lets us adopt an externally started dev
+# server before starting a duplicate on a different free port.
 # Args: $1 = base port, $2 = expected worktree path
-# Prints the port number.
-# Exit codes: 0 = found available port, 1 = found owned port (adopt), 2 = no port found
+# Prints the owned port number on success.
+# Exit codes: 0 = found owned port, 1 = no owned port in range
+find_owned_port() {
+  local base_port="\$1"
+  local expected_cwd="\$2"
+  local port="\$base_port"
+  local attempts=100
+
+  while [ "\$attempts" -gt 0 ]; do
+    check_port "\$port" "\$expected_cwd"
+    if [ \$? -eq 1 ]; then
+      echo "\$port"
+      return 0
+    fi
+    port=$((port + 1))
+    attempts=$((attempts - 1))
+  done
+
+  return 1
+}
+
+# Scan from the base port (inclusive) upward for the first truly free port.
+# Owned and conflicting ports are both skipped — adoption is handled
+# separately by find_owned_port so callers should run that first.
+# Args: $1 = base port, $2 = expected worktree path
+# Prints the available port number on success.
+# Exit codes: 0 = found available port, 2 = no available port in range
 find_available_port() {
   local base_port="\$1"
   local expected_cwd="\$2"
   local port="\$base_port"
-  local max_attempts=100
+  local attempts=100
 
-  while [ "\$max_attempts" -gt 0 ]; do
-    port=$((port + 1))
+  while [ "\$attempts" -gt 0 ]; do
     check_port "\$port" "\$expected_cwd"
-    case \$? in
-      0) echo "\$port"; return 0 ;;
-      1) echo "\$port"; return 1 ;;
-    esac
-    max_attempts=$((max_attempts - 1))
+    if [ \$? -eq 0 ]; then
+      echo "\$port"
+      return 0
+    fi
+    port=$((port + 1))
+    attempts=$((attempts - 1))
   done
 
   echo "ERROR: Could not find an available port after scanning from \$base_port" >&2
@@ -219,28 +266,77 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 BASE_PORT=${preset.basePort}
 WORKTREE_DIR="$(pwd)"
-${subdirBlock}
-check_port "$BASE_PORT" "$${cwdVar}"
-case $? in
-  0) PORT="$BASE_PORT" ;;
-  1)
-    # Server already running for this worktree — report port and exit
-    echo "CC_PORT=$BASE_PORT"
-    exit 0
-    ;;
-  2)
-    PORT=$(find_available_port "$BASE_PORT" "$${cwdVar}")
-    if [ $? -eq 1 ]; then
-      # Server already running for this worktree on a different port
-      echo "CC_PORT=$PORT"
-      exit 0
-    fi
-    ;;
-esac
+${subdirBlock}# Pass 1: adopt an externally started server anywhere in the scan range.
+# Prevents launching a duplicate when an owned server already runs on a
+# later port (e.g. base port free, but our server is on BASE+4).
+ADOPT_PORT=$(find_owned_port "$BASE_PORT" "$${cwdVar}")
+if [ $? -eq 0 ]; then
+  echo "CC_PORT=$ADOPT_PORT"
+  exit 0
+fi
+
+# Pass 2: no owned server — pick the lowest available port and start one.
+PORT=$(find_available_port "$BASE_PORT" "$${cwdVar}")
+if [ $? -ne 0 ]; then
+  echo "ERROR: no available port for ${preset.name} starting at $BASE_PORT" >&2
+  exit 1
+fi
 
 echo "CC_PORT=$PORT"
 ${execLine}
 `;
+}
+
+// ============================================================
+// Simplified Preset Config (cc-assigned strategy)
+// ============================================================
+
+const SIMPLIFIED_FRAMEWORK_COMMANDS: Record<string, string> = {
+  nextjs: 'npx next dev --port "$CC_ASSIGNED_PORT"',
+  storybook: 'npx storybook dev --port "$CC_ASSIGNED_PORT"',
+};
+
+const SIMPLIFIED_DEFAULT_RANGE = 100;
+const SIMPLIFIED_DEFAULT_READINESS_TIMEOUT_MS = 60_000;
+
+/**
+ * Build a simplified cc-assigned dev server entry for a known preset. The
+ * resulting config delegates port assignment, env injection, and readiness
+ * waiting to CC instead of relying on a generated shell script.
+ */
+export function buildSimplifiedPresetEntry(
+  presetId: string,
+  subdir?: string,
+): DevServerConfig {
+  const preset = getPreset(presetId);
+  if (!preset) {
+    throw new Error(`Unknown preset: ${presetId}`);
+  }
+
+  const command = SIMPLIFIED_FRAMEWORK_COMMANDS[presetId];
+  if (!command) {
+    throw new Error(`No simplified command template for preset: ${presetId}`);
+  }
+
+  const entry: DevServerConfig = {
+    name: preset.serverName,
+    command,
+    port: {
+      strategy: "cc-assigned",
+      base: preset.basePort,
+      range: SIMPLIFIED_DEFAULT_RANGE,
+    },
+    readiness: {
+      type: "tcp",
+      timeoutMs: SIMPLIFIED_DEFAULT_READINESS_TIMEOUT_MS,
+    },
+  };
+
+  if (subdir) {
+    entry.cwd = subdir;
+  }
+
+  return entry;
 }
 
 // ============================================================
@@ -256,15 +352,15 @@ export async function installPreset(params: {
   projectPath: string;
   presetId: string;
   subdir?: string;
+  legacy?: boolean;
 }): Promise<InstallPresetResult> {
-  const { projectPath, presetId, subdir } = params;
+  const { projectPath, presetId, subdir, legacy = false } = params;
 
   const preset = getPreset(presetId);
   if (!preset) {
     throw new Error(`Unknown preset: ${presetId}`);
   }
 
-  // Check if already installed
   const installed = await getInstalledPresets(projectPath);
   if (installed.includes(presetId)) {
     throw new Error(
@@ -272,37 +368,39 @@ export async function installPreset(params: {
     );
   }
 
-  // Create .cc/dev-servers/ directory
-  const scriptsDir = path.join(projectPath, ".cc", "dev-servers");
-  await mkdir(scriptsDir, { recursive: true });
-
   const installedFiles: string[] = [];
+  let newEntry: DevServerConfig;
 
-  // Write _helpers.sh (always overwrite to keep up-to-date)
-  const helpersPath = path.join(scriptsDir, "_helpers.sh");
-  await writeFile(helpersPath, generateHelperScript(), { mode: 0o755 });
-  installedFiles.push(".cc/dev-servers/_helpers.sh");
+  if (legacy) {
+    const scriptsDir = path.join(projectPath, ".cc", "dev-servers");
+    await mkdir(scriptsDir, { recursive: true });
 
-  // Write preset-specific script
-  const presetScriptPath = path.join(scriptsDir, preset.scriptFileName);
-  await writeFile(presetScriptPath, generatePresetScript(presetId, subdir), {
-    mode: 0o755,
-  });
-  installedFiles.push(`.cc/dev-servers/${preset.scriptFileName}`);
+    const helpersPath = path.join(scriptsDir, "_helpers.sh");
+    await writeFile(helpersPath, generateHelperScript(), { mode: 0o755 });
+    installedFiles.push(".cc/dev-servers/_helpers.sh");
 
-  // Update CommandCenter.json
+    const presetScriptPath = path.join(scriptsDir, preset.scriptFileName);
+    await writeFile(presetScriptPath, generatePresetScript(presetId, subdir), {
+      mode: 0o755,
+    });
+    installedFiles.push(`.cc/dev-servers/${preset.scriptFileName}`);
+
+    newEntry = { name: preset.serverName, command: preset.command };
+  } else {
+    newEntry = buildSimplifiedPresetEntry(presetId, subdir);
+  }
+
   const configPath = path.join(projectPath, "CommandCenter.json");
   let config: PerRepoConfig;
   try {
     const raw = await readFile(configPath, "utf-8");
     config = JSON.parse(raw) as PerRepoConfig;
   } catch {
-    // File doesn't exist or is invalid — start fresh
     config = { initScriptPath: null };
   }
 
   const devServers = config.devServers ?? [];
-  devServers.push({ name: preset.serverName, command: preset.command });
+  devServers.push(newEntry);
   config = { ...config, devServers };
 
   await writeFile(configPath, JSON.stringify(config, null, 2) + "\n");

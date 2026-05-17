@@ -180,6 +180,7 @@ export type {
   // Dev Server types
   DevServerConfig,
   DevServerStatus,
+  DevServerSource,
   DevServerStatusEvent,
   DevServerRuntimeState,
   DevServersStatusResponse,

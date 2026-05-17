@@ -1,10 +1,42 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, it, expect } from "vitest";
 import {
   getPresets,
   getPreset,
   generateHelperScript,
   generatePresetScript,
+  buildSimplifiedPresetEntry,
 } from "./dev-server-presets";
+
+function runHelperWithDriver(driver: string): {
+  stdout: string;
+  exitCode: number;
+} {
+  const dir = mkdtempSync(path.join(tmpdir(), "cc-helper-"));
+  const helperPath = path.join(dir, "_helpers.sh");
+  writeFileSync(helperPath, generateHelperScript(), { mode: 0o755 });
+  const driverPath = path.join(dir, "drive.sh");
+  writeFileSync(
+    driverPath,
+    `#!/bin/sh
+. "${helperPath}"
+${driver}
+`,
+    { mode: 0o755 },
+  );
+  try {
+    const stdout = execFileSync("sh", [driverPath], { encoding: "utf-8" });
+    return { stdout, exitCode: 0 };
+  } catch (err) {
+    const e = err as { status?: number; stdout?: Buffer | string };
+    const out =
+      typeof e.stdout === "string" ? e.stdout : (e.stdout?.toString() ?? "");
+    return { stdout: out, exitCode: e.status ?? 1 };
+  }
+}
 
 describe("PresetRegistry", () => {
   describe("getPresets", () => {
@@ -76,6 +108,89 @@ describe("PresetRegistry", () => {
     it("contains the find_available_port function", () => {
       const script = generateHelperScript();
       expect(script).toContain("find_available_port()");
+    });
+
+    it("contains the find_owned_port function for two-pass scanning", () => {
+      const script = generateHelperScript();
+      expect(script).toContain("find_owned_port()");
+    });
+
+    it("find_owned_port scans the base port itself, then upward", () => {
+      const driver = `
+check_port() {
+  case "$1" in
+    3000) return 2 ;;
+    3001) return 2 ;;
+    3002) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+find_owned_port 3000 /tmp
+`;
+      const result = runHelperWithDriver(driver);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe("3002");
+    });
+
+    it("find_owned_port adopts the base port immediately when owned", () => {
+      const driver = `
+check_port() {
+  case "$1" in
+    3000) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+find_owned_port 3000 /tmp
+`;
+      const result = runHelperWithDriver(driver);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe("3000");
+    });
+
+    it("find_owned_port returns a non-zero exit code when no owned port is found", () => {
+      const driver = `
+check_port() {
+  return 0
+}
+find_owned_port 3000 /tmp
+`;
+      const result = runHelperWithDriver(driver);
+      expect(result.exitCode).not.toBe(0);
+    });
+
+    it("find_available_port returns only truly free ports (skips conflicts and unknowns)", () => {
+      const driver = `
+check_port() {
+  case "$1" in
+    3000) return 2 ;;
+    3001) return 2 ;;
+    3002) return 0 ;;
+    *) return 0 ;;
+  esac
+}
+find_available_port 3000 /tmp
+`;
+      const result = runHelperWithDriver(driver);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe("3002");
+    });
+
+    it("find_available_port no longer reports owned ports — that is find_owned_port's job", () => {
+      const driver = `
+check_port() {
+  case "$1" in
+    3000) return 1 ;;
+    3001) return 1 ;;
+    3002) return 0 ;;
+    *) return 0 ;;
+  esac
+}
+find_available_port 3000 /tmp
+`;
+      const result = runHelperWithDriver(driver);
+      // Should skip owned ports (return 1) and pick the next available one.
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe("3002");
     });
 
     it("uses exit codes 0, 1, 2 for port status", () => {
@@ -151,14 +266,45 @@ describe("PresetRegistry", () => {
       expect(script).toContain('. "$SCRIPT_DIR/_helpers.sh"');
     });
 
-    it("handles the 3 port check cases: available, owned, conflict", () => {
+    it("scans for an owned port before falling back to an available port", () => {
       const script = generatePresetScript("nextjs");
-      // Available: exit code 0
-      expect(script).toContain("0)");
-      // Owned: exit code 1 — reuse
-      expect(script).toContain("1)");
-      // Conflict: exit code 2 — find_available_port
-      expect(script).toContain("2)");
+      const ownedIdx = script.indexOf("find_owned_port");
+      const availableIdx = script.indexOf("find_available_port");
+      expect(ownedIdx).toBeGreaterThan(-1);
+      expect(availableIdx).toBeGreaterThan(-1);
+      expect(ownedIdx).toBeLessThan(availableIdx);
+    });
+
+    it("exits early with CC_PORT when an owned port is discovered anywhere in the range", () => {
+      const script = generatePresetScript("nextjs");
+      const lines = script.split("\n");
+      const ownedCallIdx = lines.findIndex((l) =>
+        l.includes("find_owned_port"),
+      );
+      expect(ownedCallIdx).toBeGreaterThan(-1);
+      // After the owned scan succeeds, the script must echo CC_PORT and exit
+      // before reaching the available-port scan.
+      const tail = lines.slice(ownedCallIdx).join("\n");
+      expect(tail).toMatch(
+        /echo "CC_PORT=\$[A-Z_]+"[\s\S]*exit 0[\s\S]*find_available_port/,
+      );
+    });
+
+    it("storybook preset also scans owned before available", () => {
+      const script = generatePresetScript("storybook");
+      const ownedIdx = script.indexOf("find_owned_port");
+      const availableIdx = script.indexOf("find_available_port");
+      expect(ownedIdx).toBeGreaterThan(-1);
+      expect(availableIdx).toBeGreaterThan(-1);
+      expect(ownedIdx).toBeLessThan(availableIdx);
+    });
+
+    describe("owned-first ordering in subdir mode", () => {
+      it("uses APP_DIR for both owned and available scans", () => {
+        const script = generatePresetScript("nextjs", "apps/web");
+        expect(script).toContain('find_owned_port "$BASE_PORT" "$APP_DIR"');
+        expect(script).toContain('find_available_port "$BASE_PORT" "$APP_DIR"');
+      });
     });
 
     it("removes stale .next/dev/lock before starting Next.js", () => {
@@ -189,6 +335,37 @@ describe("PresetRegistry", () => {
     it("throws for unknown preset ID", () => {
       expect(() => generatePresetScript("unknown")).toThrow();
     });
+  });
+
+  describe("buildSimplifiedPresetEntry", () => {
+    it("emits a cc-assigned Next.js entry with no shell script needed", () => {
+      const entry = buildSimplifiedPresetEntry("nextjs");
+      expect(entry.name).toBe("nextjs");
+      expect(entry.command).toContain("next dev");
+      expect(entry.command).toContain("$CC_ASSIGNED_PORT");
+      expect(entry.command).not.toContain(".cc/dev-servers/");
+      expect(entry.port?.strategy).toBe("cc-assigned");
+      expect(entry.port?.base).toBe(3000);
+      expect(entry.port?.range).toBeGreaterThan(0);
+      expect(entry.readiness?.type).toBe("tcp");
+    });
+
+    it("emits a cc-assigned Storybook entry on its base port", () => {
+      const entry = buildSimplifiedPresetEntry("storybook");
+      expect(entry.name).toBe("storybook");
+      expect(entry.command).toContain("storybook dev");
+      expect(entry.port?.strategy).toBe("cc-assigned");
+      expect(entry.port?.base).toBe(6006);
+    });
+
+    it("threads a subdir through as the cwd", () => {
+      const entry = buildSimplifiedPresetEntry("nextjs", "apps/web");
+      expect(entry.cwd).toBe("apps/web");
+    });
+
+    it("throws for unknown presets", () => {
+      expect(() => buildSimplifiedPresetEntry("unknown")).toThrow();
+    });
 
     describe("with subdir", () => {
       it("generates a script that cd's into the subdirectory", () => {
@@ -206,7 +383,7 @@ describe("PresetRegistry", () => {
 
       it("uses APP_DIR for port ownership checks", () => {
         const script = generatePresetScript("nextjs", "dashboard-ui");
-        expect(script).toContain('check_port "$BASE_PORT" "$APP_DIR"');
+        expect(script).toContain('find_owned_port "$BASE_PORT" "$APP_DIR"');
         expect(script).toContain('find_available_port "$BASE_PORT" "$APP_DIR"');
       });
 
@@ -217,7 +394,9 @@ describe("PresetRegistry", () => {
 
       it("without subdir uses WORKTREE_DIR for port checks", () => {
         const script = generatePresetScript("nextjs");
-        expect(script).toContain('check_port "$BASE_PORT" "$WORKTREE_DIR"');
+        expect(script).toContain(
+          'find_owned_port "$BASE_PORT" "$WORKTREE_DIR"',
+        );
         expect(script).toContain(
           'find_available_port "$BASE_PORT" "$WORKTREE_DIR"',
         );
