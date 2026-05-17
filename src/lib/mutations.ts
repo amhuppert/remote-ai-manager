@@ -38,6 +38,7 @@ import {
   collaborationStopResponseSchema,
 } from "@/lib/api-client";
 import type {
+  AgentBackendId,
   GlobalConfig,
   ImagePayload,
   SessionState,
@@ -1609,6 +1610,7 @@ export function useCollaborationStartMutation(
       negotiationRounds: number;
       autonomousResolutionThreshold: "none" | "minor" | "major" | "blocking";
       conversationId: string;
+      backend?: AgentBackendId;
     }) =>
       mutationFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/collaboration`,

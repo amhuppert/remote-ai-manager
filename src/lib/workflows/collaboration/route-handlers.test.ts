@@ -552,6 +552,113 @@ describe("collaboration route handlers — START", () => {
 
     expect(startCalls[0]?.sessionName).toBe("feature/new design");
   });
+
+  it("adopts the requested backend on the conversation before invoking the manager", async () => {
+    const { manager, startCalls } = buildScriptedManager({
+      startResult: { workflowId: "wf-adopt", status: "started" },
+    });
+    const order: string[] = [];
+    const setConversationBackend = vi.fn(async () => {
+      order.push("setConversationBackend");
+    });
+    const wrappedManager: CollaborationManager = {
+      ...manager,
+      start: vi.fn(async (input) => {
+        order.push("manager.start");
+        return manager.start(input);
+      }),
+    };
+
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      manager: wrappedManager,
+      setConversationBackend,
+    });
+
+    const response = await handlers.START(
+      new Request("http://test/collab", {
+        method: "POST",
+        body: JSON.stringify({
+          brief: "design Z",
+          negotiationRounds: 3,
+          autonomousResolutionThreshold: "major",
+          conversationId: "conv-adopt",
+          backend: "codex",
+        }),
+      }),
+      buildContext("example", "sess-1"),
+    );
+
+    expect(response.status).toBe(202);
+    expect(setConversationBackend).toHaveBeenCalledWith(
+      "/projects/example",
+      "sess-1",
+      "conv-adopt",
+      "codex",
+    );
+    expect(order).toEqual(["setConversationBackend", "manager.start"]);
+    expect(startCalls).toHaveLength(1);
+  });
+
+  it("does not call setConversationBackend when no backend is provided", async () => {
+    const { manager, startCalls } = buildScriptedManager();
+    const setConversationBackend = vi.fn(async () => {});
+
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      manager,
+      setConversationBackend,
+    });
+
+    const response = await handlers.START(
+      new Request("http://test/collab", {
+        method: "POST",
+        body: JSON.stringify({
+          brief: "design Z",
+          negotiationRounds: 3,
+          autonomousResolutionThreshold: "major",
+          conversationId: "conv-no-backend",
+        }),
+      }),
+      buildContext("example", "sess-1"),
+    );
+
+    expect(response.status).toBe(202);
+    expect(setConversationBackend).not.toHaveBeenCalled();
+    expect(startCalls).toHaveLength(1);
+  });
+
+  it("returns 409 when the requested backend conflicts with a locked conversation", async () => {
+    const { manager, startCalls } = buildScriptedManager();
+    const setConversationBackend = vi.fn(async () => {
+      throw new Error(
+        'Cannot change backend after prompts have been sent (conversation "conv-locked")',
+      );
+    });
+
+    const handlers = createCollaborationRouteHandlers({
+      resolveProjectPath: async () => "/projects/example",
+      manager,
+      setConversationBackend,
+    });
+
+    const response = await handlers.START(
+      new Request("http://test/collab", {
+        method: "POST",
+        body: JSON.stringify({
+          brief: "design Z",
+          negotiationRounds: 3,
+          autonomousResolutionThreshold: "major",
+          conversationId: "conv-locked",
+          backend: "codex",
+        }),
+      }),
+      buildContext("example", "sess-1"),
+    );
+
+    expect(response.status).toBe(409);
+    expect(startCalls).toHaveLength(0);
+  });
 });
 
 describe("collaboration route handlers — LIST", () => {

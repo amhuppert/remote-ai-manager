@@ -1293,6 +1293,7 @@ export default function ConversationDetailPage({
         autonomousResolutionThreshold:
           effectiveCollabConfig.autonomousResolutionThreshold,
         conversationId,
+        backend: selectedBackend,
       });
       clearCollabConfigDraft(projectName, sessionName, conversationId);
       return;

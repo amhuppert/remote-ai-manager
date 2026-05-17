@@ -47,7 +47,7 @@ import { createSessionLaneStoreForProduction } from "@/lib/workflows/primitives/
 import { getSession as defaultGetSession } from "@/lib/state";
 import { getConversation as defaultGetConversation } from "@/lib/conversations";
 import type { AgentBackendId } from "@/types";
-import type { AgentSessionRef } from "@/lib/schemas";
+import { agentBackendSchema, type AgentSessionRef } from "@/lib/schemas";
 import { collaborationAutonomousResolutionThresholdSchema } from "./types";
 import { dispatchPushForCollaborationEvent } from "@/lib/push-dispatcher";
 import {
@@ -155,6 +155,11 @@ export const collaborationStartRequestSchema = z.object({
   autonomousResolutionThreshold:
     collaborationAutonomousResolutionThresholdSchema,
   conversationId: z.string().trim().min(1, "conversationId is required"),
+  // The user's currently-selected backend in the UI. The route handler adopts
+  // this onto the conversation (mirroring executePromptStream) before the
+  // manager reads `conversation.agentBackend` to pick Agent One. Optional so
+  // older clients and direct API callers keep working.
+  backend: agentBackendSchema.optional(),
 });
 export type CollaborationStartRequest = z.infer<
   typeof collaborationStartRequestSchema

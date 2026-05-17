@@ -26,6 +26,8 @@ import {
   getSession as defaultGetSession,
   mutateConversation as defaultMutateConversation,
 } from "@/lib/state";
+import { setConversationBackend as defaultSetConversationBackend } from "@/lib/conversations";
+import type { AgentBackendId } from "@/lib/schemas";
 import {
   getTranscriptPath as defaultGetTranscriptPath,
   safeAppendTranscriptEntry as defaultSafeAppendTranscriptEntry,
@@ -91,6 +93,20 @@ export interface CollaborationRouteDeps {
     label: string,
     mutate: (conversation: ConversationState) => T | Promise<T>,
   ) => Promise<T>;
+  /**
+   * Adopts the user's currently-selected backend onto the conversation before
+   * the manager picks Agent One. Mirrors `executePromptStream`'s adoption: a
+   * fresh conversation (`promptCount === 0`) accepts the new backend; once
+   * prompts have been sent the underlying call throws and START returns 409.
+   * Defaults to `setConversationBackend` from `@/lib/conversations`; tests
+   * override.
+   */
+  setConversationBackend: (
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    backend: AgentBackendId,
+  ) => Promise<void>;
 }
 
 const defaultDeps: CollaborationRouteDeps = {
@@ -104,6 +120,7 @@ const defaultDeps: CollaborationRouteDeps = {
   getTranscriptPath: (conversationId) =>
     defaultGetTranscriptPath(conversationId),
   mutateConversation: defaultMutateConversation,
+  setConversationBackend: defaultSetConversationBackend,
 };
 
 async function resolveSessionParams(
@@ -266,6 +283,42 @@ export function createCollaborationRouteHandlers(
       const parsed = collaborationStartRequestSchema.safeParse(body);
       if (!parsed.success) {
         return buildValidationErrorResponse(parsed.error);
+      }
+
+      if (parsed.data.backend) {
+        try {
+          await deps.setConversationBackend(
+            sessionResolution.projectPath,
+            sessionResolution.sessionName,
+            parsed.data.conversationId,
+            parsed.data.backend,
+          );
+        } catch (err) {
+          const message = getErrorMessage(err);
+          if (message.includes("after prompts have been sent")) {
+            logger.warn("collaboration.route.backend_adoption_locked", {
+              conversationId: parsed.data.conversationId,
+              requestedBackend: parsed.data.backend,
+            });
+            return NextResponse.json(
+              {
+                error: `Cannot change backend after prompts have been sent (conversation "${parsed.data.conversationId}")`,
+              } satisfies ApiError,
+              { status: 409 },
+            );
+          }
+          logger.error("collaboration.route.backend_adoption_failed", {
+            conversationId: parsed.data.conversationId,
+            requestedBackend: parsed.data.backend,
+            error: message,
+          });
+          return NextResponse.json(
+            {
+              error: "Failed to adopt backend on conversation",
+            } satisfies ApiError,
+            { status: 500 },
+          );
+        }
       }
 
       try {
