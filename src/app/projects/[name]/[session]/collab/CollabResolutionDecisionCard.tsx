@@ -11,6 +11,7 @@ import type {
 } from "@/lib/workflows/collaboration/types";
 import CollabClaimsList from "./CollabClaimsList";
 import CollabCollapsibleCard from "./CollabCollapsibleCard";
+import CollabMarkdownText from "./CollabMarkdownText";
 
 export interface CollabResolutionDecisionCardProps {
   agent: CollaborationAgent;
@@ -161,7 +162,10 @@ export default function CollabResolutionDecisionCard({
     >
       <TrajectorySparkline trajectory={trajectory} />
 
-      <p className="collab-artifact-card-narrative">{rationale}</p>
+      <CollabMarkdownText
+        content={rationale}
+        className="collab-artifact-card-narrative"
+      />
 
       {resolvedDisagreements.length > 0 ? (
         <section className="collab-artifact-card-section">
@@ -177,13 +181,24 @@ export default function CollabResolutionDecisionCard({
                 className="collab-resolution-decision-card-resolved-item"
                 key={item.disagreementId}
               >
-                <span>
-                  {item.disagreementId} → {item.resolution}
-                </span>
-                <span className="collab-resolution-decision-card-resolved-meta">
-                  {item.resolvedAutonomously ? "auto" : "manual"} ·{" "}
-                  {item.rationale}
-                </span>
+                <div className="collab-resolution-decision-card-resolved-resolution">
+                  <span className="collab-resolution-decision-card-resolved-id">
+                    {item.disagreementId} →
+                  </span>{" "}
+                  <CollabMarkdownText
+                    content={item.resolution}
+                    className="collab-resolution-decision-card-resolved-text"
+                  />
+                </div>
+                <div className="collab-resolution-decision-card-resolved-meta">
+                  <span className="collab-resolution-decision-card-resolved-meta-prefix">
+                    {item.resolvedAutonomously ? "auto" : "manual"} ·
+                  </span>{" "}
+                  <CollabMarkdownText
+                    content={item.rationale}
+                    className="collab-resolution-decision-card-resolved-rationale"
+                  />
+                </div>
               </li>
             ))}
           </ul>

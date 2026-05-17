@@ -6,6 +6,7 @@ import type {
   CollaborationReference,
 } from "@/lib/workflows/collaboration/types";
 import CollabCollapsibleCard from "./CollabCollapsibleCard";
+import CollabMarkdownText from "./CollabMarkdownText";
 
 export interface CollabInitialDraftCardProps {
   agent: CollaborationAgent;
@@ -61,7 +62,10 @@ export default function CollabInitialDraftCard({
         </>
       }
     >
-      <p className="collab-artifact-card-narrative">{narrative}</p>
+      <CollabMarkdownText
+        content={narrative}
+        className="collab-artifact-card-narrative"
+      />
 
       {keyClaims.length > 0 ? (
         <section className="collab-artifact-card-section">

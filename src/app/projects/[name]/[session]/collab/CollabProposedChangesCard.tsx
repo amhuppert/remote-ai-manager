@@ -9,6 +9,7 @@ import type {
 } from "@/lib/workflows/collaboration/types";
 import CollabClaimsList from "./CollabClaimsList";
 import CollabCollapsibleCard from "./CollabCollapsibleCard";
+import CollabMarkdownText from "./CollabMarkdownText";
 
 export interface CollabProposedChangesCardProps {
   fromAgent: CollaborationAgent;
@@ -69,7 +70,10 @@ export default function CollabProposedChangesCard({
         </>
       }
     >
-      <p className="collab-artifact-card-narrative">{narrative}</p>
+      <CollabMarkdownText
+        content={narrative}
+        className="collab-artifact-card-narrative"
+      />
 
       {acceptedFromAgentTwoDraft.length > 0 ? (
         <CollabClaimsList
