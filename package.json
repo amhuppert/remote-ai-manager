@@ -37,6 +37,7 @@
     "@types/react-syntax-highlighter": "^15.5.13",
     "@xyflow/react": "^12.10.2",
     "better-sqlite3": "^12.6.2",
+    "ignore": "^7.0.5",
     "immer": "^11.1.4",
     "mermaid": "^11.12.3",
     "next": "^16.1.6",

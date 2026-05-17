@@ -3,16 +3,16 @@
 import { useMemo, useRef, useCallback, useState } from "react";
 import { useProjectFilesQuery } from "@/lib/queries";
 import { detectFileAutocompleteTrigger } from "@/lib/file-autocomplete-trigger";
-import { fuzzyMatch, compareFuzzyResults } from "@/lib/fuzzy";
-import type {
-  ScoredFileItem,
-  FileAutocompleteHandle,
-} from "@/components/FileAutocomplete";
-
-const MAX_DISPLAY_ITEMS = 50;
+import {
+  filterAndScoreFiles,
+  type ScoredFileItem,
+} from "@/lib/file-autocomplete-filter";
+import type { FileAutocompleteHandle } from "@/components/FileAutocomplete";
 
 interface UseFileAutocompleteOptions {
   projectName: string;
+  /** When provided, files are sourced from the session worktree, not the project root. */
+  sessionName?: string;
   text: string;
   cursorPosition: number;
   disabled?: boolean;
@@ -32,6 +32,8 @@ interface UseFileAutocompleteReturn {
   loading: boolean;
   /** Error message if loading failed */
   error: string | null;
+  /** True when the underlying scan was truncated by the server */
+  truncated: boolean;
   /** Handle file selection — replaces @query with @path */
   onSelect: (path: string) => void;
   /** Close the dropdown */
@@ -42,6 +44,7 @@ interface UseFileAutocompleteReturn {
 
 export function useFileAutocomplete({
   projectName,
+  sessionName,
   text,
   cursorPosition,
   disabled = false,
@@ -51,14 +54,12 @@ export function useFileAutocomplete({
   const [dismissed, setDismissed] = useState(false);
   const [prevTriggerKey, setPrevTriggerKey] = useState<string | null>(null);
 
-  // Detect @-trigger
   const trigger = useMemo(
     () =>
       disabled ? null : detectFileAutocompleteTrigger(text, cursorPosition),
     [text, cursorPosition, disabled],
   );
 
-  // Reset dismissed state when trigger changes
   const triggerKey = trigger ? `${trigger.startIndex}` : null;
   if (triggerKey !== prevTriggerKey) {
     setPrevTriggerKey(triggerKey);
@@ -69,45 +70,20 @@ export function useFileAutocomplete({
 
   const visible = trigger !== null && !dismissed;
 
-  // Fetch project files
-  const filesQuery = useProjectFilesQuery(projectName, {
-    enabled: visible,
-  });
+  const filesQuery = useProjectFilesQuery(
+    { projectName, sessionName },
+    { enabled: visible },
+  );
 
   const loading = filesQuery.isLoading && visible;
   const error = filesQuery.error ? filesQuery.error.message : null;
+  const truncated = filesQuery.data?.truncated ?? false;
 
-  // Fuzzy filter files
   const { items, totalCount } = useMemo(() => {
     if (!trigger || !filesQuery.data?.items) {
       return { items: [] as ScoredFileItem[], totalCount: 0 };
     }
-
-    const query = trigger.query;
-    const scored: ScoredFileItem[] = [];
-
-    for (const file of filesQuery.data.items) {
-      const result = fuzzyMatch(query, file.path);
-      if (result.match) {
-        scored.push({
-          item: file,
-          tier: result.tier!,
-          coverage: result.coverage,
-          indices: result.indices,
-        });
-      }
-    }
-
-    scored.sort(
-      (a, b) =>
-        compareFuzzyResults(a, b) || a.item.path.localeCompare(b.item.path),
-    );
-
-    const total = scored.length;
-    return {
-      items: scored.slice(0, MAX_DISPLAY_ITEMS),
-      totalCount: total,
-    };
+    return filterAndScoreFiles(trigger.query, filesQuery.data.items);
   }, [trigger, filesQuery.data]);
 
   const onSelect = useCallback(
@@ -138,6 +114,7 @@ export function useFileAutocomplete({
     totalCount,
     loading,
     error,
+    truncated,
     onSelect,
     onClose,
     updateCursor,

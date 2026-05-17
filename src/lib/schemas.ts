@@ -2257,6 +2257,8 @@ export type FileItem = z.infer<typeof fileItemSchema>;
 
 export const projectFilesResponseSchema = z.object({
   items: z.array(fileItemSchema),
+  truncated: z.boolean(),
+  scannedCount: z.number().int().nonnegative(),
 });
 export type ProjectFilesResponse = z.infer<typeof projectFilesResponseSchema>;
 

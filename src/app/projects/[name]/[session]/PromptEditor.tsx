@@ -373,11 +373,12 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
             onShowPlaceholder={onShowPlaceholder}
           />
         ) : null}
-        {fileState && projectName ? (
+        {fileState && projectName && sessionName ? (
           <PromptEditorFileMentionPopup
             ref={filePopupRef}
             query={fileState.query}
             projectName={projectName}
+            sessionName={sessionName}
             onSelect={(path) => fileState.command({ path })}
           />
         ) : null}

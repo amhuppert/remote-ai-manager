@@ -1,101 +1,103 @@
 import { readdir } from "node:fs/promises";
 import path from "node:path";
+import ignore from "ignore";
+import { createLogger } from "./logging";
+import { getErrorMessage } from "@/lib/errors";
 import type { FileItem } from "@/types";
 
-/** Directories to skip entirely during traversal */
-const EXCLUDED_DIRS = new Set([
-  "node_modules",
-  ".git",
-  ".next",
-  ".turbo",
-  ".nuxt",
-  ".output",
-  ".cache",
-  ".vscode",
-  ".idea",
-  ".cursor",
-  "coverage",
-  ".nyc_output",
-  "storybook-static",
-  ".worktrees",
-  "dist",
-  "build",
-  ".svelte-kit",
-  ".parcel-cache",
-]);
+const logger = createLogger("file-scanner");
 
-/** Specific filenames to exclude */
-const EXCLUDED_FILES = new Set([
-  ".DS_Store",
-  "Thumbs.db",
-  ".eslintcache",
-  "pnpm-lock.yaml",
-  "yarn.lock",
-  "package-lock.json",
-  "bun.lockb",
-]);
+const DEFAULT_MAX_RESULTS = 20_000;
 
-/** Binary/media extensions to exclude */
-const EXCLUDED_EXTENSIONS = new Set([
-  ".png",
-  ".jpg",
-  ".jpeg",
-  ".gif",
-  ".ico",
-  ".svg",
-  ".webp",
-  ".mp4",
-  ".mp3",
-  ".woff",
-  ".woff2",
-  ".ttf",
-  ".eot",
-  ".zip",
-  ".tar",
-  ".gz",
-  ".pdf",
-  ".exe",
-  ".dll",
-  ".so",
-  ".dylib",
-]);
+export interface ScanOptions {
+  ignorePatterns: string[];
+  maxResults?: number;
+}
+
+export interface ScanResult {
+  items: FileItem[];
+  truncated: boolean;
+  scannedCount: number;
+}
 
 /**
  * Scan a project directory recursively and return all non-excluded files.
- * Paths are relative to projectPath, using forward slashes.
+ * Paths are relative to projectPath, using POSIX forward slashes.
  */
 export async function scanProjectFiles(
   projectPath: string,
-): Promise<FileItem[]> {
-  const results: FileItem[] = [];
-  await walkDir(projectPath, "", results);
-  return results;
+  options: ScanOptions,
+): Promise<ScanResult> {
+  const maxResults = options.maxResults ?? DEFAULT_MAX_RESULTS;
+  const matcher = ignore().add(options.ignorePatterns);
+
+  const state = {
+    items: [] as FileItem[],
+    scannedCount: 0,
+    truncated: false,
+  };
+
+  await walkDir(projectPath, "", matcher, maxResults, state);
+
+  return {
+    items: state.items,
+    truncated: state.truncated,
+    scannedCount: state.scannedCount,
+  };
+}
+
+type Matcher = ReturnType<typeof ignore>;
+
+interface WalkState {
+  items: FileItem[];
+  scannedCount: number;
+  truncated: boolean;
 }
 
 async function walkDir(
   basePath: string,
   relativePath: string,
-  results: FileItem[],
+  matcher: Matcher,
+  maxResults: number,
+  state: WalkState,
 ): Promise<void> {
+  if (state.truncated) return;
+
   const fullPath = relativePath ? path.join(basePath, relativePath) : basePath;
 
-  const entries = await readdir(fullPath, { withFileTypes: true });
+  let entries;
+  try {
+    entries = await readdir(fullPath, { withFileTypes: true });
+  } catch (err) {
+    logger.warn("readdir-error", {
+      path: fullPath,
+      error: getErrorMessage(err),
+    });
+    return;
+  }
 
   for (const entry of entries) {
+    if (state.truncated) return;
+
     const entryRelative = relativePath
       ? `${relativePath}/${entry.name}`
       : entry.name;
 
+    if (entry.isSymbolicLink()) {
+      logger.debug("symlink-skipped", { path: entryRelative });
+      continue;
+    }
+
     if (entry.isDirectory()) {
-      if (!EXCLUDED_DIRS.has(entry.name)) {
-        await walkDir(basePath, entryRelative, results);
-      }
+      if (matcher.ignores(`${entryRelative}/`)) continue;
+      await walkDir(basePath, entryRelative, matcher, maxResults, state);
     } else if (entry.isFile()) {
-      if (
-        !EXCLUDED_FILES.has(entry.name) &&
-        !EXCLUDED_EXTENSIONS.has(path.extname(entry.name).toLowerCase())
-      ) {
-        results.push({ path: entryRelative });
+      state.scannedCount += 1;
+      if (matcher.ignores(entryRelative)) continue;
+      state.items.push({ path: entryRelative });
+      if (state.items.length >= maxResults) {
+        state.truncated = true;
+        return;
       }
     }
   }

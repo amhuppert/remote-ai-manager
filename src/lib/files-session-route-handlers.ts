@@ -1,32 +1,39 @@
 /**
- * Files route handler logic — extracted for dependency injection.
+ * Session-scoped files route handler logic — extracted for dependency injection.
  *
- * Route files delegate to these handlers, passing production deps.
- * Tests create handlers with mock deps via `createFilesRouteHandlers(deps)`.
+ * The route file at
+ * `src/app/api/projects/[name]/sessions/[session]/files/route.ts`
+ * delegates to these handlers, passing production deps.
  */
 
 import { NextResponse } from "next/server";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/project-resolver";
+import { getSession as defaultGetSession } from "@/lib/state";
 import {
   scanProjectFiles as defaultScanProjectFiles,
   type ScanOptions,
   type ScanResult,
 } from "@/lib/file-scanner";
 import { readConfig as defaultReadConfig } from "@/lib/config";
-import type { ApiError, GlobalConfig } from "@/types";
+import type { ApiError, GlobalConfig, SessionState } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Deps interface
 // ---------------------------------------------------------------------------
 
-export interface FilesRouteDeps {
+export interface SessionFilesRouteDeps {
   resolveProjectPath(name: string): Promise<string | null>;
+  getSession(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<SessionState | null>;
   scanProjectFiles(projectPath: string, opts: ScanOptions): Promise<ScanResult>;
   readConfig(): Promise<GlobalConfig>;
 }
 
-const defaultDeps: FilesRouteDeps = {
+const defaultDeps: SessionFilesRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,
+  getSession: defaultGetSession,
   scanProjectFiles: defaultScanProjectFiles,
   readConfig: defaultReadConfig,
 };
@@ -43,12 +50,16 @@ type RouteContext = {
 // Factory
 // ---------------------------------------------------------------------------
 
-export function createFilesRouteHandlers(deps: FilesRouteDeps = defaultDeps) {
+export function createSessionFilesRouteHandlers(
+  deps: SessionFilesRouteDeps = defaultDeps,
+) {
   async function GET(
     _request: Request,
     context: RouteContext,
   ): Promise<Response> {
-    const name = (await context.params)["name"] ?? "";
+    const params = await context.params;
+    const name = params["name"] ?? "";
+    const sessionName = params["session"] ?? "";
 
     const projectPath = await deps.resolveProjectPath(name);
     if (!projectPath) {
@@ -58,9 +69,17 @@ export function createFilesRouteHandlers(deps: FilesRouteDeps = defaultDeps) {
       );
     }
 
+    const sessionState = await deps.getSession(projectPath, sessionName);
+    if (!sessionState) {
+      return NextResponse.json(
+        { error: "Session not found" } satisfies ApiError,
+        { status: 404 },
+      );
+    }
+
     try {
       const { ignorePatterns } = await deps.readConfig();
-      const result = await deps.scanProjectFiles(projectPath, {
+      const result = await deps.scanProjectFiles(sessionState.worktreePath, {
         ignorePatterns,
       });
       return NextResponse.json(result);

@@ -13,10 +13,8 @@ import {
   FileAutocompleteList,
   type FileAutocompleteListItem,
 } from "@/components/FileAutocompleteList";
-import { fuzzyMatch, compareFuzzyResults, type MatchTier } from "@/lib/fuzzy";
 import { useProjectFilesQuery } from "@/lib/queries";
-
-const MAX_DISPLAY_ITEMS = 50;
+import { filterAndScoreFiles } from "@/lib/file-autocomplete-filter";
 
 export interface FileMentionPopupHandle {
   /** Forward a keydown event from the editor; returns true when consumed. */
@@ -27,55 +25,36 @@ export interface FileMentionPopupProps {
   /** Text typed after `@` (without the leading `@`). */
   query: string;
   projectName: string;
+  sessionName: string;
   /** Insert the chosen path into the editor at the trigger range. */
   onSelect: (path: string) => void;
-}
-
-interface ScoredFile {
-  path: string;
-  tier: MatchTier;
-  coverage: number;
-  matchIndices: number[];
 }
 
 export const PromptEditorFileMentionPopup = forwardRef<
   FileMentionPopupHandle,
   FileMentionPopupProps
->(function PromptEditorFileMentionPopup({ query, projectName, onSelect }, ref) {
-  const filesQuery = useProjectFilesQuery(projectName);
+>(function PromptEditorFileMentionPopup(
+  { query, projectName, sessionName, onSelect },
+  ref,
+) {
+  const filesQuery = useProjectFilesQuery({ projectName, sessionName });
 
-  const { display, totalCount } = useMemo(() => {
+  const { display, totalCount, truncated } = useMemo(() => {
     const files = filesQuery.data?.items ?? [];
-    if (files.length === 0)
-      return { display: [] as ScoredFile[], totalCount: 0 };
-
-    const scored: ScoredFile[] = [];
-    for (const file of files) {
-      const result = fuzzyMatch(query, file.path);
-      if (result.match) {
-        scored.push({
-          path: file.path,
-          tier: result.tier!,
-          coverage: result.coverage,
-          matchIndices: result.indices,
-        });
-      }
-    }
-    scored.sort(
-      (a, b) => compareFuzzyResults(a, b) || a.path.localeCompare(b.path),
-    );
+    const result = filterAndScoreFiles(query, files);
     return {
-      display: scored.slice(0, MAX_DISPLAY_ITEMS),
-      totalCount: scored.length,
+      display: result.items,
+      totalCount: result.totalCount,
+      truncated: filesQuery.data?.truncated ?? false,
     };
   }, [filesQuery.data, query]);
 
   const listItems = useMemo<FileAutocompleteListItem[]>(
     () =>
       display.map((s) => ({
-        id: s.path,
-        path: s.path,
-        matchIndices: s.matchIndices,
+        id: s.item.path,
+        path: s.item.path,
+        matchIndices: s.indices,
       })),
     [display],
   );
@@ -101,7 +80,7 @@ export const PromptEditorFileMentionPopup = forwardRef<
     (index: number) => {
       const target = displayRef.current[index];
       if (!target) return;
-      onSelect(target.path);
+      onSelect(target.item.path);
     },
     [onSelect],
   );
@@ -152,6 +131,7 @@ export const PromptEditorFileMentionPopup = forwardRef<
       totalCount={totalCount}
       loading={filesQuery.isLoading}
       error={error}
+      truncated={truncated}
     />
   );
 });

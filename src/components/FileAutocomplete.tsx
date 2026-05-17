@@ -39,6 +39,10 @@ export interface FileAutocompleteProps {
   error?: string | null;
   /** Total number of matches (before capping to display limit) */
   totalCount?: number;
+  /** Label rendered in the header showing the file source (e.g. "From project root"). */
+  sourceLabel?: string;
+  /** When true, the underlying scan was truncated by the server. */
+  truncated?: boolean;
   /** Called when a file is selected */
   onSelect: (path: string) => void;
   /** Called when the user presses Escape */
@@ -49,7 +53,17 @@ export const FileAutocomplete = forwardRef<
   FileAutocompleteHandle,
   FileAutocompleteProps
 >(function FileAutocomplete(
-  { items, visible, loading, error, totalCount, onSelect, onClose },
+  {
+    items,
+    visible,
+    loading,
+    error,
+    totalCount,
+    sourceLabel,
+    truncated,
+    onSelect,
+    onClose,
+  },
   ref,
 ) {
   const [activeIndex, setActiveIndex] = useState(0);
@@ -114,15 +128,17 @@ export const FileAutocomplete = forwardRef<
 
   const displayCount = items.length;
   const hasMore = totalCount != null && totalCount > displayCount;
+  const countLabel = hasMore
+    ? `${displayCount} of ${totalCount}`
+    : `${displayCount} ${displayCount === 1 ? "file" : "files"}`;
 
   return (
     <div className="file-autocomplete">
       <div className="file-header">
-        <span>Files</span>
+        <span>{sourceLabel ? `Files — ${sourceLabel}` : "Files"}</span>
         <span className="file-header-count">
-          {hasMore
-            ? `${displayCount} of ${totalCount}`
-            : `${displayCount} ${displayCount === 1 ? "file" : "files"}`}
+          {countLabel}
+          {truncated ? " (truncated)" : ""}
         </span>
       </div>
 

@@ -37,6 +37,7 @@ function renderPopup(
         ref={ref}
         query=""
         projectName="proj"
+        sessionName="session-x"
         onSelect={vi.fn()}
         {...overrides}
       />

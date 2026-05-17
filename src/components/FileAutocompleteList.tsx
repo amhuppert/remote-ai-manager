@@ -19,6 +19,10 @@ export interface FileAutocompleteListProps {
   totalCount?: number;
   loading?: boolean;
   error?: string | null;
+  /** Label rendered in the header showing the file source (e.g. "From project root"). */
+  sourceLabel?: string;
+  /** When true, the underlying scan was truncated by the server — flags the count. */
+  truncated?: boolean;
 }
 
 export function FileAutocompleteList({
@@ -29,6 +33,8 @@ export function FileAutocompleteList({
   totalCount,
   loading,
   error,
+  sourceLabel,
+  truncated,
 }: FileAutocompleteListProps) {
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -41,15 +47,17 @@ export function FileAutocompleteList({
 
   const displayCount = items.length;
   const hasMore = totalCount != null && totalCount > displayCount;
+  const countLabel = hasMore
+    ? `${displayCount} of ${totalCount}`
+    : `${displayCount} ${displayCount === 1 ? "file" : "files"}`;
 
   return (
     <div className="file-autocomplete">
       <div className="file-header">
-        <span>Files</span>
+        <span>{sourceLabel ? `Files — ${sourceLabel}` : "Files"}</span>
         <span className="file-header-count">
-          {hasMore
-            ? `${displayCount} of ${totalCount}`
-            : `${displayCount} ${displayCount === 1 ? "file" : "files"}`}
+          {countLabel}
+          {truncated ? " (truncated)" : ""}
         </span>
       </div>
 

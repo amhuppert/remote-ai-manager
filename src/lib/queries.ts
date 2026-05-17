@@ -332,16 +332,20 @@ export function useProjectCommandsQuery(
 // ---------------------------------------------------------------------------
 
 export function useProjectFilesQuery(
-  projectName: string,
+  args: { projectName: string; sessionName?: string },
   options?: { enabled?: boolean },
 ) {
+  const { projectName, sessionName } = args;
+  const queryKey = sessionName
+    ? fileKeys.sessionList(projectName, sessionName)
+    : fileKeys.list(projectName);
+  const url = sessionName
+    ? `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/files`
+    : `/api/projects/${encodeURIComponent(projectName)}/files`;
+
   return useQuery({
-    queryKey: fileKeys.list(projectName),
-    queryFn: () =>
-      apiFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/files`,
-        projectFilesResponseSchema,
-      ),
+    queryKey,
+    queryFn: () => apiFetch(url, projectFilesResponseSchema),
     enabled: options?.enabled,
   });
 }

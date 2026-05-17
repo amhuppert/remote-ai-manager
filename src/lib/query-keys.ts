@@ -68,6 +68,8 @@ export const fileKeys = {
   all: ["files"] as const,
   list: (projectName: string) =>
     [...fileKeys.all, "list", projectName] as const,
+  sessionList: (projectName: string, sessionName: string) =>
+    [...fileKeys.all, "list", projectName, sessionName] as const,
 };
 
 export const commandKeys = {

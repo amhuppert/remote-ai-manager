@@ -277,6 +277,8 @@ export default function OptimisticDialog({
               loading={fileAutocomplete.loading}
               error={fileAutocomplete.error}
               totalCount={fileAutocomplete.totalCount}
+              truncated={fileAutocomplete.truncated}
+              sourceLabel="From project root"
               onSelect={fileAutocomplete.onSelect}
               onClose={fileAutocomplete.onClose}
             />
