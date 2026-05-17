@@ -25,7 +25,7 @@ export default function CopyMessageButton({ content }: CopyMessageButtonProps) {
       type="button"
       className={`msg-action-btn${copied ? " msg-action-btn--copied" : ""}`}
       onClick={handleCopy}
-      data-tooltip={copied ? "Copied!" : "Copy"}
+      data-tooltip={copied ? "Copied ✓" : "Copy"}
       title="Copy message as Markdown"
     >
       {copied ? (

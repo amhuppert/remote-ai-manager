@@ -118,7 +118,7 @@ export default function MobilePromptToolbar({
 
         <button
           type="button"
-          className={`mobile-prompt-model-chip${effortIsRainbow ? " rainbow-border" : ""}`}
+          className={`mobile-prompt-model-chip${effortIsRainbow ? " cc-rainbow-border" : ""}`}
           onClick={() => setSheet("settings")}
           disabled={isReadOnly || isBusy}
           aria-haspopup="dialog"
@@ -358,7 +358,7 @@ export default function MobilePromptToolbar({
                   type="button"
                   role="radio"
                   aria-checked={active}
-                  className={`mobile-prompt-option${active ? " active" : ""}${isRainbow ? " rainbow" : ""}`}
+                  className={`mobile-prompt-option${active ? " active" : ""}${isRainbow ? " cc-rainbow" : ""}`}
                   onClick={() => {
                     onSelectEffort(option.id);
                   }}

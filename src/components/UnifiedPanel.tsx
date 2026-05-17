@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useActiveConversationsQuery } from "@/lib/queries";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
+import { CloseIcon } from "@/components/icons";
 import {
   useUnifiedPanelOpen,
   useCloseUnifiedPanel,
@@ -60,8 +61,9 @@ export default function UnifiedPanel(): React.JSX.Element | null {
             className="btn-icon-only unified-panel-close"
             onClick={close}
             title="Close panel"
+            aria-label="Close panel"
           >
-            &#10005;
+            <CloseIcon />
           </button>
         </div>
         <div className="unified-panel-body">

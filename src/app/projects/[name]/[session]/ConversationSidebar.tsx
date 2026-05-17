@@ -1,10 +1,11 @@
 "use client";
 
-import { memo, useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ActiveConversation } from "@/lib/api-client";
 import { useActiveConversationsQuery } from "@/lib/queries";
+import { PlusIcon } from "@/components/icons";
 import {
   useCreateConversationMutation,
   useArchiveConversationMutation,
@@ -17,10 +18,13 @@ import {
   useToggleSidebar,
   useHydrateSidebar,
   useSidebarFilter,
-  useSidebarGroupBy,
   useSidebarSessionFilter,
   useSetSidebarSessionFilter,
 } from "@/stores/session-detail.store";
+import {
+  useSidebarActiveListFilter,
+  useSidebarGroupByPersistent,
+} from "./use-sidebar-persistent-filters";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { useLongPress } from "@/hooks/use-long-press";
 import ConversationSidebarHeader from "./ConversationSidebarHeader";
@@ -140,7 +144,7 @@ function ConversationSidebar({
   const toggleCollapsed = useToggleSidebar();
   const hydrateSidebar = useHydrateSidebar();
   const sidebarFilter = useSidebarFilter();
-  const sidebarGroupBy = useSidebarGroupBy();
+  const [sidebarGroupBy] = useSidebarGroupByPersistent();
   const sidebarSessionFilter = useSidebarSessionFilter();
   const setSidebarSessionFilter = useSetSidebarSessionFilter();
 
@@ -176,8 +180,7 @@ function ConversationSidebar({
   const genericRenameMutation = useGenericRenameConversationMutation();
 
   // --- Local UI state ---
-  const [activeListFilter, setActiveListFilter] =
-    useState<SidebarListFilter>("all");
+  const [activeListFilter, setActiveListFilter] = useSidebarActiveListFilter();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -569,6 +572,7 @@ function ConversationSidebar({
     handleRenameStart,
     onMobileClose,
     router,
+    setActiveListFilter,
     setSidebarSessionFilter,
     sessionScope,
   ]);
@@ -596,8 +600,9 @@ function ConversationSidebar({
               onClick={handleNewConversation}
               disabled={createConvoMutation.isPending}
               data-tooltip="New conversation"
+              aria-label="New conversation"
             >
-              +
+              <PlusIcon />
             </button>
             <button
               className="btn-icon-only convo-sidebar-toggle"

@@ -7,6 +7,7 @@ import { registerNotificationTool } from "@/lib/agent-notification-tool";
 import { registerAskUserQuestionTool } from "@/lib/ask-user-question-tool";
 import { defaultCodexToolDeps, registerCodexTool } from "@/lib/codex-tool";
 import { registerReferenceDocumentTools } from "@/lib/reference-document-tools";
+import { registerDevServerTools } from "@/lib/dev-server-mcp-tools";
 import { createSessionArtifactRegistryForProduction } from "@/lib/workflows/primitives/default-session-artifact-registry";
 import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
 import { registerPlannerTools } from "@/lib/workflow-graph/planner-tools";
@@ -66,6 +67,10 @@ export interface SessionMcpServerDeps {
       sessionName: string;
       conversationId: string;
     },
+  ): void;
+  registerDevServerTools(
+    server: McpServer,
+    context: { projectPath: string; sessionName: string },
   ): void;
 }
 
@@ -140,6 +145,7 @@ const defaultSessionMcpServerDeps: SessionMcpServerDeps = {
       mutateConversation,
     });
   },
+  registerDevServerTools,
 };
 
 function isNotificationEnabled(config: GlobalConfig): boolean {
@@ -209,6 +215,11 @@ export async function createSessionMcpServer(
     projectPath,
     sessionName: session.sessionName,
     conversationId: params.conversationId,
+  });
+
+  deps.registerDevServerTools(server, {
+    projectPath,
+    sessionName: session.sessionName,
   });
 
   return server;

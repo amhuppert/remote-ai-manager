@@ -7,10 +7,9 @@ import {
   type ActiveConversation,
 } from "@/lib/api-client";
 import { conversationKeys } from "@/lib/query-keys";
-import {
-  useSessionDetailStore,
-  type SidebarGroupBy,
-} from "@/stores/session-detail.store";
+import { useSessionDetailStore } from "@/stores/session-detail.store";
+import type { SidebarGroupBy } from "./ConversationSidebar.helpers";
+import { GROUP_BY_STORAGE_KEY } from "./use-sidebar-persistent-filters";
 import ConversationSidebar from "./ConversationSidebar";
 
 type ActiveConversationsResponse = z.infer<
@@ -159,11 +158,17 @@ function SidebarHarness({
   }, [active]);
 
   useLayoutEffect(() => {
+    window.sessionStorage.setItem(
+      GROUP_BY_STORAGE_KEY,
+      JSON.stringify(initialGroupBy),
+    );
     useSessionDetailStore.setState({
       sidebarFilter: initialFilter,
-      sidebarGroupBy: initialGroupBy,
       sidebarCollapsed: initialSidebarCollapsed,
     });
+    return () => {
+      window.sessionStorage.removeItem(GROUP_BY_STORAGE_KEY);
+    };
   }, [initialFilter, initialGroupBy, initialSidebarCollapsed]);
 
   useLayoutEffect(() => {
@@ -199,6 +204,7 @@ function SidebarHarness({
         style={{ height: "100%", width: "100%" }}
       >
         <ConversationSidebar
+          key={initialGroupBy}
           projectName="remote-ai-manager"
           sessionName="conversation-ui-overhaul"
           activeConversationId={activeConversationId}

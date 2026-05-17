@@ -1,4 +1,5 @@
-import { spawn, execSync, type ChildProcess } from "node:child_process";
+import { execSync, spawn, type ChildProcess } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import net from "node:net";
 import { buildChildEnv } from "./child-env";
@@ -14,7 +15,16 @@ import {
   setGlobalValue,
 } from "./global-singleton";
 import { getErrorMessage } from "@/lib/errors";
-import type { DevServerStatus, DevServerStatusEvent } from "@/types";
+import {
+  defaultPortOwnershipService,
+  type PortOwnershipInput,
+  type PortOwnershipResult,
+} from "./dev-server-port-ownership";
+import type {
+  DevServerSource,
+  DevServerStatus,
+  DevServerStatusEvent,
+} from "@/types";
 
 const logger = createLogger("dev-server");
 
@@ -24,6 +34,23 @@ const OUTPUT_BUFFER_SIZE = 50;
 const KILL_GRACE_MS = 5_000;
 const TAILSCALE_POLL_INTERVAL_MS = 500;
 const TAILSCALE_POLL_TIMEOUT_MS = 30_000;
+
+/**
+ * How the registry should start a dev server. The default `stdout-cc-port`
+ * mode preserves the legacy preset script protocol (parse `CC_PORT=<n>` on
+ * stdout, transition to running when the line is seen). `cc-assigned` mode
+ * pre-allocates the port, injects it into the child via env vars, and waits
+ * for a TCP readiness probe before transitioning to running.
+ */
+export type DevServerStartMode =
+  | { type: "stdout-cc-port" }
+  | {
+      type: "cc-assigned";
+      port: number;
+      envAliases?: ReadonlyArray<string>;
+      cwd?: string;
+      readiness: { type: "tcp"; timeoutMs: number };
+    };
 
 /** In-memory state for a single dev server */
 export interface DevServerEntry {
@@ -37,6 +64,25 @@ export interface DevServerEntry {
   startedAt: string;
   errorMessage: string | null;
   recentOutput: string[];
+  /** Worktree the server was spawned in; used to verify listener ownership on stop. */
+  worktreePath: string;
+  /**
+   * Whether this entry represents a process CC spawned (`cc-started`) or an
+   * externally started listener CC adopted (`external-adopted`). Null until the
+   * post-CC_PORT classification completes.
+   */
+  source: DevServerSource | null;
+  /**
+   * True when the most recent ownership classification matched this session's
+   * worktree (or configured app cwd). Cleanup safety gate — never kill unless
+   * this is true at stop time.
+   */
+  ownedByThisSession: boolean;
+  /**
+   * Listener PID identified at classification time. Best-effort diagnostic;
+   * may be null when ownership could not be determined.
+   */
+  ownerPid: number | null;
   /** Internal: child process handle (not exposed via API) */
   _process: ChildProcess | null;
   /** Internal: PID of the process group leader (for group kills after shell exits) */
@@ -59,6 +105,30 @@ export interface DevServerRegistryDeps {
   livenessStart: typeof liveness.start;
   getLanUrl: typeof defaultGetLanUrl;
   checkPortListening(port: number): Promise<boolean>;
+  /**
+   * Classify which process (if any) owns a TCP port relative to a session
+   * worktree. Returned by the canonical port-ownership service — registry
+   * stop logic must never reimplement listener/cwd discovery itself.
+   */
+  classifyPortOwnership(
+    input: PortOwnershipInput,
+  ): Promise<PortOwnershipResult>;
+  /** Send a signal to a single PID. Returns false if the PID no longer exists. */
+  sendSignal(pid: number, signal: NodeJS.Signals): boolean;
+  /** True iff the PID currently exists (signal 0 probe). */
+  isProcessAlive(pid: number): boolean;
+  /** Grace period (ms) between SIGTERM and SIGKILL escalation. */
+  killGraceMs: number;
+  /**
+   * Classify whether a verified listener PID belongs to the process group CC
+   * spawned for this entry (cc-started) or some pre-existing process tree
+   * (external-adopted). The default implementation compares the PID directly
+   * and falls back to the listener's process-group id when they differ.
+   */
+  classifyServerSource(input: {
+    listenerPid: number;
+    spawnedPid: number | null;
+  }): Promise<DevServerSource>;
 }
 
 export const defaultDevServerRegistryDeps: DevServerRegistryDeps = {
@@ -71,6 +141,11 @@ export const defaultDevServerRegistryDeps: DevServerRegistryDeps = {
   livenessStart: liveness.start,
   getLanUrl: defaultGetLanUrl,
   checkPortListening: isPortListening,
+  classifyPortOwnership: defaultPortOwnershipService.classifyPort,
+  sendSignal: defaultSendSignal,
+  isProcessAlive: defaultIsProcessAlive,
+  killGraceMs: KILL_GRACE_MS,
+  classifyServerSource: defaultClassifyServerSource,
 };
 
 // ============================================================
@@ -107,6 +182,10 @@ export function createDevServerRegistry(
       port: entry.port,
       remoteUrl: entry.remoteUrl,
       errorMessage: entry.errorMessage,
+      source: entry.source,
+      ownedByThisSession: entry.ownedByThisSession,
+      worktreePath: entry.worktreePath,
+      ownerPid: entry.ownerPid,
     };
     deps.broadcast(event);
   }
@@ -140,6 +219,59 @@ export function createDevServerRegistry(
       clearTimeout(entry._startupTimer);
       entry._startupTimer = null;
     }
+  }
+
+  /**
+   * Classify the listener owning `port` and update the entry with source,
+   * ownerPid, and ownedByThisSession. Runs after CC_PORT is detected. Best
+   * effort — leaves the entry's defaults intact when ownership is unverified.
+   */
+  async function classifyEntrySource(
+    entry: DevServerEntry,
+    port: number,
+  ): Promise<void> {
+    const ownership = await deps.classifyPortOwnership({
+      port,
+      worktreePath: entry.worktreePath,
+    });
+
+    if (ownership.status !== "owned") {
+      // Listener present but cwd unverified, or no listener at all. Leave
+      // ownedByThisSession=false and source unset — the safety floor.
+      logger.info("dev-server.source.unverified", {
+        serverName: entry.serverName,
+        port,
+        ownership: ownership.status,
+      });
+      broadcastStatus(entry);
+      return;
+    }
+
+    entry.ownerPid = ownership.pid;
+    entry.ownedByThisSession = true;
+    entry.source = await deps.classifyServerSource({
+      listenerPid: ownership.pid,
+      spawnedPid: entry._pid,
+    });
+
+    if (entry.source === "cc-started") {
+      logger.info("dev-server.source.cc_started", {
+        serverName: entry.serverName,
+        port,
+        ownerPid: entry.ownerPid,
+        spawnedPid: entry._pid,
+      });
+    } else {
+      logger.info("dev-server.source.external_adopted", {
+        serverName: entry.serverName,
+        port,
+        ownerPid: entry.ownerPid,
+        spawnedPid: entry._pid,
+        cwd: ownership.cwd,
+      });
+    }
+
+    broadcastStatus(entry);
   }
 
   /**
@@ -209,6 +341,84 @@ export function createDevServerRegistry(
     }
   }
 
+  const READINESS_POLL_INTERVAL_MS = 250;
+
+  /**
+   * Poll for the assigned port to start listening, then transition to running.
+   * On timeout, transitions to error. Used only by cc-assigned start mode —
+   * stdout-cc-port mode relies on the CC_PORT line parser instead.
+   */
+  async function runCcAssignedReadinessProbe(params: {
+    entry: DevServerEntry;
+    port: number;
+    timeoutMs: number;
+  }): Promise<void> {
+    const { entry, port, timeoutMs } = params;
+    const deadline = Date.now() + timeoutMs;
+
+    logger.info("dev-server.readiness.wait", {
+      serverName: entry.serverName,
+      port,
+      timeoutMs,
+    });
+
+    while (Date.now() < deadline) {
+      if (entry.status !== "starting") return;
+
+      const listening = await deps.checkPortListening(port);
+      if (listening) {
+        if (entry.status !== "starting") return;
+        cleanupTimer(entry);
+        logger.info("dev-server.readiness.ready", {
+          serverName: entry.serverName,
+          port,
+        });
+        transitionTo(entry, "running", { port, remoteUrl: null });
+        logger.info("dev-server.running", {
+          serverName: entry.serverName,
+          port,
+        });
+
+        classifyEntrySource(entry, port).catch((err) => {
+          logger.warn("dev-server.source.classify_error", {
+            serverName: entry.serverName,
+            port,
+            error: getErrorMessage(err),
+          });
+        });
+
+        deferredRemoteUrlRegister(entry, port).catch((err) => {
+          logger.warn("dev-server.remote_url_deferred_error", {
+            serverName: entry.serverName,
+            port,
+            error: getErrorMessage(err),
+          });
+        });
+        return;
+      }
+
+      await new Promise((r) => setTimeout(r, READINESS_POLL_INTERVAL_MS));
+    }
+
+    if (entry.status !== "starting") return;
+    cleanupTimer(entry);
+    logger.warn("dev-server.readiness.timeout", {
+      serverName: entry.serverName,
+      port,
+      timeoutMs,
+    });
+    transitionTo(entry, "error", {
+      errorMessage: `Readiness timeout (${Math.round(timeoutMs / 1000)}s): port ${port} never started listening.`,
+    });
+    if (entry._pid) {
+      try {
+        process.kill(-entry._pid, "SIGTERM");
+      } catch {
+        // already exited
+      }
+    }
+  }
+
   /**
    * Start a dev server for a session.
    * Spawns the command, monitors stdout for CC_PORT=<port>, and manages status transitions.
@@ -219,9 +429,13 @@ export function createDevServerRegistry(
     serverName: string;
     command: string;
     worktreePath: string;
+    startMode?: DevServerStartMode;
   }): Promise<void> {
     const { projectPath, sessionName, serverName, command, worktreePath } =
       params;
+    const startMode: DevServerStartMode = params.startMode ?? {
+      type: "stdout-cc-port",
+    };
     const registry = getRegistry();
     const key = makeKey(projectPath, sessionName, serverName);
 
@@ -233,12 +447,27 @@ export function createDevServerRegistry(
       throw new Error(`Server "${serverName}" is already ${existing.status}`);
     }
 
+    const env = buildChildEnv();
+    if (startMode.type === "cc-assigned") {
+      const portStr = String(startMode.port);
+      env.CC_ASSIGNED_PORT = portStr;
+      env.PORT = portStr;
+      for (const alias of startMode.envAliases ?? []) {
+        env[alias] = portStr;
+      }
+    }
+
+    const spawnCwd =
+      startMode.type === "cc-assigned" && startMode.cwd
+        ? startMode.cwd
+        : worktreePath;
+
     const child = spawn(command, {
       shell: true,
       detached: true,
-      cwd: worktreePath,
+      cwd: spawnCwd,
       stdio: "pipe",
-      env: buildChildEnv(),
+      env,
     });
 
     const entry: DevServerEntry = {
@@ -252,6 +481,10 @@ export function createDevServerRegistry(
       startedAt: new Date().toISOString(),
       errorMessage: null,
       recentOutput: [],
+      worktreePath,
+      source: null,
+      ownedByThisSession: false,
+      ownerPid: null,
       _process: child,
       _pid: child.pid ?? null,
       _startupTimer: null,
@@ -262,6 +495,27 @@ export function createDevServerRegistry(
     // Auto-start liveness poller when first server is registered
     deps.livenessStart();
 
+    if (startMode.type === "cc-assigned") {
+      logger.info("dev-server.start.cc_assigned_port", {
+        serverName,
+        command,
+        worktreePath,
+        cwd: spawnCwd,
+        port: startMode.port,
+        envAliases: startMode.envAliases ?? [],
+        readinessType: startMode.readiness.type,
+        readinessTimeoutMs: startMode.readiness.timeoutMs,
+        pid: child.pid,
+      });
+    } else {
+      logger.info("dev-server.start.stdout_protocol", {
+        serverName,
+        command,
+        worktreePath,
+        pid: child.pid,
+      });
+    }
+
     logger.info("dev-server.start", {
       serverName,
       command,
@@ -271,9 +525,10 @@ export function createDevServerRegistry(
 
     broadcastStatus(entry);
 
-    // Line-buffer stdout for CC_PORT detection
+    // Line-buffer stdout for CC_PORT detection (only stdout-cc-port mode)
     let stdoutBuffer = "";
     let portFound = false;
+    const detectsCcPort = startMode.type === "stdout-cc-port";
 
     child.stdout?.on("data", (chunk: Buffer) => {
       stdoutBuffer += chunk.toString();
@@ -282,6 +537,8 @@ export function createDevServerRegistry(
 
       for (const line of lines) {
         appendOutput(entry, line);
+
+        if (!detectsCcPort) continue;
 
         const match = /^CC_PORT=(\d+)$/.exec(line.trim());
         if (match && !portFound) {
@@ -299,6 +556,14 @@ export function createDevServerRegistry(
           transitionTo(entry, "running", { port, remoteUrl: null });
           logger.info("dev-server.running", { serverName, port });
 
+          classifyEntrySource(entry, port).catch((err) => {
+            logger.warn("dev-server.source.classify_error", {
+              serverName,
+              port,
+              error: getErrorMessage(err),
+            });
+          });
+
           // Deferred: wait for the server to bind the port, then resolve remote URL
           deferredRemoteUrlRegister(entry, port).catch((err) => {
             logger.warn("dev-server.remote_url_deferred_error", {
@@ -310,6 +575,22 @@ export function createDevServerRegistry(
         }
       }
     });
+
+    if (startMode.type === "cc-assigned") {
+      const assignedPort = startMode.port;
+      const readinessTimeoutMs = startMode.readiness.timeoutMs;
+      runCcAssignedReadinessProbe({
+        entry,
+        port: assignedPort,
+        timeoutMs: readinessTimeoutMs,
+      }).catch((err) => {
+        logger.warn("dev-server.readiness.error", {
+          serverName,
+          port: assignedPort,
+          error: getErrorMessage(err),
+        });
+      });
+    }
 
     child.stderr?.on("data", (chunk: Buffer) => {
       const lines = chunk.toString().split("\n");
@@ -330,10 +611,13 @@ export function createDevServerRegistry(
       });
 
       if (entry.status === "starting") {
-        // Exited before CC_PORT was detected
         const output = entry.recentOutput.slice(-10).join("\n");
+        const reason =
+          startMode.type === "cc-assigned"
+            ? `port ${startMode.port} ever listening`
+            : "reporting CC_PORT";
         transitionTo(entry, "error", {
-          errorMessage: `Process exited (code=${code}, signal=${signal}) before reporting CC_PORT.\n${output}`,
+          errorMessage: `Process exited (code=${code}, signal=${signal}) before ${reason}.\n${output}`,
         });
         logger.error("dev-server.error", {
           serverName,
@@ -352,8 +636,11 @@ export function createDevServerRegistry(
             signal,
           });
           if (entry.port) {
-            deps
-              .readConfig()
+            // Wrap synchronously: deps may have been torn down by test teardown
+            // by the time this exit handler fires for an orphaned child, so
+            // calling readConfig() itself may throw rather than reject.
+            Promise.resolve()
+              .then(() => deps.readConfig())
               .then((cfg) => {
                 if (cfg.tailscaleEnabled) {
                   deps.tailscale.unregister(entry.port!).catch(() => {});
@@ -382,7 +669,10 @@ export function createDevServerRegistry(
       });
     });
 
-    // Startup timeout
+    // Startup timeout — only for stdout-cc-port mode. cc-assigned mode owns
+    // its own readiness timeout per config.
+    if (startMode.type !== "stdout-cc-port") return;
+
     entry._startupTimer = setTimeout(() => {
       if (entry.status === "starting") {
         logger.warn("dev-server.startup_timeout", {
@@ -431,7 +721,18 @@ export function createDevServerRegistry(
       serverName,
       port: entry.port,
       pid: entry._pid,
+      source: entry.source,
+      ownedByThisSession: entry.ownedByThisSession,
     });
+
+    if (entry.source === "external-adopted") {
+      logger.info("dev-server.cleanup.stop_adopted", {
+        serverName,
+        port: entry.port,
+        ownerPid: entry.ownerPid,
+        worktreePath: entry.worktreePath,
+      });
+    }
 
     // Unregister from Tailscale if enabled
     if (entry.port) {
@@ -451,12 +752,38 @@ export function createDevServerRegistry(
     entry._process = null;
     entry._pid = null;
 
-    // Fallback: kill by port for any orphaned processes that escaped the
+    // Fallback: kill any LISTENING process on the port that escaped the
     // process group (e.g. processes that called setsid() themselves).
+    // Only kill PIDs whose cwd verifies them as belonging to this session
+    // worktree — never broad port kills that could hit browser clients.
+    let stopWarning: string | null = null;
     if (entry.port) {
-      await killByPort(entry.port);
+      const result = await killListeningProcessForPort({
+        port: entry.port,
+        worktreePath: entry.worktreePath,
+      });
+      if (result.skipped.length > 0) {
+        const skippedDescriptions = result.skipped
+          .map(
+            (s) =>
+              `pid=${s.pid} reason=${s.reason}${s.cwd ? ` cwd=${s.cwd}` : ""}`,
+          )
+          .join("; ");
+        stopWarning = `Listener(s) on port ${entry.port} could not be verified as belonging to this session worktree (${entry.worktreePath}); refused to signal them. Skipped: ${skippedDescriptions}`;
+      }
     }
 
+    if (stopWarning) {
+      entry.errorMessage = stopWarning;
+      logger.warn("dev-server.cleanup.ownership_failed", {
+        serverName,
+        port: entry.port,
+        worktreePath: entry.worktreePath,
+        source: entry.source,
+        warning: stopWarning,
+      });
+    }
+    entry.ownedByThisSession = false;
     transitionTo(entry, "stopped");
   }
 
@@ -526,6 +853,114 @@ export function createDevServerRegistry(
       params.serverName,
     );
     return registry.get(key);
+  }
+
+  /**
+   * Classify port ownership via the canonical service and kill the listener
+   * only when it is verified as owned by this session worktree (or the
+   * configured app cwd). Refuses to signal anything classified as `conflict`
+   * or `unknown` — those become entries in `skipped`.
+   *
+   * Never kills by raw port lookup — that historically matched client
+   * connections (browsers, curl, etc.) and could SIGTERM unrelated processes.
+   */
+  async function killListeningProcessForPort(params: {
+    port: number;
+    worktreePath: string;
+    allowedCwd?: string;
+  }): Promise<{
+    killed: number[];
+    skipped: Array<{ pid: number; reason: string; cwd?: string }>;
+  }> {
+    const { port, worktreePath, allowedCwd } = params;
+    const killed: number[] = [];
+    const skipped: Array<{ pid: number; reason: string; cwd?: string }> = [];
+
+    logger.info("dev-server.stop.listener_lookup", { port, worktreePath });
+
+    const ownership = await deps.classifyPortOwnership({
+      port,
+      worktreePath,
+      allowedCwd: allowedCwd ?? null,
+    });
+
+    if (ownership.status === "available") {
+      logger.info("dev-server.stop.listener_lookup", { port, found: 0 });
+      return { killed, skipped };
+    }
+
+    if (ownership.status === "unknown") {
+      logger.warn("dev-server.stop.unverified_owner", {
+        port,
+        worktreePath,
+        reason: ownership.reason,
+        ownership: "unknown",
+      });
+      skipped.push({
+        pid: 0,
+        reason: `ownership_unknown: ${ownership.reason}`,
+      });
+      logger.warn("dev-server.stop.kill_skipped", {
+        port,
+        worktreePath,
+        skipped,
+      });
+      return { killed, skipped };
+    }
+
+    if (ownership.status === "conflict") {
+      const skip: { pid: number; reason: string; cwd?: string } = {
+        pid: ownership.pid,
+        reason: "cwd_not_owned",
+      };
+      if (ownership.cwd !== null) skip.cwd = ownership.cwd;
+      logger.warn("dev-server.stop.unverified_owner", {
+        port,
+        pid: ownership.pid,
+        cwd: ownership.cwd,
+        worktreePath,
+        allowedCwd: allowedCwd ?? null,
+        reason: "cwd_not_owned",
+        ownership: "conflict",
+      });
+      skipped.push(skip);
+      logger.warn("dev-server.stop.kill_skipped", {
+        port,
+        worktreePath,
+        skipped,
+      });
+      return { killed, skipped };
+    }
+
+    const { pid, cwd } = ownership;
+    logger.info("dev-server.stop.listener_verified", { port, pid, cwd });
+
+    const sentTerm = deps.sendSignal(pid, "SIGTERM");
+    logger.info("dev-server.stop.kill_signal", {
+      port,
+      pid,
+      signal: "SIGTERM",
+      delivered: sentTerm,
+    });
+
+    const deadline = Date.now() + deps.killGraceMs;
+    while (Date.now() < deadline) {
+      if (!deps.isProcessAlive(pid)) break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+
+    if (deps.isProcessAlive(pid)) {
+      const sentKill = deps.sendSignal(pid, "SIGKILL");
+      logger.info("dev-server.stop.kill_signal", {
+        port,
+        pid,
+        signal: "SIGKILL",
+        delivered: sentKill,
+      });
+    }
+
+    killed.push(pid);
+    return { killed, skipped };
   }
 
   /** Reset state for testing — do not use in production */
@@ -642,59 +1077,58 @@ async function killProcessGroup(pid: number): Promise<void> {
   }
 }
 
-/**
- * Kill all processes listening on a given port.
- * Sends SIGTERM first, waits up to 5s for graceful shutdown, then SIGKILL.
- */
-async function killByPort(port: number): Promise<void> {
-  let pidsRaw: string;
+function defaultSendSignal(pid: number, signal: NodeJS.Signals): boolean {
   try {
-    pidsRaw = execSync(`lsof -ti :${port}`, { encoding: "utf-8" }).trim();
+    process.kill(pid, signal);
+    return true;
   } catch {
-    return; // No processes found or lsof not available
+    return false;
   }
+}
 
-  if (!pidsRaw) return;
+function defaultIsProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
-  const pids = pidsRaw
-    .split("\n")
-    .map((p) => parseInt(p.trim(), 10))
-    .filter((p) => !isNaN(p) && p > 0);
-
-  if (pids.length === 0) return;
-
-  // Send SIGTERM to all PIDs
-  for (const pid of pids) {
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      // Process may have already exited
+/** Best-effort read of /proc/<pid>/stat or `ps -o pgid=` to recover the listener's pgid. */
+function readProcessGroupId(pid: number): number | null {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf-8");
+    const idx = stat.lastIndexOf(")");
+    if (idx >= 0) {
+      const fields = stat.slice(idx + 2).split(" ");
+      const pgid = parseInt(fields[2] ?? "", 10);
+      if (!isNaN(pgid)) return pgid;
     }
+  } catch {
+    // /proc unavailable (macOS) or permission error — fall through to ps.
   }
 
-  // Wait up to 5 seconds for processes to exit
-  const deadline = Date.now() + KILL_GRACE_MS;
-  while (Date.now() < deadline) {
-    const alive = pids.filter((pid) => {
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch {
-        return false;
-      }
+  try {
+    const out = execSync(`ps -o pgid= -p ${pid}`, {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
     });
-    if (alive.length === 0) return;
-    await new Promise((r) => setTimeout(r, 500));
+    const pgid = parseInt(out.trim(), 10);
+    return isNaN(pgid) ? null : pgid;
+  } catch {
+    return null;
   }
+}
 
-  // SIGKILL remaining
-  for (const pid of pids) {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {
-      // Process may have already exited
-    }
-  }
+async function defaultClassifyServerSource(input: {
+  listenerPid: number;
+  spawnedPid: number | null;
+}): Promise<DevServerSource> {
+  if (input.spawnedPid === null) return "external-adopted";
+  if (input.listenerPid === input.spawnedPid) return "cc-started";
+  const pgid = readProcessGroupId(input.listenerPid);
+  return pgid === input.spawnedPid ? "cc-started" : "external-adopted";
 }
 
 // ============================================================

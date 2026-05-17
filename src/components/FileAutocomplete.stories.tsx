@@ -51,7 +51,7 @@ const MOCK_FILES = [
   "package.json",
   "tsconfig.json",
   "next.config.ts",
-  ".kiro/specs/ui-design-system/design.md",
+  ".claude/skills/cc-design-system/SKILL.md",
   ".kiro/steering/product.md",
   ".kiro/steering/tech.md",
   "CLAUDE.md",

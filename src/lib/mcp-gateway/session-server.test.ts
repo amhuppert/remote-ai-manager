@@ -43,6 +43,7 @@ function createDeps(overrides: Record<string, unknown> = {}) {
     registerNotificationTool: vi.fn(),
     registerCodexTool: vi.fn(),
     registerAskUserQuestionTool: vi.fn(),
+    registerDevServerTools: vi.fn(),
     ...overrides,
   };
 }
@@ -63,6 +64,14 @@ describe("mcp-gateway/session-server", () => {
 
     expect(deps.registerReferenceDocumentTools).toHaveBeenCalledOnce();
     expect(deps.registerPlannerTools).toHaveBeenCalledOnce();
+    expect(deps.registerDevServerTools).toHaveBeenCalledOnce();
+    const devServerCall = (
+      deps.registerDevServerTools as ReturnType<typeof vi.fn>
+    ).mock.calls[0]!;
+    expect(devServerCall[1]).toMatchObject({
+      projectPath: "/projects/test",
+      sessionName: "test session",
+    });
   });
 
   it("registers notification and Codex tools only when enabled", async () => {

@@ -177,7 +177,7 @@ export default function SessionsList({
 
             <ConfirmDialog
               open={deleteTarget !== null}
-              title="Delete Session"
+              title="Delete session?"
               message={`This will remove the worktree and session state for "${deleteTarget?.sessionName ?? ""}". The git branch and transcripts will be preserved. This action cannot be undone.`}
               confirmLabel="Delete"
               danger

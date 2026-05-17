@@ -112,7 +112,7 @@ function SessionInfoStrip({
             className="si-copy-context-btn"
             onClick={handleCopyContext}
             data-tooltip={
-              contextCopied ? "Copied!" : "Copy context to clipboard"
+              contextCopied ? "Copied ✓" : "Copy context to clipboard"
             }
           >
             {contextCopied ? "\u2713" : "\u2398"} Context

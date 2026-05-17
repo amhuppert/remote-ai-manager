@@ -40,7 +40,7 @@ export default function CopyableId({
     <div
       className="si-item copyable-id"
       onClick={handleCopy}
-      data-tooltip={copied ? "Copied!" : value}
+      data-tooltip={copied ? "Copied ✓" : value}
       role="button"
       tabIndex={0}
     >

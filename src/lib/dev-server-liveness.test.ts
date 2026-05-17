@@ -3,17 +3,22 @@ import { getGlobalSingleton } from "./global-singleton";
 import type { DevServerEntry } from "./dev-server-registry";
 import * as liveness from "./dev-server-liveness";
 import { setLivenessDeps, type LivenessDeps } from "./dev-server-liveness";
+import type {
+  PortOwnershipInput,
+  PortOwnershipResult,
+} from "./dev-server-port-ownership";
 
 // No vi.mock — use setLivenessDeps for DI
 
 const mockBroadcast = vi.fn();
 const mockUnregister = vi.fn().mockResolvedValue(undefined);
-const mockIsPortAlive = vi.fn<(port: number) => Promise<boolean>>();
+const mockClassifyPortOwnership =
+  vi.fn<(input: PortOwnershipInput) => Promise<PortOwnershipResult>>();
 
 const mockDeps: LivenessDeps = {
   broadcast: mockBroadcast,
   unregister: mockUnregister,
-  isPortAlive: mockIsPortAlive,
+  classifyPortOwnership: mockClassifyPortOwnership,
 };
 
 function createMockEntry(
@@ -30,6 +35,10 @@ function createMockEntry(
     startedAt: new Date().toISOString(),
     errorMessage: null,
     recentOutput: [],
+    worktreePath: "/tmp",
+    source: null,
+    ownedByThisSession: false,
+    ownerPid: null,
     _process: null,
     _pid: null,
     _startupTimer: null,
@@ -75,7 +84,7 @@ describe("LivenessPoller", () => {
 
   it("detects dead port and transitions to stopped", async () => {
     const reg = getRegistryMap();
-    mockIsPortAlive.mockResolvedValue(false);
+    mockClassifyPortOwnership.mockResolvedValue({ status: "available" });
 
     const entry = createMockEntry({ port: 3000, status: "running" });
     reg.set("/proj::s1::web", entry);
@@ -95,7 +104,11 @@ describe("LivenessPoller", () => {
 
   it("does not transition alive servers", async () => {
     const reg = getRegistryMap();
-    mockIsPortAlive.mockResolvedValue(true);
+    mockClassifyPortOwnership.mockResolvedValue({
+      status: "owned",
+      pid: 1234,
+      cwd: "/tmp",
+    });
 
     const entry = createMockEntry({ port: 3000, status: "running" });
     reg.set("/proj::s1::web", entry);
@@ -104,6 +117,71 @@ describe("LivenessPoller", () => {
     await vi.advanceTimersByTimeAsync(5_000);
 
     expect(entry.status).toBe("running");
+  });
+
+  it("does not transition on unknown ownership (treats as still owned for safety)", async () => {
+    const reg = getRegistryMap();
+    mockClassifyPortOwnership.mockResolvedValue({
+      status: "unknown",
+      reason: "listener_lookup_failed",
+    });
+
+    const entry = createMockEntry({ port: 3000, status: "running" });
+    reg.set("/proj::s1::web", entry);
+
+    liveness.start();
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(entry.status).toBe("running");
+  });
+
+  it("transitions to stopped when port is now owned by a different worktree", async () => {
+    const reg = getRegistryMap();
+    mockClassifyPortOwnership.mockResolvedValue({
+      status: "conflict",
+      pid: 9999,
+      cwd: "/var/run/other",
+    });
+
+    const entry = createMockEntry({ port: 3000, status: "running" });
+    reg.set("/proj::s1::web", entry);
+
+    liveness.start();
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(entry.status).toBe("stopped");
+  });
+
+  it("preserves source/ownerPid metadata when transitioning to stopped on dead port", async () => {
+    const reg = getRegistryMap();
+    mockClassifyPortOwnership.mockResolvedValue({ status: "available" });
+
+    const entry = createMockEntry({
+      port: 3000,
+      status: "running",
+      source: "external-adopted",
+      ownedByThisSession: true,
+      ownerPid: 42424,
+    });
+    reg.set("/proj::s1::web", entry);
+
+    liveness.start();
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(entry.status).toBe("stopped");
+    expect(entry.source).toBe("external-adopted");
+    expect(entry.ownerPid).toBe(42424);
+    expect(entry.ownedByThisSession).toBe(false);
+    expect(mockBroadcast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "dev-server-status",
+        status: "stopped",
+        source: "external-adopted",
+        ownerPid: 42424,
+        ownedByThisSession: false,
+        worktreePath: "/tmp",
+      }),
+    );
   });
 
   it("auto-stops when registry empties", async () => {

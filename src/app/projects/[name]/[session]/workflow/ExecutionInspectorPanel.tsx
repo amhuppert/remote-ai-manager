@@ -1002,7 +1002,7 @@ function DetailView({
       </div>
       <ConfirmDialog
         open={resetConfirmOpen}
-        title="Reset Context"
+        title="Reset context?"
         message="Clear implementer and validator conversations, unmark completed tasks, and reset runtime state for this context. The workflow will remain paused until you resume it."
         confirmLabel="Reset"
         cancelLabel="Cancel"

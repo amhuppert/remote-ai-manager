@@ -33,7 +33,6 @@ const MOCK_TREE = {
     "session-lifecycle": ["requirements.md", "design.md", "tasks.md"],
     "smart-merge": ["requirements.md", "design.md"],
     "transcript-viewer": ["requirements.md", "design.md", "tasks.md"],
-    "ui-design-system": ["requirements.md", "design.md", "tasks.md"],
     "unified-conversations-panel": [
       "requirements.md",
       "design.md",

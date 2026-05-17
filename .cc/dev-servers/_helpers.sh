@@ -79,24 +79,51 @@ check_port() {
   return 2
 }
 
-# Scan from a base port upward to find the first available or owned port.
+# Scan the configured range (base port inclusive, then upward) for a port
+# already owned by this worktree. Lets us adopt an externally started dev
+# server before starting a duplicate on a different free port.
 # Args: $1 = base port, $2 = expected worktree path
-# Prints the port number.
-# Exit codes: 0 = found available port, 1 = found owned port (adopt), 2 = no port found
+# Prints the owned port number on success.
+# Exit codes: 0 = found owned port, 1 = no owned port in range
+find_owned_port() {
+  local base_port="$1"
+  local expected_cwd="$2"
+  local port="$base_port"
+  local attempts=100
+
+  while [ "$attempts" -gt 0 ]; do
+    check_port "$port" "$expected_cwd"
+    if [ $? -eq 1 ]; then
+      echo "$port"
+      return 0
+    fi
+    port=$((port + 1))
+    attempts=$((attempts - 1))
+  done
+
+  return 1
+}
+
+# Scan from the base port (inclusive) upward for the first truly free port.
+# Owned and conflicting ports are both skipped — adoption is handled
+# separately by find_owned_port so callers should run that first.
+# Args: $1 = base port, $2 = expected worktree path
+# Prints the available port number on success.
+# Exit codes: 0 = found available port, 2 = no available port in range
 find_available_port() {
   local base_port="$1"
   local expected_cwd="$2"
   local port="$base_port"
-  local max_attempts=100
+  local attempts=100
 
-  while [ "$max_attempts" -gt 0 ]; do
-    port=$((port + 1))
+  while [ "$attempts" -gt 0 ]; do
     check_port "$port" "$expected_cwd"
-    case $? in
-      0) echo "$port"; return 0 ;;
-      1) echo "$port"; return 1 ;;
-    esac
-    max_attempts=$((max_attempts - 1))
+    if [ $? -eq 0 ]; then
+      echo "$port"
+      return 0
+    fi
+    port=$((port + 1))
+    attempts=$((attempts - 1))
   done
 
   echo "ERROR: Could not find an available port after scanning from $base_port" >&2

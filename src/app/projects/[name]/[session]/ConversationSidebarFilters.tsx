@@ -1,12 +1,11 @@
 "use client";
 
 import {
-  useSidebarGroupBy,
-  useSetSidebarGroupBy,
   useSidebarSessionFilter,
   useSetSidebarSessionFilter,
 } from "@/stores/session-detail.store";
-import type { SidebarGroupBy } from "@/stores/session-detail.store";
+import type { SidebarGroupBy } from "./ConversationSidebar.helpers";
+import { useSidebarGroupByPersistent } from "./use-sidebar-persistent-filters";
 
 interface Props {
   /** Optional override label rendered before the segmented control. */
@@ -21,8 +20,7 @@ const GROUP_BY_OPTIONS: { value: SidebarGroupBy; label: string }[] = [
 export default function ConversationSidebarFilters({
   label = "Group by",
 }: Props): React.JSX.Element {
-  const groupBy = useSidebarGroupBy();
-  const setGroupBy = useSetSidebarGroupBy();
+  const [groupBy, setGroupBy] = useSidebarGroupByPersistent();
   const sessionFilter = useSidebarSessionFilter();
   const setSessionFilter = useSetSidebarSessionFilter();
 

@@ -139,7 +139,7 @@ export default function ReasoningLevelSelector({
       <button
         ref={triggerRef}
         type="button"
-        className={`effort-selector-trigger${open ? " open" : ""}${selected?.id === "max" || selected?.id === "xhigh" ? " rainbow-border" : ""}`}
+        className={`effort-selector-trigger${open ? " open" : ""}${selected?.id === "max" || selected?.id === "xhigh" ? " cc-rainbow-border" : ""}`}
         onClick={toggle}
         disabled={effectiveDisabled}
         aria-label={triggerLabel}

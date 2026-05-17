@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback } from "react";
 import { assertNever } from "@/lib/assert-never";
 import { getItemLabel } from "./notification-helpers";
+import { CloseIcon } from "@/components/icons";
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -471,8 +472,9 @@ export default function NotificationsPanel({
             className="btn-icon-only np-close"
             onClick={onClose}
             title="Close panel"
+            aria-label="Close panel"
           >
-            &#10005;
+            <CloseIcon />
           </button>
         </div>
         <div className="np-body">

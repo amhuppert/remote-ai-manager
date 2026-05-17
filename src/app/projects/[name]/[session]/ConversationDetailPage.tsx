@@ -163,6 +163,7 @@ import type {
   CollaborationArtifact,
   CollaborationReference,
 } from "@/lib/workflows/collaboration/types";
+import { CloseIcon } from "@/components/icons";
 
 interface Props {
   projectName: string;
@@ -325,7 +326,7 @@ const MessageRow = memo(function MessageRow({
             )}
             {msg.effort && (
               <span
-                className={`message-meta-effort${msg.effort === "max" || msg.effort === "xhigh" ? " rainbow-text" : ""}`}
+                className={`message-meta-effort${msg.effort === "max" || msg.effort === "xhigh" ? " cc-rainbow-text" : ""}`}
               >
                 {msg.effort}
               </span>
@@ -1288,6 +1289,7 @@ export default function ConversationDetailPage({
         autonomousResolutionThreshold:
           effectiveCollabConfig.autonomousResolutionThreshold,
         conversationId,
+        backend: selectedBackend,
       });
       clearCollabConfigDraft(projectName, sessionName, conversationId);
       return;
@@ -1815,9 +1817,10 @@ export default function ConversationDetailPage({
             <button
               className="btn-icon-only danger"
               data-tooltip="Delete session"
+              aria-label="Delete session"
               onClick={requestDelete}
             >
-              &#10005;
+              <CloseIcon />
             </button>
           </>
         }

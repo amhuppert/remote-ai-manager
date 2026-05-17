@@ -88,6 +88,18 @@ function ServerRow({
         )}
         <span className="ds-status-text">{server.status}</span>
         {server.port != null && <span className="ds-port">:{server.port}</span>}
+        {server.source === "external-adopted" && (
+          <span
+            className="ds-source-tag"
+            title={
+              server.ownerPid != null
+                ? `Adopted external listener (pid ${server.ownerPid})`
+                : "Adopted external listener"
+            }
+          >
+            adopted
+          </span>
+        )}
       </div>
       <div className="ds-row-actions">
         {isActive ? (

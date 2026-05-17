@@ -82,7 +82,7 @@ Generic browser automation (navigation, clicks, snapshots, UI verification, netw
 
 - **Design proposals before implementation**: When `/ui-design` is invoked, do NOT immediately implement. First present one or more design proposals (with rationale, tradeoffs, and ASCII/text mockups where helpful) for the user to review. Only begin implementation after the user approves a proposal.
 - Use Storybook for UI prototyping. Implement the component and create a `*.stories.tsx` story so the user can review it interactively before approving.
-- UI design must follow the design system in `.kiro/specs/ui-design-system/design.md`.
+- UI design must follow the design system in `.claude/skills/cc-design-system/SKILL.md` (and its `references/` files).
 - Run Storybook with `bun run storybook` (port 6006). Stories use `@storybook/nextjs-vite`.
 
 <!-- Begin standard instructions -->
