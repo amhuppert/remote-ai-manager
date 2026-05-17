@@ -1,9 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { useLayoutEffect } from "react";
-import {
-  useSessionDetailStore,
-  type SidebarGroupBy,
-} from "@/stores/session-detail.store";
+import type { SidebarGroupBy } from "./ConversationSidebar.helpers";
+import { GROUP_BY_STORAGE_KEY } from "./use-sidebar-persistent-filters";
 import ConversationSidebarFilters from "./ConversationSidebarFilters";
 
 interface WrapperProps {
@@ -12,10 +10,16 @@ interface WrapperProps {
 
 function FiltersHarness({ initialGroupBy }: WrapperProps) {
   useLayoutEffect(() => {
-    useSessionDetailStore.setState({ sidebarGroupBy: initialGroupBy });
+    window.sessionStorage.setItem(
+      GROUP_BY_STORAGE_KEY,
+      JSON.stringify(initialGroupBy),
+    );
+    return () => {
+      window.sessionStorage.removeItem(GROUP_BY_STORAGE_KEY);
+    };
   }, [initialGroupBy]);
 
-  return <ConversationSidebarFilters />;
+  return <ConversationSidebarFilters key={initialGroupBy} />;
 }
 
 const meta = {

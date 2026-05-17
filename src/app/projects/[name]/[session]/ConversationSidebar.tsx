@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ConversationState } from "@/types";
@@ -19,10 +19,13 @@ import {
   useToggleSidebar,
   useHydrateSidebar,
   useSidebarFilter,
-  useSidebarGroupBy,
   useSidebarSessionFilter,
   useSetSidebarSessionFilter,
 } from "@/stores/session-detail.store";
+import {
+  useSidebarActiveListFilter,
+  useSidebarGroupByPersistent,
+} from "./use-sidebar-persistent-filters";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { useLongPress } from "@/hooks/use-long-press";
 import ConversationSidebarHeader from "./ConversationSidebarHeader";
@@ -143,7 +146,7 @@ export default function ConversationSidebar({
   const toggleCollapsed = useToggleSidebar();
   const hydrateSidebar = useHydrateSidebar();
   const sidebarFilter = useSidebarFilter();
-  const sidebarGroupBy = useSidebarGroupBy();
+  const [sidebarGroupBy] = useSidebarGroupByPersistent();
   const sidebarSessionFilter = useSidebarSessionFilter();
   const setSidebarSessionFilter = useSetSidebarSessionFilter();
 
@@ -179,8 +182,7 @@ export default function ConversationSidebar({
   const genericRenameMutation = useGenericRenameConversationMutation();
 
   // --- Local UI state ---
-  const [activeListFilter, setActiveListFilter] =
-    useState<SidebarListFilter>("all");
+  const [activeListFilter, setActiveListFilter] = useSidebarActiveListFilter();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -572,6 +574,7 @@ export default function ConversationSidebar({
     handleRenameStart,
     onMobileClose,
     router,
+    setActiveListFilter,
     setSidebarSessionFilter,
     sessionScope,
   ]);

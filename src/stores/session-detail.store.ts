@@ -14,8 +14,6 @@ import type {
 type MobilePanel = "chat" | "diff" | "docs" | "specs" | "info";
 type RightPaneTab = "diff" | "docs" | "specs";
 
-export type SidebarGroupBy = "session" | "project";
-
 export interface SidebarSessionFilter {
   projectName: string;
   sessionName: string;
@@ -45,7 +43,6 @@ interface SessionDetailState {
   infoExpanded: boolean;
   sidebarCollapsed: boolean;
   sidebarFilter: string;
-  sidebarGroupBy: SidebarGroupBy;
   sidebarSessionFilter: SidebarSessionFilter | null;
   pendingQuestions: AskQuestionItem[] | null;
   pendingQuestionId: string | null;
@@ -88,7 +85,6 @@ interface SessionDetailActions {
   toggleSidebar: () => void;
   hydrateSidebar: () => void;
   setSidebarFilter: (value: string) => void;
-  setSidebarGroupBy: (value: SidebarGroupBy) => void;
   setSidebarSessionFilter: (value: SidebarSessionFilter | null) => void;
   showQuestions: (questionId: string, questions: AskQuestionItem[]) => void;
   navigateQuestion: (index: number) => void;
@@ -130,7 +126,6 @@ const initialState: SessionDetailState = {
   infoExpanded: false,
   sidebarCollapsed: false,
   sidebarFilter: "",
-  sidebarGroupBy: "project",
   sidebarSessionFilter: null,
   pendingQuestions: null,
   pendingQuestionId: null,
@@ -366,11 +361,6 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
         state.sidebarFilter = value;
       }),
 
-    setSidebarGroupBy: (value) =>
-      set((state) => {
-        state.sidebarGroupBy = value;
-      }),
-
     setSidebarSessionFilter: (value) =>
       set((state) => {
         state.sidebarSessionFilter = value;
@@ -470,8 +460,6 @@ export const useSidebarCollapsed = () =>
   useSessionDetailStore((s) => s.sidebarCollapsed);
 export const useSidebarFilter = () =>
   useSessionDetailStore((s) => s.sidebarFilter);
-export const useSidebarGroupBy = () =>
-  useSessionDetailStore((s) => s.sidebarGroupBy);
 export const useSidebarSessionFilter = () =>
   useSessionDetailStore((s) => s.sidebarSessionFilter);
 export const useRightPaneTab = () =>
@@ -537,8 +525,6 @@ export const useHydrateSidebar = () =>
   useSessionDetailStore((s) => s.hydrateSidebar);
 export const useSetSidebarFilter = () =>
   useSessionDetailStore((s) => s.setSidebarFilter);
-export const useSetSidebarGroupBy = () =>
-  useSessionDetailStore((s) => s.setSidebarGroupBy);
 export const useSetSidebarSessionFilter = () =>
   useSessionDetailStore((s) => s.setSidebarSessionFilter);
 export const useShowQuestions = () =>
