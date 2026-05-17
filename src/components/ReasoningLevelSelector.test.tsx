@@ -16,7 +16,7 @@ describe("ReasoningLevelSelector", () => {
         />,
       );
       const trigger = document.querySelector(".effort-selector-trigger");
-      expect(trigger?.classList.contains("rainbow-border")).toBe(true);
+      expect(trigger?.classList.contains("cc-rainbow-border")).toBe(true);
     });
 
     it("applies rainbow-border class when value is 'xhigh'", () => {
@@ -28,7 +28,7 @@ describe("ReasoningLevelSelector", () => {
         />,
       );
       const trigger = document.querySelector(".effort-selector-trigger");
-      expect(trigger?.classList.contains("rainbow-border")).toBe(true);
+      expect(trigger?.classList.contains("cc-rainbow-border")).toBe(true);
     });
 
     it("does not apply rainbow-border class for non-max levels", () => {
@@ -40,7 +40,7 @@ describe("ReasoningLevelSelector", () => {
         />,
       );
       const trigger = document.querySelector(".effort-selector-trigger");
-      expect(trigger?.classList.contains("rainbow-border")).toBe(false);
+      expect(trigger?.classList.contains("cc-rainbow-border")).toBe(false);
     });
   });
 

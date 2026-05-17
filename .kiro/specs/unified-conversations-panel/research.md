@@ -154,5 +154,5 @@
 ## References
 - Existing SSE pattern: `src/lib/sse-broadcaster.ts`
 - TanStack Query invalidation: `src/components/NotificationListener.tsx`
-- Design system: `.kiro/specs/ui-design-system/design.md`
+- Design system: `.claude/skills/cc-design-system/SKILL.md`
 - Zustand store pattern: `src/stores/session-detail.store.ts`

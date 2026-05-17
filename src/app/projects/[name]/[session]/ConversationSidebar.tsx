@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import type { ConversationState } from "@/types";
 import type { ActiveConversation } from "@/lib/api-client";
 import { useActiveConversationsQuery } from "@/lib/queries";
+import { PlusIcon } from "@/components/icons";
 import {
   useCreateConversationMutation,
   useArchiveConversationMutation,
@@ -598,8 +599,9 @@ export default function ConversationSidebar({
               onClick={handleNewConversation}
               disabled={createConvoMutation.isPending}
               data-tooltip="New conversation"
+              aria-label="New conversation"
             >
-              +
+              <PlusIcon />
             </button>
             <button
               className="btn-icon-only convo-sidebar-toggle"

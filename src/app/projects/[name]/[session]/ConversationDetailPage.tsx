@@ -170,6 +170,7 @@ import type {
   CollaborationArtifact,
   CollaborationReference,
 } from "@/lib/workflows/collaboration/types";
+import { CloseIcon } from "@/components/icons";
 
 interface Props {
   projectName: string;
@@ -1628,7 +1629,7 @@ export default function ConversationDetailPage({
                 )}
                 {msg.effort && (
                   <span
-                    className={`message-meta-effort${msg.effort === "max" || msg.effort === "xhigh" ? " rainbow-text" : ""}`}
+                    className={`message-meta-effort${msg.effort === "max" || msg.effort === "xhigh" ? " cc-rainbow-text" : ""}`}
                   >
                     {msg.effort}
                   </span>
@@ -1880,9 +1881,10 @@ export default function ConversationDetailPage({
             <button
               className="btn-icon-only danger"
               data-tooltip="Delete session"
+              aria-label="Delete session"
               onClick={requestDelete}
             >
-              &#10005;
+              <CloseIcon />
             </button>
           </>
         }
@@ -1948,7 +1950,7 @@ export default function ConversationDetailPage({
                 className="si-copy-context-btn"
                 onClick={handleCopyContext}
                 data-tooltip={
-                  contextCopied ? "Copied!" : "Copy context to clipboard"
+                  contextCopied ? "Copied ✓" : "Copy context to clipboard"
                 }
               >
                 {contextCopied ? "\u2713" : "\u2398"} Context
@@ -2584,7 +2586,7 @@ export default function ConversationDetailPage({
 
       <ConfirmDialog
         open={showDeleteConfirm}
-        title="Delete Session"
+        title="Delete session?"
         message={`This will remove the worktree and session state for "${session.sessionName}". The git branch and transcripts will be preserved. This action cannot be undone.`}
         confirmLabel="Delete"
         danger

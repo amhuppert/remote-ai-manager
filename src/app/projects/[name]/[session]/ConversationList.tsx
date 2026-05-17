@@ -4,6 +4,7 @@ import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ConversationState } from "@/types";
+import { CloseIcon } from "@/components/icons";
 import {
   deriveSessionStatus,
   deriveSessionPromptCount,
@@ -281,9 +282,10 @@ export default function ConversationList({
             <button
               className="btn-icon-only danger"
               data-tooltip="Delete session"
+              aria-label="Delete session"
               onClick={() => setShowDeleteConfirm(true)}
             >
-              &#10005;
+              <CloseIcon />
             </button>
           </>
         }
@@ -335,7 +337,7 @@ export default function ConversationList({
                     className="si-copy-context-btn"
                     onClick={handleCopyContext}
                     data-tooltip={
-                      contextCopied ? "Copied!" : "Copy context to clipboard"
+                      contextCopied ? "Copied ✓" : "Copy context to clipboard"
                     }
                   >
                     {contextCopied ? "\u2713" : "\u2398"} Context
@@ -520,7 +522,7 @@ export default function ConversationList({
 
       <ConfirmDialog
         open={showDeleteConfirm}
-        title="Delete Session"
+        title="Delete session?"
         message={`This will remove the worktree and session state for "${sessionName}". The git branch and transcripts will be preserved. This action cannot be undone.`}
         confirmLabel="Delete"
         danger

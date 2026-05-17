@@ -35,7 +35,7 @@ Three principles guide every decision:
 
 ## Step 1: Load Design System Context
 Read the following files to understand the design system, existing patterns, and product requirements:
-- `.kiro/specs/ui-design-system/design.md` — the design system specification (vision, principles, tokens, component contracts)
+- `.claude/skills/cc-design-system/SKILL.md` — the design system specification (vision, principles, tokens, component contracts). See `references/` for full token tables, component class lists, iconography, motion, and content/voice rules.
 - `src/app/globals.css` — the canonical CSS tokens and component styles
 
 Study 1–2 existing stories to understand Storybook conventions:
