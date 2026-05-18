@@ -99,3 +99,44 @@ export const LongContent: Story = {
     ),
   ],
 };
+
+const wideTableMarkdown = `# Server-Sent Events vs WebSockets
+
+## The Problem They Solve
+
+Standard HTTP follows a request/response pattern: the client asks, the server answers, the connection closes. This breaks down when the server needs to *push* data to the client — live notifications, stock prices, chat messages, log streams. Both **SSE** and **WebSockets** solve this by keeping a connection open so the server can send data whenever it has something to share.
+
+## Quick Comparison
+
+| Dimension     | SSE                    | WebSocket                                          |
+|---------------|------------------------|----------------------------------------------------|
+| Direction     | Server → client only   | Bidirectional (full-duplex)                        |
+| Protocol      | Plain HTTP             | Custom protocol (HTTP handshake, then upgrade)     |
+| Data          | Text only (UTF-8)      | Text or binary                                     |
+| Auto-reconnect| Built into browser     | Application must implement                         |
+| Browser API   | \`EventSource\`        | \`WebSocket\`                                      |
+| URL scheme    | \`http://\` / \`https://\` | \`ws://\` / \`wss://\`                          |
+| Best for      | Works with proxies and load balancers naturally | Often requires additional configuration |
+`;
+
+export const WideTableMobile: Story = {
+  args: {
+    content: wideTableMarkdown,
+    isLoading: false,
+  },
+  decorators: [
+    (Story) => (
+      <div
+        style={{
+          width: 390,
+          height: 700,
+          display: "flex",
+          flexDirection: "column",
+          border: "1px solid #333",
+        }}
+      >
+        <Story />
+      </div>
+    ),
+  ],
+};

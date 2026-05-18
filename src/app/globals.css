@@ -5470,7 +5470,9 @@ textarea {
 .markdown-viewer {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   min-height: 0;
+  min-width: 0;
 }
 
 .markdown-viewer-empty {
@@ -5492,6 +5494,9 @@ textarea {
   font-size: 0.88rem;
   line-height: 1.7;
   color: var(--text-primary);
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
 }
 
 .markdown-content h1,
@@ -5622,10 +5627,13 @@ textarea {
 }
 
 .markdown-content table {
+  display: block;
   width: 100%;
+  max-width: 100%;
   margin: 0 0 1em;
   border-collapse: collapse;
   font-size: 0.82rem;
+  overflow-x: auto;
 }
 
 .markdown-content th,
