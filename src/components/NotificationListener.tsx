@@ -62,6 +62,14 @@ export default function NotificationListener(): null {
         if (!result.success) return;
         const data = result.data;
 
+        void queryClient.invalidateQueries({
+          queryKey: conversationKeys.messages(
+            data.projectName,
+            data.sessionName,
+            data.conversationId,
+          ),
+        });
+
         if (data.status === "waiting_for_input") {
           // In-app toast
           enqueueInputToast({

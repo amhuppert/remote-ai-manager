@@ -220,6 +220,8 @@ vi.mock("@/hooks/use-abort-prompt", () => ({
 // Query/Mutation mocks — API boundary
 // ---------------------------------------------------------------------------
 
+const useConversationMessagesQueryMock = vi.hoisted(() => vi.fn());
+
 let testSession: SessionState | undefined;
 let testMessages: TranscriptMessage[];
 let testDiff: SessionDiff;
@@ -233,10 +235,8 @@ let testCollaborationEnvelopes: Array<{
 
 vi.mock("@/lib/queries", () => ({
   useSessionQuery: () => ({ data: testSession, isPending: testSessionPending }),
-  useConversationMessagesQuery: () => ({
-    data: testMessages,
-    isPending: false,
-  }),
+  useConversationMessagesQuery: (...args: unknown[]) =>
+    useConversationMessagesQueryMock(...args),
   useSessionDiffQuery: () => ({ data: testDiff, isPending: false }),
   useCommitsQuery: () => ({ data: [], isPending: false }),
   useConversationsQuery: () => ({ data: undefined, isPending: false }),
@@ -442,6 +442,10 @@ beforeEach(() => {
   testDiff = emptyDiff;
   testSessionPending = false;
   testCollaborationEnvelopes = [];
+  useConversationMessagesQueryMock.mockImplementation(() => ({
+    data: testMessages,
+    isPending: false,
+  }));
 
   globalThis.IntersectionObserver = vi.fn().mockImplementation(() => ({
     observe: vi.fn(),
@@ -564,6 +568,51 @@ describe("ConversationDetailPage", () => {
     testSessionPending = true;
     renderPage();
     expect(screen.getByText("Loading session...")).toBeInTheDocument();
+  });
+
+  it("does not poll messages when a different conversation makes the session running", () => {
+    testSession = {
+      ...baseSession,
+      conversations: [
+        {
+          ...baseSession.conversations[0]!,
+          status: "awaiting",
+        },
+        {
+          ...baseSession.conversations[0]!,
+          id: "conv-2",
+          status: "running",
+        },
+      ],
+    };
+
+    renderPage();
+
+    expect(useConversationMessagesQueryMock).toHaveBeenCalledWith(
+      "repo",
+      "test-session",
+      "conv-1",
+    );
+  });
+
+  it("does not poll messages while the selected conversation is running", () => {
+    testSession = {
+      ...baseSession,
+      conversations: [
+        {
+          ...baseSession.conversations[0]!,
+          status: "running",
+        },
+      ],
+    };
+
+    renderPage();
+
+    expect(useConversationMessagesQueryMock).toHaveBeenCalledWith(
+      "repo",
+      "test-session",
+      "conv-1",
+    );
   });
 
   describe("Escape key abort behavior", () => {

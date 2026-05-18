@@ -148,6 +148,32 @@ describe("NotificationListener", () => {
     });
   });
 
+  it("invalidates the targeted conversation's messages on conversation-status events", async () => {
+    const client = makeClient();
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) {
+      throw new Error("expected EventSource instance");
+    }
+
+    es.emit("conversation-status", {
+      type: "conversation-status",
+      projectName: "proj",
+      sessionName: "sess",
+      conversationId: "conv-1",
+      status: "awaiting",
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: conversationKeys.messages("proj", "sess", "conv-1"),
+      }),
+    );
+  });
+
   // Regression: the asymmetric collab slice writes the final answer onto
   // the conversation transcript via `appendTranscriptEntry`. If the
   // scope=collaboration listener does not invalidate the conversation

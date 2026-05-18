@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
@@ -412,6 +418,41 @@ describe("GraphWorkflowPanel — codex transcript viewing path (mount)", () => {
         ),
       ),
     ).toBe(true);
+  });
+
+  it("does not refetch a live transcript on a timer", async () => {
+    const execution = createCodexExecutionWithRunningTask();
+    const resolved = resolveViewingTask(execution, "task-codex-1");
+    expect(resolved).not.toBeNull();
+
+    renderWithQuery(
+      <IterationTranscriptViewer
+        projectName="test-project"
+        sessionName="test-session"
+        conversationId={resolved!.conversationId}
+        isLive={true}
+        contextTitle={resolved!.contextTitle}
+        taskTitle={resolved!.taskTitle}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const messageRequestCount = () =>
+      fetchSpy.mock.calls.filter(([url]) =>
+        String(url).includes(
+          "/api/projects/test-project/sessions/test-session/conversations/cc-conv-codex-abc/messages",
+        ),
+      ).length;
+
+    await waitFor(() => {
+      expect(messageRequestCount()).toBe(1);
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+    });
+
+    expect(messageRequestCount()).toBe(1);
   });
 
   it("does not mount the transcript viewer until a task is selected (default render path for codex execution)", () => {

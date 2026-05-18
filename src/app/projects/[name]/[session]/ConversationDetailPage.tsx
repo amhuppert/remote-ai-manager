@@ -454,11 +454,6 @@ export default function ConversationDetailPage({
   const hasActiveCollab = activeCollabEnvelope !== undefined;
   const isReadOnly =
     isFinished || isWorkflowManagedConversation || hasActiveCollab;
-  const isBusy =
-    sending ||
-    sessionStatus === "running" ||
-    sessionStatus === "waiting_for_input" ||
-    !!pendingQuestions;
 
   // Detect initialization conversation for focus confirmation bar.
   // TanStack Query's default structural sharing keeps `session.conversations`
@@ -469,6 +464,11 @@ export default function ConversationDetailPage({
     () => session?.conversations.find((c) => c.id === conversationId),
     [session?.conversations, conversationId],
   );
+  const isBusy =
+    sending ||
+    sessionStatus === "running" ||
+    sessionStatus === "waiting_for_input" ||
+    !!pendingQuestions;
   const isInitConversation = activeConversation?.role === "initialization";
   const contextPercent = computeContextFillPercent(
     activeConversation?.contextTokens ?? null,
@@ -478,12 +478,10 @@ export default function ConversationDetailPage({
   // Flag: user clicked confirm, write-focus prompt was sent, waiting for it to finish
   const [awaitingFinalize, setAwaitingFinalize] = useState(false);
 
-  // Conditional polling: refetch while session is active
   const messagesQuery = useConversationMessagesQuery(
     projectName,
     sessionName,
     conversationId,
-    { refetchInterval: isBusy ? 3000 : false },
   );
   const diffQuery = useSessionDiffQuery(projectName, sessionName);
   const commitsQuery = useCommitsQuery(projectName, sessionName);

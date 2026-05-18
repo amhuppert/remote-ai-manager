@@ -36,7 +36,6 @@ export default function IterationTranscriptViewer({
     projectName,
     sessionName,
     conversationId,
-    { refetchInterval: isLive ? 1000 : false },
   );
   const sessionQuery = useSessionQuery(projectName, sessionName);
   const worktreePath = sessionQuery.data?.worktreePath;

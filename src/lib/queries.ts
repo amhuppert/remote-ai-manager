@@ -271,7 +271,6 @@ export function useConversationMessagesQuery(
   projectName: string,
   sessionName: string,
   conversationId: string,
-  options?: { refetchInterval?: number | false },
 ) {
   return useQuery({
     queryKey: conversationKeys.messages(
@@ -284,7 +283,6 @@ export function useConversationMessagesQuery(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/messages`,
         z.array(transcriptMessageSchema),
       ),
-    refetchInterval: options?.refetchInterval,
   });
 }
 
