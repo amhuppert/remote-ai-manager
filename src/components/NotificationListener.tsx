@@ -325,10 +325,31 @@ export default function NotificationListener(): null {
           // The slice writes the final answer onto the conversation
           // transcript via `appendTranscriptEntry`, and progress envelopes
           // can also land while the messages query has stopped polling —
-          // invalidate the whole conversation subtree so any open
-          // transcript view refetches.
+          // refetch only the affected conversation's messages so an open
+          // transcript view stays current without invalidating every
+          // cached conversation (which can produce a refetch storm under
+          // a chatty collaboration). The workflowId arrives as `scopeId`;
+          // map it to a conversationId via the cached active list.
+          const activeData = queryClient.getQueryData<{
+            activeCollaborationExecutions: Array<{
+              workflowId: string;
+              conversationId: string | null;
+            }>;
+          }>(conversationKeys.active);
+          const collab = activeData?.activeCollaborationExecutions.find(
+            (c) => c.workflowId === data.scopeId,
+          );
+          if (collab?.conversationId) {
+            void queryClient.invalidateQueries({
+              queryKey: conversationKeys.messages(
+                data.projectName,
+                data.sessionName,
+                collab.conversationId,
+              ),
+            });
+          }
           void queryClient.invalidateQueries({
-            queryKey: conversationKeys.all,
+            queryKey: conversationKeys.active,
           });
           void queryClient.invalidateQueries({
             queryKey: projectKeys.list(),

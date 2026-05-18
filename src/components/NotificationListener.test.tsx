@@ -154,8 +154,25 @@ describe("NotificationListener", () => {
   // messages cache, the transcript stays stale until the user manually
   // refreshes (the messages query only re-fetches while `isBusy`, which
   // can flip false before the final transcript flush).
-  it("invalidates conversation queries on scoped-status events with scope=collaboration so the transcript refetches when the slice writes the final answer", async () => {
+  it("invalidates the targeted conversation's messages (scoped to workflowId via active-conversations cache) on scoped-status events with scope=collaboration so the transcript refetches without a cache-wide refetch storm", async () => {
     const client = makeClient();
+    client.setQueryData(conversationKeys.active, {
+      conversations: [],
+      graphWorkflowExecutions: [],
+      activeCollaborationExecutions: [
+        {
+          workflowId: "wf-collab-1",
+          status: "running" as const,
+          phase: "asymmetric",
+          projectName: "proj",
+          projectPath: "/p/proj",
+          sessionName: "sess",
+          conversationId: "conv-abc",
+          createdAt: "2026-04-28T00:00:00.000Z",
+          updatedAt: "2026-04-28T00:00:00.000Z",
+        },
+      ],
+    });
     const invalidateQueries = vi.spyOn(client, "invalidateQueries");
 
     renderWithClient(client);
@@ -178,9 +195,12 @@ describe("NotificationListener", () => {
 
     await waitFor(() =>
       expect(invalidateQueries).toHaveBeenCalledWith({
-        queryKey: conversationKeys.all,
+        queryKey: conversationKeys.messages("proj", "sess", "conv-abc"),
       }),
     );
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: conversationKeys.all,
+    });
   });
 
   it("invalidates only session queries on scoped-status events with scope=workflow", async () => {
