@@ -14,6 +14,7 @@ import {
   claudeConversationBackendFactory,
   type ClaudeFactoryDeps,
 } from "./conversation-runtime";
+import { CLAUDE_AGENT_SUPPRESSION_STRATEGY } from "@/lib/agent-capabilities/claude-agent-suppression";
 import type { ConversationBackendEvent } from "../conversation";
 
 function createFakeMcpServer(): {
@@ -65,10 +66,14 @@ function createControllableMockQuery() {
     }),
     streamInput: vi.fn(),
     interrupt: vi.fn(),
+    supportedCommands: vi.fn().mockResolvedValue([]),
+    supportedAgents: vi.fn().mockResolvedValue([]),
     mcpServerStatus: vi.fn().mockResolvedValue([]),
     setMcpServers: vi
       .fn()
       .mockResolvedValue({ added: [], removed: [], errors: {} }),
+    applyFlagSettings: vi.fn().mockResolvedValue(undefined),
+    reloadPlugins: vi.fn().mockResolvedValue(undefined),
     next() {
       if (messages.length > 0) {
         return Promise.resolve({
@@ -360,6 +365,33 @@ describe("ClaudeConversationRuntime — external turn events", () => {
   });
 });
 
+describe("ClaudeConversationRuntime — capability runtime discovery", () => {
+  it("forwards supportedCommands and supportedAgents to the live SDK query", async () => {
+    const mock = createControllableMockQuery();
+    mock.query.supportedCommands.mockResolvedValueOnce([{ name: "skill-a" }]);
+    mock.query.supportedAgents.mockResolvedValueOnce([{ name: "agent-a" }]);
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-runtime-capabilities",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    await expect(runtime.supportedCommands?.()).resolves.toEqual([
+      { name: "skill-a" },
+    ]);
+    await expect(runtime.supportedAgents?.()).resolves.toEqual([
+      { name: "agent-a" },
+    ]);
+  });
+});
+
 describe("ClaudeConversationRuntime — applyPortableMcpConfig live updates", () => {
   it("applies live via setMcpServers when runtime is idle (disposition: applied_now)", async () => {
     const mock = createControllableMockQuery();
@@ -541,6 +573,77 @@ describe("ClaudeConversationRuntime — canUseTool MCP filter wiring", () => {
     const result = await canUseTool("mcp__srv__permitted", { x: 1 });
 
     expect(result).toEqual({ behavior: "allow", updatedInput: { x: 1 } });
+
+    runtime.close();
+  });
+
+  it("denies disabled sub-agent Task invocations from the initial capability config", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-agent-deny",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {
+        claudeCapabilityConfig: {
+          enabledPlugins: {},
+          skillOverrides: {},
+          disabledAgentNames: ["code-reviewer"],
+          agentSuppressionStrategy: CLAUDE_AGENT_SUPPRESSION_STRATEGY,
+        },
+      },
+    });
+
+    const canUseTool = captureCanUseTool();
+    const result = await canUseTool("Task", {
+      subagent_type: "code-reviewer",
+      prompt: "review this",
+    });
+
+    expect(result).toMatchObject({
+      behavior: "deny",
+      message: expect.stringContaining("code-reviewer"),
+    });
+
+    runtime.close();
+  });
+
+  it("applies capability flags and reloads plugins so plugin-contributed children refresh", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-capability-apply",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const result = await runtime.applyClaudeCapabilityConfig!({
+      enabledPlugins: { "owner@m": false },
+      skillOverrides: { "contrib-skill": "off" },
+      disabledAgentNames: [],
+      agentSuppressionStrategy: CLAUDE_AGENT_SUPPRESSION_STRATEGY,
+    });
+
+    expect(result).toEqual({ status: "applied" });
+    expect(mock.query.applyFlagSettings).toHaveBeenCalledWith({
+      enabledPlugins: { "owner@m": false },
+      skillOverrides: { "contrib-skill": "off" },
+    });
+    expect(mock.query.reloadPlugins).toHaveBeenCalledTimes(1);
+    expect(
+      mock.query.applyFlagSettings.mock.invocationCallOrder[0],
+    ).toBeLessThan(mock.query.reloadPlugins.mock.invocationCallOrder[0]!);
 
     runtime.close();
   });

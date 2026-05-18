@@ -1,0 +1,3 @@
+interface:
+  display_name: "Graph Workflow Planning"
+  short_description: "Source of truth for planning graph workflows, validators, criteria, defaults, and dependencies."

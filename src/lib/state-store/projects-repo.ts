@@ -2,8 +2,10 @@ import type Database from "better-sqlite3";
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
 import {
+  agentCapabilityOverridesSchema,
   mcpOverridesSchema,
   projectRowSchema,
+  type AgentCapabilityOverrides,
   type McpOverrides,
 } from "../schemas";
 import { PersistenceError, getErrorMessage } from "../errors";
@@ -16,6 +18,7 @@ const logger = createLogger("state-store.projects");
 export interface ProjectInput {
   rootPath: string;
   mcpOverrides?: McpOverrides;
+  agentCapabilityOverrides?: AgentCapabilityOverrides;
 }
 
 export interface ProjectsRepo {
@@ -42,6 +45,7 @@ const projectsTableRowSchema = z.object({
   pinned: z.union([z.literal(0), z.literal(1)]),
   pin_order: z.number().int().nullable(),
   mcp_overrides: z.string().nullable(),
+  agent_capability_overrides: z.string().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
 });
@@ -53,6 +57,7 @@ interface SqlBindRow {
   pinned: number;
   pin_order: number | null;
   mcp_overrides: string | null;
+  agent_capability_overrides: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -89,6 +94,10 @@ function projectRowToSqlBind(row: ProjectRow): SqlBindRow {
     pin_order: row.pinOrder,
     mcp_overrides:
       row.mcpOverrides === undefined ? null : stableStringify(row.mcpOverrides),
+    agent_capability_overrides:
+      row.agentCapabilityOverrides === undefined
+        ? null
+        : stableStringify(row.agentCapabilityOverrides),
     created_at: row.createdAt,
     updated_at: row.updatedAt,
   };
@@ -132,6 +141,34 @@ function parseMcpOverridesColumn(
   return { ok: true, value: result.data };
 }
 
+function parseAgentCapabilityOverridesColumn(
+  rootPath: string,
+  raw: string | null,
+):
+  | { ok: true; value: AgentCapabilityOverrides | undefined }
+  | { ok: false; issues: unknown } {
+  if (raw === null) return { ok: true, value: undefined };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    return {
+      ok: false,
+      issues: [
+        {
+          code: "invalid_json",
+          path: ["agentCapabilityOverrides"],
+          message: getErrorMessage(err),
+          rootPath,
+        },
+      ],
+    };
+  }
+  const result = agentCapabilityOverridesSchema.safeParse(parsed);
+  if (!result.success) return { ok: false, issues: result.error.issues };
+  return { ok: true, value: result.data };
+}
+
 function logAndThrowValidationFailure(
   rootPath: string,
   issues: unknown,
@@ -170,6 +207,14 @@ function rowToDomain(rawRow: unknown): ProjectRow {
     return logAndThrowValidationFailure(row.root_path, mcpResult.issues);
   }
 
+  const capResult = parseAgentCapabilityOverridesColumn(
+    row.root_path,
+    row.agent_capability_overrides,
+  );
+  if (!capResult.ok) {
+    return logAndThrowValidationFailure(row.root_path, capResult.issues);
+  }
+
   const candidate: Record<string, unknown> = {
     rootPath: row.root_path,
     archived: row.archived === 1,
@@ -179,6 +224,9 @@ function rowToDomain(rawRow: unknown): ProjectRow {
     updatedAt: row.updated_at,
   };
   if (mcpResult.value !== undefined) candidate.mcpOverrides = mcpResult.value;
+  if (capResult.value !== undefined) {
+    candidate.agentCapabilityOverrides = capResult.value;
+  }
 
   const result = projectRowSchema.safeParse(candidate);
   if (!result.success) {
@@ -213,11 +261,12 @@ export function createProjectsRepo(db: Db): ProjectsRepo {
      ORDER BY (pin_order IS NULL), pin_order ASC, created_at ASC`,
   );
   const upsertStmt = db.prepare(
-    `INSERT INTO projects (root_path, mcp_overrides)
-     VALUES (@root_path, @mcp_overrides)
+    `INSERT INTO projects (root_path, mcp_overrides, agent_capability_overrides)
+     VALUES (@root_path, @mcp_overrides, @agent_capability_overrides)
      ON CONFLICT(root_path) DO UPDATE SET
-       mcp_overrides = excluded.mcp_overrides,
-       updated_at    = datetime('now')`,
+       mcp_overrides              = excluded.mcp_overrides,
+       agent_capability_overrides = excluded.agent_capability_overrides,
+       updated_at                 = datetime('now')`,
   );
   const setArchivedStmt = db.prepare(
     `UPDATE projects
@@ -274,9 +323,18 @@ export function createProjectsRepo(db: Db): ProjectsRepo {
           project.mcpOverrides === undefined
             ? null
             : stableStringify(mcpOverridesSchema.parse(project.mcpOverrides));
+        const capJson =
+          project.agentCapabilityOverrides === undefined
+            ? null
+            : stableStringify(
+                agentCapabilityOverridesSchema.parse(
+                  project.agentCapabilityOverrides,
+                ),
+              );
         upsertStmt.run({
           root_path: project.rootPath,
           mcp_overrides: mcpJson,
+          agent_capability_overrides: capJson,
         });
       });
     },

@@ -49,22 +49,22 @@ const executionContextInputSchema = z.object({
     .trim()
     .min(1)
     .describe(
-      "Required. The shared 'done' statement for this context. Passed to the implementer and, when the agent validator is enabled, to that validator. Write criteria that stay strictly inside this context's scope — if another context will finish related work (e.g. updating downstream types, wiring up integrations), do not include that work here. Do NOT write deterministic gates such as 'tests pass', 'no type errors', 'lint clean', or 'build succeeds' — those belong to the optional script validator, not the acceptance criteria. Focus on judgment-based outcomes that only a reviewer could assess.",
+      "Required. The context-level done statement shared by the implementer and validator. Follow the graph-workflow-planning skill for acceptance criteria rules.",
     ),
   implementer: graphWorkflowAgentConfigSchema
     .optional()
     .describe(
-      "Optional per-context override for the implementer agent backend/model/reasoningEffort. Omit to inherit workflow-level or project defaults.",
+      "Optional per-context override for implementer backend/model/reasoningEffort. Omit unless the user explicitly asked for non-default settings or this context has a justified need.",
     ),
   contextValidator: contextValidatorOverrideSchema
     .optional()
     .describe(
-      "Optional per-context override for the agent (LLM-judged) validator. Use { kind: 'use', value: ... } to specify a custom validator, or { kind: 'disabled' } to opt this context out of agent validation. Omit to inherit the workflow-level validator. The agent validator judges intent-based criteria only; deterministic checks belong to scriptValidator.",
+      "Optional per-context override for the agent validator. Omit unless the graph-workflow-planning skill's default-setting guidance says an override is needed.",
     ),
   scriptValidator: graphWorkflowScriptValidatorConfigSchema
     .optional()
     .describe(
-      "Optional per-context script validator. Set { enabled: true } to run the project's preMergeCommand as a deterministic gate after all tasks in this context complete. Failures are saved to a log file and fed back to the implementer as a remediation task. Requires the project to have a preMergeCommand configured in CommandCenter.json — otherwise the workflow halts with an infra error. Omit to inherit workflow-level/global defaults. A context may use the agent validator, script validator, both, or neither.",
+      "Optional per-context script validator. Enable only when this context should leave the codebase fully valid after all of its tasks; follow graph-workflow-planning before setting it.",
     ),
   mutability: graphWorkflowMutabilityPolicySchema
     .optional()
@@ -104,7 +104,7 @@ const taskInputSchema = z.object({
     .trim()
     .min(1)
     .describe(
-      "Self-contained instructions for the executing agent. Include what to change, why, which files, and how to verify.",
+      "Self-contained instructions for the executing agent. Follow graph-workflow-planning for required context, contract, and verification details.",
     ),
 });
 
@@ -136,7 +136,7 @@ const createWorkflowSchema = z.object({
   workflowConfig: workflowConfigOverrideSchema
     .optional()
     .describe(
-      "Optional workflow-level config overrides. Only include when the user explicitly asked for non-default backend/model/effort or non-default policies; otherwise omit to inherit global defaults.",
+      "Optional workflow-level config overrides. Omit unless the user explicitly asked for non-default workflow-wide settings.",
     ),
   executionContexts: z
     .array(executionContextInputSchema)
@@ -148,7 +148,7 @@ const createWorkflowSchema = z.object({
     .array(taskInputSchema)
     .min(1)
     .describe(
-      "Atomic work items. Ordered per context by array position — no explicit order field needed.",
+      "Atomic work items. Ordered per context by array position; no explicit order field needed.",
     ),
   edges: z
     .array(edgeInputSchema)
@@ -176,7 +176,7 @@ const replaceWorkflowSchema = z.object({
   workflowConfig: workflowConfigOverrideSchema
     .optional()
     .describe(
-      "Optional workflow-level config overrides. Only include when the user explicitly asked for non-default backend/model/effort or non-default policies; otherwise omit to inherit global defaults.",
+      "Optional workflow-level config overrides. Omit unless the user explicitly asked for non-default workflow-wide settings.",
     ),
   executionContexts: z
     .array(executionContextInputSchema)
@@ -298,39 +298,13 @@ export interface PlannerToolContext {
   sessionName: string;
 }
 
-const CREATE_DESCRIPTION = `Create a graph workflow definition for this project. Analyze the user's objective and decompose it into execution contexts (groups of related work) with tasks and dependency edges.
-
-Planning guidelines:
-- Each execution context runs as an independent agent session. Split work into separate contexts when tasks have distinct concerns or dependency boundaries.
-- Tasks within a context execute sequentially in array order within a single agent session. Make each task achievable in roughly 10-30 minutes of work.
-- Task instructions must be self-contained: the executing agent sees only the workflow definition and the codebase, not this conversation. Include the specific what, why, files to modify, and how to verify.
-- Edges express dependencies: context B waits for context A to complete. Do not create edges between contexts that can run independently.
-- Use kebab-case ids that describe the content (e.g. 'auth-setup', 'create-user-schema'), not generic names like 'step-1'.
-
-Acceptance criteria authoring:
-- Write intent-based criteria that an agent could judge by reading the resulting code — outcomes, not process.
-- Keep criteria STRICTLY inside the scope of THIS context. If cleanup, type updates, integration work, or follow-up wiring is the responsibility of a downstream context, do not include it here. Holding a context to work that another context is assigned to produces false validation failures.
-- Do NOT encode deterministic checks ('tests pass', 'no type errors', 'lint clean', 'build succeeds') in acceptance criteria. The agent validator ignores those. If those gates must fully pass before a context can proceed, enable the script validator on the context instead — it runs the project's preMergeCommand as a deterministic gate.
-
-Validators (two independent mechanisms):
-- 'contextValidator' runs an LLM agent that judges the INTENT of the acceptance criteria. It makes allowance for imprecise wording and respects context scope boundaries. Use { kind: 'disabled' } to opt out, or { kind: 'use', value: ... } to override.
-- 'scriptValidator: { enabled: true }' runs the project's preMergeCommand as a deterministic pre-merge gate after all tasks complete. On failure, the full output is written to a log file and a remediation task is added to the context. Script validator runs BEFORE the agent validator; if the script fails, the agent validator is skipped for that iteration.
-- A context may enable the agent validator, the script validator, both, or neither.
-
-Cascade & defaults (IMPORTANT — keep payloads minimal):
-- 'acceptanceCriteria' is REQUIRED on every execution context. Treat it as the single source of truth for what intent-based success looks like in this context's scope.
-- 'implementer', 'contextValidator', 'scriptValidator', 'iterationPolicy', 'circuitBreaker', and 'mutability' are all OPTIONAL on a context. Omit them entirely unless the user explicitly asked for a non-default value on that specific context. Omitted blocks inherit from the workflow-level config, which inherits from the global project defaults.
-- Include top-level 'workflowConfig' ONLY when the user explicitly asked for a non-default backend/model/effort or a non-default policy for the whole workflow. Otherwise omit it and let global defaults apply.
+const CREATE_DESCRIPTION = `Create a graph workflow definition for this project. Before calling this tool, use the graph-workflow-planning skill. That skill is the source of truth for decomposing execution contexts, writing acceptance criteria, aligning implementers and validators, choosing dependency edges, deciding whether script validation is safe, and keeping default implementer/validator settings unless told otherwise.
 
 The user will review and edit the workflow in the visual builder before starting execution.`;
 
-const REPLACE_DESCRIPTION = `Replace the entire definition of an existing workflow. Use this when revising a plan after user feedback — submit the complete updated graph, not a partial diff. The previous definition is fully overwritten.
+const REPLACE_DESCRIPTION = `Replace the entire definition of an existing workflow. Use this when revising a plan after user feedback; submit the complete updated graph, not a partial diff. The previous definition is fully overwritten.
 
-The same authoring rules apply as with create_graph_workflow:
-- Every execution context must declare 'acceptanceCriteria' as intent-based outcomes strictly inside the context's scope. Do not include deterministic gates (tests/types/lint/build) — use 'scriptValidator' for those.
-- Validators are independent: 'contextValidator' judges intent with an LLM; 'scriptValidator: { enabled: true }' runs the project's preMergeCommand as a deterministic gate. A context may enable both, either, or neither.
-- Omit 'implementer', 'contextValidator', 'scriptValidator', 'iterationPolicy', 'circuitBreaker', and 'mutability' on a context unless the user explicitly asked for a non-default value on that context. Omitted blocks inherit workflow-level / global defaults.
-- Set top-level 'workflowConfig' only when the user explicitly asked for non-default backend/model/effort or non-default policies for the whole workflow; otherwise omit it.`;
+Before calling this tool, use the graph-workflow-planning skill and submit the full updated graph that follows that skill's planning rules.`;
 
 const LIST_WORKFLOWS_DESCRIPTION =
   "List all saved workflow definitions for this project. Returns each workflow's ID, name, description, and timestamps.";

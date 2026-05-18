@@ -112,6 +112,7 @@ import ReasoningLevelSelector, {
 } from "@/components/ReasoningLevelSelector";
 import MobilePromptToolbar from "./MobilePromptToolbar";
 import BackendToggle from "@/components/BackendToggle";
+import ConversationAgentCapabilitiesConfig from "@/components/agent-capabilities/ConversationAgentCapabilitiesConfig";
 import ConversationMcpConfig from "@/components/mcp/ConversationMcpConfig";
 import {
   type AgentBackendId,
@@ -2140,6 +2141,15 @@ export default function ConversationDetailPage({
                             isReadOnly ? "Session is read-only" : undefined
                           }
                         />
+                        <ConversationAgentCapabilitiesConfig
+                          projectName={projectName}
+                          sessionName={sessionName}
+                          conversationId={conversationId}
+                          disabled={isReadOnly}
+                          disabledTooltip={
+                            isReadOnly ? "Session is read-only" : undefined
+                          }
+                        />
                       </div>
                       <div className="prompt-toolbar-end">
                         <VoiceRecordButton
@@ -2225,6 +2235,15 @@ export default function ConversationDetailPage({
                             sessionName={sessionName}
                             conversationId={conversationId}
                             turnRunning={conversationRunning}
+                            disabled={isReadOnly}
+                            disabledTooltip={
+                              isReadOnly ? "Session is read-only" : undefined
+                            }
+                          />
+                          <ConversationAgentCapabilitiesConfig
+                            projectName={projectName}
+                            sessionName={sessionName}
+                            conversationId={conversationId}
                             disabled={isReadOnly}
                             disabledTooltip={
                               isReadOnly ? "Session is read-only" : undefined

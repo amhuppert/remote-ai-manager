@@ -34,13 +34,14 @@ const SCHEMA_DDL = `
   );
 
   CREATE TABLE IF NOT EXISTS projects (
-    root_path     TEXT PRIMARY KEY,
-    archived      INTEGER NOT NULL DEFAULT 0,
-    pinned        INTEGER NOT NULL DEFAULT 0,
-    pin_order     INTEGER,
-    mcp_overrides TEXT,
-    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    root_path                  TEXT PRIMARY KEY,
+    archived                   INTEGER NOT NULL DEFAULT 0,
+    pinned                     INTEGER NOT NULL DEFAULT 0,
+    pin_order                  INTEGER,
+    mcp_overrides              TEXT,
+    agent_capability_overrides TEXT,
+    created_at                 TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at                 TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
   CREATE INDEX IF NOT EXISTS idx_projects_archived ON projects(archived);
@@ -66,6 +67,7 @@ const SCHEMA_DDL = `
     workflow_envelopes                 TEXT,
     workflow_lanes                     TEXT,
     mcp_overrides                      TEXT,
+    agent_capability_overrides         TEXT,
     PRIMARY KEY (project_path, session_name),
     FOREIGN KEY (project_path) REFERENCES projects(root_path) ON DELETE CASCADE
   );
@@ -103,6 +105,8 @@ const SCHEMA_DDL = `
     backend_ref           TEXT,
     mcp_overrides         TEXT,
     mcp_runtime           TEXT,
+    agent_capability_overrides TEXT,
+    agent_capabilities_runtime TEXT,
     FOREIGN KEY (project_path, session_name)
       REFERENCES sessions(project_path, session_name) ON DELETE CASCADE
   );
@@ -217,7 +221,21 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
   table: string;
   column: string;
   type: string;
-}> = [{ table: "conversations", column: "pending_prompt_text", type: "TEXT" }];
+}> = [
+  { table: "conversations", column: "pending_prompt_text", type: "TEXT" },
+  { table: "projects", column: "agent_capability_overrides", type: "TEXT" },
+  { table: "sessions", column: "agent_capability_overrides", type: "TEXT" },
+  {
+    table: "conversations",
+    column: "agent_capability_overrides",
+    type: "TEXT",
+  },
+  {
+    table: "conversations",
+    column: "agent_capabilities_runtime",
+    type: "TEXT",
+  },
+];
 
 function ensureAdditiveColumns(db: Db): void {
   for (const { table, column, type } of ADDITIVE_COLUMNS) {

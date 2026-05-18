@@ -16,11 +16,12 @@ function makeIdentity(
     projectName: "repo",
     sessionName: "test",
     conversationId: "conv-ext-1",
+    worktreePath: "/projects/repo/.worktrees/test",
     ...overrides,
   };
 }
 
-function makeDeps(): {
+function makeDeps(overrides: Partial<ExternalTurnHandlerDeps> = {}): {
   deps: ExternalTurnHandlerDeps;
   transcriptWrites: Array<{ conversationId: string; entry: TranscriptEntry }>;
 } {
@@ -36,6 +37,7 @@ function makeDeps(): {
           transcriptWrites.push({ conversationId, entry });
         },
       ),
+      ...overrides,
     },
   };
 }
@@ -255,6 +257,88 @@ describe("createExternalTurnHandler", () => {
     }).not.toThrow();
 
     await new Promise((r) => setTimeout(r, 20));
+  });
+
+  it("invokes applyCapabilityWhenIdle on external_turn_completed for the conversation", async () => {
+    const sendToMachine = vi.fn();
+    const applyCapabilityWhenIdle = vi.fn(async () => {});
+    const { deps } = makeDeps({ applyCapabilityWhenIdle });
+    const handler = createExternalTurnHandler(
+      makeIdentity({
+        projectPath: "/projects/repo",
+        projectName: "repo",
+        sessionName: "test",
+        conversationId: "conv-idle",
+        worktreePath: "/projects/repo/.worktrees/test",
+      }),
+      { sendToMachine },
+      deps,
+    );
+
+    handler({ type: "external_turn_started" });
+    handler({
+      type: "external_turn_completed",
+      result: {
+        backendRef: { backend: "claude", sessionId: "sess-1" },
+        costUsd: 0,
+        durationMs: 0,
+        numTurns: 1,
+        contextTokens: null,
+        contextWindowMax: null,
+        contentBlocks: [{ type: "text", text: "hi" }],
+        aborted: false,
+        error: null,
+      },
+    });
+
+    // applyCapabilityWhenIdle is dispatched asynchronously after the
+    // completion event is forwarded to the machine; let microtasks run.
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(applyCapabilityWhenIdle).toHaveBeenCalledTimes(1);
+    expect(applyCapabilityWhenIdle).toHaveBeenCalledWith({
+      projectPath: "/projects/repo",
+      projectName: "repo",
+      sessionName: "test",
+      conversationId: "conv-idle",
+      worktreePath: "/projects/repo/.worktrees/test",
+      backend: "claude",
+    });
+  });
+
+  it("does not throw when applyCapabilityWhenIdle rejects", async () => {
+    const sendToMachine = vi.fn();
+    const applyCapabilityWhenIdle = vi
+      .fn()
+      .mockRejectedValue(new Error("apply boom"));
+    const { deps } = makeDeps({ applyCapabilityWhenIdle });
+    const handler = createExternalTurnHandler(
+      makeIdentity(),
+      { sendToMachine },
+      deps,
+    );
+
+    handler({ type: "external_turn_started" });
+
+    expect(() => {
+      handler({
+        type: "external_turn_completed",
+        result: {
+          backendRef: { backend: "claude", sessionId: "sess-1" },
+          costUsd: 0,
+          durationMs: 0,
+          numTurns: 1,
+          contextTokens: null,
+          contextWindowMax: null,
+          contentBlocks: [],
+          aborted: false,
+          error: null,
+        },
+      });
+    }).not.toThrow();
+
+    await new Promise((r) => setTimeout(r, 20));
+    expect(applyCapabilityWhenIdle).toHaveBeenCalledTimes(1);
   });
 
   it("ignores content and backend_init events (not part of external turn protocol)", () => {

@@ -30,6 +30,7 @@ import type {
   ConversationBackendEvent,
   ConversationImageRef,
   ImagePayload,
+  AgentCapabilityRuntimeApplicationState,
 } from "@/types";
 import { assembleUserContentBlocks } from "./assemble-user-blocks";
 import { buildUserTranscriptBlocks } from "./build-user-transcript-blocks";
@@ -271,6 +272,73 @@ export interface ActorImplementationDeps {
   }): Promise<ConversationApplyResult>;
 
   /**
+   * Promote any seeded `staged-next-turn` capability cascades for the
+   * conversation at the start of a new turn. Live for both backends — Codex
+   * rebuilds its options each turn, and Claude's seeded state from
+   * conversation start needs promotion on the first turn boundary.
+   */
+  applyCapabilityAtTurnStart(input: {
+    projectPath: string;
+    projectName: string;
+    sessionName: string;
+    conversationId: string;
+    worktreePath: string;
+    backend: AgentBackendId;
+  }): Promise<unknown>;
+
+  /**
+   * Drain any `staged-idle` Claude capability cascades after a turn completes
+   * and the conversation transitions running → idle. No-op for Codex (no
+   * idle-live-apply semantics). Failures are recorded as `rejected` per
+   * cascade and surfaced via diagnostics; the previously applied hash is
+   * preserved so retries can proceed.
+   */
+  applyCapabilityWhenIdle(input: {
+    projectPath: string;
+    projectName: string;
+    sessionName: string;
+    conversationId: string;
+    worktreePath: string;
+    backend: AgentBackendId;
+  }): Promise<unknown>;
+
+  /**
+   * Compose the Claude capability runtime config + initial apply state for a
+   * new conversation runtime. The actor passes `config` to the backend
+   * factory's `tooling.claudeCapabilityConfig` and persists `runtimeState` to
+   * `conversation.agentCapabilitiesRuntime` so the apply service can compare
+   * subsequent mutations against the baseline the runtime was seeded with.
+   * Returns `undefined` for non-Claude backends or when there are no cascade
+   * overrides to apply.
+   */
+  composeClaudeCapabilityConfigForConversation(input: {
+    projectPath: string;
+    projectName: string;
+    sessionName: string;
+    conversationId: string;
+    worktreePath: string;
+  }): Promise<
+    | import("@/lib/agent-capabilities/default-deps").ComposedClaudeCapabilitySeed
+    | undefined
+  >;
+
+  /**
+   * Compose the Codex capability runtime config + initial apply state for a
+   * new conversation runtime. See `composeClaudeCapabilityConfigForConversation`
+   * for the actor wiring contract.
+   */
+  composeCodexCapabilityConfigForConversation(input: {
+    projectPath: string;
+    projectName: string;
+    sessionName: string;
+    conversationId: string;
+    worktreePath: string;
+  }): Promise<
+    | import("@/lib/agent-capabilities/default-deps").ComposedCodexCapabilitySeed
+    | undefined
+  >;
+
+  /**
    * Execute a single conversation/task turn through the shared AgentCall
    * primitive. Production wires this to the real `executeAgentCall` facade;
    * tests inject a spy. Routing through this dep guarantees the conversation
@@ -315,6 +383,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     discoveryMod,
     gatewayPortableConfigMod,
     defaultDepsMod,
+    capabilitiesDepsMod,
   ] = await Promise.all([
     import("@/lib/lock"),
     import("@/lib/query-semaphore"),
@@ -335,6 +404,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     import("@/lib/mcp/discovery"),
     import("@/lib/mcp-gateway/portable-config"),
     import("@/lib/mcp/default-deps"),
+    import("@/lib/agent-capabilities/default-deps"),
   ]);
 
   const composePortableMcpForConversation =
@@ -394,6 +464,15 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     composePortableMcpForConversation,
     applyMcpAtTurnStart:
       defaultDepsMod.defaultMcpRuntimeApplyService.applyAtTurnStart,
+    applyCapabilityAtTurnStart:
+      capabilitiesDepsMod.defaultCapabilityRuntimeApplyService.applyAtTurnStart,
+    applyCapabilityWhenIdle:
+      capabilitiesDepsMod.defaultCapabilityRuntimeApplyService
+        .applyWhenConversationBecomesIdle,
+    composeClaudeCapabilityConfigForConversation:
+      capabilitiesDepsMod.composeClaudeCapabilityConfigForConversation,
+    composeCodexCapabilityConfigForConversation:
+      capabilitiesDepsMod.composeCodexCapabilityConfigForConversation,
     executeAgentCall: defaultExecuteAgentCall,
   } as unknown as ActorImplementationDeps;
 }
@@ -1121,6 +1200,26 @@ export async function executePromptForMachine(
     });
   }
 
+  async function seedRuntimeCapabilityState(
+    seed: AgentCapabilityRuntimeApplicationState,
+  ) {
+    await deps.mutateConversation(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+      "prompt.seedCapabilityRuntime",
+      (conversation) => {
+        conversation.agentCapabilitiesRuntime = seed;
+      },
+    );
+    logger.info("prompt.capability_runtime_seeded", {
+      sessionName: input.sessionName,
+      backend: input.agentBackend,
+      conversationId: input.conversationId,
+      seededCascadeKinds: Object.keys(seed.cascades),
+    });
+  }
+
   // Close existing runtime if model, effort, or outputFormat changed
   if (
     backendRuntime &&
@@ -1203,10 +1302,39 @@ export async function executePromptForMachine(
         : {}),
     });
 
+    const claudeCapabilitySeed =
+      input.agentBackend === "claude"
+        ? await deps.composeClaudeCapabilityConfigForConversation({
+            projectPath: input.projectPath,
+            projectName,
+            sessionName: input.sessionName,
+            conversationId: input.conversationId,
+            worktreePath: input.worktreePath,
+          })
+        : undefined;
+
+    const codexCapabilitySeed =
+      input.agentBackend === "codex"
+        ? await deps.composeCodexCapabilityConfigForConversation({
+            projectPath: input.projectPath,
+            projectName,
+            sessionName: input.sessionName,
+            conversationId: input.conversationId,
+            worktreePath: input.worktreePath,
+          })
+        : undefined;
+
+    const claudeCapabilityConfig = claudeCapabilitySeed?.config;
+    const codexCapabilityConfig = codexCapabilitySeed?.config;
+    const capabilityRuntimeStateSeed =
+      claudeCapabilitySeed?.runtimeState ?? codexCapabilitySeed?.runtimeState;
+
     logger.info("prompt.runtime_create", {
       sessionName: input.sessionName,
       backend: input.agentBackend,
       conversationId: input.conversationId,
+      claudeCapabilityConfigSeeded: claudeCapabilityConfig !== undefined,
+      codexCapabilityConfigSeeded: codexCapabilityConfig !== undefined,
     });
 
     const externalTurnHandler = createExternalTurnHandler(
@@ -1215,11 +1343,18 @@ export async function executePromptForMachine(
         projectName,
         sessionName: input.sessionName,
         conversationId: input.conversationId,
+        worktreePath: input.worktreePath,
       },
       {
         sendToMachine: (event) => runtimeState.sendToMachine?.(event),
       },
-      { safeAppendTranscriptEntry: deps.safeAppendTranscriptEntry },
+      {
+        safeAppendTranscriptEntry: deps.safeAppendTranscriptEntry,
+        applyCapabilityWhenIdle:
+          input.agentBackend === "claude"
+            ? (port) => deps.applyCapabilityWhenIdle(port)
+            : undefined,
+      },
     );
 
     const newRuntime = await factory.createRuntime({
@@ -1235,6 +1370,12 @@ export async function executePromptForMachine(
       sessionInstructions,
       tooling: {
         portableMcp,
+        ...(claudeCapabilityConfig !== undefined
+          ? { claudeCapabilityConfig }
+          : {}),
+        ...(codexCapabilityConfig !== undefined
+          ? { codexCapabilityConfig }
+          : {}),
       },
       onExternalTurnEvent: externalTurnHandler,
     });
@@ -1244,6 +1385,9 @@ export async function executePromptForMachine(
     runtimeState.backendRuntime = newRuntime;
     backendRuntime = newRuntime;
     await seedRuntimeMcpState(portableMcp);
+    if (capabilityRuntimeStateSeed) {
+      await seedRuntimeCapabilityState(capabilityRuntimeStateSeed);
+    }
 
     return newRuntime;
   }
@@ -1386,6 +1530,27 @@ export async function executePromptForMachine(
 
   let turnResult: ConversationBackendTurnResult | undefined;
 
+  async function drainClaudeCapabilityWhenIdle(): Promise<void> {
+    if (input.agentBackend !== "claude") return;
+
+    try {
+      await deps.applyCapabilityWhenIdle({
+        projectPath: input.projectPath,
+        projectName,
+        sessionName: input.sessionName,
+        conversationId: input.conversationId,
+        worktreePath: input.worktreePath,
+        backend: input.agentBackend,
+      });
+    } catch (err) {
+      logger.error("prompt.capability_idle_drain_failed", {
+        sessionName: input.sessionName,
+        conversationId: input.conversationId,
+        error: getErrorMessage(err),
+      });
+    }
+  }
+
   try {
     if (!isNewRuntime) {
       logger.info("prompt.mcp_turn_start_apply", {
@@ -1431,6 +1596,30 @@ export async function executePromptForMachine(
       }
     }
 
+    try {
+      logger.info("prompt.capability_turn_start_apply", {
+        sessionName: input.sessionName,
+        backend: input.agentBackend,
+        conversationId: input.conversationId,
+        isNewRuntime,
+      });
+      await deps.applyCapabilityAtTurnStart({
+        projectPath: input.projectPath,
+        projectName,
+        sessionName: input.sessionName,
+        conversationId: input.conversationId,
+        worktreePath: input.worktreePath,
+        backend: input.agentBackend,
+      });
+    } catch (err) {
+      logger.error("prompt.capability_turn_start_failed", {
+        sessionName: input.sessionName,
+        backend: input.agentBackend,
+        conversationId: input.conversationId,
+        error: getErrorMessage(err),
+      });
+    }
+
     // Route the turn through the shared AgentCall primitive. The wrapped
     // runtime captures the underlying `ConversationBackendTurnResult` (the
     // existing actor downstream still needs `numTurns`, `contentBlocks`, and
@@ -1463,6 +1652,8 @@ export async function executePromptForMachine(
     if (turnDispatch.thrown) {
       throw turnDispatch.thrown;
     }
+
+    await drainClaudeCapabilityWhenIdle();
   } catch (err) {
     if (abortController.signal.aborted) {
       logger.info("prompt.aborted", { sessionName: input.sessionName });
@@ -1487,6 +1678,7 @@ export async function executePromptForMachine(
       sessionName: input.sessionName,
       error: errorMsg,
     });
+    await drainClaudeCapabilityWhenIdle();
     runtimeState.streamEmit?.("error", { message: `SDK error: ${errorMsg}` });
     return {
       backendRef: null,

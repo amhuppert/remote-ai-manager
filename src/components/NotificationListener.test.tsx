@@ -7,6 +7,7 @@ import NotificationListener from "./NotificationListener";
 import {
   collaborationKeys,
   conversationKeys,
+  agentCapabilityKeys,
   mcpConfigKeys,
   mcpToolsKeys,
   sessionKeys,
@@ -111,6 +112,117 @@ describe("NotificationListener", () => {
     expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: mcpToolsKeys.inventory("proj", "sess", "conv-1", "calc"),
     });
+  });
+
+  it("invalidates affected capability queries on override update events", async () => {
+    const client = makeClient();
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) {
+      throw new Error("expected EventSource instance");
+    }
+
+    es.emit("agent-capabilities-updated", {
+      type: "agent-capabilities-updated",
+      level: "session",
+      projectName: "proj",
+      sessionName: "sess",
+      cascadeKind: "claude-skills",
+      backend: "claude",
+      changedItemIds: ["skill:a"],
+      effectiveHash: "hash-2",
+      invalidationHints: {
+        level: "session",
+        projectName: "proj",
+        sessionName: "sess",
+        cascadeKind: "claude-skills",
+        itemIds: ["skill:a"],
+        effectiveHash: "hash-2",
+      },
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: agentCapabilityKeys.session("proj", "sess", "claude-skills"),
+      }),
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: [
+        "agent-capabilities",
+        "conversation",
+        "proj",
+        "claude-skills",
+        "sess",
+      ],
+    });
+  });
+
+  it("invalidates affected capability queries on discovery refresh events", async () => {
+    const client = makeClient();
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) {
+      throw new Error("expected EventSource instance");
+    }
+
+    es.emit("agent-capabilities-discovery-updated", {
+      type: "agent-capabilities-discovery-updated",
+      level: "conversation",
+      projectName: "proj",
+      sessionName: "sess",
+      conversationId: "conv",
+      cascadeKind: "claude-skills",
+      backend: "claude",
+      refreshedAt: "2026-05-18T12:00:00.000Z",
+      sourceSignature: "sig",
+      invalidationHints: {
+        level: "conversation",
+        projectName: "proj",
+        sessionName: "sess",
+        conversationId: "conv",
+        cascadeKind: "claude-skills",
+        refreshDiscovery: true,
+        sourceSignature: "sig",
+      },
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: agentCapabilityKeys.conversation(
+          "proj",
+          "sess",
+          "conv",
+          "claude-skills",
+        ),
+      }),
+    );
+  });
+
+  it("refetches canonical capability state after EventSource reconnect", async () => {
+    const client = makeClient();
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) {
+      throw new Error("expected EventSource instance");
+    }
+
+    es.onerror?.call(es as unknown as EventSource, new Event("error"));
+    es.onopen?.call(es as unknown as EventSource, new Event("open"));
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: agentCapabilityKeys.all,
+      }),
+    );
   });
 
   it("invalidates collaboration + session queries on scoped-status events with scope=collaboration", async () => {

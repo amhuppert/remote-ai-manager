@@ -3,7 +3,11 @@
  * behind the backend-neutral conversation runtime interface.
  */
 
-import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  CanUseTool,
+  McpServerConfig,
+  Settings,
+} from "@anthropic-ai/claude-agent-sdk";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { MessageContentBlock } from "@/types";
@@ -13,6 +17,7 @@ import type {
   ConversationBackendCapabilities,
 } from "../types";
 import type {
+  ClaudeCapabilityApplyResult,
   ConversationBackendEvent,
   ConversationBackendRuntime,
   ConversationBackendTurnInput,
@@ -22,6 +27,7 @@ import type {
   ConversationBackendFactory,
 } from "../conversation";
 import type { PortableMcpConfig, McpApplyResult } from "../portable-mcp";
+import type { ClaudeRuntimeCapabilityConfig } from "@/lib/agent-capabilities/claude-runtime-translator";
 import { registerConversationBackendFactory } from "../registry-core";
 import {
   createQuerySession,
@@ -44,6 +50,7 @@ import {
   createSessionMcpServer,
   type SessionMcpServerParams,
 } from "@/lib/mcp-gateway/session-server";
+import { composeClaudeAgentCanUseTool } from "@/lib/agent-capabilities/claude-agent-suppression";
 
 const logger = createLogger("claude:conversation-runtime");
 
@@ -87,6 +94,9 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
     config: PortableMcpConfig | null,
   ) => void;
   private readonly sessionToolsInstance: McpServer;
+  private readonly onCapabilityConfigApplied: (
+    config: ClaudeRuntimeCapabilityConfig,
+  ) => Promise<void>;
 
   constructor(
     querySession: QuerySession,
@@ -95,6 +105,16 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
       reasoningEffort?: string;
       outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
       onPortableMcpApplied?: (config: PortableMcpConfig | null) => void;
+      /**
+       * Mid-session capability apply hook. Production wires this to
+       * `query.applyFlagSettings(...)` + `query.reloadPlugins()` so cascade
+       * deltas actually mutate the live SDK process. Initial capability
+       * seeding flows through `Settings` on `QuerySessionOptions` instead, so
+       * the constructor does not self-fire this callback at runtime creation.
+       */
+      onCapabilityConfigApplied?: (
+        config: ClaudeRuntimeCapabilityConfig,
+      ) => Promise<void>;
       sessionToolsInstance: McpServer;
     },
   ) {
@@ -103,12 +123,18 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
     this.reasoningEffort = opts.reasoningEffort;
     this.outputFormat = opts.outputFormat;
     this.onPortableMcpApplied = opts.onPortableMcpApplied ?? (() => {});
+    this.onCapabilityConfigApplied =
+      opts.onCapabilityConfigApplied ?? (async () => {});
     this.sessionToolsInstance = opts.sessionToolsInstance;
 
     logger.info("claude-runtime.created", {
       conversationId: querySession.conversationId,
       modelId: opts.modelId,
     });
+  }
+
+  get isTurnActive(): boolean {
+    return this.querySession.isTurnActive;
   }
 
   private mergeSessionToolsServer(
@@ -323,6 +349,59 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
     }
   }
 
+  /**
+   * Live-apply a Claude capability configuration to this runtime. The
+   * installed SDK does not expose runtime `setSkills`/`setPlugins`/`setAgents`
+   * setters, so the runtime forwards the config to the registered
+   * `onCapabilityConfigApplied` callback — production wiring forwards it to
+   * the `QuerySession` so the next SDK options ingestion picks it up. Returns
+   * `skipped-turn-active` while a turn is in flight so the apply service can
+   * record `staged-idle` and drain after the turn completes.
+   */
+  async applyClaudeCapabilityConfig(
+    config: ClaudeRuntimeCapabilityConfig,
+  ): Promise<ClaudeCapabilityApplyResult> {
+    const conversationId = this.querySession.conversationId;
+    if (this._status === "dead" || this.querySession.status === "dead") {
+      return {
+        status: "rejected",
+        error: "runtime is closed",
+      };
+    }
+    if (this.querySession.isTurnActive) {
+      logger.info("claude-runtime.capability_deferred_turn_active", {
+        conversationId,
+      });
+      return { status: "skipped-turn-active" };
+    }
+
+    try {
+      await this.onCapabilityConfigApplied(config);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      logger.error("claude-runtime.capability_apply_failed", {
+        conversationId,
+        error: errorMsg,
+      });
+      return { status: "rejected", error: errorMsg };
+    }
+    logger.info("claude-runtime.capability_applied", {
+      conversationId,
+      pluginCount: Object.keys(config.enabledPlugins).length,
+      skillOverrideCount: Object.keys(config.skillOverrides).length,
+      disabledAgentCount: config.disabledAgentNames.length,
+    });
+    return { status: "applied" };
+  }
+
+  async supportedCommands(): Promise<readonly { name: string }[]> {
+    return this.querySession.query.supportedCommands();
+  }
+
+  async supportedAgents(): Promise<readonly { name: string }[]> {
+    return this.querySession.query.supportedAgents();
+  }
+
   async listMcpServerTools(
     serverKey: string,
   ): Promise<readonly McpDiscoveredTool[] | undefined> {
@@ -477,10 +556,47 @@ const claudeConversationBackendFactory = {
     let currentPortableConfig: PortableMcpConfig | null =
       input.tooling.portableMcp ?? null;
 
-    const canUseTool = createCanUseTool({
+    const mcpCanUseTool = createCanUseTool({
       conversationId: input.conversationId,
       mcpFilter: createPortableMcpFilterLookup(() => currentPortableConfig),
     });
+
+    // Adapt the 2-argument MCP filter callback to the SDK's 3-argument
+    // CanUseTool signature so the suppression layer can call it through.
+    const innerCanUseTool: CanUseTool = async (toolName, toolInput) => {
+      const result = await mcpCanUseTool(
+        toolName,
+        toolInput as Record<string, unknown>,
+      );
+      return result;
+    };
+
+    // Compose the sub-agent suppression layer. The suppression set is bound
+    // at session creation per `CLAUDE_AGENT_SUPPRESSION_STRATEGY.applyPoint`
+    // ("next-conversation"); mid-session changes require a fresh runtime.
+    const disabledAgentNames = new Set<string>(
+      input.tooling.claudeCapabilityConfig?.disabledAgentNames ?? [],
+    );
+    const canUseTool = composeClaudeAgentCanUseTool({
+      disabledAgentNames,
+      inner: innerCanUseTool,
+    });
+
+    // Build initial SDK Settings from the translated capability config so the
+    // SDK applies plugin/skill overrides natively at session start. Without
+    // this, capability seeding for a brand-new runtime would be a no-op.
+    const initialSettings: Settings | undefined = (() => {
+      const cfg = input.tooling.claudeCapabilityConfig;
+      if (!cfg) return undefined;
+      const settings: Settings = {};
+      if (Object.keys(cfg.enabledPlugins).length > 0) {
+        settings.enabledPlugins = cfg.enabledPlugins;
+      }
+      if (Object.keys(cfg.skillOverrides).length > 0) {
+        settings.skillOverrides = cfg.skillOverrides;
+      }
+      return Object.keys(settings).length > 0 ? settings : undefined;
+    })();
 
     // Determine resume session ID from persisted ref
     const resumeSessionId =
@@ -538,6 +654,7 @@ const claudeConversationBackendFactory = {
       disallowedTools: ["AskUserQuestion"],
       outputFormat: input.outputFormat,
       externalTurnHandler,
+      ...(initialSettings ? { settings: initialSettings } : {}),
     };
 
     const querySession = createQuerySession(sessionOptions);
@@ -549,8 +666,35 @@ const claudeConversationBackendFactory = {
       onPortableMcpApplied: (config) => {
         currentPortableConfig = config;
       },
+      onCapabilityConfigApplied: async (config) => {
+        const flagSettings: Settings = {
+          enabledPlugins: config.enabledPlugins,
+          skillOverrides: config.skillOverrides,
+        };
+        await querySession.query.applyFlagSettings(flagSettings);
+        await querySession.query.reloadPlugins();
+        logger.info("claude-runtime.capability_sdk_mutation", {
+          conversationId: input.conversationId,
+          pluginCount: Object.keys(config.enabledPlugins).length,
+          skillOverrideCount: Object.keys(config.skillOverrides).length,
+        });
+      },
       sessionToolsInstance,
     });
+
+    if (input.tooling.claudeCapabilityConfig) {
+      logger.info("claude-runtime.initial_capability_config", {
+        conversationId: input.conversationId,
+        pluginCount: Object.keys(
+          input.tooling.claudeCapabilityConfig.enabledPlugins,
+        ).length,
+        skillOverrideCount: Object.keys(
+          input.tooling.claudeCapabilityConfig.skillOverrides,
+        ).length,
+        disabledAgentCount:
+          input.tooling.claudeCapabilityConfig.disabledAgentNames.length,
+      });
+    }
 
     try {
       await runtime.init(translatedServers);

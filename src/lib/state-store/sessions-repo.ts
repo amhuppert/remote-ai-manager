@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
 import {
+  agentCapabilityOverridesSchema,
   graphWorkflowExecutionSchema,
   mcpOverridesSchema,
   sessionCreationModeSchema,
@@ -53,6 +54,7 @@ const sessionsTableRowSchema = z.object({
   workflow_envelopes: z.string().nullable(),
   workflow_lanes: z.string().nullable(),
   mcp_overrides: z.string().nullable(),
+  agent_capability_overrides: z.string().nullable(),
 });
 type SessionsTableRow = z.infer<typeof sessionsTableRowSchema>;
 
@@ -76,6 +78,7 @@ interface SqlBindRow {
   workflow_envelopes: string | null;
   workflow_lanes: string | null;
   mcp_overrides: string | null;
+  agent_capability_overrides: string | null;
 }
 
 function stableStringify(value: unknown): string {
@@ -133,6 +136,7 @@ function sessionToSqlBind(
     workflow_envelopes: jsonOrNull(session.workflowEnvelopes),
     workflow_lanes: jsonOrNull(session.workflowLanes),
     mcp_overrides: jsonOrNull(session.mcpOverrides),
+    agent_capability_overrides: jsonOrNull(session.agentCapabilityOverrides),
   };
 }
 
@@ -414,6 +418,20 @@ function rowToDomain(rawRow: unknown): {
     );
   }
 
+  const agentCaps = parseJsonColumn(
+    "agentCapabilityOverrides",
+    row.agent_capability_overrides,
+    agentCapabilityOverridesSchema,
+    "absent",
+  );
+  if (!agentCaps.ok) {
+    return logAndThrowValidationFailure(
+      row.project_path,
+      row.session_name,
+      agentCaps.issues,
+    );
+  }
+
   const candidate: Record<string, unknown> = {
     sessionName: row.session_name,
     worktreePath: row.worktree_path,
@@ -437,6 +455,9 @@ function rowToDomain(rawRow: unknown): {
     candidate.workflowEnvelopes = envelopes.value;
   if (lanes.value !== undefined) candidate.workflowLanes = lanes.value;
   if (mcp.value !== undefined) candidate.mcpOverrides = mcp.value;
+  if (agentCaps.value !== undefined) {
+    candidate.agentCapabilityOverrides = agentCaps.value;
+  }
 
   const result = sessionStateSchema.safeParse(candidate);
   if (!result.success) {
@@ -493,14 +514,14 @@ export function createSessionsRepo(db: Db): SessionsRepo {
        objective, creation_mode, tdd_enabled, target_branch,
        parent_session_name, graph_workflow_execution,
        graph_workflow_execution_history, workflow_envelopes,
-       workflow_lanes, mcp_overrides
+       workflow_lanes, mcp_overrides, agent_capability_overrides
      ) VALUES (
        @project_path, @session_name, @worktree_path, @branch_name,
        @created_at, @last_activity_at, @archived, @finished, @source,
        @objective, @creation_mode, @tdd_enabled, @target_branch,
        @parent_session_name, @graph_workflow_execution,
        @graph_workflow_execution_history, @workflow_envelopes,
-       @workflow_lanes, @mcp_overrides
+       @workflow_lanes, @mcp_overrides, @agent_capability_overrides
      )
      ON CONFLICT(project_path, session_name) DO UPDATE SET
        worktree_path                    = excluded.worktree_path,
@@ -519,7 +540,8 @@ export function createSessionsRepo(db: Db): SessionsRepo {
        graph_workflow_execution_history = excluded.graph_workflow_execution_history,
        workflow_envelopes               = excluded.workflow_envelopes,
        workflow_lanes                   = excluded.workflow_lanes,
-       mcp_overrides                    = excluded.mcp_overrides`,
+       mcp_overrides                    = excluded.mcp_overrides,
+       agent_capability_overrides       = excluded.agent_capability_overrides`,
   );
   const deleteStmt = db.prepare(
     `DELETE FROM sessions WHERE project_path = ? AND session_name = ?`,

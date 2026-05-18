@@ -1,0 +1,322 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  AGENT_CAPABILITY_CASCADE_KINDS,
+  agentCapabilityMetadata,
+  agentCapabilityMetadataSchema,
+  createAgentCapabilityMetadataRegistry,
+  defaultAgentCapabilityMetadataRegistry,
+  type AgentCapabilityCascadeKind,
+} from "./metadata";
+
+describe("agent capability metadata registry", () => {
+  it("declares exactly the five supported cascade kinds", () => {
+    expect(AGENT_CAPABILITY_CASCADE_KINDS).toEqual([
+      "claude-skills",
+      "claude-plugins",
+      "claude-agents",
+      "codex-skills",
+      "codex-plugins",
+    ]);
+  });
+
+  it("provides exactly one metadata record per cascade kind", () => {
+    const cascadeKinds = new Set<AgentCapabilityCascadeKind>();
+    for (const record of agentCapabilityMetadata) {
+      expect(cascadeKinds.has(record.cascadeKind)).toBe(false);
+      cascadeKinds.add(record.cascadeKind);
+    }
+    expect(cascadeKinds.size).toBe(AGENT_CAPABILITY_CASCADE_KINDS.length);
+  });
+
+  it("assigns claude cascades to the claude backend and codex cascades to codex", () => {
+    for (const record of agentCapabilityMetadata) {
+      if (record.cascadeKind.startsWith("claude-")) {
+        expect(record.backend).toBe("claude");
+      } else {
+        expect(record.backend).toBe("codex");
+      }
+    }
+  });
+
+  it("marks codex-plugins discovery as unavailable-pending-verification", () => {
+    const codexPlugins =
+      defaultAgentCapabilityMetadataRegistry.get("codex-plugins");
+    expect(codexPlugins.discoverySupport).toBe(
+      "unavailable-pending-verification",
+    );
+    expect(codexPlugins.compositionSupport).toBe("verification-gated");
+  });
+
+  it("marks codex-skills as discovery-available but composition verification-gated until the SDK config key is proven", () => {
+    // The installed @openai/codex-sdk typings expose only a generic
+    // `CodexOptions.config` pass-through and no documented per-skill key.
+    // `translateCodexCapabilities` currently refuses to emit skill config and
+    // surfaces a `codex-skill-config-key-unverified` diagnostic. Metadata
+    // must reflect that gate: discovery is available (skill files are read
+    // from disk) but runtime composition is verification-gated, so the UI
+    // and apply service refuse to expose editable runtime behavior for this
+    // cascade.
+    const codexSkills =
+      defaultAgentCapabilityMetadataRegistry.get("codex-skills");
+    expect(codexSkills.discoverySupport).toBe("available");
+    expect(codexSkills.compositionSupport).toBe("verification-gated");
+    expect(codexSkills.applySemantics).toBe("next-turn");
+  });
+
+  it("treats every codex cascade as verification-gated until concrete SDK emission is proven", () => {
+    // Pinned invariant: no Codex cascade may advertise `translator` or
+    // `native` composition until its SDK config keys have been verified.
+    const codexRecords =
+      defaultAgentCapabilityMetadataRegistry.listForBackend("codex");
+    expect(codexRecords.length).toBeGreaterThan(0);
+    for (const record of codexRecords) {
+      expect(record.compositionSupport).toBe("verification-gated");
+    }
+  });
+
+  it("never assigns idle-live-apply to a codex cascade", () => {
+    const codexRecords =
+      defaultAgentCapabilityMetadataRegistry.listForBackend("codex");
+    for (const record of codexRecords) {
+      expect(record.applySemantics).not.toBe("idle-live-apply");
+    }
+  });
+
+  it("uses idle-live-apply for claude skills and plugins", () => {
+    expect(
+      defaultAgentCapabilityMetadataRegistry.get("claude-skills")
+        .applySemantics,
+    ).toBe("idle-live-apply");
+    expect(
+      defaultAgentCapabilityMetadataRegistry.get("claude-plugins")
+        .applySemantics,
+    ).toBe("idle-live-apply");
+  });
+
+  it("represents claude-agents using a verified suppression apply point, not idle-live-apply", () => {
+    // Native Claude SDK Settings has no per-agent disable; verified strategy is
+    // permission-layer denial of Task invocations on disabled agents. That
+    // strategy takes effect on the next conversation (Options.canUseTool is
+    // bound at session creation), so apply semantics must reflect that.
+    const claudeAgents =
+      defaultAgentCapabilityMetadataRegistry.get("claude-agents");
+    expect(claudeAgents.applySemantics).toBe("next-conversation");
+    expect(claudeAgents.compositionSupport).toBe("translator");
+  });
+
+  it("throws when asked for an unregistered cascade", () => {
+    const registry = createAgentCapabilityMetadataRegistry([]);
+    expect(() => registry.get("claude-skills")).toThrow();
+  });
+
+  it("supports adding a future backend through metadata without scattering checks", () => {
+    // Future-extensibility check: a custom registry built from arbitrary
+    // metadata records must accept any cascade kind we declare, including
+    // hypothetical backends added later by the metadata-driven design.
+    const registry = createAgentCapabilityMetadataRegistry([
+      {
+        cascadeKind: "claude-skills",
+        backend: "claude",
+        capabilityKind: "skill",
+        applySemantics: "idle-live-apply",
+        discoverySupport: "available",
+        runtimeVisibility: "sdk-runtime",
+        compositionSupport: "translator",
+      },
+    ]);
+    expect(registry.listForBackend("claude")).toHaveLength(1);
+    expect(registry.listForBackend("codex")).toHaveLength(0);
+  });
+
+  it("pins codex-plugins runtimeVisibility to unsupported so UI never offers runtime editing for unverified plugins", () => {
+    // Codex plugins are unsupported at runtime until discovery and the SDK
+    // emission path are verified. Encoding this in metadata means no UI
+    // component needs `if (cascadeKind === "codex-plugins")` branches.
+    const codexPlugins =
+      defaultAgentCapabilityMetadataRegistry.get("codex-plugins");
+    expect(codexPlugins.runtimeVisibility).toBe("unsupported");
+    expect(codexPlugins.capabilityKind).toBe("plugin");
+  });
+
+  it("encodes claude-agents as runtime-visible but deferred-apply via metadata fields alone", () => {
+    // The "deferred" pattern (visible in runtime, applied at session boundary
+    // via a permission-layer translator) must be readable from metadata
+    // without UI/runtime layers having to special-case the cascade kind.
+    const claudeAgents =
+      defaultAgentCapabilityMetadataRegistry.get("claude-agents");
+    expect(claudeAgents.runtimeVisibility).toBe("sdk-runtime");
+    expect(claudeAgents.applySemantics).toBe("next-conversation");
+    expect(claudeAgents.compositionSupport).toBe("translator");
+    expect(claudeAgents.capabilityKind).toBe("agent");
+  });
+
+  it("encodes every required metadata field on every cascade record", () => {
+    // Acceptance: each cascade record fully specifies backend ownership,
+    // capability kind, discovery support, runtime visibility, composition
+    // support, and apply semantics. No downstream consumer should have to
+    // derive any of these from the cascade string.
+    for (const record of agentCapabilityMetadata) {
+      expect(record.cascadeKind).toBeDefined();
+      expect(record.backend).toBeDefined();
+      expect(record.capabilityKind).toBeDefined();
+      expect(record.applySemantics).toBeDefined();
+      expect(record.discoverySupport).toBeDefined();
+      expect(record.runtimeVisibility).toBeDefined();
+      expect(record.compositionSupport).toBeDefined();
+    }
+  });
+
+  it("derives backend partitioning from metadata records, not from cascade-kind string parsing", () => {
+    // Build a synthetic registry with valid pairings in reverse declaration
+    // order to prove `listForBackend` reads `record.backend` rather than
+    // parsing the cascade-kind prefix or relying on insertion order.
+    const registry = createAgentCapabilityMetadataRegistry([
+      {
+        cascadeKind: "codex-skills",
+        backend: "codex",
+        capabilityKind: "skill",
+        applySemantics: "next-turn",
+        discoverySupport: "available",
+        runtimeVisibility: "source-only",
+        compositionSupport: "verification-gated",
+      },
+      {
+        cascadeKind: "claude-agents",
+        backend: "claude",
+        capabilityKind: "agent",
+        applySemantics: "next-conversation",
+        discoverySupport: "available",
+        runtimeVisibility: "sdk-runtime",
+        compositionSupport: "translator",
+      },
+    ]);
+    expect(registry.listForBackend("claude")).toHaveLength(1);
+    expect(registry.listForBackend("claude")[0]?.cascadeKind).toBe(
+      "claude-agents",
+    );
+    expect(registry.listForBackend("codex")).toHaveLength(1);
+    expect(registry.listForBackend("codex")[0]?.cascadeKind).toBe(
+      "codex-skills",
+    );
+  });
+
+  it("uses the metadata-declared composition support to gate runtime emission decisions per cascade", () => {
+    // Every cascade kind in AGENT_CAPABILITY_CASCADE_KINDS resolves to a
+    // metadata record with a composition strategy. Downstream translators
+    // branch on this field instead of inspecting cascadeKind directly.
+    for (const cascadeKind of AGENT_CAPABILITY_CASCADE_KINDS) {
+      const record = defaultAgentCapabilityMetadataRegistry.get(cascadeKind);
+      expect(["native", "translator", "verification-gated"]).toContain(
+        record.compositionSupport,
+      );
+    }
+  });
+
+  it("parses every metadata record through agentCapabilityMetadataSchema at registry construction", () => {
+    // The registry constructor must Zod-parse every input so the metadata
+    // shape is enforced structurally, not by hand-written interface trust.
+    // Passing a payload missing a required field must throw — the registry
+    // can never carry a partially-initialised metadata record.
+    expect(() =>
+      createAgentCapabilityMetadataRegistry([
+        {
+          cascadeKind: "claude-skills",
+          backend: "claude",
+          // capabilityKind intentionally omitted
+          applySemantics: "idle-live-apply",
+          discoverySupport: "available",
+          runtimeVisibility: "sdk-runtime",
+          compositionSupport: "translator",
+        },
+      ]),
+    ).toThrow(/Invalid agent capability metadata record/);
+  });
+
+  it("rejects metadata records pairing a cascade with the wrong backend at registry construction", () => {
+    // Cascade/backend ownership is fixed (claude-* → claude, codex-* → codex).
+    // The schema enforces this so no downstream consumer ever sees a
+    // mismatched pairing.
+    expect(() =>
+      createAgentCapabilityMetadataRegistry([
+        {
+          cascadeKind: "claude-skills",
+          backend: "codex",
+          capabilityKind: "skill",
+          applySemantics: "idle-live-apply",
+          discoverySupport: "available",
+          runtimeVisibility: "sdk-runtime",
+          compositionSupport: "translator",
+        },
+      ]),
+    ).toThrow(/Invalid agent capability metadata record/);
+
+    expect(() =>
+      createAgentCapabilityMetadataRegistry([
+        {
+          cascadeKind: "codex-plugins",
+          backend: "claude",
+          capabilityKind: "plugin",
+          applySemantics: "next-turn",
+          discoverySupport: "unavailable-pending-verification",
+          runtimeVisibility: "unsupported",
+          compositionSupport: "verification-gated",
+        },
+      ]),
+    ).toThrow(/Invalid agent capability metadata record/);
+  });
+
+  it("rejects metadata records carrying unknown extra fields", () => {
+    // `.strict()` on agentCapabilityMetadataSchema blocks accidental
+    // payload leakage (e.g. raw SDK config) from being smuggled into the
+    // registry.
+    expect(() =>
+      createAgentCapabilityMetadataRegistry([
+        {
+          cascadeKind: "claude-skills",
+          backend: "claude",
+          capabilityKind: "skill",
+          applySemantics: "idle-live-apply",
+          discoverySupport: "available",
+          runtimeVisibility: "sdk-runtime",
+          compositionSupport: "translator",
+          rawSdkConfig: { secret: "should not be here" },
+        },
+      ]),
+    ).toThrow(/Invalid agent capability metadata record/);
+  });
+
+  it("rejects duplicate cascade-kind records at registry construction", () => {
+    expect(() =>
+      createAgentCapabilityMetadataRegistry([
+        {
+          cascadeKind: "claude-skills",
+          backend: "claude",
+          capabilityKind: "skill",
+          applySemantics: "idle-live-apply",
+          discoverySupport: "available",
+          runtimeVisibility: "sdk-runtime",
+          compositionSupport: "translator",
+        },
+        {
+          cascadeKind: "claude-skills",
+          backend: "claude",
+          capabilityKind: "skill",
+          applySemantics: "idle-live-apply",
+          discoverySupport: "available",
+          runtimeVisibility: "sdk-runtime",
+          compositionSupport: "translator",
+        },
+      ]),
+    ).toThrow(/Duplicate agent capability metadata record/);
+  });
+
+  it("guarantees every shipped metadata record passes the canonical schema", () => {
+    // Pins the production registry against silent regressions: every entry
+    // in `agentCapabilityMetadata` must parse cleanly via the schema.
+    for (const record of agentCapabilityMetadata) {
+      const result = agentCapabilityMetadataSchema.safeParse(record);
+      expect(result.success).toBe(true);
+    }
+  });
+});

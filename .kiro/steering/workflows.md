@@ -242,18 +242,23 @@ Resolution at seed time (`src/lib/workflow-graph/resolve-config.ts`); resolved c
 }
 ```
 
+Workflow definitions should normally omit `workflowConfig` and per-context
+override blocks. Defaults cascade from global config unless Alex explicitly asks
+for non-default implementer or validator settings.
+
 ```jsonc
-// workflow tier overrides global; per-context overrides both
 {
-  "workflowConfig": { "implementer": { "model": "sonnet" } },
   "executionContexts": [
-    { "id": "plan", "title": "Plan",
-      "acceptanceCriteria": "A plan.md describes the approach in enough detail for an implementer to follow.",
-      "contextValidator": { "kind": "disabled" } },
-    { "id": "impl", "title": "Implement",
-      "acceptanceCriteria": "The feature behaves as described in the plan when exercised end-to-end.",
-      "implementer": { "model": "opus", "reasoningEffort": "high" },
-      "scriptValidator": { "enabled": true } }
+    {
+      "id": "plan",
+      "title": "Plan",
+      "acceptanceCriteria": "A plan.md describes the approach in enough detail for an implementer to follow."
+    },
+    {
+      "id": "impl",
+      "title": "Implement",
+      "acceptanceCriteria": "The feature behaves as described in the plan when exercised end-to-end."
+    }
   ]
 }
 ```
@@ -266,68 +271,36 @@ Six blocks, all individually overridable per tier:
 |---|---|
 | `implementer` | Implementer agent config (backend, model, reasoning) |
 | `contextValidator` | Agent (LLM) validator on intent of acceptance criteria. Discriminated `type: "claude" \| "codex"` |
-| `scriptValidator` | Deterministic — runs project's `preMergeCommand`. `{ enabled: boolean }`. Requires `preMergeCommand` in `CommandCenter.json` |
+| `scriptValidator` | Deterministic validator that runs project's `preMergeCommand`. `{ enabled: boolean }`. Requires `preMergeCommand` in `CommandCenter.json` |
 | `iterationPolicy` | `maxIterations`, `continuity.enabled`, optional `contextLimitTokens` |
 | `circuitBreaker` | `consecutiveFailureThreshold` |
 | `mutability` | E.g. `allowAgentTaskAdd` |
 
-## Acceptance criteria (context-level)
+## Planning source of truth
 
-`acceptanceCriteria` is **required on every execution context**. Used by:
-- **Implementer** — success condition for the context
-- **Agent (context) validator** (when enabled) — rubric to evaluate against
+Use the `graph-workflow-planning` Codex skill before creating, replacing, or
+diagnosing graph workflow plans. That skill owns the rules for decomposition,
+acceptance criteria, validator alignment, script validator eligibility, context
+sharing, defaults, and parallelization.
 
-AC lives on the context — never on the validator.
+This steering section is runtime/config reference only.
 
-**Authoring rules:**
-- **Intent-based outcomes**, not deterministic gates. Agent validator judges intent and tolerates imprecise wording.
-- Keep criteria **inside this context's scope**. Agent validator respects scope boundaries.
-- **Do NOT encode deterministic checks** (`tests pass`, `no type errors`, `lint clean`, `build succeeds`) — agent validator ignores those. Enable `scriptValidator` instead.
+## Validation runtime reference
 
-## Dual validators: agent + script
+`acceptanceCriteria` is required on every execution context and is consumed by
+the implementer and, when enabled, the agent context validator.
 
-| Validator | Nature | Judges | Failure artifact |
-|---|---|---|---|
-| `contextValidator` | LLM (Claude/Codex) | Whether work satisfies intent of AC, in context scope | Issues list; affected tasks reopened |
-| `scriptValidator` | Deterministic | Whether `preMergeCommand` exits 0 against worktree | Output to `.cc/workflow/<executionId>/pre-merge-<timestamp>.log`; remediation task added |
+`contextValidator` is an LLM validator. `scriptValidator` runs the project's
+`preMergeCommand` before agent validation and writes failures to
+`.cc/workflow/<executionId>/pre-merge-<timestamp>.log`. Enabling
+`scriptValidator` without a configured `preMergeCommand` halts with
+`script_validator_missing_command`.
 
-**Order**: script runs **first**. If script fails, agent validator skipped — no point spending LLM turns on a tree that won't compile. Both failures count as failed iterations (consume iteration budget, feed circuit breaker).
-
-**Why two**: agent for judgment-based checks only an LLM can make; script for deterministic checks (cheaper, more reliable; reuses `preMergeCommand` as single source of truth across smart merge + graph workflows).
-
-**Missing `preMergeCommand` is an infra error** — context with `scriptValidator: { enabled: true }` halts with `script_validator_missing_command` if not configured. No silent skipping.
-
-## Opting out per-context
+Per-context validator overrides:
 
 ```jsonc
 { "contextValidator": { "kind": "disabled" } }
-```
-
-`contextValidatorOverride` is a discriminated union:
-- `{ "kind": "use", "value": <validator config> }` — override
-- `{ "kind": "disabled" }` — skip; context completes on implementer's claim (+ script validator if enabled)
-
-Omit entirely → inherit (usual case).
-
-Script validator: `scriptValidator: { enabled: true | false }` per context. Both disabled → context completes when implementer reports done.
-
-## Validator engines
-
-Discriminated on `type`:
-
-| Type | Engine | Runs | Notes |
-|---|---|---|---|
-| `claude` | Claude (SDK) | Cloud | Default for intent reviews |
-| `codex` | OpenAI Codex | Local | Useful for local-file inspection without round-trip |
-
-Both receive the same intent-based prompt — judge whether work satisfies AC intent; explicitly NOT enforce tests/types/lint/build (script validator's job). Set `type` directly — do **NOT** configure a Claude validator and instruct it to call Codex via MCP.
-
-```jsonc
-// Codex
-{ "type": "codex", "enabled": true, "codex": { "reasoningEffort": "high" }, "continuity": { "enabled": true } }
-
-// Claude
-{ "type": "claude", "enabled": true, "agent": { "backend": "claude", "model": "sonnet", "reasoningEffort": "high" }, "continuity": { "enabled": true } }
+{ "contextValidator": { "kind": "use", "value": { "type": "codex", "enabled": true, "codex": { "reasoningEffort": "high" }, "continuity": { "enabled": true } } } }
 ```
 
 Codex reasoning levels are model-aware — `getCodexReasoningLevelsForModel()` returns allowed levels.

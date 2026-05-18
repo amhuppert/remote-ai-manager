@@ -9,10 +9,12 @@ import {
   notificationKeys,
   devServerKeys,
   debugLogKeys,
+  agentCapabilityKeys,
   mcpConfigKeys,
   mcpToolsKeys,
   collaborationKeys,
 } from "@/lib/query-keys";
+import { computeAgentCapabilityInvalidations } from "@/lib/agent-capabilities/sse-invalidation";
 import { computeMcpConfigInvalidations } from "@/lib/mcp/sse-invalidation";
 import {
   conversationStatusEventSchema,
@@ -26,6 +28,8 @@ import {
   graphWorkflowValidationResultEventSchema,
   graphWorkflowCircuitBreakerEventSchema,
   graphWorkflowSharedDocumentsUpdatedEventSchema,
+  agentCapabilitiesDiscoveryUpdatedEventSchema,
+  agentCapabilitiesUpdatedEventSchema,
   mcpConfigUpdatedEventSchema,
   mcpToolsUpdatedEventSchema,
   scopedStatusEventSchema,
@@ -48,6 +52,36 @@ export default function NotificationListener(): null {
 
   useEffect(() => {
     const es = new EventSource("/api/events");
+
+    const invalidateAgentCapabilityViews = (data: {
+      level: "global" | "project" | "session" | "conversation";
+      projectName?: string;
+      sessionName?: string;
+      conversationId?: string;
+      cascadeKind:
+        | "claude-skills"
+        | "claude-plugins"
+        | "claude-agents"
+        | "codex-skills"
+        | "codex-plugins";
+    }) => {
+      const invalidations = computeAgentCapabilityInvalidations({
+        level: data.level,
+        cascadeKind: data.cascadeKind,
+        ...(data.projectName !== undefined && {
+          projectName: data.projectName,
+        }),
+        ...(data.sessionName !== undefined && {
+          sessionName: data.sessionName,
+        }),
+        ...(data.conversationId !== undefined && {
+          conversationId: data.conversationId,
+        }),
+      });
+      for (const matcher of invalidations) {
+        void queryClient.invalidateQueries({ queryKey: matcher.queryKey });
+      }
+    };
 
     es.addEventListener("conversation-status", (event) => {
       void queryClient.invalidateQueries({
@@ -431,6 +465,30 @@ export default function NotificationListener(): null {
       }
     });
 
+    es.addEventListener("agent-capabilities-updated", (event) => {
+      try {
+        const parsed = agentCapabilitiesUpdatedEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        invalidateAgentCapabilityViews(parsed.data);
+      } catch {
+        // best-effort
+      }
+    });
+
+    es.addEventListener("agent-capabilities-discovery-updated", (event) => {
+      try {
+        const parsed = agentCapabilitiesDiscoveryUpdatedEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        invalidateAgentCapabilityViews(parsed.data);
+      } catch {
+        // best-effort
+      }
+    });
+
     // SSE reconnection recovery: refetch notifications on reconnect after error
     es.onerror = () => {
       hadErrorRef.current = true;
@@ -454,6 +512,9 @@ export default function NotificationListener(): null {
         });
         void queryClient.invalidateQueries({
           queryKey: mcpToolsKeys.all,
+        });
+        void queryClient.invalidateQueries({
+          queryKey: agentCapabilityKeys.all,
         });
 
         // Reconcile stale running jobs with server-side truth

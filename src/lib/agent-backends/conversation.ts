@@ -7,6 +7,29 @@ import type {
 } from "./types";
 import type { PortableMcpConfig, McpApplyResult } from "./portable-mcp";
 import type { McpDiscoveredTool } from "@/lib/schemas";
+import type { ClaudeRuntimeCapabilityConfig } from "@/lib/agent-capabilities/claude-runtime-translator";
+import type { CodexRuntimeCapabilityConfig } from "@/lib/agent-capabilities/codex-runtime-translator";
+
+/**
+ * Result of a live capability-config apply attempt against a Claude
+ * conversation runtime. Mirrors `ClaudeApplyPortResult` from the
+ * capability apply service so the port can pass-through directly.
+ */
+export type ClaudeCapabilityApplyResult =
+  | { status: "applied" }
+  | { status: "rejected"; error: string }
+  | { status: "skipped-turn-active" };
+
+/**
+ * Result of pushing a refreshed capability-config payload into a live Codex
+ * runtime between turns. Codex always rebuilds its `CodexOptions` per turn,
+ * so the runtime only needs to store the new config; the next turn picks it
+ * up automatically. Mirrors `CodexApplyPortResult` from the capability apply
+ * service so the port can pass-through directly.
+ */
+export type CodexCapabilityApplyResult =
+  | { status: "applied" }
+  | { status: "rejected"; error: string };
 
 /**
  * Server-side reference to an image already saved on disk under the
@@ -82,6 +105,28 @@ export interface ConversationBackendRuntime {
   ): Promise<ConversationBackendTurnResult>;
   queueUserInput?(input: ConversationQueuedUserInput): Promise<void>;
   applyPortableMcpConfig?(config: PortableMcpConfig): Promise<McpApplyResult>;
+  /**
+   * Live-apply a Claude capability configuration (skills/plugins/agents
+   * deltas) to the active runtime. Implemented by the Claude runtime to
+   * support idle-drain and after-mutation fanout from the capability apply
+   * service. Returns `skipped-turn-active` when a turn is in flight so the
+   * caller stages the change for idle-drain rather than interrupting.
+   */
+  applyClaudeCapabilityConfig?(
+    config: ClaudeRuntimeCapabilityConfig,
+  ): Promise<ClaudeCapabilityApplyResult>;
+  /**
+   * Replace the live Codex capability configuration the runtime will merge
+   * into the next turn's `CodexOptions.config`. Implemented by the Codex
+   * runtime so the capability apply service can promote `staged-next-turn`
+   * cascades into the running runtime before the upcoming turn ingests
+   * options. Returns `rejected` when the runtime is closed.
+   */
+  applyCodexCapabilityConfig?(
+    config: CodexRuntimeCapabilityConfig,
+  ): Promise<CodexCapabilityApplyResult>;
+  supportedCommands?(): Promise<readonly { name: string }[]>;
+  supportedAgents?(): Promise<readonly { name: string }[]>;
   /**
    * Return the live MCP server's advertised tool list when the runtime can
    * report it authoritatively (e.g. Claude's `mcpServerStatus()`). Returns

@@ -17,6 +17,7 @@ import type { MessageContentBlock, ToolResultMetrics } from "@/types";
 import { parseToolResultMetrics } from "@/lib/parse-tool-result";
 import type { AgentBackendId, ConversationBackendCapabilities } from "../types";
 import type {
+  CodexCapabilityApplyResult,
   ConversationBackendRuntime,
   ConversationBackendTurnInput,
   ConversationBackendTurnResult,
@@ -31,6 +32,7 @@ import {
   getCodexReasoningLevelsForModel,
 } from "@/lib/schemas";
 import { createLogger } from "@/lib/logging";
+import type { CodexRuntimeCapabilityConfig } from "@/lib/agent-capabilities/codex-runtime-translator";
 
 // Default dep implementations (used at runtime, injected in tests)
 import { Codex } from "@openai/codex-sdk";
@@ -109,6 +111,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
   private threadId: string | null;
   private isFirstTurn: boolean;
   private stagedPortableMcp: PortableMcpConfig | null;
+  private stagedCapabilityConfig: CodexRuntimeCapabilityConfig | null;
   private readonly sessionInstructions: string[];
   private readonly worktreePath: string;
   private readonly conversationId: string;
@@ -124,6 +127,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
         : null;
     this.isFirstTurn = this.threadId == null;
     this.stagedPortableMcp = input.tooling.portableMcp ?? null;
+    this.stagedCapabilityConfig = input.tooling.codexCapabilityConfig ?? null;
     this.sessionInstructions = input.sessionInstructions;
     this.worktreePath = input.worktreePath;
     this.conversationId = input.conversationId;
@@ -136,6 +140,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
       conversationId: input.conversationId,
       modelId: input.modelId,
       hasPersistedRef: !!input.persistedRef,
+      hasCodexCapabilityConfig: this.stagedCapabilityConfig !== null,
     });
   }
 
@@ -304,6 +309,28 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
     return result;
   }
 
+  /**
+   * Replace the staged Codex capability config used to build the next turn's
+   * `CodexOptions.config`. The runtime rebuilds options per turn, so simply
+   * swapping the field is enough — the change takes effect on the very next
+   * `sendTurn` call. Returns `rejected` when the runtime is closed so the
+   * apply service can record the failure instead of falsely reporting
+   * `applied`.
+   */
+  async applyCodexCapabilityConfig(
+    config: CodexRuntimeCapabilityConfig,
+  ): Promise<CodexCapabilityApplyResult> {
+    if (this._status === "dead") {
+      return { status: "rejected", error: "codex runtime is closed" };
+    }
+    this.stagedCapabilityConfig = config;
+    logger.info("codex-runtime.capability_applied", {
+      conversationId: this.conversationId,
+      configKeys: Object.keys(config.config).length,
+    });
+    return { status: "applied" };
+  }
+
   async applyPortableMcpConfig(
     config: PortableMcpConfig,
   ): Promise<McpApplyResult> {
@@ -377,18 +404,28 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
     });
 
     const options: CodexOptions = { env };
+    const configMerged: Record<string, unknown> = {};
 
     if (this.stagedPortableMcp !== null) {
       const { mcpServers } = this.deps.translatePortableMcpToCodex(
         this.stagedPortableMcp,
       );
       const nativeServerNames = await this.listNativeMcpServerNames(env);
-      options.config = {
-        mcp_servers: buildCodexMcpServersConfig({
-          managedMcpServers: mcpServers,
-          nativeServerNames,
-        }),
-      } as CodexOptions["config"];
+      configMerged.mcp_servers = buildCodexMcpServersConfig({
+        managedMcpServers: mcpServers,
+        nativeServerNames,
+      });
+    }
+
+    if (this.stagedCapabilityConfig !== null) {
+      // Merge the verification-gated capability config payload last. Once
+      // SDK key verification lands, the translator will emit a non-empty
+      // object; until then this is a deliberate no-op preserving the seed.
+      Object.assign(configMerged, this.stagedCapabilityConfig.config);
+    }
+
+    if (Object.keys(configMerged).length > 0) {
+      options.config = configMerged as CodexOptions["config"];
     }
 
     return options;

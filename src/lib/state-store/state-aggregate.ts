@@ -183,6 +183,9 @@ export function createStateAggregate(repos: AllRepos): StateAggregate {
       if (row.mcpOverrides !== undefined) {
         project.mcpOverrides = row.mcpOverrides;
       }
+      if (row.agentCapabilityOverrides !== undefined) {
+        project.agentCapabilityOverrides = row.agentCapabilityOverrides;
+      }
       projects[row.rootPath] = project as unknown as ProjectState;
     }
 
@@ -251,6 +254,9 @@ export function createStateAggregate(repos: AllRepos): StateAggregate {
             ...(mutPs.mcpOverrides !== undefined && {
               mcpOverrides: mutPs.mcpOverrides,
             }),
+            ...(mutPs.agentCapabilityOverrides !== undefined && {
+              agentCapabilityOverrides: mutPs.agentCapabilityOverrides,
+            }),
           });
           if (archived) repos.projects.setArchived(k, true);
           if (pinned) repos.projects.setPinned(k, true);
@@ -261,19 +267,26 @@ export function createStateAggregate(repos: AllRepos): StateAggregate {
 
       const snapMcp = stableStringify(snapPs?.mcpOverrides ?? null);
       const mutMcp = stableStringify(mutPs.mcpOverrides ?? null);
+      const snapCaps = stableStringify(
+        snapPs?.agentCapabilityOverrides ?? null,
+      );
+      const mutCaps = stableStringify(mutPs.agentCapabilityOverrides ?? null);
       const snapArchived = snapshot.archivedProjects.includes(k);
       const mutArchived = mutated.archivedProjects.includes(k);
       const snapPinned = snapshot.pinnedProjects.includes(k);
       const mutPinned = mutated.pinnedProjects.includes(k);
 
       let projectDirty = false;
-      if (snapMcp !== mutMcp) {
+      if (snapMcp !== mutMcp || snapCaps !== mutCaps) {
         projectDirty = true;
         ops.push(() =>
           repos.projects.upsert({
             rootPath: k,
             ...(mutPs.mcpOverrides !== undefined && {
               mcpOverrides: mutPs.mcpOverrides,
+            }),
+            ...(mutPs.agentCapabilityOverrides !== undefined && {
+              agentCapabilityOverrides: mutPs.agentCapabilityOverrides,
             }),
           }),
         );

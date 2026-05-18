@@ -5,7 +5,11 @@ import type {
   ConversationBackendRuntime,
   ConversationBackendTurnInput,
   ConversationBackendTurnResult,
+  ConversationState,
+  AgentCapabilityRuntimeApplicationState,
 } from "@/types";
+import type { ClaudeRuntimeCapabilityConfig } from "@/lib/agent-capabilities/claude-runtime-translator";
+import type { CodexRuntimeCapabilityConfig } from "@/lib/agent-capabilities/codex-runtime-translator";
 import {
   _resetForTesting,
   registerConversationRuntime,
@@ -148,6 +152,10 @@ function createMockDeps(
         effectiveConfigHash: "hash-1",
       }),
     ),
+    applyCapabilityAtTurnStart: vi.fn(async () => ({})),
+    applyCapabilityWhenIdle: vi.fn(async () => ({})),
+    composeClaudeCapabilityConfigForConversation: vi.fn(async () => undefined),
+    composeCodexCapabilityConfigForConversation: vi.fn(async () => undefined),
     composePortableMcpForConversation: vi.fn(
       async (args: {
         projectName: string;
@@ -1379,6 +1387,37 @@ describe("executePromptForMachine", () => {
     expect(result.aborted).toBe(false);
   });
 
+  it("drains Claude capability idle work when a caller turn fails", async () => {
+    const applyCapabilityWhenIdle = vi.fn(async () => ({}));
+    mockDeps = createMockDeps({ applyCapabilityWhenIdle });
+    setActorDeps(mockDeps);
+    mockSendTurn.mockRejectedValue(new Error("SDK crashed"));
+
+    const input = makeExecutePromptInput();
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    const result = await executePromptForMachine(input);
+
+    expect(result.error).toBe("SDK crashed");
+    expect(result.aborted).toBe(false);
+    expect(applyCapabilityWhenIdle).toHaveBeenCalledTimes(1);
+    expect(applyCapabilityWhenIdle).toHaveBeenCalledWith({
+      projectPath: input.projectPath,
+      projectName: input.projectName,
+      sessionName: input.sessionName,
+      conversationId: input.conversationId,
+      worktreePath: input.worktreePath,
+      backend: "claude",
+    });
+  });
+
   it("retries once with a fresh runtime when prompt delivery never reached backend", async () => {
     const staleSendTurn = vi.fn();
     const staleRuntime = createMockBackendRuntime({
@@ -1850,6 +1889,174 @@ describe("executePromptForMachine", () => {
         expect.objectContaining({ id: "cc-session-tools" }),
       ]),
     );
+  });
+
+  it("seeds Claude capability config + persists runtime state for new runtimes", async () => {
+    const seededConfig: ClaudeRuntimeCapabilityConfig = {
+      enabledPlugins: {},
+      skillOverrides: { "skill-alpha": "on" },
+      disabledAgentNames: [],
+      agentSuppressionStrategy: {
+        kind: "permission-layer",
+        applyPoint: "next-conversation",
+        interceptedToolNames: ["Task"],
+      },
+    };
+    const seededRuntimeState: AgentCapabilityRuntimeApplicationState = {
+      cascades: {
+        "claude-skills": {
+          appliedHash: "hash-claude-skills",
+          lastApplyStatus: "applied",
+        },
+      },
+    };
+    const composeClaudeCapabilityConfigForConversation: ActorImplementationDeps["composeClaudeCapabilityConfigForConversation"] =
+      vi.fn(async () => ({
+        config: seededConfig,
+        runtimeState: seededRuntimeState,
+      }));
+    let capturedSeed: AgentCapabilityRuntimeApplicationState | undefined;
+    const mutateConversation: ActorImplementationDeps["mutateConversation"] =
+      vi.fn(
+        async (_projectPath, _sessionName, _conversationId, label, mutate) => {
+          if (label === "prompt.seedCapabilityRuntime") {
+            const stub = {} as ConversationState;
+            mutate(stub);
+            capturedSeed = stub.agentCapabilitiesRuntime;
+          }
+        },
+      );
+
+    mockDeps = createMockDeps({
+      composeClaudeCapabilityConfigForConversation,
+      mutateConversation,
+    });
+    setActorDeps(mockDeps);
+
+    const input = makeExecutePromptInput();
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    await executePromptForMachine(input);
+
+    expect(composeClaudeCapabilityConfigForConversation).toHaveBeenCalledTimes(
+      1,
+    );
+    const createCall = (
+      mockFactory.createRuntime.mock.calls as unknown[][]
+    )[0]![0] as Record<string, unknown>;
+    const tooling = createCall["tooling"] as {
+      claudeCapabilityConfig?: ClaudeRuntimeCapabilityConfig;
+    };
+    expect(tooling.claudeCapabilityConfig).toBe(seededConfig);
+    expect(capturedSeed).toBe(seededRuntimeState);
+    const labels = (
+      mutateConversation as ReturnType<typeof vi.fn>
+    ).mock.calls.map((call) => call[3]);
+    expect(labels).toContain("prompt.seedCapabilityRuntime");
+  });
+
+  it("delivers seeded Codex capability config at first turn start before sendTurn", async () => {
+    const codexRuntime = createMockBackendRuntime({
+      backend: "codex" as const,
+    });
+    (codexRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...defaultTurnResult,
+      backendRef: { backend: "codex" as const, threadId: "thread-1" },
+    });
+    mockFactory.createRuntime.mockResolvedValue(codexRuntime);
+
+    const seededConfig: CodexRuntimeCapabilityConfig = {
+      config: {
+        verifiedSkillConfig: { "skill-alpha": false },
+      } as unknown as CodexRuntimeCapabilityConfig["config"],
+    };
+    const seededRuntimeState: AgentCapabilityRuntimeApplicationState = {
+      cascades: {
+        "codex-skills": {
+          pendingHash: "hash-codex-skills",
+          pendingItemIds: ["skill-alpha"],
+          lastApplyStatus: "staged-next-turn",
+        },
+      },
+    };
+    const composeCodexCapabilityConfigForConversation: ActorImplementationDeps["composeCodexCapabilityConfigForConversation"] =
+      vi.fn(async () => ({
+        config: seededConfig,
+        runtimeState: seededRuntimeState,
+      }));
+    const applyCapabilityAtTurnStart = vi.fn<
+      ActorImplementationDeps["applyCapabilityAtTurnStart"]
+    >(async () => ({}));
+
+    mockDeps = createMockDeps({
+      composeCodexCapabilityConfigForConversation,
+      applyCapabilityAtTurnStart,
+    });
+    setActorDeps(mockDeps);
+
+    const input = makeExecutePromptInput({ agentBackend: "codex" });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    await executePromptForMachine(input);
+
+    expect(composeCodexCapabilityConfigForConversation).toHaveBeenCalledTimes(
+      1,
+    );
+    expect(applyCapabilityAtTurnStart).toHaveBeenCalledWith({
+      projectPath: "/projects/repo",
+      projectName: "repo",
+      sessionName: "test-session",
+      conversationId: "conv-1",
+      worktreePath: "/projects/repo/.worktrees/test-session",
+      backend: "codex",
+    });
+    expect(applyCapabilityAtTurnStart.mock.invocationCallOrder[0]).toBeLessThan(
+      (codexRuntime.sendTurn as ReturnType<typeof vi.fn>).mock
+        .invocationCallOrder[0]!,
+    );
+  });
+
+  it("does not persist capability runtime state when compose returns undefined", async () => {
+    const mutateConversation: ActorImplementationDeps["mutateConversation"] =
+      vi.fn(async () => {});
+    mockDeps = createMockDeps({
+      composeClaudeCapabilityConfigForConversation: vi.fn(
+        async () => undefined,
+      ),
+      mutateConversation,
+    });
+    setActorDeps(mockDeps);
+
+    const input = makeExecutePromptInput();
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    await executePromptForMachine(input);
+
+    const labels = (
+      mutateConversation as ReturnType<typeof vi.fn>
+    ).mock.calls.map((call) => call[3]);
+    expect(labels).not.toContain("prompt.seedCapabilityRuntime");
   });
 
   it("propagates structuredOutput from TurnResult to PromptActorResult", async () => {

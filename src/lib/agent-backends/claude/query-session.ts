@@ -16,6 +16,7 @@ import type {
   SDKSystemMessage,
   CanUseTool,
   Options,
+  Settings,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { MessageContentBlock, ToolResultMetrics } from "@/types";
 import type { EffortLevel } from "@/lib/schemas";
@@ -125,6 +126,13 @@ export interface QuerySessionOptions {
     schema: Record<string, unknown>;
   };
   /**
+   * Initial SDK Settings object passed to `Options.settings`. The Claude
+   * factory builds this from the translated capability config so the SDK
+   * applies plugin/skill overrides natively at session start instead of
+   * relying on a post-hoc `applyFlagSettings` call.
+   */
+  settings?: Settings;
+  /**
    * Optional handler for "virtual turns" — SDK message sequences that arrive
    * between caller-initiated prompts (e.g. Claude Code's background-task
    * auto-continuation feature). When a message arrives while pendingTurn is
@@ -207,6 +215,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     allowDangerouslySkipPermissions: true,
     disallowedTools: options.disallowedTools,
     ...(options.plugins.length > 0 ? { plugins: options.plugins } : {}),
+    ...(options.settings ? { settings: options.settings } : {}),
     ...(options.outputFormat ? { outputFormat: options.outputFormat } : {}),
     maxTurns: options.maxTurns,
     resume: options.resume,

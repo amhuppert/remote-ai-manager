@@ -3,6 +3,8 @@ import { z } from "zod";
 import { createLogger } from "@/lib/logging";
 import {
   agentBackendSchema,
+  agentCapabilityOverridesSchema,
+  agentCapabilityRuntimeApplicationStateSchema,
   agentSessionRefSchema,
   askQuestionItemSchema,
   conversationStateSchema,
@@ -81,6 +83,8 @@ const conversationsTableRowSchema = z.object({
   backend_ref: z.string().nullable(),
   mcp_overrides: z.string().nullable(),
   mcp_runtime: z.string().nullable(),
+  agent_capability_overrides: z.string().nullable(),
+  agent_capabilities_runtime: z.string().nullable(),
 });
 type ConversationsTableRow = z.infer<typeof conversationsTableRowSchema>;
 
@@ -113,6 +117,8 @@ interface SqlBindRow {
   backend_ref: string | null;
   mcp_overrides: string | null;
   mcp_runtime: string | null;
+  agent_capability_overrides: string | null;
+  agent_capabilities_runtime: string | null;
 }
 
 function stableStringify(value: unknown): string {
@@ -178,6 +184,12 @@ function conversationToSqlBind(
     backend_ref: jsonOrNull(conversation.backendRef),
     mcp_overrides: jsonOrNull(conversation.mcpOverrides),
     mcp_runtime: jsonOrNull(conversation.mcpRuntime),
+    agent_capability_overrides: jsonOrNull(
+      conversation.agentCapabilityOverrides,
+    ),
+    agent_capabilities_runtime: jsonOrNull(
+      conversation.agentCapabilitiesRuntime,
+    ),
   };
 }
 
@@ -373,6 +385,26 @@ function rowToDomain(rawRow: unknown): {
     return logAndThrowValidationFailure(row.id, mcpRuntime.issues);
   }
 
+  const agentCaps = parseJsonColumn(
+    "agentCapabilityOverrides",
+    row.agent_capability_overrides,
+    agentCapabilityOverridesSchema,
+    "absent",
+  );
+  if (!agentCaps.ok) {
+    return logAndThrowValidationFailure(row.id, agentCaps.issues);
+  }
+
+  const agentCapsRuntime = parseJsonColumn(
+    "agentCapabilitiesRuntime",
+    row.agent_capabilities_runtime,
+    agentCapabilityRuntimeApplicationStateSchema,
+    "absent",
+  );
+  if (!agentCapsRuntime.ok) {
+    return logAndThrowValidationFailure(row.id, agentCapsRuntime.issues);
+  }
+
   const candidate: Record<string, unknown> = {
     id: row.id,
     name: row.name,
@@ -404,6 +436,12 @@ function rowToDomain(rawRow: unknown): {
   }
   if (mcpRuntime.value !== undefined) {
     candidate.mcpRuntime = mcpRuntime.value;
+  }
+  if (agentCaps.value !== undefined) {
+    candidate.agentCapabilityOverrides = agentCaps.value;
+  }
+  if (agentCapsRuntime.value !== undefined) {
+    candidate.agentCapabilitiesRuntime = agentCapsRuntime.value;
   }
 
   const result = conversationStateSchema.safeParse(candidate);
@@ -467,43 +505,45 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        total_cost_usd, total_duration_ms, total_turns, pending_question_id,
        pending_questions, pending_prompt_text, forked_from, role, context_tokens, context_window_max,
        debug_mode, machine_snapshot, agent_backend, backend_ref,
-       mcp_overrides, mcp_runtime
+       mcp_overrides, mcp_runtime, agent_capability_overrides, agent_capabilities_runtime
      ) VALUES (
        @id, @project_path, @session_name, @name, @transcript_path, @status,
        @prompt_count, @created_at, @last_activity_at, @source, @summary, @archived,
        @total_cost_usd, @total_duration_ms, @total_turns, @pending_question_id,
        @pending_questions, @pending_prompt_text, @forked_from, @role, @context_tokens, @context_window_max,
        @debug_mode, @machine_snapshot, @agent_backend, @backend_ref,
-       @mcp_overrides, @mcp_runtime
+       @mcp_overrides, @mcp_runtime, @agent_capability_overrides, @agent_capabilities_runtime
      )
      ON CONFLICT(id) DO UPDATE SET
-       project_path        = excluded.project_path,
-       session_name        = excluded.session_name,
-       name                = excluded.name,
-       transcript_path     = excluded.transcript_path,
-       status              = excluded.status,
-       prompt_count        = excluded.prompt_count,
-       created_at          = excluded.created_at,
-       last_activity_at    = excluded.last_activity_at,
-       source              = excluded.source,
-       summary             = excluded.summary,
-       archived            = excluded.archived,
-       total_cost_usd      = excluded.total_cost_usd,
-       total_duration_ms   = excluded.total_duration_ms,
-       total_turns         = excluded.total_turns,
-       pending_question_id = excluded.pending_question_id,
-       pending_questions   = excluded.pending_questions,
-       pending_prompt_text = excluded.pending_prompt_text,
-       forked_from         = excluded.forked_from,
-       role                = excluded.role,
-       context_tokens      = excluded.context_tokens,
-       context_window_max  = excluded.context_window_max,
-       debug_mode          = excluded.debug_mode,
-       machine_snapshot    = excluded.machine_snapshot,
-       agent_backend       = excluded.agent_backend,
-       backend_ref         = excluded.backend_ref,
-       mcp_overrides       = excluded.mcp_overrides,
-       mcp_runtime         = excluded.mcp_runtime`,
+       project_path               = excluded.project_path,
+       session_name               = excluded.session_name,
+       name                       = excluded.name,
+       transcript_path            = excluded.transcript_path,
+       status                     = excluded.status,
+       prompt_count               = excluded.prompt_count,
+       created_at                 = excluded.created_at,
+       last_activity_at           = excluded.last_activity_at,
+       source                     = excluded.source,
+       summary                    = excluded.summary,
+       archived                   = excluded.archived,
+       total_cost_usd             = excluded.total_cost_usd,
+       total_duration_ms          = excluded.total_duration_ms,
+       total_turns                = excluded.total_turns,
+       pending_question_id        = excluded.pending_question_id,
+       pending_questions          = excluded.pending_questions,
+       pending_prompt_text        = excluded.pending_prompt_text,
+       forked_from                = excluded.forked_from,
+       role                       = excluded.role,
+       context_tokens             = excluded.context_tokens,
+       context_window_max         = excluded.context_window_max,
+       debug_mode                 = excluded.debug_mode,
+       machine_snapshot           = excluded.machine_snapshot,
+       agent_backend              = excluded.agent_backend,
+       backend_ref                = excluded.backend_ref,
+       mcp_overrides              = excluded.mcp_overrides,
+       mcp_runtime                = excluded.mcp_runtime,
+       agent_capability_overrides = excluded.agent_capability_overrides,
+       agent_capabilities_runtime = excluded.agent_capabilities_runtime`,
   );
   const deleteStmt = db.prepare(`DELETE FROM conversations WHERE id = ?`);
   const sessionTouchStmt = db.prepare(
