@@ -396,6 +396,80 @@ describe("conversationMachine", () => {
       // backendRef should be cleared so the next prompt starts a fresh thread
       expect(snap.context.backendRef).toBeNull();
     });
+
+    it("preserves Claude backendRef when prompt returns with error and no fresher sessionId", async () => {
+      const machine = makeTestMachine({
+        executePrompt: makeMockExecutePrompt({
+          error: "QuerySession closed while turn was in progress",
+          backendRef: null,
+        }),
+      });
+
+      const actor = createActor(machine, {
+        input: {
+          ...defaultInput,
+          agentBackend: "claude" as const,
+          backendRef: {
+            backend: "claude" as const,
+            sessionId: "sess-abc-123",
+          },
+        },
+      });
+      activeActors.push(actor);
+      actor.start();
+
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Hello",
+        streamId: "s1",
+      });
+
+      await waitForState(actor, "idle");
+
+      const snap = actor.getSnapshot();
+      // Keep the prior sessionId so the next turn can attempt `resume:` —
+      // wiping it would force a brand-new SDK session with no memory of the
+      // earlier turns even though the transcript is intact.
+      expect(snap.context.backendRef).toEqual({
+        backend: "claude",
+        sessionId: "sess-abc-123",
+      });
+    });
+
+    it("adopts fresher Claude sessionId from a failed turn over the prior one", async () => {
+      const machine = makeTestMachine({
+        executePrompt: makeMockExecutePrompt({
+          error: "QuerySession ended before the turn completed",
+          backendRef: { backend: "claude", sessionId: "sess-xyz-789" },
+        }),
+      });
+
+      const actor = createActor(machine, {
+        input: {
+          ...defaultInput,
+          agentBackend: "claude" as const,
+          backendRef: {
+            backend: "claude" as const,
+            sessionId: "sess-abc-123",
+          },
+        },
+      });
+      activeActors.push(actor);
+      actor.start();
+
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Hello",
+        streamId: "s1",
+      });
+
+      await waitForState(actor, "idle");
+
+      expect(actor.getSnapshot().context.backendRef).toEqual({
+        backend: "claude",
+        sessionId: "sess-xyz-789",
+      });
+    });
   });
 
   describe("AskUserQuestion flow", () => {

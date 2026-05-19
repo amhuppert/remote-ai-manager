@@ -372,10 +372,19 @@ export const conversationMachine = setup({
           target: "#conversation.finalizingTurn",
           actions: assign({
             lastResult: ({ event }) => event.output,
-            backendRef: ({ context, event }) =>
-              event.output.error
-                ? (event.output.backendRef ?? null)
-                : (event.output.backendRef ?? context.backendRef),
+            // On error: Codex's threadId is unrecoverable when `codex exec`
+            // exits non-zero, so clear it to force a fresh thread next turn.
+            // Claude session IDs are server-side at Anthropic and a transient
+            // QuerySession failure (subprocess crash, idle TTL) does not
+            // invalidate them — preserve the last-known ref so the next turn
+            // can attempt `resume:`. Wiping it strands the conversation with
+            // a rendered transcript but no agent memory of it.
+            backendRef: ({ context, event }) => {
+              if (event.output.error && context.agentBackend === "codex") {
+                return event.output.backendRef ?? null;
+              }
+              return event.output.backendRef ?? context.backendRef;
+            },
           }),
         },
         onError: {
