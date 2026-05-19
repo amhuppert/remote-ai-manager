@@ -70,13 +70,19 @@ export async function queueMessage(params: QueueMessageParams): Promise<void> {
 
   logger.info("queue.submit", { conversationId, textLength: text.length });
 
-  // Persist to transcript immediately
-  await d.appendTranscriptEntry(conversationId, {
-    timestamp: new Date().toISOString(),
-    type: "user",
-    role: "user",
-    content: [{ type: "text", text }],
-  });
+  // Persist to transcript immediately. `meta` triggers a `message-appended`
+  // broadcast inside `appendTranscriptEntry` once the JSONL append succeeds.
+  await d.appendTranscriptEntry(
+    conversationId,
+    {
+      timestamp: new Date().toISOString(),
+      type: "user",
+      role: "user",
+      content: [{ type: "text", text }],
+    },
+    undefined,
+    { projectName, sessionName },
+  );
 
   // Deliver to the running backend runtime
   await runtime.queueUserInput({ content: [{ type: "text", text }] });

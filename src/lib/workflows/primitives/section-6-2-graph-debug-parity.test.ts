@@ -842,7 +842,6 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
         }),
       },
       getSession: async () => sessionStub as never,
-      emitStreamFrame: vi.fn(),
       runCircuitBreakerGate,
     });
 

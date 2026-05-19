@@ -4,7 +4,8 @@ import { createServer } from "node:net";
 import net from "node:net";
 import { buildChildEnv } from "./child-env";
 import { createLogger } from "./logging";
-import { broadcast as defaultBroadcast } from "./sse-broadcaster";
+import type { BroadcastFn } from "./sse-broadcaster";
+import { publishSessionStatus } from "./workflows/primitives/default-session-status-bus";
 import * as defaultTailscale from "./tailscale";
 import * as liveness from "./dev-server-liveness";
 import { readConfig as defaultReadConfig } from "./config";
@@ -96,7 +97,7 @@ export interface DevServerEntry {
 // ============================================================
 
 export interface DevServerRegistryDeps {
-  broadcast: typeof defaultBroadcast;
+  broadcast: BroadcastFn;
   tailscale: {
     register: typeof defaultTailscale.register;
     unregister: typeof defaultTailscale.unregister;
@@ -131,8 +132,12 @@ export interface DevServerRegistryDeps {
   }): Promise<DevServerSource>;
 }
 
+const defaultRegistryBroadcast: BroadcastFn = (event) => {
+  publishSessionStatus(event);
+};
+
 export const defaultDevServerRegistryDeps: DevServerRegistryDeps = {
-  broadcast: defaultBroadcast,
+  broadcast: defaultRegistryBroadcast,
   tailscale: {
     register: defaultTailscale.register,
     unregister: defaultTailscale.unregister,

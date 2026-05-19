@@ -30,7 +30,6 @@ import {
   activeConversationsResponseSchema,
   type ActiveConversation,
   type ActiveConversationForkedFrom,
-  transcriptMessageSchema,
   contentResponseSchema,
   kiroDocTreeSchema,
   presetsResponseSchema,
@@ -44,6 +43,7 @@ import {
   conversationStateSchema,
   mcpConfigViewResponseSchema,
   mcpToolInventoryResultSchema,
+  transcriptMessageSchema,
 } from "@/lib/schemas";
 import {
   commandsResponseSchema,
@@ -88,7 +88,7 @@ export function useConfigQuery() {
 
 export function useFullConfigQuery() {
   return useQuery({
-    queryKey: configKeys.full,
+    queryKey: configKeys.full(),
     queryFn: () => apiFetch("/api/config", fullConfigResponseSchema),
   });
 }
@@ -243,7 +243,7 @@ export type { ActiveConversation, ActiveConversationForkedFrom };
 
 export function useActiveConversationsQuery() {
   return useQuery({
-    queryKey: conversationKeys.active,
+    queryKey: conversationKeys.active(),
     queryFn: async () => {
       return apiFetch(
         "/api/conversations/active",
@@ -267,6 +267,10 @@ export function useConversationsQuery(
   });
 }
 
+export const stampedTranscriptMessageSchema = transcriptMessageSchema.extend({
+  seq: z.number().int().nonnegative(),
+});
+
 export function useConversationMessagesQuery(
   projectName: string,
   sessionName: string,
@@ -281,7 +285,7 @@ export function useConversationMessagesQuery(
     queryFn: () =>
       apiFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/messages`,
-        z.array(transcriptMessageSchema),
+        z.array(stampedTranscriptMessageSchema),
       ),
   });
 }
@@ -548,7 +552,6 @@ export function useCollaborationListQuery(
   sessionName: string,
   options?: {
     enabled?: boolean;
-    refetchInterval?: number;
     includeAll?: boolean;
   },
 ) {
@@ -563,7 +566,6 @@ export function useCollaborationListQuery(
         collaborationListResponseSchema,
       ).then((r) => r.envelopes),
     enabled: options?.enabled ?? true,
-    refetchInterval: options?.refetchInterval,
   });
 }
 

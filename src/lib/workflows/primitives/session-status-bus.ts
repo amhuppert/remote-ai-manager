@@ -53,7 +53,8 @@ export type SessionStatusScope =
   | "merge_job"
   | "notification"
   | "collaboration"
-  | "workflow";
+  | "workflow"
+  | "dev-server";
 
 export interface SessionStatusScopeResolution {
   scope: SessionStatusScope;
@@ -104,7 +105,16 @@ const SCOPED_STATUS_RECOGNIZED_SCOPES: ReadonlySet<SessionStatusScope> =
     "notification",
     "collaboration",
     "workflow",
+    "dev-server",
   ]);
+
+function mapDevServerStatus(raw: unknown): StatusBusLifecycleStatus {
+  if (raw === "running") return "running";
+  if (raw === "starting") return "running";
+  if (raw === "stopped") return "completed";
+  if (raw === "error") return "failed";
+  return "running";
+}
 
 function narrowScopedStatusScope(raw: unknown): SessionStatusScope {
   if (
@@ -224,6 +234,20 @@ export function resolveSessionStatusScope(
         scope: "notification",
         scopeId: pickString(e.id) ?? FALLBACK_SCOPE_ID,
         status: "completed",
+      };
+    }
+    case "dev-server-status": {
+      const projectName = pickString(e.projectName);
+      const sessionName = pickString(e.sessionName);
+      const serverName = pickString(e.serverName);
+      const scopeId =
+        projectName && sessionName && serverName
+          ? `${projectName}/${sessionName}/${serverName}`
+          : FALLBACK_SCOPE_ID;
+      return {
+        scope: "dev-server",
+        scopeId,
+        status: mapDevServerStatus(e.status),
       };
     }
     case "scoped-status": {

@@ -260,7 +260,11 @@ export async function startMergeDetection(
     });
   });
 
-  // Schedule recurring checks
+  // Server-side scheduler: this runs in the Node runtime started by
+  // `instrumentation.node.ts` and drives `setSessionFinished` /
+  // `retargetOrphanedChildren` plus `session-finished` broadcasts. It is not
+  // feeding a UI `useQuery`, so it cannot be hoisted to TanStack
+  // `refetchInterval` — `setInterval` is the correct primitive here.
   const ref = setInterval(() => {
     void checkAllSessionsForMerge().catch((err) => {
       logger.error("merge-detection.cycle_failed", {

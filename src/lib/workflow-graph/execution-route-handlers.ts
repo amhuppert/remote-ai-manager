@@ -27,7 +27,6 @@ import {
   type ScriptValidatorInput,
   type ScriptValidatorOutcome,
 } from "./script-validator-runner";
-import { emit as emitGraphWorkflowStreamFrame } from "./stream-registry";
 import { createWorkflowStorageService } from "./storage";
 import { buildGraphWorkflowPortableMcp } from "@/lib/mcp-gateway/portable-config";
 import {
@@ -208,13 +207,11 @@ const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
       model: input.model,
       reasoningEffort: input.reasoningEffort,
       toolServer: input.toolServer,
-      emitStreamFrame: input.emitStreamFrame,
       executionTarget: input.executionTarget,
     });
   },
   validationService,
   scriptValidatorService,
-  emitStreamFrame: emitGraphWorkflowStreamFrame,
 });
 const mergeMutex = createPerSessionMergeMutex();
 const sessionGitLock = createSessionGitLock();
@@ -232,7 +229,6 @@ const executionLoop = createGraphWorkflowExecutionLoop({
   soloContextCommitter,
   executionTargetResolver,
   getSession: defaultGetSession,
-  emitStreamFrame: emitGraphWorkflowStreamFrame,
 });
 
 export interface GraphWorkflowExecutionContextMergeProgress {

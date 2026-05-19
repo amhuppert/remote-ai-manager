@@ -1,19 +1,57 @@
-import { addClient, removeClient } from "@/lib/sse-broadcaster";
+import {
+  addClient,
+  removeClient,
+  replayFramesSince,
+} from "@/lib/sse-broadcaster";
 
 export const dynamic = "force-dynamic";
 
 const encoder = new TextEncoder();
+const HEARTBEAT_INTERVAL_MS = 15_000;
 
-export function GET(): Response {
+export function GET(request: Request): Response {
   let savedController: ReadableStreamDefaultController;
+  let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+
+  const lastEventIdHeader = request.headers.get("Last-Event-ID");
+  let lastEventId: number | null = null;
+  if (lastEventIdHeader !== null) {
+    const parsed = Number.parseInt(lastEventIdHeader, 10);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      lastEventId = parsed;
+    }
+  }
 
   const stream = new ReadableStream({
     start(controller) {
       savedController = controller;
       addClient(controller);
+
+      if (lastEventId !== null) {
+        const frames = replayFramesSince(lastEventId);
+        for (const frame of frames) {
+          controller.enqueue(frame);
+        }
+      }
+
       controller.enqueue(encoder.encode(`event: connected\ndata: {}\n\n`));
+
+      heartbeatTimer = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(`: heartbeat\n\n`));
+        } catch {
+          if (heartbeatTimer !== undefined) {
+            clearInterval(heartbeatTimer);
+            heartbeatTimer = undefined;
+          }
+        }
+      }, HEARTBEAT_INTERVAL_MS);
     },
     cancel() {
+      if (heartbeatTimer !== undefined) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = undefined;
+      }
       removeClient(savedController);
     },
   });

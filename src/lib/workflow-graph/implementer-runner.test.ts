@@ -59,28 +59,12 @@ function makeConversation(
 }
 
 describe("graph workflow implementer runner", () => {
-  it("executes claude implementer turns through prompt execution and forwards content frames", async () => {
-    const emitStreamFrame = vi.fn();
-    const executePromptStream = vi.fn(
-      async (
-        _projectPath: string,
-        _session: SessionState,
-        _promptText: string,
-        emit: (event: string, data: unknown) => void,
-      ) => {
-        emit("content", {
-          type: "text",
-          text: "Inspecting the codebase.",
-        });
-        emit("error", { message: "ignored by graph stream" });
-
-        return {
-          conversationId: "conversation-1",
-          contextTokens: 12_345,
-          contextWindowMax: 200_000,
-        };
-      },
-    );
+  it("executes claude implementer turns through prompt execution", async () => {
+    const executePromptStream = vi.fn(async () => ({
+      conversationId: "conversation-1",
+      contextTokens: 12_345,
+      contextWindowMax: 200_000,
+    }));
     const getConversation = vi.fn(async () =>
       makeConversation({
         backendRef: { backend: "claude" as const, sessionId: "sdk-session-1" },
@@ -110,7 +94,6 @@ describe("graph workflow implementer runner", () => {
           },
         ],
       },
-      emitStreamFrame,
     });
 
     expect(executePromptStream).toHaveBeenCalledWith(
@@ -138,15 +121,6 @@ describe("graph workflow implementer runner", () => {
         },
       }),
     );
-    expect(emitStreamFrame).toHaveBeenCalledWith({
-      type: "content",
-      conversationId: "conversation-1",
-      contextId: "context-plan",
-      content: {
-        type: "text",
-        text: "Inspecting the codebase.",
-      },
-    });
     expect(result).toEqual({
       conversationId: "conversation-1",
       contextTokens: 12_345,
@@ -212,65 +186,6 @@ describe("graph workflow implementer runner", () => {
       contextTokens: null,
       contextWindowMax: null,
       sessionRef: { backend: "codex", threadId: "thread-codex-1" },
-    });
-  });
-
-  it("forwards content frames for codex backend", async () => {
-    const emitStreamFrame = vi.fn();
-    const executePromptStream = vi.fn(
-      async (
-        _projectPath: string,
-        _session: SessionState,
-        _promptText: string,
-        emit: (event: string, data: unknown) => void,
-      ) => {
-        emit("content", {
-          type: "text",
-          text: "Codex output",
-        });
-        emit("status", { phase: "thinking" });
-
-        return {
-          conversationId: "conversation-codex",
-          contextTokens: null,
-          contextWindowMax: null,
-        };
-      },
-    );
-    const getConversation = vi.fn(async () =>
-      makeConversation({
-        agentBackend: "codex",
-        backendRef: { backend: "codex" as const, threadId: "thread-codex-2" },
-      }),
-    );
-
-    const runner = createGraphWorkflowImplementerRunner({
-      executePromptStream,
-      getConversation,
-    });
-
-    await runner.runIteration({
-      projectPath: "/repo",
-      session: makeSession(),
-      prompt: "Implement feature",
-      conversationId: "conversation-codex",
-      contextId: "context-impl",
-      backend: "codex",
-      model: "codex-mini",
-      reasoningEffort: "medium",
-      toolServer: { servers: [] },
-      emitStreamFrame,
-    });
-
-    expect(emitStreamFrame).toHaveBeenCalledTimes(1);
-    expect(emitStreamFrame).toHaveBeenCalledWith({
-      type: "content",
-      conversationId: "conversation-codex",
-      contextId: "context-impl",
-      content: {
-        type: "text",
-        text: "Codex output",
-      },
     });
   });
 

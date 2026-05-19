@@ -31,6 +31,7 @@ import type { AgentBackendId } from "@/lib/schemas";
 import {
   getTranscriptPath as defaultGetTranscriptPath,
   safeAppendTranscriptEntry as defaultSafeAppendTranscriptEntry,
+  type TranscriptBroadcastMeta,
   type TranscriptEntry,
 } from "@/lib/transcript";
 import type { ApiError, ConversationState } from "@/types";
@@ -70,6 +71,7 @@ export interface CollaborationRouteDeps {
   appendTranscriptEntry: (
     conversationId: string,
     entry: TranscriptEntry,
+    meta?: TranscriptBroadcastMeta,
   ) => Promise<unknown>;
   /**
    * Resolves the canonical transcript file path for a conversation. Used to
@@ -116,7 +118,14 @@ const defaultDeps: CollaborationRouteDeps = {
   },
   getSession: defaultGetSession,
   readArtifactFile: (absolutePath) => readFile(absolutePath, "utf-8"),
-  appendTranscriptEntry: defaultSafeAppendTranscriptEntry,
+  appendTranscriptEntry: (conversationId, entry, meta) =>
+    defaultSafeAppendTranscriptEntry(
+      conversationId,
+      entry,
+      undefined,
+      undefined,
+      meta,
+    ),
   getTranscriptPath: (conversationId) =>
     defaultGetTranscriptPath(conversationId),
   mutateConversation: defaultMutateConversation,
@@ -322,17 +331,24 @@ export function createCollaborationRouteHandlers(
       }
 
       try {
-        await deps.appendTranscriptEntry(parsed.data.conversationId, {
-          timestamp: new Date().toISOString(),
-          type: "user",
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: `/collab ${parsed.data.brief}`,
-            },
-          ],
-        });
+        await deps.appendTranscriptEntry(
+          parsed.data.conversationId,
+          {
+            timestamp: new Date().toISOString(),
+            type: "user",
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: `/collab ${parsed.data.brief}`,
+              },
+            ],
+          },
+          {
+            projectName: sessionResolution.projectName,
+            sessionName: sessionResolution.sessionName,
+          },
+        );
         const result = await deps.manager.start({
           projectPath: sessionResolution.projectPath,
           sessionName: sessionResolution.sessionName,

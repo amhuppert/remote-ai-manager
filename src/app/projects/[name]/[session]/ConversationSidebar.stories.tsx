@@ -153,7 +153,7 @@ function SidebarHarness({
         queries: { retry: false, staleTime: Infinity, gcTime: Infinity },
       },
     });
-    qc.setQueryData(conversationKeys.active, active);
+    qc.setQueryData(conversationKeys.active(), active);
     return qc;
   }, [active]);
 

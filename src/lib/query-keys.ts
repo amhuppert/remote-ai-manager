@@ -6,15 +6,16 @@ export const projectKeys = {
 
 export const configKeys = {
   all: ["config"] as const,
-  full: ["config", "full"] as const,
+  full: () => [...configKeys.all, "full"] as const,
 };
 
 export const sessionKeys = {
   all: ["sessions"] as const,
-  list: (projectName: string) =>
-    [...sessionKeys.all, "list", projectName] as const,
+  lists: () => [...sessionKeys.all, "list"] as const,
+  details: () => [...sessionKeys.all, "detail"] as const,
+  list: (projectName: string) => [...sessionKeys.lists(), projectName] as const,
   detail: (projectName: string, sessionName: string) =>
-    [...sessionKeys.all, "detail", projectName, sessionName] as const,
+    [...sessionKeys.details(), projectName, sessionName] as const,
   diff: (projectName: string, sessionName: string) =>
     [...sessionKeys.all, "diff", projectName, sessionName] as const,
   commits: (projectName: string, sessionName: string) =>
@@ -25,12 +26,13 @@ export const sessionKeys = {
 
 export const referenceDocumentKeys = {
   all: ["reference-documents"] as const,
+  lists: () => [...referenceDocumentKeys.all, "list"] as const,
+  contents: () => [...referenceDocumentKeys.all, "content"] as const,
   list: (projectName: string, sessionName: string) =>
-    [...referenceDocumentKeys.all, "list", projectName, sessionName] as const,
+    [...referenceDocumentKeys.lists(), projectName, sessionName] as const,
   content: (projectName: string, sessionName: string, documentId: string) =>
     [
-      ...referenceDocumentKeys.all,
-      "content",
+      ...referenceDocumentKeys.contents(),
       projectName,
       sessionName,
       documentId,
@@ -39,17 +41,19 @@ export const referenceDocumentKeys = {
 
 export const conversationKeys = {
   all: ["conversations"] as const,
-  active: ["conversations", "active"] as const,
+  active: () => [...conversationKeys.all, "active"] as const,
+  lists: () => [...conversationKeys.all, "list"] as const,
+  details: () => [...conversationKeys.all, "detail"] as const,
+  messagesAll: () => [...conversationKeys.all, "messages"] as const,
   list: (projectName: string, sessionName: string) =>
-    [...conversationKeys.all, "list", projectName, sessionName] as const,
+    [...conversationKeys.lists(), projectName, sessionName] as const,
   messages: (
     projectName: string,
     sessionName: string,
     conversationId: string,
   ) =>
     [
-      ...conversationKeys.all,
-      "messages",
+      ...conversationKeys.messagesAll(),
       projectName,
       sessionName,
       conversationId,
@@ -58,29 +62,33 @@ export const conversationKeys = {
 
 export const workflowDefinitionKeys = {
   all: ["workflow-definitions"] as const,
+  lists: () => [...workflowDefinitionKeys.all, "list"] as const,
+  details: () => [...workflowDefinitionKeys.all, "detail"] as const,
   list: (projectName: string) =>
-    [...workflowDefinitionKeys.all, "list", projectName] as const,
+    [...workflowDefinitionKeys.lists(), projectName] as const,
   detail: (projectName: string, workflowId: string) =>
-    [...workflowDefinitionKeys.all, "detail", projectName, workflowId] as const,
+    [...workflowDefinitionKeys.details(), projectName, workflowId] as const,
 };
 
 export const fileKeys = {
   all: ["files"] as const,
-  list: (projectName: string) =>
-    [...fileKeys.all, "list", projectName] as const,
+  lists: () => [...fileKeys.all, "list"] as const,
+  list: (projectName: string) => [...fileKeys.lists(), projectName] as const,
   sessionList: (projectName: string, sessionName: string) =>
-    [...fileKeys.all, "list", projectName, sessionName] as const,
+    [...fileKeys.lists(), projectName, sessionName] as const,
 };
 
 export const commandKeys = {
   all: ["commands"] as const,
+  lists: () => [...commandKeys.all, "list"] as const,
+  projectLists: () => [...commandKeys.all, "project-list"] as const,
   list: (
     projectName: string,
     sessionName: string,
     backend: "claude" | "codex" = "claude",
-  ) => [...commandKeys.all, "list", projectName, sessionName, backend] as const,
+  ) => [...commandKeys.lists(), projectName, sessionName, backend] as const,
   projectList: (projectName: string) =>
-    [...commandKeys.all, "project-list", projectName] as const,
+    [...commandKeys.projectLists(), projectName] as const,
 };
 
 export const notificationKeys = {
@@ -90,22 +98,23 @@ export const notificationKeys = {
 
 export const devServerKeys = {
   all: ["dev-servers"] as const,
+  lists: () => [...devServerKeys.all, "list"] as const,
   list: (projectName: string, sessionName: string) =>
-    [...devServerKeys.all, "list", projectName, sessionName] as const,
+    [...devServerKeys.lists(), projectName, sessionName] as const,
 };
 
 export const presetKeys = {
   all: ["presets"] as const,
-  list: (projectName: string) =>
-    [...presetKeys.all, "list", projectName] as const,
+  lists: () => [...presetKeys.all, "list"] as const,
+  list: (projectName: string) => [...presetKeys.lists(), projectName] as const,
 };
 
 export const debugLogKeys = {
   all: ["debug-logs"] as const,
+  statsAll: () => [...debugLogKeys.all, "stats"] as const,
   stats: (projectName: string, sessionName: string, conversationId: string) =>
     [
-      ...debugLogKeys.all,
-      "stats",
+      ...debugLogKeys.statsAll(),
       projectName,
       sessionName,
       conversationId,
@@ -114,10 +123,10 @@ export const debugLogKeys = {
 
 export const imageIndexKeys = {
   all: ["image-index"] as const,
+  counts: () => [...imageIndexKeys.all, "count"] as const,
   count: (projectName: string, sessionName: string, conversationId: string) =>
     [
-      ...imageIndexKeys.all,
-      "count",
+      ...imageIndexKeys.counts(),
       projectName,
       sessionName,
       conversationId,
@@ -127,18 +136,26 @@ export const imageIndexKeys = {
 export const mcpConfigKeys = {
   all: ["mcp-config"] as const,
   global: () => [...mcpConfigKeys.all, "global"] as const,
+  projects: () => [...mcpConfigKeys.all, "project"] as const,
+  sessions: () => [...mcpConfigKeys.all, "session"] as const,
+  conversations: () => [...mcpConfigKeys.all, "conversation"] as const,
   project: (projectName: string) =>
-    [...mcpConfigKeys.all, "project", projectName] as const,
+    [...mcpConfigKeys.projects(), projectName] as const,
+  sessionsInProject: (projectName: string) =>
+    [...mcpConfigKeys.sessions(), projectName] as const,
   session: (projectName: string, sessionName: string) =>
-    [...mcpConfigKeys.all, "session", projectName, sessionName] as const,
+    [...mcpConfigKeys.sessions(), projectName, sessionName] as const,
+  conversationsInProject: (projectName: string) =>
+    [...mcpConfigKeys.conversations(), projectName] as const,
+  conversationsInSession: (projectName: string, sessionName: string) =>
+    [...mcpConfigKeys.conversations(), projectName, sessionName] as const,
   conversation: (
     projectName: string,
     sessionName: string,
     conversationId: string,
   ) =>
     [
-      ...mcpConfigKeys.all,
-      "conversation",
+      ...mcpConfigKeys.conversations(),
       projectName,
       sessionName,
       conversationId,
@@ -147,6 +164,7 @@ export const mcpConfigKeys = {
 
 export const mcpToolsKeys = {
   all: ["mcp-tools"] as const,
+  inventories: () => [...mcpToolsKeys.all, "inventory"] as const,
   inventory: (
     projectName: string,
     sessionName: string,
@@ -154,7 +172,7 @@ export const mcpToolsKeys = {
     serverKey: string,
   ) =>
     [
-      ...mcpToolsKeys.all,
+      ...mcpToolsKeys.inventories(),
       projectName,
       sessionName,
       conversationId,
@@ -194,14 +212,17 @@ export const agentCapabilityKeys = {
 
 export const collaborationKeys = {
   all: ["collaboration"] as const,
+  lists: () => [...collaborationKeys.all, "list"] as const,
+  listsAll: () => [...collaborationKeys.all, "listAll"] as const,
+  details: () => [...collaborationKeys.all, "detail"] as const,
+  artifacts: () => [...collaborationKeys.all, "artifact"] as const,
   list: (projectName: string, sessionName: string) =>
-    [...collaborationKeys.all, "list", projectName, sessionName] as const,
+    [...collaborationKeys.lists(), projectName, sessionName] as const,
   listAll: (projectName: string, sessionName: string) =>
-    [...collaborationKeys.all, "listAll", projectName, sessionName] as const,
+    [...collaborationKeys.listsAll(), projectName, sessionName] as const,
   detail: (projectName: string, sessionName: string, workflowId: string) =>
     [
-      ...collaborationKeys.all,
-      "detail",
+      ...collaborationKeys.details(),
       projectName,
       sessionName,
       workflowId,
@@ -213,8 +234,7 @@ export const collaborationKeys = {
     artifactType: string,
   ) =>
     [
-      ...collaborationKeys.all,
-      "artifact",
+      ...collaborationKeys.artifacts(),
       projectName,
       sessionName,
       workflowId,
@@ -224,14 +244,10 @@ export const collaborationKeys = {
 
 export const kiroDocKeys = {
   all: ["kiro-docs"] as const,
+  trees: () => [...kiroDocKeys.all, "tree"] as const,
+  files: () => [...kiroDocKeys.all, "file"] as const,
   tree: (projectName: string, sessionName?: string) =>
-    [...kiroDocKeys.all, "tree", projectName, sessionName ?? ""] as const,
+    [...kiroDocKeys.trees(), projectName, sessionName ?? ""] as const,
   file: (projectName: string, filePath: string, sessionName?: string) =>
-    [
-      ...kiroDocKeys.all,
-      "file",
-      projectName,
-      sessionName ?? "",
-      filePath,
-    ] as const,
+    [...kiroDocKeys.files(), projectName, sessionName ?? "", filePath] as const,
 };

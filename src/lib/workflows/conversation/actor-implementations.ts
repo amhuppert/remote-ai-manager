@@ -34,7 +34,10 @@ import type {
 } from "@/types";
 import { assembleUserContentBlocks } from "./assemble-user-blocks";
 import { buildUserTranscriptBlocks } from "./build-user-transcript-blocks";
-import type { TranscriptEntry } from "@/lib/transcript";
+import type {
+  TranscriptEntry,
+  TranscriptBroadcastMeta,
+} from "@/lib/transcript";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { ConversationApplyResult } from "@/lib/mcp/runtime-apply";
 import { computeEffectiveConfigHash } from "@/lib/mcp/runtime-apply";
@@ -176,10 +179,13 @@ export interface ActorImplementationDeps {
   getProjectDisplayName(projectPath: string): string;
   getDebugLogUrl(conversationId: string): string;
 
-  // Transcript I/O
+  // Transcript I/O. `meta` is forwarded to `appendTranscriptEntry` so callers
+  // that know the project + session identity (the conversation turn actor and
+  // external-turn handler) can trigger the `message-appended` SSE broadcast.
   safeAppendTranscriptEntry(
     conversationId: string,
     entry: TranscriptEntry,
+    meta?: TranscriptBroadcastMeta,
   ): Promise<void>;
   saveTranscriptImage(
     conversationId: string,
@@ -442,7 +448,18 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     acquireQuerySlot: semaphoreMod.acquireQuerySlot,
     getTranscriptPath: transcriptMod.getTranscriptPath,
     readConfig: configMod.readConfig,
-    safeAppendTranscriptEntry: transcriptMod.safeAppendTranscriptEntry,
+    safeAppendTranscriptEntry: (
+      cid: string,
+      entry: TranscriptEntry,
+      meta?: TranscriptBroadcastMeta,
+    ) =>
+      transcriptMod.safeAppendTranscriptEntry(
+        cid,
+        entry,
+        undefined,
+        undefined,
+        meta,
+      ),
     saveTranscriptImage: transcriptImagesMod.saveTranscriptImage,
     getNextImageIndex: transcriptImagesMod.getNextImageIndex,
     getConversationBackendFactory: registryMod.getConversationBackendFactory,
@@ -1071,6 +1088,16 @@ export async function executePromptForMachine(
   const projectName =
     input.projectName || deps.getProjectDisplayName(input.projectPath);
 
+  const broadcastMeta: TranscriptBroadcastMeta = {
+    projectName,
+    sessionName: input.sessionName,
+  };
+  const safeAppendWithMeta = (
+    conversationId: string,
+    entry: TranscriptEntry,
+  ): Promise<void> =>
+    deps.safeAppendTranscriptEntry(conversationId, entry, broadcastMeta);
+
   // Resolve backend-specific model and effort defaults
   const { effectiveModel, effectiveEffort } = resolveBackendTurnSettings(
     input.agentBackend,
@@ -1158,7 +1185,7 @@ export async function executePromptForMachine(
         : [];
 
   // Persist user prompt in transcript
-  await deps.safeAppendTranscriptEntry(input.conversationId, {
+  await safeAppendWithMeta(input.conversationId, {
     timestamp: new Date().toISOString(),
     type: "user",
     role: "user",
@@ -1349,7 +1376,7 @@ export async function executePromptForMachine(
         sendToMachine: (event) => runtimeState.sendToMachine?.(event),
       },
       {
-        safeAppendTranscriptEntry: deps.safeAppendTranscriptEntry,
+        safeAppendTranscriptEntry: safeAppendWithMeta,
         applyCapabilityWhenIdle:
           input.agentBackend === "claude"
             ? (port) => deps.applyCapabilityWhenIdle(port)
@@ -1436,7 +1463,7 @@ export async function executePromptForMachine(
         });
         if (event.backendRef.backend === "codex") {
           pendingTranscriptWrites.push(
-            deps.safeAppendTranscriptEntry(input.conversationId, {
+            safeAppendWithMeta(input.conversationId, {
               timestamp: new Date().toISOString(),
               type: "system",
               raw: {
@@ -1477,7 +1504,7 @@ export async function executePromptForMachine(
           input.conversationId,
           runtimeState.streamEmit ?? (() => {}),
           contentBlocks,
-          deps.safeAppendTranscriptEntry,
+          safeAppendWithMeta,
         );
         break;
       }
@@ -1725,7 +1752,7 @@ export async function executePromptForMachine(
     });
 
     for (const entry of transcriptEntries) {
-      await deps.safeAppendTranscriptEntry(input.conversationId, entry);
+      await safeAppendWithMeta(input.conversationId, entry);
     }
   }
 
@@ -1739,7 +1766,7 @@ export async function executePromptForMachine(
     turnResult?.structuredOutput != null &&
     !turnResult.error
   ) {
-    await deps.safeAppendTranscriptEntry(input.conversationId, {
+    await safeAppendWithMeta(input.conversationId, {
       timestamp: new Date().toISOString(),
       type: "assistant",
       role: "assistant",

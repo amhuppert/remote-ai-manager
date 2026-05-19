@@ -416,13 +416,14 @@ describe("collaboration route handlers — START", () => {
 
     expect(response.status).toBe(202);
     expect(appendTranscriptEntry).toHaveBeenCalledTimes(1);
-    const [convId, entry] = appendTranscriptEntry.mock.calls[0]!;
+    const [convId, entry, meta] = appendTranscriptEntry.mock.calls[0]!;
     expect(convId).toBe("conv-trans");
     expect(entry).toMatchObject({
       type: "user",
       role: "user",
       content: [{ type: "text", text: "/collab investigate flaky test" }],
     });
+    expect(meta).toEqual({ projectName: "example", sessionName: "sess-1" });
     expect(order).toEqual(["transcript", "manager.start"]);
     expect(startCalls).toHaveLength(1);
   });

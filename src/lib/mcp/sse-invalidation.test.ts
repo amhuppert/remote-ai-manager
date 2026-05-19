@@ -23,14 +23,14 @@ describe("computeMcpConfigInvalidations", () => {
 
     // The prefix must cover every session within the project. Session keys
     // look like ["mcp-config","session", projectName, sessionName]; a single
-    // prefix ["mcp-config","session", projectName] captures them all.
+    // prefix from sessionsInProject captures them all.
     expect(result).toContainEqual({
-      queryKey: ["mcp-config", "session", "my-project"],
+      queryKey: mcpConfigKeys.sessionsInProject("my-project"),
     });
 
     // Likewise every conversation view under this project.
     expect(result).toContainEqual({
-      queryKey: ["mcp-config", "conversation", "my-project"],
+      queryKey: mcpConfigKeys.conversationsInProject("my-project"),
     });
 
     expect(result).toHaveLength(3);
@@ -51,7 +51,7 @@ describe("computeMcpConfigInvalidations", () => {
       queryKey: mcpConfigKeys.session("p", "s"),
     });
     expect(result).toContainEqual({
-      queryKey: ["mcp-config", "conversation", "p", "s"],
+      queryKey: mcpConfigKeys.conversationsInSession("p", "s"),
     });
     expect(result).toHaveLength(2);
   });

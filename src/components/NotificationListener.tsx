@@ -9,13 +9,15 @@ import {
   notificationKeys,
   devServerKeys,
   debugLogKeys,
-  agentCapabilityKeys,
   mcpConfigKeys,
   mcpToolsKeys,
   collaborationKeys,
 } from "@/lib/query-keys";
 import { computeAgentCapabilityInvalidations } from "@/lib/agent-capabilities/sse-invalidation";
 import { computeMcpConfigInvalidations } from "@/lib/mcp/sse-invalidation";
+import { reconnectReconcile } from "@/lib/sse-reconnect";
+import { backgroundJobSchema } from "@/lib/schemas";
+import { z } from "zod";
 import {
   conversationStatusEventSchema,
   jobStatusEventSchema,
@@ -33,7 +35,16 @@ import {
   mcpConfigUpdatedEventSchema,
   mcpToolsUpdatedEventSchema,
   scopedStatusEventSchema,
+  messageAppendedEventSchema,
+  messageUpdatedEventSchema,
+  conversationCreatedEventSchema,
+  conversationRenamedEventSchema,
+  conversationArchivedEventSchema,
+  askQuestionEventSchema,
+  sessionFinishedEventSchema,
+  debugModeStatusEventSchema,
 } from "@/lib/schemas";
+import type { ConversationState } from "@/types";
 import {
   useAddOrUpdateJob,
   useReconcileJobs,
@@ -84,18 +95,18 @@ export default function NotificationListener(): null {
     };
 
     es.addEventListener("conversation-status", (event) => {
-      void queryClient.invalidateQueries({
-        queryKey: conversationKeys.active,
-      });
-      void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
-      void queryClient.invalidateQueries({ queryKey: projectKeys.list() });
-
       try {
         const parsed = JSON.parse(event.data);
         const result = conversationStatusEventSchema.safeParse(parsed);
         if (!result.success) return;
         const data = result.data;
 
+        void queryClient.invalidateQueries({
+          queryKey: conversationKeys.active(),
+        });
+        void queryClient.invalidateQueries({
+          queryKey: sessionKeys.detail(data.projectName, data.sessionName),
+        });
         void queryClient.invalidateQueries({
           queryKey: conversationKeys.messages(
             data.projectName,
@@ -142,15 +153,124 @@ export default function NotificationListener(): null {
       }
     });
 
-    es.addEventListener("ask-question", () => {
-      void queryClient.invalidateQueries({
-        queryKey: conversationKeys.active,
-      });
-      void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+    es.addEventListener("message-appended", (event) => {
+      const parsed = messageAppendedEventSchema.safeParse(
+        JSON.parse(event.data),
+      );
+      if (!parsed.success) return;
+      const d = parsed.data;
+      queryClient.setQueryData(
+        conversationKeys.messages(
+          d.projectName,
+          d.sessionName,
+          d.conversationId,
+        ),
+        (prev: unknown) => {
+          const entry = { ...d.message, seq: d.seq };
+          return Array.isArray(prev) ? [...prev, entry] : [entry];
+        },
+      );
     });
 
-    es.addEventListener("session-finished", () => {
-      void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+    es.addEventListener("message-updated", (event) => {
+      const parsed = messageUpdatedEventSchema.safeParse(
+        JSON.parse(event.data),
+      );
+      if (!parsed.success) return;
+      const d = parsed.data;
+      queryClient.setQueryData(
+        conversationKeys.messages(
+          d.projectName,
+          d.sessionName,
+          d.conversationId,
+        ),
+        (prev: unknown) => {
+          if (!Array.isArray(prev)) return prev;
+          const replacement = { ...d.message, seq: d.seq };
+          return prev.map((m) =>
+            m && typeof m === "object" && "seq" in m && m.seq === d.seq
+              ? replacement
+              : m,
+          );
+        },
+      );
+    });
+
+    es.addEventListener("conversation-created", (event) => {
+      const parsed = conversationCreatedEventSchema.safeParse(
+        JSON.parse(event.data),
+      );
+      if (!parsed.success) return;
+      const d = parsed.data;
+      queryClient.setQueryData(
+        conversationKeys.list(d.projectName, d.sessionName),
+        (prev: unknown) =>
+          Array.isArray(prev) ? [...prev, d.conversation] : [d.conversation],
+      );
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.active(),
+      });
+    });
+
+    es.addEventListener("conversation-renamed", (event) => {
+      const parsed = conversationRenamedEventSchema.safeParse(
+        JSON.parse(event.data),
+      );
+      if (!parsed.success) return;
+      const d = parsed.data;
+      queryClient.setQueryData(
+        conversationKeys.list(d.projectName, d.sessionName),
+        (prev: unknown) => {
+          if (!Array.isArray(prev)) return prev;
+          return prev.map((c) =>
+            c && typeof c === "object" && "id" in c && c.id === d.conversationId
+              ? { ...(c as ConversationState), name: d.name }
+              : c,
+          );
+        },
+      );
+    });
+
+    es.addEventListener("conversation-archived", (event) => {
+      const parsed = conversationArchivedEventSchema.safeParse(
+        JSON.parse(event.data),
+      );
+      if (!parsed.success) return;
+      const d = parsed.data;
+      queryClient.setQueryData(
+        conversationKeys.list(d.projectName, d.sessionName),
+        (prev: unknown) => {
+          if (!Array.isArray(prev)) return prev;
+          return prev.map((c) =>
+            c && typeof c === "object" && "id" in c && c.id === d.conversationId
+              ? { ...(c as ConversationState), archived: d.archived }
+              : c,
+          );
+        },
+      );
+    });
+
+    es.addEventListener("ask-question", (event) => {
+      const parsed = askQuestionEventSchema.safeParse(JSON.parse(event.data));
+      if (!parsed.success) return;
+      const d = parsed.data;
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.active(),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(d.projectName, d.sessionName),
+      });
+    });
+
+    es.addEventListener("session-finished", (event) => {
+      const parsed = sessionFinishedEventSchema.safeParse(
+        JSON.parse(event.data),
+      );
+      if (!parsed.success) return;
+      const d = parsed.data;
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(d.projectName, d.sessionName),
+      });
     });
 
     es.addEventListener("job-status", (event) => {
@@ -168,7 +288,9 @@ export default function NotificationListener(): null {
             data.jobType === "commit" ||
             data.jobType === "resolve-conflicts")
         ) {
-          void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+          void queryClient.invalidateQueries({
+            queryKey: sessionKeys.detail(data.projectName, data.sessionName),
+          });
         }
       } catch {
         // best-effort: ignore malformed events
@@ -207,16 +329,23 @@ export default function NotificationListener(): null {
     });
 
     // --- Debug Mode SSE events ---
-    es.addEventListener("debug-mode-status", () => {
+    es.addEventListener("debug-mode-status", (event) => {
+      const parsed = debugModeStatusEventSchema.safeParse(
+        JSON.parse(event.data),
+      );
+      if (!parsed.success) return;
+      const d = parsed.data;
       void queryClient.invalidateQueries({
-        queryKey: conversationKeys.active,
+        queryKey: conversationKeys.active(),
       });
-      void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(d.projectName, d.sessionName),
+      });
     });
 
     es.addEventListener("debug-log-received", (event) => {
       void queryClient.invalidateQueries({
-        queryKey: conversationKeys.active,
+        queryKey: conversationKeys.active(),
       });
       try {
         const parsed = debugLogReceivedEventSchema.parse(
@@ -249,7 +378,6 @@ export default function NotificationListener(): null {
       void queryClient.invalidateQueries({
         queryKey: sessionKeys.detail(projectName, sessionName),
       });
-      void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
     };
 
     es.addEventListener("graph-workflow-status", (event) => {
@@ -363,7 +491,6 @@ export default function NotificationListener(): null {
             queryKey: collaborationKeys.all,
           });
           void queryClient.invalidateQueries({ queryKey: sessionDetail });
-          void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
           // The slice writes the final answer onto the conversation
           // transcript via `appendTranscriptEntry`, and progress envelopes
           // can also land while the messages query has stopped polling —
@@ -377,7 +504,7 @@ export default function NotificationListener(): null {
               workflowId: string;
               conversationId: string | null;
             }>;
-          }>(conversationKeys.active);
+          }>(conversationKeys.active());
           const collab = activeData?.activeCollaborationExecutions.find(
             (c) => c.workflowId === data.scopeId,
           );
@@ -391,7 +518,7 @@ export default function NotificationListener(): null {
             });
           }
           void queryClient.invalidateQueries({
-            queryKey: conversationKeys.active,
+            queryKey: conversationKeys.active(),
           });
           void queryClient.invalidateQueries({
             queryKey: projectKeys.list(),
@@ -400,7 +527,6 @@ export default function NotificationListener(): null {
         }
         if (data.scope === "workflow") {
           void queryClient.invalidateQueries({ queryKey: sessionDetail });
-          void queryClient.invalidateQueries({ queryKey: sessionKeys.all });
           return;
         }
       } catch {
@@ -495,36 +621,12 @@ export default function NotificationListener(): null {
     };
 
     es.onopen = () => {
-      if (hadErrorRef.current) {
-        hadErrorRef.current = false;
-        // Reconnected after error — refetch to reconcile missed events
-        void queryClient.invalidateQueries({
-          queryKey: notificationKeys.all,
-        });
-        void queryClient.invalidateQueries({
-          queryKey: devServerKeys.all,
-        });
-        void queryClient.invalidateQueries({
-          queryKey: sessionKeys.all,
-        });
-        void queryClient.invalidateQueries({
-          queryKey: mcpConfigKeys.all,
-        });
-        void queryClient.invalidateQueries({
-          queryKey: mcpToolsKeys.all,
-        });
-        void queryClient.invalidateQueries({
-          queryKey: agentCapabilityKeys.all,
-        });
-
-        // Reconcile stale running jobs with server-side truth
-        void fetch("/api/jobs")
-          .then((res) => (res.ok ? res.json() : null))
-          .then((data) => {
-            if (data?.jobs) reconcileJobs(data.jobs);
-          })
-          .catch(() => {});
-      }
+      if (!hadErrorRef.current) return;
+      hadErrorRef.current = false;
+      void reconnectReconcile(queryClient, (jobs) => {
+        const parsed = z.array(backgroundJobSchema).safeParse(jobs);
+        if (parsed.success) reconcileJobs(parsed.data);
+      });
     };
 
     return () => {

@@ -12,7 +12,7 @@ function makeQueryClient(): QueryClient {
         staleTime: 30_000,
         gcTime: 300_000,
         retry: 1,
-        refetchOnWindowFocus: true,
+        refetchOnWindowFocus: false,
       },
     },
   });

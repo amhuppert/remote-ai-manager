@@ -1,8 +1,6 @@
 import { createLogger } from "./logging";
-import {
-  broadcast as defaultBroadcast,
-  type BroadcastFn,
-} from "./sse-broadcaster";
+import type { BroadcastFn } from "./sse-broadcaster";
+import { publishSessionStatus } from "./workflows/primitives/default-session-status-bus";
 import {
   defaultPortOwnershipService,
   type PortOwnershipInput,
@@ -289,10 +287,14 @@ function defaultGetRegistry(): Map<string, DevServerEntry> {
   );
 }
 
+const defaultReconcilerBroadcast: BroadcastFn = (event) => {
+  publishSessionStatus(event);
+};
+
 export const defaultDevServerReconciliationDeps: DevServerReconciliationDeps = {
   classifyPortOwnership: defaultPortOwnershipService.classifyPort,
   resolveScanStrategy: getPresetScanHint,
-  broadcast: defaultBroadcast,
+  broadcast: defaultReconcilerBroadcast,
   getRegistry: defaultGetRegistry,
 };
 

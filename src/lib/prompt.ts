@@ -291,17 +291,26 @@ async function getDefaultPromptDeps(): Promise<PromptDeps> {
     detachPromptStream: manager.detachPromptStream,
     sendConversationEvent: manager.sendConversationEvent,
     async dispatchCollabStart(input) {
-      await transcriptMod.safeAppendTranscriptEntry(input.conversationId, {
-        timestamp: new Date().toISOString(),
-        type: "user",
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: `/collab ${input.brief}`,
-          },
-        ],
-      });
+      await transcriptMod.safeAppendTranscriptEntry(
+        input.conversationId,
+        {
+          timestamp: new Date().toISOString(),
+          type: "user",
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: `/collab ${input.brief}`,
+            },
+          ],
+        },
+        undefined,
+        undefined,
+        {
+          projectName: getProjectDisplayName(input.projectPath),
+          sessionName: input.sessionName,
+        },
+      );
       const collabManager = collabModule.getDefaultCollaborationManager();
       const startInput: Parameters<typeof collabManager.start>[0] = {
         projectPath: input.projectPath,

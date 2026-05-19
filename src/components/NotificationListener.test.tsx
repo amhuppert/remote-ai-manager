@@ -255,7 +255,7 @@ describe("NotificationListener", () => {
     expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: sessionKeys.detail("proj", "sess"),
     });
-    expect(invalidateQueries).toHaveBeenCalledWith({
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
       queryKey: sessionKeys.all,
     });
   });
@@ -294,7 +294,7 @@ describe("NotificationListener", () => {
   // can flip false before the final transcript flush).
   it("invalidates the targeted conversation's messages (scoped to workflowId via active-conversations cache) on scoped-status events with scope=collaboration so the transcript refetches without a cache-wide refetch storm", async () => {
     const client = makeClient();
-    client.setQueryData(conversationKeys.active, {
+    client.setQueryData(conversationKeys.active(), {
       conversations: [],
       graphWorkflowExecutions: [],
       activeCollaborationExecutions: [
@@ -367,7 +367,7 @@ describe("NotificationListener", () => {
         queryKey: sessionKeys.detail("proj", "sess"),
       }),
     );
-    expect(invalidateQueries).toHaveBeenCalledWith({
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
       queryKey: sessionKeys.all,
     });
     expect(invalidateQueries).not.toHaveBeenCalledWith({
@@ -403,6 +403,207 @@ describe("NotificationListener", () => {
     });
     expect(invalidateQueries).not.toHaveBeenCalledWith({
       queryKey: sessionKeys.detail("proj", "sess"),
+    });
+  });
+
+  it("appends to the cached messages query on message-appended without invalidating", async () => {
+    const client = makeClient();
+    const key = conversationKeys.messages("proj", "sess", "conv-1");
+    client.setQueryData(key, [
+      {
+        role: "user",
+        content: [{ type: "text", text: "hi" }],
+        timestamp: null,
+        seq: 0,
+      },
+    ]);
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("message-appended", {
+      type: "message-appended",
+      projectName: "proj",
+      sessionName: "sess",
+      conversationId: "conv-1",
+      seq: 1,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "hello" }],
+        timestamp: null,
+      },
+    });
+
+    await waitFor(() => {
+      const cached = client.getQueryData<Array<{ seq: number }>>(key);
+      expect(cached?.length).toBe(2);
+    });
+    const cached = client.getQueryData<Array<{ seq: number }>>(key);
+    expect(cached?.[1]?.seq).toBe(1);
+    expect(invalidateQueries).not.toHaveBeenCalledWith({ queryKey: key });
+  });
+
+  it("replaces the matching entry by seq on message-updated without invalidating", async () => {
+    const client = makeClient();
+    const key = conversationKeys.messages("proj", "sess", "conv-1");
+    client.setQueryData(key, [
+      {
+        role: "user",
+        content: [{ type: "text", text: "hi" }],
+        timestamp: null,
+        seq: 0,
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "partial" }],
+        timestamp: null,
+        seq: 1,
+      },
+    ]);
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("message-updated", {
+      type: "message-updated",
+      projectName: "proj",
+      sessionName: "sess",
+      conversationId: "conv-1",
+      seq: 1,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "complete" }],
+        timestamp: null,
+      },
+    });
+
+    await waitFor(() => {
+      const cached =
+        client.getQueryData<
+          Array<{ seq: number; content: Array<{ text: string }> }>
+        >(key);
+      expect(cached?.[1]?.content[0]?.text).toBe("complete");
+    });
+    expect(invalidateQueries).not.toHaveBeenCalledWith({ queryKey: key });
+  });
+
+  it("appends new conversations to the list cache on conversation-created and invalidates active", async () => {
+    const client = makeClient();
+    const listKey = conversationKeys.list("proj", "sess");
+    client.setQueryData(listKey, [
+      { id: "conv-1", name: null, archived: false },
+    ]);
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("conversation-created", {
+      type: "conversation-created",
+      projectName: "proj",
+      sessionName: "sess",
+      conversation: {
+        id: "conv-2",
+        name: null,
+        transcriptPath: null,
+        status: "new",
+        promptCount: 0,
+        createdAt: "2026-04-28T00:00:00.000Z",
+        lastActivityAt: "2026-04-28T00:00:00.000Z",
+        source: "cc",
+        summary: null,
+        archived: false,
+        totalCostUsd: null,
+        totalDurationMs: null,
+        totalTurns: null,
+        pendingQuestionId: null,
+        pendingQuestions: null,
+        pendingPromptText: null,
+        forkedFrom: null,
+        role: null,
+        contextTokens: null,
+        contextWindowMax: null,
+        debugMode: null,
+        machineSnapshot: null,
+        agentBackend: "claude",
+        backendRef: null,
+      },
+    });
+
+    await waitFor(() => {
+      const cached = client.getQueryData<Array<{ id: string }>>(listKey);
+      expect(cached?.map((c) => c.id)).toEqual(["conv-1", "conv-2"]);
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: conversationKeys.active(),
+    });
+  });
+
+  it("renames the matching entry in the cached list on conversation-renamed", async () => {
+    const client = makeClient();
+    const listKey = conversationKeys.list("proj", "sess");
+    client.setQueryData(listKey, [
+      { id: "conv-1", name: null, archived: false },
+      { id: "conv-2", name: "keep", archived: false },
+    ]);
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("conversation-renamed", {
+      type: "conversation-renamed",
+      projectName: "proj",
+      sessionName: "sess",
+      conversationId: "conv-1",
+      name: "renamed",
+    });
+
+    await waitFor(() => {
+      const cached =
+        client.getQueryData<Array<{ id: string; name: string | null }>>(
+          listKey,
+        );
+      expect(cached?.find((c) => c.id === "conv-1")?.name).toBe("renamed");
+      expect(cached?.find((c) => c.id === "conv-2")?.name).toBe("keep");
+    });
+  });
+
+  it("toggles the archived flag on the matching entry on conversation-archived", async () => {
+    const client = makeClient();
+    const listKey = conversationKeys.list("proj", "sess");
+    client.setQueryData(listKey, [
+      { id: "conv-1", name: null, archived: false },
+      { id: "conv-2", name: null, archived: false },
+    ]);
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("conversation-archived", {
+      type: "conversation-archived",
+      projectName: "proj",
+      sessionName: "sess",
+      conversationId: "conv-2",
+      archived: true,
+    });
+
+    await waitFor(() => {
+      const cached =
+        client.getQueryData<Array<{ id: string; archived: boolean }>>(listKey);
+      expect(cached?.find((c) => c.id === "conv-2")?.archived).toBe(true);
+      expect(cached?.find((c) => c.id === "conv-1")?.archived).toBe(false);
     });
   });
 });

@@ -7,10 +7,8 @@ import {
   _installTestDb as _installSharedStateDb,
   _resetForTesting as _resetSharedStateDb,
 } from "./state-store/state-db";
-import {
-  broadcast as defaultBroadcast,
-  type BroadcastFn,
-} from "./sse-broadcaster";
+import type { BroadcastFn } from "./sse-broadcaster";
+import { publishSessionStatus } from "./workflows/primitives/default-session-status-bus";
 import { createLogger } from "./logging";
 import {
   notificationSchema,
@@ -26,6 +24,10 @@ import type {
 } from "@/types";
 import { PersistenceError } from "./errors";
 import { dispatchPushForNotification } from "./push-dispatcher";
+
+const defaultBroadcast: BroadcastFn = (event) => {
+  publishSessionStatus(event);
+};
 
 type Db = InstanceType<typeof Database>;
 

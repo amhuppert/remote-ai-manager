@@ -7,6 +7,23 @@ import type { ApiError } from "@/types";
 
 export const dynamic = "force-dynamic";
 
+// Publication audit (server-broadcasts context, task: audit-tdd-route):
+// This route mutates session.tddEnabled, which is read by clients via the
+// cached sessionKeys.list/detail queries. The originating client picks up
+// the change via the mutation's onSuccess invalidation (see
+// useTddToggleMutation in src/lib/mutations.ts).
+// Cross-client sync would benefit from an SSE event, but none of the events
+// defined in the foundation-event-contract catalog (`message-appended`,
+// `message-updated`, `conversation-created`, `conversation-renamed`,
+// `conversation-archived`) carries a session-level setting toggle, and the
+// existing `conversation-status` event is conversation-scoped (not
+// session-scoped). Per the audit-tdd-route task instructions, no new event
+// schema is added here — that belongs to a future foundation-event-contract
+// extension.
+// TODO(sse-improvements): introduce a session-setting-changed event (or
+// equivalent) so other clients pick up TDD toggles without window-focus
+// refetch (which is being disabled in the polling-focus-cleanup context).
+
 /** PATCH /api/projects/[name]/sessions/[session]/tdd — toggle TDD mode */
 export const PATCH = withTracing(async (request, { params }) => {
   const resolvedParams = await params;

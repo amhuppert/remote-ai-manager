@@ -10,7 +10,6 @@ import {
   IterationHaltedError,
 } from "./iteration-orchestrator";
 import { IterationFailureWithProgressError } from "./iteration-failure-with-progress";
-import type { GraphWorkflowStreamFrame } from "@/lib/workflow-graph/stream-registry";
 import type {
   ResolveImplementerCallInput,
   RecordClaudeLaneTurnInput,
@@ -514,98 +513,6 @@ describe("graph workflow iteration orchestrator", () => {
       "completed",
     );
     expect(result.execution.activeContextIds).toEqual(["context-implement"]);
-  });
-
-  it("emits live stream frames for iteration boundaries and agent content", async () => {
-    const repository = createRepository(
-      createExecutionWithPlanTasks({
-        "task-plan-1": "pending",
-        "task-plan-2": "pending",
-      }),
-    );
-    const createConversation = vi.fn(async () => ({ id: "conversation-4" }));
-    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
-    const emittedFrames: GraphWorkflowStreamFrame[] = [];
-    const runAgentIteration = vi.fn(async (input) => {
-      input.emitStreamFrame?.({
-        type: "content",
-        conversationId: input.conversationId,
-        contextId: input.contextId,
-        content: {
-          type: "text",
-          text: "Inspecting the codebase.",
-        },
-      });
-
-      const current = structuredClone(repository.read());
-      current.taskStates["task-plan-1"] = {
-        ...current.taskStates["task-plan-1"]!,
-        status: "completed",
-        summary: "Inspected the codebase",
-        completedAt: "2026-03-27T16:32:00.000Z",
-      };
-      current.taskStates["task-plan-2"] = {
-        ...current.taskStates["task-plan-2"]!,
-        status: "completed",
-        summary: "Done",
-        completedAt: "2026-03-27T16:32:00.000Z",
-      };
-      current.contextStates["context-plan"] = {
-        ...current.contextStates["context-plan"]!,
-        completedTaskCount: 2,
-      };
-
-      await repository.mutateActive("/repo", "session-1", () => current);
-      return {
-        conversationId: "conv-mock",
-        contextTokens: 50_000,
-        contextWindowMax: 200_000,
-      };
-    });
-
-    const orchestrator = createGraphWorkflowIterationOrchestrator({
-      executionRepository: repository,
-      createConversation,
-      createToolServer,
-      runAgentIteration,
-      emitStreamFrame(_projectPath, _sessionName, frame) {
-        emittedFrames.push(frame);
-      },
-      now() {
-        return "2026-03-27T16:30:00.000Z";
-      },
-    });
-
-    await orchestrator.runIteration({
-      projectPath: "/repo",
-      projectName: "repo",
-      sessionName: "session-1",
-      contextId: "context-plan",
-    });
-
-    expect(emittedFrames).toEqual([
-      {
-        type: "iteration-boundary",
-        conversationId: "conversation-4",
-        contextId: "context-plan",
-        status: "started",
-      },
-      {
-        type: "content",
-        conversationId: "conversation-4",
-        contextId: "context-plan",
-        content: {
-          type: "text",
-          text: "Inspecting the codebase.",
-        },
-      },
-      {
-        type: "iteration-boundary",
-        conversationId: "conversation-4",
-        contextId: "context-plan",
-        status: "completed",
-      },
-    ]);
   });
 
   it("sends follow-up messages when agent stops with incomplete tasks and context has room", async () => {

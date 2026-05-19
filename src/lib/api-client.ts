@@ -9,7 +9,6 @@ import { z } from "zod";
 import {
   sessionStateSchema,
   commitLogEntrySchema,
-  messageContentBlockSchema,
   workflowDefinitionRecordSchema,
   workflowGeneratedDraftSchema,
   agentBackendSchema,
@@ -183,15 +182,6 @@ export const activeConversationsResponseSchema = z.object({
   activeCollaborationExecutions: z
     .array(activeCollaborationExecutionSchema)
     .default([]),
-});
-
-// -- Transcript --
-export const transcriptMessageSchema = z.object({
-  role: z.enum(["user", "assistant"]),
-  content: z.array(messageContentBlockSchema),
-  timestamp: z.string().nullable(),
-  model: z.string().optional(),
-  effort: z.string().optional(),
 });
 
 // -- Content (focus doc, kiro doc file) --

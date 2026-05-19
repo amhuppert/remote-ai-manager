@@ -156,7 +156,6 @@ interface BuildHarnessInput {
   iterationOrchestrator: GraphWorkflowExecutionLoopDeps["iterationOrchestrator"];
   recoverRetryableIterationError?: GraphWorkflowExecutionLoopWorkflowManager["recoverRetryableIterationError"];
   runCircuitBreakerGate?: GraphWorkflowExecutionLoopDeps["runCircuitBreakerGate"];
-  emitStreamFrame?: GraphWorkflowExecutionLoopDeps["emitStreamFrame"];
   scheduleEligibleContexts?: GraphWorkflowExecutionLoopWorkflowManager["scheduleEligibleContexts"];
   executionTargetResolver?: ExecutionTargetResolver;
   parallelWorktrees?: ParallelWorktrees;
@@ -322,7 +321,6 @@ function buildHarness(input: BuildHarnessInput): LoopHarness {
     soloContextCommitter,
     executionTargetResolver,
     getSession,
-    emitStreamFrame: input.emitStreamFrame ?? vi.fn(),
     runCircuitBreakerGate: input.runCircuitBreakerGate,
   };
 
@@ -1386,11 +1384,8 @@ describe("execution loop", () => {
       completedAt: "2026-03-27T12:10:00.000Z",
     };
 
-    const emitStreamFrame = vi.fn();
-
     const harness = buildHarness({
       initialExecution: initial,
-      emitStreamFrame,
       iterationOrchestrator: {
         async runIteration(): Promise<GraphWorkflowIterationResult> {
           harness.setCurrent(haltedExecution);
@@ -1413,10 +1408,6 @@ describe("execution loop", () => {
 
     expect(harness.sendSpy).not.toHaveBeenCalled();
     expect(harness.recordPendingHaltReasonSpy).not.toHaveBeenCalled();
-    expect(emitStreamFrame).toHaveBeenCalledWith("/repo", "session-1", {
-      type: "done",
-      reason: "validator_infra_error",
-    });
     expect(result.status).toBe("halted");
     expect(result.haltReason?.type).toBe("validator_infra_error");
   });

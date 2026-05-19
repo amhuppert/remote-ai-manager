@@ -30,10 +30,6 @@ import {
   type GraphWorkflowValidationService,
 } from "@/lib/workflow-graph/execution-validation";
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
-import {
-  emit as defaultEmitStreamFrame,
-  type GraphWorkflowStreamFrame,
-} from "@/lib/workflow-graph/stream-registry";
 import type { ScriptValidatorOutcome } from "@/lib/workflow-graph/script-validator-runner";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import {
@@ -94,7 +90,6 @@ export interface GraphWorkflowRunAgentIterationInput {
   model: string;
   reasoningEffort: string;
   toolServer: unknown;
-  emitStreamFrame?(frame: GraphWorkflowStreamFrame): void;
   /**
    * Resolved per-context execution target. When the context is isolated in a
    * sub-worktree (parallel batch), this carries the sub-worktree path and
@@ -161,11 +156,6 @@ export interface GraphWorkflowIterationOrchestratorDeps {
   scriptValidatorService?: IterationOrchestratorScriptValidatorService;
   createTaskId?(): string;
   now?(): string;
-  emitStreamFrame?(
-    projectPath: string,
-    sessionName: string,
-    frame: GraphWorkflowStreamFrame,
-  ): void;
   eventPublisher?: ReturnType<
     typeof createGraphWorkflowExecutionEventPublisher
   >;
@@ -482,18 +472,6 @@ export function createGraphWorkflowIterationOrchestrator(
     threshold: number,
   ): boolean {
     return runCircuitBreakerGate({ failureCount, threshold }).status === "fail";
-  }
-
-  function emitStreamFrame(
-    projectPath: string,
-    sessionName: string,
-    frame: GraphWorkflowStreamFrame,
-  ): void {
-    (deps.emitStreamFrame ?? defaultEmitStreamFrame)(
-      projectPath,
-      sessionName,
-      frame,
-    );
   }
 
   async function requireExecution(
@@ -1508,13 +1486,6 @@ export function createGraphWorkflowIterationOrchestrator(
     let completedTurnCount = 0;
 
     try {
-      emitStreamFrame(input.projectPath, input.sessionName, {
-        type: "iteration-boundary",
-        conversationId: conversation.id,
-        contextId: input.contextId,
-        status: "started",
-      });
-
       const agentCallBase = {
         projectPath: input.projectPath,
         projectName: input.projectName,
@@ -1526,8 +1497,6 @@ export function createGraphWorkflowIterationOrchestrator(
         model: context.implementer.model,
         reasoningEffort: context.implementer.reasoningEffort,
         toolServer: toolServer.server,
-        emitStreamFrame: (frame: GraphWorkflowStreamFrame) =>
-          emitStreamFrame(input.projectPath, input.sessionName, frame),
         executionTarget: input.executionTarget,
       } as const;
 
@@ -1723,13 +1692,6 @@ export function createGraphWorkflowIterationOrchestrator(
         input,
         execLogger,
         onHalt: haltIteration,
-      });
-
-      emitStreamFrame(input.projectPath, input.sessionName, {
-        type: "iteration-boundary",
-        conversationId: conversation.id,
-        contextId: input.contextId,
-        status: "completed",
       });
     } catch (error) {
       if (!(error instanceof IterationHaltedError)) {

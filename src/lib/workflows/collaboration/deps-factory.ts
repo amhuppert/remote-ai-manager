@@ -169,7 +169,10 @@ export function createCollaborationDeps(
       });
     },
     appendTranscriptEntry: (conversationId, entry) =>
-      safeAppendTranscriptEntry(conversationId, entry),
+      safeAppendTranscriptEntry(conversationId, entry, undefined, undefined, {
+        projectName,
+        sessionName,
+      }),
     markConversationAwaiting: (conversationId) =>
       defaultMutateConversation(
         input.projectPath,

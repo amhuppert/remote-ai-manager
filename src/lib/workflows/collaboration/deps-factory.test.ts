@@ -21,6 +21,14 @@ import {
   createStatusBus,
   type StatusBusEnvelope,
 } from "@/lib/workflows/primitives/status-bus";
+import {
+  setTranscriptDeps,
+  _resetTranscriptDepsForTesting,
+} from "@/lib/transcript";
+import type { SSEEvent } from "@/lib/schemas";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 function makeStubCallAgent(): AsymmetricCollaborationSliceDeps["callAgent"] {
   return vi.fn(async () => {
@@ -125,5 +133,49 @@ describe("createCollaborationDeps", () => {
     expect(a.laneService).not.toBe(b.laneService);
     expect(a.laneScheduler).toBe(b.laneScheduler);
     expect(a.statusBus).not.toBe(b.statusBus);
+  });
+
+  it("threads projectName + sessionName as meta when invoking transcript append, so message-appended broadcasts fire on collaboration transcript writes", async () => {
+    const tmpRoot = await mkdtemp(join(tmpdir(), "deps-factory-meta-"));
+    const events: SSEEvent[] = [];
+    const previousConfigDir = process.env["CC_CONFIG_DIR"];
+    process.env["CC_CONFIG_DIR"] = tmpRoot;
+    setTranscriptDeps({
+      broadcast: (event) => {
+        events.push(event);
+      },
+    });
+    try {
+      const deps = createCollaborationDeps({
+        ...baseInput,
+        callAgent: makeStubCallAgent(),
+        projectName: "example",
+      });
+
+      await deps.appendTranscriptEntry!("conv-A", {
+        timestamp: "2026-04-28T10:00:00.000Z",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      });
+
+      expect(events).toHaveLength(1);
+      const event = events[0]!;
+      expect(event.type).toBe("message-appended");
+      if (event.type === "message-appended") {
+        expect(event.projectName).toBe("example");
+        expect(event.sessionName).toBe("collab-session");
+        expect(event.conversationId).toBe("conv-A");
+        expect(event.seq).toBe(0);
+      }
+    } finally {
+      _resetTranscriptDepsForTesting();
+      if (previousConfigDir === undefined) {
+        delete process.env["CC_CONFIG_DIR"];
+      } else {
+        process.env["CC_CONFIG_DIR"] = previousConfigDir;
+      }
+      await rm(tmpRoot, { recursive: true, force: true });
+    }
   });
 });

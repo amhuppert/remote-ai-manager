@@ -8,6 +8,7 @@
  * UI sees the same effective config another client just patched.
  */
 
+import { mcpConfigKeys } from "@/lib/query-keys";
 import type { McpConfigLevel } from "@/lib/schemas";
 
 export interface McpConfigEventIdentifiers {
@@ -34,41 +35,34 @@ export interface McpQueryKeyMatcher {
  *   within that session.
  * - A `conversation` event invalidates only that conversation view.
  *
- * The `mcp-config` root segment is shared across all four scopes; the function
- * uses increasingly specific prefixes so TanStack's prefix-match invalidation
- * touches exactly the right subtree.
+ * Every prefix is built from `mcpConfigKeys` so changes to the factory ripple
+ * through the cascade without manual updates.
  */
 export function computeMcpConfigInvalidations(
   event: McpConfigEventIdentifiers,
 ): readonly McpQueryKeyMatcher[] {
-  const root = ["mcp-config"] as const;
-
   if (event.level === "global") {
-    return [{ queryKey: root }];
+    return [{ queryKey: mcpConfigKeys.all }];
   }
 
   if (event.level === "project") {
     if (!event.projectName) return [];
     return [
-      { queryKey: [...root, "project", event.projectName] },
-      { queryKey: [...root, "session", event.projectName] },
-      { queryKey: [...root, "conversation", event.projectName] },
+      { queryKey: mcpConfigKeys.project(event.projectName) },
+      { queryKey: mcpConfigKeys.sessionsInProject(event.projectName) },
+      { queryKey: mcpConfigKeys.conversationsInProject(event.projectName) },
     ];
   }
 
   if (event.level === "session") {
     if (!event.projectName || !event.sessionName) return [];
     return [
+      { queryKey: mcpConfigKeys.session(event.projectName, event.sessionName) },
       {
-        queryKey: [...root, "session", event.projectName, event.sessionName],
-      },
-      {
-        queryKey: [
-          ...root,
-          "conversation",
+        queryKey: mcpConfigKeys.conversationsInSession(
           event.projectName,
           event.sessionName,
-        ],
+        ),
       },
     ];
   }
@@ -78,13 +72,11 @@ export function computeMcpConfigInvalidations(
   }
   return [
     {
-      queryKey: [
-        ...root,
-        "conversation",
+      queryKey: mcpConfigKeys.conversation(
         event.projectName,
         event.sessionName,
         event.conversationId,
-      ],
+      ),
     },
   ];
 }

@@ -257,6 +257,14 @@ export const messageContentBlockSchema = z.discriminatedUnion("type", [
 ]);
 export type MessageContentBlock = z.infer<typeof messageContentBlockSchema>;
 
+export const transcriptMessageSchema = z.object({
+  role: z.enum(["user", "assistant"]),
+  content: z.array(messageContentBlockSchema),
+  timestamp: z.string().nullable(),
+  model: z.string().optional(),
+  effort: z.string().optional(),
+});
+
 // AskUserQuestion schemas (defined before conversationStateSchema which references them)
 export const askQuestionOptionSchema = z.object({
   label: z.string(),
@@ -2537,6 +2545,58 @@ export type ConversationStatusEvent = z.infer<
   typeof conversationStatusEventSchema
 >;
 
+export const messageAppendedEventSchema = z.object({
+  type: z.literal("message-appended"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  conversationId: z.string(),
+  seq: z.number().int().nonnegative(),
+  message: transcriptMessageSchema,
+});
+export type MessageAppendedEvent = z.infer<typeof messageAppendedEventSchema>;
+
+export const messageUpdatedEventSchema = z.object({
+  type: z.literal("message-updated"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  conversationId: z.string(),
+  seq: z.number().int().nonnegative(),
+  message: transcriptMessageSchema,
+});
+export type MessageUpdatedEvent = z.infer<typeof messageUpdatedEventSchema>;
+
+export const conversationCreatedEventSchema = z.object({
+  type: z.literal("conversation-created"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  conversation: conversationStateSchema,
+});
+export type ConversationCreatedEvent = z.infer<
+  typeof conversationCreatedEventSchema
+>;
+
+export const conversationRenamedEventSchema = z.object({
+  type: z.literal("conversation-renamed"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  conversationId: z.string(),
+  name: z.string().nullable(),
+});
+export type ConversationRenamedEvent = z.infer<
+  typeof conversationRenamedEventSchema
+>;
+
+export const conversationArchivedEventSchema = z.object({
+  type: z.literal("conversation-archived"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  conversationId: z.string(),
+  archived: z.boolean(),
+});
+export type ConversationArchivedEvent = z.infer<
+  typeof conversationArchivedEventSchema
+>;
+
 // ============================================================
 // AskUserQuestion Event Schemas
 // ============================================================
@@ -2833,6 +2893,11 @@ export type ScopedStatusEvent = z.infer<typeof scopedStatusEventSchema>;
 /** SSE event type */
 export type SSEEvent =
   | ConversationStatusEvent
+  | MessageAppendedEvent
+  | MessageUpdatedEvent
+  | ConversationCreatedEvent
+  | ConversationRenamedEvent
+  | ConversationArchivedEvent
   | AskQuestionEvent
   | JobStatusEvent
   | SessionFinishedEvent

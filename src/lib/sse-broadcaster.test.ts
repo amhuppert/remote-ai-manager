@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   addClient,
   removeClient,
   broadcast,
   getClientCount,
+  replayFramesSince,
   _resetForTesting,
 } from "./sse-broadcaster";
 import type { ConversationStatusEvent } from "@/types";
@@ -79,7 +80,7 @@ describe("sse-broadcaster", () => {
     broadcast(TEST_EVENT);
 
     const decoder = new TextDecoder();
-    const expected = `event: conversation-status\ndata: ${JSON.stringify(TEST_EVENT)}\n\n`;
+    const expected = `id: 1\nevent: conversation-status\ndata: ${JSON.stringify(TEST_EVENT)}\n\n`;
 
     expect(decoder.decode(client1.chunks[0])).toBe(expected);
     expect(decoder.decode(client2.chunks[0])).toBe(expected);
@@ -123,6 +124,165 @@ describe("sse-broadcaster", () => {
     removeClient(c1.controller);
     removeClient(c3.controller);
     expect(getClientCount()).toBe(0);
+  });
+});
+
+describe("sse-broadcaster seq + replay buffer", () => {
+  const ORIGINAL_BUFFER_ENV = process.env.CC_SSE_REPLAY_BUFFER_SIZE;
+
+  afterEach(() => {
+    if (ORIGINAL_BUFFER_ENV === undefined) {
+      delete process.env.CC_SSE_REPLAY_BUFFER_SIZE;
+    } else {
+      process.env.CC_SSE_REPLAY_BUFFER_SIZE = ORIGINAL_BUFFER_ENV;
+    }
+  });
+
+  it("seq increments by 1 per broadcast", () => {
+    const { controller, chunks } = makeController();
+    addClient(controller);
+
+    broadcast(TEST_EVENT);
+    broadcast(TEST_EVENT);
+    broadcast(TEST_EVENT);
+
+    const decoder = new TextDecoder();
+    expect(decoder.decode(chunks[0])).toMatch(/^id: 1\n/);
+    expect(decoder.decode(chunks[1])).toMatch(/^id: 2\n/);
+    expect(decoder.decode(chunks[2])).toMatch(/^id: 3\n/);
+  });
+
+  it("id: line is the first line of the frame", () => {
+    const { controller, chunks } = makeController();
+    addClient(controller);
+
+    broadcast(TEST_EVENT);
+
+    const decoder = new TextDecoder();
+    const frame = decoder.decode(chunks[0]);
+    const firstLine = frame.split("\n")[0];
+    expect(firstLine).toBe("id: 1");
+  });
+
+  it("ring buffer evicts oldest entries when size exceeds CC_SSE_REPLAY_BUFFER_SIZE", () => {
+    process.env.CC_SSE_REPLAY_BUFFER_SIZE = "3";
+    _resetForTesting();
+
+    broadcast(TEST_EVENT); // seq 1
+    broadcast(TEST_EVENT); // seq 2
+    broadcast(TEST_EVENT); // seq 3
+    broadcast(TEST_EVENT); // seq 4 (evicts 1)
+    broadcast(TEST_EVENT); // seq 5 (evicts 2)
+
+    // Buffer now holds seq 3,4,5. Asking from the oldest-minus-one (2) is the
+    // boundary where the catch-up is still complete.
+    const all = replayFramesSince(2);
+    expect(all).toHaveLength(3);
+    const decoder = new TextDecoder();
+    expect(decoder.decode(all[0])).toMatch(/^id: 3\n/);
+    expect(decoder.decode(all[1])).toMatch(/^id: 4\n/);
+    expect(decoder.decode(all[2])).toMatch(/^id: 5\n/);
+  });
+
+  it("replayFramesSince(0) returns all buffered frames", () => {
+    broadcast(TEST_EVENT);
+    broadcast(TEST_EVENT);
+    broadcast(TEST_EVENT);
+
+    const frames = replayFramesSince(0);
+    expect(frames).toHaveLength(3);
+  });
+
+  it("replayFramesSince(currentSeq) returns empty", () => {
+    broadcast(TEST_EVENT);
+    broadcast(TEST_EVENT);
+    broadcast(TEST_EVENT);
+
+    expect(replayFramesSince(3)).toHaveLength(0);
+  });
+
+  it("replayFramesSince(currentSeq - N) returns up to N frames", () => {
+    for (let i = 0; i < 150; i++) {
+      broadcast(TEST_EVENT);
+    }
+
+    const frames = replayFramesSince(50);
+    expect(frames).toHaveLength(100);
+    const decoder = new TextDecoder();
+    expect(decoder.decode(frames[0])).toMatch(/^id: 51\n/);
+    expect(decoder.decode(frames[99])).toMatch(/^id: 150\n/);
+  });
+
+  it("replayFramesSince returns empty when lastEventId is older than buffer's oldest (gap)", () => {
+    process.env.CC_SSE_REPLAY_BUFFER_SIZE = "3";
+    _resetForTesting();
+
+    broadcast(TEST_EVENT); // seq 1
+    broadcast(TEST_EVENT); // seq 2
+    broadcast(TEST_EVENT); // seq 3
+    broadcast(TEST_EVENT); // seq 4 (evicts 1; buffer holds 2,3,4)
+
+    // lastEventId = 0 implies the client expects to receive seq 1, but seq 1
+    // has been evicted. The replay window has a gap, so signal "cannot
+    // catch up" by returning empty instead of a partial replay.
+    expect(replayFramesSince(0)).toHaveLength(0);
+  });
+
+  it("replayFramesSince returns frames when lastEventId + 1 equals the oldest buffered seq (no gap)", () => {
+    process.env.CC_SSE_REPLAY_BUFFER_SIZE = "3";
+    _resetForTesting();
+
+    broadcast(TEST_EVENT); // seq 1
+    broadcast(TEST_EVENT); // seq 2
+    broadcast(TEST_EVENT); // seq 3
+    broadcast(TEST_EVENT); // seq 4 (evicts 1; buffer holds 2,3,4)
+
+    const frames = replayFramesSince(1);
+    expect(frames).toHaveLength(3);
+    const decoder = new TextDecoder();
+    expect(decoder.decode(frames[0])).toMatch(/^id: 2\n/);
+  });
+
+  it("invalid CC_SSE_REPLAY_BUFFER_SIZE falls back to default 256", () => {
+    process.env.CC_SSE_REPLAY_BUFFER_SIZE = "foo";
+    _resetForTesting();
+
+    for (let i = 0; i < 300; i++) {
+      broadcast(TEST_EVENT);
+    }
+
+    // Buffer holds the last 256 frames (seq 45..300); oldest = 45.
+    // Replay from oldest - 1 (= 44) is the boundary where the catch-up is
+    // still complete; from anything older the new gap rule returns empty.
+    expect(replayFramesSince(44)).toHaveLength(256);
+    expect(replayFramesSince(0)).toHaveLength(0);
+  });
+
+  it("zero or negative CC_SSE_REPLAY_BUFFER_SIZE falls back to default 256", () => {
+    process.env.CC_SSE_REPLAY_BUFFER_SIZE = "0";
+    _resetForTesting();
+
+    for (let i = 0; i < 300; i++) {
+      broadcast(TEST_EVENT);
+    }
+
+    expect(replayFramesSince(44)).toHaveLength(256);
+  });
+
+  it("_resetForTesting clears seq back to 0 and empties the buffer", () => {
+    broadcast(TEST_EVENT);
+    broadcast(TEST_EVENT);
+    expect(replayFramesSince(0)).toHaveLength(2);
+
+    _resetForTesting();
+
+    expect(replayFramesSince(0)).toHaveLength(0);
+
+    const { controller, chunks } = makeController();
+    addClient(controller);
+    broadcast(TEST_EVENT);
+    const decoder = new TextDecoder();
+    expect(decoder.decode(chunks[0])).toMatch(/^id: 1\n/);
   });
 });
 

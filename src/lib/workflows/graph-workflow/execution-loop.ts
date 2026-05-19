@@ -8,10 +8,6 @@ import {
   type DirtyPath,
 } from "./errors";
 import {
-  emit as defaultEmitStreamFrame,
-  type GraphWorkflowStreamFrame,
-} from "@/lib/workflow-graph/stream-registry";
-import {
   runCircuitBreakerGate as defaultRunCircuitBreakerGate,
   type CircuitBreakerGateResult,
   type RunCircuitBreakerGateInput,
@@ -106,11 +102,6 @@ export interface GraphWorkflowExecutionLoopDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<SessionState | null>;
-  emitStreamFrame?(
-    projectPath: string,
-    sessionName: string,
-    frame: GraphWorkflowStreamFrame,
-  ): void;
   /**
    * Optional override for the shared circuit-breaker gate primitive. The loop
    * routes the per-context "consecutive failures hit threshold" decision
@@ -130,18 +121,6 @@ export interface GraphWorkflowExecutionLoopDeps {
   getSessionWorktreeDirtyPaths?: (input: {
     sessionWorktreePath: string;
   }) => Promise<DirtyPath[]>;
-}
-
-function emitDone(
-  deps: GraphWorkflowExecutionLoopDeps,
-  projectPath: string,
-  sessionName: string,
-  reason: string,
-): void {
-  (deps.emitStreamFrame ?? defaultEmitStreamFrame)(projectPath, sessionName, {
-    type: "done",
-    reason,
-  });
 }
 
 // -- Active loop registry -----------------------------------------------------
@@ -936,12 +915,6 @@ export function createGraphWorkflowExecutionLoop(
         }
       }
 
-      emitDone(
-        deps,
-        input.projectPath,
-        input.sessionName,
-        execution.haltReason?.type ?? execution.status,
-      );
       return execution;
     } catch (error) {
       execLogger?.lifecycle("loop.recovery_error", {
@@ -971,12 +944,6 @@ export function createGraphWorkflowExecutionLoop(
         projectPath: input.projectPath,
         sessionName: input.sessionName,
       });
-      emitDone(
-        deps,
-        input.projectPath,
-        input.sessionName,
-        haltedExecution.haltReason?.type ?? "recovery_error",
-      );
       return haltedExecution;
     } finally {
       activeLoops.delete(key);

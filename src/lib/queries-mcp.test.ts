@@ -68,6 +68,7 @@ describe("MCP query keys", () => {
     expect(mcpToolsKeys.all).toEqual(["mcp-tools"]);
     expect(mcpToolsKeys.inventory("p", "s", "c", "server-1")).toEqual([
       "mcp-tools",
+      "inventory",
       "p",
       "s",
       "c",

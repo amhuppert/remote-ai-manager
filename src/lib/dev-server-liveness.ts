@@ -1,8 +1,6 @@
 import { createLogger } from "./logging";
-import {
-  broadcast as defaultBroadcast,
-  type BroadcastFn,
-} from "./sse-broadcaster";
+import type { BroadcastFn } from "./sse-broadcaster";
+import { publishSessionStatus } from "./workflows/primitives/default-session-status-bus";
 import * as tailscale from "./tailscale";
 import { readConfig } from "./config";
 import { defaultPortOwnershipService } from "./dev-server-port-ownership";
@@ -32,10 +30,14 @@ export interface LivenessDeps {
 
 let _deps: LivenessDeps | null = null;
 
+const defaultLivenessBroadcast: BroadcastFn = (event) => {
+  publishSessionStatus(event);
+};
+
 function getDeps(): LivenessDeps {
   if (!_deps) {
     _deps = {
-      broadcast: defaultBroadcast,
+      broadcast: defaultLivenessBroadcast,
       unregister: tailscale.unregister,
       classifyPortOwnership: defaultPortOwnershipService.classifyPort,
     };

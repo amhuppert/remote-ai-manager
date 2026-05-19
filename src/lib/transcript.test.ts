@@ -1,15 +1,20 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { writeFile, mkdir, rm, readFile } from "node:fs/promises";
 import path from "node:path";
 import {
   readConversationMessages,
+  readConversationMessagesWithSeq,
   appendTranscriptEntry,
   getTranscriptPath,
   parseCommandContent,
   copyTranscriptUpTo,
   findForkAnchorUuid,
+  setTranscriptDeps,
+  _resetTranscriptDepsForTesting,
   type TranscriptEntry,
 } from "./transcript";
+import { messageAppendedEventSchema } from "./schemas";
+import type { SSEEvent } from "./schemas";
 
 const TEST_DIR = path.join("/tmp", "cc-transcript-test-" + Date.now());
 
@@ -474,6 +479,101 @@ describe("readConversationMessages", () => {
       ],
       timestamp: "2024-01-01T00:00:00Z",
     });
+  });
+});
+
+// ==========================================================================
+// readConversationMessagesWithSeq
+// ==========================================================================
+
+describe("readConversationMessagesWithSeq", () => {
+  it("returns [] for null path", async () => {
+    expect(await readConversationMessagesWithSeq(null)).toEqual([]);
+  });
+
+  it("returns [] for non-existent file", async () => {
+    expect(
+      await readConversationMessagesWithSeq("/tmp/missing-xyz.jsonl"),
+    ).toEqual([]);
+  });
+
+  it("stamps seq with the 0-based JSONL line index of each entry", async () => {
+    const filePath = path.join(TEST_DIR, "transcripts", "seq-basic.jsonl");
+    const lines = [
+      JSON.stringify({
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "a" }],
+      }),
+      JSON.stringify({
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "b" }],
+      }),
+      JSON.stringify({
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "c" }],
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const result = await readConversationMessagesWithSeq(filePath);
+    expect(result.map((m) => m.seq)).toEqual([0, 1, 2]);
+  });
+
+  it("uses the last contributing line index for merged consecutive entries", async () => {
+    const filePath = path.join(TEST_DIR, "transcripts", "seq-merged.jsonl");
+    const lines = [
+      JSON.stringify({
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "ask" }],
+      }),
+      JSON.stringify({
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "first" }],
+      }),
+      JSON.stringify({
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "second" }],
+      }),
+      JSON.stringify({
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "third" }],
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const result = await readConversationMessagesWithSeq(filePath);
+    expect(result).toHaveLength(2);
+    expect(result[0]!.seq).toBe(0);
+    // Merged assistant turn ends at line 3
+    expect(result[1]!.seq).toBe(3);
+  });
+
+  it("does not advance seq for non-visible lines between visible entries", async () => {
+    const filePath = path.join(TEST_DIR, "transcripts", "seq-skip.jsonl");
+    const lines = [
+      JSON.stringify({
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "a" }],
+      }),
+      JSON.stringify({ type: "system", raw: { subtype: "init" } }),
+      JSON.stringify({
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "b" }],
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const result = await readConversationMessagesWithSeq(filePath);
+    expect(result.map((m) => m.seq)).toEqual([0, 2]);
   });
 });
 
@@ -1287,5 +1387,152 @@ describe("copyTranscriptUpTo (inclusive)", () => {
 
     const target = await readTarget("inc-full-target");
     expect(target).toHaveLength(2);
+  });
+});
+
+// ==========================================================================
+// appendTranscriptEntry — message-appended broadcast
+// ==========================================================================
+
+describe("appendTranscriptEntry — message-appended broadcast", () => {
+  let captured: SSEEvent[] = [];
+
+  beforeEach(() => {
+    captured = [];
+    setTranscriptDeps({
+      broadcast: (event: SSEEvent) => {
+        captured.push(event);
+      },
+    });
+  });
+
+  afterEach(() => {
+    _resetTranscriptDepsForTesting();
+  });
+
+  const meta = { projectName: "demo", sessionName: "main" };
+
+  function makeEntry(
+    role: "user" | "assistant",
+    text: string,
+  ): TranscriptEntry {
+    return {
+      timestamp: "2024-01-01T00:00:00Z",
+      type: role,
+      role,
+      content: [{ type: "text", text }],
+    };
+  }
+
+  it("broadcasts message-appended with monotonic seq (0,1,2) for three entries", async () => {
+    await appendTranscriptEntry(
+      "conv-bcast",
+      makeEntry("user", "hello"),
+      TEST_DIR,
+      meta,
+    );
+    await appendTranscriptEntry(
+      "conv-bcast",
+      makeEntry("assistant", "hi there"),
+      TEST_DIR,
+      meta,
+    );
+    await appendTranscriptEntry(
+      "conv-bcast",
+      makeEntry("user", "next"),
+      TEST_DIR,
+      meta,
+    );
+
+    expect(captured).toHaveLength(3);
+    expect(captured.map((e) => (e as { seq: number }).seq)).toEqual([0, 1, 2]);
+    for (const event of captured) {
+      const parsed = messageAppendedEventSchema.safeParse(event);
+      expect(parsed.success).toBe(true);
+    }
+  });
+
+  it("does not broadcast when meta is omitted", async () => {
+    await appendTranscriptEntry(
+      "conv-no-meta",
+      makeEntry("user", "silent"),
+      TEST_DIR,
+    );
+    expect(captured).toHaveLength(0);
+  });
+
+  it("does not broadcast for system/result entries even when meta is provided", async () => {
+    await appendTranscriptEntry(
+      "conv-sys",
+      {
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "system",
+        raw: { subtype: "init" },
+      },
+      TEST_DIR,
+      meta,
+    );
+    await appendTranscriptEntry(
+      "conv-sys",
+      {
+        timestamp: "2024-01-01T00:00:01Z",
+        type: "result",
+        raw: { subtype: "success" },
+      },
+      TEST_DIR,
+      meta,
+    );
+    expect(captured).toHaveLength(0);
+  });
+
+  it("does not broadcast when content is empty", async () => {
+    await appendTranscriptEntry(
+      "conv-empty",
+      {
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "assistant",
+        role: "assistant",
+        content: [],
+      },
+      TEST_DIR,
+      meta,
+    );
+    expect(captured).toHaveLength(0);
+  });
+
+  it("includes model and effort in the broadcast message when set on the entry", async () => {
+    await appendTranscriptEntry(
+      "conv-model",
+      {
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "hi" }],
+        model: "opus",
+        effort: "high",
+      },
+      TEST_DIR,
+      meta,
+    );
+    expect(captured).toHaveLength(1);
+    const event = captured[0] as {
+      message: { model?: string; effort?: string };
+    };
+    expect(event.message.model).toBe("opus");
+    expect(event.message.effort).toBe("high");
+  });
+
+  it("uses the active broadcast dep set via setTranscriptDeps", async () => {
+    const spy = vi.fn();
+    setTranscriptDeps({ broadcast: spy });
+
+    await appendTranscriptEntry(
+      "conv-spy",
+      makeEntry("user", "hello"),
+      TEST_DIR,
+      meta,
+    );
+
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 });

@@ -359,7 +359,6 @@ describe("execution loop — parallel integration", () => {
       async getSession() {
         return createSession();
       },
-      emitStreamFrame: vi.fn(),
     });
 
     completionGates.get("ctx-a")!.resolve();
@@ -465,7 +464,6 @@ describe("execution loop — parallel integration", () => {
       async getSession() {
         return createSession();
       },
-      emitStreamFrame: vi.fn(),
     });
 
     completionGates.get("ctx-b")!.resolve();
@@ -556,7 +554,6 @@ describe("execution loop — parallel integration", () => {
       async getSession() {
         return createSession();
       },
-      emitStreamFrame: vi.fn(),
     });
 
     const result = await loop.run({
@@ -645,7 +642,6 @@ describe("execution loop — parallel integration", () => {
       async getSession() {
         return createSession();
       },
-      emitStreamFrame: vi.fn(),
     });
 
     completionGates.get("ctx-a")!.resolve();
@@ -767,7 +763,6 @@ describe("execution loop — parallel integration", () => {
       async getSession() {
         return createSession();
       },
-      emitStreamFrame: vi.fn(),
     });
 
     // A halts first; then B and C complete normally
@@ -893,7 +888,6 @@ describe("execution loop — parallel integration", () => {
       async getSession() {
         return createSession();
       },
-      emitStreamFrame: vi.fn(),
     });
 
     completionGates.get("ctx-a")!.resolve();
@@ -1055,7 +1049,6 @@ describe("execution loop — parallel integration", () => {
       async getSession() {
         return createSession();
       },
-      emitStreamFrame: vi.fn(),
     });
 
     const result = await loop.run({
@@ -1159,7 +1152,6 @@ describe("execution loop — parallel integration", () => {
       async getSession() {
         return createSession();
       },
-      emitStreamFrame: vi.fn(),
     });
 
     const result = await loop.run({
@@ -1264,7 +1256,6 @@ describe("execution loop — parallel integration", () => {
       async getSession() {
         return createSession();
       },
-      emitStreamFrame: vi.fn(),
     });
 
     completionGates.get("ctx-a")!.resolve();

@@ -9,9 +9,8 @@ import type {
   AgentSessionRef,
 } from "@/lib/agent-backends/types";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
-import type { GraphWorkflowStreamFrame } from "@/lib/workflow-graph/stream-registry";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
-import type { MessageContentBlock, SessionState } from "@/types";
+import type { SessionState } from "@/types";
 import { AgentTurnFailedError } from "@/lib/workflows/graph-workflow/errors";
 
 function toAgentTurnEngine(backend: AgentBackendId): "claude" | "codex" {
@@ -67,7 +66,6 @@ export interface RunIterationInput {
   model: string;
   reasoningEffort: string;
   toolServer: unknown;
-  emitStreamFrame?(frame: GraphWorkflowStreamFrame): void;
   /**
    * When supplied, the iteration runs against this resolved target's
    * worktree and branch instead of `session.worktreePath` /
@@ -76,10 +74,6 @@ export interface RunIterationInput {
    * behavior of running directly inside the session worktree.
    */
   executionTarget?: ExecutionTarget;
-}
-
-function isMessageContentBlock(value: unknown): value is MessageContentBlock {
-  return typeof value === "object" && value !== null && "type" in value;
 }
 
 export function createGraphWorkflowImplementerRunner(
@@ -131,18 +125,7 @@ export function createGraphWorkflowImplementerRunner(
       input.projectPath,
       input.session,
       input.prompt,
-      (event, data) => {
-        if (event !== "content" || !isMessageContentBlock(data)) {
-          return;
-        }
-
-        input.emitStreamFrame?.({
-          type: "content",
-          conversationId: input.conversationId,
-          contextId: input.contextId,
-          content: data,
-        });
-      },
+      () => {},
       input.conversationId,
       input.model,
       undefined,

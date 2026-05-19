@@ -7,6 +7,14 @@ import { resolveImageRefs } from "./transcript-images";
 import { createLogger } from "./logging";
 import { getErrorMessage } from "./errors";
 import { parseCommandContent } from "./command-parsing";
+import {
+  broadcast as defaultBroadcast,
+  type BroadcastFn,
+} from "./sse-broadcaster";
+import {
+  messageAppendedEventSchema,
+  type MessageAppendedEvent,
+} from "./schemas";
 
 // ============================================================
 // Transcript Entry Types
@@ -59,21 +67,97 @@ export async function getTranscriptPath(
 }
 
 // ============================================================
+// Broadcast Dependency (setter pattern for testability)
+// ============================================================
+
+/**
+ * Project + session identity passed to write APIs so the transcript module
+ * can publish `message-appended` SSE events scoped to the right conversation.
+ * Optional: omitting it suppresses the broadcast (used by tests / utility
+ * paths like `copyTranscriptUpTo` that fabricate transcripts).
+ */
+export interface TranscriptBroadcastMeta {
+  projectName: string;
+  sessionName: string;
+}
+
+interface TranscriptDeps {
+  broadcast: BroadcastFn;
+}
+
+const productionDeps: TranscriptDeps = {
+  broadcast: defaultBroadcast,
+};
+
+let activeDeps: TranscriptDeps = productionDeps;
+
+export function setTranscriptDeps(overrides: Partial<TranscriptDeps>): void {
+  activeDeps = { ...productionDeps, ...overrides };
+}
+
+export function _resetTranscriptDepsForTesting(): void {
+  activeDeps = productionDeps;
+}
+
+// ============================================================
 // Write Operations
 // ============================================================
 
 /**
  * Append a single transcript entry to the conversation's JSONL file.
- * Creates the file if it doesn't exist.
+ * Creates the file if it doesn't exist. When `meta` is provided and the entry
+ * carries a visible user/assistant message, broadcasts a `message-appended`
+ * SSE event with the new entry's 0-based JSONL line index as `seq`.
  */
 export async function appendTranscriptEntry(
   conversationId: string,
   entry: TranscriptEntry,
   configDir?: string,
+  meta?: TranscriptBroadcastMeta,
 ): Promise<void> {
   const filePath = await getTranscriptPath(conversationId, configDir);
+
+  // Compute seq from the file's pre-append line count. Only read when we're
+  // actually going to broadcast — saves I/O on fabricated/non-broadcasting
+  // paths (e.g. `copyTranscriptUpTo`).
+  let seq = 0;
+  if (meta && existsSync(filePath)) {
+    try {
+      const prev = await readFile(filePath, "utf-8");
+      seq = prev.match(/\n/g)?.length ?? 0;
+    } catch {
+      seq = 0;
+    }
+  }
+
   const line = JSON.stringify(entry) + "\n";
   await appendFile(filePath, line, "utf-8");
+
+  // direct broadcast (not StatusBus): clients register
+  // `es.addEventListener('message-appended', ...)`, which requires a dedicated
+  // event-name frame line that StatusBus's generic envelope does not provide.
+  if (
+    meta &&
+    (entry.role === "user" || entry.role === "assistant") &&
+    entry.content &&
+    entry.content.length > 0
+  ) {
+    const event: MessageAppendedEvent = messageAppendedEventSchema.parse({
+      type: "message-appended",
+      projectName: meta.projectName,
+      sessionName: meta.sessionName,
+      conversationId,
+      seq,
+      message: {
+        role: entry.role,
+        content: entry.content,
+        timestamp: entry.timestamp ?? null,
+        ...(entry.model !== undefined ? { model: entry.model } : {}),
+        ...(entry.effort !== undefined ? { effort: entry.effort } : {}),
+      },
+    });
+    activeDeps.broadcast(event);
+  }
 }
 
 // ============================================================
@@ -275,20 +359,37 @@ export { parseCommandContent } from "./command-parsing";
 export async function readConversationMessages(
   transcriptPath: string | null,
 ): Promise<TranscriptMessage[]> {
+  const stamped = await readConversationMessagesWithSeq(transcriptPath);
+  return stamped.map(({ seq: _seq, ...rest }) => rest);
+}
+
+/**
+ * Same as `readConversationMessages`, but each returned message carries a
+ * `seq` field equal to the 0-based JSONL line index of the last entry that
+ * contributed to it. Used by the cursor-reconciliation path so a client can
+ * reconnect and ask for only messages newer than its last-seen seq.
+ *
+ * seq is derived from line position at read time — not persisted on disk.
+ */
+export async function readConversationMessagesWithSeq(
+  transcriptPath: string | null,
+): Promise<Array<TranscriptMessage & { seq: number }>> {
   if (!transcriptPath) return [];
 
   if (!existsSync(transcriptPath)) return [];
 
   const raw = await readFile(transcriptPath, "utf-8");
-  const lines = raw.split("\n").filter((line) => line.trim().length > 0);
-  const messages: TranscriptMessage[] = [];
+  const lines = raw.split("\n");
+  const messages: Array<TranscriptMessage & { seq: number }> = [];
 
   // Track the most recent model/effort from user entries so assistant
   // messages can inherit the settings that were active for their turn.
   let currentModel: string | undefined;
   let currentEffort: string | undefined;
 
-  for (const line of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex];
+    if (!line || line.trim().length === 0) continue;
     let entry: TranscriptEntry;
     try {
       entry = JSON.parse(line) as TranscriptEntry;
@@ -321,6 +422,7 @@ export async function readConversationMessages(
             timestamp: entry.timestamp ?? null,
             model: entry.model,
             effort: entry.effort,
+            seq: lineIndex,
           });
           continue;
         }
@@ -331,6 +433,7 @@ export async function readConversationMessages(
     if (prev && prev.role === entry.role) {
       // Merge consecutive messages from the same role into one
       prev.content = [...prev.content, ...entry.content];
+      prev.seq = lineIndex;
     } else {
       messages.push({
         role: entry.role,
@@ -339,6 +442,7 @@ export async function readConversationMessages(
         // User entries carry their own metadata; assistant entries inherit
         model: entry.role === "user" ? entry.model : currentModel,
         effort: entry.role === "user" ? entry.effort : currentEffort,
+        seq: lineIndex,
       });
     }
   }
@@ -368,9 +472,10 @@ export async function safeAppendTranscriptEntry(
     warn: (message: string, meta?: Record<string, unknown>) => void;
   } = transcriptLogger,
   configDir?: string,
+  meta?: TranscriptBroadcastMeta,
 ): Promise<void> {
   try {
-    await appendTranscriptEntry(conversationId, entry, configDir);
+    await appendTranscriptEntry(conversationId, entry, configDir, meta);
   } catch (err) {
     logger.warn("transcript_write_failed", {
       conversationId,
@@ -378,3 +483,11 @@ export async function safeAppendTranscriptEntry(
     });
   }
 }
+
+// `message-updated` events would be wired here if there were a code path that
+// rewrites an existing JSONL entry. Today every transcript update is an
+// `appendFile` (see `appendTranscriptEntry`) and image externalization
+// (`transcript-images.ts:externalizeImageBlocks`) substitutes blocks BEFORE
+// the entry is appended — never patching an entry on disk. The
+// `messageUpdatedEventSchema` + client listener exist so this wiring is a
+// one-call addition the day a patch path is introduced.

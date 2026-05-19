@@ -94,6 +94,8 @@ describe("queueMessage", () => {
         role: "user",
         content: [{ type: "text", text: "queued prompt" }],
       }),
+      undefined,
+      { projectName: "my-project", sessionName: "my-session" },
     );
   });
 
