@@ -39,6 +39,7 @@ const sharedActions = {
   onToggleItem: fn(),
   onResetItem: fn(),
   onRefresh: fn(),
+  onOpenPlugin: fn(),
 };
 
 const meta = {
@@ -88,6 +89,10 @@ export const ParentStalePendingFailedDiagnostic: Story = {
         row({
           itemId: "parent-disabled-skill",
           displayName: "Parent Disabled Skill",
+          source: { kind: "plugin", pluginId: "planning-pack" },
+          owningPluginId: "planning-pack",
+          ownEffectiveState: { enabled: true, originLayer: "global" },
+          inheritedEffectiveState: { enabled: true, originLayer: "global" },
           effectiveState: { enabled: false, originLayer: "project" },
           inheritedDisableReason: {
             pluginId: "planning-pack",
@@ -216,6 +221,41 @@ export const UnavailableCodexPlugins: Story = {
   },
 };
 
+export const PluginProvidedRows: Story = {
+  args: {
+    title: "Claude Skills",
+    view: viewWithRows([
+      row({
+        itemId: "release-notes",
+        displayName: "release-notes",
+        source: { kind: "plugin", pluginId: "git-guardrails" },
+        owningPluginId: "git-guardrails",
+        currentLayerValue: { enabled: true, originLayer: "global" },
+        ownEffectiveState: { enabled: true, originLayer: "global" },
+        effectiveState: { enabled: true, originLayer: "global" },
+        originLayer: "global",
+      }),
+      row({
+        itemId: "commit-review",
+        displayName: "commit-review",
+        source: { kind: "plugin", pluginId: "git-guardrails" },
+        owningPluginId: "git-guardrails",
+        ownEffectiveState: { enabled: true, originLayer: "global" },
+        inheritedEffectiveState: { enabled: true, originLayer: "global" },
+        effectiveState: { enabled: false, originLayer: "global" },
+        originLayer: "global",
+        inheritedDisableReason: {
+          pluginId: "git-guardrails",
+          originLayer: "global",
+        },
+      }),
+    ]),
+    layerOptions,
+    selectedScope: layerOptions[0]!.scope,
+    ...sharedActions,
+  },
+};
+
 export const InteractiveRegression: Story = {
   args: {
     title: "Claude Skills",
@@ -231,6 +271,9 @@ export const InteractiveRegression: Story = {
       row({
         itemId: "long-unbroken-capability-identifier-with-diagnostics",
         displayName: "Long Identifier Capability",
+        currentLayerValue: { enabled: true, originLayer: "conversation" },
+        effectiveState: { enabled: true, originLayer: "conversation" },
+        originLayer: "conversation",
         source: {
           kind: "user-file",
           path: "/home/alex/.claude/skills/long-unbroken-capability-identifier-with-diagnostics",

@@ -9,10 +9,14 @@ vi.mock("./AgentCapabilityPanelContainer", () => ({
     cascadeKind,
     layerOptions,
     initialScope,
+    onOpenPlugin,
+    initialSearch,
   }: {
     cascadeKind: string;
     layerOptions: readonly { label: string; scope: { level: string } }[];
     initialScope?: { level: string };
+    onOpenPlugin?: (pluginId: string, backend: "claude" | "codex") => void;
+    initialSearch?: string;
   }) => (
     <section data-testid={`capability-panel-${cascadeKind}`}>
       <span>{cascadeKind}</span>
@@ -22,12 +26,41 @@ vi.mock("./AgentCapabilityPanelContainer", () => ({
       <span data-testid={`capability-initial-${cascadeKind}`}>
         {initialScope?.level}
       </span>
+      <span data-testid={`capability-search-${cascadeKind}`}>
+        {initialSearch}
+      </span>
+      {cascadeKind === "claude-skills" ? (
+        <button
+          type="button"
+          onClick={() => onOpenPlugin?.("git-guardrails", "claude")}
+        >
+          Open linked plugin
+        </button>
+      ) : null}
+    </section>
+  ),
+}));
+
+vi.mock("./McpCapabilityPanelContainer", () => ({
+  McpCapabilityPanelContainer: ({
+    layerOptions,
+    selectedScope,
+  }: {
+    layerOptions: readonly { label: string; scope: { level: string } }[];
+    selectedScope: { level: string };
+  }) => (
+    <section data-testid="capability-panel-mcp">
+      <span>mcp</span>
+      <span data-testid="capability-layers-mcp">
+        {layerOptions.map((option) => option.scope.level).join("|")}
+      </span>
+      <span data-testid="capability-initial-mcp">{selectedScope.level}</span>
     </section>
   ),
 }));
 
 describe("ConversationAgentCapabilitiesConfig", () => {
-  it("opens all five capability panels with global through conversation layer options", () => {
+  it("opens the unified capability configurator in a right drawer", () => {
     render(
       <ConversationAgentCapabilitiesConfig
         projectName="remote-ai-manager"
@@ -42,26 +75,75 @@ describe("ConversationAgentCapabilitiesConfig", () => {
       }),
     );
 
-    const dialog = screen.getByRole("dialog", {
+    const drawer = screen.getByRole("dialog", {
       name: "Agent capabilities configuration",
     });
-    const expectedKinds = [
-      "claude-skills",
-      "claude-plugins",
-      "claude-agents",
-      "codex-skills",
-      "codex-plugins",
-    ];
+    expect(drawer).toHaveClass("agent-capabilities-drawer");
+    expect(
+      screen.getByTestId("agent-capabilities-drawer-overlay"),
+    ).toBeInTheDocument();
 
-    for (const cascadeKind of expectedKinds) {
+    expect(
+      within(drawer).getByTestId("capability-panel-mcp"),
+    ).toBeInTheDocument();
+    expect(
+      within(drawer).getByTestId("capability-layers-mcp"),
+    ).toHaveTextContent("global|project|session|conversation");
+    expect(
+      within(drawer).getByTestId("capability-initial-mcp"),
+    ).toHaveTextContent("conversation");
+
+    fireEvent.click(within(drawer).getAllByRole("tab", { name: "Skills" })[0]!);
+    expect(
+      within(drawer).getByTestId("capability-panel-claude-skills"),
+    ).toBeInTheDocument();
+    expect(
+      within(drawer).getByTestId("capability-layers-claude-skills"),
+    ).toHaveTextContent("global|project|session|conversation");
+    expect(
+      within(drawer).getByTestId("capability-initial-claude-skills"),
+    ).toHaveTextContent("conversation");
+
+    fireEvent.click(
+      within(drawer).getByRole("button", { name: "Open linked plugin" }),
+    );
+    expect(
+      within(drawer).getByTestId("capability-panel-claude-plugins"),
+    ).toBeInTheDocument();
+    expect(
+      within(drawer).getByTestId("capability-search-claude-plugins"),
+    ).toHaveTextContent("git-guardrails");
+
+    fireEvent.click(within(drawer).getByRole("tab", { name: "Agents" }));
+    expect(
+      within(drawer).getByTestId("capability-panel-claude-agents"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      within(drawer).getAllByRole("tab", { name: "Plugins" })[0]!,
+    );
+    expect(
+      within(drawer).getByTestId("capability-panel-claude-plugins"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(within(drawer).getAllByRole("tab", { name: "Skills" })[1]!);
+    expect(
+      within(drawer).getByTestId("capability-panel-codex-skills"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      within(drawer).getAllByRole("tab", { name: "Plugins" })[1]!,
+    );
+    expect(
+      within(drawer).getByTestId("capability-panel-codex-plugins"),
+    ).toBeInTheDocument();
+
+    for (const cascadeKind of ["codex-plugins"] as const) {
       expect(
-        within(dialog).getByTestId(`capability-panel-${cascadeKind}`),
-      ).toBeInTheDocument();
-      expect(
-        within(dialog).getByTestId(`capability-layers-${cascadeKind}`),
+        within(drawer).getByTestId(`capability-layers-${cascadeKind}`),
       ).toHaveTextContent("global|project|session|conversation");
       expect(
-        within(dialog).getByTestId(`capability-initial-${cascadeKind}`),
+        within(drawer).getByTestId(`capability-initial-${cascadeKind}`),
       ).toHaveTextContent("conversation");
     }
   });

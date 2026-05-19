@@ -3,10 +3,9 @@
 import { useCallback, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 
-import type { AgentCapabilityCascadeKind } from "@/lib/schemas";
 import type { AgentCapabilityScope } from "@/hooks/use-agent-capabilities";
 
-import { AgentCapabilityPanelContainer } from "./AgentCapabilityPanelContainer";
+import { AgentCapabilitiesConfigurator } from "./AgentCapabilitiesConfigurator";
 import type { AgentCapabilityLayerOption } from "./AgentCapabilityPanel";
 
 interface ConversationAgentCapabilitiesConfigProps {
@@ -16,14 +15,6 @@ interface ConversationAgentCapabilitiesConfigProps {
   disabled?: boolean;
   disabledTooltip?: string;
 }
-
-const CASCADE_KINDS: readonly AgentCapabilityCascadeKind[] = [
-  "claude-skills",
-  "claude-plugins",
-  "claude-agents",
-  "codex-skills",
-  "codex-plugins",
-];
 
 export default function ConversationAgentCapabilitiesConfig({
   projectName,
@@ -76,8 +67,6 @@ export default function ConversationAgentCapabilitiesConfig({
       <AgentCapabilitiesModal
         open={open}
         onClose={close}
-        projectName={projectName}
-        sessionName={sessionName}
         layerOptions={layerOptions}
         initialScope={initialScope}
       />
@@ -88,62 +77,36 @@ export default function ConversationAgentCapabilitiesConfig({
 function AgentCapabilitiesModal({
   open,
   onClose,
-  projectName,
-  sessionName,
   layerOptions,
   initialScope,
 }: {
   open: boolean;
   onClose(): void;
-  projectName: string;
-  sessionName: string;
   layerOptions: readonly AgentCapabilityLayerOption[];
   initialScope: AgentCapabilityScope;
 }): React.JSX.Element | null {
   if (!open || typeof document === "undefined") return null;
 
   const overlay = (
-    <div
-      className="modal-overlay"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
+    <>
       <div
-        className="modal mcp-servers-modal agent-capability-modal"
+        className="agent-capabilities-drawer-overlay"
+        data-testid="agent-capabilities-drawer-overlay"
+        onClick={onClose}
+      />
+      <aside
+        className="agent-capabilities-drawer"
         role="dialog"
         aria-label="Agent capabilities configuration"
       >
-        <header className="mcp-servers-modal__head">
-          <div className="mcp-servers-modal__headings">
-            <span className="mcp-servers-modal__eyebrow">CONVERSATION</span>
-            <h2 className="mcp-servers-modal__title">Agent capabilities</h2>
-            <span className="mcp-servers-modal__subtitle">
-              {projectName} / {sessionName}
-            </span>
-          </div>
-          <button
-            type="button"
-            className="mcp-servers-modal__close"
-            onClick={onClose}
-            aria-label="Close"
-          >
-            x
-          </button>
-        </header>
-
-        <div className="mcp-servers-modal__body agent-capability-modal__body">
-          {CASCADE_KINDS.map((cascadeKind) => (
-            <AgentCapabilityPanelContainer
-              key={cascadeKind}
-              cascadeKind={cascadeKind}
-              layerOptions={layerOptions}
-              initialScope={initialScope}
-            />
-          ))}
-        </div>
-      </div>
-    </div>
+        <AgentCapabilitiesConfigurator
+          layerOptions={layerOptions}
+          initialScope={initialScope}
+          drawer
+          onClose={onClose}
+        />
+      </aside>
+    </>
   );
 
   return createPortal(overlay, document.body);

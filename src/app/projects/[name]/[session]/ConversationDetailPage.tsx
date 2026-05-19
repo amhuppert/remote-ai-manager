@@ -113,7 +113,6 @@ import ReasoningLevelSelector, {
 import MobilePromptToolbar from "./MobilePromptToolbar";
 import BackendToggle from "@/components/BackendToggle";
 import ConversationAgentCapabilitiesConfig from "@/components/agent-capabilities/ConversationAgentCapabilitiesConfig";
-import ConversationMcpConfig from "@/components/mcp/ConversationMcpConfig";
 import {
   type AgentBackendId,
   type EffortLevel,
@@ -2131,16 +2130,6 @@ export default function ConversationDetailPage({
                           conversation={activeConversation}
                           disabled={sending || isReadOnly}
                         />
-                        <ConversationMcpConfig
-                          projectName={projectName}
-                          sessionName={sessionName}
-                          conversationId={conversationId}
-                          turnRunning={conversationRunning}
-                          disabled={isReadOnly}
-                          disabledTooltip={
-                            isReadOnly ? "Session is read-only" : undefined
-                          }
-                        />
                         <ConversationAgentCapabilitiesConfig
                           projectName={projectName}
                           sessionName={sessionName}
@@ -2230,16 +2219,6 @@ export default function ConversationDetailPage({
                       debugDisabled={sending || debugToggleMutation.isPending}
                       mcpRow={
                         <div className="mobile-prompt-row mobile-prompt-row--mcp">
-                          <ConversationMcpConfig
-                            projectName={projectName}
-                            sessionName={sessionName}
-                            conversationId={conversationId}
-                            turnRunning={conversationRunning}
-                            disabled={isReadOnly}
-                            disabledTooltip={
-                              isReadOnly ? "Session is read-only" : undefined
-                            }
-                          />
                           <ConversationAgentCapabilitiesConfig
                             projectName={projectName}
                             sessionName={sessionName}

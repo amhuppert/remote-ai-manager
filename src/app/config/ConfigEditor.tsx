@@ -4,7 +4,8 @@ import { useState, useCallback, useMemo } from "react";
 import Topbar from "@/components/Topbar";
 import ModelSelector from "@/components/ModelSelector";
 import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
-import GlobalMcpSection from "@/components/mcp/GlobalMcpSection";
+import { AgentCapabilitiesConfigurator } from "@/components/agent-capabilities/AgentCapabilitiesConfigurator";
+import type { AgentCapabilityLayerOption } from "@/components/agent-capabilities/AgentCapabilityPanel";
 import { useFullConfigQuery } from "@/lib/queries";
 import { useUpdateConfigMutation } from "@/lib/mutations";
 import type { FullConfigResponse } from "@/lib/api-client";
@@ -77,6 +78,24 @@ type FormState = GlobalConfig;
 
 /** Dot-separated path into the config object (e.g. "pushNotification.enabled") */
 type FieldPath = string;
+type ConfigNavSection =
+  | "general"
+  | "defaults"
+  | "capabilities"
+  | "backends"
+  | "workflow"
+  | "limits"
+  | "notifications";
+
+const CONFIG_NAV: Array<{ id: ConfigNavSection; label: string }> = [
+  { id: "general", label: "General" },
+  { id: "defaults", label: "Agent defaults" },
+  { id: "capabilities", label: "Capabilities" },
+  { id: "backends", label: "Backends" },
+  { id: "workflow", label: "Workflow defaults" },
+  { id: "limits", label: "Limits & timeouts" },
+  { id: "notifications", label: "Notifications" },
+];
 
 // ---------------------------------------------------------------------------
 // Helpers — deep get/set by dot-path
@@ -156,34 +175,6 @@ function stripUndefinedDeep(value: unknown): unknown {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-function ConfigSection({
-  title,
-  id,
-  collapsed,
-  onToggle,
-  children,
-}: {
-  title: string;
-  id: string;
-  collapsed: boolean;
-  onToggle: (id: string) => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className={`config-section${collapsed ? " collapsed" : ""}`}>
-      <button
-        type="button"
-        className="config-section-header"
-        onClick={() => onToggle(id)}
-      >
-        <span className="config-section-chevron">&#9660;</span>
-        {title}
-      </button>
-      <div className="config-section-body">{children}</div>
-    </div>
-  );
-}
-
 function ConfigField({
   label,
   fieldPath,
@@ -213,7 +204,7 @@ function ConfigField({
     <div className={cls} data-field={fieldPath}>
       <div className="config-field-header">
         <span className="config-field-label">{label}</span>
-        {readOnly && <span className="config-field-lock">&#128274;</span>}
+        {readOnly && <span className="config-field-lock">LOCKED</span>}
         {isDefault && <span className="config-badge-default">DEFAULT</span>}
       </div>
       {children}
@@ -354,42 +345,14 @@ export default function ConfigEditor(): React.JSX.Element {
 
   const [formState, setFormState] = useState<FormState | null>(null);
   const [loadedData, setLoadedData] = useState<FullConfigResponse | null>(null);
-  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
-    () => new Set(["pushNotification", "codex", "workflowDefaults"]),
-  );
-  const [collapsedSubs, setCollapsedSubs] = useState<Set<string>>(
-    () => new Set(["mutability"]),
-  );
+  const [activeSection, setActiveSection] =
+    useState<ConfigNavSection>("general");
 
   // Initialize form state from query data (during render, not in effect)
   if (configQuery.data && !formState) {
     setFormState(configQuery.data.config);
     setLoadedData(configQuery.data);
   }
-
-  const toggleSection = useCallback((id: string) => {
-    setCollapsedSections((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  }, []);
-
-  const toggleSub = useCallback((id: string) => {
-    setCollapsedSubs((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  }, []);
 
   const handleChangeBlock = useCallback(
     <K extends WorkflowDefaultsBlock>(block: K, value: WorkflowDefaults[K]) => {
@@ -492,6 +455,9 @@ export default function ConfigEditor(): React.JSX.Element {
     () => ALL_FIELD_PATHS.filter((p) => isModified(p)).length,
     [ALL_FIELD_PATHS, isModified],
   );
+  const globalCapabilityLayerOptions = useMemo<
+    readonly AgentCapabilityLayerOption[]
+  >(() => [{ label: "Global", scope: { level: "global" } }], []);
 
   // Dynamic model/effort paths and options based on selected backend
   const isCodexBackend = formState?.defaultAgentBackend === "codex";
@@ -592,27 +558,38 @@ export default function ConfigEditor(): React.JSX.Element {
     );
   }
 
-  return (
-    <div className="app" data-page="config">
-      <Topbar breadcrumbs={[{ label: "config" }]} page="projects" />
-      <main className="main">
-        <div className="config-editor">
-          <div className="config-editor-header">
-            <h1 className="config-editor-title">System Configuration</h1>
-          </div>
+  const handleRevert = () => {
+    if (!loadedData) return;
+    setFormState(loadedData.config);
+  };
 
-          {/* ---- CORE ---- */}
-          <ConfigSection
-            title="Core"
-            id="core"
-            collapsed={collapsedSections.has("core")}
-            onToggle={toggleSection}
+  const renderConfigContent = (): React.JSX.Element => {
+    if (activeSection === "capabilities") {
+      return (
+        <AgentCapabilitiesConfigurator
+          layerOptions={globalCapabilityLayerOptions}
+          initialScope={{ level: "global" }}
+        />
+      );
+    }
+
+    if (activeSection === "general") {
+      return (
+        <SettingsPage
+          title="General"
+          accent="settings"
+          sub="Filesystem layout, branch naming and runtime networking."
+        >
+          <SettingsSubSection
+            title="Workspace"
+            hint="Where Command Center finds your repositories and how it names new branches."
           >
             <ConfigField
-              label={formatFieldLabel("baseDir")}
+              label="Base directory"
               fieldPath="baseDir"
               isDefault={isDefault("baseDir")}
               isModified={isModified("baseDir")}
+              hint="Repositories must live under this path."
             >
               <input
                 className="form-input"
@@ -621,62 +598,12 @@ export default function ConfigEditor(): React.JSX.Element {
                 onChange={(e) => handleChange("baseDir", e.target.value)}
               />
             </ConfigField>
-
             <ConfigField
-              label={formatFieldLabel("defaultAgentBackend")}
-              fieldPath="defaultAgentBackend"
-              isDefault={isDefault("defaultAgentBackend")}
-              isModified={isModified("defaultAgentBackend")}
-            >
-              <ConfigPillGroup
-                value={formState.defaultAgentBackend}
-                options={["claude", "codex"] as const}
-                onChange={(v) => {
-                  handleChangeMulti([
-                    ["defaultAgentBackend", v],
-                    ["defaultModel", undefined],
-                    ["defaultEffort", undefined],
-                  ]);
-                }}
-              />
-            </ConfigField>
-
-            <ConfigField
-              label={formatFieldLabel("defaultModel")}
-              fieldPath={coreModelPath}
-              isDefault={isDefault(coreModelPath)}
-              isModified={isModified(coreModelPath)}
-            >
-              <ConfigPillGroup
-                value={coreModelValue}
-                options={getModelOptionsForBackend(
-                  formState.defaultAgentBackend,
-                )}
-                onChange={(v) => handleChange(coreModelPath, v)}
-              />
-            </ConfigField>
-
-            {effortOptions.length > 0 && (
-              <ConfigField
-                label={formatFieldLabel("defaultEffort")}
-                fieldPath={coreEffortPath}
-                isDefault={isDefault(coreEffortPath)}
-                isModified={isModified(coreEffortPath)}
-              >
-                <ConfigPillGroup
-                  value={coreEffortValue}
-                  options={effortOptions}
-                  onChange={(v) => handleChange(coreEffortPath, v)}
-                />
-              </ConfigField>
-            )}
-
-            <ConfigField
-              label={formatFieldLabel("branchPrefix")}
+              label="Branch prefix"
               fieldPath="branchPrefix"
               isDefault={isDefault("branchPrefix")}
               isModified={isModified("branchPrefix")}
-              hint='Prefix for session branches (default: "csm")'
+              hint='Used when creating session branches (default: "csm").'
             >
               <input
                 className="form-input"
@@ -688,268 +615,132 @@ export default function ConfigEditor(): React.JSX.Element {
                 placeholder="csm"
               />
             </ConfigField>
-          </ConfigSection>
-
-          {/* ---- LIMITS & TIMEOUTS ---- */}
-          <ConfigSection
-            title="Limits & Timeouts"
-            id="limits"
-            collapsed={collapsedSections.has("limits")}
-            onToggle={toggleSection}
-          >
-            <div className="config-field-row">
-              <ConfigField
-                label={formatFieldLabel("claudeTimeoutMs")}
-                fieldPath="claudeTimeoutMs"
-                isDefault={isDefault("claudeTimeoutMs")}
-                isModified={isModified("claudeTimeoutMs")}
-                hint="minutes"
-              >
-                <ConfigNumericInput
-                  value={formState.claudeTimeoutMs}
-                  onChange={(v) =>
-                    handleChange("claudeTimeoutMs", v ?? 3_600_000)
-                  }
-                  displayAsMinutes
-                  required
-                  positive
-                />
-              </ConfigField>
-
-              <ConfigField
-                label={formatFieldLabel("maxTurns")}
-                fieldPath="maxTurns"
-                isDefault={isDefault("maxTurns")}
-                isModified={isModified("maxTurns")}
-              >
-                <ConfigNumericInput
-                  value={formState.maxTurns}
-                  onChange={(v) => handleChange("maxTurns", v)}
-                  positive
-                  integer
-                />
-              </ConfigField>
-
-              <ConfigField
-                label={formatFieldLabel("maxConcurrentQueries")}
-                fieldPath="maxConcurrentQueries"
-                isDefault={isDefault("maxConcurrentQueries")}
-                isModified={isModified("maxConcurrentQueries")}
-              >
-                <ConfigNumericInput
-                  value={formState.maxConcurrentQueries}
-                  onChange={(v) => handleChange("maxConcurrentQueries", v)}
-                  positive
-                  integer
-                />
-              </ConfigField>
-            </div>
-
-            <div className="config-field-row">
-              <ConfigField
-                label={formatFieldLabel("mergeCheckIntervalMs")}
-                fieldPath="mergeCheckIntervalMs"
-                isDefault={isDefault("mergeCheckIntervalMs")}
-                isModified={isModified("mergeCheckIntervalMs")}
-                hint="minutes"
-              >
-                <ConfigNumericInput
-                  value={formState.mergeCheckIntervalMs}
-                  onChange={(v) => handleChange("mergeCheckIntervalMs", v)}
-                  displayAsMinutes
-                  positive
-                />
-              </ConfigField>
-
-              <ConfigField
-                label={formatFieldLabel("preMergeTimeoutMs")}
-                fieldPath="preMergeTimeoutMs"
-                isDefault={isDefault("preMergeTimeoutMs")}
-                isModified={isModified("preMergeTimeoutMs")}
-                hint="minutes"
-              >
-                <ConfigNumericInput
-                  value={formState.preMergeTimeoutMs}
-                  onChange={(v) => handleChange("preMergeTimeoutMs", v)}
-                  displayAsMinutes
-                  positive
-                />
-              </ConfigField>
-
-              <ConfigField
-                label={formatFieldLabel("idleQuerySessionTtlMs")}
-                fieldPath="idleQuerySessionTtlMs"
-                isDefault={isDefault("idleQuerySessionTtlMs")}
-                isModified={isModified("idleQuerySessionTtlMs")}
-                hint="minutes"
-              >
-                <ConfigNumericInput
-                  value={formState.idleQuerySessionTtlMs}
-                  onChange={(v) => handleChange("idleQuerySessionTtlMs", v)}
-                  displayAsMinutes
-                  positive
-                />
-              </ConfigField>
-            </div>
-          </ConfigSection>
-
-          {/* ---- INFRASTRUCTURE ---- */}
-          <ConfigSection
-            title="Infrastructure"
-            id="infrastructure"
-            collapsed={collapsedSections.has("infrastructure")}
-            onToggle={toggleSection}
-          >
+          </SettingsSubSection>
+          <SettingsSubSection title="Infrastructure">
             <ConfigField
-              label={formatFieldLabel("ignorePatterns")}
+              label="Ignore patterns"
               fieldPath="ignorePatterns"
               isDefault={isDefault("ignorePatterns")}
               isModified={false}
               readOnly
+              hint="Directories and globs excluded from worktree operations and indexing."
             >
               <div className="config-tags">
-                {formState.ignorePatterns.map((p) => (
-                  <span key={p} className="config-tag">
-                    {p}
+                {formState.ignorePatterns.map((pattern) => (
+                  <span key={pattern} className="config-tag">
+                    {pattern}
                   </span>
                 ))}
               </div>
             </ConfigField>
-
             <ConfigField
-              label={formatFieldLabel("tailscaleEnabled")}
+              label="Tailscale enabled"
               fieldPath="tailscaleEnabled"
               isDefault={isDefault("tailscaleEnabled")}
               isModified={isModified("tailscaleEnabled")}
+              hint="Reach Command Center over your tailnet from a phone or laptop."
             >
               <ConfigToggle
                 value={formState.tailscaleEnabled ?? false}
-                onChange={(v) => handleChange("tailscaleEnabled", v)}
+                onChange={(value) => handleChange("tailscaleEnabled", value)}
               />
             </ConfigField>
-          </ConfigSection>
+          </SettingsSubSection>
+        </SettingsPage>
+      );
+    }
 
-          {/* ---- PUSH NOTIFICATIONS ---- */}
-          <ConfigSection
-            title="Push Notifications"
-            id="pushNotification"
-            collapsed={collapsedSections.has("pushNotification")}
-            onToggle={toggleSection}
+    if (activeSection === "defaults") {
+      return (
+        <SettingsPage
+          title="Agent"
+          accent="defaults"
+          sub="What a new conversation looks like before any per-session override."
+        >
+          <SettingsSubSection
+            title="Default backend"
+            hint="Determines which model and effort options apply below."
           >
             <ConfigField
-              label={formatFieldLabel("enabled")}
-              fieldPath="pushNotification.enabled"
-              isDefault={isDefault("pushNotification.enabled")}
-              isModified={isModified("pushNotification.enabled")}
-            >
-              <ConfigToggle
-                value={formState.pushNotification?.enabled ?? false}
-                onChange={(v) => handleChange("pushNotification.enabled", v)}
-              />
-            </ConfigField>
-
-            <ConfigField
-              label={formatFieldLabel("provider")}
-              fieldPath="pushNotification.provider"
-              isDefault={isDefault("pushNotification.provider")}
-              isModified={isModified("pushNotification.provider")}
+              label="Backend"
+              fieldPath="defaultAgentBackend"
+              isDefault={isDefault("defaultAgentBackend")}
+              isModified={isModified("defaultAgentBackend")}
             >
               <ConfigPillGroup
-                value={formState.pushNotification?.provider ?? "ntfy"}
-                options={["ntfy", "pushover"] as const}
-                onChange={(v) => handleChange("pushNotification.provider", v)}
+                value={formState.defaultAgentBackend}
+                options={["claude", "codex"] as const}
+                onChange={(value) => {
+                  handleChangeMulti([
+                    ["defaultAgentBackend", value],
+                    ["defaultModel", undefined],
+                    ["defaultEffort", undefined],
+                  ]);
+                }}
               />
             </ConfigField>
-
+          </SettingsSubSection>
+          <SettingsSubSection title="Model & reasoning">
             <ConfigField
-              label={formatFieldLabel("serverUrl")}
-              fieldPath="pushNotification.serverUrl"
-              isDefault={isDefault("pushNotification.serverUrl")}
-              isModified={isModified("pushNotification.serverUrl")}
+              label="Model"
+              fieldPath={coreModelPath}
+              isDefault={isDefault(coreModelPath)}
+              isModified={isModified(coreModelPath)}
             >
-              <input
-                className="form-input"
-                type="text"
-                value={formState.pushNotification?.serverUrl ?? ""}
-                onChange={(e) =>
-                  handleChange("pushNotification.serverUrl", e.target.value)
-                }
-                placeholder="https://ntfy.sh"
+              <ConfigPillGroup
+                value={coreModelValue}
+                options={getModelOptionsForBackend(
+                  formState.defaultAgentBackend,
+                )}
+                onChange={(value) => handleChange(coreModelPath, value)}
               />
             </ConfigField>
+            {effortOptions.length > 0 ? (
+              <ConfigField
+                label="Effort"
+                fieldPath={coreEffortPath}
+                isDefault={isDefault(coreEffortPath)}
+                isModified={isModified(coreEffortPath)}
+              >
+                <ConfigPillGroup
+                  value={coreEffortValue}
+                  options={effortOptions}
+                  onChange={(value) => handleChange(coreEffortPath, value)}
+                />
+              </ConfigField>
+            ) : null}
+          </SettingsSubSection>
+        </SettingsPage>
+      );
+    }
 
-            <ConfigField
-              label={formatFieldLabel("topic")}
-              fieldPath="pushNotification.topic"
-              isDefault={isDefault("pushNotification.topic")}
-              isModified={isModified("pushNotification.topic")}
-            >
-              <input
-                className="form-input"
-                type="text"
-                value={formState.pushNotification?.topic ?? ""}
-                onChange={(e) =>
-                  handleChange("pushNotification.topic", e.target.value)
-                }
-              />
-            </ConfigField>
-
-            <div className="config-field">
-              <div className="config-field-header">
-                <span className="config-field-label">Triggers</span>
-              </div>
-              {(
-                [
-                  "jobCompleted",
-                  "waitingForInput",
-                  "workflowCompleted",
-                  "workflowHalted",
-                  "conversationIdle",
-                ] as const
-              ).map((trigger) => (
-                <ConfigField
-                  key={trigger}
-                  label={formatFieldLabel(trigger)}
-                  fieldPath={`pushNotification.triggers.${trigger}`}
-                  isDefault={isDefault(`pushNotification.triggers.${trigger}`)}
-                  isModified={isModified(
-                    `pushNotification.triggers.${trigger}`,
-                  )}
-                >
-                  <ConfigToggle
-                    value={
-                      formState.pushNotification?.triggers?.[trigger] ?? true
-                    }
-                    onChange={(v) =>
-                      handleChange(`pushNotification.triggers.${trigger}`, v)
-                    }
-                  />
-                </ConfigField>
-              ))}
-            </div>
-          </ConfigSection>
-
-          {/* ---- CODEX ---- */}
-          <ConfigSection
-            title="Codex"
-            id="codex"
-            collapsed={collapsedSections.has("codex")}
-            onToggle={toggleSection}
+    if (activeSection === "backends") {
+      return (
+        <SettingsPage
+          title="Agent"
+          accent="backends"
+          sub="Per-backend runtime settings. Claude is always available; Codex is opt-in."
+        >
+          <SettingsSubSection
+            title="Claude"
+            hint="Claude SDK is bundled. Per-conversation defaults live under Agent defaults."
           >
+            <div className="config-readout">SDK is bundled and ready.</div>
+          </SettingsSubSection>
+          <SettingsSubSection title="Codex">
             <ConfigField
-              label={formatFieldLabel("enabled")}
+              label="Enable Codex"
               fieldPath="codex.enabled"
               isDefault={isDefault("codex.enabled")}
               isModified={isModified("codex.enabled")}
             >
               <ConfigToggle
                 value={formState.codex?.enabled ?? false}
-                onChange={(v) => handleChange("codex.enabled", v)}
+                onChange={(value) => handleChange("codex.enabled", value)}
               />
             </ConfigField>
-
             <ConfigField
-              label={formatFieldLabel("model")}
+              label="Default Codex model"
               fieldPath="codex.model"
               isDefault={isDefault("codex.model")}
               isModified={isModified("codex.model")}
@@ -964,12 +755,11 @@ export default function ConfigEditor(): React.JSX.Element {
                     "gpt-5.4-nano",
                   ] as const
                 }
-                onChange={(v) => handleChange("codex.model", v)}
+                onChange={(value) => handleChange("codex.model", value)}
               />
             </ConfigField>
-
             <ConfigField
-              label={formatFieldLabel("reasoningEffort")}
+              label="Default Codex effort"
               fieldPath="codex.reasoningEffort"
               isDefault={isDefault("codex.reasoningEffort")}
               isModified={isModified("codex.reasoningEffort")}
@@ -977,63 +767,391 @@ export default function ConfigEditor(): React.JSX.Element {
               <ConfigPillGroup
                 value={formState.codex?.reasoningEffort ?? "medium"}
                 options={["minimal", "low", "medium", "high", "xhigh"] as const}
-                onChange={(v) => handleChange("codex.reasoningEffort", v)}
+                onChange={(value) =>
+                  handleChange("codex.reasoningEffort", value)
+                }
               />
             </ConfigField>
-
             <ConfigField
-              label={formatFieldLabel("timeout")}
+              label="Codex timeout"
               fieldPath="codex.timeout"
               isDefault={isDefault("codex.timeout")}
               isModified={isModified("codex.timeout")}
-              hint="minutes (leave empty for no timeout)"
+              hint="Minutes. Empty means no timeout."
             >
               <ConfigNumericInput
                 value={formState.codex?.timeout}
-                onChange={(v) => handleChange("codex.timeout", v ?? null)}
+                onChange={(value) =>
+                  handleChange("codex.timeout", value ?? null)
+                }
                 displayAsMinutes
                 positive
               />
             </ConfigField>
-          </ConfigSection>
+          </SettingsSubSection>
+        </SettingsPage>
+      );
+    }
 
-          {/* ---- MCP SERVERS ---- */}
-          <GlobalMcpSection />
+    if (activeSection === "workflow") {
+      return (
+        <SettingsPage
+          title="Workflow"
+          accent="defaults"
+          sub="Per-stage configuration used by every new graph workflow."
+        >
+          <WorkflowDefaultsSubsections
+            defaults={formState.workflowDefaults}
+            onChangeBlock={handleChangeBlock}
+          />
+        </SettingsPage>
+      );
+    }
 
-          {/* ---- WORKFLOW DEFAULTS ---- */}
-          <ConfigSection
-            title="Workflow Defaults"
-            id="workflowDefaults"
-            collapsed={collapsedSections.has("workflowDefaults")}
-            onToggle={toggleSection}
-          >
-            <WorkflowDefaultsSubsections
-              defaults={formState.workflowDefaults}
-              collapsedSubs={collapsedSubs}
-              onToggleSub={toggleSub}
-              onChangeBlock={handleChangeBlock}
-            />
-          </ConfigSection>
-
-          {/* ---- SAVE BAR ---- */}
-          <div className="config-save-bar">
-            {dirtyCount > 0 && (
-              <div className="config-save-bar-status">
-                <span className="config-save-bar-dot" />
-                {dirtyCount} field{dirtyCount !== 1 ? "s" : ""} modified
-              </div>
-            )}
-            <button
-              className="btn btn-primary"
-              disabled={dirtyCount === 0 || mutation.isPending}
-              onClick={handleSave}
-              type="button"
+    if (activeSection === "limits") {
+      return (
+        <SettingsPage
+          title="Limits &"
+          accent="timeouts"
+          sub="Bounds for runaway agents, idle sessions and pre-merge automation."
+        >
+          <div className="config-field-row config-field-row--grid">
+            <ConfigField
+              label="Claude timeout"
+              fieldPath="claudeTimeoutMs"
+              isDefault={isDefault("claudeTimeoutMs")}
+              isModified={isModified("claudeTimeoutMs")}
+              hint="minutes"
             >
-              {mutation.isPending ? "Saving..." : "Save Changes"}
-            </button>
+              <ConfigNumericInput
+                value={formState.claudeTimeoutMs}
+                onChange={(value) =>
+                  handleChange("claudeTimeoutMs", value ?? 3_600_000)
+                }
+                displayAsMinutes
+                required
+                positive
+              />
+            </ConfigField>
+            <ConfigField
+              label="Max turns"
+              fieldPath="maxTurns"
+              isDefault={isDefault("maxTurns")}
+              isModified={isModified("maxTurns")}
+              hint="Hard cap per conversation. Empty means unbounded."
+            >
+              <ConfigNumericInput
+                value={formState.maxTurns}
+                onChange={(value) => handleChange("maxTurns", value)}
+                positive
+                integer
+              />
+            </ConfigField>
+            <ConfigField
+              label="Max concurrent queries"
+              fieldPath="maxConcurrentQueries"
+              isDefault={isDefault("maxConcurrentQueries")}
+              isModified={isModified("maxConcurrentQueries")}
+            >
+              <ConfigNumericInput
+                value={formState.maxConcurrentQueries}
+                onChange={(value) =>
+                  handleChange("maxConcurrentQueries", value)
+                }
+                positive
+                integer
+              />
+            </ConfigField>
+            <ConfigField
+              label="Merge check interval"
+              fieldPath="mergeCheckIntervalMs"
+              isDefault={isDefault("mergeCheckIntervalMs")}
+              isModified={isModified("mergeCheckIntervalMs")}
+              hint="minutes"
+            >
+              <ConfigNumericInput
+                value={formState.mergeCheckIntervalMs}
+                onChange={(value) =>
+                  handleChange("mergeCheckIntervalMs", value)
+                }
+                displayAsMinutes
+                positive
+              />
+            </ConfigField>
+            <ConfigField
+              label="Pre-merge timeout"
+              fieldPath="preMergeTimeoutMs"
+              isDefault={isDefault("preMergeTimeoutMs")}
+              isModified={isModified("preMergeTimeoutMs")}
+              hint="minutes"
+            >
+              <ConfigNumericInput
+                value={formState.preMergeTimeoutMs}
+                onChange={(value) => handleChange("preMergeTimeoutMs", value)}
+                displayAsMinutes
+                positive
+              />
+            </ConfigField>
+            <ConfigField
+              label="Idle session TTL"
+              fieldPath="idleQuerySessionTtlMs"
+              isDefault={isDefault("idleQuerySessionTtlMs")}
+              isModified={isModified("idleQuerySessionTtlMs")}
+              hint="minutes"
+            >
+              <ConfigNumericInput
+                value={formState.idleQuerySessionTtlMs}
+                onChange={(value) =>
+                  handleChange("idleQuerySessionTtlMs", value)
+                }
+                displayAsMinutes
+                positive
+              />
+            </ConfigField>
+          </div>
+        </SettingsPage>
+      );
+    }
+
+    return (
+      <SettingsPage
+        title="Push"
+        accent="notifications"
+        sub="Get pinged when conversations finish, halt, or wait on you."
+      >
+        <SettingsSubSection title="Provider">
+          <ConfigField
+            label="Push notifications enabled"
+            fieldPath="pushNotification.enabled"
+            isDefault={isDefault("pushNotification.enabled")}
+            isModified={isModified("pushNotification.enabled")}
+          >
+            <ConfigToggle
+              value={formState.pushNotification?.enabled ?? false}
+              onChange={(value) =>
+                handleChange("pushNotification.enabled", value)
+              }
+            />
+          </ConfigField>
+          <ConfigField
+            label="Provider"
+            fieldPath="pushNotification.provider"
+            isDefault={isDefault("pushNotification.provider")}
+            isModified={isModified("pushNotification.provider")}
+          >
+            <ConfigPillGroup
+              value={formState.pushNotification?.provider ?? "ntfy"}
+              options={["ntfy", "pushover"] as const}
+              onChange={(value) =>
+                handleChange("pushNotification.provider", value)
+              }
+            />
+          </ConfigField>
+          <ConfigField
+            label="Server URL"
+            fieldPath="pushNotification.serverUrl"
+            isDefault={isDefault("pushNotification.serverUrl")}
+            isModified={isModified("pushNotification.serverUrl")}
+          >
+            <input
+              className="form-input"
+              type="text"
+              value={formState.pushNotification?.serverUrl ?? ""}
+              onChange={(e) =>
+                handleChange("pushNotification.serverUrl", e.target.value)
+              }
+              placeholder="https://ntfy.sh"
+            />
+          </ConfigField>
+          <ConfigField
+            label="Topic"
+            fieldPath="pushNotification.topic"
+            isDefault={isDefault("pushNotification.topic")}
+            isModified={isModified("pushNotification.topic")}
+            hint="A long random string keeps your notification stream private."
+          >
+            <input
+              className="form-input"
+              type="text"
+              value={formState.pushNotification?.topic ?? ""}
+              onChange={(e) =>
+                handleChange("pushNotification.topic", e.target.value)
+              }
+            />
+          </ConfigField>
+        </SettingsSubSection>
+        <SettingsSubSection
+          title="Triggers"
+          hint="Each event maps to a notification. Disable individually."
+        >
+          {(
+            [
+              "jobCompleted",
+              "waitingForInput",
+              "workflowCompleted",
+              "workflowHalted",
+              "conversationIdle",
+            ] as const
+          ).map((trigger) => (
+            <ConfigField
+              key={trigger}
+              label={formatFieldLabel(trigger)}
+              fieldPath={`pushNotification.triggers.${trigger}`}
+              isDefault={isDefault(`pushNotification.triggers.${trigger}`)}
+              isModified={isModified(`pushNotification.triggers.${trigger}`)}
+            >
+              <ConfigToggle
+                value={formState.pushNotification?.triggers?.[trigger] ?? true}
+                onChange={(value) =>
+                  handleChange(`pushNotification.triggers.${trigger}`, value)
+                }
+              />
+            </ConfigField>
+          ))}
+        </SettingsSubSection>
+      </SettingsPage>
+    );
+  };
+
+  const contentIsCapabilities = activeSection === "capabilities";
+
+  return (
+    <div className="app" data-page="config">
+      <Topbar breadcrumbs={[{ label: "config" }]} page="projects" />
+      <main className="main">
+        <div className="config-shell" data-active-section={activeSection}>
+          <aside className="config-shell__side">
+            <nav className="config-shell__nav" aria-label="Settings">
+              {CONFIG_NAV.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeSection === item.id}
+                  className={
+                    activeSection === item.id
+                      ? "config-shell__nav-item active"
+                      : "config-shell__nav-item"
+                  }
+                  onClick={() => setActiveSection(item.id)}
+                >
+                  <span>{item.label}</span>
+                  {item.id === "capabilities" ? (
+                    <span className="config-shell__nav-badge">cascading</span>
+                  ) : null}
+                </button>
+              ))}
+            </nav>
+          </aside>
+          <div
+            className={`config-shell__content${contentIsCapabilities ? " config-shell__content--capabilities" : ""}`}
+          >
+            <div className="config-shell__scroll">{renderConfigContent()}</div>
+            {!contentIsCapabilities ? (
+              <ConfigSaveBar
+                dirtyCount={dirtyCount}
+                saving={mutation.isPending}
+                onRevert={handleRevert}
+                onSave={handleSave}
+              />
+            ) : null}
           </div>
         </div>
       </main>
+    </div>
+  );
+}
+
+function SettingsPage({
+  title,
+  accent,
+  sub,
+  children,
+}: {
+  title: string;
+  accent: string;
+  sub: string;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <section className="config-settings-page">
+      <header className="config-settings-page__head">
+        <h1 className="config-settings-page__title">
+          {title} <span>{accent}</span>
+        </h1>
+        <p className="config-settings-page__subtitle">{sub}</p>
+      </header>
+      <div className="config-settings-page__body">{children}</div>
+    </section>
+  );
+}
+
+function SettingsSubSection({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <section className="config-section">
+      <div className="config-section-header">{title}</div>
+      {hint ? <div className="config-section-hint">{hint}</div> : null}
+      <div className="config-section-body">{children}</div>
+    </section>
+  );
+}
+
+function ConfigSaveBar({
+  dirtyCount,
+  saving,
+  onRevert,
+  onSave,
+}: {
+  dirtyCount: number;
+  saving: boolean;
+  onRevert(): void;
+  onSave(): void;
+}): React.JSX.Element {
+  return (
+    <div className="config-save-bar">
+      <div
+        className={
+          dirtyCount > 0
+            ? "config-save-bar-status"
+            : "config-save-bar-status config-save-bar-status--clean"
+        }
+      >
+        <span className="config-save-bar-dot" />
+        {dirtyCount > 0 ? (
+          <>
+            <span className="config-save-bar-count">{dirtyCount}</span> unsaved{" "}
+            {dirtyCount === 1 ? "change" : "changes"}
+          </>
+        ) : (
+          "All changes saved"
+        )}
+      </div>
+      <div className="config-save-bar-actions">
+        <button
+          className="btn btn-ghost btn-sm"
+          disabled={dirtyCount === 0 || saving}
+          onClick={onRevert}
+          type="button"
+        >
+          Revert
+        </button>
+        <button
+          className="btn btn-primary btn-sm"
+          disabled={dirtyCount === 0 || saving}
+          onClick={onSave}
+          type="button"
+        >
+          {saving ? "Saving..." : "Save changes"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -1046,20 +1164,15 @@ function ConfigSubsection({
   title,
   id,
   isDefault,
-  collapsed,
-  onToggle,
   children,
 }: {
   title: string;
   id: string;
   isDefault: boolean;
-  collapsed: boolean;
-  onToggle: (id: string) => void;
   children: React.ReactNode;
 }) {
   const cls = [
     "config-subsection",
-    collapsed ? "collapsed" : "",
     isDefault ? "config-subsection--default" : "config-subsection--modified",
   ]
     .filter(Boolean)
@@ -1067,17 +1180,12 @@ function ConfigSubsection({
 
   return (
     <div className={cls} data-subsection={id}>
-      <button
-        type="button"
-        className="config-subsection-header"
-        onClick={() => onToggle(id)}
-      >
-        <span className="config-section-chevron">&#9660;</span>
+      <div className="config-subsection-header">
         <span>{title}</span>
         <span className="config-subsection-badge">
           {isDefault ? "DEFAULT" : "MODIFIED"}
         </span>
-      </button>
+      </div>
       <div className="config-subsection-body">{children}</div>
     </div>
   );
@@ -1085,13 +1193,9 @@ function ConfigSubsection({
 
 function WorkflowDefaultsSubsections({
   defaults,
-  collapsedSubs,
-  onToggleSub,
   onChangeBlock,
 }: {
   defaults: WorkflowDefaults | undefined;
-  collapsedSubs: Set<string>;
-  onToggleSub: (id: string) => void;
   onChangeBlock: <K extends WorkflowDefaultsBlock>(
     block: K,
     value: WorkflowDefaults[K],
@@ -1130,8 +1234,6 @@ function WorkflowDefaultsSubsections({
         id="implementer"
         title="Implementer"
         isDefault={implementerIsDefault}
-        collapsed={collapsedSubs.has("implementer")}
-        onToggle={onToggleSub}
       >
         <ImplementerFields
           value={effective.implementer}
@@ -1143,8 +1245,6 @@ function WorkflowDefaultsSubsections({
         id="contextValidator"
         title="Context validator"
         isDefault={validatorIsDefault}
-        collapsed={collapsedSubs.has("contextValidator")}
-        onToggle={onToggleSub}
       >
         <ContextValidatorFields
           value={effective.contextValidator}
@@ -1156,8 +1256,6 @@ function WorkflowDefaultsSubsections({
         id="scriptValidator"
         title="Script validator"
         isDefault={scriptValidatorIsDefault}
-        collapsed={collapsedSubs.has("scriptValidator")}
-        onToggle={onToggleSub}
       >
         <ScriptValidatorFields
           value={effective.scriptValidator}
@@ -1169,8 +1267,6 @@ function WorkflowDefaultsSubsections({
         id="iterationPolicy"
         title="Iteration policy"
         isDefault={iterationIsDefault}
-        collapsed={collapsedSubs.has("iterationPolicy")}
-        onToggle={onToggleSub}
       >
         <IterationPolicyFields
           value={effective.iterationPolicy}
@@ -1182,8 +1278,6 @@ function WorkflowDefaultsSubsections({
         id="circuitBreaker"
         title="Circuit breaker"
         isDefault={circuitIsDefault}
-        collapsed={collapsedSubs.has("circuitBreaker")}
-        onToggle={onToggleSub}
       >
         <CircuitBreakerFields
           value={effective.circuitBreaker}
@@ -1195,8 +1289,6 @@ function WorkflowDefaultsSubsections({
         id="mutability"
         title="Mutability"
         isDefault={mutabilityIsDefault}
-        collapsed={collapsedSubs.has("mutability")}
-        onToggle={onToggleSub}
       >
         <MutabilityFields
           value={effective.mutability}

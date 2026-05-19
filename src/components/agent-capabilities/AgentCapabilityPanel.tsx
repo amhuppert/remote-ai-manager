@@ -7,7 +7,6 @@ import type {
   AgentCapabilityCascadeKind,
   AgentCapabilityCascadeLayer,
   AgentCapabilityDiagnostic,
-  AgentCapabilityEffectiveState,
   AgentCapabilitySourceRef,
   AgentCapabilityViewResponse,
   AgentCapabilityViewRow,
@@ -31,14 +30,27 @@ export interface AgentCapabilityPanelProps {
   onRefresh?: () => void;
   onToggleItem?: (itemId: string, enabled: boolean) => void;
   onResetItem?: (itemId: string) => void;
+  onOpenPlugin?: (
+    pluginId: string,
+    backend: AgentCapabilityViewRow["backend"],
+  ) => void;
+  initialSearch?: string;
   pendingItemIds?: readonly string[];
+  hideHeader?: boolean;
+  hideLevels?: boolean;
 }
 
 const FILTERS = [
-  { key: "enabled", label: "Show enabled" },
-  { key: "disabled", label: "Show disabled" },
-  { key: "stale", label: "Show stale" },
-  { key: "parent-disabled", label: "Show parent-disabled" },
+  { key: "all", label: "All", ariaLabel: "Show all" },
+  { key: "overridden", label: "Overridden", ariaLabel: "Show overridden" },
+  { key: "enabled", label: "On", ariaLabel: "Show enabled" },
+  { key: "disabled", label: "Off", ariaLabel: "Show disabled" },
+  { key: "stale", label: "Stale", ariaLabel: "Show stale" },
+  {
+    key: "parent-disabled",
+    label: "Parent off",
+    ariaLabel: "Show parent-disabled",
+  },
 ] as const;
 
 type FilterKey = (typeof FILTERS)[number]["key"];
@@ -62,12 +74,14 @@ export function AgentCapabilityPanel({
   onRefresh,
   onToggleItem,
   onResetItem,
+  onOpenPlugin,
+  initialSearch,
   pendingItemIds = [],
+  hideHeader,
+  hideLevels,
 }: AgentCapabilityPanelProps): React.JSX.Element {
-  const [search, setSearch] = useState("");
-  const [activeFilters, setActiveFilters] = useState<ReadonlySet<FilterKey>>(
-    () => new Set(),
-  );
+  const [search, setSearch] = useState(() => initialSearch ?? "");
+  const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
 
   const optionByValue = useMemo(() => {
     const out = new Map<string, AgentCapabilityLayerOption>();
@@ -82,47 +96,68 @@ export function AgentCapabilityPanel({
     const term = search.trim().toLowerCase();
     return view.items.filter((row) => {
       if (term && !rowMatchesSearch(row, term)) return false;
-      if (activeFilters.size === 0) return true;
-      for (const filter of activeFilters) {
-        if (rowMatchesFilter(row, filter)) return true;
-      }
-      return false;
+      return rowMatchesFilter(row, activeFilter);
     });
-  }, [activeFilters, search, view]);
+  }, [activeFilter, search, view]);
 
   const selectedValue = scopeValue(selectedScope);
+  const selectedOption = optionByValue.get(selectedValue);
+  const overrideCount = view
+    ? view.items.filter((row) => row.currentLayerValue !== undefined).length
+    : 0;
   const panelClass = [
     "agent-capability-panel",
     view?.backend === "codex" ? "agent-capability-panel--codex" : "",
   ]
     .filter(Boolean)
     .join(" ");
+  const rowsClass = [
+    "agent-capability-panel__rows",
+    "agent-capability-panel__rows--capabilities",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <section className={panelClass} data-cascade-kind={view?.cascadeKind}>
-      <div className="agent-capability-panel__header">
-        <div>
-          <h2 className="agent-capability-panel__title">{title}</h2>
-          {view ? (
-            <div className="agent-capability-panel__summary">
-              <span>{view.items.length} items</span>
-              <span>{view.backend}</span>
-              <span>{metadataLabel(view)}</span>
-            </div>
-          ) : null}
+      {!hideHeader ? (
+        <div className="agent-capability-panel__header">
+          <div>
+            <h2 className="agent-capability-panel__title">{title}</h2>
+            <p className="agent-capability-panel__subtitle">
+              Toggle this capability set at any available scope. More specific
+              layers inherit until they store an override.
+            </p>
+            {view ? (
+              <div className="agent-capability-panel__summary">
+                <span>{view.items.length} items</span>
+                <span>{view.backend}</span>
+                <span>{metadataLabel(view)}</span>
+                <span>{overrideCount} overrides here</span>
+              </div>
+            ) : null}
+          </div>
+          <div className="agent-capability-panel__actions">
+            {onRefresh ? (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={onRefresh}
+              >
+                Refresh
+              </button>
+            ) : null}
+          </div>
         </div>
-        <div className="agent-capability-panel__actions">
-          {onRefresh ? (
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={onRefresh}
-            >
-              Refresh
-            </button>
-          ) : null}
-        </div>
-      </div>
+      ) : null}
+
+      {!hideLevels ? (
+        <AgentCapabilityLevelSwitcher
+          layerOptions={layerOptions}
+          selectedScope={selectedScope}
+          onScopeChange={onScopeChange}
+        />
+      ) : null}
 
       <div className="agent-capability-panel__toolbar">
         <label className="agent-capability-panel__field">
@@ -134,41 +169,22 @@ export function AgentCapabilityPanel({
             placeholder="Filter items"
           />
         </label>
-        <label className="agent-capability-panel__field">
-          <span>Edited layer</span>
-          <select
-            aria-label="Edited layer"
-            value={selectedValue}
-            onChange={(event) => {
-              const option = optionByValue.get(event.target.value);
-              if (option) onScopeChange(option.scope);
-            }}
-          >
-            {layerOptions.map((option) => (
-              <option
-                key={scopeValue(option.scope)}
-                value={scopeValue(option.scope)}
-                disabled={option.disabled}
-              >
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
         <div className="agent-capability-panel__filters">
           {FILTERS.map((filter) => (
-            <label key={filter.key} className="agent-capability-filter">
-              <input
-                type="checkbox"
-                aria-label={filter.label}
-                checked={activeFilters.has(filter.key)}
-                onChange={() => {
-                  setActiveFilters((prev) => toggleFilter(prev, filter.key));
-                }}
-              />
-              <span>{filter.label.replace("Show ", "")}</span>
-            </label>
+            <button
+              key={filter.key}
+              type="button"
+              className={`agent-capability-filter${activeFilter === filter.key ? " agent-capability-filter--active" : ""}`}
+              aria-label={filter.ariaLabel}
+              aria-pressed={activeFilter === filter.key}
+              onClick={() => setActiveFilter(filter.key)}
+            >
+              {filter.label}
+            </button>
           ))}
+        </div>
+        <div className="agent-capability-panel__scope-note">
+          {selectedOption?.label ?? levelLabel(selectedScope.level)}
         </div>
       </div>
 
@@ -186,7 +202,7 @@ export function AgentCapabilityPanel({
         <DiagnosticList diagnostics={view.diagnostics} />
       ) : null}
 
-      <div className="agent-capability-panel__rows">
+      <div className={rowsClass}>
         {view
           ? visibleRows.map((row) => (
               <CapabilityRow
@@ -195,6 +211,7 @@ export function AgentCapabilityPanel({
                 view={view}
                 onToggleItem={onToggleItem}
                 onResetItem={onResetItem}
+                onOpenPlugin={onOpenPlugin}
                 pending={pendingItemIds.includes(row.itemId)}
               />
             ))
@@ -206,6 +223,71 @@ export function AgentCapabilityPanel({
         ) : null}
       </div>
     </section>
+  );
+}
+
+export function AgentCapabilityLevelSwitcher({
+  layerOptions,
+  selectedScope,
+  onScopeChange,
+}: {
+  layerOptions: readonly AgentCapabilityLayerOption[];
+  selectedScope: AgentCapabilityScope;
+  onScopeChange(scope: AgentCapabilityScope): void;
+}): React.JSX.Element {
+  const selectedValue = scopeValue(selectedScope);
+  const optionByValue = new Map(
+    layerOptions.map((option) => [scopeValue(option.scope), option] as const),
+  );
+
+  return (
+    <div className="agent-capability-levels">
+      <span className="agent-capability-levels__label">Editing at</span>
+      <div className="agent-capability-levels__stones">
+        {layerOptions.map((option) => {
+          const value = scopeValue(option.scope);
+          const active = value === selectedValue;
+          return (
+            <button
+              key={value}
+              type="button"
+              className={`agent-capability-level${active ? " agent-capability-level--active" : ""}`}
+              disabled={option.disabled}
+              aria-pressed={active}
+              onClick={() => onScopeChange(option.scope)}
+            >
+              <span className="agent-capability-level__name">
+                {levelLabel(option.scope.level)}
+              </span>
+              <span className="agent-capability-level__detail">
+                {scopeDetail(option.scope)}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <label className="agent-capability-panel__scope-select">
+        <span>Edited layer</span>
+        <select
+          aria-label="Edited layer"
+          value={selectedValue}
+          onChange={(event) => {
+            const option = optionByValue.get(event.target.value);
+            if (option) onScopeChange(option.scope);
+          }}
+        >
+          {layerOptions.map((option) => (
+            <option
+              key={scopeValue(option.scope)}
+              value={scopeValue(option.scope)}
+              disabled={option.disabled}
+            >
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
   );
 }
 
@@ -254,22 +336,31 @@ function CapabilityRow({
   view,
   onToggleItem,
   onResetItem,
+  onOpenPlugin,
   pending,
 }: {
   row: AgentCapabilityViewRow;
   view: AgentCapabilityViewResponse;
   onToggleItem?: (itemId: string, enabled: boolean) => void;
   onResetItem?: (itemId: string) => void;
+  onOpenPlugin?: (
+    pluginId: string,
+    backend: AgentCapabilityViewRow["backend"],
+  ) => void;
   pending: boolean;
 }): React.JSX.Element {
   const unavailableReason = controlUnavailableReason(view);
   const controlsDisabled = pending || unavailableReason !== undefined;
+  const explicitHere = row.currentLayerValue !== undefined;
+  const switchEnabled = row.ownEffectiveState.enabled;
   const className = [
     "agent-capability-row",
     row.effectiveState.enabled ? "agent-capability-row--enabled" : "",
     row.stale ? "agent-capability-row--stale" : "",
     row.inheritedDisableReason ? "agent-capability-row--parent-disabled" : "",
+    row.inheritedDisableReason ? "agent-capability-row--plugin-disabled" : "",
     row.applyStatus !== "none" ? "agent-capability-row--pending" : "",
+    explicitHere ? "agent-capability-row--explicit" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -279,87 +370,36 @@ function CapabilityRow({
       className={className}
       data-testid={`capability-row-${row.itemId}`}
       data-item-id={row.itemId}
+      data-effective={row.effectiveState.enabled ? "on" : "off"}
     >
-      <div className="agent-capability-row__main">
-        <div className="agent-capability-row__identity">
-          <span className="agent-capability-row__name">{row.displayName}</span>
-          <span className="agent-capability-row__id">{row.itemId}</span>
-        </div>
-        <div className="agent-capability-row__badges">
-          <Badge label={`backend ${row.backend}`} />
-          <Badge label={sourceLabel(row.source)} />
-          <Badge label={`native ${enabledLabel(row.nativeDefault.enabled)}`} />
-          <Badge
-            label={`effective ${enabledLabel(row.effectiveState.enabled)}`}
-          />
-          <Badge label={`origin ${row.originLayer}`} />
-          <Badge label={runtimeVisibilityLabel(row)} />
-          <Badge label={row.runtimeEmittable ? "emittable" : "not emittable"} />
-          {row.stale ? <Badge label="stale" tone="warning" /> : null}
-          {row.applyStatus !== "none" ? (
-            <Badge label={applyStatusLabel(row.applyStatus)} tone="pending" />
-          ) : null}
-        </div>
-      </div>
-      <div className="agent-capability-row__details">
-        <span>{stateLabel("own", row.ownEffectiveState)}</span>
-        {row.currentLayerValue ? (
-          <span>current {enabledLabel(row.currentLayerValue.enabled)}</span>
-        ) : (
-          <span>current inherited</span>
-        )}
-        {row.inheritedEffectiveState ? (
-          <span>{stateLabel("inherited", row.inheritedEffectiveState)}</span>
-        ) : null}
-        {row.owningPluginId ? <span>plugin {row.owningPluginId}</span> : null}
-        {row.inheritedDisableReason ? (
-          <span>
-            disabled by {row.inheritedDisableReason.pluginId} from{" "}
-            {row.inheritedDisableReason.originLayer}
-          </span>
-        ) : null}
-      </div>
-      {row.diagnostics.length ? (
-        <DiagnosticList diagnostics={row.diagnostics} compact />
-      ) : null}
-      {onToggleItem || onResetItem ? (
-        <div className="agent-capability-row__controls">
-          <div
-            className="agent-capability-row__toggle-group"
-            aria-label={`${row.displayName} enablement controls`}
-          >
-            <button
-              type="button"
-              className={`agent-capability-row__toggle${row.effectiveState.enabled ? " active" : ""}`}
-              aria-pressed={row.effectiveState.enabled}
-              aria-label={`Enable ${row.displayName}`}
-              disabled={controlsDisabled || !onToggleItem}
-              onClick={() => onToggleItem?.(row.itemId, true)}
-            >
-              Enabled
-            </button>
-            <button
-              type="button"
-              className={`agent-capability-row__toggle${!row.effectiveState.enabled ? " active" : ""}`}
-              aria-pressed={!row.effectiveState.enabled}
-              aria-label={`Disable ${row.displayName}`}
-              disabled={controlsDisabled || !onToggleItem}
-              onClick={() => onToggleItem?.(row.itemId, false)}
-            >
-              Disabled
-            </button>
+      <div className="agent-capability-row__body">
+        <div className="agent-capability-row__main">
+          <div className="agent-capability-row__identity">
+            <span className="agent-capability-row__name">
+              {row.displayName}
+            </span>
+            <span className="agent-capability-row__id">{row.itemId}</span>
           </div>
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm agent-capability-row__reset"
-            aria-label={`Reset ${row.displayName}`}
-            disabled={controlsDisabled || !onResetItem}
-            onClick={() => onResetItem?.(row.itemId)}
-          >
-            Reset
-          </button>
+        </div>
+        <div className="agent-capability-row__details">
+          <InheritanceChip row={row} />
+          {row.owningPluginId ? (
+            <PluginChip
+              pluginId={row.owningPluginId}
+              disabledByPlugin={row.inheritedDisableReason !== undefined}
+              backend={row.backend}
+              onOpenPlugin={onOpenPlugin}
+            />
+          ) : null}
+          {row.stale ? <StatusChip label="Stale" tone="warning" /> : null}
+          {row.applyStatus !== "none" ? (
+            <StatusChip
+              label={applyStatusLabel(row.applyStatus)}
+              tone="pending"
+            />
+          ) : null}
           {pending ? (
-            <span className="agent-capability-row__control-note">pending</span>
+            <span className="agent-capability-row__control-note">Pending</span>
           ) : null}
           {unavailableReason ? (
             <span className="agent-capability-row__control-note">
@@ -367,12 +407,41 @@ function CapabilityRow({
             </span>
           ) : null}
         </div>
+        {row.diagnostics.length ? (
+          <DiagnosticList diagnostics={row.diagnostics} compact />
+        ) : null}
+      </div>
+
+      {onToggleItem || onResetItem ? (
+        <div className="agent-capability-row__controls">
+          <button
+            type="button"
+            className={`agent-capability-row__switch${switchEnabled ? " agent-capability-row__switch--on" : ""}`}
+            aria-pressed={switchEnabled}
+            aria-label={`${switchEnabled ? "Disable" : "Enable"} ${row.displayName}`}
+            disabled={controlsDisabled || !onToggleItem}
+            onClick={() => onToggleItem?.(row.itemId, !switchEnabled)}
+          >
+            <span />
+          </button>
+          {explicitHere ? (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm agent-capability-row__reset"
+              aria-label={`Reset ${row.displayName}`}
+              disabled={controlsDisabled || !onResetItem}
+              onClick={() => onResetItem?.(row.itemId)}
+            >
+              Reset
+            </button>
+          ) : null}
+        </div>
       ) : null}
     </article>
   );
 }
 
-function Badge({
+function StatusChip({
   label,
   tone,
 }: {
@@ -381,9 +450,72 @@ function Badge({
 }): React.JSX.Element {
   return (
     <span
-      className={`agent-capability-badge${tone ? ` agent-capability-badge--${tone}` : ""}`}
+      className={`agent-capability-status-chip${tone ? ` agent-capability-status-chip--${tone}` : ""}`}
     >
       {label}
+    </span>
+  );
+}
+
+function PluginChip({
+  pluginId,
+  disabledByPlugin,
+  backend,
+  onOpenPlugin,
+}: {
+  pluginId: string;
+  disabledByPlugin: boolean;
+  backend: AgentCapabilityViewRow["backend"];
+  onOpenPlugin?: (
+    pluginId: string,
+    backend: AgentCapabilityViewRow["backend"],
+  ) => void;
+}): React.JSX.Element {
+  const label = pluginDisplayName(pluginId);
+  const className = [
+    "agent-capability-plugin-chip",
+    disabledByPlugin ? "agent-capability-plugin-chip--suppressed" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const text = disabledByPlugin ? `Off via plugin · ${label}` : `via ${label}`;
+
+  if (!onOpenPlugin) {
+    return <span className={className}>{text}</span>;
+  }
+
+  return (
+    <button
+      type="button"
+      className={className}
+      aria-label={`Open ${label} plugin configuration`}
+      onClick={() => onOpenPlugin(pluginId, backend)}
+    >
+      {text}
+    </button>
+  );
+}
+
+function InheritanceChip({
+  row,
+}: {
+  row: AgentCapabilityViewRow;
+}): React.JSX.Element {
+  if (row.currentLayerValue) {
+    return (
+      <span
+        className={`agent-capability-inheritance agent-capability-inheritance--explicit${row.currentLayerValue.enabled ? "" : "-off"}`}
+      >
+        Set {enabledStateLabel(row.currentLayerValue.enabled)} at{" "}
+        {originLabel(row.currentLayerValue.originLayer)}
+      </span>
+    );
+  }
+
+  return (
+    <span className="agent-capability-inheritance">
+      Inherits {enabledStateLabel(row.ownEffectiveState.enabled)} from{" "}
+      {originLabel(row.ownEffectiveState.originLayer)}
     </span>
   );
 }
@@ -428,23 +560,12 @@ function rowMatchesFilter(
   row: AgentCapabilityViewRow,
   filter: FilterKey,
 ): boolean {
+  if (filter === "all") return true;
+  if (filter === "overridden") return row.currentLayerValue !== undefined;
   if (filter === "enabled") return row.effectiveState.enabled;
   if (filter === "disabled") return !row.effectiveState.enabled;
   if (filter === "stale") return row.stale;
   return row.inheritedDisableReason !== undefined;
-}
-
-function toggleFilter(
-  prev: ReadonlySet<FilterKey>,
-  filter: FilterKey,
-): ReadonlySet<FilterKey> {
-  const next = new Set(prev);
-  if (next.has(filter)) {
-    next.delete(filter);
-  } else {
-    next.add(filter);
-  }
-  return next;
 }
 
 function scopeValue(scope: AgentCapabilityScope): string {
@@ -454,6 +575,20 @@ function scopeValue(scope: AgentCapabilityScope): string {
     return `session:${scope.projectName}:${scope.sessionName}`;
   }
   return `conversation:${scope.projectName}:${scope.sessionName}:${scope.conversationId}`;
+}
+
+function levelLabel(level: AgentCapabilityScope["level"]): string {
+  if (level === "global") return "Global";
+  if (level === "project") return "Project";
+  if (level === "session") return "Session";
+  return "Conversation";
+}
+
+function scopeDetail(scope: AgentCapabilityScope): string {
+  if (scope.level === "global") return "CC defaults";
+  if (scope.level === "project") return scope.projectName;
+  if (scope.level === "session") return scope.sessionName;
+  return scope.conversationId;
 }
 
 function metadataLabel(view: AgentCapabilityViewResponse): string {
@@ -467,20 +602,22 @@ function sourceLabel(source: AgentCapabilitySourceRef): string {
   return `${source.kind}: ${source.path}`;
 }
 
-function enabledLabel(enabled: boolean): string {
-  return enabled ? "enabled" : "disabled";
+function enabledStateLabel(enabled: boolean): string {
+  return enabled ? "on" : "off";
 }
 
-function stateLabel(
-  prefix: "own" | "current" | "inherited",
-  state: AgentCapabilityEffectiveState,
-): string {
-  return `${prefix} ${enabledLabel(state.enabled)} from ${state.originLayer}`;
+function originLabel(layer: AgentCapabilityViewRow["originLayer"]): string {
+  if (layer === "global") return "Global";
+  if (layer === "project") return "Project";
+  if (layer === "session") return "Session";
+  if (layer === "conversation") return "Conversation";
+  return "native";
 }
 
-function runtimeVisibilityLabel(row: AgentCapabilityViewRow): string {
-  if (row.runtimeVisibility === "runtime-visible") return "runtime visible";
-  return row.runtimeVisibility.replaceAll("-", " ");
+function pluginDisplayName(pluginId: string): string {
+  return pluginId.startsWith("plugin:")
+    ? pluginId.slice("plugin:".length)
+    : pluginId;
 }
 
 function applyStatusLabel(status: AgentCapabilityApplyStatus): string {

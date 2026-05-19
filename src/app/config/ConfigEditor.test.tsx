@@ -58,6 +58,24 @@ vi.mock("@/lib/queries", () => ({
     isError: false,
     error: null,
   }),
+  useProjectMcpConfigQuery: () => ({
+    data: undefined,
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
+  useSessionMcpConfigQuery: () => ({
+    data: undefined,
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
+  useConversationMcpConfigQuery: () => ({
+    data: undefined,
+    isPending: false,
+    isError: false,
+    error: null,
+  }),
 }));
 
 vi.mock("@/lib/mutations", () => ({
@@ -77,13 +95,86 @@ beforeEach(() => {
   currentData = structuredClone(fullConfigData);
 });
 
+function selectSettingsTab(name: RegExp | string) {
+  fireEvent.click(screen.getByRole("tab", { name }));
+}
+
 function expandWorkflowDefaults() {
-  // The workflowDefaults section is collapsed by default; click its header to expand.
-  fireEvent.click(screen.getByRole("button", { name: /Workflow Defaults/i }));
+  selectSettingsTab(/Workflow defaults/i);
 }
 
 describe("ConfigEditor — Workflow Defaults", () => {
-  it("renders all six sub-sections inside 'Workflow Defaults'", () => {
+  it("uses the redesigned settings shell with General as the default section", () => {
+    renderWithQuery(<ConfigEditor />);
+
+    expect(
+      screen.getByRole("navigation", { name: "Settings" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /General/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      screen.getByRole("heading", { name: /General settings/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("System Configuration")).not.toBeInTheDocument();
+  });
+
+  it("switches side-nav sections without leaving old sections underneath", () => {
+    renderWithQuery(<ConfigEditor />);
+
+    selectSettingsTab(/Capabilities/i);
+
+    expect(screen.getByRole("tab", { name: /Capabilities/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      screen.getByRole("heading", { name: /Agent capabilities/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: /MCP Servers/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: /General settings/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("System Configuration")).not.toBeInTheDocument();
+  });
+
+  it("renders config section headers as static chrome instead of expandable controls", () => {
+    renderWithQuery(<ConfigEditor />);
+
+    expect(
+      screen.queryByRole("button", { name: /Workspace/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/^Workspace$/i)).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /Infrastructure/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/^Infrastructure$/i)).toBeVisible();
+  });
+
+  it("renders workflow defaults directly at the page top level", () => {
+    const { container } = renderWithQuery(<ConfigEditor />);
+    selectSettingsTab(/Workflow defaults/i);
+
+    expect(
+      screen.queryByRole("button", { name: /Workflow Defaults/i }),
+    ).not.toBeInTheDocument();
+    expect(container.querySelectorAll(".config-section")).toHaveLength(0);
+    expect(container.querySelectorAll(".config-section-header")).toHaveLength(
+      0,
+    );
+    expect(
+      screen.queryByRole("button", { name: /Implementer/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/^Implementer$/i)).toBeVisible();
+    expect(
+      container.querySelectorAll(".config-subsection.collapsed"),
+    ).toHaveLength(0);
+  });
+
+  it("renders all six workflow default blocks at the page top level", () => {
     renderWithQuery(<ConfigEditor />);
     expandWorkflowDefaults();
 
@@ -96,9 +187,7 @@ describe("ConfigEditor — Workflow Defaults", () => {
       "Mutability",
     ];
     for (const title of expected) {
-      expect(
-        screen.getByRole("button", { name: new RegExp(title, "i") }),
-      ).toBeInTheDocument();
+      expect(screen.getByText(new RegExp(`^${title}$`, "i"))).toBeVisible();
     }
   });
 

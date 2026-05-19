@@ -66,15 +66,13 @@ function baseView(
         backend: "claude",
         capabilityKind: "skill",
         cascadeKind: "claude-skills",
-        source: {
-          kind: "user-file",
-          path: "/home/alex/.claude/skills/planner",
-        },
+        source: { kind: "plugin", pluginId: "planning-pack" },
         nativeDefault: { enabled: true },
-        ownEffectiveState: { enabled: true, originLayer: "native" },
-        inheritedEffectiveState: { enabled: true, originLayer: "native" },
+        ownEffectiveState: { enabled: true, originLayer: "global" },
+        inheritedEffectiveState: { enabled: true, originLayer: "global" },
         effectiveState: { enabled: false, originLayer: "project" },
         originLayer: "project",
+        owningPluginId: "planning-pack",
         inheritedDisableReason: {
           pluginId: "planning-pack",
           originLayer: "project",
@@ -118,7 +116,65 @@ function baseView(
 }
 
 describe("AgentCapabilityPanel", () => {
-  it("renders the capability row fields needed to distinguish current, inherited, stale, pending, and diagnostic states", () => {
+  it("renders the prototype-style cascade switcher and filter pills", () => {
+    render(
+      <AgentCapabilityPanel
+        title="Claude Skills"
+        view={baseView()}
+        layerOptions={[
+          { label: "Global", scope: { level: "global" } },
+          {
+            label: "Project",
+            scope: { level: "project", projectName: "remote-ai-manager" },
+          },
+          {
+            label: "Session",
+            scope: {
+              level: "session",
+              projectName: "remote-ai-manager",
+              sessionName: "capabilities",
+            },
+          },
+          {
+            label: "Conversation",
+            scope: {
+              level: "conversation",
+              projectName: "remote-ai-manager",
+              sessionName: "capabilities",
+              conversationId: "conv-1",
+            },
+          },
+        ]}
+        selectedScope={{
+          level: "conversation",
+          projectName: "remote-ai-manager",
+          sessionName: "capabilities",
+          conversationId: "conv-1",
+        }}
+        onScopeChange={vi.fn()}
+        onOpenPlugin={vi.fn()}
+        onToggleItem={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Editing at")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Global/i })).toHaveClass(
+      "agent-capability-level",
+    );
+    expect(screen.getByRole("button", { name: /Conversation/i })).toHaveClass(
+      "agent-capability-level--active",
+    );
+    expect(
+      screen.getByRole("button", { name: "Show all" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("All")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Show overridden" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Overridden")).toBeInTheDocument();
+  });
+
+  it("renders prototype row state without exposing raw resolver metadata", () => {
     render(
       <AgentCapabilityPanel
         title="Claude Skills"
@@ -141,34 +197,45 @@ describe("AgentCapabilityPanel", () => {
           conversationId: "conv-1",
         }}
         onScopeChange={vi.fn()}
+        onOpenPlugin={vi.fn()}
+        onToggleItem={vi.fn()}
       />,
     );
 
     const reviewer = screen.getByTestId("capability-row-reviewer");
     expect(within(reviewer).getByText("Reviewer")).toBeInTheDocument();
     expect(
-      within(reviewer).getByText("plugin: quality-pack"),
-    ).toBeInTheDocument();
-    expect(within(reviewer).getByText("backend claude")).toBeInTheDocument();
-    expect(within(reviewer).getByText("native enabled")).toBeInTheDocument();
-    expect(
-      within(reviewer).getByText("effective disabled"),
-    ).toBeInTheDocument();
-    expect(within(reviewer).getByText("current disabled")).toBeInTheDocument();
-    expect(
-      within(reviewer).getByText("inherited enabled from project"),
+      within(reviewer).getByText("Set off at Conversation"),
     ).toBeInTheDocument();
     expect(
-      within(reviewer).getByText("origin conversation"),
-    ).toBeInTheDocument();
-    expect(within(reviewer).getByText("runtime visible")).toBeInTheDocument();
-    expect(within(reviewer).getByText("emittable")).toBeInTheDocument();
-    expect(within(reviewer).getByText("staged idle")).toBeInTheDocument();
+      within(reviewer).getByRole("button", {
+        name: "Open quality-pack plugin configuration",
+      }),
+    ).toHaveTextContent("via quality-pack");
+    expect(within(reviewer).queryByText("backend claude")).toBeNull();
+    expect(within(reviewer).queryByText("native enabled")).toBeNull();
+    expect(within(reviewer).queryByText("effective disabled")).toBeNull();
+    expect(within(reviewer).queryByText("origin conversation")).toBeNull();
+    expect(within(reviewer).queryByText("runtime visible")).toBeNull();
+    expect(within(reviewer).queryByText("emittable")).toBeNull();
 
     const planner = screen.getByTestId("capability-row-planner");
     expect(
-      within(planner).getByText("disabled by planning-pack from project"),
+      within(planner).getByText("Inherits on from Global"),
     ).toBeInTheDocument();
+    expect(
+      within(planner).getByRole("button", {
+        name: "Open planning-pack plugin configuration",
+      }),
+    ).toHaveTextContent("Off via plugin · planning-pack");
+    expect(
+      within(planner).getByRole("button", {
+        name: "Open planning-pack plugin configuration",
+      }),
+    ).toHaveClass("agent-capability-plugin-chip--suppressed");
+    expect(
+      within(planner).getByRole("button", { name: "Disable Planner" }),
+    ).toHaveAttribute("aria-pressed", "true");
     expect(
       within(planner).getByText("Disabled by planning-pack."),
     ).toBeInTheDocument();
@@ -177,7 +244,7 @@ describe("AgentCapabilityPanel", () => {
       screen.getByText("One skill source could not be read."),
     ).toBeInTheDocument();
     expect(
-      within(screen.getByTestId("capability-row-legacy")).getAllByText("stale")
+      within(screen.getByTestId("capability-row-legacy")).getAllByText("Stale")
         .length,
     ).toBeGreaterThan(0);
   });
@@ -219,6 +286,33 @@ describe("AgentCapabilityPanel", () => {
     });
     fireEvent.click(screen.getByLabelText("Show stale"));
     expect(screen.getByTestId("capability-row-legacy")).toBeInTheDocument();
+    expect(screen.queryByTestId("capability-row-reviewer")).toBeNull();
+  });
+
+  it("keeps a single visible capability row in the standard fixed-height list", () => {
+    render(
+      <AgentCapabilityPanel
+        title="Claude Skills"
+        view={baseView()}
+        layerOptions={[
+          {
+            label: "Global",
+            scope: { level: "global" },
+          },
+        ]}
+        selectedScope={{ level: "global" }}
+        onScopeChange={vi.fn()}
+        initialSearch="planner"
+      />,
+    );
+
+    const row = screen.getByTestId("capability-row-planner");
+    expect(row.parentElement).toHaveClass(
+      "agent-capability-panel__rows--capabilities",
+    );
+    expect(row.parentElement).not.toHaveClass(
+      "agent-capability-panel__rows--single",
+    );
     expect(screen.queryByTestId("capability-row-reviewer")).toBeNull();
   });
 
@@ -308,7 +402,7 @@ describe("AgentCapabilityPanel", () => {
     );
   });
 
-  it("keeps stale stored intent editable while showing it is not runtime-emittable", () => {
+  it("keeps stale stored intent editable while showing the stale state", () => {
     const onToggleItem = vi.fn();
     render(
       <AgentCapabilityPanel
@@ -335,13 +429,35 @@ describe("AgentCapabilityPanel", () => {
     );
 
     const legacy = screen.getByTestId("capability-row-legacy");
-    expect(within(legacy).getByText("not emittable")).toBeInTheDocument();
+    expect(within(legacy).getByText("Stale")).toBeInTheDocument();
     const disableButton = within(legacy).getByRole("button", {
       name: "Disable legacy",
     });
     expect(disableButton).not.toBeDisabled();
     fireEvent.click(disableButton);
     expect(onToggleItem).toHaveBeenCalledWith("legacy", false);
+  });
+
+  it("opens the owning plugin tab from plugin provenance chips", () => {
+    const onOpenPlugin = vi.fn();
+    render(
+      <AgentCapabilityPanel
+        title="Claude Skills"
+        view={baseView()}
+        layerOptions={[{ label: "Global", scope: { level: "global" } }]}
+        selectedScope={{ level: "global" }}
+        onScopeChange={vi.fn()}
+        onOpenPlugin={onOpenPlugin}
+      />,
+    );
+
+    fireEvent.click(
+      within(screen.getByTestId("capability-row-planner")).getByRole("button", {
+        name: "Open planning-pack plugin configuration",
+      }),
+    );
+
+    expect(onOpenPlugin).toHaveBeenCalledWith("planning-pack", "claude");
   });
 
   it("disables verification-gated Codex controls and renders diagnostics", () => {

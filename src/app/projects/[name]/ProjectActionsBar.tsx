@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import ProjectMcpButton from "@/components/mcp/ProjectMcpButton";
+import ScopedAgentCapabilitiesConfig from "@/components/agent-capabilities/ScopedAgentCapabilitiesConfig";
 
 interface ProjectActionsBarProps {
   projectName: string;
@@ -40,7 +40,11 @@ export default function ProjectActionsBar({
         <button className="btn btn-sm" onClick={onQuickTask}>
           Quick Task
         </button>
-        <ProjectMcpButton projectName={projectName} />
+        <ScopedAgentCapabilitiesConfig
+          level="project"
+          projectName={projectName}
+          className="btn btn-sm cap-trigger"
+        />
         <Link
           className="btn btn-sm"
           href={`/projects/${encodeURIComponent(projectName)}/workflows`}

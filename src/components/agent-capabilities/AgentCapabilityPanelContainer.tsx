@@ -21,26 +21,45 @@ export interface AgentCapabilityPanelContainerProps {
   cascadeKind: AgentCapabilityCascadeKind;
   layerOptions: readonly AgentCapabilityLayerOption[];
   initialScope?: AgentCapabilityScope;
+  selectedScope?: AgentCapabilityScope;
+  onScopeChange?: (scope: AgentCapabilityScope) => void;
+  onOpenPlugin?: (pluginId: string, backend: "claude" | "codex") => void;
+  initialSearch?: string;
+  hideHeader?: boolean;
+  hideLevels?: boolean;
 }
 
 export function AgentCapabilityPanelContainer({
   cascadeKind,
   layerOptions,
   initialScope,
+  selectedScope,
+  onScopeChange,
+  onOpenPlugin,
+  initialSearch,
+  hideHeader,
+  hideLevels,
 }: AgentCapabilityPanelContainerProps): React.JSX.Element {
-  const [selectedScope, setSelectedScope] = useState<AgentCapabilityScope>(
-    () => initialScope ?? layerOptions[0]?.scope ?? { level: "global" },
-  );
-  const query = useAgentCapabilityViewQuery(selectedScope, cascadeKind, {
+  const [localSelectedScope, setLocalSelectedScope] =
+    useState<AgentCapabilityScope>(
+      () => initialScope ?? layerOptions[0]?.scope ?? { level: "global" },
+    );
+  const effectiveScope = selectedScope ?? localSelectedScope;
+  const setEffectiveScope = onScopeChange ?? setLocalSelectedScope;
+
+  const query = useAgentCapabilityViewQuery(effectiveScope, cascadeKind, {
     enabled: layerOptions.length > 0,
   });
-  const refresh = useRefreshAgentCapabilityMutation(selectedScope, cascadeKind);
+  const refresh = useRefreshAgentCapabilityMutation(
+    effectiveScope,
+    cascadeKind,
+  );
   const toggleItem = useToggleAgentCapabilityItemMutation(
-    selectedScope,
+    effectiveScope,
     cascadeKind,
   );
   const resetItem = useResetAgentCapabilityItemMutation(
-    selectedScope,
+    effectiveScope,
     cascadeKind,
   );
 
@@ -59,8 +78,8 @@ export function AgentCapabilityPanelContainer({
       title={titleForCapabilityCascade(cascadeKind)}
       view={query.data}
       layerOptions={layerOptions}
-      selectedScope={selectedScope}
-      onScopeChange={setSelectedScope}
+      selectedScope={effectiveScope}
+      onScopeChange={setEffectiveScope}
       loading={query.isPending || refresh.isPending}
       errorMessage={errorMessage}
       onRefresh={() => refresh.mutate()}
@@ -70,10 +89,14 @@ export function AgentCapabilityPanelContainer({
       onResetItem={(itemId) => {
         resetItem.mutate({ itemId });
       }}
+      onOpenPlugin={onOpenPlugin}
+      initialSearch={initialSearch}
       pendingItemIds={[
         ...(toggleItem.isPending ? [toggleItem.variables.itemId] : []),
         ...(resetItem.isPending ? [resetItem.variables.itemId] : []),
       ]}
+      hideHeader={hideHeader}
+      hideLevels={hideLevels}
     />
   );
 }

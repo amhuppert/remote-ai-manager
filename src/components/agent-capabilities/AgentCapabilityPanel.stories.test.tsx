@@ -11,6 +11,7 @@ beforeAll(storybookAnnotations.beforeAll);
 const {
   NativeInheritedOverridden,
   ParentStalePendingFailedDiagnostic,
+  PluginProvidedRows,
   UnavailableCodexPlugins,
   InteractiveRegression,
   ErrorRendering,
@@ -33,6 +34,23 @@ describe("AgentCapabilityPanel stories", () => {
     expect(
       screen.getByText("Apply failed during idle reload."),
     ).toBeInTheDocument();
+  });
+
+  it("renders plugin-provided rows with linked plugin chips and suppression state", async () => {
+    await PluginProvidedRows.run();
+    const enabledRow = screen.getByTestId("capability-row-release-notes");
+    expect(
+      within(enabledRow).getByRole("button", {
+        name: "Open git-guardrails plugin configuration",
+      }),
+    ).toHaveTextContent("via git-guardrails");
+
+    const suppressedRow = screen.getByTestId("capability-row-commit-review");
+    expect(
+      within(suppressedRow).getByRole("button", {
+        name: "Open git-guardrails plugin configuration",
+      }),
+    ).toHaveTextContent("Off via plugin · git-guardrails");
   });
 
   it("renders unavailable Codex plugin controls as disabled", async () => {
@@ -61,7 +79,7 @@ describe("AgentCapabilityPanel stories", () => {
     fireEvent.click(screen.getByLabelText("Show stale"));
     expect(screen.getByText("Stale Stored Skill")).toBeInTheDocument();
     expect(screen.queryByText("Native Skill")).toBeNull();
-    fireEvent.click(screen.getByLabelText("Show stale"));
+    fireEvent.click(screen.getByLabelText("Show all"));
 
     fireEvent.change(screen.getByLabelText("Edited layer"), {
       target: { value: "project:remote-ai-manager" },

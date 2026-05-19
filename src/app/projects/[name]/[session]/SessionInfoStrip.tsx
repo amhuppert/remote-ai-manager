@@ -3,8 +3,7 @@
 import { memo, useCallback, useState } from "react";
 import CopyableId from "@/components/CopyableId";
 import { ContextFillIndicator } from "@/components/ContextFillIndicator";
-import SessionMcpChip from "@/components/mcp/SessionMcpChip";
-import SessionMcpModal from "@/components/mcp/SessionMcpModal";
+import ScopedAgentCapabilitiesConfig from "@/components/agent-capabilities/ScopedAgentCapabilitiesConfig";
 import {
   useInfoExpanded,
   useToggleInfoStrip,
@@ -45,7 +44,6 @@ function SessionInfoStrip({
 }: SessionInfoStripProps): React.JSX.Element {
   const infoExpanded = useInfoExpanded();
   const toggleInfoStrip = useToggleInfoStrip();
-  const [mcpModalOpen, setMcpModalOpen] = useState(false);
   const [contextCopied, setContextCopied] = useState(false);
 
   const handleCopyContext = useCallback(
@@ -60,9 +58,6 @@ function SessionInfoStrip({
     },
     [buildContext],
   );
-
-  const openMcpModal = useCallback(() => setMcpModalOpen(true), []);
-  const closeMcpModal = useCallback(() => setMcpModalOpen(false), []);
 
   return (
     <>
@@ -117,27 +112,20 @@ function SessionInfoStrip({
           >
             {contextCopied ? "\u2713" : "\u2398"} Context
           </button>
-          <SessionMcpChip
+          <ScopedAgentCapabilitiesConfig
+            level="session"
             projectName={projectName}
             sessionName={sessionName}
-            onClick={openMcpModal}
+            className="si-copy-context-btn cap-trigger"
           />
           <InfoDetailsPopover
             conversationId={conversationId}
             backendRef={activeConversation?.backendRef ?? null}
             createdAt={session.createdAt}
             worktreePath={session.worktreePath}
-            onOpenMcpServers={openMcpModal}
           />
         </div>
       </div>
-
-      <SessionMcpModal
-        projectName={projectName}
-        sessionName={sessionName}
-        open={mcpModalOpen}
-        onClose={closeMcpModal}
-      />
     </>
   );
 }
