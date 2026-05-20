@@ -3238,6 +3238,10 @@ textarea {
   min-height: 500px;
 }
 
+.session-detail-layout.finished {
+  grid-template-rows: auto auto 1fr;
+}
+
 /* Session info strip — mission readout */
 .session-info-strip {
   background: var(--bg-surface);
@@ -7728,6 +7732,11 @@ textarea {
      otherwise let it fall into the auto-sized row 1 and collapse panel-body. */
   .session-detail-layout > .session-content-area {
     grid-row: 2 / 3;
+  }
+
+  /* With finished banner, content area lives in row 3 (banner takes row 2). */
+  .session-detail-layout.finished > .session-content-area {
+    grid-row: 3 / 4;
   }
 
   /* Full-bleed conversation panel on mobile */
