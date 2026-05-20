@@ -167,7 +167,31 @@ export default function NotificationListener(): null {
         ),
         (prev: unknown) => {
           const entry = { ...d.message, seq: d.seq };
-          return Array.isArray(prev) ? [...prev, entry] : [entry];
+          if (!Array.isArray(prev)) return [entry];
+          // Mirror server-side `readConversationMessagesWithSeq` merging:
+          // consecutive same-role entries collapse into one TranscriptMessage
+          // so the MessageContent grouping logic sees them as a single turn.
+          const lastIdx = prev.length - 1;
+          const last = prev[lastIdx];
+          if (
+            last &&
+            typeof last === "object" &&
+            "role" in last &&
+            "content" in last &&
+            Array.isArray((last as { content: unknown }).content) &&
+            (last as { role: unknown }).role === entry.role
+          ) {
+            const merged = {
+              ...(last as object),
+              content: [
+                ...(last as { content: unknown[] }).content,
+                ...entry.content,
+              ],
+              seq: entry.seq,
+            };
+            return [...prev.slice(0, lastIdx), merged];
+          }
+          return [...prev, entry];
         },
       );
     });

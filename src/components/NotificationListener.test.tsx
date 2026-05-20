@@ -446,6 +446,72 @@ describe("NotificationListener", () => {
     expect(invalidateQueries).not.toHaveBeenCalledWith({ queryKey: key });
   });
 
+  it("merges consecutive same-role message-appended events into the previous cache entry", async () => {
+    const client = makeClient();
+    const key = conversationKeys.messages("proj", "sess", "conv-1");
+    client.setQueryData(key, [
+      {
+        role: "user",
+        content: [{ type: "text", text: "do four tool calls" }],
+        timestamp: null,
+        seq: 0,
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "tu_1",
+            name: "Bash",
+            input: { command: "ls" },
+          },
+        ],
+        timestamp: null,
+        seq: 1,
+      },
+    ]);
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("message-appended", {
+      type: "message-appended",
+      projectName: "proj",
+      sessionName: "sess",
+      conversationId: "conv-1",
+      seq: 2,
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "tu_2",
+            name: "Read",
+            input: { path: "/x" },
+          },
+        ],
+        timestamp: null,
+      },
+    });
+
+    await waitFor(() => {
+      const cached =
+        client.getQueryData<
+          Array<{ seq: number; role: string; content: Array<{ id?: string }> }>
+        >(key);
+      // Same-role assistant entries must merge into one message so the
+      // MessageContent grouping logic can collapse consecutive tool uses.
+      expect(cached?.length).toBe(2);
+      expect(cached?.[1]?.content.length).toBe(2);
+      expect(cached?.[1]?.content[0]?.id).toBe("tu_1");
+      expect(cached?.[1]?.content[1]?.id).toBe("tu_2");
+      // Merged message takes the latest seq, matching server-side disk read.
+      expect(cached?.[1]?.seq).toBe(2);
+    });
+  });
+
   it("replaces the matching entry by seq on message-updated without invalidating", async () => {
     const client = makeClient();
     const key = conversationKeys.messages("proj", "sess", "conv-1");
