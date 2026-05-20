@@ -6,6 +6,8 @@ import {
 import type {
   PortOwnershipInput,
   PortOwnershipResult,
+  ScanRangeInput,
+  ScanRangeMatch,
 } from "./dev-server-port-ownership";
 import type { DevServerEntry } from "./dev-server-registry";
 
@@ -48,6 +50,9 @@ interface DepsBundle {
   classifyPortOwnership: ReturnType<
     typeof vi.fn<(input: PortOwnershipInput) => Promise<PortOwnershipResult>>
   >;
+  findOwnedListenerInRange: ReturnType<
+    typeof vi.fn<(input: ScanRangeInput) => Promise<ScanRangeMatch>>
+  >;
   resolveScanStrategy: ReturnType<
     typeof vi.fn<
       (serverName: string) => { basePort: number; rangeSize: number } | null
@@ -61,6 +66,9 @@ function bundle(
     classifyPortOwnership?: (
       input: PortOwnershipInput,
     ) => Promise<PortOwnershipResult>;
+    findOwnedListenerInRange?: (
+      input: ScanRangeInput,
+    ) => Promise<ScanRangeMatch>;
     resolveScanStrategy?: (
       serverName: string,
     ) => { basePort: number; rangeSize: number } | null;
@@ -73,12 +81,36 @@ function bundle(
     overrides.classifyPortOwnership ??
       (async () => ({ status: "available" }) as const),
   );
+  // Default to a loop over `classifyPortOwnership` so existing tests that
+  // only configure classifyPortOwnership keep driving adoption behavior.
+  // Production wires this to a batched lookup; the loop here is purely a
+  // test convenience.
+  const findOwnedListenerInRange = vi.fn<
+    (input: ScanRangeInput) => Promise<ScanRangeMatch>
+  >(
+    overrides.findOwnedListenerInRange ??
+      (async ({ basePort, rangeSize, worktreePath, allowedCwd }) => {
+        for (let offset = 0; offset < rangeSize; offset++) {
+          const port = basePort + offset;
+          const result = await classifyPortOwnership({
+            port,
+            worktreePath,
+            ...(allowedCwd !== undefined ? { allowedCwd } : {}),
+          });
+          if (result.status === "owned") {
+            return { status: "owned", port, pid: result.pid, cwd: result.cwd };
+          }
+        }
+        return { status: "none" };
+      }),
+  );
   const resolveScanStrategy = vi.fn<
     (serverName: string) => { basePort: number; rangeSize: number } | null
   >(overrides.resolveScanStrategy ?? (() => null));
   const broadcast = vi.fn();
   const deps: DevServerReconciliationDeps = {
     classifyPortOwnership,
+    findOwnedListenerInRange,
     resolveScanStrategy,
     broadcast,
     getRegistry: () => registry,
@@ -87,6 +119,7 @@ function bundle(
     registry,
     deps,
     classifyPortOwnership,
+    findOwnedListenerInRange,
     resolveScanStrategy,
     broadcast,
   };

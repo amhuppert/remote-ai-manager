@@ -5,6 +5,8 @@ import {
   defaultPortOwnershipService,
   type PortOwnershipInput,
   type PortOwnershipResult,
+  type ScanRangeInput,
+  type ScanRangeMatch,
 } from "./dev-server-port-ownership";
 import { getGlobalSingleton } from "./global-singleton";
 import {
@@ -26,6 +28,15 @@ export interface DevServerReconciliationDeps {
   classifyPortOwnership(
     input: PortOwnershipInput,
   ): Promise<PortOwnershipResult>;
+  /**
+   * Batched scan-range lookup used by adoption: returns the first listener in
+   * `[basePort, basePort + rangeSize)` whose process cwd belongs to this
+   * session's worktree, or `{ status: "none" }` when nothing matches. A single
+   * call replaces what was previously one subprocess invocation per scanned
+   * port — critical so adoption doesn't block the Node.js event loop for
+   * tens of seconds on every dev-server status fetch.
+   */
+  findOwnedListenerInRange(input: ScanRangeInput): Promise<ScanRangeMatch>;
   /**
    * Return the scan range CC should sweep when looking for an externally
    * started listener for `serverName`, or null when no strategy is known.
@@ -183,52 +194,46 @@ export function createDevServerReconciler(deps: DevServerReconciliationDeps) {
       return;
     }
 
-    for (let offset = 0; offset < scan.rangeSize; offset++) {
-      const port = scan.basePort + offset;
-      const ownership = await deps.classifyPortOwnership({
-        port,
-        worktreePath,
-        allowedCwd: cwd,
-      });
+    const match = await deps.findOwnedListenerInRange({
+      basePort: scan.basePort,
+      rangeSize: scan.rangeSize,
+      worktreePath,
+      allowedCwd: cwd,
+    });
 
-      if (ownership.status === "owned") {
-        const registry = deps.getRegistry();
-        const key = makeKey(projectPath, sessionName, serverName);
-        const adopted: DevServerEntry = {
-          serverName,
-          projectPath,
-          sessionName,
-          command,
-          status: "running",
-          port,
-          remoteUrl: null,
-          startedAt: existing?.startedAt ?? new Date().toISOString(),
-          errorMessage: null,
-          recentOutput: existing?.recentOutput ?? [],
-          worktreePath,
-          source: "external-adopted",
-          ownedByThisSession: true,
-          ownerPid: ownership.pid,
-          _process: null,
-          _pid: null,
-          _startupTimer: null,
-        };
-        registry.set(key, adopted);
+    if (match.status !== "owned") return;
 
-        logger.info("dev-server.reconcile.adopted", {
-          serverName,
-          port,
-          ownerPid: ownership.pid,
-          worktreePath,
-        });
+    const registry = deps.getRegistry();
+    const key = makeKey(projectPath, sessionName, serverName);
+    const adopted: DevServerEntry = {
+      serverName,
+      projectPath,
+      sessionName,
+      command,
+      status: "running",
+      port: match.port,
+      remoteUrl: null,
+      startedAt: existing?.startedAt ?? new Date().toISOString(),
+      errorMessage: null,
+      recentOutput: existing?.recentOutput ?? [],
+      worktreePath,
+      source: "external-adopted",
+      ownedByThisSession: true,
+      ownerPid: match.pid,
+      _process: null,
+      _pid: null,
+      _startupTimer: null,
+    };
+    registry.set(key, adopted);
 
-        deps.broadcast(buildEvent(adopted));
-        return;
-      }
+    logger.info("dev-server.reconcile.adopted", {
+      serverName,
+      port: match.port,
+      ownerPid: match.pid,
+      worktreePath,
+    });
 
-      // conflict / unknown / available: keep scanning. The reconciler never
-      // adopts a listener it cannot verify belongs to this worktree.
-    }
+    deps.broadcast(buildEvent(adopted));
   }
 
   async function reconcile(input: ReconcileInput): Promise<void> {
@@ -293,6 +298,8 @@ const defaultReconcilerBroadcast: BroadcastFn = (event) => {
 
 export const defaultDevServerReconciliationDeps: DevServerReconciliationDeps = {
   classifyPortOwnership: defaultPortOwnershipService.classifyPort,
+  findOwnedListenerInRange:
+    defaultPortOwnershipService.findOwnedListenerInRange,
   resolveScanStrategy: getPresetScanHint,
   broadcast: defaultReconcilerBroadcast,
   getRegistry: defaultGetRegistry,

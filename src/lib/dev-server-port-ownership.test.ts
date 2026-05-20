@@ -5,6 +5,8 @@ import {
   isSameOrDescendantPath,
   listListeningPidsWithExec,
   normalizePath,
+  parseLsofListenerOutput,
+  parseSsListenerOutput,
   type PortOwnershipDeps,
 } from "./dev-server-port-ownership";
 
@@ -13,6 +15,9 @@ function createTestDeps(
 ): PortOwnershipDeps {
   return {
     listListeningPids: vi.fn().mockResolvedValue([]),
+    listAllListeningPorts: vi
+      .fn()
+      .mockResolvedValue(new Map<number, number[]>()),
     getProcessCwd: vi.fn().mockResolvedValue(null),
     realpath: vi.fn().mockImplementation(async (p: string) => p),
     ...overrides,
@@ -279,5 +284,131 @@ describe("production listener PID lookup", () => {
     await expect(listListeningPidsWithExec(65000, exec)).rejects.toThrow(
       /unusable/,
     );
+  });
+});
+
+describe("parseSsListenerOutput", () => {
+  it("parses local addr port and pid from a typical ss row", () => {
+    const out =
+      'LISTEN 0      511                0.0.0.0:3000                  0.0.0.0:*    users:(("next-server",pid=1234,fd=23))\n' +
+      'LISTEN 0      511                127.0.0.1:6006                0.0.0.0:*    users:(("storybook",pid=5678,fd=15))\n';
+    const result = parseSsListenerOutput(out);
+    expect(result.get(3000)).toEqual([1234]);
+    expect(result.get(6006)).toEqual([5678]);
+  });
+
+  it("handles IPv6 by taking the port after the last colon", () => {
+    const out =
+      'LISTEN 0      128                [::]:8080                     [::]:*       users:(("app",pid=42,fd=3))\n';
+    expect(parseSsListenerOutput(out).get(8080)).toEqual([42]);
+  });
+
+  it("returns an empty map for unparseable output", () => {
+    expect(parseSsListenerOutput("").size).toBe(0);
+    expect(parseSsListenerOutput("garbage with no pid").size).toBe(0);
+  });
+
+  it("merges multiple PIDs listening on the same port without duplicates", () => {
+    const out =
+      'LISTEN 0 511 0.0.0.0:3000 0.0.0.0:* users:(("a",pid=1,fd=1),("b",pid=2,fd=2))\n' +
+      'LISTEN 0 511 0.0.0.0:3000 0.0.0.0:* users:(("a",pid=1,fd=1))\n';
+    expect(parseSsListenerOutput(out).get(3000)).toEqual([1, 2]);
+  });
+});
+
+describe("parseLsofListenerOutput", () => {
+  it("parses pid/name pairs from -F pPn output", () => {
+    const out = "p1234\nPnode\nn*:3000\np5678\nPnode\nn127.0.0.1:6006\n";
+    const result = parseLsofListenerOutput(out);
+    expect(result.get(3000)).toEqual([1234]);
+    expect(result.get(6006)).toEqual([5678]);
+  });
+});
+
+describe("createPortOwnershipService.findOwnedListenerInRange", () => {
+  it("returns the first owned listener inside the scan range", async () => {
+    const deps = createTestDeps({
+      listAllListeningPorts: vi.fn().mockResolvedValue(
+        new Map<number, number[]>([
+          [2999, [9999]],
+          [3007, [5001]],
+          [3008, [5002]],
+        ]),
+      ),
+      getProcessCwd: vi.fn().mockImplementation(async (pid: number) => {
+        if (pid === 9999) return "/elsewhere";
+        if (pid === 5001) return "/wt/app";
+        return null;
+      }),
+    });
+    const service = createPortOwnershipService(deps);
+
+    const result = await service.findOwnedListenerInRange({
+      basePort: 3000,
+      rangeSize: 100,
+      worktreePath: "/wt",
+    });
+
+    expect(result).toEqual({
+      status: "owned",
+      port: 3007,
+      pid: 5001,
+      cwd: "/wt/app",
+    });
+    // Batched lookup must be a single call, not 100.
+    expect(deps.listAllListeningPorts).toHaveBeenCalledTimes(1);
+    expect(deps.listListeningPids).not.toHaveBeenCalled();
+  });
+
+  it("returns none when no listener in the range is owned by the worktree", async () => {
+    const deps = createTestDeps({
+      listAllListeningPorts: vi
+        .fn()
+        .mockResolvedValue(new Map<number, number[]>([[3007, [9999]]])),
+      getProcessCwd: vi.fn().mockResolvedValue("/somewhere/else"),
+    });
+    const service = createPortOwnershipService(deps);
+
+    const result = await service.findOwnedListenerInRange({
+      basePort: 3000,
+      rangeSize: 100,
+      worktreePath: "/wt",
+    });
+
+    expect(result).toEqual({ status: "none" });
+  });
+
+  it("ignores listeners outside the requested scan range", async () => {
+    const deps = createTestDeps({
+      listAllListeningPorts: vi
+        .fn()
+        .mockResolvedValue(new Map<number, number[]>([[4500, [5001]]])),
+      getProcessCwd: vi.fn().mockResolvedValue("/wt/app"),
+    });
+    const service = createPortOwnershipService(deps);
+
+    const result = await service.findOwnedListenerInRange({
+      basePort: 3000,
+      rangeSize: 100,
+      worktreePath: "/wt",
+    });
+
+    expect(result).toEqual({ status: "none" });
+    expect(deps.getProcessCwd).not.toHaveBeenCalled();
+  });
+
+  it("returns none when the batched listener lookup throws", async () => {
+    const deps = createTestDeps({
+      listAllListeningPorts: vi.fn().mockRejectedValue(new Error("ss broke")),
+    });
+    const service = createPortOwnershipService(deps);
+
+    const result = await service.findOwnedListenerInRange({
+      basePort: 3000,
+      rangeSize: 100,
+      worktreePath: "/wt",
+    });
+
+    expect(result).toEqual({ status: "none" });
   });
 });

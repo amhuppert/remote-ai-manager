@@ -1,8 +1,11 @@
-import { execSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { readlink, realpath as nodeRealpath } from "node:fs/promises";
 import path from "node:path";
 import { createLogger } from "./logging";
 import { getErrorMessage } from "@/lib/errors";
+
+const execFileAsync = promisify(execFile);
 
 const logger = createLogger("dev-server");
 
@@ -12,6 +15,13 @@ const logger = createLogger("dev-server");
 
 export interface PortOwnershipDeps {
   listListeningPids(port: number): Promise<number[]>;
+  /**
+   * Best-effort batched listener lookup. Returns a map keyed by port whose
+   * value is the set of PIDs listening on that port. Used by callers that
+   * need to classify many ports without paying the per-port subprocess cost
+   * (e.g. scan-range adoption sweeps).
+   */
+  listAllListeningPorts(): Promise<Map<number, number[]>>;
   getProcessCwd(pid: number): Promise<string | null>;
   realpath(path: string): Promise<string | null>;
 }
@@ -95,6 +105,17 @@ async function resolveReal(
   const real = await deps.realpath(p).catch(() => null);
   return real ? normalizePath(real) : normalizePath(p);
 }
+
+export interface ScanRangeInput {
+  basePort: number;
+  rangeSize: number;
+  worktreePath: string;
+  allowedCwd?: string | null;
+}
+
+export type ScanRangeMatch =
+  | { status: "owned"; port: number; pid: number; cwd: string }
+  | { status: "none" };
 
 export function createPortOwnershipService(deps: PortOwnershipDeps) {
   async function classifyPort(
@@ -181,7 +202,76 @@ export function createPortOwnershipService(deps: PortOwnershipDeps) {
     return { status: "unknown", reason: unknown.reason };
   }
 
-  return { classifyPort };
+  /**
+   * Find the first listener in [basePort, basePort + rangeSize) whose process
+   * cwd belongs to this session's worktree (or the configured app cwd).
+   *
+   * Performs a single batched listener lookup instead of probing every port,
+   * then runs cwd resolution only on the (typically zero or one) listeners
+   * that fall inside the scan range. This keeps the dev-server reconciliation
+   * path fast even when adoption never matches.
+   */
+  async function findOwnedListenerInRange(
+    input: ScanRangeInput,
+  ): Promise<ScanRangeMatch> {
+    const { basePort, rangeSize, worktreePath } = input;
+    const allowedCwd = input.allowedCwd ?? null;
+
+    logger.info("dev-server.ownership.scan_range", {
+      basePort,
+      rangeSize,
+      worktreePath,
+      allowedCwd,
+    });
+
+    let listeners: Map<number, number[]>;
+    try {
+      listeners = await deps.listAllListeningPorts();
+    } catch (err) {
+      logger.warn("dev-server.ownership.scan_range_failed", {
+        basePort,
+        rangeSize,
+        worktreePath,
+        reason: getErrorMessage(err),
+      });
+      return { status: "none" };
+    }
+
+    const worktreeReal = await resolveReal(deps, worktreePath);
+    const allowedReal = allowedCwd ? await resolveReal(deps, allowedCwd) : null;
+
+    for (let offset = 0; offset < rangeSize; offset++) {
+      const port = basePort + offset;
+      const pids = listeners.get(port);
+      if (!pids || pids.length === 0) continue;
+
+      for (const pid of pids) {
+        const cwd = await deps.getProcessCwd(pid).catch(() => null);
+        if (cwd === null) continue;
+
+        const cwdReal = await resolveReal(deps, cwd);
+        const owned = isOwnedProcessCwd(
+          cwdReal,
+          worktreeReal,
+          allowedReal ?? undefined,
+        );
+
+        if (owned) {
+          logger.info("dev-server.ownership.scan_range_owned", {
+            port,
+            pid,
+            cwd,
+            worktreePath,
+          });
+          return { status: "owned", port, pid, cwd };
+        }
+      }
+    }
+
+    return { status: "none" };
+  }
+
+  return { classifyPort, findOwnedListenerInRange };
 }
 
 // ============================================================
@@ -194,13 +284,157 @@ export function createPortOwnershipService(deps: PortOwnershipDeps) {
  * Fallback (Linux + macOS): `lsof -tiTCP:PORT -sTCP:LISTEN -n -P`.
  * Never uses `lsof -ti :PORT` (which also returns client connections).
  *
- * Throws when ALL inspection tools fail — that means we cannot prove the
- * port is unoccupied, so the caller must treat it as `unknown`.
+ * Uses async `execFile` so the Node.js event loop stays responsive while
+ * subprocesses run. Throws when ALL inspection tools fail — the caller must
+ * treat that as `unknown`.
  */
 export async function defaultListListeningPids(
   port: number,
 ): Promise<number[]> {
-  return listListeningPidsWithExec(port, execSync as ExecSyncLike);
+  const pids = new Set<number>();
+  let ssOk = false;
+  let lsofOk = false;
+
+  try {
+    const { stdout } = await execFileAsync(
+      "ss",
+      ["-H", "-tlnp", `sport = :${port}`],
+      { encoding: "utf-8" },
+    );
+    ssOk = true;
+    addPidsFromOutput(stdout, pids);
+    if (pids.size > 0) return Array.from(pids);
+  } catch {
+    // ss missing on macOS or returned nothing — fall through to lsof.
+  }
+
+  try {
+    const { stdout } = await execFileAsync(
+      "lsof",
+      ["-tiTCP:" + port, "-sTCP:LISTEN", "-n", "-P"],
+      { encoding: "utf-8" },
+    );
+    lsofOk = true;
+    addPidsFromOutput(stdout, pids);
+  } catch (err) {
+    if (getExitStatus(err) === 1) {
+      lsofOk = true;
+    } else if (!ssOk) {
+      throw new Error("port listener lookup failed: ss and lsof both unusable");
+    }
+  }
+
+  if (!ssOk && !lsofOk) {
+    throw new Error(
+      "port listener lookup failed: no inspection tool available",
+    );
+  }
+
+  return Array.from(pids);
+}
+
+/**
+ * Production batched lookup: one `ss -H -tlnp` call returns every TCP
+ * listener system-wide. Parses the (port → PIDs) map and returns it.
+ *
+ * Falls back to `lsof -iTCP -sTCP:LISTEN -n -P -F` when `ss` is unavailable
+ * (notably macOS). Returns an empty map when both tools fail — callers should
+ * treat that as "no adoption candidates found" rather than an error, because
+ * adoption is best-effort.
+ */
+export async function defaultListAllListeningPorts(): Promise<
+  Map<number, number[]>
+> {
+  try {
+    const { stdout } = await execFileAsync("ss", ["-H", "-tlnp"], {
+      encoding: "utf-8",
+      maxBuffer: 4 * 1024 * 1024,
+    });
+    return parseSsListenerOutput(stdout);
+  } catch {
+    // Fall through to lsof.
+  }
+
+  try {
+    const { stdout } = await execFileAsync(
+      "lsof",
+      ["-iTCP", "-sTCP:LISTEN", "-n", "-P", "-F", "pPn"],
+      { encoding: "utf-8", maxBuffer: 4 * 1024 * 1024 },
+    );
+    return parseLsofListenerOutput(stdout);
+  } catch {
+    return new Map();
+  }
+}
+
+/**
+ * Parse `ss -H -tlnp` output into a (port → pids) map. Tolerates the multiple
+ * shapes `ss` emits depending on locale/permissions — only PID and the local
+ * port (last `:NNN` in column 4) are extracted.
+ */
+export function parseSsListenerOutput(output: string): Map<number, number[]> {
+  const result = new Map<number, number[]>();
+  for (const line of output.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    const cols = trimmed.split(/\s+/);
+    const localAddr = cols[3];
+    if (!localAddr) continue;
+    const colonIdx = localAddr.lastIndexOf(":");
+    if (colonIdx === -1) continue;
+    const port = parseInt(localAddr.slice(colonIdx + 1), 10);
+    if (!Number.isFinite(port) || port <= 0) continue;
+
+    const pids: number[] = [];
+    for (const match of trimmed.matchAll(/pid=(\d+)/g)) {
+      const n = parseInt(match[1]!, 10);
+      if (Number.isFinite(n) && n > 0) pids.push(n);
+    }
+    if (pids.length === 0) continue;
+
+    const existing = result.get(port);
+    if (existing) {
+      for (const pid of pids) {
+        if (!existing.includes(pid)) existing.push(pid);
+      }
+    } else {
+      result.set(port, pids);
+    }
+  }
+  return result;
+}
+
+/**
+ * Parse `lsof -F pPn` listener output into a (port → pids) map. lsof prints
+ * one field per line tagged with a single-letter prefix; `p<pid>` opens a
+ * process group, and `n<addr>` lines inside that group describe sockets.
+ */
+export function parseLsofListenerOutput(output: string): Map<number, number[]> {
+  const result = new Map<number, number[]>();
+  let currentPid: number | null = null;
+  for (const line of output.split("\n")) {
+    if (!line) continue;
+    if (line.startsWith("p")) {
+      const n = parseInt(line.slice(1), 10);
+      currentPid = Number.isFinite(n) && n > 0 ? n : null;
+      continue;
+    }
+    if (line.startsWith("n") && currentPid !== null) {
+      const addr = line.slice(1);
+      const colonIdx = addr.lastIndexOf(":");
+      if (colonIdx === -1) continue;
+      const port = parseInt(addr.slice(colonIdx + 1), 10);
+      if (!Number.isFinite(port) || port <= 0) continue;
+      const existing = result.get(port);
+      if (existing) {
+        if (!existing.includes(currentPid)) existing.push(currentPid);
+      } else {
+        result.set(port, [currentPid]);
+      }
+    }
+  }
+  return result;
 }
 
 function addPidsFromOutput(output: string, pids: Set<number>): void {
@@ -277,11 +511,12 @@ export async function defaultGetProcessCwd(
   }
 
   try {
-    const out = execSync(`lsof -a -p ${pid} -d cwd -Fn`, {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    for (const line of out.split("\n")) {
+    const { stdout } = await execFileAsync(
+      "lsof",
+      ["-a", "-p", String(pid), "-d", "cwd", "-Fn"],
+      { encoding: "utf-8" },
+    );
+    for (const line of stdout.split("\n")) {
       if (line.startsWith("n")) return line.slice(1);
     }
   } catch {
@@ -302,6 +537,7 @@ export async function defaultRealpath(p: string): Promise<string | null> {
 
 export const defaultPortOwnershipDeps: PortOwnershipDeps = {
   listListeningPids: defaultListListeningPids,
+  listAllListeningPorts: defaultListAllListeningPorts,
   getProcessCwd: defaultGetProcessCwd,
   realpath: defaultRealpath,
 };
