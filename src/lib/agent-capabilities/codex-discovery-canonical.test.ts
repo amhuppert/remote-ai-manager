@@ -120,21 +120,51 @@ describe("discoverCodexSkillsCanonical", () => {
 });
 
 describe("discoverCodexPluginsCanonical", () => {
-  it("returns no items, the unavailable diagnostic, and canonical-shaped diagnostic", async () => {
+  it("returns no items, no diagnostics, and discoverySupport=available when no codex plugin sources exist", async () => {
     const result = await discoverCodexPluginsCanonical({
       worktreePath: workTree,
       home,
     });
     expect(result.cascadeKind).toBe("codex-plugins");
     expect(result.items).toEqual([]);
-    expect(result.discoverySupport).toBe("unavailable-pending-verification");
-    expect(result.diagnostics).toHaveLength(1);
-    const diag = result.diagnostics[0]!;
-    agentCapabilityDiagnosticSchema.parse(diag);
-    expect(diag.code).toBe("codex-plugins-unavailable");
-    expect(diag.cascadeKind).toBe("codex-plugins");
-    expect(diag.backend).toBe("codex");
-    expect(diag.severity).toBe("warning");
+    expect(result.discoverySupport).toBe("available");
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it("maps a marketplace-sourced plugin into canonical AgentCapabilityDiscoveredItem shape", async () => {
+    const marketplaceRoot = path.join(
+      home,
+      ".codex",
+      "marketplaces",
+      "oh-my-codex-local",
+      "oh-my-codex",
+    );
+    const manifestDir = path.join(marketplaceRoot, ".codex-plugin");
+    await mkdir(manifestDir, { recursive: true });
+    const manifestPath = path.join(manifestDir, "plugin.json");
+    await writeFile(
+      manifestPath,
+      JSON.stringify({
+        name: "oh-my-codex",
+        displayName: "Oh My Codex",
+      }),
+      "utf-8",
+    );
+
+    const result = await discoverCodexPluginsCanonical({
+      worktreePath: workTree,
+      home,
+    });
+
+    expect(result.items).toHaveLength(1);
+    const item = result.items[0]!;
+    // Boundary parse: ensures the canonical schema accepts the item.
+    agentCapabilityDiscoveredItemSchema.parse(item);
+    expect(item.capabilityKind).toBe("plugin");
+    expect(item.itemId).toBe("oh-my-codex@oh-my-codex-local");
+    expect(item.displayName).toBe("Oh My Codex");
+    expect(item.nativeDefault).toEqual({ enabled: true });
+    expect(item.source).toEqual({ kind: "user-file", path: manifestPath });
   });
 
   it("populates refreshedAt and a stable signature so cache layers can key on it", async () => {

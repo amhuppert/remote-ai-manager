@@ -75,7 +75,7 @@ function emptyOverrides(): AgentCapabilityOverrides {
 }
 
 describe("agent capability end-to-end acceptance", () => {
-  it("covers discovery, toggle, inheritance, apply, SSE, isolation, verification-gated, and non-blocking diagnostics", async () => {
+  it("covers discovery, toggle, inheritance, apply, SSE, isolation, and non-blocking diagnostics", async () => {
     let globalOverrides = emptyOverrides();
     const events: AgentCapabilitiesUpdatedEvent[] = [];
     const writes: AgentCapabilityOverrides[] = [];
@@ -121,18 +121,7 @@ describe("agent capability end-to-end acceptance", () => {
         discoveredItems,
         metadata: defaultAgentCapabilityMetadataRegistry.get(cascadeKind),
         ...(pluginResolution === undefined ? {} : { pluginResolution }),
-        discoveryDiagnostics:
-          cascadeKind === "codex-plugins"
-            ? [
-                {
-                  severity: "warning",
-                  code: "codex-plugins-unavailable",
-                  message: "Codex plugin discovery is verification-gated.",
-                  cascadeKind: "codex-plugins",
-                  backend: "codex",
-                },
-              ]
-            : [],
+        discoveryDiagnostics: [],
       });
     };
 
@@ -319,14 +308,9 @@ describe("agent capability end-to-end acceptance", () => {
     expect(codexComposition.views["claude-skills"]).toBeUndefined();
     expect(codexComposition.views["codex-skills"]).toBeDefined();
 
-    const verificationGated = resolveView("codex-plugins");
-    expect(verificationGated.metadata?.compositionSupport).toBe(
-      "verification-gated",
-    );
-    expect(verificationGated.diagnostics[0]).toMatchObject({
-      code: "codex-plugins-unavailable",
-      backend: "codex",
-    });
+    const codexPluginsView = resolveView("codex-plugins");
+    expect(codexPluginsView.metadata?.compositionSupport).toBe("translator");
+    expect(codexPluginsView.metadata?.discoverySupport).toBe("available");
 
     const nonBlocking = composeConversationStartRuntime({
       backend: "claude",

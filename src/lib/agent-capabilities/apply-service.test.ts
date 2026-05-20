@@ -6,11 +6,7 @@ import type {
   AgentCapabilityRuntimeApplicationState,
 } from "@/lib/schemas";
 
-import {
-  agentCapabilityMetadata,
-  createAgentCapabilityMetadataRegistry,
-  type AgentCapabilityMetadataRegistry,
-} from "./metadata";
+import type { AgentCapabilityMetadataRegistry } from "./metadata";
 import {
   createCapabilityRuntimeApplyService,
   type AffectedConversation,
@@ -199,16 +195,6 @@ const buildDeps = (opts: FakeDepsOptions = {}): FakeDepsHandles => {
   };
 };
 
-const verifiedCodexSkillsMetadataRegistry =
-  (): AgentCapabilityMetadataRegistry =>
-    createAgentCapabilityMetadataRegistry(
-      agentCapabilityMetadata.map((record) =>
-        record.cascadeKind === "codex-skills"
-          ? { ...record, compositionSupport: "translator" }
-          : record,
-      ),
-    );
-
 describe("apply-after-mutation", () => {
   it("fans out to every affected conversation", async () => {
     const a = claudeConversation({ conversationId: "conv-1" });
@@ -352,63 +338,42 @@ describe("apply-after-mutation", () => {
     });
   });
 
-  it("Codex skills are unsupported while runtime emission is verification-gated", async () => {
-    const port = vi.fn();
-    const { deps, writes } = buildDeps({
-      affected: [codexConversation()],
-      applyClaudeRuntime: port,
-      composeForConversation: async () =>
-        buildCodexComposition({
-          cascades: {
-            "codex-skills": { rows: [{ itemId: "spec-init", enabled: false }] },
-          },
-        }),
-    });
-    const result = await createCapabilityRuntimeApplyService(
-      deps,
-    ).applyAfterOverrideChange({
-      scope: { level: "global" },
-      cascadeKind: "codex-skills",
-      changedItemIds: ["spec-init"],
-    });
-    expect(result.conversations[0]?.cascades[0]).toMatchObject({
-      cascadeKind: "codex-skills",
-      disposition: "unsupported",
-    });
-    expect(port).not.toHaveBeenCalled();
-    expect(writes).toHaveLength(0);
-  });
-
-  it("codex-plugins are unsupported while discovery and runtime emission are verification-gated", async () => {
-    const { deps, writes } = buildDeps({
-      affected: [codexConversation()],
-      composeForConversation: async () =>
-        buildCodexComposition({
-          cascades: {
-            "codex-plugins": { rows: [] },
-          },
-        }),
-    });
-    const result = await createCapabilityRuntimeApplyService(
-      deps,
-    ).applyAfterOverrideChange({
-      scope: { level: "global" },
-      cascadeKind: "codex-plugins",
-      changedItemIds: ["x"],
-    });
-    expect(result.conversations[0]?.cascades[0]).toMatchObject({
-      cascadeKind: "codex-plugins",
-      disposition: "unsupported",
-    });
-    expect(writes).toHaveLength(0);
-  });
-
-  it("stages verified Codex cascade changes for next turn without calling the runtime port during mutation fanout", async () => {
+  it("stages codex-plugins changes for next turn without calling the runtime port", async () => {
     const port = vi.fn<
       (input: CodexApplyPortInput) => Promise<CodexApplyPortResult>
     >(async () => ({ status: "applied" }));
     const { deps, writes } = buildDeps({
-      metadataRegistry: verifiedCodexSkillsMetadataRegistry(),
+      affected: [codexConversation()],
+      applyCodexRuntime: port,
+      composeForConversation: async () =>
+        buildCodexComposition({
+          cascades: {
+            "codex-plugins": { rows: [{ itemId: "plugin:p", enabled: false }] },
+          },
+        }),
+    });
+    const result = await createCapabilityRuntimeApplyService(
+      deps,
+    ).applyAfterOverrideChange({
+      scope: { level: "global" },
+      cascadeKind: "codex-plugins",
+      changedItemIds: ["plugin:p"],
+    });
+    expect(result.conversations[0]?.cascades[0]).toMatchObject({
+      cascadeKind: "codex-plugins",
+      disposition: "staged-next-turn",
+    });
+    expect(port).not.toHaveBeenCalled();
+    expect(writes[0]?.state.cascades["codex-plugins"]?.lastApplyStatus).toBe(
+      "staged-next-turn",
+    );
+  });
+
+  it("stages Codex cascade changes for next turn without calling the runtime port during mutation fanout", async () => {
+    const port = vi.fn<
+      (input: CodexApplyPortInput) => Promise<CodexApplyPortResult>
+    >(async () => ({ status: "applied" }));
+    const { deps, writes } = buildDeps({
       affected: [codexConversation()],
       applyCodexRuntime: port,
       composeForConversation: async () =>
@@ -607,44 +572,6 @@ describe("apply-after-mutation", () => {
     );
   });
 
-  it("keeps verification-gated Codex compose throws unsupported without writing rejected state", async () => {
-    const { deps, writes } = buildDeps({
-      affected: [codexConversation()],
-      composeForConversation: async () => {
-        throw new Error("codex compose failed");
-      },
-      readRuntimeState: async () => ({
-        cascades: {
-          "codex-skills": {
-            pendingHash: "hash-pending",
-            pendingItemIds: ["spec-init"],
-            lastApplyStatus: "staged-next-turn",
-          },
-        },
-      }),
-    });
-    const result = await createCapabilityRuntimeApplyService(
-      deps,
-    ).applyAfterOverrideChange({
-      scope: { level: "global" },
-      cascadeKind: "codex-skills",
-      changedItemIds: ["spec-init"],
-    });
-    expect(result.conversations[0]?.cascades[0]).toMatchObject({
-      cascadeKind: "codex-skills",
-      disposition: "unsupported",
-    });
-    expect(result.conversations[0]?.diagnostics).toContainEqual(
-      expect.objectContaining({
-        severity: "warning",
-        code: "agent-capability-runtime-verification-gated",
-        backend: "codex",
-        cascadeKind: "codex-skills",
-      }),
-    );
-    expect(writes).toHaveLength(0);
-  });
-
   it("records a rejected disposition when target cascade discovery failed", async () => {
     const previousAppliedHash = "previous-live-hash";
     const { deps, writes } = buildDeps({
@@ -691,46 +618,6 @@ describe("apply-after-mutation", () => {
     expect(
       writes[0]?.state.cascades["claude-skills"]?.lastApplyError,
     ).toContain("discovery failed");
-  });
-
-  it("keeps verification-gated Codex discovery failures unsupported without writing rejected state", async () => {
-    const { deps, writes } = buildDeps({
-      affected: [codexConversation()],
-      composeForConversation: async () =>
-        buildCodexComposition({
-          cascades: {},
-          failedCascadeKinds: ["codex-skills"],
-        }),
-      readRuntimeState: async () => ({
-        cascades: {
-          "codex-skills": {
-            pendingHash: "hash-pending",
-            pendingItemIds: ["spec-init"],
-            lastApplyStatus: "staged-next-turn",
-          },
-        },
-      }),
-    });
-    const result = await createCapabilityRuntimeApplyService(
-      deps,
-    ).applyAfterOverrideChange({
-      scope: { level: "global" },
-      cascadeKind: "codex-skills",
-      changedItemIds: ["spec-init"],
-    });
-    expect(result.conversations[0]?.cascades[0]).toMatchObject({
-      cascadeKind: "codex-skills",
-      disposition: "unsupported",
-    });
-    expect(result.conversations[0]?.diagnostics).toContainEqual(
-      expect.objectContaining({
-        severity: "warning",
-        code: "agent-capability-runtime-verification-gated",
-        backend: "codex",
-        cascadeKind: "codex-skills",
-      }),
-    );
-    expect(writes).toHaveLength(0);
   });
 
   it("records a rejected disposition when the mutated target cascade is missing after composition", async () => {
@@ -1266,102 +1153,6 @@ describe("apply-at-turn-start", () => {
     expect(writes).toHaveLength(0);
   });
 
-  it("keeps verification-gated Codex turn-start state unsupported without calling the runtime", async () => {
-    const port = vi.fn();
-    const composedHash = computeCascadeRuntimeHash({
-      cascadeKind: "codex-skills",
-      rows: [],
-    });
-    const { deps, writes } = buildDeps({
-      applyCodexRuntime: port,
-      composeForConversation: async () =>
-        buildCodexComposition({
-          cascades: {
-            "codex-skills": { rows: [] },
-          },
-        }),
-      readRuntimeState: async () => ({
-        cascades: {
-          "codex-skills": {
-            pendingHash: composedHash,
-            pendingItemIds: [],
-            lastApplyStatus: "staged-next-turn",
-          },
-        },
-      }),
-    });
-    const result = await createCapabilityRuntimeApplyService(
-      deps,
-    ).applyAtTurnStart({
-      projectPath: "/repo",
-      projectName: "repo",
-      sessionName: "session-c",
-      conversationId: "conv-c1",
-      worktreePath: "/repo/.worktrees/session-c",
-      backend: "codex",
-    });
-    expect(port).not.toHaveBeenCalled();
-    expect(
-      result.cascades.find((c) => c.cascadeKind === "codex-skills"),
-    ).toMatchObject({
-      disposition: "unsupported",
-    });
-    expect(result.diagnostics).toContainEqual(
-      expect.objectContaining({
-        severity: "warning",
-        code: "agent-capability-runtime-verification-gated",
-        backend: "codex",
-        cascadeKind: "codex-skills",
-      }),
-    );
-    expect(writes).toHaveLength(0);
-  });
-
-  it("does not retry rejected verification-gated Codex pending work at turn start", async () => {
-    const port = vi.fn();
-    const composedHash = computeCascadeRuntimeHash({
-      cascadeKind: "codex-skills",
-      rows: [],
-    });
-    const { deps, writes } = buildDeps({
-      applyCodexRuntime: port,
-      composeForConversation: async () =>
-        buildCodexComposition({
-          cascades: {
-            "codex-skills": { rows: [] },
-          },
-        }),
-      readRuntimeState: async () => ({
-        cascades: {
-          "codex-skills": {
-            appliedHash: "prev-applied",
-            pendingHash: composedHash,
-            pendingItemIds: [],
-            lastApplyStatus: "rejected",
-            lastApplyError: "previous runtime delivery failure",
-          },
-        },
-      }),
-    });
-    const result = await createCapabilityRuntimeApplyService(
-      deps,
-    ).applyAtTurnStart({
-      projectPath: "/repo",
-      projectName: "repo",
-      sessionName: "session-c",
-      conversationId: "conv-c1",
-      worktreePath: "/repo/.worktrees/session-c",
-      backend: "codex",
-    });
-    expect(
-      result.cascades.find((c) => c.cascadeKind === "codex-skills"),
-    ).toMatchObject({
-      disposition: "unsupported",
-    });
-    expect(port).not.toHaveBeenCalled();
-    expect(writes).toHaveLength(0);
-  });
-
   it("Codex turn-start pushes recomposed config to the live runtime before promoting to applied", async () => {
     const composedHash = computeCascadeRuntimeHash({
       cascadeKind: "codex-skills",
@@ -1374,7 +1165,6 @@ describe("apply-at-turn-start", () => {
       (input: CodexApplyPortInput) => Promise<CodexApplyPortResult>
     >(async () => ({ status: "applied" }));
     const { deps, writes } = buildDeps({
-      metadataRegistry: verifiedCodexSkillsMetadataRegistry(),
       applyCodexRuntime: port,
       composeForConversation: async () =>
         buildCodexComposition({
@@ -1431,7 +1221,6 @@ describe("apply-at-turn-start", () => {
       }),
     );
     const { deps, writes } = buildDeps({
-      metadataRegistry: verifiedCodexSkillsMetadataRegistry(),
       applyCodexRuntime: port,
       composeForConversation: async () =>
         buildCodexComposition({
@@ -1484,7 +1273,6 @@ describe("apply-at-turn-start", () => {
       rows: [{ itemId: "spec-init", enabled: false }],
     });
     const { deps, writes } = buildDeps({
-      metadataRegistry: verifiedCodexSkillsMetadataRegistry(),
       composeForConversation: async () =>
         buildCodexComposition({
           cascades: {
@@ -1568,7 +1356,6 @@ describe("apply-at-turn-start", () => {
       (input: CodexApplyPortInput) => Promise<CodexApplyPortResult>
     >(async () => ({ status: "applied" }));
     const { deps, writes } = buildDeps({
-      metadataRegistry: verifiedCodexSkillsMetadataRegistry(),
       applyCodexRuntime: port,
       composeForConversation: async () =>
         buildCodexComposition({
@@ -1629,7 +1416,6 @@ describe("apply-at-turn-start", () => {
       (input: CodexApplyPortInput) => Promise<CodexApplyPortResult>
     >(async () => ({ status: "applied" }));
     const { deps, writes } = buildDeps({
-      metadataRegistry: verifiedCodexSkillsMetadataRegistry(),
       applyCodexRuntime: port,
       composeForConversation: async () =>
         buildCodexComposition({
@@ -1678,7 +1464,6 @@ describe("apply-at-turn-start", () => {
     });
     const port = vi.fn();
     const { deps, writes } = buildDeps({
-      metadataRegistry: verifiedCodexSkillsMetadataRegistry(),
       applyCodexRuntime: port,
       composeForConversation: async () => {
         throw new Error("turn-start composition crashed");
@@ -1720,7 +1505,7 @@ describe("apply-at-turn-start", () => {
       }),
       expect.objectContaining({
         cascadeKind: "codex-plugins",
-        disposition: "unsupported",
+        disposition: "rejected",
       }),
     ]);
     expect(result.diagnostics).toContainEqual(
@@ -1738,8 +1523,8 @@ describe("apply-at-turn-start", () => {
       lastApplyError: "turn-start composition crashed",
     });
     expect(writes[0]?.state.cascades["codex-plugins"]).toMatchObject({
-      pendingHash: "unsupported-pending",
-      lastApplyStatus: "staged-next-turn",
+      lastApplyStatus: "rejected",
+      lastApplyError: "turn-start composition crashed",
     });
   });
 

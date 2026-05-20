@@ -22,17 +22,17 @@ const baseInput = (
 });
 
 describe("planCascadeApply", () => {
-  it("returns unsupported for verification-gated codex-skills", () => {
+  it("returns staged-next-turn for codex-skills regardless of turn state", () => {
     const plan = planCascadeApply(
       baseInput({
         metadata: defaultAgentCapabilityMetadataRegistry.get("codex-skills"),
         triggerMode: "turn-active",
       }),
     );
-    expect(plan.disposition).toBe("unsupported");
+    expect(plan.disposition).toBe("staged-next-turn");
   });
 
-  it("keeps verification-gated next-turn cascades unsupported instead of treating matching hashes as applied no-ops", () => {
+  it("treats matching hashes as applied no-ops even for next-turn cascades", () => {
     const plan = planCascadeApply(
       baseInput({
         metadata: defaultAgentCapabilityMetadataRegistry.get("codex-skills"),
@@ -40,16 +40,16 @@ describe("planCascadeApply", () => {
         previous: { appliedHash: "stable", lastApplyStatus: "applied" },
       }),
     );
-    expect(plan.disposition).toBe("unsupported");
+    expect(plan.disposition).toBe("idempotent-no-op");
   });
 
-  it("returns unsupported for verification-gated codex-plugins", () => {
+  it("returns staged-next-turn for codex-plugins", () => {
     const plan = planCascadeApply(
       baseInput({
         metadata: defaultAgentCapabilityMetadataRegistry.get("codex-plugins"),
       }),
     );
-    expect(plan.disposition).toBe("unsupported");
+    expect(plan.disposition).toBe("staged-next-turn");
   });
 
   it("returns idempotent-no-op when attempted hash matches applied hash", () => {
@@ -305,50 +305,9 @@ describe("planMissingTargetCascadeAfterMutation", () => {
       reason: "missing-target-cascade",
     });
   });
-
-  it("keeps verification-gated targets unsupported rather than failed", () => {
-    const plan = planMissingTargetCascadeAfterMutation({
-      metadata: defaultAgentCapabilityMetadataRegistry.get("codex-skills"),
-      previous: undefined,
-    });
-    expect(plan).toEqual({
-      disposition: "unsupported",
-      stateAction: "preserve",
-    });
-  });
 });
 
 describe("planCascadeFailure", () => {
-  it("keeps verification-gated failed discovery unsupported instead of rejected", () => {
-    const plan = planCascadeFailure({
-      metadata: defaultAgentCapabilityMetadataRegistry.get("codex-skills"),
-      previous: {
-        pendingHash: "hash-pending",
-        pendingItemIds: ["spec-init"],
-        lastApplyStatus: "staged-next-turn",
-      },
-      failureKind: "failed-discovery",
-    });
-    expect(plan).toEqual({
-      disposition: "unsupported",
-      stateAction: "preserve",
-      reason: "verification-gated",
-    });
-  });
-
-  it("keeps verification-gated compose throws unsupported instead of rejected", () => {
-    const plan = planCascadeFailure({
-      metadata: defaultAgentCapabilityMetadataRegistry.get("codex-skills"),
-      previous: undefined,
-      failureKind: "compose-throw",
-    });
-    expect(plan).toEqual({
-      disposition: "unsupported",
-      stateAction: "preserve",
-      reason: "verification-gated",
-    });
-  });
-
   it("rejects translator-backed failed discovery with retryable pending state", () => {
     const plan = planCascadeFailure({
       metadata: defaultAgentCapabilityMetadataRegistry.get("claude-skills"),

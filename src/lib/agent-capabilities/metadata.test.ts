@@ -39,40 +39,19 @@ describe("agent capability metadata registry", () => {
     }
   });
 
-  it("marks codex-plugins discovery as unavailable-pending-verification", () => {
+  it("marks codex-plugins as discovery-available and translator-composed", () => {
     const codexPlugins =
       defaultAgentCapabilityMetadataRegistry.get("codex-plugins");
-    expect(codexPlugins.discoverySupport).toBe(
-      "unavailable-pending-verification",
-    );
-    expect(codexPlugins.compositionSupport).toBe("verification-gated");
+    expect(codexPlugins.discoverySupport).toBe("available");
+    expect(codexPlugins.compositionSupport).toBe("translator");
   });
 
-  it("marks codex-skills as discovery-available but composition verification-gated until the SDK config key is proven", () => {
-    // The installed @openai/codex-sdk typings expose only a generic
-    // `CodexOptions.config` pass-through and no documented per-skill key.
-    // `translateCodexCapabilities` currently refuses to emit skill config and
-    // surfaces a `codex-skill-config-key-unverified` diagnostic. Metadata
-    // must reflect that gate: discovery is available (skill files are read
-    // from disk) but runtime composition is verification-gated, so the UI
-    // and apply service refuse to expose editable runtime behavior for this
-    // cascade.
+  it("marks codex-skills as discovery-available, translator-composed, next-turn apply", () => {
     const codexSkills =
       defaultAgentCapabilityMetadataRegistry.get("codex-skills");
     expect(codexSkills.discoverySupport).toBe("available");
-    expect(codexSkills.compositionSupport).toBe("verification-gated");
+    expect(codexSkills.compositionSupport).toBe("translator");
     expect(codexSkills.applySemantics).toBe("next-turn");
-  });
-
-  it("treats every codex cascade as verification-gated until concrete SDK emission is proven", () => {
-    // Pinned invariant: no Codex cascade may advertise `translator` or
-    // `native` composition until its SDK config keys have been verified.
-    const codexRecords =
-      defaultAgentCapabilityMetadataRegistry.listForBackend("codex");
-    expect(codexRecords.length).toBeGreaterThan(0);
-    for (const record of codexRecords) {
-      expect(record.compositionSupport).toBe("verification-gated");
-    }
   });
 
   it("never assigns idle-live-apply to a codex cascade", () => {
@@ -129,13 +108,10 @@ describe("agent capability metadata registry", () => {
     expect(registry.listForBackend("codex")).toHaveLength(0);
   });
 
-  it("pins codex-plugins runtimeVisibility to unsupported so UI never offers runtime editing for unverified plugins", () => {
-    // Codex plugins are unsupported at runtime until discovery and the SDK
-    // emission path are verified. Encoding this in metadata means no UI
-    // component needs `if (cascadeKind === "codex-plugins")` branches.
+  it("pins codex-plugins runtimeVisibility to source-only (Codex runtime is config-driven, not SDK-runtime)", () => {
     const codexPlugins =
       defaultAgentCapabilityMetadataRegistry.get("codex-plugins");
-    expect(codexPlugins.runtimeVisibility).toBe("unsupported");
+    expect(codexPlugins.runtimeVisibility).toBe("source-only");
     expect(codexPlugins.capabilityKind).toBe("plugin");
   });
 
@@ -258,9 +234,9 @@ describe("agent capability metadata registry", () => {
           backend: "claude",
           capabilityKind: "plugin",
           applySemantics: "next-turn",
-          discoverySupport: "unavailable-pending-verification",
-          runtimeVisibility: "unsupported",
-          compositionSupport: "verification-gated",
+          discoverySupport: "available",
+          runtimeVisibility: "source-only",
+          compositionSupport: "translator",
         },
       ]),
     ).toThrow(/Invalid agent capability metadata record/);

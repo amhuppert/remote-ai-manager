@@ -139,7 +139,7 @@ describe("composeConversationStartRuntime — backend scoping", () => {
     });
     expect(result.backend).toBe("codex");
     expect(result.claudeRuntime).toBeUndefined();
-    expect(result.codexRuntime).toBeUndefined();
+    expect(result.codexRuntime).toBeDefined();
     expect(result.views["claude-skills"]).toBeUndefined();
     expect(result.views["codex-skills"]).toBeDefined();
   });
@@ -337,42 +337,6 @@ describe("composeConversationStartRuntime — runtime hash seeding", () => {
     // no skill emission → hashes differ.
     expect(off.runtimeState.cascades["claude-skills"]?.pendingHash).not.toEqual(
       on.runtimeState.cascades["claude-skills"]?.pendingHash,
-    );
-  });
-
-  it("does not seed verification-gated Codex cascades as runtime-applicable", () => {
-    const result = composeConversationStartRuntime({
-      backend: "codex",
-      scope: { level: "conversation" },
-      overrideChain: [{ layer: "global", overrides: undefined }],
-      discoveryByCascade: {
-        "codex-skills": { items: [codexSkill("spec-init")] },
-        "codex-plugins": { items: [] },
-      },
-    });
-    expect(result.runtimeState.cascades["codex-skills"]).toBeUndefined();
-    expect(result.runtimeState.cascades["codex-plugins"]).toBeUndefined();
-  });
-
-  it("does not return empty Codex runtime config for verification-gated cascades", () => {
-    const result = composeConversationStartRuntime({
-      backend: "codex",
-      scope: { level: "conversation" },
-      overrideChain: [{ layer: "global", overrides: undefined }],
-      discoveryByCascade: {
-        "codex-skills": { items: [codexSkill("spec-init")] },
-        "codex-plugins": { items: [] },
-      },
-    });
-
-    expect(result.codexRuntime).toBeUndefined();
-    expect(result.diagnostics).toContainEqual(
-      expect.objectContaining({
-        severity: "warning",
-        code: "codex-skill-config-key-unverified",
-        backend: "codex",
-        cascadeKind: "codex-skills",
-      }),
     );
   });
 });

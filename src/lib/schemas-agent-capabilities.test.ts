@@ -1055,9 +1055,9 @@ describe("agentCapabilityMetadataSchema (canonical capability metadata)", () => 
       backend: "claude",
       capabilityKind: "plugin",
       applySemantics: "next-turn",
-      discoverySupport: "unavailable-pending-verification",
-      runtimeVisibility: "unsupported",
-      compositionSupport: "verification-gated",
+      discoverySupport: "available",
+      runtimeVisibility: "source-only",
+      compositionSupport: "translator",
     });
     expect(result.success).toBe(false);
   });

@@ -10,76 +10,159 @@ function input(
 ): CodexCapabilityResolvedInput {
   return {
     skills: partial.skills ?? [],
-    pluginCascadeRequested: partial.pluginCascadeRequested ?? false,
-    pluginItemCount: partial.pluginItemCount ?? 0,
+    plugins: partial.plugins ?? [],
   };
 }
 
 describe("Codex capability translator", () => {
-  it("returns empty config and no diagnostics when no skills are requested", () => {
+  it("returns empty config, no diagnostics, and no emitted cascades when no skills or plugins are present", () => {
     const result = translateCodexCapabilities(input({}));
     expect(result.config).toEqual({});
     expect(result.diagnostics).toEqual([]);
     expect(result.emittedCascadeKinds).toEqual([]);
+    expect(result.applySemantics).toBe("next-turn");
   });
 
-  it("never emits codex plugin keys; only emits a diagnostic if the cascade is exercised", () => {
-    const result = translateCodexCapabilities(
-      input({
-        pluginCascadeRequested: true,
-        pluginItemCount: 2,
-      }),
-    );
-
-    expect(result.config).toEqual({});
-    expect(result.emittedCascadeKinds).toEqual([]);
-    expect(result.diagnostics).toHaveLength(1);
-    const diagnostic = result.diagnostics[0];
-    expect(diagnostic?.code).toBe("codex-plugins-unavailable");
-    expect(diagnostic?.cascadeKind).toBe("codex-plugins");
-    expect(diagnostic?.message).toMatch(/verification/i);
-  });
-
-  it("treats an unverified Codex skill config key as a translation failure for the skills cascade and falls back to native defaults", () => {
-    // Verification gate: until the implementation verifies a concrete
-    // `CodexOptions.config` key for per-skill enablement on the installed SDK
-    // (none is documented in the installed typings), the translator must
-    // surface a diagnostic and omit the cascade rather than silently emitting
-    // configuration-only flags that the agent ignores.
+  it("emits a single enabled skill into skills.config[]", () => {
     const result = translateCodexCapabilities(
       input({
         skills: [
-          { itemId: "spec-init", enabled: true, sourcePath: "/skills/spec" },
-          { itemId: "spec-tasks", enabled: false, sourcePath: "/skills/tasks" },
+          {
+            itemId: "foo",
+            name: "foo",
+            enabled: true,
+            sourcePath: "/skills/foo",
+          },
         ],
       }),
     );
 
-    expect(result.config).toEqual({});
-    expect(result.emittedCascadeKinds).toEqual([]);
-    expect(result.diagnostics).toHaveLength(1);
-    const diagnostic = result.diagnostics[0];
-    expect(diagnostic?.code).toBe("codex-skill-config-key-unverified");
-    expect(diagnostic?.cascadeKind).toBe("codex-skills");
+    expect(result.config).toEqual({
+      skills: { config: [{ enabled: true, name: "foo" }] },
+    });
+    expect(result.emittedCascadeKinds).toEqual(["codex-skills"]);
+    expect(result.diagnostics).toEqual([]);
   });
 
-  it("does not block conversation start when both Codex cascades produce diagnostics (per-cascade fallback)", () => {
+  it("emits a single disabled skill (not omitted) so the override carries the disable", () => {
     const result = translateCodexCapabilities(
       input({
-        skills: [{ itemId: "x", enabled: false, sourcePath: "/x" }],
-        pluginCascadeRequested: true,
-        pluginItemCount: 1,
+        skills: [
+          {
+            itemId: "foo",
+            name: "foo",
+            enabled: false,
+            sourcePath: "/skills/foo",
+          },
+        ],
       }),
     );
 
-    expect(result.config).toEqual({});
-    expect(result.diagnostics.map((d) => d.cascadeKind).sort()).toEqual([
+    expect(result.config).toEqual({
+      skills: { config: [{ enabled: false, name: "foo" }] },
+    });
+    expect(result.emittedCascadeKinds).toEqual(["codex-skills"]);
+  });
+
+  it("emits a mix of enabled and disabled skills in input order", () => {
+    const result = translateCodexCapabilities(
+      input({
+        skills: [
+          {
+            itemId: "spec-init",
+            name: "spec-init",
+            enabled: true,
+            sourcePath: "/skills/spec-init",
+          },
+          {
+            itemId: "spec-tasks",
+            name: "spec-tasks",
+            enabled: false,
+            sourcePath: "/skills/spec-tasks",
+          },
+          {
+            itemId: "spec-design",
+            name: "spec-design",
+            enabled: true,
+            sourcePath: "/skills/spec-design",
+          },
+        ],
+      }),
+    );
+
+    expect(result.config.skills?.config).toEqual([
+      { enabled: true, name: "spec-init" },
+      { enabled: false, name: "spec-tasks" },
+      { enabled: true, name: "spec-design" },
+    ]);
+    expect(result.emittedCascadeKinds).toEqual(["codex-skills"]);
+  });
+
+  it("emits a single enabled plugin into plugins.NAME", () => {
+    const result = translateCodexCapabilities(
+      input({
+        plugins: [{ itemId: "oh-my-codex", enabled: true }],
+      }),
+    );
+
+    expect(result.config).toEqual({
+      plugins: { "oh-my-codex": { enabled: true } },
+    });
+    expect(result.emittedCascadeKinds).toEqual(["codex-plugins"]);
+  });
+
+  it("emits a single disabled plugin (not omitted)", () => {
+    const result = translateCodexCapabilities(
+      input({
+        plugins: [{ itemId: "oh-my-codex", enabled: false }],
+      }),
+    );
+
+    expect(result.config).toEqual({
+      plugins: { "oh-my-codex": { enabled: false } },
+    });
+    expect(result.emittedCascadeKinds).toEqual(["codex-plugins"]);
+  });
+
+  it("preserves an @scoped plugin id verbatim as the plugins record key", () => {
+    const result = translateCodexCapabilities(
+      input({
+        plugins: [{ itemId: "oh-my-codex@oh-my-codex-local", enabled: false }],
+      }),
+    );
+
+    expect(result.config.plugins).toEqual({
+      "oh-my-codex@oh-my-codex-local": { enabled: false },
+    });
+    expect(result.emittedCascadeKinds).toEqual(["codex-plugins"]);
+  });
+
+  it("emits both cascades together when both skills and plugins are present", () => {
+    const result = translateCodexCapabilities(
+      input({
+        skills: [
+          {
+            itemId: "spec-init",
+            name: "spec-init",
+            enabled: true,
+            sourcePath: "/skills/spec-init",
+          },
+        ],
+        plugins: [{ itemId: "oh-my-codex", enabled: true }],
+      }),
+    );
+
+    expect(result.config.skills?.config).toEqual([
+      { enabled: true, name: "spec-init" },
+    ]);
+    expect(result.config.plugins).toEqual({
+      "oh-my-codex": { enabled: true },
+    });
+    expect([...result.emittedCascadeKinds].sort()).toEqual([
       "codex-plugins",
       "codex-skills",
     ]);
-    // emittedCascadeKinds remains empty: both cascades fell back to native.
-    expect(result.emittedCascadeKinds).toEqual([]);
-    // A `staged` flag confirms the translator never claimed live application.
+    expect(result.diagnostics).toEqual([]);
     expect(result.applySemantics).toBe("next-turn");
   });
 });

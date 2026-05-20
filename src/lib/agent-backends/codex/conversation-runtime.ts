@@ -418,9 +418,6 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
     }
 
     if (this.stagedCapabilityConfig !== null) {
-      // Merge the verification-gated capability config payload last. Once
-      // SDK key verification lands, the translator will emit a non-empty
-      // object; until then this is a deliberate no-op preserving the seed.
       Object.assign(configMerged, this.stagedCapabilityConfig.config);
     }
 

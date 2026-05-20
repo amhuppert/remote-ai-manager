@@ -1,37 +1,32 @@
 /**
- * Codex capability translator — verification-gated.
+ * Codex capability translator.
  *
- * The installed `@openai/codex-sdk` typings expose only a generic
- * `CodexOptions.config` pass-through; they do not declare a typed per-skill or
- * per-plugin enablement key. Until those keys are verified against the
- * installed Codex CLI and SDK, the translator deliberately:
- *
- * - Refuses to emit any `CodexOptions.config` payload for the skills cascade
- *   and surfaces a `codex-skill-config-key-unverified` diagnostic so the
- *   conversation falls back to Codex's native defaults rather than silently
- *   shipping configuration-only flags the agent ignores.
- * - Refuses to emit any plugin payload and surfaces a `codex-plugins-unavailable`
- *   diagnostic that mirrors the metadata's `unavailable-pending-verification`
- *   discovery state.
- *
- * When a future implementation verifies the concrete config keys for either
- * cascade, that work must (1) update this translator to emit them, (2) update
- * the metadata registry to drop the verification gate, and (3) extend the
- * focused tests below with the verified emission shape.
+ * Emits the verified TOML override shape that `@openai/codex-sdk` accepts
+ * through `CodexOptions.config` — `skills.config[]` entries with
+ * `{ enabled, name }` per resolved codex-skill and `plugins."NAME".enabled`
+ * per resolved codex-plugin (verified against the Codex `config.schema.json`
+ * `SkillsConfig` and `PluginConfig` definitions). The SDK passes this
+ * object through verbatim via `flattenConfigOverrides`, which handles
+ * nested objects and `@`-bearing keys correctly.
  */
 
 import type { AgentCapabilityCascadeKind } from "./metadata";
 
 export interface CodexResolvedSkill {
   itemId: string;
+  name: string;
   enabled: boolean;
   sourcePath: string;
 }
 
+export interface CodexResolvedPlugin {
+  itemId: string;
+  enabled: boolean;
+}
+
 export interface CodexCapabilityResolvedInput {
   skills: readonly CodexResolvedSkill[];
-  pluginCascadeRequested: boolean;
-  pluginItemCount: number;
+  plugins: readonly CodexResolvedPlugin[];
 }
 
 export interface CodexCapabilityTranslationDiagnostic {
@@ -41,10 +36,14 @@ export interface CodexCapabilityTranslationDiagnostic {
   message: string;
 }
 
+export interface CodexCapabilityEmittedConfig {
+  skills?: { config: { enabled: boolean; name: string }[] };
+  plugins?: Record<string, { enabled: boolean }>;
+}
+
 export interface CodexCapabilityTranslationResult {
-  /** Object that will be merged into `CodexOptions.config` at turn start.
-   * Empty when no cascade has a verified emission path. */
-  config: Record<string, never>;
+  /** Object that will be merged into `CodexOptions.config` at turn start. */
+  config: CodexCapabilityEmittedConfig;
   diagnostics: readonly CodexCapabilityTranslationDiagnostic[];
   emittedCascadeKinds: readonly AgentCapabilityCascadeKind[];
   /** Confirms the translator never claims live application. Codex is staged
@@ -55,32 +54,32 @@ export interface CodexCapabilityTranslationResult {
 export function translateCodexCapabilities(
   input: CodexCapabilityResolvedInput,
 ): CodexCapabilityTranslationResult {
-  const diagnostics: CodexCapabilityTranslationDiagnostic[] = [];
+  const config: CodexCapabilityEmittedConfig = {};
+  const emittedCascadeKinds: AgentCapabilityCascadeKind[] = [];
 
   if (input.skills.length > 0) {
-    diagnostics.push({
-      code: "codex-skill-config-key-unverified",
-      severity: "warning",
-      cascadeKind: "codex-skills",
-      message:
-        "Codex skill enablement cannot be emitted: no `CodexOptions.config` key for per-skill enablement is verified against the installed @openai/codex-sdk typings. Cascade falls back to Codex native skill resolution.",
-    });
+    config.skills = {
+      config: input.skills.map((skill) => ({
+        enabled: skill.enabled,
+        name: skill.name,
+      })),
+    };
+    emittedCascadeKinds.push("codex-skills");
   }
 
-  if (input.pluginCascadeRequested && input.pluginItemCount > 0) {
-    diagnostics.push({
-      code: "codex-plugins-unavailable",
-      severity: "warning",
-      cascadeKind: "codex-plugins",
-      message:
-        "Codex plugin overrides cannot be emitted: plugin discovery and translation are pending verification against the installed Codex SDK.",
-    });
+  if (input.plugins.length > 0) {
+    const plugins: Record<string, { enabled: boolean }> = {};
+    for (const plugin of input.plugins) {
+      plugins[plugin.itemId] = { enabled: plugin.enabled };
+    }
+    config.plugins = plugins;
+    emittedCascadeKinds.push("codex-plugins");
   }
 
   return {
-    config: {},
-    diagnostics,
-    emittedCascadeKinds: [],
+    config,
+    diagnostics: [],
+    emittedCascadeKinds,
     applySemantics: "next-turn",
   };
 }

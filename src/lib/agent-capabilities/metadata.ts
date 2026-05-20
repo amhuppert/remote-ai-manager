@@ -11,11 +11,6 @@
  * `createAgentCapabilityMetadataRegistry()` is parsed at the boundary so
  * cascade/backend ownership and field completeness are enforced structurally —
  * there are no hand-written types or trust-the-caller paths in this module.
- *
- * Verification-gated cascades (currently `codex-plugins`) are represented here
- * with `discoverySupport: "unavailable-pending-verification"` so the UI and
- * runtime composer can keep the panel present while refusing to emit runtime
- * configuration until an authoritative discovery source is proven.
  */
 
 import {
@@ -82,13 +77,6 @@ export const agentCapabilityMetadata: readonly AgentCapabilityMetadata[] = [
     runtimeVisibility: "sdk-runtime",
     compositionSupport: "translator",
   }),
-  // Skill files are readable from disk so discovery is available, but the
-  // installed @openai/codex-sdk typings expose only a generic
-  // `CodexOptions.config` pass-through with no documented per-skill key.
-  // Until the concrete config key is verified against the installed CLI,
-  // composition is verification-gated: the translator must refuse to emit
-  // runtime config and the UI must refuse to expose editable runtime
-  // behavior for this cascade.
   agentCapabilityMetadataSchema.parse({
     cascadeKind: "codex-skills",
     backend: "codex",
@@ -96,21 +84,16 @@ export const agentCapabilityMetadata: readonly AgentCapabilityMetadata[] = [
     applySemantics: "next-turn",
     discoverySupport: "available",
     runtimeVisibility: "source-only",
-    compositionSupport: "verification-gated",
+    compositionSupport: "translator",
   }),
-  // Codex SDK exposes no typed plugin API and the design has not yet
-  // verified an authoritative installed/enabled plugin discovery source.
-  // Until 1.1 verification lands, this cascade is present (so the UI can
-  // render a placeholder panel with diagnostics) but neither discovery nor
-  // composition is permitted to emit runtime configuration.
   agentCapabilityMetadataSchema.parse({
     cascadeKind: "codex-plugins",
     backend: "codex",
     capabilityKind: "plugin",
     applySemantics: "next-turn",
-    discoverySupport: "unavailable-pending-verification",
-    runtimeVisibility: "unsupported",
-    compositionSupport: "verification-gated",
+    discoverySupport: "available",
+    runtimeVisibility: "source-only",
+    compositionSupport: "translator",
   }),
 ];
 

@@ -2,10 +2,13 @@
  * Codex capability discovery primitives.
  *
  * Implements the design's authoritative skill discovery sources for Codex and
- * keeps Codex plugin discovery represented as `unavailable-pending-verification`
- * until an authoritative installed/enabled plugin source is verified. The
- * factory accepts a `readDir` seam so tests can drive the diagnostics path
- * without root-only filesystem corruption.
+ * the Codex plugin discovery sources documented by `openai/codex`:
+ *   - `~/.codex/config.toml` `[plugins."NAME"]` tables
+ *   - `~/.codex/marketplaces/<marketplace>/<plugin-path>/.codex-plugin/plugin.json`
+ *     manifests
+ *
+ * Each entry-point accepts injected `readDir`/`readFile` seams so tests can
+ * exercise diagnostics paths without root-only filesystem corruption.
  */
 
 import { createHash } from "node:crypto";
@@ -17,6 +20,8 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 
+import { parse as parseToml } from "smol-toml";
+
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/errors";
 
@@ -27,6 +32,7 @@ import { redactAgentCapabilityText } from "./redaction";
 import type {
   AgentCapabilityDiagnostic,
   AgentCapabilityDiscoveredItem,
+  AgentCapabilityDiscoverySupport,
   AgentCapabilitySourceRef,
 } from "@/lib/schemas";
 
@@ -56,6 +62,10 @@ export interface CodexDiscoveredSkill {
   sourcePath: string;
   description: string;
   argumentHint?: string;
+  /** Set when this skill was discovered under a marketplace plugin directory
+   * (`~/.codex/marketplaces/<marketplace>/<plugin-path>/skills/...`). The id
+   * matches the owning plugin's `itemId` from `discoverCodexPlugins`. */
+  owningPluginId?: string;
 }
 
 export interface CodexDiscoveryDiagnostic {
@@ -72,10 +82,29 @@ export interface CodexSkillDiscoveryResult {
   sourceSignature: string;
 }
 
+export interface CodexDiscoveredPlugin {
+  /** Plugin id — bare name (e.g. `oh-my-codex`) for config-only plugins, or
+   * `<name>@<marketplace>` for marketplace-sourced plugins. */
+  itemId: string;
+  displayName: string;
+  description?: string;
+  version?: string;
+  enabled: boolean;
+  /** Absolute path to the manifest file when discovered via a marketplace.
+   * Omitted for config-only plugins (no native manifest exists). */
+  sourcePath?: string;
+  /** Absolute path to the plugin's root directory (parent of `.codex-plugin`).
+   * Used by skill discovery to attribute plugin-bundled skills. */
+  pluginPath?: string;
+  /** Marketplace directory name when sourced from a marketplace. */
+  marketplaceName?: string;
+}
+
 export interface CodexPluginDiscoveryResult {
-  items: readonly never[];
+  items: readonly CodexDiscoveredPlugin[];
   diagnostics: readonly CodexDiscoveryDiagnostic[];
-  discoverySupport: "unavailable-pending-verification";
+  sourceSignature: string;
+  discoverySupport: AgentCapabilityDiscoverySupport;
 }
 
 interface CodexDiscoveryDeps {
@@ -153,13 +182,71 @@ export async function discoverCodexSkills(
     }
   }
 
+  // Plugin-bundled skills: enumerate installed Codex plugins and walk each
+  // plugin's `skills/` directory, attributing discovered SKILL.md files to
+  // their owning plugin. Mirrors `claude-discovery.ts` so the cascade resolver
+  // inherits disable state from the plugin layer without extra wiring.
+  const pluginResult = await discoverCodexPlugins({
+    worktreePath: input.worktreePath,
+    home: input.home,
+    ...(input.readDir !== undefined ? { readDir: input.readDir } : {}),
+    ...(input.readFile !== undefined ? { readFile: input.readFile } : {}),
+  });
+  for (const diag of pluginResult.diagnostics) {
+    diagnostics.push(diag);
+  }
+  signatureParts.push(`plugins:${pluginResult.sourceSignature}`);
+
+  for (const plugin of pluginResult.items) {
+    if (!plugin.pluginPath) continue;
+    if (!plugin.enabled) continue;
+    const pluginSkillsDir = path.join(plugin.pluginPath, "skills");
+    if (!existsSync(pluginSkillsDir)) {
+      signatureParts.push(
+        `plugin-skills:${plugin.itemId}:${pluginSkillsDir}:missing`,
+      );
+      continue;
+    }
+    try {
+      await walkSkills(
+        pluginSkillsDir,
+        "user",
+        new Set<string>(),
+        deps,
+        items,
+        plugin.itemId,
+      );
+      signatureParts.push(
+        `plugin-skills:${plugin.itemId}:${pluginSkillsDir}:ok`,
+      );
+    } catch (err) {
+      const message = redactAgentCapabilityText(getErrorMessage(err));
+      diagnostics.push({
+        code: "codex-skill-source-unreadable",
+        severity: "warning",
+        message,
+        sourcePath: pluginSkillsDir,
+        source: "user",
+      });
+      signatureParts.push(
+        `plugin-skills:${plugin.itemId}:${pluginSkillsDir}:err:${message}`,
+      );
+      logger.warn("codex_discovery.plugin_skills_scan_error", {
+        sourcePath: pluginSkillsDir,
+        pluginId: plugin.itemId,
+        error: message,
+      });
+    }
+  }
+
   // Content-sensitive signature: include each discovered item's id, source,
-  // sourcePath, description, and argument hint. Discovered description is
-  // parsed from the SKILL.md frontmatter/body, so an in-place edit to the
-  // SKILL.md content changes the signature even when the item id is stable.
+  // sourcePath, description, argument hint, and owning plugin id. Discovered
+  // description is parsed from the SKILL.md frontmatter/body, so an in-place
+  // edit to the SKILL.md content changes the signature even when the item id
+  // is stable.
   for (const item of items) {
     signatureParts.push(
-      `item:${item.source}:${item.itemId}:${item.sourcePath}:${item.description}:${item.argumentHint ?? ""}`,
+      `item:${item.source}:${item.itemId}:${item.sourcePath}:${item.description}:${item.argumentHint ?? ""}:${item.owningPluginId ?? ""}`,
     );
   }
 
@@ -178,6 +265,7 @@ async function walkSkills(
   ignoreDirNames: ReadonlySet<string>,
   deps: CodexDiscoveryDeps,
   items: CodexDiscoveredSkill[],
+  owningPluginId?: string,
 ): Promise<void> {
   const visit = async (dir: string): Promise<void> => {
     const skillFile = path.join(dir, "SKILL.md");
@@ -198,6 +286,7 @@ async function walkSkills(
         sourcePath: skillFile,
         description,
         argumentHint: fields["argument-hint"],
+        ...(owningPluginId !== undefined ? { owningPluginId } : {}),
       });
       return;
     }
@@ -219,39 +308,371 @@ async function walkSkills(
 export interface CodexPluginDiscoveryInput {
   worktreePath: string;
   home: string;
+  readDir?: CodexDiscoveryDeps["readDir"];
+  readFile?: CodexDiscoveryDeps["readFile"];
 }
 
 export async function discoverCodexPlugins(
-  _input: CodexPluginDiscoveryInput,
+  input: CodexPluginDiscoveryInput,
 ): Promise<CodexPluginDiscoveryResult> {
-  // Verification gate: no authoritative Codex plugin source has been
-  // identified. Discovery deliberately returns an empty inventory plus a
-  // structured diagnostic so the UI panel can render in an unavailable state
-  // and runtime composition refuses to emit configuration for this cascade.
-  return {
-    items: [],
-    diagnostics: [
-      {
-        code: "codex-plugins-unavailable",
-        severity: "warning",
-        message:
-          "Codex plugin discovery is unavailable: no authoritative installed/enabled plugin source has been verified for the installed Codex SDK.",
-      },
-    ],
-    discoverySupport: "unavailable-pending-verification",
+  const deps: CodexDiscoveryDeps = {
+    readDir: input.readDir ?? defaultDeps.readDir,
+    readFile: input.readFile ?? defaultDeps.readFile,
   };
+
+  const items = new Map<string, CodexDiscoveredPlugin>();
+  const diagnostics: CodexDiscoveryDiagnostic[] = [];
+  const signatureParts: string[] = [];
+  const configEnabledById = new Map<string, boolean>();
+
+  logger.debug("codex_discovery.plugins.start", { home: input.home });
+
+  const configPath = path.join(input.home, ".codex", "config.toml");
+  if (existsSync(configPath)) {
+    await loadCodexConfigPlugins(
+      configPath,
+      items,
+      configEnabledById,
+      diagnostics,
+      signatureParts,
+      deps,
+    );
+  } else {
+    signatureParts.push(`config:${configPath}:missing`);
+  }
+
+  const marketplacesDir = path.join(input.home, ".codex", "marketplaces");
+  if (existsSync(marketplacesDir)) {
+    await loadCodexMarketplacePlugins(
+      marketplacesDir,
+      items,
+      configEnabledById,
+      diagnostics,
+      signatureParts,
+      deps,
+    );
+  } else {
+    signatureParts.push(`marketplaces:${marketplacesDir}:missing`);
+  }
+
+  const result: CodexDiscoveredPlugin[] = Array.from(items.values()).sort(
+    (a, b) => a.itemId.localeCompare(b.itemId),
+  );
+
+  for (const item of result) {
+    signatureParts.push(
+      `item:${item.itemId}:${item.enabled}:${item.displayName}:${item.description ?? ""}:${item.version ?? ""}:${item.sourcePath ?? ""}`,
+    );
+  }
+
+  logger.info("codex_discovery.plugins.done", {
+    configCount: configEnabledById.size,
+    totalCount: result.length,
+    diagnosticCount: diagnostics.length,
+  });
+
+  return {
+    items: result,
+    diagnostics,
+    sourceSignature: createHash("sha256")
+      .update(signatureParts.join("|"))
+      .digest("hex"),
+    discoverySupport: "available",
+  };
+}
+
+async function loadCodexConfigPlugins(
+  configPath: string,
+  items: Map<string, CodexDiscoveredPlugin>,
+  configEnabledById: Map<string, boolean>,
+  diagnostics: CodexDiscoveryDiagnostic[],
+  signatureParts: string[],
+  deps: CodexDiscoveryDeps,
+): Promise<void> {
+  let raw: string;
+  try {
+    raw = await deps.readFile(configPath);
+  } catch (err) {
+    const message = redactAgentCapabilityText(getErrorMessage(err));
+    diagnostics.push({
+      code: "codex-config-toml-invalid",
+      severity: "warning",
+      message,
+      sourcePath: configPath,
+      source: "user",
+    });
+    signatureParts.push(`config:${configPath}:read-err:${message}`);
+    logger.warn("codex_discovery.plugins.config_toml_unreadable", {
+      sourcePath: configPath,
+      error: message,
+    });
+    return;
+  }
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = parseToml(raw) as Record<string, unknown>;
+  } catch (err) {
+    const message = redactAgentCapabilityText(getErrorMessage(err));
+    diagnostics.push({
+      code: "codex-config-toml-invalid",
+      severity: "warning",
+      message: `config.toml parse error: ${message}`,
+      sourcePath: configPath,
+      source: "user",
+    });
+    signatureParts.push(`config:${configPath}:parse-err:${message}`);
+    logger.warn("codex_discovery.plugins.config_toml_invalid", {
+      sourcePath: configPath,
+      error: message,
+    });
+    return;
+  }
+
+  signatureParts.push(
+    `config:${configPath}:${createHash("sha256").update(raw).digest("hex")}`,
+  );
+
+  const pluginsTable = parsed["plugins"];
+  if (
+    !pluginsTable ||
+    typeof pluginsTable !== "object" ||
+    Array.isArray(pluginsTable)
+  ) {
+    return;
+  }
+
+  for (const [pluginId, rawTable] of Object.entries(
+    pluginsTable as Record<string, unknown>,
+  )) {
+    if (!rawTable || typeof rawTable !== "object" || Array.isArray(rawTable)) {
+      continue;
+    }
+    const enabledRaw = (rawTable as Record<string, unknown>)["enabled"];
+    const enabled = typeof enabledRaw === "boolean" ? enabledRaw : true;
+    configEnabledById.set(pluginId, enabled);
+    items.set(pluginId, {
+      itemId: pluginId,
+      displayName: pluginId,
+      enabled,
+    });
+  }
+}
+
+async function loadCodexMarketplacePlugins(
+  marketplacesDir: string,
+  items: Map<string, CodexDiscoveredPlugin>,
+  configEnabledById: Map<string, boolean>,
+  diagnostics: CodexDiscoveryDiagnostic[],
+  signatureParts: string[],
+  deps: CodexDiscoveryDeps,
+): Promise<void> {
+  let topEntries: readonly { name: string; isDirectory: boolean }[];
+  try {
+    topEntries = await deps.readDir(marketplacesDir);
+  } catch (err) {
+    const message = redactAgentCapabilityText(getErrorMessage(err));
+    diagnostics.push({
+      code: "codex-plugin-source-unreadable",
+      severity: "warning",
+      message,
+      sourcePath: marketplacesDir,
+      source: "user",
+    });
+    signatureParts.push(`marketplaces:${marketplacesDir}:err:${message}`);
+    logger.warn("codex_discovery.plugins.marketplaces_unreadable", {
+      sourcePath: marketplacesDir,
+      error: message,
+    });
+    return;
+  }
+
+  for (const entry of topEntries) {
+    if (!entry.isDirectory) continue;
+    const marketplacePath = path.join(marketplacesDir, entry.name);
+    await walkMarketplaceForManifests(
+      marketplacePath,
+      entry.name,
+      items,
+      configEnabledById,
+      diagnostics,
+      signatureParts,
+      deps,
+    );
+  }
+}
+
+async function walkMarketplaceForManifests(
+  baseDir: string,
+  marketplaceName: string,
+  items: Map<string, CodexDiscoveredPlugin>,
+  configEnabledById: Map<string, boolean>,
+  diagnostics: CodexDiscoveryDiagnostic[],
+  signatureParts: string[],
+  deps: CodexDiscoveryDeps,
+): Promise<void> {
+  const visit = async (dir: string): Promise<void> => {
+    const manifestPath = path.join(dir, ".codex-plugin", "plugin.json");
+    if (existsSync(manifestPath)) {
+      await loadCodexPluginManifest(
+        manifestPath,
+        dir,
+        marketplaceName,
+        items,
+        configEnabledById,
+        diagnostics,
+        signatureParts,
+        deps,
+      );
+      return;
+    }
+    let entries: readonly { name: string; isDirectory: boolean }[];
+    try {
+      entries = await deps.readDir(dir);
+    } catch (err) {
+      const message = redactAgentCapabilityText(getErrorMessage(err));
+      diagnostics.push({
+        code: "codex-plugin-source-unreadable",
+        severity: "warning",
+        message,
+        sourcePath: dir,
+        source: "user",
+      });
+      signatureParts.push(`marketplace-walk:${dir}:err:${message}`);
+      logger.warn("codex_discovery.plugins.marketplace_walk_error", {
+        sourcePath: dir,
+        error: message,
+      });
+      return;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory) continue;
+      if (entry.name === ".codex-plugin") continue;
+      await visit(path.join(dir, entry.name));
+    }
+  };
+  await visit(baseDir);
+}
+
+async function loadCodexPluginManifest(
+  manifestPath: string,
+  pluginDir: string,
+  marketplaceName: string,
+  items: Map<string, CodexDiscoveredPlugin>,
+  configEnabledById: Map<string, boolean>,
+  diagnostics: CodexDiscoveryDiagnostic[],
+  signatureParts: string[],
+  deps: CodexDiscoveryDeps,
+): Promise<void> {
+  let raw: string;
+  try {
+    raw = await deps.readFile(manifestPath);
+  } catch (err) {
+    const message = redactAgentCapabilityText(getErrorMessage(err));
+    diagnostics.push({
+      code: "codex-plugin-manifest-invalid",
+      severity: "warning",
+      message,
+      sourcePath: manifestPath,
+      source: "user",
+    });
+    signatureParts.push(`manifest:${manifestPath}:read-err:${message}`);
+    logger.warn("codex_discovery.plugins.manifest_unreadable", {
+      sourcePath: manifestPath,
+      error: message,
+    });
+    return;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    const message = redactAgentCapabilityText(getErrorMessage(err));
+    diagnostics.push({
+      code: "codex-plugin-manifest-invalid",
+      severity: "warning",
+      message: `plugin.json parse error: ${message}`,
+      sourcePath: manifestPath,
+      source: "user",
+    });
+    signatureParts.push(`manifest:${manifestPath}:parse-err:${message}`);
+    logger.warn("codex_discovery.plugins.manifest_invalid", {
+      sourcePath: manifestPath,
+      error: message,
+    });
+    return;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    diagnostics.push({
+      code: "codex-plugin-manifest-invalid",
+      severity: "warning",
+      message: "plugin.json is not a JSON object",
+      sourcePath: manifestPath,
+      source: "user",
+    });
+    signatureParts.push(`manifest:${manifestPath}:non-object`);
+    logger.warn("codex_discovery.plugins.manifest_invalid", {
+      sourcePath: manifestPath,
+      reason: "non-object",
+    });
+    return;
+  }
+  const obj = parsed as Record<string, unknown>;
+  const name = obj["name"];
+  if (typeof name !== "string" || name.length === 0) {
+    diagnostics.push({
+      code: "codex-plugin-manifest-invalid",
+      severity: "warning",
+      message: 'plugin.json missing required "name" field',
+      sourcePath: manifestPath,
+      source: "user",
+    });
+    signatureParts.push(`manifest:${manifestPath}:no-name`);
+    logger.warn("codex_discovery.plugins.manifest_invalid", {
+      sourcePath: manifestPath,
+      reason: "missing-name",
+    });
+    return;
+  }
+  const itemId = `${name}@${marketplaceName}`;
+  const displayName =
+    typeof obj["displayName"] === "string"
+      ? (obj["displayName"] as string)
+      : name;
+  const description =
+    typeof obj["description"] === "string"
+      ? (obj["description"] as string)
+      : undefined;
+  const version =
+    typeof obj["version"] === "string" ? (obj["version"] as string) : undefined;
+
+  const existing = items.get(itemId);
+  const enabled = configEnabledById.has(itemId)
+    ? (configEnabledById.get(itemId) as boolean)
+    : (existing?.enabled ?? true);
+
+  items.set(itemId, {
+    itemId,
+    displayName,
+    ...(description !== undefined ? { description } : {}),
+    ...(version !== undefined ? { version } : {}),
+    enabled,
+    sourcePath: manifestPath,
+    pluginPath: pluginDir,
+    marketplaceName,
+  });
+  signatureParts.push(
+    `manifest:${manifestPath}:${createHash("sha256").update(raw).digest("hex")}`,
+  );
 }
 
 // ---------------------------------------------------------------------------
 // Canonical discovery surface
 // ---------------------------------------------------------------------------
 // The primitives above (`discoverCodexSkills` / `discoverCodexPlugins`) keep
-// their local shape because they are the proven verification gates from task
-// 1.1. The wrappers below adapt them to the canonical
+// their local shape. The wrappers below adapt them to the canonical
 // `AgentCapabilityDiscoveredItem` / `AgentCapabilityDiagnostic` shape used by
-// the cascade resolver, API view, runtime composer, and discovery cache. This
-// keeps the cross-cutting agent-capabilities subsystem on a single schema
-// without re-doing the source-signature or verification-gate logic.
+// the cascade resolver, API view, runtime composer, and discovery cache.
 
 function codexSkillSourceRef(
   layer: "project" | "user" | "system",
@@ -285,7 +706,7 @@ export interface CodexCanonicalPluginDiscoveryResult {
   diagnostics: readonly AgentCapabilityDiagnostic[];
   sourceSignature: string;
   refreshedAt: string;
-  discoverySupport: "unavailable-pending-verification";
+  discoverySupport: AgentCapabilityDiscoverySupport;
 }
 
 export async function discoverCodexSkillsCanonical(
@@ -293,14 +714,23 @@ export async function discoverCodexSkillsCanonical(
 ): Promise<CodexCanonicalSkillDiscoveryResult> {
   const result = await discoverCodexSkills(input);
 
-  const items: AgentCapabilityDiscoveredItem[] = result.items.map((skill) => ({
-    itemId: skill.itemId,
-    displayName: skill.itemId,
-    capabilityKind: "skill",
-    source: codexSkillSourceRef(skill.source, skill.sourcePath),
-    nativeDefault: { enabled: true },
-    runtimeVisibility: "source-only",
-  }));
+  const items: AgentCapabilityDiscoveredItem[] = result.items.map((skill) => {
+    const source: AgentCapabilitySourceRef =
+      skill.owningPluginId !== undefined
+        ? { kind: "plugin", pluginId: skill.owningPluginId }
+        : codexSkillSourceRef(skill.source, skill.sourcePath);
+    return {
+      itemId: skill.itemId,
+      displayName: skill.itemId,
+      capabilityKind: "skill",
+      source,
+      nativeDefault: { enabled: true },
+      ...(skill.owningPluginId !== undefined
+        ? { owningPluginId: skill.owningPluginId }
+        : {}),
+      runtimeVisibility: "source-only",
+    };
+  });
 
   const diagnostics: AgentCapabilityDiagnostic[] = result.diagnostics.map(
     (diag) => ({
@@ -330,6 +760,23 @@ export async function discoverCodexPluginsCanonical(
   input: CodexPluginDiscoveryInput,
 ): Promise<CodexCanonicalPluginDiscoveryResult> {
   const result = await discoverCodexPlugins(input);
+  const configPath = path.join(input.home, ".codex", "config.toml");
+
+  const items: AgentCapabilityDiscoveredItem[] = result.items.map((plugin) => {
+    const source: AgentCapabilitySourceRef = {
+      kind: "user-file",
+      path: plugin.sourcePath ?? configPath,
+    };
+    return {
+      itemId: plugin.itemId,
+      displayName: plugin.displayName,
+      capabilityKind: "plugin",
+      source,
+      nativeDefault: { enabled: plugin.enabled },
+      runtimeVisibility: "source-only",
+    };
+  });
+
   const diagnostics: AgentCapabilityDiagnostic[] = result.diagnostics.map(
     (diag) => ({
       severity: diag.severity,
@@ -337,16 +784,19 @@ export async function discoverCodexPluginsCanonical(
       message: diag.message,
       cascadeKind: "codex-plugins",
       backend: "codex",
+      ...(diag.sourcePath !== undefined
+        ? {
+            sourceRef: codexDiagnosticSourceRef(diag.source, diag.sourcePath),
+          }
+        : {}),
     }),
   );
+
   return {
     cascadeKind: "codex-plugins",
-    items: [],
+    items,
     diagnostics,
-    // Plugin discovery has no native source to hash; a literal sentinel keeps
-    // the cache key stable across refreshes until verification provides a
-    // real source to sign.
-    sourceSignature: "codex-plugins:unavailable-pending-verification",
+    sourceSignature: result.sourceSignature,
     refreshedAt: new Date().toISOString(),
     discoverySupport: result.discoverySupport,
   };

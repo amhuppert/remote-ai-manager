@@ -18062,6 +18062,11 @@ html[data-dev-tools-enabled] nextjs-portal {
   border-left: 2px solid var(--blue);
 }
 
+.agent-capability-row--pending.agent-capability-row--plugin-disabled,
+.agent-capability-row--pending.agent-capability-row--explicit[data-effective="off"] {
+  box-shadow: none;
+}
+
 .agent-capability-row__expand {
   display: flex;
   align-items: center;

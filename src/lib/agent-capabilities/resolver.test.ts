@@ -422,25 +422,6 @@ describe("resolveCascadeView — stale override preservation (task 4.2)", () => 
     ).toBe(true);
   });
 
-  it("marks rows of verification-gated cascades as not runtime-emittable", () => {
-    const view = resolveCascadeView(
-      baseInput({
-        cascadeKind: "codex-skills",
-        discoveredItems: [
-          {
-            itemId: "codex-skill:a",
-            displayName: "codex-skill:a",
-            capabilityKind: "skill",
-            source: { kind: "user-file", path: "/codex/a.md" },
-            nativeDefault: { enabled: true },
-            runtimeVisibility: "source-only",
-          },
-        ],
-      }),
-    );
-    expect(view.items[0]!.runtimeEmittable).toBe(false);
-  });
-
   it("marks discovered unavailable rows as not runtime-emittable", () => {
     const view = resolveCascadeView(
       baseInput({
@@ -654,6 +635,78 @@ describe("resolveCascadeView — plugin parent-child disable (task 4.3)", () => 
     expect(rowsById.get("skill:c")!.inheritedDisableReason).toBeUndefined();
   });
 
+  it("forces a plugin-bundled codex-skill disabled when its parent codex-plugin resolves disabled", () => {
+    const pluginResolution = resolvePluginEnablement({
+      pluginCascadeKind: "codex-plugins",
+      discoveredPlugins: [discoveredPlugin("plugin:p", true)],
+      overrideChain: [
+        {
+          layer: "project",
+          overrides: overrideFor("codex-plugins", { "plugin:p": false }),
+        },
+      ],
+    });
+
+    const view = resolveCascadeView(
+      baseInput({
+        cascadeKind: "codex-skills",
+        discoveredItems: [
+          discoveredSkill("codex-skill:a", true, {
+            owningPluginId: "plugin:p",
+          }),
+        ],
+        pluginResolution,
+      }),
+    );
+    const row = view.items[0]!;
+    expect(row.ownEffectiveState).toEqual({
+      enabled: true,
+      originLayer: "native",
+    });
+    expect(row.effectiveState).toEqual({
+      enabled: false,
+      originLayer: "project",
+    });
+    expect(row.inheritedDisableReason).toEqual({
+      pluginId: "plugin:p",
+      originLayer: "project",
+    });
+  });
+
+  it("leaves plugin-bundled codex-skills with their own toggle when the codex-plugin is enabled", () => {
+    const pluginResolution = resolvePluginEnablement({
+      pluginCascadeKind: "codex-plugins",
+      discoveredPlugins: [discoveredPlugin("plugin:p", true)],
+      overrideChain: [],
+    });
+
+    const view = resolveCascadeView(
+      baseInput({
+        cascadeKind: "codex-skills",
+        overrideChain: [
+          {
+            layer: "session",
+            overrides: overrideFor("codex-skills", {
+              "codex-skill:a": false,
+            }),
+          },
+        ],
+        discoveredItems: [
+          discoveredSkill("codex-skill:a", true, {
+            owningPluginId: "plugin:p",
+          }),
+        ],
+        pluginResolution,
+      }),
+    );
+    const row = view.items[0]!;
+    expect(row.effectiveState).toEqual({
+      enabled: false,
+      originLayer: "session",
+    });
+    expect(row.inheritedDisableReason).toBeUndefined();
+  });
+
   it("ignores codex-plugins overrides when resolving Claude parent enablement", () => {
     const sharedChain = [
       {
@@ -863,29 +916,7 @@ describe("resolveCascadeView — runtime status attachment (task 4.4)", () => {
         }),
       }),
     );
-    expect(view.items[0]!.applyStatus).toBe("unsupported");
-  });
-
-  it("verification-gated cascade rows report unsupported apply status regardless of runtime state", () => {
-    const view = resolveCascadeView(
-      baseInput({
-        cascadeKind: "codex-skills",
-        discoveredItems: [
-          {
-            itemId: "codex-skill:a",
-            displayName: "codex-skill:a",
-            capabilityKind: "skill",
-            source: { kind: "user-file", path: "/x.md" },
-            nativeDefault: { enabled: true },
-            runtimeVisibility: "source-only",
-          },
-        ],
-        runtimeApplyState: runtimeWith("codex-skills", {
-          lastApplyStatus: "applied",
-        }),
-      }),
-    );
-    expect(view.items[0]!.applyStatus).toBe("unsupported");
+    expect(view.items[0]!.applyStatus).toBe("staged-next-turn");
   });
 
   it("stale rows do not report runtime-applied status from cascade-level state", () => {
