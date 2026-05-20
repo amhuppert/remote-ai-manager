@@ -7,7 +7,7 @@
 
 import { z } from "zod";
 import {
-  sessionStateSchema,
+  sessionListItemSchema,
   commitLogEntrySchema,
   workflowDefinitionRecordSchema,
   workflowGeneratedDraftSchema,
@@ -68,7 +68,7 @@ export type FullConfigResponse = z.infer<typeof fullConfigResponseSchema>;
 
 // -- Sessions --
 export const sessionsResponseSchema = z.object({
-  sessions: z.array(sessionStateSchema),
+  sessions: z.array(sessionListItemSchema),
 });
 
 // -- Diff --

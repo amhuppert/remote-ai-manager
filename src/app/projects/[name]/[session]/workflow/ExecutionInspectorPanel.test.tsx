@@ -52,7 +52,7 @@ function makeExecutionWithHistory(
 }
 
 describe("ExecutionInspectorPanel — ValidationCard markdown formatting", () => {
-  it("renders summary with markdown inline code for any validator", () => {
+  it("renders summary with markdown inline code for any validator", async () => {
     const execution = makeExecutionWithHistory([
       makeValidationEvent({
         summary: "All 23 tests passed via `bunx vitest run`",
@@ -72,10 +72,12 @@ describe("ExecutionInspectorPanel — ValidationCard markdown formatting", () =>
       />,
     );
 
-    expect(screen.getByText("bunx vitest run").closest("code")).toBeTruthy();
+    // MarkdownContent is loaded via next/dynamic — wait for it to mount.
+    const codeEl = await screen.findByText("bunx vitest run");
+    expect(codeEl.closest("code")).toBeTruthy();
   });
 
-  it("renders issue descriptions as markdown for any validator", () => {
+  it("renders issue descriptions as markdown for any validator", async () => {
     const execution = makeExecutionWithHistory([
       makeValidationEvent({
         pass: false,
@@ -103,7 +105,8 @@ describe("ExecutionInspectorPanel — ValidationCard markdown formatting", () =>
       />,
     );
 
-    expect(screen.getByText("handleSubmit").closest("code")).toBeTruthy();
+    const codeEl = await screen.findByText("handleSubmit");
+    expect(codeEl.closest("code")).toBeTruthy();
   });
 });
 
@@ -293,7 +296,7 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
     expect(screen.getByText("thread-codex-99")).toBeInTheDocument();
   });
 
-  it("displays codex response text in artifact section", () => {
+  it("displays codex response text in artifact section", async () => {
     const execution = makeExecutionWithHistory([
       makeValidationEvent({
         reviewArtifact: {
@@ -318,7 +321,9 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
       />,
     );
 
-    expect(screen.getByText("Everything checks out.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Everything checks out."),
+    ).toBeInTheDocument();
   });
 
   it("parses JSON codex response and renders summary as markdown instead of raw JSON", () => {

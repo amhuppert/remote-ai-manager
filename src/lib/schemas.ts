@@ -182,12 +182,14 @@ export type ConversationStatus =
   | "waiting_for_input";
 
 /** Session-level derived status (waiting_for_input > running > awaiting > new > idle) */
-export type DerivedSessionStatus =
-  | "waiting_for_input"
-  | "running"
-  | "awaiting"
-  | "new"
-  | "idle";
+export const derivedSessionStatusSchema = z.enum([
+  "waiting_for_input",
+  "running",
+  "awaiting",
+  "new",
+  "idle",
+]);
+export type DerivedSessionStatus = z.infer<typeof derivedSessionStatusSchema>;
 
 export const toolResultMetricsSchema = z.object({
   lineCount: z.number().int().nonnegative().optional(),
@@ -2244,6 +2246,31 @@ export const sessionStateSchema = z.object({
   agentCapabilityOverrides: agentCapabilityOverridesSchema.optional(),
 });
 export type SessionState = z.infer<typeof sessionStateSchema>;
+
+// Slim per-row shape for the sessions-list accessor. Defined explicitly (NOT
+// via sessionStateSchema.omit/extend) so heavy fields added to sessionStateSchema
+// in the future do not silently leak into the list payload.
+export const sessionListItemSchema = z.object({
+  sessionName: z.string(),
+  worktreePath: z.string(),
+  branchName: z.string(),
+  targetBranch: z.string(),
+  parentSessionName: z.string().nullable(),
+  createdAt: z.string(),
+  lastActivityAt: z.string(),
+  archived: z.boolean(),
+  finished: z.boolean(),
+  source: sessionSourceSchema,
+  creationMode: sessionCreationModeSchema,
+  tddEnabled: z.boolean(),
+  objective: z.string().nullable(),
+  derivedStatus: derivedSessionStatusSchema,
+  promptCount: z.number().int().nonnegative(),
+  derivedLastActivityAt: z.string(),
+  collabContribution: z.enum(["running", "paused"]).nullable(),
+  hasActiveGraphWorkflow: z.boolean(),
+});
+export type SessionListItem = z.infer<typeof sessionListItemSchema>;
 
 export const projectStateSchema = z.object({
   rootPath: z.string(),

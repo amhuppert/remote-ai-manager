@@ -1179,7 +1179,7 @@ describe("ConversationDetailPage", () => {
       expect(allStrips).toHaveLength(1);
     });
 
-    it("does not render the terminal final answer twice after transcript writeback", () => {
+    it("does not render the terminal final answer twice after transcript writeback", async () => {
       const finalAnswer = makeFinalAnswer({
         answer: "Unique collaboration final answer",
       });
@@ -1208,9 +1208,11 @@ describe("ConversationDetailPage", () => {
 
       renderPage();
 
-      expect(
-        screen.getAllByText("Unique collaboration final answer"),
-      ).toHaveLength(1);
+      // MarkdownContent loads via next/dynamic — wait for first render.
+      const matches = await screen.findAllByText(
+        "Unique collaboration final answer",
+      );
+      expect(matches).toHaveLength(1);
     });
 
     it("does not render the terminal final answer twice when the /collab trigger is parsed as a command block", () => {

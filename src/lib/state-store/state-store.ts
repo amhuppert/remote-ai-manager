@@ -5,9 +5,17 @@ import type {
   ManagerState,
   ProjectState,
   ReferenceDocument,
+  SessionListItem,
   SessionState,
 } from "@/types";
-import { managerStateSchema } from "../schemas";
+import { managerStateSchema, sessionListItemSchema } from "../schemas";
+import {
+  deriveSessionLastActivityFromConvs,
+  deriveSessionPromptCountFromConvs,
+  deriveSessionStatusFromParts,
+  getCollaborationEnvelopeContribution,
+} from "@/lib/session-derived";
+import { z } from "zod";
 import { PersistenceError } from "../errors";
 import { readConfig } from "../config";
 import { createLogger } from "@/lib/logging";
@@ -312,6 +320,102 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     }
   }
 
+  async function getProjectSessionListItems(
+    projectPath: string,
+  ): Promise<SessionListItem[]> {
+    const start = performance.now();
+    try {
+      const sessionRows = repos.sessions.findListItemsByProject(projectPath);
+      const convRows = repos.conversations.findListItemsForProject(projectPath);
+      const convsBySession = new Map<
+        string,
+        Array<{
+          id: string;
+          status: ConversationState["status"];
+          promptCount: number;
+          lastActivityAt: string;
+        }>
+      >();
+      for (const row of convRows) {
+        const list = convsBySession.get(row.sessionName);
+        if (list) {
+          list.push(row);
+        } else {
+          convsBySession.set(row.sessionName, [row]);
+        }
+      }
+
+      const result: SessionListItem[] = sessionRows.map((row) => {
+        let parsedEnvelopes: Record<string, unknown> | null = null;
+        if (row.workflow_envelopes !== null) {
+          try {
+            const candidate: unknown = JSON.parse(row.workflow_envelopes);
+            if (
+              candidate !== null &&
+              typeof candidate === "object" &&
+              !Array.isArray(candidate)
+            ) {
+              parsedEnvelopes = candidate as Record<string, unknown>;
+            }
+          } catch {
+            logger.warn("state-store.workflow_envelopes_parse_failed", {
+              projectPath,
+              sessionName: row.session_name,
+            });
+            parsedEnvelopes = null;
+          }
+        }
+
+        const collabContribution = getCollaborationEnvelopeContribution({
+          workflowEnvelopes: parsedEnvelopes,
+        });
+        const convs = convsBySession.get(row.session_name) ?? [];
+        const derivedStatus = deriveSessionStatusFromParts({
+          finished: row.finished === 1,
+          convStatuses: convs.map((c) => c.status),
+          collabContribution,
+        });
+        const promptCount = deriveSessionPromptCountFromConvs(convs);
+        const derivedLastActivityAt = deriveSessionLastActivityFromConvs(
+          row.last_activity_at,
+          convs,
+        );
+
+        const item: SessionListItem = {
+          sessionName: row.session_name,
+          worktreePath: row.worktree_path,
+          branchName: row.branch_name,
+          targetBranch: row.target_branch,
+          parentSessionName: row.parent_session_name,
+          createdAt: row.created_at,
+          lastActivityAt: row.last_activity_at,
+          archived: row.archived === 1,
+          finished: row.finished === 1,
+          source: row.source as SessionListItem["source"],
+          creationMode: row.creation_mode as SessionListItem["creationMode"],
+          tddEnabled: row.tdd_enabled === 1,
+          objective: row.objective,
+          derivedStatus,
+          promptCount,
+          derivedLastActivityAt,
+          collabContribution,
+          hasActiveGraphWorkflow: row.has_active_graph_workflow === 1,
+        };
+        return item;
+      });
+
+      if (process.env.NODE_ENV !== "production") {
+        return z.array(sessionListItemSchema).parse(result);
+      }
+      return result;
+    } finally {
+      emitReadTiming(start, {
+        accessor: "getProjectSessionListItems",
+        projectPath,
+      });
+    }
+  }
+
   async function getConversation(
     projectPath: string,
     sessionName: string,
@@ -594,6 +698,7 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     mutateSession,
     mutateConversation,
     getProjectSessions,
+    getProjectSessionListItems,
     getSession,
     getConversation,
     getSessionConversations,

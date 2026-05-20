@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
-import type { SessionState } from "@/types";
+import type { SessionListItem } from "@/types";
 import SessionsTable from "./SessionsTable";
 
 const now = new Date().toISOString();
@@ -8,35 +8,35 @@ const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
 const dayAgo = new Date(Date.now() - 86_400_000).toISOString();
 
 function makeSession(
-  overrides: Partial<SessionState> &
-    Pick<SessionState, "sessionName" | "branchName">,
-): SessionState {
+  overrides: Partial<SessionListItem> &
+    Pick<SessionListItem, "sessionName" | "branchName">,
+): SessionListItem {
   return {
     worktreePath: `/tmp/wt/${overrides.sessionName}`,
     createdAt: dayAgo,
     lastActivityAt: hourAgo,
     archived: false,
     finished: false,
-    conversations: [],
     source: "cc",
     objective: null,
     creationMode: "fast",
     tddEnabled: true,
     targetBranch: "main",
     parentSessionName: null,
-    graphWorkflowExecution: null,
-    graphWorkflowExecutionHistory: [],
-    referenceDocuments: [],
+    derivedStatus: "idle",
+    promptCount: 0,
+    derivedLastActivityAt: hourAgo,
+    collabContribution: null,
+    hasActiveGraphWorkflow: false,
     ...overrides,
   };
 }
 
-const sampleSessions: SessionState[] = [
+const sampleSessions: SessionListItem[] = [
   makeSession({
     sessionName: "implement-auth",
     branchName: "csm/implement-auth",
     lastActivityAt: now,
-    conversations: [],
   }),
   makeSession({
     sessionName: "add-dashboard",

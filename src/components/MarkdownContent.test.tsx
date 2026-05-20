@@ -1,27 +1,32 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import { render } from "@testing-library/react";
+import { render, waitFor } from "@testing-library/react";
 import MarkdownContent from "./MarkdownContent";
 
 describe("MarkdownContent", () => {
-  it("renders fenced code blocks with syntax-highlighted tokens", () => {
+  it("renders fenced code blocks with syntax-highlighted tokens", async () => {
     const md =
       '```typescript\nfunction hello(): string {\n  return "world";\n}\n```';
     const { container } = render(<MarkdownContent content={md} />);
 
-    // SyntaxHighlighter wraps code in a div (PreTag="div") with spans for tokens
+    // Language module + style load lazily; wait for highlighted tokens to appear.
+    await waitFor(
+      () => {
+        const tokenSpans = container.querySelectorAll("span");
+        const allClasses = Array.from(tokenSpans)
+          .map((s) => s.className)
+          .join(" ");
+        expect(allClasses).toContain("token");
+      },
+      { timeout: 5000 },
+    );
+
     const tokenSpans = container.querySelectorAll("span");
     const hasKeyword = Array.from(tokenSpans).some(
       (span) =>
         span.className.includes("keyword") || span.textContent === "function",
     );
     expect(hasKeyword).toBe(true);
-
-    // Verify the language-specific tokens exist (not just plain text)
-    const allClasses = Array.from(tokenSpans)
-      .map((s) => s.className)
-      .join(" ");
-    expect(allClasses).toContain("token");
   });
 
   it("renders inline code without SyntaxHighlighter", () => {
@@ -63,13 +68,15 @@ describe("MarkdownContent", () => {
     expect(copyBtn).toBeNull();
   });
 
-  it("renders mermaid code blocks with MermaidDiagram component", () => {
+  it("renders mermaid code blocks with MermaidDiagram component", async () => {
     const md = "```mermaid\ngraph LR\n    A --> B\n```";
     const { container } = render(<MarkdownContent content={md} />);
 
-    // Should render a MermaidDiagram container, not syntax highlighter tokens
-    const mermaidDiv = container.querySelector(".mermaid-diagram");
-    expect(mermaidDiv).not.toBeNull();
+    // MermaidDiagram is loaded via next/dynamic — wait for it to mount.
+    await waitFor(() => {
+      const mermaidDiv = container.querySelector(".mermaid-diagram");
+      expect(mermaidDiv).not.toBeNull();
+    });
 
     // Should NOT have syntax highlighter tokens
     const tokenSpans = container.querySelectorAll("span.token");

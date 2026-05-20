@@ -14,7 +14,7 @@ import ImageAttachmentPreview from "@/app/projects/[name]/[session]/ImageAttachm
 import { useFileAutocomplete } from "@/hooks/use-file-autocomplete";
 import { useBranchFromParent } from "@/stores/sessions.store";
 import TddToggle from "@/components/TddToggle";
-import type { SessionCreationMode, SessionState, ImagePayload } from "@/types";
+import type { SessionCreationMode, ImagePayload } from "@/types";
 
 /** Derive a git-safe branch suffix from an arbitrary session name */
 function sanitizeBranchName(sessionName: string): string {
@@ -69,8 +69,8 @@ export default function CreateSessionModal({
   const branchOptions = useMemo(() => {
     if (!sessionsQuery.data) return [];
     return sessionsQuery.data
-      .filter((s: SessionState) => !s.finished && !s.archived)
-      .map((s: SessionState) => ({
+      .filter((s) => !s.finished && !s.archived)
+      .map((s) => ({
         sessionName: s.sessionName,
         branchName: s.branchName,
       }));
@@ -80,7 +80,7 @@ export default function CreateSessionModal({
   const selectedParentBranch = useMemo(() => {
     if (!parentSessionName || !sessionsQuery.data) return null;
     const parent = sessionsQuery.data.find(
-      (s: SessionState) => s.sessionName === parentSessionName,
+      (s) => s.sessionName === parentSessionName,
     );
     return parent?.branchName ?? null;
   }, [parentSessionName, sessionsQuery.data]);

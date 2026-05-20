@@ -13,11 +13,7 @@ import {
   type ColumnFiltersState,
   type SortingFn,
 } from "@tanstack/react-table";
-import type { SessionState, DerivedSessionStatus } from "@/types";
-import {
-  deriveSessionStatus,
-  deriveSessionPromptCount,
-} from "@/lib/session-derived";
+import type { SessionListItem, DerivedSessionStatus } from "@/types";
 import {
   useTddToggleMutation,
   useArchiveSessionMutation,
@@ -36,7 +32,7 @@ function formatRelativeTime(isoDate: string): string {
   return `${days}d ago`;
 }
 
-function StatusBadge({ session }: { session: SessionState }) {
+function StatusBadge({ session }: { session: SessionListItem }) {
   if (session.finished) {
     return (
       <span className="session-status merged">
@@ -45,7 +41,7 @@ function StatusBadge({ session }: { session: SessionState }) {
       </span>
     );
   }
-  const status = deriveSessionStatus(session);
+  const status = session.derivedStatus;
   return (
     <span className={`session-status ${status}`}>
       <span className="dot" />
@@ -59,7 +55,7 @@ function SessionTddToggle({
   session,
 }: {
   projectName: string;
-  session: SessionState;
+  session: SessionListItem;
 }) {
   const tddMutation = useTddToggleMutation(projectName, session.sessionName);
 
@@ -78,7 +74,7 @@ function ArchiveButton({
   session,
 }: {
   projectName: string;
-  session: SessionState;
+  session: SessionListItem;
 }) {
   const archiveMutation = useArchiveSessionMutation(
     projectName,
@@ -107,13 +103,13 @@ const STATUS_ORDER: DerivedSessionStatus[] = [
   "idle",
 ];
 
-const statusSortingFn: SortingFn<SessionState> = (rowA, rowB, columnId) => {
+const statusSortingFn: SortingFn<SessionListItem> = (rowA, rowB, columnId) => {
   const a = STATUS_ORDER.indexOf(rowA.getValue(columnId));
   const b = STATUS_ORDER.indexOf(rowB.getValue(columnId));
   return a - b;
 };
 
-const columnHelper = createColumnHelper<SessionState>();
+const columnHelper = createColumnHelper<SessionListItem>();
 
 function SortIndicator({ direction }: { direction: false | "asc" | "desc" }) {
   if (!direction) {
@@ -127,7 +123,7 @@ function SortIndicator({ direction }: { direction: false | "asc" | "desc" }) {
 }
 
 interface SessionsTableProps {
-  sessions: SessionState[];
+  sessions: SessionListItem[];
   projectName: string;
   nameFilter: string;
   onNameFilterChange: (value: string) => void;
@@ -223,7 +219,7 @@ export default function SessionsTable({
         },
       }),
       columnHelper.accessor(
-        (row) => (row.finished ? "merged" : deriveSessionStatus(row)),
+        (row) => (row.finished ? "merged" : row.derivedStatus),
         {
           id: "status",
           header: "Status",
@@ -240,7 +236,7 @@ export default function SessionsTable({
           <span className="session-time">{formatRelativeTime(getValue())}</span>
         ),
       }),
-      columnHelper.accessor((row) => deriveSessionPromptCount(row), {
+      columnHelper.accessor((row) => row.promptCount, {
         id: "prompts",
         header: "Prompts",
         sortingFn: "basic",

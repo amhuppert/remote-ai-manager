@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/project-resolver";
-import { getProjectSessions, getSession } from "@/lib/state";
+import { getProjectSessionListItems, getSession } from "@/lib/state";
 import {
   createSessionFast,
   createSessionFocus,
@@ -27,7 +27,7 @@ export const GET = withTracing(async (_request, { params }) => {
     );
   }
 
-  const sessions = await getProjectSessions(projectPath);
+  const sessions = await getProjectSessionListItems(projectPath);
   return NextResponse.json({ sessions });
 });
 

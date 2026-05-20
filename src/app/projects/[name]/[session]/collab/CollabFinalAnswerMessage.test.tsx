@@ -4,7 +4,7 @@ import { render, screen } from "@testing-library/react";
 import CollabFinalAnswerMessage from "./CollabFinalAnswerMessage";
 
 describe("CollabFinalAnswerMessage", () => {
-  it("renders the answer body", () => {
+  it("renders the answer body", async () => {
     render(
       <CollabFinalAnswerMessage
         agent="claude"
@@ -12,8 +12,9 @@ describe("CollabFinalAnswerMessage", () => {
       />,
     );
 
+    // MarkdownContent is loaded via next/dynamic — wait for first paint.
     expect(
-      screen.getByText(/Ship the migration in three phases\./),
+      await screen.findByText(/Ship the migration in three phases\./),
     ).toBeInTheDocument();
   });
 

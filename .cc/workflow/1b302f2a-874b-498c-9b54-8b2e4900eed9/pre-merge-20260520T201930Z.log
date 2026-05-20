@@ -1,0 +1,387 @@
+# Pre-merge validation failure
+timestamp: 2026-05-20T20:19:30.257Z
+execution: 1b302f2a-874b-498c-9b54-8b2e4900eed9
+context: final-verification
+session: Performance improvements
+branch: cc/performance-improvements-23b8f3
+
+DEPRECATED  The `test.workspace` option is deprecated and will be removed in the next major. To hide this warning, rename `test.workspace` option to `test.projects`.
+{"timestamp":"2026-05-20T20:18:59.235Z","level":"warn","module":"mcp.source-discovery","message":"cc.source.malformed","filePath":"/tmp/mcp-discover-cc-ttRJXe/cc-config/.mcp.json","scope":"global"}
+{"timestamp":"2026-05-20T20:19:05.068Z","level":"error","module":"tracing","message":"request.error","traceId":"t","projectName":"p","sessionName":"s","error":"boom"}
+{"timestamp":"2026-05-20T20:19:08.373Z","level":"warn","module":"test","message":"should pass"}
+{"timestamp":"2026-05-20T20:19:08.375Z","level":"error","module":"test","message":"should pass"}
+{"timestamp":"2026-05-20T20:19:08.410Z","level":"error","module":"test","message":"operation failed","error":"test failure","stack":"Error: test failure\n    at /home/alex/github/remote-ai-manager/.worktrees/performance-improvements-23b8f3/src/lib/logging/logger.test.ts:176:17\n    at file:///home/alex/github/remote-ai-manager/.worktrees/performance-improvements-23b8f3/node_modules/@vitest/runner/dist/chunk-hooks.js:155:11\n    at file:///home/alex/github/remote-ai-manager/.worktrees/performance-improvements-23b8f3/node_modules/@vitest/runner/dist/chunk-hooks.js:752:26\n    at file:///home/alex/github/remote-ai-manager/.worktrees/performance-improvements-23b8f3/node_modules/@vitest/runner/dist/chunk-hooks.js:1897:20\n    at new Promise (<anonymous>)\n    at runWithTimeout (file:///home/alex/github/remote-ai-manager/.worktrees/performance-improvements-23b8f3/node_modules/@vitest/runner/dist/chunk-hooks.js:1863:10)\n    at runTest (file:///home/alex/github/remote-ai-manager/.worktrees/performance-improvements-23b8f3/node_modules/@vitest/runner/dist/chunk-hooks.js:1574:12)\n    at processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at runSuite (file:///home/alex/github/remote-ai-manager/.worktrees/performance-improvements-23b8f3/node_modules/@vitest/runner/dist/chunk-hooks.js:1729:8)\n    at runSuite (file:///home/alex/github/remote-ai-manager/.worktrees/performance-improvements-23b8f3/node_modules/@vitest/runner/dist/chunk-hooks.js:1729:8)"}
+{"timestamp":"2026-05-20T20:19:08.432Z","level":"error","module":"test","message":"test"}
+{"timestamp":"2026-05-20T20:19:11.507Z","level":"warn","module":"agent-capabilities.discovery-cache","message":"discovery.failed","cascadeKind":"claude-plugins","scopeLevel":"conversation","error":"plugins failed with ANTHROPIC_API_KEY=<redacted> and token <redacted> in ~/.claude/settings.json","projectName":"demo-project","sessionName":"demo-session","conversationId":"conv-1"}
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |unit| src/app/projects/[name]/[session]/workflow/ExecutionInspectorPanel.test.tsx > ExecutionInspectorPanel — ValidationCard markdown formatting > renders summary with markdown inline code for any validator
+TestingLibraryElementError: Unable to find an element with the text: bunx vitest run. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<aside[39m
+      [33mclass[39m=[32m"wb-inspector"[39m
+    [36m>[39m
+      [36m<header[39m
+        [33mclass[39m=[32m"wb-inspector-header"[39m
+      [36m>[39m
+        [36m<span[39m
+          [33mclass[39m=[32m"wb-inspector-title"[39m
+        [36m>[39m
+          [0mOverview[0m
+        [36m</span>[39m
+      [36m</header>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"wb-inspector-body"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"wb-overview-stat-grid"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"wb-overview-stat"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"wb-overview-stat-value"[39m
+            [36m>[39m
+              [0m0[0m
+              [0m/[0m
+              [0m3[0m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"wb-overview-stat-label"[39m
+            [36m>[39m
+              [0mContexts[0m
+            [36m</div>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"wb-overview-stat"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"wb-overview-stat-value"[39m
+            [36m>[39m
+              [0m0[0m
+              [0m/[0m
+              [0m3[0m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"wb-overview-stat-label"[39m
+            [36m>[39m
+              [0mTasks[0m
+            [36m</div>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"wb-overview-stat"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"wb-overview-stat-value"[39m
+            [36m>[39m
+              [0m2[0m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"wb-overview-stat-label"[39m
+            [36m>[39m
+              [0mEdges[0m
+            [36m</div>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"wb-overview-stat"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"wb-overview-stat-value"[39m
+            [36m>[39m
+              [0m0[0m
+              [0m/[0m
+              [0m0[0m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"wb-overview-stat-label"[39m
+            [36m>[39m
+              [0mMerges[0m
+            [36m</div>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+        [36m<section[39m
+          [33mclass[39m=[32m"wb-overview-section"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"wb-overview-section-title"[39m
+          [36m>[39m
+            [0mEvents[0m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"wb-exec-event-log"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"wb-exec-event"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"wb-exec-event-header"[39m
+                [33mrole[39m=[32m"button"[39m
+                [33mstyle[39m=[32m"cursor: pointer;"[39m
+                [33mtabindex[39m=[32m"0"[39m
+              [36m>[39m
+                [36m<span[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mclass[39m=[32m"wb-exec-event-dot wb-exec-event-dot--pass"[39m
+                [36m/>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"wb-exec-event-text"[39m
+                [36m>[39m
+                  [0mValidation passed · Plan[0m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"wb-exec-event-timestamp"[39m
+                [36m>[39m
+                  [0mMar 27, 6:00 AM[0m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mclass[39m=[32m"wb-exec-event-caret"[39m
+                [36m>[39m
+                  [0m▸[0m
+                [36m</span>[39m
+              [36m</div>[39m
+            [36m</div>[39m
+          [36m</div>[39m
+        [36m</section>[39m
+        [36m<section[39m
+          [33mclass[39m=[32m"wb-overview-section"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"wb-overview-section-title"[39m
+          [36m>[39m
+            [0mRecent Validations[0m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"wb-validation-card"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"wb-validation-header"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"wb-validation-dot pass"[39m
+              [36m/>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"wb-validation-summary wb-markdown-inline"[39m
+              [36m/>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"wb-validation-timestamp"[39m
+              [36m>[39m
+                [0mMar 27, 6:00 AM[0m
+              [36m</span>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"wb-validation-meta"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"wb-validation-lane-badge task"[39m
+              [36m>[39m
+                [0mContext[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"wb-validation-engine-badge"[39m
+              [36m>[39m
+                [0mclaude[0m
+              [36m</span>[39m
+            [36m</div>[39m
+          [36m</div>[39m
+        [36m</section>[39m
+      [36m</div>[39m
+    [36m</aside>[39m
+  [36m</div>[39m
+[36m</body>[39m
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<aside[39m
+      [33mclass[39m=[32m"wb-inspector"[39m
+    [36m>[39m
+      [36m<header[39m
+        [33mclass[39m=[32m"wb-inspector-header"[39m
+      [36m>[39m
+        [36m<span[39m
+          [33mclass[39m=[32m"wb-inspector-title"[39m
+        [36m>[39m
+          [0mOverview[0m
+        [36m</span>[39m
+      [36m</header>[39m
+      [36m<div[39m
+        [33mclass[39m=[32m"wb-inspector-body"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"wb-overview-stat-grid"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"wb-overview-stat"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"wb-overview-stat-value"[39m
+            [36m>[39m
+              [0m0[0m
+              [0m/[0m
+              [0m3[0m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"wb-overview-stat-label"[39m
+            [36m>[39m
+              [0mContexts[0m
+            [36m</div>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"wb-overview-stat"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"wb-overview-stat-value"[39m
+            [36m>[39m
+              [0m0[0m
+              [0m/[0m
+              [0m3[0m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"wb-overview-stat-label"[39m
+            [36m>[39m
+              [0mTasks[0m
+            [36m</div>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"wb-overview-stat"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"wb-overview-stat-value"[39m
+            [36m>[39m
+              [0m2[0m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"wb-overview-stat-label"[39m
+            [36m>[39m
+              [0mEdges[0m
+            [36m</div>[39m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"wb-overview-stat"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"wb-overview-stat-value"[39m
+            [36m>[39m
+              [0m0[0m
+              [0m/[0m
+              [0m0[0m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"wb-overview-stat-label"[39m
+            [36m>[39m
+              [0mMerges[0m
+            [36m</div>[39m
+          [36m</div>[39m
+        [36m</div>[39m
+        [36m<section[39m
+          [33mclass[39m=[32m"wb-overview-section"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"wb-overview-section-title"[39m
+          [36m>[39m
+            [0mEvents[0m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"wb-exec-event-log"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"wb-exec-event"[39m
+            [36m>[39m
+              [36m<div[39m
+                [33mclass[39m=[32m"wb-exec-event-header"[39m
+                [33mrole[39m=[32m"button"[39m
+                [33mstyle[39m=[32m"cursor: pointer;"[39m
+                [33mtabindex[39m=[32m"0"[39m
+              [36m>[39m
+                [36m<span[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mclass[39m=[32m"wb-exec-event-dot wb-exec-event-dot--pass"[39m
+                [36m/>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"wb-exec-event-text"[39m
+                [36m>[39m
+                  [0mValidation passed · Plan[0m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"wb-exec-event-timestamp"[39m
+                [36m>[39m
+                  [0mMar 27, 6:00 AM[0m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33maria-hidden[39m=[32m"true"[39m
+                  [33mclass[39m=[32m"wb-exec-event-caret"[39m
+                [36m>[39m
+                  [0m▸[0m
+                [36m</span>[39m
+              [36m</div>[39m
+            [36m</div>[39m
+          [36m</div>[39m
+        [36m</section>[39m
+        [36m<section[39m
+          [33mclass[39m=[32m"wb-overview-section"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"wb-overview-section-title"[39m
+          [36m>[39m
+            [0mRecent Validations[0m
+          [36m</div>[39m
+          [36m<div[39m
+            [33mclass[39m=[32m"wb-validation-card"[39m
+          [36m>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"wb-validation-header"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"wb-validation-dot pass"[39m
+              [36m/>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"wb-validation-summary wb-markdown-inline"[39m
+              [36m/>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"wb-validation-timestamp"[39m
+              [36m>[39m
+                [0mMar 27, 6:00 AM[0m
+              [36m</span>[39m
+            [36m</div>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"wb-validation-meta"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"wb-validation-lane-badge task"[39m
+              [36m>[39m
+                [0mContext[0m
+              [36m</span>[39m
+              [36m<span[39m
+                [33mclass[39m=[32m"wb-validation-engine-badge"[39m
+              [36m>[39m
+                [0mclaude[0m
+              [36m</span>[39m
+            [36m</div>[39m
+          [36m</div>[39m
+        [36m</section>[39m
+      [36m</div>[39m
+    [36m</aside>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ src/app/projects/[name]/[session]/workflow/ExecutionInspectorPanel.test.tsx:76:33
+     74| 
+     75|     // MarkdownContent is loaded via next/dynamic — wait for it to mou…
+     76|     const codeEl = await screen.findByText("bunx vitest run");
+       |                                 ^
+     77|     expect(codeEl.closest("code")).toBeTruthy();
+     78|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+RUN  v3.2.4 /home/alex/github/remote-ai-manager/.worktrees/performance-improvements-23b8f3
+
+···············x··························································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································································
+
+ Test Files  1 failed | 394 passed (395)
+      Tests  1 failed | 5257 passed (5258)
+   Start at  16:17:53
+   Duration  96.53s (transform 46.23s, setup 130.35s, collect 393.16s, tests 354.17s, environment 195.84s, prepare 133.53s)

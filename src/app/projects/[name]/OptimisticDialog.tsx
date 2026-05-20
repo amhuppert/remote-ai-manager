@@ -16,7 +16,7 @@ import {
 import { FileAutocomplete } from "@/components/FileAutocomplete";
 import TddToggle from "@/components/TddToggle";
 import { useFileAutocomplete } from "@/hooks/use-file-autocomplete";
-import type { SessionState, ImagePayload } from "@/types";
+import type { ImagePayload } from "@/types";
 
 interface OptimisticDialogProps {
   projectName: string;
@@ -56,8 +56,8 @@ export default function OptimisticDialog({
   const branchOptions = useMemo(() => {
     if (!sessionsQuery.data) return [];
     return sessionsQuery.data
-      .filter((s: SessionState) => !s.finished && !s.archived)
-      .map((s: SessionState) => ({
+      .filter((s) => !s.finished && !s.archived)
+      .map((s) => ({
         sessionName: s.sessionName,
         branchName: s.branchName,
       }));
@@ -66,7 +66,7 @@ export default function OptimisticDialog({
   const selectedParentBranch = useMemo(() => {
     if (!parentSessionName || !sessionsQuery.data) return null;
     const parent = sessionsQuery.data.find(
-      (s: SessionState) => s.sessionName === parentSessionName,
+      (s) => s.sessionName === parentSessionName,
     );
     return parent?.branchName ?? null;
   }, [parentSessionName, sessionsQuery.data]);

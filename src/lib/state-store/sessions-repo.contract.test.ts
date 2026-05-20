@@ -310,6 +310,114 @@ describe("sessions-repo cascading-FK invariant", () => {
   });
 });
 
+describe("sessions-repo findListItemsByProject projection", () => {
+  it("returns rows without heavy JSON columns and computes has_active_graph_workflow", () => {
+    const heavyMachineSnapshot = JSON.stringify({
+      state: "running",
+      context: { largeBlob: "x".repeat(50_000) },
+    });
+    const runningExecution = JSON.stringify({
+      id: "wf-running",
+      seedDefinitionId: "seed",
+      seedDefinitionRevision: 1,
+      workingDefinition: {},
+      status: "running",
+      startedAt: "2026-01-01T00:00:00Z",
+    });
+    const completedExecution = JSON.stringify({
+      id: "wf-done",
+      seedDefinitionId: "seed",
+      seedDefinitionRevision: 1,
+      workingDefinition: {},
+      status: "completed",
+      startedAt: "2026-01-01T00:00:00Z",
+    });
+
+    db.prepare(
+      `INSERT INTO sessions
+         (project_path, session_name, worktree_path, branch_name,
+          created_at, last_activity_at, graph_workflow_execution,
+          graph_workflow_execution_history, workflow_envelopes, workflow_lanes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      PROJECT_PATH,
+      "running-wf",
+      "/wt/running-wf",
+      "csm/running-wf",
+      "2026-01-01T00:00:00Z",
+      "2026-02-01T00:00:00Z",
+      runningExecution,
+      "[]",
+      JSON.stringify({
+        env1: { workflowType: "collaboration", status: "running" },
+      }),
+      JSON.stringify({ lane1: { engine: "noop" } }),
+    );
+    db.prepare(
+      `INSERT INTO sessions
+         (project_path, session_name, worktree_path, branch_name,
+          created_at, last_activity_at, graph_workflow_execution,
+          graph_workflow_execution_history)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      PROJECT_PATH,
+      "done-wf",
+      "/wt/done-wf",
+      "csm/done-wf",
+      "2026-01-01T00:00:00Z",
+      "2026-01-15T00:00:00Z",
+      completedExecution,
+      "[]",
+    );
+
+    db.prepare(
+      `INSERT INTO conversations
+         (id, project_path, session_name, status, prompt_count,
+          created_at, last_activity_at, machine_snapshot)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "conv-running",
+      PROJECT_PATH,
+      "running-wf",
+      "running",
+      0,
+      "2026-01-01T00:00:00Z",
+      "2026-01-01T00:00:00Z",
+      heavyMachineSnapshot,
+    );
+
+    const rows = repo.findListItemsByProject(PROJECT_PATH);
+    expect(rows).toHaveLength(2);
+
+    const forbidden = [
+      "machine_snapshot",
+      "graph_workflow_execution",
+      "graph_workflow_execution_history",
+      "workflow_lanes",
+      "mcp_runtime",
+      "agent_capabilities_runtime",
+      "pending_questions",
+      "pending_prompt_text",
+      "debug_mode",
+    ];
+    for (const row of rows) {
+      const keys = Object.keys(row);
+      for (const f of forbidden) {
+        expect(keys).not.toContain(f);
+      }
+    }
+
+    const running = rows.find((r) => r.session_name === "running-wf");
+    expect(running).toBeDefined();
+    expect(running?.has_active_graph_workflow).toBe(1);
+    expect(running?.workflow_envelopes).toContain("collaboration");
+
+    const done = rows.find((r) => r.session_name === "done-wf");
+    expect(done).toBeDefined();
+    expect(done?.has_active_graph_workflow).toBe(0);
+  });
+});
+
 describe("canonicalSessionRow", () => {
   it("returns the same string for two SessionState values that are deep-equal post-Zod-parse", () => {
     const a = makeFullSession();

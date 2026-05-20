@@ -16,7 +16,7 @@ import {
   mcpRuntimeApplicationStateSchema,
 } from "../schemas";
 import { PersistenceError, getErrorMessage } from "../errors";
-import type { ConversationState } from "@/types";
+import type { ConversationState, ConversationStatus } from "@/types";
 
 type Db = InstanceType<typeof Database>;
 
@@ -30,6 +30,13 @@ export interface ConversationsRepo {
     conversationId: string,
   ): ConversationState | null;
   findBySession(projectPath: string, sessionName: string): ConversationState[];
+  findListItemsForProject(projectPath: string): Array<{
+    id: string;
+    sessionName: string;
+    status: ConversationStatus;
+    promptCount: number;
+    lastActivityAt: string;
+  }>;
   findAll(): {
     projectPath: string;
     sessionName: string;
@@ -491,6 +498,11 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
      WHERE project_path = ? AND session_name = ?
      ORDER BY created_at ASC, id ASC`,
   );
+  const findListItemsForProjectStmt = db.prepare(
+    `SELECT id, session_name, status, prompt_count, last_activity_at
+     FROM conversations
+     WHERE project_path = ?`,
+  );
   const findAllStmt = db.prepare(
     `SELECT * FROM conversations
      ORDER BY project_path ASC, session_name ASC, created_at ASC, id ASC`,
@@ -593,6 +605,24 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
           sessionName,
         ) as unknown[];
         return rows.map((row) => rowToDomain(row).conversation);
+      });
+    },
+    findListItemsForProject(projectPath) {
+      return timed("findListItemsForProject", { projectPath }, () => {
+        const rows = findListItemsForProjectStmt.all(projectPath) as Array<{
+          id: string;
+          session_name: string;
+          status: ConversationStatus;
+          prompt_count: number;
+          last_activity_at: string;
+        }>;
+        return rows.map((row) => ({
+          id: row.id,
+          sessionName: row.session_name,
+          status: row.status,
+          promptCount: row.prompt_count,
+          lastActivityAt: row.last_activity_at,
+        }));
       });
     },
     findAll() {

@@ -19,6 +19,7 @@ export type {
   ConversationRole,
   DerivedSessionStatus,
   SessionState,
+  SessionListItem,
   ProjectState,
   ProjectRow,
   ManagerState,

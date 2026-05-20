@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import CommandIndicator from "./CommandIndicator";
 
 describe("CommandIndicator", () => {
@@ -30,7 +30,7 @@ describe("CommandIndicator", () => {
     expect(container.querySelector(".command-indicator__body")).toBeNull();
   });
 
-  it("renders an expanded markdown body when args contains a newline", () => {
+  it("renders an expanded markdown body when args contains a newline", async () => {
     const args = "Line one.\n\n**Bold change** and more details.";
     const { container } = render(
       <CommandIndicator name="/collab" args={args} />,
@@ -42,8 +42,10 @@ describe("CommandIndicator", () => {
     expect(screen.getByText("/collab")).toBeDefined();
     const body = container.querySelector(".command-indicator__body");
     expect(body).not.toBeNull();
-    // Markdown rendering produces a <strong> for **Bold change**
-    expect(body?.querySelector("strong")?.textContent).toBe("Bold change");
+    // MarkdownContent is loaded via next/dynamic — wait for it to mount.
+    await waitFor(() => {
+      expect(body?.querySelector("strong")?.textContent).toBe("Bold change");
+    });
     expect(container.querySelector(".command-args")).toBeNull();
   });
 });

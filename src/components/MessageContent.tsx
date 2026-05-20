@@ -1,9 +1,30 @@
 "use client";
 
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import type { MessageContentBlock, ToolResultMetrics } from "@/types";
-import MarkdownContent from "./MarkdownContent";
 import { formatToolUse } from "@/lib/format-tool-use";
+
+const LazyMarkdownContent = dynamic(() => import("./MarkdownContent"), {
+  ssr: false,
+});
+
+function MarkdownContent({ content }: { content: string }): React.JSX.Element {
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void import("./MarkdownContent").then(() => {
+      if (!cancelled) setLoaded(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  if (!loaded) {
+    return <pre className="markdown-loading">{content}</pre>;
+  }
+  return <LazyMarkdownContent content={content} />;
+}
 import ToolUseGroup from "./ToolUseGroup";
 import DebugStructuredCard from "./DebugStructuredCard";
 import CommandIndicator from "./CommandIndicator";

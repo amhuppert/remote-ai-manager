@@ -1,7 +1,11 @@
 "use client";
 
 import { memo } from "react";
-import MarkdownContent from "./MarkdownContent";
+import dynamic from "next/dynamic";
+
+const MarkdownContent = dynamic(() => import("./MarkdownContent"), {
+  ssr: false,
+});
 
 interface Props {
   name: string;

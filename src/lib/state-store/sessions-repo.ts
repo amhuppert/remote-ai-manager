@@ -21,9 +21,28 @@ type Db = InstanceType<typeof Database>;
 const logger = createLogger("state-store.sessions");
 const parallelLogger = createLogger("graph-workflow-parallel");
 
+interface SessionListItemRow {
+  session_name: string;
+  worktree_path: string;
+  branch_name: string;
+  target_branch: string;
+  parent_session_name: string | null;
+  created_at: string;
+  last_activity_at: string;
+  archived: 0 | 1;
+  finished: 0 | 1;
+  source: string;
+  creation_mode: string;
+  tdd_enabled: 0 | 1;
+  objective: string | null;
+  has_active_graph_workflow: 0 | 1;
+  workflow_envelopes: string | null;
+}
+
 export interface SessionsRepo {
   findByKey(projectPath: string, sessionName: string): SessionState | null;
   findByProject(projectPath: string): SessionState[];
+  findListItemsByProject(projectPath: string): SessionListItemRow[];
   findAll(): { projectPath: string; session: SessionState }[];
   upsert(projectPath: string, session: SessionState): void;
   delete(projectPath: string, sessionName: string): void;
@@ -503,6 +522,20 @@ export function createSessionsRepo(db: Db): SessionsRepo {
      WHERE project_path = ?
      ORDER BY created_at ASC, session_name ASC`,
   );
+  const findListItemsByProjectStmt = db.prepare(
+    `SELECT
+       session_name, worktree_path, branch_name, target_branch,
+       parent_session_name, created_at, last_activity_at,
+       archived, finished, source, creation_mode, tdd_enabled, objective,
+       CASE WHEN graph_workflow_execution IS NOT NULL
+         AND json_extract(graph_workflow_execution, '$.status')
+           NOT IN ('completed', 'failed', 'cancelled')
+         THEN 1 ELSE 0 END AS has_active_graph_workflow,
+       workflow_envelopes
+     FROM sessions
+     WHERE project_path = ?
+     ORDER BY last_activity_at DESC`,
+  );
   const findAllStmt = db.prepare(
     `SELECT * FROM sessions
      ORDER BY project_path ASC, created_at ASC, session_name ASC`,
@@ -599,6 +632,13 @@ export function createSessionsRepo(db: Db): SessionsRepo {
           }
           return result.session;
         });
+      });
+    },
+    findListItemsByProject(projectPath) {
+      return timed("findListItemsByProject", projectPath, undefined, () => {
+        return findListItemsByProjectStmt.all(
+          projectPath,
+        ) as SessionListItemRow[];
       });
     },
     findAll() {

@@ -1,7 +1,32 @@
 "use client";
 
-import MarkdownContent from "@/components/MarkdownContent";
+import dynamic from "next/dynamic";
+import { useEffect, useState } from "react";
 import { normalizeCollabMarkdown } from "./text-normalizer";
+
+const LazyMarkdownContent = dynamic(
+  () => import("@/components/MarkdownContent"),
+  {
+    ssr: false,
+  },
+);
+
+function MarkdownContent({ content }: { content: string }): React.JSX.Element {
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void import("@/components/MarkdownContent").then(() => {
+      if (!cancelled) setLoaded(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  if (!loaded) {
+    return <pre className="markdown-loading">{content}</pre>;
+  }
+  return <LazyMarkdownContent content={content} />;
+}
 
 export interface CollabMarkdownTextProps {
   content: string;

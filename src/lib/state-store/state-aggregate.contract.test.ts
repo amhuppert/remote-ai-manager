@@ -26,13 +26,16 @@ import {
   type AllRepos,
   type StateAggregate,
 } from "./state-aggregate";
+import { createStateStore } from "./state-store";
 import {
   conversationStateSchema,
   managerStateSchema,
   projectRowSchema,
   referenceDocumentSchema,
+  sessionListItemSchema,
   sessionStateSchema,
 } from "../schemas";
+import { z } from "zod";
 import type {
   ConversationState,
   ManagerState,
@@ -248,6 +251,7 @@ describe("state-aggregate.readAll", () => {
       sessions: {
         findByKey: () => null,
         findByProject: () => [],
+        findListItemsByProject: () => [],
         findAll: () => [
           {
             projectPath: "/proj",
@@ -261,6 +265,7 @@ describe("state-aggregate.readAll", () => {
         findById: () => null,
         findByKey: () => null,
         findBySession: () => [],
+        findListItemsForProject: () => [],
         findAll: () => [],
         upsert: () => {},
         delete: () => {},
@@ -390,6 +395,73 @@ describe("state-aggregate.diffAndCommit", () => {
     expect(reread.projects["/proj-a"]?.sessions["alpha"]?.lastActivityAt).toBe(
       expected,
     );
+  });
+});
+
+describe("createStateStore.getProjectSessionListItems", () => {
+  it("returns SessionListItem rows without heavy fields, with correctly derived metadata", async () => {
+    repos.projects.upsert({ rootPath: "/proj-a" });
+    repos.sessions.upsert(
+      "/proj-a",
+      sessionStateSchema.parse({
+        sessionName: "alpha",
+        worktreePath: "/wt/alpha",
+        branchName: "csm/alpha",
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+        workflowEnvelopes: {
+          env1: { workflowType: "collaboration", status: "running" },
+        },
+      }),
+    );
+    repos.conversations.upsert(
+      "/proj-a",
+      "alpha",
+      conversationStateSchema.parse({
+        id: "conv-running",
+        transcriptPath: null,
+        status: "running",
+        promptCount: 3,
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-02-10T00:00:00Z",
+        machineSnapshot: { state: "running", context: { foo: "bar" } },
+      }),
+    );
+    repos.conversations.upsert(
+      "/proj-a",
+      "alpha",
+      conversationStateSchema.parse({
+        id: "conv-idle",
+        transcriptPath: null,
+        status: "idle",
+        promptCount: 7,
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-02-05T00:00:00Z",
+        machineSnapshot: { state: "idle", context: {} },
+      }),
+    );
+
+    const store = createStateStore({ db });
+    const items = await store.getProjectSessionListItems("/proj-a");
+
+    const alpha = items.find((i) => i.sessionName === "alpha");
+    expect(alpha).toBeDefined();
+    if (!alpha) return;
+
+    const keys = Object.keys(alpha);
+    expect(keys).not.toContain("machineSnapshot");
+    expect(keys).not.toContain("conversations");
+    expect(keys).not.toContain("graphWorkflowExecution");
+    expect(keys).not.toContain("workflowEnvelopes");
+    expect(keys).not.toContain("workflowLanes");
+
+    expect(alpha.derivedStatus).toBe("running");
+    expect(alpha.promptCount).toBe(10);
+    expect(alpha.collabContribution).toBe("running");
+    expect(alpha.hasActiveGraphWorkflow).toBe(false);
+    expect(alpha.derivedLastActivityAt).toBe("2026-02-10T00:00:00Z");
+
+    expect(() => z.array(sessionListItemSchema).parse(items)).not.toThrow();
   });
 });
 

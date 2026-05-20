@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useCallback, useState } from "react";
-import { deriveSessionStatus } from "@/lib/session-derived";
 import { useSessionsQuery, usePresetsQuery } from "@/lib/queries";
 import {
   useDeleteSessionMutation,
@@ -82,7 +81,7 @@ export default function SessionsList({
   }, [deleteTarget, deleteMutation, cancelDelete]);
 
   const runningCount = sessions.filter(
-    (s) => deriveSessionStatus(s) === "running",
+    (s) => s.derivedStatus === "running",
   ).length;
 
   const isLoading = sessionsQuery.isPending;

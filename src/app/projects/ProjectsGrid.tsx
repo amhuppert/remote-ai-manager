@@ -184,7 +184,7 @@ export default function ProjectsGrid(): React.JSX.Element {
         }
       />
       <main className="main">
-        <div className="page-header stagger-in">
+        <div className="page-header">
           <h1 className="page-title">
             Ground <span className="accent">Control</span>
           </h1>

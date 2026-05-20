@@ -1,7 +1,11 @@
 "use client";
 
-import MarkdownContent from "@/components/MarkdownContent";
+import dynamic from "next/dynamic";
 import type { CollaborationAgent } from "@/lib/workflows/collaboration/types";
+
+const MarkdownContent = dynamic(() => import("@/components/MarkdownContent"), {
+  ssr: false,
+});
 
 export interface CollabFinalAnswerMessageProps {
   agent: CollaborationAgent;

@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen } from "@testing-library/react";
 import { renderWithQuery } from "@/test/component-mocks";
 import SessionsList from "./SessionsList";
-import type { SessionState } from "@/types";
+import type { SessionListItem } from "@/types";
 
 // Shared mocks
 vi.mock(
@@ -33,7 +33,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 const mockSessionsData = {
-  data: undefined as SessionState[] | undefined,
+  data: undefined as SessionListItem[] | undefined,
   isPending: false,
 };
 vi.mock("@/lib/queries", () => ({
@@ -113,7 +113,7 @@ beforeEach(() => {
 
 const now = new Date().toISOString();
 
-const makeSessions = (count: number): SessionState[] =>
+const makeSessions = (count: number): SessionListItem[] =>
   Array.from({ length: count }, (_, i) => ({
     sessionName: `session-${i + 1}`,
     worktreePath: `/project/.worktrees/session-${i + 1}`,
@@ -122,43 +122,17 @@ const makeSessions = (count: number): SessionState[] =>
     lastActivityAt: now,
     archived: false,
     finished: false,
-    conversations: [
-      {
-        id: `conv-${i + 1}`,
-        name: null,
-        transcriptPath: null,
-        status: i === 0 ? ("running" as const) : ("awaiting" as const),
-        promptCount: i * 3,
-        createdAt: now,
-        lastActivityAt: now,
-        source: "cc" as const,
-        summary: null,
-        archived: false,
-        totalCostUsd: null,
-        totalDurationMs: null,
-        totalTurns: null,
-        pendingQuestionId: null,
-        pendingQuestions: null,
-        pendingPromptText: null,
-        forkedFrom: null,
-        role: null,
-        contextTokens: null,
-        contextWindowMax: null,
-        debugMode: null,
-        machineSnapshot: null,
-        agentBackend: "claude" as const,
-        backendRef: null,
-      },
-    ],
     source: "cc" as const,
     objective: null,
     creationMode: "fast" as const,
     tddEnabled: true,
     targetBranch: "main",
     parentSessionName: null,
-    graphWorkflowExecution: null,
-    graphWorkflowExecutionHistory: [],
-    referenceDocuments: [],
+    derivedStatus: i === 0 ? ("running" as const) : ("awaiting" as const),
+    promptCount: i * 3,
+    derivedLastActivityAt: now,
+    collabContribution: null,
+    hasActiveGraphWorkflow: false,
   }));
 
 // ===========================================================================

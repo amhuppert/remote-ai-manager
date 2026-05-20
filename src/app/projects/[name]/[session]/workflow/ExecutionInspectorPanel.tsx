@@ -1,7 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import MarkdownContent from "@/components/MarkdownContent";
+import dynamic from "next/dynamic";
+
+const MarkdownContent = dynamic(() => import("@/components/MarkdownContent"), {
+  ssr: false,
+});
 import CollapsibleText from "@/components/CollapsibleText";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import ContextHaltCard from "@/components/workflow-graph/ContextHaltCard";

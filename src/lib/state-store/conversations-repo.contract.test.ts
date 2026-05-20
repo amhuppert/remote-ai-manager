@@ -252,6 +252,50 @@ describe("conversations-repo round-trip contract", () => {
   });
 });
 
+describe("conversations-repo findListItemsForProject projection", () => {
+  it("returns rows with only the slim columns (no JSON or heavy fields)", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeFullConversation({
+        id: "c-heavy",
+        status: "running",
+        promptCount: 5,
+        lastActivityAt: "2026-03-15T00:00:00Z",
+      }),
+    );
+
+    const rows = repo.findListItemsForProject(PROJECT_PATH);
+    expect(rows).toHaveLength(1);
+    const row = rows[0]!;
+    expect(Object.keys(row).sort()).toEqual(
+      ["id", "lastActivityAt", "promptCount", "sessionName", "status"].sort(),
+    );
+    expect(row.id).toBe("c-heavy");
+    expect(row.sessionName).toBe(SESSION_NAME);
+    expect(row.status).toBe("running");
+    expect(row.promptCount).toBe(5);
+    expect(row.lastActivityAt).toBe("2026-03-15T00:00:00Z");
+  });
+
+  it("scopes to the requested projectPath", () => {
+    insertParentSession("/p-other", "s-other");
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "in-scope" }),
+    );
+    repo.upsert(
+      "/p-other",
+      "s-other",
+      makeMinimalConversation({ id: "out-of-scope" }),
+    );
+
+    const rows = repo.findListItemsForProject(PROJECT_PATH);
+    expect(rows.map((r) => r.id)).toEqual(["in-scope"]);
+  });
+});
+
 describe("conversations-repo upsertWithSessionTouch atomicity", () => {
   it("commits both the conversation upsert and parent session.last_activity_at update in one transaction (success)", () => {
     repo.upsert(

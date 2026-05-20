@@ -13,8 +13,9 @@ const { TextOnly, WithToolUse, MultipleBlocks, ToolUseWithoutInput } =
 describe("MessageContent stories", () => {
   it("TextOnly renders markdown text", async () => {
     await TextOnly.run();
+    // MarkdownContent is loaded via next/dynamic — wait for first paint.
     expect(
-      screen.getByText(/refactor the authentication module/),
+      await screen.findByText(/refactor the authentication module/),
     ).toBeInTheDocument();
   });
 
@@ -26,7 +27,9 @@ describe("MessageContent stories", () => {
 
   it("MultipleBlocks renders text and tool-use blocks, skips tool_result", async () => {
     await MultipleBlocks.run();
-    expect(screen.getByText(/update the session manager/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/update the session manager/),
+    ).toBeInTheDocument();
     expect(screen.getAllByText("Read")).toHaveLength(1);
     expect(screen.getAllByText("Write")).toHaveLength(1);
     // tool_result should not be rendered
