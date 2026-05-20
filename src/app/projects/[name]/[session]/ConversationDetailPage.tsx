@@ -1710,7 +1710,7 @@ export default function ConversationDetailPage({
   ]);
 
   const typingIndicatorVisible =
-    !hasActiveCollab && (sending || displayStatus === "running");
+    !hasActiveCollab && (sending || activeConversation?.status === "running");
   const renderTypingIndicator = useCallback(
     () => (
       <TypingIndicator
