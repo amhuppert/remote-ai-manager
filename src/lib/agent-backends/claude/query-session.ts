@@ -178,6 +178,8 @@ interface PendingTurn {
 export function createQuerySession(options: QuerySessionOptions): QuerySession {
   const DEFAULT_IDLE_TTL_MS = 5 * 60 * 1000; // 5 minutes
   const DEFAULT_MCP_KEEPALIVE_MS = 30_000; // 30 seconds
+  const MCP_PIPE_BROKEN_THRESHOLD = 3;
+  const TOOL_RESULT_STREAM_CLOSED_THRESHOLD = 3;
   const idleTtlMs = options.idleTtlMs ?? DEFAULT_IDLE_TTL_MS;
   const mcpKeepaliveMs =
     options.mcpKeepaliveIntervalMs ?? DEFAULT_MCP_KEEPALIVE_MS;
@@ -192,6 +194,14 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   const stderrChunks: string[] = [];
   let awaitingSubsequentPromptDelivery = false;
   const hasMcpServers = Object.keys(options.mcpServers).length > 0;
+  // Re-entrancy guards on the MCP health/recovery codepaths. Without these, a
+  // stalled mcpServerStatus or setMcpServers call lets the keepalive interval
+  // queue dozens of concurrent ticks/reconnects, which all reject in a
+  // thundering herd when the underlying SDK pipe finally breaks.
+  let keepaliveInFlight = false;
+  let recoveryInFlight = false;
+  let recoveryFailureCount = 0;
+  let consecutiveStreamClosedCount = 0;
 
   // The hanging generator: yields the first user message, then hangs forever.
   // This keeps the SDK subprocess alive indefinitely.
@@ -281,7 +291,11 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   if (mcpKeepaliveMs > 0) {
     mcpKeepaliveTimer = setInterval(() => {
       if (status !== "alive") return;
-      void mcpKeepaliveTick();
+      if (keepaliveInFlight) return;
+      keepaliveInFlight = true;
+      void mcpKeepaliveTick().finally(() => {
+        keepaliveInFlight = false;
+      });
     }, mcpKeepaliveMs);
   }
 
@@ -395,11 +409,20 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       // Generator completed normally (subprocess exited cleanly)
       if (status === "alive") {
         markDead("pump_completed");
-        rejectPendingTurn(
-          awaitingSubsequentPromptDelivery
-            ? createPromptNotDeliveredError()
-            : new Error("QuerySession ended before the turn completed"),
-        );
+        let rejectError: Error;
+        if (awaitingSubsequentPromptDelivery) {
+          rejectError = createPromptNotDeliveredError();
+        } else if (pendingTurn !== null) {
+          rejectError = tagQuerySessionError(
+            new Error("QuerySession ended before the turn completed"),
+            QUERY_SESSION_ERROR_CODES.sessionDiedMidTurn,
+          );
+        } else {
+          rejectError = new Error(
+            "QuerySession ended before the turn completed",
+          );
+        }
+        rejectPendingTurn(rejectError);
       }
     } catch (err) {
       if (status === "alive") {
@@ -424,7 +447,10 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
                 rejectError,
                 QUERY_SESSION_ERROR_CODES.promptNotDelivered,
               )
-            : rejectError,
+            : tagQuerySessionError(
+                rejectError,
+                QUERY_SESSION_ERROR_CODES.sessionDiedMidTurn,
+              ),
         );
       }
     }
@@ -485,6 +511,35 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   }
 
   // ------------------------------------------------------------------
+  // Pipe-broken escalation
+  // ------------------------------------------------------------------
+
+  function escalatePipeBroken(
+    reason: "mcp_pipe_broken" | "tool_result_pipe_broken",
+    count: number,
+  ): void {
+    if (status === "dead") return;
+    logger.error("query-session.pipe_broken", {
+      conversationId: options.conversationId,
+      reason,
+      count,
+    });
+    markDead(reason);
+    const taggedError = tagQuerySessionError(
+      new Error(
+        `SDK pipe broken: ${reason} after ${count} consecutive failures`,
+      ),
+      QUERY_SESSION_ERROR_CODES.sdkPipeBroken,
+    );
+    rejectPendingTurn(taggedError);
+    try {
+      q.close();
+    } catch {
+      // best-effort
+    }
+  }
+
+  // ------------------------------------------------------------------
   // MCP health & recovery
   // ------------------------------------------------------------------
 
@@ -497,6 +552,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   async function mcpKeepaliveTick(): Promise<void> {
     try {
       const statuses = await q.mcpServerStatus();
+      if (status !== "alive") return;
       const failed = findFailedServers(statuses);
       if (failed.length > 0) {
         logger.warn("query-session.mcp_keepalive_failed", {
@@ -506,6 +562,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         await attemptMcpRecovery("keepalive");
       }
     } catch {
+      if (status !== "alive") return;
       logger.warn("query-session.mcp_keepalive_failed", {
         conversationId: options.conversationId,
       });
@@ -517,6 +574,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     if (!hasMcpServers) return;
     try {
       const statuses = await q.mcpServerStatus();
+      if (status !== "alive") return;
       const failed = findFailedServers(statuses);
       if (failed.length > 0) {
         logger.warn("query-session.mcp_unhealthy", {
@@ -527,6 +585,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         await attemptMcpRecovery(trigger);
       }
     } catch {
+      if (status !== "alive") return;
       logger.warn("query-session.mcp_unhealthy", {
         conversationId: options.conversationId,
         trigger,
@@ -536,17 +595,29 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   }
 
   async function attemptMcpRecovery(trigger: string): Promise<void> {
+    if (recoveryInFlight) return;
+    recoveryInFlight = true;
     try {
       await q.setMcpServers(options.mcpServers as Record<string, never>);
+      if (status !== "alive") return;
+      recoveryFailureCount = 0;
       logger.info("query-session.mcp_reconnected", {
         conversationId: options.conversationId,
         trigger,
       });
     } catch {
+      if (status !== "alive") return;
+      recoveryFailureCount += 1;
       logger.error("query-session.mcp_reconnect_failed", {
         conversationId: options.conversationId,
         trigger,
+        consecutiveFailures: recoveryFailureCount,
       });
+      if (recoveryFailureCount >= MCP_PIPE_BROKEN_THRESHOLD) {
+        escalatePipeBroken("mcp_pipe_broken", recoveryFailureCount);
+      }
+    } finally {
+      recoveryInFlight = false;
     }
   }
 
@@ -655,6 +726,21 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
                 turn.toolNamesById,
               );
               turn.contentBlocks.push(resultBlock);
+              if (isStreamClosedToolResult(resultBlock)) {
+                consecutiveStreamClosedCount += 1;
+                if (
+                  consecutiveStreamClosedCount >=
+                  TOOL_RESULT_STREAM_CLOSED_THRESHOLD
+                ) {
+                  escalatePipeBroken(
+                    "tool_result_pipe_broken",
+                    consecutiveStreamClosedCount,
+                  );
+                  return;
+                }
+              } else {
+                consecutiveStreamClosedCount = 0;
+              }
             }
           }
         }
@@ -782,6 +868,15 @@ function extractToolResultText(
     }
   }
   return textParts.length > 0 ? textParts.join("\n") : undefined;
+}
+
+function isStreamClosedToolResult(block: MessageContentBlock): boolean {
+  return (
+    block.type === "tool_result" &&
+    block.isError === true &&
+    typeof block.content === "string" &&
+    block.content.includes("Stream closed")
+  );
 }
 
 function buildToolResultBlock(

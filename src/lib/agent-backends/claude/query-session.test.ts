@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { isUndeliveredQuerySessionError } from "./query-session-errors";
+import {
+  isUndeliveredQuerySessionError,
+  isSessionDiedMidTurnError,
+  isSdkPipeBrokenError,
+} from "./query-session-errors";
 
 // ---------------------------------------------------------------------------
 // Mock the SDK
@@ -744,6 +748,54 @@ describe("QuerySession crash detection", () => {
   });
 });
 
+describe("Mid-turn death tagging", () => {
+  it("tags clean pump completion mid-turn with sessionDiedMidTurn", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+    const turnPromise = session.sendPrompt("Hello", emit);
+
+    // Iterator ends cleanly while the caller-initiated turn is still pending
+    mock.endPump();
+
+    let caughtError: unknown;
+    try {
+      await turnPromise;
+    } catch (error) {
+      caughtError = error;
+    }
+    expect(caughtError).toBeInstanceOf(Error);
+    expect(isSessionDiedMidTurnError(caughtError)).toBe(true);
+    expect(isUndeliveredQuerySessionError(caughtError)).toBe(false);
+    expect(session.status).toBe("dead");
+  });
+
+  it("tags pump crash mid-turn with sessionDiedMidTurn while preserving the underlying error message", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+    const turnPromise = session.sendPrompt("Hello", emit);
+
+    mock.crashPump(new Error("subprocess gone"));
+
+    let caughtError: unknown;
+    try {
+      await turnPromise;
+    } catch (error) {
+      caughtError = error;
+    }
+    expect(caughtError).toBeInstanceOf(Error);
+    expect((caughtError as Error).message).toBe("subprocess gone");
+    expect(isSessionDiedMidTurnError(caughtError)).toBe(true);
+    expect(isUndeliveredQuerySessionError(caughtError)).toBe(false);
+    expect(session.status).toBe("dead");
+  });
+});
+
 describe("QuerySession idle TTL", () => {
   it("closes session after idle TTL expires", async () => {
     vi.useFakeTimers();
@@ -1327,6 +1379,290 @@ describe("MCP keepalive pings", () => {
     vi.useRealTimers();
   });
 
+  it("does not pile up keepalive ticks while a prior status check is in flight", async () => {
+    vi.useFakeTimers();
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    // Make mcpServerStatus hang so the first tick stays in flight
+    let resolveStatus: ((v: unknown) => void) | undefined;
+    mock.query.mcpServerStatus.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveStatus = resolve;
+        }),
+    );
+
+    const session = createQuerySession(
+      makeDefaultOptions({
+        mcpKeepaliveIntervalMs: 100,
+        idleTtlMs: 5000,
+        mcpServers: { s: {} },
+      }),
+    );
+    const emit = vi.fn();
+
+    const turn = session.sendPrompt("Hello", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn;
+
+    await vi.advanceTimersByTimeAsync(150);
+    expect(mock.query.mcpServerStatus).toHaveBeenCalledTimes(1);
+
+    // Advance past five more intervals — pending tick still in flight, so no piling up
+    await vi.advanceTimersByTimeAsync(500);
+    expect(mock.query.mcpServerStatus).toHaveBeenCalledTimes(1);
+
+    // Resolve the hanging status — next interval should be free to run
+    resolveStatus?.([]);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(mock.query.mcpServerStatus).toHaveBeenCalledTimes(2);
+
+    session.close();
+    vi.useRealTimers();
+  });
+
+  it("does not attempt recovery when the session is closed during a status check", async () => {
+    vi.useFakeTimers();
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    let rejectStatus: ((err: Error) => void) | undefined;
+    mock.query.mcpServerStatus.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectStatus = reject;
+        }),
+    );
+
+    const session = createQuerySession(
+      makeDefaultOptions({
+        mcpKeepaliveIntervalMs: 100,
+        idleTtlMs: 5000,
+        mcpServers: { s: {} },
+      }),
+    );
+    const emit = vi.fn();
+
+    const turn = session.sendPrompt("Hello", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn;
+
+    // Fire the tick — status check now pending
+    await vi.advanceTimersByTimeAsync(150);
+    expect(mock.query.mcpServerStatus).toHaveBeenCalledTimes(1);
+
+    // Close the session while the status check is still in flight
+    session.close();
+
+    // NOW reject the status check — recovery must NOT run on a dead session
+    rejectStatus?.(new Error("Stream closed"));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mock.query.setMcpServers).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
+
+  it("serializes recovery — concurrent triggers only call setMcpServers once", async () => {
+    vi.useFakeTimers();
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const mcpServers = {
+      "my-server": { command: "node", args: ["server.js"] },
+    };
+    const session = createQuerySession(
+      makeDefaultOptions({
+        mcpKeepaliveIntervalMs: 100,
+        idleTtlMs: 5000,
+        mcpServers,
+      }),
+    );
+    const emit = vi.fn();
+
+    // Complete first turn so subsequent prompts use streamInput + pre-turn check
+    const turn1 = session.sendPrompt("First", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn1;
+
+    // Make status fail so both triggers want to recover, and make setMcpServers
+    // hang so the first recovery is still in flight when the second tries to start
+    mock.query.mcpServerStatus.mockRejectedValue(new Error("Stream closed"));
+    let resolveSet: ((v: unknown) => void) | undefined;
+    mock.query.setMcpServers.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSet = resolve;
+        }),
+    );
+
+    // Keepalive fires recovery (setMcpServers hangs)
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(1);
+
+    // Pre-turn health check would normally trigger a second recovery
+    const turn2 = session.sendPrompt("Second", emit);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // With the recovery mutex, the second trigger should be a no-op
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(1);
+
+    // Unblock recovery so the test cleans up
+    resolveSet?.({});
+    await vi.advanceTimersByTimeAsync(0);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u2",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn2;
+
+    session.close();
+    vi.useRealTimers();
+  });
+
+  it("escalates to dead after MCP_PIPE_BROKEN_THRESHOLD consecutive setMcpServers failures", async () => {
+    vi.useFakeTimers();
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(
+      makeDefaultOptions({
+        mcpKeepaliveIntervalMs: 100,
+        idleTtlMs: 5000,
+        mcpServers: { s: {} },
+      }),
+    );
+    const emit = vi.fn();
+
+    const turn = session.sendPrompt("Hello", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn;
+
+    // Both status and recovery fail every time
+    mock.query.mcpServerStatus.mockRejectedValue(new Error("Stream closed"));
+    mock.query.setMcpServers.mockRejectedValue(new Error("reconnect failed"));
+
+    // Fire three keepalive ticks, settling async chains in between
+    for (let i = 0; i < 3; i += 1) {
+      await vi.advanceTimersByTimeAsync(150);
+      await vi.advanceTimersByTimeAsync(0);
+    }
+
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(3);
+    expect(session.status).toBe("dead");
+    expect(mock.query.close).toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
+
+  it("resets the MCP failure counter after a successful setMcpServers call", async () => {
+    vi.useFakeTimers();
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(
+      makeDefaultOptions({
+        mcpKeepaliveIntervalMs: 100,
+        idleTtlMs: 5000,
+        mcpServers: { s: {} },
+      }),
+    );
+    const emit = vi.fn();
+
+    const turn = session.sendPrompt("Hello", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn;
+
+    mock.query.mcpServerStatus.mockRejectedValue(new Error("Stream closed"));
+
+    // Pattern: fail, fail, success, fail, fail. Without the reset, the 4 total
+    // failures would NOT trip threshold (4 != 3+), but the test still verifies
+    // the counter goes to 0 after success — otherwise the next failure would
+    // be counter=3 and trip.
+    mock.query.setMcpServers
+      .mockRejectedValueOnce(new Error("reconnect failed"))
+      .mockRejectedValueOnce(new Error("reconnect failed"))
+      .mockResolvedValueOnce({ added: [], removed: [], errors: {} })
+      .mockRejectedValueOnce(new Error("reconnect failed"))
+      .mockRejectedValueOnce(new Error("reconnect failed"))
+      .mockRejectedValueOnce(new Error("reconnect failed"));
+
+    // 5 ticks at t=100..500. Without reset: counters go 1,2,3 → would already
+    // be dead by tick 3 (the successful one would never run). With reset:
+    // 1, 2, 0, 1, 2 → stays alive.
+    for (let i = 0; i < 5; i += 1) {
+      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    expect(session.status).toBe("alive");
+
+    // Sanity: one more failure should now trip the threshold (counter 2 → 3)
+    await vi.advanceTimersByTimeAsync(100);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(session.status).toBe("dead");
+
+    vi.useRealTimers();
+  });
+
   it("defaults to 30s keepalive interval when not specified", async () => {
     vi.useFakeTimers();
     const mock = createControllableMockQuery();
@@ -1362,6 +1698,138 @@ describe("MCP keepalive pings", () => {
 
     session.close();
     vi.useRealTimers();
+  });
+});
+
+describe("Stream-closed tool_result detection", () => {
+  function pushStreamClosedResult(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    toolUseId: string,
+    content: string = "Stream closed",
+  ) {
+    mock.pushMessage({
+      type: "user",
+      session_id: "sess-1",
+      uuid: `u-${toolUseId}`,
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: toolUseId,
+            content,
+            is_error: true,
+          },
+        ],
+      },
+      parent_tool_use_id: null,
+    } as unknown as SDKMessage);
+  }
+
+  function pushNormalToolResult(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    toolUseId: string,
+  ) {
+    mock.pushMessage({
+      type: "user",
+      session_id: "sess-1",
+      uuid: `u-${toolUseId}`,
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: toolUseId,
+            content: "ok",
+            is_error: false,
+          },
+        ],
+      },
+      parent_tool_use_id: null,
+    } as unknown as SDKMessage);
+  }
+
+  it("escalates to dead after TOOL_RESULT_STREAM_CLOSED_THRESHOLD consecutive stream-closed results", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+    const turnPromise = session.sendPrompt("Hello", emit);
+
+    pushStreamClosedResult(mock, "t1");
+    pushStreamClosedResult(mock, "t2");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(session.status).toBe("alive");
+
+    pushStreamClosedResult(mock, "t3");
+
+    let caughtError: unknown;
+    try {
+      await turnPromise;
+    } catch (err) {
+      caughtError = err;
+    }
+    expect(caughtError).toBeInstanceOf(Error);
+    expect(isSdkPipeBrokenError(caughtError)).toBe(true);
+    expect(session.status).toBe("dead");
+    expect(mock.query.close).toHaveBeenCalled();
+  });
+
+  it("resets the stream-closed counter on a non-stream-closed tool_result", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+    const turnPromise = session.sendPrompt("Hello", emit);
+
+    pushStreamClosedResult(mock, "t1");
+    pushStreamClosedResult(mock, "t2");
+    pushNormalToolResult(mock, "t3"); // resets counter to 0
+    pushStreamClosedResult(mock, "t4");
+    pushStreamClosedResult(mock, "t5");
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(session.status).toBe("alive");
+
+    // Cleanup — deliver result so the turn resolves
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u-result",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turnPromise;
+
+    session.close();
+  });
+
+  it("matches stream-closed by substring so wrapped error messages still escalate", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+    const turnPromise = session.sendPrompt("Hello", emit);
+
+    pushStreamClosedResult(mock, "t1", "Error: Stream closed");
+    pushStreamClosedResult(mock, "t2", "Error: Stream closed");
+    pushStreamClosedResult(mock, "t3", "Error: Stream closed");
+
+    let caughtError: unknown;
+    try {
+      await turnPromise;
+    } catch (err) {
+      caughtError = err;
+    }
+    expect(isSdkPipeBrokenError(caughtError)).toBe(true);
+    expect(session.status).toBe("dead");
   });
 });
 

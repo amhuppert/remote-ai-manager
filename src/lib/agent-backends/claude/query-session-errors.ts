@@ -1,5 +1,7 @@
 export const QUERY_SESSION_ERROR_CODES = {
   promptNotDelivered: "query_session_prompt_not_delivered",
+  sessionDiedMidTurn: "SESSION_DIED_MID_TURN",
+  sdkPipeBroken: "SDK_PIPE_BROKEN",
 } as const;
 
 export type QuerySessionErrorCode =
@@ -27,5 +29,19 @@ export function isUndeliveredQuerySessionError(error: unknown): boolean {
   return hasQuerySessionErrorCode(
     error,
     QUERY_SESSION_ERROR_CODES.promptNotDelivered,
+  );
+}
+
+export function isSessionDiedMidTurnError(error: unknown): boolean {
+  return hasQuerySessionErrorCode(
+    error,
+    QUERY_SESSION_ERROR_CODES.sessionDiedMidTurn,
+  );
+}
+
+export function isSdkPipeBrokenError(error: unknown): boolean {
+  return hasQuerySessionErrorCode(
+    error,
+    QUERY_SESSION_ERROR_CODES.sdkPipeBroken,
   );
 }
