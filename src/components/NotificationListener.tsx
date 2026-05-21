@@ -59,6 +59,21 @@ export default function NotificationListener(): null {
   const enqueueToast = useEnqueueToast();
   const enqueueInputToast = useEnqueueInputToast();
   const enqueuePromptErrorToast = useEnqueuePromptErrorToast();
+  const actionsRef = useRef({
+    addOrUpdateJob,
+    reconcileJobs,
+    enqueueToast,
+    enqueueInputToast,
+    enqueuePromptErrorToast,
+  });
+  // eslint-disable-next-line react-hooks/refs -- event handlers read this after render without reconnecting the SSE effect.
+  actionsRef.current = {
+    addOrUpdateJob,
+    reconcileJobs,
+    enqueueToast,
+    enqueueInputToast,
+    enqueuePromptErrorToast,
+  };
   const hadErrorRef = useRef(false);
 
   useEffect(() => {
@@ -117,7 +132,7 @@ export default function NotificationListener(): null {
 
         if (data.status === "waiting_for_input") {
           // In-app toast
-          enqueueInputToast({
+          actionsRef.current.enqueueInputToast({
             projectName: data.projectName,
             sessionName: data.sessionName,
             conversationId: data.conversationId,
@@ -141,7 +156,7 @@ export default function NotificationListener(): null {
         }
 
         if (data.error) {
-          enqueuePromptErrorToast({
+          actionsRef.current.enqueuePromptErrorToast({
             projectName: data.projectName,
             sessionName: data.sessionName,
             conversationId: data.conversationId,
@@ -303,7 +318,7 @@ export default function NotificationListener(): null {
         const result = jobStatusEventSchema.safeParse(parsed);
         if (!result.success) return;
         const data = result.data;
-        addOrUpdateJob(data);
+        actionsRef.current.addOrUpdateJob(data);
 
         // On completed merge/commit/resolve: invalidate session queries
         if (
@@ -331,7 +346,7 @@ export default function NotificationListener(): null {
         void queryClient.invalidateQueries({
           queryKey: notificationKeys.all,
         });
-        enqueueToast(result.data.notification);
+        actionsRef.current.enqueueToast(result.data.notification);
       } catch {
         // best-effort
       }
@@ -649,21 +664,14 @@ export default function NotificationListener(): null {
       hadErrorRef.current = false;
       void reconnectReconcile(queryClient, (jobs) => {
         const parsed = z.array(backgroundJobSchema).safeParse(jobs);
-        if (parsed.success) reconcileJobs(parsed.data);
+        if (parsed.success) actionsRef.current.reconcileJobs(parsed.data);
       });
     };
 
     return () => {
       es.close();
     };
-  }, [
-    queryClient,
-    addOrUpdateJob,
-    reconcileJobs,
-    enqueueToast,
-    enqueueInputToast,
-    enqueuePromptErrorToast,
-  ]);
+  }, [queryClient]);
 
   return null;
 }
