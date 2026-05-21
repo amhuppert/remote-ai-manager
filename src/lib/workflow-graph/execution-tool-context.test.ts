@@ -95,6 +95,7 @@ const sessionTarget: ExecutionTarget = {
   worktreePath: "/repo/.worktrees/session-1",
   branchName: "csm/session-1",
   isolation: "session",
+  laneId: null,
 };
 
 function buildToolContext(
@@ -377,6 +378,7 @@ describe("GraphWorkflowExecutionToolContext", () => {
       worktreePath: "/repo/.worktrees/session-1.context-plan",
       branchName: "csm/session-1-context-plan",
       isolation: "worktree",
+      laneId: null,
     };
     const { store, toolContext } = buildToolContext(
       {},

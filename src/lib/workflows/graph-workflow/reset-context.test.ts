@@ -3,7 +3,7 @@ import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionEvent,
-  GraphWorkflowLaneState,
+  GraphWorkflowAgentSessionState,
 } from "@/types";
 import { resetExecutionContext } from "./reset-context";
 
@@ -11,8 +11,8 @@ const now = "2026-04-19T00:00:00.000Z";
 
 function makeLaneState(
   contextId: string,
-  lane: GraphWorkflowLaneState["lane"],
-): GraphWorkflowLaneState {
+  lane: GraphWorkflowAgentSessionState["lane"],
+): GraphWorkflowAgentSessionState {
   return {
     engine: "claude",
     lane,
@@ -49,6 +49,7 @@ function makeHistoryEvent(
         workflowStatus: "running",
         activeContextIds: contextId ? [contextId] : [],
         activeBatchIds: [],
+        activeJoinIds: [],
         haltReason: null,
         pendingHaltReason: null,
         secondaryHaltReasons: [],
@@ -106,6 +107,8 @@ function buildExecution(
         branchName: null,
         isolation: "session",
         batchId: null,
+        laneId: null,
+        joinId: null,
         mergeStatus: "not-applicable",
         cleanupStatus: "not-applicable",
         lastMergeError: null,
@@ -121,6 +124,8 @@ function buildExecution(
         branchName: null,
         isolation: "session",
         batchId: null,
+        laneId: null,
+        joinId: null,
         mergeStatus: "not-applicable",
         cleanupStatus: "not-applicable",
         lastMergeError: null,
@@ -136,6 +141,8 @@ function buildExecution(
         branchName: null,
         isolation: "session",
         batchId: null,
+        laneId: null,
+        joinId: null,
         mergeStatus: "not-applicable",
         cleanupStatus: "not-applicable",
         lastMergeError: null,
@@ -219,6 +226,8 @@ describe("resetExecutionContext", () => {
       branchName: null,
       isolation: "session",
       batchId: null,
+      laneId: null,
+      joinId: null,
       mergeStatus: "not-applicable",
       cleanupStatus: "not-applicable",
       lastMergeError: null,
@@ -388,6 +397,68 @@ describe("resetExecutionContext", () => {
     ).toThrow(/not found|unknown/i);
   });
 
+  it("recomputes lanePlan after reset so a stale continuation entry on the target context's parent is refreshed", () => {
+    const base = createWorkflowExecution();
+    const fanOutDefinition = {
+      ...base.workingDefinition,
+      edges: [
+        {
+          id: "edge-plan-implement",
+          sourceContextId: "context-plan",
+          targetContextId: "context-implement",
+        },
+        {
+          id: "edge-plan-verify",
+          sourceContextId: "context-plan",
+          targetContextId: "context-verify",
+        },
+      ],
+      // Inflate context-implement's task count so the tiebreaker prefers
+      // it over context-verify. After resetExecutionContext the plan will
+      // be recomputed from this definition.
+      tasks: [
+        ...base.workingDefinition.tasks,
+        {
+          id: "task-implement-2",
+          contextId: "context-implement",
+          order: 2,
+          title: "Extra implement step A",
+          instructions: "Additional work.",
+          source: "user" as const,
+        },
+        {
+          id: "task-implement-3",
+          contextId: "context-implement",
+          order: 3,
+          title: "Extra implement step B",
+          instructions: "Additional work.",
+          source: "user" as const,
+        },
+      ],
+    };
+
+    const execution = buildExecution({
+      workingDefinition: fanOutDefinition,
+      // Stale plan asserts context-verify as inheritor. After reset, the
+      // recompute must flip it to context-implement based on task count.
+      lanePlan: {
+        continuationMap: { "context-plan": "context-verify" },
+        longestDownstreamPath: {
+          "context-plan": 1,
+          "context-implement": 0,
+          "context-verify": 0,
+        },
+      },
+    });
+
+    const next = resetExecutionContext(execution, "context-implement");
+
+    expect(next.lanePlan.continuationMap["context-plan"]).toBe(
+      "context-implement",
+    );
+    expect(next.lanePlan.longestDownstreamPath["context-plan"]).toBe(1);
+  });
+
   it("marks graph-workflow-status history rows tied to the target context via activeContextIds or haltReason", () => {
     const execution = buildExecution({
       history: [
@@ -402,6 +473,7 @@ describe("resetExecutionContext", () => {
             workflowStatus: "running",
             activeContextIds: ["context-implement"],
             activeBatchIds: [],
+            activeJoinIds: [],
             haltReason: null,
             pendingHaltReason: null,
             secondaryHaltReasons: [],
@@ -418,6 +490,7 @@ describe("resetExecutionContext", () => {
             workflowStatus: "halted",
             activeContextIds: [],
             activeBatchIds: [],
+            activeJoinIds: [],
             haltReason: {
               type: "max_iterations",
               contextId: "context-implement",
@@ -438,6 +511,7 @@ describe("resetExecutionContext", () => {
             workflowStatus: "running",
             activeContextIds: ["context-plan"],
             activeBatchIds: [],
+            activeJoinIds: [],
             haltReason: null,
             pendingHaltReason: null,
             secondaryHaltReasons: [],

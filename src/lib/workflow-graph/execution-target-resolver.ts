@@ -7,6 +7,12 @@ export interface ExecutionTarget {
   worktreePath: string;
   branchName: string;
   isolation: "session" | "worktree";
+  /**
+   * The execution lane this target was resolved through, when the owning
+   * context has been assigned to a lane. `null` for legacy per-context
+   * worktrees and for solo contexts that have not joined a lane yet.
+   */
+  laneId: string | null;
 }
 
 export interface ResolveExecutionTargetInput {
@@ -31,6 +37,57 @@ export function createExecutionTargetResolver(): ExecutionTargetResolver {
       );
     }
 
+    const { laneId } = contextState;
+    if (laneId !== null) {
+      const lane = execution.executionLanes[laneId];
+      if (!lane) {
+        throw new Error(
+          `ExecutionTargetResolver: lane ${JSON.stringify(
+            laneId,
+          )} (assigned to contextId ${JSON.stringify(
+            contextId,
+          )}) not found in execution.executionLanes (executionId=${execution.id})`,
+        );
+      }
+
+      if (lane.kind === "worktree") {
+        if (lane.worktreePath === null) {
+          throw new Error(
+            `ExecutionTargetResolver: lane ${JSON.stringify(
+              laneId,
+            )} is kind=worktree but worktreePath is null (executionId=${execution.id})`,
+          );
+        }
+        logger.debug("resolve_lane_worktree", {
+          executionId: execution.id,
+          contextId,
+          laneId,
+          worktreePath: lane.worktreePath,
+          branchName: lane.branchName,
+        });
+        return {
+          worktreePath: lane.worktreePath,
+          branchName: lane.branchName,
+          isolation: "worktree",
+          laneId,
+        };
+      }
+
+      logger.debug("resolve_lane_session", {
+        executionId: execution.id,
+        contextId,
+        laneId,
+        worktreePath: session.worktreePath,
+        branchName: session.branchName,
+      });
+      return {
+        worktreePath: session.worktreePath,
+        branchName: session.branchName,
+        isolation: "session",
+        laneId,
+      };
+    }
+
     const { worktreePath, branchName } = contextState;
     if (worktreePath !== null && branchName !== null) {
       logger.debug("resolve_worktree", {
@@ -43,6 +100,7 @@ export function createExecutionTargetResolver(): ExecutionTargetResolver {
         worktreePath,
         branchName,
         isolation: "worktree",
+        laneId: null,
       };
     }
 
@@ -56,6 +114,7 @@ export function createExecutionTargetResolver(): ExecutionTargetResolver {
       worktreePath: session.worktreePath,
       branchName: session.branchName,
       isolation: "session",
+      laneId: null,
     };
   }
 

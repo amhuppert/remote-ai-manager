@@ -61,6 +61,31 @@ export function formatGraphWorkflowHaltReason(
         detail: <pre className="wb-exec-halt-pre">{reason.message}</pre>,
         action: "Resolve conflicts in the worktree, then resume.",
       };
+    case "join_failure": {
+      const kindLabel =
+        reason.joinKind === "final_publish" ? "Final publish" : "Context join";
+      const scope = reason.contextId ? ` in ${reason.contextId}` : "";
+      const conflictsList =
+        reason.conflictFiles.length > 0 ? (
+          <ul className="wb-exec-halt-paths">
+            {reason.conflictFiles.map((path) => (
+              <li key={path}>
+                <code>UU</code> {path}
+              </li>
+            ))}
+          </ul>
+        ) : null;
+      return {
+        headline: `${kindLabel} failed${scope} — ${reason.sourceLaneIds.length} source lane(s) → ${reason.targetLaneId}`,
+        detail: (
+          <>
+            <pre className="wb-exec-halt-pre">{reason.message}</pre>
+            {conflictsList}
+          </>
+        ),
+        action: "Resolve conflicts in the target worktree, then resume.",
+      };
+    }
     case "circuit_breaker":
       return {
         headline: `Circuit breaker tripped in ${reason.contextId}`,

@@ -17,6 +17,8 @@ import type {
   ManagerState,
   ConversationStatus,
   GraphWorkflowCleanupStatusValue,
+  GraphWorkflowExecutionJoinKind,
+  GraphWorkflowExecutionJoinStatus,
   GraphWorkflowHaltReason,
   GraphWorkflowMergeStatusValue,
   GraphWorkflowStatus,
@@ -54,6 +56,24 @@ export interface ActiveGraphWorkflowContextMergeProgress {
   lastMergeError: string | null;
 }
 
+export interface ActiveGraphWorkflowJoinProgress {
+  joinId: string;
+  kind: GraphWorkflowExecutionJoinKind;
+  contextId: string | null;
+  targetLaneId: string;
+  sourceLaneIds: string[];
+  mergedSourceLaneIds: string[];
+  status: GraphWorkflowExecutionJoinStatus;
+}
+
+export interface ActiveGraphWorkflowFinalPublishProgress {
+  joinId: string;
+  targetLaneId: string;
+  sourceLaneIds: string[];
+  mergedSourceLaneIds: string[];
+  status: GraphWorkflowExecutionJoinStatus;
+}
+
 export interface ActiveGraphWorkflowExecution {
   executionId: string;
   status: GraphWorkflowStatus;
@@ -65,6 +85,9 @@ export interface ActiveGraphWorkflowExecution {
   activeBatchIds: string[];
   pendingHaltReason: GraphWorkflowHaltReason | null;
   contextMergeProgress: ActiveGraphWorkflowContextMergeProgress[];
+  activeJoinIds: string[];
+  joinProgress: ActiveGraphWorkflowJoinProgress[];
+  finalPublishState: ActiveGraphWorkflowFinalPublishProgress | null;
   completedContexts: number;
   totalContexts: number;
   startedAt: string;
@@ -409,6 +432,37 @@ export function createActiveConversationsRouteHandlers(
               (cs) => cs.status === "completed",
             ).length;
 
+            const joinValues = Object.values(exec.joins ?? {});
+            const activeJoins = joinValues
+              .filter((j) => j.status === "pending" || j.status === "running")
+              .sort((a, b) => a.joinId.localeCompare(b.joinId));
+            const activeJoinIds = activeJoins.map((j) => j.joinId);
+            const joinProgress: ActiveGraphWorkflowJoinProgress[] =
+              activeJoins.map((j) => ({
+                joinId: j.joinId,
+                kind: j.kind,
+                contextId: j.contextId,
+                targetLaneId: j.targetLaneId,
+                sourceLaneIds: [...j.sourceLaneIds],
+                mergedSourceLaneIds: [...j.mergedSourceLaneIds],
+                status: j.status,
+              }));
+            const finalPublishJoin = activeJoins.find(
+              (j) => j.kind === "final_publish",
+            );
+            const finalPublishState: ActiveGraphWorkflowFinalPublishProgress | null =
+              finalPublishJoin
+                ? {
+                    joinId: finalPublishJoin.joinId,
+                    targetLaneId: finalPublishJoin.targetLaneId,
+                    sourceLaneIds: [...finalPublishJoin.sourceLaneIds],
+                    mergedSourceLaneIds: [
+                      ...finalPublishJoin.mergedSourceLaneIds,
+                    ],
+                    status: finalPublishJoin.status,
+                  }
+                : null;
+
             graphWorkflowExecutions.push({
               executionId: exec.id,
               status: exec.status,
@@ -420,6 +474,9 @@ export function createActiveConversationsRouteHandlers(
               activeBatchIds,
               pendingHaltReason: exec.pendingHaltReason,
               contextMergeProgress,
+              activeJoinIds,
+              joinProgress,
+              finalPublishState,
               completedContexts,
               totalContexts: exec.workingDefinition.executionContexts.length,
               startedAt: exec.startedAt,

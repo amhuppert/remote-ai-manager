@@ -9,7 +9,7 @@ import { createLaneService } from "@/lib/workflows/primitives/lane-service";
 import type { LaneState } from "@/lib/workflows/primitives/lane-vocabulary";
 import type {
   GraphWorkflowExecution,
-  GraphWorkflowLaneState,
+  GraphWorkflowAgentSessionState,
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
 } from "@/types";
@@ -80,6 +80,8 @@ function makeExecution(
         branchName: null,
         isolation: "session",
         batchId: null,
+        laneId: null,
+        joinId: null,
         mergeStatus: "not-applicable",
         cleanupStatus: "not-applicable",
         lastMergeError: null,
@@ -101,6 +103,9 @@ function makeExecution(
     },
     sharedDocuments: [],
     laneStates: {},
+    executionLanes: {},
+    joins: {},
+    lanePlan: { continuationMap: {}, longestDownstreamPath: {} },
     machineSnapshot: null,
     history: [],
     startedAt: NOW,
@@ -114,7 +119,7 @@ function makeExecution(
 }
 
 function laneStatesByContext(
-  ...states: GraphWorkflowLaneState[]
+  ...states: GraphWorkflowAgentSessionState[]
 ): GraphWorkflowExecution["laneStates"] {
   const laneStates: GraphWorkflowExecution["laneStates"] = {};
   for (const state of states) {
@@ -177,7 +182,7 @@ describe("resolveImplementerCall", () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
-    const existingLane: GraphWorkflowLaneState = {
+    const existingLane: GraphWorkflowAgentSessionState = {
       engine: "claude",
       lane: "implementer",
       contextId: "ctx-1",
@@ -216,7 +221,7 @@ describe("resolveImplementerCall", () => {
     });
     const svc = createWorkflowContinuityService(deps);
 
-    const existingLane: GraphWorkflowLaneState = {
+    const existingLane: GraphWorkflowAgentSessionState = {
       engine: "claude",
       lane: "implementer",
       contextId: "ctx-1",
@@ -262,7 +267,7 @@ describe("resolveImplementerCall", () => {
       continuity: { enabled: false },
     };
 
-    const existingLane: GraphWorkflowLaneState = {
+    const existingLane: GraphWorkflowAgentSessionState = {
       engine: "claude",
       lane: "implementer",
       contextId: "ctx-1",
@@ -300,7 +305,7 @@ describe("resolveImplementerCall", () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
-    const existingLane: GraphWorkflowLaneState = {
+    const existingLane: GraphWorkflowAgentSessionState = {
       engine: "claude",
       lane: "implementer",
       contextId: "ctx-1",
@@ -386,7 +391,7 @@ describe("resolveImplementerCall (codex)", () => {
     });
     const svc = createWorkflowContinuityService(deps);
 
-    const existingLane: GraphWorkflowLaneState = {
+    const existingLane: GraphWorkflowAgentSessionState = {
       engine: "codex",
       lane: "implementer",
       contextId: "ctx-1",
@@ -436,7 +441,7 @@ describe("resolveImplementerCall (codex)", () => {
     });
     const svc = createWorkflowContinuityService(deps);
 
-    const existingLane: GraphWorkflowLaneState = {
+    const existingLane: GraphWorkflowAgentSessionState = {
       engine: "codex",
       lane: "implementer",
       contextId: "ctx-1",
@@ -478,7 +483,7 @@ describe("resolveImplementerCall (codex)", () => {
     });
     const svc = createWorkflowContinuityService(deps);
 
-    const claudeLane: GraphWorkflowLaneState = {
+    const claudeLane: GraphWorkflowAgentSessionState = {
       engine: "claude",
       lane: "implementer",
       contextId: "ctx-1",
@@ -524,7 +529,7 @@ describe("resolveImplementerCall (codex)", () => {
     });
     const svc = createWorkflowContinuityService(deps);
 
-    const codexLane: GraphWorkflowLaneState = {
+    const codexLane: GraphWorkflowAgentSessionState = {
       engine: "codex",
       lane: "implementer",
       contextId: "ctx-1",
@@ -575,7 +580,7 @@ describe("resolveImplementerCall (codex)", () => {
     });
     const svc = createWorkflowContinuityService(deps);
 
-    const codexLane: GraphWorkflowLaneState = {
+    const codexLane: GraphWorkflowAgentSessionState = {
       engine: "codex",
       lane: "implementer",
       contextId: "ctx-1",
@@ -646,7 +651,7 @@ describe("resolveValidatorCall", () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
-    const existingLane: GraphWorkflowLaneState = {
+    const existingLane: GraphWorkflowAgentSessionState = {
       engine: "claude",
       lane: "context_validator",
       contextId: "ctx-1",
@@ -709,7 +714,7 @@ describe("resolveValidatorCall", () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
-    const existingLane: GraphWorkflowLaneState = {
+    const existingLane: GraphWorkflowAgentSessionState = {
       engine: "codex",
       lane: "context_validator",
       contextId: "ctx-1",
@@ -758,7 +763,7 @@ describe("resolveValidatorCall", () => {
       agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
     };
 
-    const existingLane: GraphWorkflowLaneState = {
+    const existingLane: GraphWorkflowAgentSessionState = {
       engine: "claude",
       lane: "context_validator",
       contextId: "ctx-1",
@@ -840,7 +845,7 @@ describe("recordClaudeTurnOutcome", () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
-    const existingLane: GraphWorkflowLaneState = {
+    const existingLane: GraphWorkflowAgentSessionState = {
       engine: "claude",
       lane: "implementer",
       contextId: "ctx-1",
@@ -883,7 +888,7 @@ describe("recordClaudeTurnOutcome", () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
-    const existingLane: GraphWorkflowLaneState = {
+    const existingLane: GraphWorkflowAgentSessionState = {
       engine: "claude",
       lane: "implementer",
       contextId: "ctx-1",
@@ -923,7 +928,7 @@ describe("recordClaudeTurnOutcome", () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
-    const existingLane: GraphWorkflowLaneState = {
+    const existingLane: GraphWorkflowAgentSessionState = {
       engine: "claude",
       lane: "implementer",
       contextId: "ctx-1",
@@ -962,7 +967,7 @@ describe("recordClaudeTurnOutcome", () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
-    const existingLane: GraphWorkflowLaneState = {
+    const existingLane: GraphWorkflowAgentSessionState = {
       engine: "claude",
       lane: "implementer",
       contextId: "ctx-1",
@@ -1003,7 +1008,7 @@ describe("recordClaudeTurnOutcome", () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
-    const ctx1Lane: GraphWorkflowLaneState = {
+    const ctx1Lane: GraphWorkflowAgentSessionState = {
       engine: "claude",
       lane: "implementer",
       contextId: "ctx-1",
@@ -1018,7 +1023,7 @@ describe("recordClaudeTurnOutcome", () => {
       limitEvaluation: "disabled",
       lastUsedAt: NOW,
     };
-    const ctx2Lane: GraphWorkflowLaneState = {
+    const ctx2Lane: GraphWorkflowAgentSessionState = {
       engine: "claude",
       lane: "implementer",
       contextId: "ctx-2",
@@ -1067,7 +1072,7 @@ describe("recordCodexTurnOutcome", () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
-    const existingLane: GraphWorkflowLaneState = {
+    const existingLane: GraphWorkflowAgentSessionState = {
       engine: "codex",
       lane: "context_validator",
       contextId: "ctx-1",
@@ -1107,7 +1112,7 @@ describe("recordCodexTurnOutcome", () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
-    const existingLane: GraphWorkflowLaneState = {
+    const existingLane: GraphWorkflowAgentSessionState = {
       engine: "codex",
       lane: "context_validator",
       contextId: "ctx-1",
@@ -1144,7 +1149,7 @@ describe("recordCodexTurnOutcome", () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
-    const existingLane: GraphWorkflowLaneState = {
+    const existingLane: GraphWorkflowAgentSessionState = {
       engine: "codex",
       lane: "context_validator",
       contextId: "ctx-1",
@@ -1221,7 +1226,7 @@ describe("recordCodexTurnOutcome", () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
-    const existingLane: GraphWorkflowLaneState = {
+    const existingLane: GraphWorkflowAgentSessionState = {
       engine: "codex",
       lane: "context_validator",
       contextId: "ctx-1",
@@ -1259,7 +1264,7 @@ describe("recordCodexTurnOutcome", () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
-    const existingLane: GraphWorkflowLaneState = {
+    const existingLane: GraphWorkflowAgentSessionState = {
       engine: "codex",
       lane: "context_validator",
       contextId: "ctx-1",
@@ -1302,7 +1307,7 @@ describe("clearForNewContext", () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
-    const existingLane: GraphWorkflowLaneState = {
+    const existingLane: GraphWorkflowAgentSessionState = {
       engine: "claude",
       lane: "implementer",
       contextId: "ctx-1",
@@ -1371,7 +1376,7 @@ describe("recovery behaviors", () => {
     const svc = createWorkflowContinuityService(deps);
 
     // Lane was used for ctx-1 but we're now requesting ctx-2
-    const staleLane: GraphWorkflowLaneState = {
+    const staleLane: GraphWorkflowAgentSessionState = {
       engine: "claude",
       lane: "implementer",
       contextId: "ctx-1",
@@ -1414,7 +1419,7 @@ describe("recovery behaviors", () => {
     });
     const svc = createWorkflowContinuityService(deps);
 
-    const existingLane: GraphWorkflowLaneState = {
+    const existingLane: GraphWorkflowAgentSessionState = {
       engine: "claude",
       lane: "implementer",
       contextId: "ctx-1",
@@ -1461,7 +1466,7 @@ describe("recovery behaviors", () => {
     });
     const svc = createWorkflowContinuityService(deps);
 
-    const existingLane: GraphWorkflowLaneState = {
+    const existingLane: GraphWorkflowAgentSessionState = {
       engine: "claude",
       lane: "context_validator",
       contextId: "ctx-1",
@@ -1513,7 +1518,7 @@ describe("recovery behaviors", () => {
     });
     const svc = createWorkflowContinuityService(deps);
 
-    const existingLane: GraphWorkflowLaneState = {
+    const existingLane: GraphWorkflowAgentSessionState = {
       engine: "codex",
       lane: "context_validator",
       contextId: "ctx-1",
@@ -1559,7 +1564,7 @@ describe("recovery behaviors", () => {
     });
     const svc = createWorkflowContinuityService(deps);
 
-    const codexLane: GraphWorkflowLaneState = {
+    const codexLane: GraphWorkflowAgentSessionState = {
       engine: "codex",
       lane: "context_validator",
       contextId: "ctx-1",
@@ -1653,7 +1658,7 @@ describe("primitive lane-service integration", () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService({ ...deps, laneService });
 
-    const existingLane: GraphWorkflowLaneState = {
+    const existingLane: GraphWorkflowAgentSessionState = {
       engine: "claude",
       lane: "implementer",
       contextId: "ctx-1",
@@ -1722,7 +1727,7 @@ describe("primitive lane-service integration", () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService({ ...deps, laneService });
 
-    const existingLane: GraphWorkflowLaneState = {
+    const existingLane: GraphWorkflowAgentSessionState = {
       engine: "codex",
       lane: "context_validator",
       contextId: "ctx-1",

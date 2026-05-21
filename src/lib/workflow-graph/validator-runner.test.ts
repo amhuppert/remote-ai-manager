@@ -926,6 +926,7 @@ describe("validator-runner executionTarget override", () => {
         worktreePath: "/repo/.worktrees/session-1.context-plan",
         branchName: "csm/session-1-context-plan",
         isolation: "worktree",
+        laneId: null,
       },
     });
 

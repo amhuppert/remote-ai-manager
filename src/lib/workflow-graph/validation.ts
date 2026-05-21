@@ -7,6 +7,10 @@ import type {
   WorkflowRuntimeEditRequest,
   WorkflowSemanticDefinition,
 } from "@/types";
+import {
+  isContextOutputCommittedToLane,
+  isUpstreamVisibleToDownstream,
+} from "./lane-readiness";
 
 type ValidatableDefinition =
   | WorkflowSemanticDefinition
@@ -227,16 +231,19 @@ export function getTerminalContextIds(
 }
 
 /**
- * A context is "landed" when its work is visible to downstream consumers.
- * Session-isolation contexts publish work directly to the session worktree, so
- * `status === "completed"` is sufficient. Worktree-isolation contexts only
- * publish work after the fan-in squash merge succeeds, which is signaled by
- * `mergeStatus === "merged-success"`.
+ * A context is "landed" — its work is visible to a session-bound downstream.
+ * Equivalent to "upstream output is visible to a downstream that has no lane
+ * assignment" under the lane-aware model: legacy session-isolation contexts
+ * publish straight to the session worktree, and legacy per-context worktree
+ * contexts publish via the fan-in squash merge (`mergeStatus === "merged-success"`).
+ * Prefer {@link isContextOutputCommittedToLane} or
+ * {@link isUpstreamVisibleToDownstream} for lane-aware callers.
  */
 export function isContextLanded(
   state: GraphWorkflowExecutionContextState,
 ): boolean {
   if (state.status !== "completed") return false;
+  if (state.laneId !== null) return false;
   if (state.isolation === "session") return true;
   return state.mergeStatus === "merged-success";
 }
@@ -263,7 +270,9 @@ export function getEligibleContextIds(
       return (prerequisites.get(contextId) ?? []).every((upstreamId) => {
         const upstream = execution.contextStates[upstreamId];
         if (!upstream) return false;
-        return isContextLanded(upstream);
+        if (!isContextOutputCommittedToLane(upstream, execution)) return false;
+        if (state.laneId === null) return true;
+        return isUpstreamVisibleToDownstream(upstreamId, contextId, execution);
       });
     });
 }

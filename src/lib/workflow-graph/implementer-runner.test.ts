@@ -206,6 +206,7 @@ describe("graph workflow implementer runner", () => {
       worktreePath: "/repo/.worktrees/session-1.context-plan",
       branchName: "csm/session-1-context-plan",
       isolation: "worktree",
+      laneId: null,
     };
 
     await runner.runIteration({

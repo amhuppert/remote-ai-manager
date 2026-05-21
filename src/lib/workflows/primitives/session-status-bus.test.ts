@@ -274,6 +274,7 @@ describe("publishScopedStatus", () => {
         workflowStatus: "running",
         activeContextIds: [],
         activeBatchIds: [],
+        activeJoinIds: [],
         haltReason: null,
         pendingHaltReason: null,
         secondaryHaltReasons: [],

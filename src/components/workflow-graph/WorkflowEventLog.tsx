@@ -334,6 +334,76 @@ function normalizeEvent(
       };
     }
 
+    case "graph-workflow-lane-status": {
+      const laneLabel = event.branchName
+        ? `${event.laneId} (${event.branchName})`
+        : event.laneId;
+      const memberSummary =
+        event.includedContextIds.length > 0
+          ? `members: ${event.includedContextIds
+              .map((id) => contextLookup.get(id) ?? id)
+              .join(", ")}`
+          : null;
+      const detailText = [
+        `kind: ${event.kind}`,
+        memberSummary,
+        event.lastCommittingContextId
+          ? `last commit: ${contextLookup.get(event.lastCommittingContextId) ?? event.lastCommittingContextId}`
+          : null,
+      ]
+        .filter((s): s is string => s !== null)
+        .join(" · ");
+      return {
+        key,
+        occurredAt,
+        contextId: event.lastCommittingContextId,
+        dot: "neutral",
+        title: `Lane ${event.status} · ${laneLabel}`,
+        detail: detailText ? <span>{detailText}</span> : null,
+        expandable: null,
+      };
+    }
+
+    case "graph-workflow-join-status": {
+      const sourceSummary = event.sourceLaneIds.join(", ");
+      const progress =
+        event.mergedSourceLaneIds.length > 0
+          ? `merged: ${event.mergedSourceLaneIds.join(", ")}`
+          : null;
+      const errorSummary =
+        event.status === "failed" || event.status === "conflicts"
+          ? event.errorMessage
+          : null;
+      const dot: EventDotKind =
+        event.status === "succeeded"
+          ? "task-completed"
+          : event.status === "failed" || event.status === "conflicts"
+            ? "task-failed"
+            : event.status === "running"
+              ? "task-running"
+              : "neutral";
+      const detailText = [
+        `kind: ${event.kind}`,
+        `sources: ${sourceSummary} -> ${event.targetLaneId}`,
+        progress,
+      ]
+        .filter((s): s is string => s !== null)
+        .join(" · ");
+      return {
+        key,
+        occurredAt,
+        contextId: event.contextId,
+        dot,
+        title: `Join ${event.status} · ${event.joinId}`,
+        detail: errorSummary ? (
+          <pre className="wb-exec-event-pre">{errorSummary}</pre>
+        ) : detailText ? (
+          <span>{detailText}</span>
+        ) : null,
+        expandable: null,
+      };
+    }
+
     case "graph-workflow-shared-documents-updated":
     case "graph-workflow-pending-halt-reason":
       return null;

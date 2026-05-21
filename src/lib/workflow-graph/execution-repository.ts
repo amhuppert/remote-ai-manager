@@ -5,6 +5,7 @@ import {
   buildInitialContextStates,
   buildInitialTaskStates,
 } from "./execution-state";
+import { computeLanePlan } from "./lane-plan";
 import { resolveWorkflowDefinition } from "./resolve-config";
 import { assertNoLegacyWorkflowFields } from "./schema-cutover-guard";
 import {
@@ -66,6 +67,7 @@ async function createExecutionFromSeed(
 
   const contextStates = buildInitialContextStates(workingDefinition);
   const taskStates = buildInitialTaskStates(workingDefinition);
+  const lanePlan = computeLanePlan(workingDefinition);
 
   return graphWorkflowExecutionSchema.parse({
     id: seed.executionId,
@@ -83,6 +85,7 @@ async function createExecutionFromSeed(
     startedAt: seed.startedAt,
     completedAt: null,
     haltReason: null,
+    lanePlan,
   });
 }
 

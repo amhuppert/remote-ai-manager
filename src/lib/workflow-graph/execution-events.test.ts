@@ -27,6 +27,8 @@ describe("graph workflow execution event publisher", () => {
           branchName: null,
           isolation: "session",
           batchId: null,
+          laneId: null,
+          joinId: null,
           mergeStatus: "not-applicable",
           cleanupStatus: "not-applicable",
           lastMergeError: null,
@@ -42,6 +44,8 @@ describe("graph workflow execution event publisher", () => {
           branchName: null,
           isolation: "session",
           batchId: null,
+          laneId: null,
+          joinId: null,
           mergeStatus: "not-applicable",
           cleanupStatus: "not-applicable",
           lastMergeError: null,
@@ -57,6 +61,8 @@ describe("graph workflow execution event publisher", () => {
           branchName: null,
           isolation: "session",
           batchId: null,
+          laneId: null,
+          joinId: null,
           mergeStatus: "not-applicable",
           cleanupStatus: "not-applicable",
           lastMergeError: null,
@@ -418,6 +424,8 @@ describe("graph workflow execution event publisher", () => {
           branchName: null,
           isolation: "session",
           batchId: null,
+          laneId: null,
+          joinId: null,
           mergeStatus: "not-applicable",
           cleanupStatus: "not-applicable",
           lastMergeError: null,
@@ -433,6 +441,8 @@ describe("graph workflow execution event publisher", () => {
           branchName: null,
           isolation: "session",
           batchId: null,
+          laneId: null,
+          joinId: null,
           mergeStatus: "not-applicable",
           cleanupStatus: "not-applicable",
           lastMergeError: null,
@@ -448,6 +458,8 @@ describe("graph workflow execution event publisher", () => {
           branchName: null,
           isolation: "session",
           batchId: null,
+          laneId: null,
+          joinId: null,
           mergeStatus: "not-applicable",
           cleanupStatus: "not-applicable",
           lastMergeError: null,
@@ -507,6 +519,8 @@ describe("graph workflow execution event publisher", () => {
           worktreePath: "/repo/.worktrees/session-1.context-implement",
           branchName: "csm/session-1-context-implement",
           batchId: "batch-7",
+          laneId: null,
+          joinId: null,
           mergeStatus: "pending",
           cleanupStatus: "pending",
         },
@@ -517,6 +531,8 @@ describe("graph workflow execution event publisher", () => {
           worktreePath: "/repo/.worktrees/session-1.context-verify",
           branchName: "csm/session-1-context-verify",
           batchId: "batch-7",
+          laneId: null,
+          joinId: null,
           mergeStatus: "pending",
           cleanupStatus: "pending",
         },
@@ -593,6 +609,8 @@ describe("graph workflow execution event publisher", () => {
           worktreePath: "/repo/.worktrees/session-1.context-implement",
           branchName: "csm/session-1-context-implement",
           batchId: "batch-9",
+          laneId: null,
+          joinId: null,
           mergeStatus: "in-progress",
           cleanupStatus: "pending",
         },
@@ -603,6 +621,8 @@ describe("graph workflow execution event publisher", () => {
           worktreePath: "/repo/.worktrees/session-1.context-verify",
           branchName: "csm/session-1-context-verify",
           batchId: "batch-9",
+          laneId: null,
+          joinId: null,
           mergeStatus: "pending",
           cleanupStatus: "pending",
         },
@@ -694,5 +714,459 @@ describe("graph workflow execution event publisher", () => {
         nextExecution: next,
       });
     }).not.toThrow();
+  });
+
+  it("emits a graph-workflow-lane-status event when a lane is newly created", () => {
+    const broadcast = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      now: () => "2026-04-02T08:00:00.000Z",
+    });
+
+    const previousExecution = createWorkflowExecution({
+      status: "running",
+      executionLanes: {},
+    });
+    const nextExecution = createWorkflowExecution({
+      ...previousExecution,
+      executionLanes: {
+        "lane-plan": {
+          laneId: "lane-plan",
+          kind: "worktree",
+          status: "active",
+          worktreePath: "/repo/.worktrees/feature.lane-plan",
+          branchName: "csm/feature-lane-plan",
+          includedContextIds: [],
+          lastCommittingContextId: null,
+          commitSnapshots: [],
+          createdAt: "2026-04-02T07:59:00.000Z",
+          updatedAt: "2026-04-02T07:59:00.000Z",
+        },
+      },
+    });
+
+    const published = publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution,
+      nextExecution,
+    });
+
+    const laneEvent = broadcast.mock.calls
+      .map(([event]) => event)
+      .find((e) => e.type === "graph-workflow-lane-status");
+    expect(laneEvent).toEqual({
+      type: "graph-workflow-lane-status",
+      projectName: "repo",
+      sessionName: "session-1",
+      executionId: nextExecution.id,
+      laneId: "lane-plan",
+      kind: "worktree",
+      status: "active",
+      branchName: "csm/feature-lane-plan",
+      worktreePath: "/repo/.worktrees/feature.lane-plan",
+      includedContextIds: [],
+      lastCommittingContextId: null,
+    });
+    expect(
+      published.history.some(
+        (h) => h.event.type === "graph-workflow-lane-status",
+      ),
+    ).toBe(true);
+  });
+
+  it("emits a graph-workflow-lane-status event when an existing lane changes status or membership", () => {
+    const broadcast = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      now: () => "2026-04-02T08:00:00.000Z",
+    });
+
+    const baseLane = {
+      laneId: "lane-plan",
+      kind: "worktree" as const,
+      status: "active" as const,
+      worktreePath: "/repo/.worktrees/feature.lane-plan",
+      branchName: "csm/feature-lane-plan",
+      includedContextIds: [],
+      lastCommittingContextId: null,
+      commitSnapshots: [],
+      createdAt: "2026-04-02T07:59:00.000Z",
+      updatedAt: "2026-04-02T07:59:00.000Z",
+    };
+    const previousExecution = createWorkflowExecution({
+      status: "running",
+      executionLanes: { "lane-plan": baseLane },
+    });
+    const nextExecution = createWorkflowExecution({
+      ...previousExecution,
+      executionLanes: {
+        "lane-plan": {
+          ...baseLane,
+          status: "merged",
+          includedContextIds: ["context-plan"],
+          lastCommittingContextId: "context-plan",
+          updatedAt: "2026-04-02T08:00:00.000Z",
+        },
+      },
+    });
+
+    publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution,
+      nextExecution,
+    });
+
+    const laneEvents = broadcast.mock.calls
+      .map(([event]) => event)
+      .filter((e) => e.type === "graph-workflow-lane-status");
+    expect(laneEvents).toHaveLength(1);
+    expect(laneEvents[0]).toMatchObject({
+      laneId: "lane-plan",
+      status: "merged",
+      includedContextIds: ["context-plan"],
+      lastCommittingContextId: "context-plan",
+    });
+  });
+
+  it("does not emit a lane-status event when no observable lane fields change", () => {
+    const broadcast = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      now: () => "2026-04-02T08:00:00.000Z",
+    });
+
+    const lane = {
+      laneId: "lane-plan",
+      kind: "worktree" as const,
+      status: "active" as const,
+      worktreePath: "/repo/.worktrees/feature.lane-plan",
+      branchName: "csm/feature-lane-plan",
+      includedContextIds: ["context-plan"],
+      lastCommittingContextId: "context-plan",
+      commitSnapshots: [],
+      createdAt: "2026-04-02T07:59:00.000Z",
+      updatedAt: "2026-04-02T07:59:00.000Z",
+    };
+    const previousExecution = createWorkflowExecution({
+      status: "running",
+      executionLanes: { "lane-plan": lane },
+    });
+    const nextExecution = createWorkflowExecution({
+      ...previousExecution,
+      executionLanes: {
+        "lane-plan": { ...lane, updatedAt: "2026-04-02T08:00:00.000Z" },
+      },
+    });
+
+    publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution,
+      nextExecution,
+    });
+
+    const laneEvents = broadcast.mock.calls
+      .map(([event]) => event)
+      .filter((e) => e.type === "graph-workflow-lane-status");
+    expect(laneEvents).toEqual([]);
+  });
+
+  it("emits a graph-workflow-join-status event when a join is newly created (pending)", () => {
+    const broadcast = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      now: () => "2026-04-02T08:00:00.000Z",
+    });
+
+    const previousExecution = createWorkflowExecution({
+      status: "running",
+      joins: {},
+    });
+    const nextExecution = createWorkflowExecution({
+      ...previousExecution,
+      joins: {
+        "join-1": {
+          joinId: "join-1",
+          kind: "context_merge",
+          contextId: "context-verify",
+          targetLaneId: "lane-target",
+          sourceLaneIds: ["lane-a", "lane-b"],
+          mergedSourceLaneIds: [],
+          status: "pending",
+          errorMessage: null,
+          conflicts: null,
+          createdAt: "2026-04-02T08:00:00.000Z",
+          updatedAt: "2026-04-02T08:00:00.000Z",
+          completedAt: null,
+        },
+      },
+    });
+
+    const published = publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution,
+      nextExecution,
+    });
+
+    const joinEvent = broadcast.mock.calls
+      .map(([event]) => event)
+      .find((e) => e.type === "graph-workflow-join-status");
+    expect(joinEvent).toEqual({
+      type: "graph-workflow-join-status",
+      projectName: "repo",
+      sessionName: "session-1",
+      executionId: nextExecution.id,
+      joinId: "join-1",
+      kind: "context_merge",
+      contextId: "context-verify",
+      status: "pending",
+      sourceLaneIds: ["lane-a", "lane-b"],
+      mergedSourceLaneIds: [],
+      targetLaneId: "lane-target",
+      errorMessage: null,
+      conflicts: null,
+    });
+    expect(
+      published.history.some(
+        (h) => h.event.type === "graph-workflow-join-status",
+      ),
+    ).toBe(true);
+  });
+
+  it("emits a graph-workflow-join-status event when join progresses (status or mergedSourceLaneIds changes)", () => {
+    const broadcast = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      now: () => "2026-04-02T08:00:00.000Z",
+    });
+
+    const baseJoin = {
+      joinId: "join-1",
+      kind: "context_merge" as const,
+      contextId: null,
+      targetLaneId: "lane-target",
+      sourceLaneIds: ["lane-a", "lane-b"],
+      mergedSourceLaneIds: [],
+      status: "pending" as const,
+      errorMessage: null,
+      conflicts: null,
+      createdAt: "2026-04-02T07:59:00.000Z",
+      updatedAt: "2026-04-02T07:59:00.000Z",
+      completedAt: null,
+    };
+    const previousExecution = createWorkflowExecution({
+      status: "running",
+      joins: { "join-1": baseJoin },
+    });
+    const nextExecution = createWorkflowExecution({
+      ...previousExecution,
+      joins: {
+        "join-1": {
+          ...baseJoin,
+          status: "running",
+          mergedSourceLaneIds: ["lane-a"],
+          updatedAt: "2026-04-02T08:00:00.000Z",
+        },
+      },
+    });
+
+    publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution,
+      nextExecution,
+    });
+
+    const joinEvents = broadcast.mock.calls
+      .map(([event]) => event)
+      .filter((e) => e.type === "graph-workflow-join-status");
+    expect(joinEvents).toHaveLength(1);
+    expect(joinEvents[0]).toMatchObject({
+      joinId: "join-1",
+      status: "running",
+      mergedSourceLaneIds: ["lane-a"],
+    });
+  });
+
+  it("emits a graph-workflow-join-status event when join fails with conflicts", () => {
+    const broadcast = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      now: () => "2026-04-02T08:00:00.000Z",
+    });
+
+    const baseJoin = {
+      joinId: "join-1",
+      kind: "final_publish" as const,
+      contextId: null,
+      targetLaneId: "__session__",
+      sourceLaneIds: ["lane-plan"],
+      mergedSourceLaneIds: [],
+      status: "running" as const,
+      errorMessage: null,
+      conflicts: null,
+      createdAt: "2026-04-02T07:59:00.000Z",
+      updatedAt: "2026-04-02T07:59:00.000Z",
+      completedAt: null,
+    };
+    const previousExecution = createWorkflowExecution({
+      status: "running",
+      joins: { "join-1": baseJoin },
+    });
+    const nextExecution = createWorkflowExecution({
+      ...previousExecution,
+      joins: {
+        "join-1": {
+          ...baseJoin,
+          status: "conflicts",
+          errorMessage: "merge conflicts",
+          conflicts: { files: ["src/foo.ts"], message: "merge conflicts" },
+          updatedAt: "2026-04-02T08:00:00.000Z",
+          completedAt: "2026-04-02T08:00:00.000Z",
+        },
+      },
+    });
+
+    publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution,
+      nextExecution,
+    });
+
+    const joinEvents = broadcast.mock.calls
+      .map(([event]) => event)
+      .filter((e) => e.type === "graph-workflow-join-status");
+    expect(joinEvents).toHaveLength(1);
+    expect(joinEvents[0]).toMatchObject({
+      joinId: "join-1",
+      kind: "final_publish",
+      status: "conflicts",
+      errorMessage: "merge conflicts",
+      conflicts: { files: ["src/foo.ts"], message: "merge conflicts" },
+    });
+  });
+
+  it("does not emit a join-status event when nothing observable changes on a join", () => {
+    const broadcast = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      now: () => "2026-04-02T08:00:00.000Z",
+    });
+
+    const join = {
+      joinId: "join-1",
+      kind: "context_merge" as const,
+      contextId: null,
+      targetLaneId: "lane-target",
+      sourceLaneIds: ["lane-a", "lane-b"],
+      mergedSourceLaneIds: ["lane-a"],
+      status: "running" as const,
+      errorMessage: null,
+      conflicts: null,
+      createdAt: "2026-04-02T07:59:00.000Z",
+      updatedAt: "2026-04-02T07:59:00.000Z",
+      completedAt: null,
+    };
+    const previousExecution = createWorkflowExecution({
+      status: "running",
+      joins: { "join-1": join },
+    });
+    const nextExecution = createWorkflowExecution({
+      ...previousExecution,
+      joins: { "join-1": { ...join, updatedAt: "2026-04-02T08:00:00.000Z" } },
+    });
+
+    publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution,
+      nextExecution,
+    });
+
+    const joinEvents = broadcast.mock.calls
+      .map(([event]) => event)
+      .filter((e) => e.type === "graph-workflow-join-status");
+    expect(joinEvents).toEqual([]);
+  });
+
+  it("includes derived activeJoinIds in graph-workflow-status events so consumers can render wait state", () => {
+    const broadcast = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      now: () => "2026-04-02T08:00:00.000Z",
+    });
+
+    const previousExecution = createWorkflowExecution({
+      status: "running",
+      activeContextIds: [],
+      joins: {},
+    });
+    const nextExecution = createWorkflowExecution({
+      ...previousExecution,
+      activeContextIds: [],
+      joins: {
+        "join-running": {
+          joinId: "join-running",
+          kind: "context_merge",
+          contextId: null,
+          targetLaneId: "lane-target",
+          sourceLaneIds: ["lane-a", "lane-b"],
+          mergedSourceLaneIds: ["lane-a"],
+          status: "running",
+          errorMessage: null,
+          conflicts: null,
+          createdAt: "2026-04-02T07:59:00.000Z",
+          updatedAt: "2026-04-02T08:00:00.000Z",
+          completedAt: null,
+        },
+        "join-pending": {
+          joinId: "join-pending",
+          kind: "final_publish",
+          contextId: null,
+          targetLaneId: "__session__",
+          sourceLaneIds: ["lane-c"],
+          mergedSourceLaneIds: [],
+          status: "pending",
+          errorMessage: null,
+          conflicts: null,
+          createdAt: "2026-04-02T07:59:00.000Z",
+          updatedAt: "2026-04-02T08:00:00.000Z",
+          completedAt: null,
+        },
+        "join-done": {
+          joinId: "join-done",
+          kind: "context_merge",
+          contextId: null,
+          targetLaneId: "lane-x",
+          sourceLaneIds: ["lane-y"],
+          mergedSourceLaneIds: ["lane-y"],
+          status: "succeeded",
+          errorMessage: null,
+          conflicts: null,
+          createdAt: "2026-04-02T07:59:00.000Z",
+          updatedAt: "2026-04-02T08:00:00.000Z",
+          completedAt: "2026-04-02T08:00:00.000Z",
+        },
+      },
+    });
+
+    publisher.publishExecutionUpdate({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      previousExecution,
+      nextExecution,
+    });
+
+    const statusEvent = broadcast.mock.calls
+      .map(([event]) => event)
+      .find((e) => e.type === "graph-workflow-status");
+    expect(statusEvent).toBeDefined();
+    expect(statusEvent!.activeJoinIds.sort()).toEqual(
+      ["join-pending", "join-running"].sort(),
+    );
   });
 });

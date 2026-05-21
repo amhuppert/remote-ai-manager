@@ -266,9 +266,12 @@ describe("graph workflow execution route handlers", () => {
         activeContextIds: ["context-plan"],
         activeContextTitles: ["Plan"],
         activeBatchIds: [],
+        activeJoinIds: [],
         haltReason: null,
         pendingHaltReason: null,
         contextMergeProgress: [],
+        joinProgress: [],
+        finalPublishState: null,
         archived: false,
       },
       archivedExecutions: [
@@ -282,9 +285,12 @@ describe("graph workflow execution route handlers", () => {
           activeContextIds: [],
           activeContextTitles: [],
           activeBatchIds: [],
+          activeJoinIds: [],
           haltReason: { type: "aborted" },
           pendingHaltReason: null,
           contextMergeProgress: [],
+          joinProgress: [],
+          finalPublishState: null,
           archived: true,
         },
       ],
@@ -309,6 +315,8 @@ describe("graph workflow execution route handlers", () => {
               isolation: "worktree",
               branchName: "csm/session-1-context-plan",
               batchId: "batch-9",
+              laneId: null,
+              joinId: null,
               mergeStatus: "in-progress",
               cleanupStatus: "pending",
               lastMergeError: null,
@@ -319,6 +327,8 @@ describe("graph workflow execution route handlers", () => {
               isolation: "worktree",
               branchName: "csm/session-1-context-verify",
               batchId: "batch-9",
+              laneId: null,
+              joinId: null,
               mergeStatus: "pending",
               cleanupStatus: "pending",
               lastMergeError: null,
@@ -367,6 +377,8 @@ describe("graph workflow execution route handlers", () => {
               worktreePath: "/repo/.worktrees/session-1.context-plan",
               branchName: "csm/session-1-context-plan",
               batchId: "batch-1",
+              laneId: null,
+              joinId: null,
               mergeStatus: "in-progress",
               cleanupStatus: "pending",
               lastMergeError: null,
@@ -378,6 +390,8 @@ describe("graph workflow execution route handlers", () => {
               worktreePath: "/repo/.worktrees/session-1.context-implement",
               branchName: "csm/session-1-context-implement",
               batchId: "batch-1",
+              laneId: null,
+              joinId: null,
               mergeStatus: "merged-success",
               cleanupStatus: "removed",
               lastMergeError: null,
@@ -432,6 +446,136 @@ describe("graph workflow execution route handlers", () => {
         lastMergeError: null,
       },
     ]);
+  });
+
+  it("exposes activeJoinIds and per-join progress so operators can see pending/running joins in the REST summary", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    const baseExecution = createWorkflowExecution({
+      status: "running",
+      activeContextIds: ["context-implement"],
+    });
+    getSession.mockResolvedValue(
+      makeSession({
+        graphWorkflowExecution: {
+          ...baseExecution,
+          joins: {
+            "join-merge": {
+              joinId: "join-merge",
+              kind: "context_merge",
+              contextId: "context-implement",
+              targetLaneId: "lane-target",
+              sourceLaneIds: ["lane-a", "lane-b"],
+              mergedSourceLaneIds: ["lane-a"],
+              status: "running",
+              errorMessage: null,
+              conflicts: null,
+              createdAt: "2026-04-02T08:00:00.000Z",
+              updatedAt: "2026-04-02T08:00:00.000Z",
+              completedAt: null,
+            },
+          },
+        },
+      }),
+    );
+    normalizeExecutionAfterRestart.mockResolvedValue(null);
+
+    const response = await handlers.STATUS(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow",
+        "GET",
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(200);
+    const json = (await response.json()) as {
+      execution: {
+        activeJoinIds: string[];
+        joinProgress: Array<{
+          joinId: string;
+          kind: string;
+          contextId: string | null;
+          targetLaneId: string;
+          sourceLaneIds: string[];
+          mergedSourceLaneIds: string[];
+          status: string;
+        }>;
+      };
+    };
+    expect(json.execution.activeJoinIds).toEqual(["join-merge"]);
+    expect(json.execution.joinProgress).toEqual([
+      {
+        joinId: "join-merge",
+        kind: "context_merge",
+        contextId: "context-implement",
+        targetLaneId: "lane-target",
+        sourceLaneIds: ["lane-a", "lane-b"],
+        mergedSourceLaneIds: ["lane-a"],
+        status: "running",
+      },
+    ]);
+  });
+
+  it("surfaces final publish state in the REST summary when a final_publish join is active", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    const baseExecution = createWorkflowExecution({
+      status: "running",
+      activeContextIds: [],
+    });
+    getSession.mockResolvedValue(
+      makeSession({
+        graphWorkflowExecution: {
+          ...baseExecution,
+          joins: {
+            "join-publish": {
+              joinId: "join-publish",
+              kind: "final_publish",
+              contextId: null,
+              targetLaneId: "__session__",
+              sourceLaneIds: ["lane-plan"],
+              mergedSourceLaneIds: [],
+              status: "running",
+              errorMessage: null,
+              conflicts: null,
+              createdAt: "2026-04-02T09:00:00.000Z",
+              updatedAt: "2026-04-02T09:00:00.000Z",
+              completedAt: null,
+            },
+          },
+        },
+      }),
+    );
+    normalizeExecutionAfterRestart.mockResolvedValue(null);
+
+    const response = await handlers.STATUS(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow",
+        "GET",
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(200);
+    const json = (await response.json()) as {
+      execution: {
+        activeJoinIds: string[];
+        finalPublishState: {
+          joinId: string;
+          targetLaneId: string;
+          sourceLaneIds: string[];
+          mergedSourceLaneIds: string[];
+          status: string;
+        } | null;
+      };
+    };
+    expect(json.execution.activeJoinIds).toEqual(["join-publish"]);
+    expect(json.execution.finalPublishState).toEqual({
+      joinId: "join-publish",
+      targetLaneId: "__session__",
+      sourceLaneIds: ["lane-plan"],
+      mergedSourceLaneIds: [],
+      status: "running",
+    });
   });
 
   it("normalizes an in-flight iteration before returning status", async () => {
@@ -567,6 +711,7 @@ describe("graph workflow execution route handlers", () => {
           activeContextIds: ["context-plan"],
           activeContextTitles: ["Plan"],
           activeBatchIds: [],
+          activeJoinIds: [],
           haltReason: {
             type: "circuit_breaker",
             contextId: "context-plan",
@@ -576,6 +721,8 @@ describe("graph workflow execution route handlers", () => {
           },
           pendingHaltReason: null,
           contextMergeProgress: [],
+          joinProgress: [],
+          finalPublishState: null,
           archived: false,
         },
       ],
@@ -1027,6 +1174,8 @@ function createCodexWorkflowExecution(): GraphWorkflowExecution {
         branchName: null,
         isolation: "session",
         batchId: null,
+        laneId: null,
+        joinId: null,
         mergeStatus: "not-applicable",
         cleanupStatus: "not-applicable",
         lastMergeError: null,

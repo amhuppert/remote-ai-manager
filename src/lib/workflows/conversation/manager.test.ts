@@ -478,6 +478,7 @@ describe("conversation manager", () => {
             worktreePath: "/per-context-worktree",
             branchName: "csm/sess-context",
             isolation: "worktree",
+            laneId: null,
           },
         },
       );
@@ -510,6 +511,7 @@ describe("conversation manager", () => {
             worktreePath: "/per-context-worktree",
             branchName: "csm/sess-context",
             isolation: "worktree",
+            laneId: null,
           },
         },
       );
@@ -549,6 +551,7 @@ describe("conversation manager", () => {
             worktreePath: "/new-worktree",
             branchName: "csm/sess-context",
             isolation: "worktree",
+            laneId: null,
           },
         },
       );
@@ -591,6 +594,7 @@ describe("conversation manager", () => {
               worktreePath: "/new-worktree",
               branchName: "csm/sess-context",
               isolation: "worktree",
+              laneId: null,
             },
           },
         ),

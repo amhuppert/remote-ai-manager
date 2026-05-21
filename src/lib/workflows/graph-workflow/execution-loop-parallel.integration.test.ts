@@ -4,10 +4,13 @@ import type {
   DisposeResult,
   ParallelWorktrees,
   ProvisionInput,
+  ProvisionLaneInput,
   ProvisionResult,
 } from "@/lib/workflow-graph/parallel-worktrees";
 import { createExecutionTargetResolver } from "@/lib/workflow-graph/execution-target-resolver";
 import type { GraphMergeRunner } from "@/lib/workflow-graph/graph-merge-runner";
+import { applyJoinProgress } from "@/lib/workflow-graph/lane-join";
+import type { JoinRunner } from "@/lib/workflow-graph/join-runner";
 import { createPerSessionMergeMutex } from "@/lib/workflow-graph/per-session-merge-mutex";
 import { createSessionGitLock } from "@/lib/workflow-graph/session-git-lock";
 import type { MergeOutput } from "@/lib/workflows/merge/types";
@@ -146,7 +149,42 @@ function createParallelWorktreesStub(): ParallelWorktreesStub {
     return { status: "removed" };
   }
 
-  return { provision, provisionBatch, dispose, provisionCalls, disposeCalls };
+  async function provisionLane(
+    input: ProvisionLaneInput,
+  ): Promise<ProvisionResult> {
+    return provision({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      sessionDir: input.sessionDir,
+      sessionBranch: input.sessionBranch,
+      contextId: input.laneId,
+    });
+  }
+
+  async function provisionLaneBatch(
+    inputs: ProvisionLaneInput[],
+  ): Promise<ProvisionResult[]> {
+    const results: ProvisionResult[] = [];
+    for (const input of inputs) {
+      results.push(await provisionLane(input));
+    }
+    return results;
+  }
+
+  async function disposeLane(input: DisposeInput): Promise<DisposeResult> {
+    return dispose(input);
+  }
+
+  return {
+    provision,
+    provisionBatch,
+    dispose,
+    provisionLane,
+    provisionLaneBatch,
+    disposeLane,
+    provisionCalls,
+    disposeCalls,
+  };
 }
 
 interface Deferred<T> {
@@ -215,6 +253,8 @@ function createInitialExecution(
       branchName: null,
       isolation: "session",
       batchId: null,
+      laneId: null,
+      joinId: null,
       mergeStatus: "not-applicable",
       cleanupStatus: "not-applicable",
       lastMergeError: null,
@@ -245,6 +285,9 @@ function createInitialExecution(
     taskStates,
     sharedDocuments: [],
     laneStates: {},
+    executionLanes: {},
+    joins: {},
+    lanePlan: { continuationMap: {}, longestDownstreamPath: {} },
     machineSnapshot: null,
     history: [],
     startedAt: "2026-03-27T12:00:00.000Z",
@@ -275,6 +318,19 @@ function buildFailedMergeOutput(message: string): MergeOutput {
     error: message,
     conflictFiles: [],
     conflictAnalysis: null,
+  };
+}
+
+function createNoopJoinRunner(): JoinRunner {
+  return {
+    async run({ joinId, mutateActive }) {
+      await mutateActive((e) =>
+        applyJoinProgress(e, joinId, new Date().toISOString(), {
+          status: "succeeded",
+        }),
+      );
+      return { status: "succeeded" };
+    },
   };
 }
 
@@ -349,11 +405,15 @@ describe("execution loop — parallel integration", () => {
         acquireSessionLock: () => () => {},
       }),
       mergeRunner,
+      joinRunner: createNoopJoinRunner(),
       soloContextCommitter: {
         commit: async (input) => {
           soloCommitCalls.push(input.contextId);
           return { status: "skipped" };
         },
+      },
+      laneCommitter: {
+        commit: async () => ({ status: "skipped" }),
       },
       executionTargetResolver: createExecutionTargetResolver(),
       async getSession() {
@@ -457,7 +517,11 @@ describe("execution loop — parallel integration", () => {
         acquireSessionLock: () => () => {},
       }),
       mergeRunner,
+      joinRunner: createNoopJoinRunner(),
       soloContextCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      laneCommitter: {
         commit: async () => ({ status: "skipped" }),
       },
       executionTargetResolver: createExecutionTargetResolver(),
@@ -547,7 +611,11 @@ describe("execution loop — parallel integration", () => {
         acquireSessionLock: () => () => {},
       }),
       mergeRunner,
+      joinRunner: createNoopJoinRunner(),
       soloContextCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      laneCommitter: {
         commit: async () => ({ status: "skipped" }),
       },
       executionTargetResolver: createExecutionTargetResolver(),
@@ -635,7 +703,11 @@ describe("execution loop — parallel integration", () => {
         acquireSessionLock: () => () => {},
       }),
       mergeRunner,
+      joinRunner: createNoopJoinRunner(),
       soloContextCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      laneCommitter: {
         commit: async () => ({ status: "skipped" }),
       },
       executionTargetResolver: createExecutionTargetResolver(),
@@ -756,7 +828,11 @@ describe("execution loop — parallel integration", () => {
         acquireSessionLock: () => () => {},
       }),
       mergeRunner,
+      joinRunner: createNoopJoinRunner(),
       soloContextCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      laneCommitter: {
         commit: async () => ({ status: "skipped" }),
       },
       executionTargetResolver: createExecutionTargetResolver(),
@@ -881,7 +957,11 @@ describe("execution loop — parallel integration", () => {
         acquireSessionLock: () => () => {},
       }),
       mergeRunner,
+      joinRunner: createNoopJoinRunner(),
       soloContextCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      laneCommitter: {
         commit: async () => ({ status: "skipped" }),
       },
       executionTargetResolver: createExecutionTargetResolver(),
@@ -1039,11 +1119,15 @@ describe("execution loop — parallel integration", () => {
         acquireSessionLock: () => () => {},
       }),
       mergeRunner,
+      joinRunner: createNoopJoinRunner(),
       soloContextCommitter: {
         commit: async (input) => {
           soloCommitCalls.push(input.contextId);
           return { status: "committed", hash: "abc" };
         },
+      },
+      laneCommitter: {
+        commit: async () => ({ status: "skipped" }),
       },
       executionTargetResolver: createExecutionTargetResolver(),
       async getSession() {
@@ -1056,6 +1140,7 @@ describe("execution loop — parallel integration", () => {
       projectName: "test",
       sessionName: "session-1",
       execution: initial,
+      sessionLaneEnabled: true,
     });
 
     expect(result.status).toBe("completed");
@@ -1145,7 +1230,11 @@ describe("execution loop — parallel integration", () => {
       mergeMutex: createPerSessionMergeMutex(),
       sessionGitLock,
       mergeRunner,
+      joinRunner: createNoopJoinRunner(),
       soloContextCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      laneCommitter: {
         commit: async () => ({ status: "skipped" }),
       },
       executionTargetResolver: createExecutionTargetResolver(),
@@ -1249,7 +1338,11 @@ describe("execution loop — parallel integration", () => {
         acquireSessionLock: () => () => {},
       }),
       mergeRunner,
+      joinRunner: createNoopJoinRunner(),
       soloContextCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      laneCommitter: {
         commit: async () => ({ status: "skipped" }),
       },
       executionTargetResolver: createExecutionTargetResolver(),
@@ -1288,5 +1381,322 @@ describe("execution loop — parallel integration", () => {
     );
     expect(disposeBranches).toContain("csm/session-1-ctx-a");
     expect(disposeBranches).not.toContain("csm/session-1-ctx-b");
+  });
+
+  it("scenario 10: P1 Foundation, P2, and P3 start; once P1 Foundation lands, P1 Data Layer is scheduled in worktree isolation while P2 and P3 are still in flight (guarded event-driven scheduling)", async () => {
+    _resetActiveLoopsForTesting();
+
+    const contextIds = ["p1-foundation", "p1-data-layer", "p2", "p3"] as const;
+    const definition: WorkflowSemanticDefinition = {
+      schemaVersion: 1,
+      workflowConfig: {},
+      executionContexts: contextIds.map((id) => ({
+        id,
+        title: `Context ${id}`,
+        description: `${id} description`,
+        acceptanceCriteria: "TBD",
+        implementer: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
+        mutability: { allowAgentTaskAdd: false },
+        circuitBreaker: {},
+        iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
+      })),
+      tasks: contextIds.map((id) => ({
+        id: `task-${id}`,
+        contextId: id,
+        order: 1,
+        title: `Task ${id}`,
+        instructions: `Do work for ${id}`,
+        source: "user" as const,
+      })),
+      edges: [
+        {
+          id: "p1-foundation->p1-data-layer",
+          sourceContextId: "p1-foundation",
+          targetContextId: "p1-data-layer",
+        },
+      ],
+    };
+
+    const initial = createInitialExecution(definition);
+    const repository = createRepository(initial);
+    const parallelWorktrees = createParallelWorktreesStub();
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+      parallelWorktrees,
+      async getSession() {
+        return createSession();
+      },
+    });
+
+    const completionGates = new Map<string, Deferred<void>>(
+      contextIds.map((id) => [id, deferred()]),
+    );
+
+    const p1DataLayerSnapshots: GraphWorkflowExecution[] = [];
+
+    const iterationOrchestrator = {
+      async runIteration(input: {
+        contextId: string;
+      }): Promise<GraphWorkflowIterationResult> {
+        if (input.contextId === "p1-data-layer") {
+          const snap = repository.read();
+          if (!snap) throw new Error("repository empty during data-layer run");
+          p1DataLayerSnapshots.push(structuredClone(snap));
+          completionGates.get("p2")!.resolve();
+          completionGates.get("p3")!.resolve();
+        }
+        await completionGates.get(input.contextId)!.promise;
+        const next = await manager.mutateActive("/repo", "session-1", (e) => {
+          const updated = structuredClone(e);
+          const cs = updated.contextStates[input.contextId];
+          if (cs) {
+            cs.iterationCount = 1;
+            cs.status = "completed";
+            cs.completedTaskCount = 1;
+          }
+          const ts = updated.taskStates[`task-${input.contextId}`];
+          if (ts) ts.status = "completed";
+          return updated;
+        });
+        return {
+          conversationId: `conv-${input.contextId}`,
+          execution: next,
+          shouldContinueInContext: false,
+        };
+      },
+    };
+
+    const mergeRunner: GraphMergeRunner = {
+      async run() {
+        return buildSuccessMergeOutput();
+      },
+    };
+
+    const loop = createGraphWorkflowExecutionLoop({
+      workflowManager: manager,
+      iterationOrchestrator,
+      parallelWorktrees,
+      mergeMutex: createPerSessionMergeMutex(),
+      sessionGitLock: createSessionGitLock({
+        acquireSessionLock: () => () => {},
+      }),
+      mergeRunner,
+      joinRunner: createNoopJoinRunner(),
+      soloContextCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      laneCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      executionTargetResolver: createExecutionTargetResolver(),
+      async getSession() {
+        return createSession();
+      },
+    });
+
+    completionGates.get("p1-foundation")!.resolve();
+    completionGates.get("p1-data-layer")!.resolve();
+
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(p1DataLayerSnapshots).toHaveLength(1);
+    const snapshot = p1DataLayerSnapshots[0]!;
+
+    const dataLayerStateAtSchedule = snapshot.contextStates["p1-data-layer"];
+    expect(dataLayerStateAtSchedule?.isolation).toBe("worktree");
+    expect(dataLayerStateAtSchedule?.worktreePath).toBe(
+      "/repo/.worktrees/session-1.p1-data-layer",
+    );
+    expect(dataLayerStateAtSchedule?.branchName).toBe(
+      "csm/session-1-p1-data-layer",
+    );
+    expect(dataLayerStateAtSchedule?.status).toBe("running");
+    expect(snapshot.contextStates["p2"]?.status).toBe("running");
+    expect(snapshot.contextStates["p3"]?.status).toBe("running");
+    expect(snapshot.activeContextIds).toEqual(
+      expect.arrayContaining(["p1-data-layer", "p2", "p3"]),
+    );
+
+    expect(result.status).toBe("completed");
+    const provisionedContextIds = parallelWorktrees.provisionCalls.map(
+      (c) => c.contextId,
+    );
+    expect(provisionedContextIds).toContain("p1-data-layer");
+
+    for (const ctxId of contextIds) {
+      const cs = result.contextStates[ctxId];
+      expect(cs?.isolation).toBe("worktree");
+      expect(cs?.mergeStatus).toBe("merged-success");
+      expect(cs?.cleanupStatus).toBe("removed");
+    }
+  });
+
+  it("scenario 11: pendingHaltReason from one sibling's merge failure prevents scheduling any newly eligible downstream context, and the remaining in-flight siblings drain before the loop halts", async () => {
+    _resetActiveLoopsForTesting();
+
+    const contextIds = ["p1", "p1-child", "p2", "p3"] as const;
+    const definition: WorkflowSemanticDefinition = {
+      schemaVersion: 1,
+      workflowConfig: {},
+      executionContexts: contextIds.map((id) => ({
+        id,
+        title: `Context ${id}`,
+        description: `${id} description`,
+        acceptanceCriteria: "TBD",
+        implementer: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
+        mutability: { allowAgentTaskAdd: false },
+        circuitBreaker: {},
+        iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
+      })),
+      tasks: contextIds.map((id) => ({
+        id: `task-${id}`,
+        contextId: id,
+        order: 1,
+        title: `Task ${id}`,
+        instructions: `Do work for ${id}`,
+        source: "user" as const,
+      })),
+      edges: [
+        {
+          id: "p1->p1-child",
+          sourceContextId: "p1",
+          targetContextId: "p1-child",
+        },
+      ],
+    };
+
+    const initial = createInitialExecution(definition);
+    const repository = createRepository(initial);
+    const parallelWorktrees = createParallelWorktreesStub();
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+      parallelWorktrees,
+      async getSession() {
+        return createSession();
+      },
+    });
+
+    const completionGates = new Map<string, Deferred<void>>([
+      ["p1", deferred()],
+      ["p1-child", deferred()],
+      ["p2", deferred()],
+      ["p3", deferred()],
+    ]);
+
+    const runIterationCalls: string[] = [];
+    const iterationOrchestrator = {
+      async runIteration(input: {
+        contextId: string;
+      }): Promise<GraphWorkflowIterationResult> {
+        runIterationCalls.push(input.contextId);
+        await completionGates.get(input.contextId)!.promise;
+        const next = await manager.mutateActive("/repo", "session-1", (e) => {
+          const updated = structuredClone(e);
+          const cs = updated.contextStates[input.contextId];
+          if (cs) {
+            cs.iterationCount = 1;
+            cs.status = "completed";
+            cs.completedTaskCount = 1;
+          }
+          const ts = updated.taskStates[`task-${input.contextId}`];
+          if (ts) ts.status = "completed";
+          return updated;
+        });
+        return {
+          conversationId: `conv-${input.contextId}`,
+          execution: next,
+          shouldContinueInContext: false,
+        };
+      },
+    };
+
+    const mergeRunner: GraphMergeRunner = {
+      async run(input) {
+        if (input.contextId === "p2") {
+          return buildFailedMergeOutput("simulated p2 fan-in failure");
+        }
+        return buildSuccessMergeOutput();
+      },
+    };
+
+    const loop = createGraphWorkflowExecutionLoop({
+      workflowManager: manager,
+      iterationOrchestrator,
+      parallelWorktrees,
+      mergeMutex: createPerSessionMergeMutex(),
+      sessionGitLock: createSessionGitLock({
+        acquireSessionLock: () => () => {},
+      }),
+      mergeRunner,
+      joinRunner: createNoopJoinRunner(),
+      soloContextCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      laneCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      executionTargetResolver: createExecutionTargetResolver(),
+      async getSession() {
+        return createSession();
+      },
+    });
+
+    completionGates.get("p2")!.resolve();
+    setTimeout(() => {
+      completionGates.get("p1")!.resolve();
+    }, 15);
+    setTimeout(() => {
+      completionGates.get("p3")!.resolve();
+    }, 30);
+
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(result.status).toBe("halted");
+    expect(result.haltReason?.type).toBe("merge_failure");
+    if (result.haltReason?.type === "merge_failure") {
+      expect(result.haltReason.contextId).toBe("p2");
+    }
+
+    expect(runIterationCalls).not.toContain("p1-child");
+    expect(
+      parallelWorktrees.provisionCalls.map((c) => c.contextId),
+    ).not.toContain("p1-child");
+
+    expect(result.contextStates["p1-child"]?.status).toBe("pending");
+    expect(result.contextStates["p1-child"]?.isolation).toBe("session");
+    expect(result.contextStates["p1-child"]?.worktreePath).toBeNull();
+    expect(result.contextStates["p1-child"]?.mergeStatus).toBe(
+      "not-applicable",
+    );
+
+    expect(result.contextStates["p1"]?.mergeStatus).toBe("merged-success");
+    expect(result.contextStates["p3"]?.mergeStatus).toBe("merged-success");
+    expect(result.contextStates["p2"]?.mergeStatus).toBe("merged-failed");
   });
 });

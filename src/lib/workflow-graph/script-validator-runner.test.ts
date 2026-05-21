@@ -216,6 +216,7 @@ describe("createScriptValidatorRunner", () => {
       worktreePath: "/projects/acme/.worktrees/ctx-abc.ctx-plan",
       branchName: "csm/ctx-abc-ctx-plan",
       isolation: "worktree",
+      laneId: null,
     };
 
     const outcome = await runner.runScriptValidator({
@@ -252,6 +253,7 @@ describe("createScriptValidatorRunner", () => {
       worktreePath: "/projects/acme/.worktrees/ctx-abc.ctx-plan",
       branchName: "csm/ctx-abc-ctx-plan",
       isolation: "worktree",
+      laneId: null,
     };
 
     const outcome = await runner.runScriptValidator({

@@ -21,6 +21,21 @@ import type { PerSessionMergeMutex } from "@/lib/workflow-graph/per-session-merg
 import type { SessionGitLock } from "@/lib/workflow-graph/session-git-lock";
 import type { GraphMergeRunner } from "@/lib/workflow-graph/graph-merge-runner";
 import type { SoloContextCommitter } from "@/lib/workflow-graph/solo-context-committer";
+import {
+  applyLaneCommitSnapshot,
+  type LaneCommitter,
+} from "@/lib/workflow-graph/lane-committer";
+import type { JoinRunner } from "@/lib/workflow-graph/join-runner";
+import { classifyContextSchedulability } from "@/lib/workflow-graph/lane-readiness";
+import { getEligibleContextIds } from "@/lib/workflow-graph/validation";
+import {
+  SESSION_LANE_ID,
+  appendPendingJoin,
+  findActiveJoin,
+  materializeSessionLane,
+  planContextJoin,
+  planFinalPublishJoin,
+} from "@/lib/workflow-graph/lane-join";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
@@ -39,12 +54,21 @@ export interface GraphWorkflowExecutionLoopInput {
   projectName: string;
   sessionName: string;
   execution: GraphWorkflowExecution;
+  /**
+   * Opt-in flag for session-lane participation (accepted design decision 10).
+   * Defaults to `false` — every parallel chain runs on its own worktree lane
+   * and is converged onto the session branch only at final publish. Callers
+   * that have validated dirty-worktree/concurrent-job preconditions can pass
+   * `true` to allow solo contexts to execute directly in the session worktree.
+   */
+  sessionLaneEnabled?: boolean;
 }
 
 export interface GraphWorkflowExecutionLoopWorkflowManager {
   scheduleEligibleContexts(input: {
     projectPath: string;
     sessionName: string;
+    sessionLaneEnabled?: boolean;
   }): Promise<ScheduleEligibleContextsResult>;
   send(
     projectPath: string,
@@ -97,6 +121,8 @@ export interface GraphWorkflowExecutionLoopDeps {
   sessionGitLock: SessionGitLock;
   mergeRunner: GraphMergeRunner;
   soloContextCommitter: SoloContextCommitter;
+  laneCommitter: LaneCommitter;
+  joinRunner: JoinRunner;
   executionTargetResolver: ExecutionTargetResolver;
   getSession(
     projectPath: string,
@@ -555,6 +581,7 @@ export function createGraphWorkflowExecutionLoop(
       let isolation: "session" | "worktree" = "session";
       let featureWorktreePath: string | null = null;
       let featureBranchName: string | null = null;
+      let featureLaneId: string | null = null;
 
       try {
         // Inner per-context iteration loop
@@ -578,6 +605,7 @@ export function createGraphWorkflowExecutionLoop(
             session,
           });
           isolation = target.isolation;
+          featureLaneId = target.laneId;
           if (target.isolation === "worktree") {
             featureWorktreePath = target.worktreePath;
             featureBranchName = target.branchName;
@@ -726,10 +754,168 @@ export function createGraphWorkflowExecutionLoop(
         featureWorktreePath !== null &&
         featureBranchName !== null
       ) {
-        await runFanInMerge(contextId, featureWorktreePath, featureBranchName);
+        if (featureLaneId !== null) {
+          await runLaneCommit(
+            contextId,
+            featureLaneId,
+            featureWorktreePath,
+            featureBranchName,
+          );
+        } else {
+          await runFanInMerge(
+            contextId,
+            featureWorktreePath,
+            featureBranchName,
+          );
+        }
       } else if (isolation === "session") {
         await runSoloCommit(contextId);
       }
+    }
+
+    async function runLaneCommit(
+      contextId: string,
+      laneId: string,
+      laneWorktreePath: string,
+      laneBranchName: string,
+    ): Promise<void> {
+      await deps.mergeMutex.withMergeMutex(
+        {
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+        },
+        async () => {
+          execLogger?.iteration(contextId, "lane_commit.started", {
+            laneId,
+            laneWorktreePath,
+            laneBranchName,
+          });
+          logger.info("graph-workflow.lane_commit.started", {
+            executionId: execution.id,
+            contextId,
+            laneId,
+            laneBranchName,
+          });
+
+          const result = await deps.sessionGitLock.withSessionGitLock(
+            {
+              projectPath: input.projectPath,
+              sessionName: input.sessionName,
+            },
+            async () =>
+              deps.laneCommitter.commit({
+                projectPath: input.projectPath,
+                sessionName: input.sessionName,
+                contextId,
+                laneId,
+                laneWorktreePath,
+              }),
+          );
+
+          if (result.status === "failed") {
+            const reason: GraphWorkflowHaltReason = {
+              type: "merge_failure",
+              contextId,
+              message: result.errorMessage,
+              conflictFiles: [],
+            };
+            const haltResult =
+              await deps.workflowManager.recordPendingHaltReason({
+                projectPath: input.projectPath,
+                sessionName: input.sessionName,
+                reason,
+                applyAdditionalMutation: (next) => {
+                  const cs = next.contextStates[contextId];
+                  if (cs) {
+                    cs.mergeStatus = "merged-failed";
+                    cs.lastMergeError = result.errorMessage;
+                  }
+                },
+              });
+            execution = haltResult.execution;
+            logger.error("graph-workflow.lane_commit.failed", {
+              executionId: execution.id,
+              contextId,
+              laneId,
+              error: result.errorMessage,
+            });
+            return;
+          }
+
+          if (result.status === "committed") {
+            const snapshot = result.snapshot;
+            await deps.workflowManager.mutateActive(
+              input.projectPath,
+              input.sessionName,
+              (e) =>
+                applyLaneCommitSnapshot(
+                  {
+                    ...e,
+                    contextStates: {
+                      ...e.contextStates,
+                      ...(e.contextStates[contextId]
+                        ? {
+                            [contextId]: {
+                              ...e.contextStates[contextId]!,
+                              mergeStatus: "merged-success",
+                              lastMergeError: null,
+                            },
+                          }
+                        : {}),
+                    },
+                  },
+                  laneId,
+                  snapshot,
+                ),
+            );
+            execLogger?.iteration(contextId, "lane_commit.completed", {
+              laneId,
+              sha: snapshot.sha,
+              committedAt: snapshot.committedAt,
+            });
+            logger.info("graph-workflow.lane_commit.completed", {
+              executionId: execution.id,
+              contextId,
+              laneId,
+              sha: snapshot.sha,
+            });
+            return;
+          }
+
+          // status === "skipped" — no uncommitted changes on the lane. Still
+          // mark the context as available in the lane so downstream contexts
+          // (and any future join) see the work as ready, but do not append a
+          // snapshot since no commit was made.
+          await deps.workflowManager.mutateActive(
+            input.projectPath,
+            input.sessionName,
+            (e) => {
+              const next = structuredClone(e);
+              const lane = next.executionLanes[laneId];
+              if (lane && !lane.includedContextIds.includes(contextId)) {
+                lane.includedContextIds = [
+                  ...lane.includedContextIds,
+                  contextId,
+                ];
+              }
+              const cs = next.contextStates[contextId];
+              if (cs) {
+                cs.mergeStatus = "merged-success";
+              }
+              return next;
+            },
+          );
+          execLogger?.iteration(contextId, "lane_commit.skipped", {
+            laneId,
+            laneWorktreePath,
+          });
+          logger.info("graph-workflow.lane_commit.skipped", {
+            executionId: execution.id,
+            contextId,
+            laneId,
+          });
+        },
+      );
     }
 
     async function runSoloCommit(contextId: string): Promise<void> {
@@ -808,12 +994,196 @@ export function createGraphWorkflowExecutionLoop(
             contextId,
             status: result.status,
           });
+
+          await deps.workflowManager.mutateActive(
+            input.projectPath,
+            input.sessionName,
+            (e) => {
+              const cs = e.contextStates[contextId];
+              if (!cs || cs.laneId === null) return e;
+              const lane = e.executionLanes[cs.laneId];
+              if (!lane || lane.kind !== "session") return e;
+              if (lane.includedContextIds.includes(contextId)) return e;
+              const next = structuredClone(e);
+              const nextLane = next.executionLanes[cs.laneId];
+              if (nextLane) {
+                nextLane.includedContextIds = [
+                  ...nextLane.includedContextIds,
+                  contextId,
+                ];
+              }
+              return next;
+            },
+          );
         },
       );
     }
 
+    async function runEligibleJoinIfAny(): Promise<"ran" | "halted" | "none"> {
+      const session = await deps.getSession(
+        input.projectPath,
+        input.sessionName,
+      );
+      if (!session) {
+        await recordHalt({
+          type: "recovery_error",
+          message: `Session "${input.sessionName}" not found during join orchestration`,
+        });
+        return "halted";
+      }
+
+      execution = await deps.workflowManager.mutateActive(
+        input.projectPath,
+        input.sessionName,
+        (e) =>
+          materializeSessionLane(e, {
+            sessionLaneId: SESSION_LANE_ID,
+            branchName: session.branchName,
+            worktreePath: session.worktreePath,
+            now: () => new Date().toISOString(),
+          }),
+      );
+
+      let active = findActiveJoin(execution);
+      if (!active) {
+        const eligibleIds = getEligibleContextIds(
+          execution.workingDefinition,
+          execution,
+        );
+        let planned = null as ReturnType<typeof planContextJoin> | null;
+        let plannedFor: "context" | "final_publish" | null = null;
+        for (const contextId of eligibleIds) {
+          const classification = classifyContextSchedulability({
+            contextId,
+            definition: execution.workingDefinition,
+            execution,
+          });
+          if (classification.kind !== "wait-for-join") continue;
+          planned = planContextJoin({
+            contextId,
+            execution,
+            now: () => new Date().toISOString(),
+            generateJoinId: () => createJobId(),
+          });
+          if (planned) {
+            plannedFor = "context";
+            break;
+          }
+        }
+
+        if (!planned) {
+          planned = planFinalPublishJoin({
+            execution,
+            sessionLaneId: SESSION_LANE_ID,
+            now: () => new Date().toISOString(),
+            generateJoinId: () => createJobId(),
+          });
+          if (planned) plannedFor = "final_publish";
+        }
+
+        if (!planned) return "none";
+
+        const toPersist = planned;
+        execution = await deps.workflowManager.mutateActive(
+          input.projectPath,
+          input.sessionName,
+          (e) => appendPendingJoin(e, toPersist),
+        );
+        active = toPersist;
+        execLogger?.lifecycle("join.planned", {
+          joinId: planned.joinId,
+          kind: planned.kind,
+          contextId: planned.contextId,
+          sourceLaneIds: planned.sourceLaneIds,
+          targetLaneId: planned.targetLaneId,
+        });
+        logger.info("graph-workflow.join.planned", {
+          executionId: execution.id,
+          joinId: planned.joinId,
+          kind: planned.kind,
+          plannedFor,
+          sourceLaneIds: planned.sourceLaneIds,
+          targetLaneId: planned.targetLaneId,
+        });
+      }
+
+      const join = active;
+      execLogger?.lifecycle("join.started", {
+        joinId: join.joinId,
+        kind: join.kind,
+        sourceLaneIds: join.sourceLaneIds,
+        targetLaneId: join.targetLaneId,
+      });
+      logger.info("graph-workflow.join.started", {
+        executionId: execution.id,
+        joinId: join.joinId,
+        kind: join.kind,
+      });
+
+      const result = await deps.joinRunner.run({
+        projectPath: input.projectPath,
+        projectName: input.projectName,
+        sessionName: input.sessionName,
+        joinId: join.joinId,
+        mutateActive: (mutator) =>
+          deps.workflowManager.mutateActive(
+            input.projectPath,
+            input.sessionName,
+            mutator,
+          ),
+      });
+
+      const refreshed = await deps.workflowManager.getActive(
+        input.projectPath,
+        input.sessionName,
+      );
+      if (refreshed) execution = refreshed;
+
+      if (result.status === "succeeded") {
+        execLogger?.lifecycle("join.completed", {
+          joinId: join.joinId,
+          kind: join.kind,
+        });
+        return "ran";
+      }
+
+      const haltResult = await deps.workflowManager.recordPendingHaltReason({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        reason: {
+          type: "join_failure",
+          joinId: join.joinId,
+          joinKind: join.kind,
+          contextId: join.contextId,
+          sourceLaneIds: join.sourceLaneIds,
+          targetLaneId: join.targetLaneId,
+          message: result.message,
+          conflictFiles: result.conflictFiles,
+        },
+      });
+      execution = haltResult.execution;
+      execLogger?.lifecycle("join.failed", {
+        joinId: join.joinId,
+        kind: join.kind,
+        failedSourceLaneId: result.failedSourceLaneId,
+        conflictFiles: result.conflictFiles,
+      });
+      logger.error("graph-workflow.join.failed", {
+        executionId: execution.id,
+        joinId: join.joinId,
+        kind: join.kind,
+        message: result.message,
+        conflictFiles: result.conflictFiles.length,
+      });
+      return "halted";
+    }
+
     try {
-      // Outer scheduling loop: schedule batch → run all → check halt → repeat.
+      // Outer scheduling loop: schedule currently-eligible work, wait for the
+      // next in-flight context or merge event to settle, refresh execution
+      // state, and reschedule. Downstream contexts can become eligible the
+      // moment an upstream context lands without waiting for the full wave to
+      // drain.
       // eslint-disable-next-line no-constant-condition
       while (true) {
         if (execution.status !== "running") {
@@ -863,6 +1233,7 @@ export function createGraphWorkflowExecutionLoop(
           await deps.workflowManager.scheduleEligibleContexts({
             projectPath: input.projectPath,
             sessionName: input.sessionName,
+            sessionLaneEnabled: input.sessionLaneEnabled,
           });
         execution = scheduleResult.execution;
 
@@ -877,6 +1248,17 @@ export function createGraphWorkflowExecutionLoop(
               sessionName: input.sessionName,
             });
             break;
+          }
+          const joinOutcome = await runEligibleJoinIfAny();
+          if (joinOutcome === "halted") {
+            execution = await deps.workflowManager.drainAndHalt({
+              projectPath: input.projectPath,
+              sessionName: input.sessionName,
+            });
+            break;
+          }
+          if (joinOutcome === "ran") {
+            continue;
           }
           execution = await deps.workflowManager.send(
             input.projectPath,
@@ -899,12 +1281,13 @@ export function createGraphWorkflowExecutionLoop(
           inFlight.set(contextId, task);
         }
 
-        // Wait for the scheduled batch to settle before scheduling the next one.
-        await Promise.all(
-          scheduledContextIds
-            .map((id) => inFlight.get(id))
-            .filter((p): p is Promise<void> => p !== undefined),
-        );
+        // Wait for the next in-flight context or merge event to settle, then
+        // refresh and reschedule. Newly eligible downstream contexts are
+        // picked up immediately instead of being held behind the slowest peer
+        // in the current wave.
+        if (inFlight.size > 0) {
+          await Promise.race(inFlight.values());
+        }
 
         const refreshed = await deps.workflowManager.getActive(
           input.projectPath,

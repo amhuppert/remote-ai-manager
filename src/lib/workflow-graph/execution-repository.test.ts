@@ -110,6 +110,27 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
     expect(execution.status).toBe("pending");
   });
 
+  it("seeds the lane plan from the resolved working definition at creation time", async () => {
+    const repo = createInMemoryRepo();
+    const execution = await repo.create("/repo", "session-1", {
+      definition: createWorkflowDefinition(),
+      definitionId: "wf-1",
+      definitionRevision: 1,
+      executionId: "exec-1",
+      startedAt: "2026-04-04T00:00:00.000Z",
+    });
+
+    expect(execution.lanePlan.continuationMap).toEqual({
+      "context-plan": "context-implement",
+      "context-implement": "context-verify",
+    });
+    expect(execution.lanePlan.longestDownstreamPath).toEqual({
+      "context-plan": 2,
+      "context-implement": 1,
+      "context-verify": 0,
+    });
+  });
+
   it("initializes context and task state to execution-start defaults", async () => {
     const repo = createInMemoryRepo();
     const execution = await repo.create("/repo", "session-1", {
@@ -142,6 +163,8 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         branchName: null,
         batchId: null,
         isolation: "session",
+        laneId: null,
+        joinId: null,
         mergeStatus: "not-applicable",
         cleanupStatus: "not-applicable",
         lastMergeError: null,

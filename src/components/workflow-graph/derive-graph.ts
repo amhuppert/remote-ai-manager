@@ -11,6 +11,10 @@ import type {
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
 } from "@/types";
+import {
+  deriveContextWaitState,
+  type ContextWaitState,
+} from "./derive-wait-state";
 
 type DeriveGraphDefinition =
   | WorkflowSemanticDefinition
@@ -24,6 +28,7 @@ export type ExecutionContextNodeData = {
   mode: "builder" | "execution";
   contextState?: GraphWorkflowExecutionContextState;
   taskStates?: Record<string, GraphWorkflowTaskState>;
+  waitState?: ContextWaitState;
 };
 
 export type ContextEdgeData = {
@@ -94,6 +99,15 @@ export function deriveNodes(
       const ctxState = execution.contextStates[context.id];
       if (ctxState) {
         data.contextState = ctxState;
+      }
+
+      const waitState = deriveContextWaitState({
+        contextId: context.id,
+        definition,
+        execution,
+      });
+      if (waitState) {
+        data.waitState = waitState;
       }
 
       const filteredTaskStates: Record<string, GraphWorkflowTaskState> = {};

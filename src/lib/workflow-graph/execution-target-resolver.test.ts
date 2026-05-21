@@ -75,6 +75,7 @@ describe("ExecutionTargetResolver", () => {
       worktreePath: "/repo/.worktrees/session-1.context-plan",
       branchName: "csm/session-1-context-plan",
       isolation: "worktree",
+      laneId: null,
     };
     expect(result).toEqual(expected);
   });
@@ -97,6 +98,7 @@ describe("ExecutionTargetResolver", () => {
       worktreePath: "/repo/.worktrees/session-1",
       branchName: "csm/session-1",
       isolation: "session",
+      laneId: null,
     };
     expect(result).toEqual(expected);
   });
@@ -127,6 +129,7 @@ describe("ExecutionTargetResolver", () => {
       worktreePath: session.worktreePath,
       branchName: session.branchName,
       isolation: "session",
+      laneId: null,
     });
   });
 
@@ -156,6 +159,7 @@ describe("ExecutionTargetResolver", () => {
       worktreePath: session.worktreePath,
       branchName: session.branchName,
       isolation: "session",
+      laneId: null,
     });
   });
 
@@ -171,5 +175,139 @@ describe("ExecutionTargetResolver", () => {
         session,
       }),
     ).toThrow(/context-missing/);
+  });
+
+  it("resolves through the assigned worktree-kind lane when contextState.laneId is set", () => {
+    const baseExecution = createWorkflowExecution();
+    const existing = baseExecution.contextStates["context-plan"]!;
+    const execution: GraphWorkflowExecution = {
+      ...baseExecution,
+      contextStates: {
+        ...baseExecution.contextStates,
+        "context-plan": {
+          ...existing,
+          laneId: "lane-plan",
+          isolation: "worktree",
+        },
+      },
+      executionLanes: {
+        "lane-plan": {
+          laneId: "lane-plan",
+          kind: "worktree",
+          status: "active",
+          worktreePath: "/repo/.worktrees/session-1.lane-plan",
+          branchName: "csm/session-1-lane-plan",
+          includedContextIds: ["context-plan"],
+          lastCommittingContextId: null,
+          commitSnapshots: [],
+          createdAt: "2026-03-27T12:00:00.000Z",
+          updatedAt: "2026-03-27T12:00:00.000Z",
+        },
+      },
+    };
+    const session = createSession();
+    const resolver = createExecutionTargetResolver();
+
+    const result = resolver.resolve({
+      execution,
+      contextId: "context-plan",
+      session,
+    });
+
+    expect(result).toEqual<ExecutionTarget>({
+      worktreePath: "/repo/.worktrees/session-1.lane-plan",
+      branchName: "csm/session-1-lane-plan",
+      isolation: "worktree",
+      laneId: "lane-plan",
+    });
+  });
+
+  it("resolves to the session target when the assigned lane is kind=session", () => {
+    const baseExecution = createWorkflowExecution();
+    const existing = baseExecution.contextStates["context-plan"]!;
+    const execution: GraphWorkflowExecution = {
+      ...baseExecution,
+      contextStates: {
+        ...baseExecution.contextStates,
+        "context-plan": {
+          ...existing,
+          laneId: "lane-session",
+          isolation: "session",
+        },
+      },
+      executionLanes: {
+        "lane-session": {
+          laneId: "lane-session",
+          kind: "session",
+          status: "active",
+          worktreePath: null,
+          branchName: "csm/session-1",
+          includedContextIds: ["context-plan"],
+          lastCommittingContextId: null,
+          commitSnapshots: [],
+          createdAt: "2026-03-27T12:00:00.000Z",
+          updatedAt: "2026-03-27T12:00:00.000Z",
+        },
+      },
+    };
+    const session = createSession();
+    const resolver = createExecutionTargetResolver();
+
+    const result = resolver.resolve({
+      execution,
+      contextId: "context-plan",
+      session,
+    });
+
+    expect(result).toEqual<ExecutionTarget>({
+      worktreePath: session.worktreePath,
+      branchName: session.branchName,
+      isolation: "session",
+      laneId: "lane-session",
+    });
+  });
+
+  it("throws when contextState.laneId is set but the lane is missing from executionLanes", () => {
+    const baseExecution = createWorkflowExecution();
+    const existing = baseExecution.contextStates["context-plan"]!;
+    const execution: GraphWorkflowExecution = {
+      ...baseExecution,
+      contextStates: {
+        ...baseExecution.contextStates,
+        "context-plan": { ...existing, laneId: "lane-missing" },
+      },
+      executionLanes: {},
+    };
+    const session = createSession();
+    const resolver = createExecutionTargetResolver();
+
+    expect(() =>
+      resolver.resolve({
+        execution,
+        contextId: "context-plan",
+        session,
+      }),
+    ).toThrow(/lane-missing/);
+  });
+
+  it("returns laneId: null when no lane is assigned (legacy per-context worktree)", () => {
+    const baseExecution = createWorkflowExecution();
+    const execution = withContextWorktree(
+      baseExecution,
+      "context-plan",
+      "/repo/.worktrees/session-1.context-plan",
+      "csm/session-1-context-plan",
+    );
+    const session = createSession();
+    const resolver = createExecutionTargetResolver();
+
+    const result = resolver.resolve({
+      execution,
+      contextId: "context-plan",
+      session,
+    });
+
+    expect(result.laneId).toBeNull();
+    expect(result.isolation).toBe("worktree");
   });
 });

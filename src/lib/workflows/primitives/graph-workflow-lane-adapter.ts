@@ -1,5 +1,5 @@
 /**
- * Adapter that round-trips `GraphWorkflowLaneState` through the shared
+ * Adapter that round-trips `GraphWorkflowAgentSessionState` through the shared
  * primitive `LaneState` shape used by the workflow primitive lane service.
  *
  * Graph workflow lanes carry semantics the primitive layer does not model
@@ -25,9 +25,9 @@
 
 import { createLogger } from "@/lib/logging";
 import {
-  graphWorkflowLaneStateSchema,
+  graphWorkflowAgentSessionStateSchema,
   type GraphWorkflowLaneKind,
-  type GraphWorkflowLaneState,
+  type GraphWorkflowAgentSessionState,
 } from "@/lib/schemas";
 import {
   laneStateSchema,
@@ -58,7 +58,7 @@ export interface GraphWorkflowLanePrimitiveProjection {
 }
 
 export function toPrimitive(
-  state: GraphWorkflowLaneState,
+  state: GraphWorkflowAgentSessionState,
   ctx: GraphWorkflowLaneAdapterInputContext,
 ): GraphWorkflowLanePrimitiveProjection {
   if (state.engine === "claude") {
@@ -70,7 +70,7 @@ export function toPrimitive(
 export function toGraph(
   primitive: LaneState,
   extras: GraphWorkflowLaneExtras,
-): GraphWorkflowLaneState {
+): GraphWorkflowAgentSessionState {
   if (primitive.backend === "claude") {
     return reconstructClaude(primitive, extras);
   }
@@ -84,7 +84,7 @@ function inferWriteCapability(
 }
 
 function projectClaude(
-  state: Extract<GraphWorkflowLaneState, { engine: "claude" }>,
+  state: Extract<GraphWorkflowAgentSessionState, { engine: "claude" }>,
   ctx: GraphWorkflowLaneAdapterInputContext,
 ): GraphWorkflowLanePrimitiveProjection {
   if (state.sessionRef.engine !== "claude") {
@@ -136,7 +136,7 @@ function projectClaude(
 }
 
 function projectCodex(
-  state: Extract<GraphWorkflowLaneState, { engine: "codex" }>,
+  state: Extract<GraphWorkflowAgentSessionState, { engine: "codex" }>,
   ctx: GraphWorkflowLaneAdapterInputContext,
 ): GraphWorkflowLanePrimitiveProjection {
   if (state.sessionRef !== undefined && state.sessionRef.engine !== "codex") {
@@ -190,7 +190,7 @@ function projectCodex(
 function reconstructClaude(
   primitive: LaneState,
   extras: GraphWorkflowLaneExtras,
-): GraphWorkflowLaneState {
+): GraphWorkflowAgentSessionState {
   if (primitive.backendState.backend !== "claude") {
     throw new Error(
       "graph-lane adapter: primitive backendState branch is not Claude",
@@ -214,7 +214,7 @@ function reconstructClaude(
   }
   const limitEvaluation: "disabled" | "supported" = extras.limitEvaluation;
 
-  return graphWorkflowLaneStateSchema.parse({
+  return graphWorkflowAgentSessionStateSchema.parse({
     engine: "claude",
     lane: extras.lane,
     contextId: extras.contextId,
@@ -237,7 +237,7 @@ function reconstructClaude(
 function reconstructCodex(
   primitive: LaneState,
   extras: GraphWorkflowLaneExtras,
-): GraphWorkflowLaneState {
+): GraphWorkflowAgentSessionState {
   if (primitive.backendState.backend !== "codex") {
     throw new Error(
       "graph-lane adapter: primitive backendState branch is not Codex",
@@ -264,7 +264,7 @@ function reconstructCodex(
         }
       : undefined;
 
-  return graphWorkflowLaneStateSchema.parse({
+  return graphWorkflowAgentSessionStateSchema.parse({
     engine: "codex",
     lane: extras.lane,
     contextId: extras.contextId,

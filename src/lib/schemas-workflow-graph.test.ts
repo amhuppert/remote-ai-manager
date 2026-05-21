@@ -4,15 +4,18 @@ import {
   globalConfigSchema,
   graphWorkflowAgentValidatorConfigSchema,
   graphWorkflowBatchScheduledEventSchema,
+  graphWorkflowContextStatusSchema,
   graphWorkflowExecutionContextDefinitionSchema,
   graphWorkflowExecutionContextStateSchema,
   graphWorkflowExecutionEventSchema,
+  graphWorkflowExecutionJoinStateSchema,
+  graphWorkflowExecutionLaneStateSchema,
   graphWorkflowExecutionSchema,
   graphWorkflowExecutionSessionRefSchema,
   graphWorkflowHaltReasonSchema,
   graphWorkflowIterationPolicySchema,
   graphWorkflowLaneContinuityPolicySchema,
-  graphWorkflowLaneStateSchema,
+  graphWorkflowAgentSessionStateSchema,
   graphWorkflowMergeStatusEventSchema,
   graphWorkflowPendingHaltReasonEventSchema,
   graphWorkflowResolvedContextSchema,
@@ -990,7 +993,7 @@ describe("graphWorkflowExecutionSessionRefSchema", () => {
   });
 });
 
-describe("graphWorkflowLaneStateSchema", () => {
+describe("graphWorkflowAgentSessionStateSchema", () => {
   const claudeSessionRef = {
     engine: "claude" as const,
     lane: "implementer" as const,
@@ -1003,7 +1006,7 @@ describe("graphWorkflowLaneStateSchema", () => {
   };
 
   it("parses a claude lane state with supported limit evaluation", () => {
-    const result = graphWorkflowLaneStateSchema.safeParse({
+    const result = graphWorkflowAgentSessionStateSchema.safeParse({
       engine: "claude",
       lane: "implementer",
       contextId: "ctx-1",
@@ -1022,7 +1025,7 @@ describe("graphWorkflowLaneStateSchema", () => {
   });
 
   it("parses a claude lane state with disabled limit evaluation", () => {
-    const result = graphWorkflowLaneStateSchema.safeParse({
+    const result = graphWorkflowAgentSessionStateSchema.safeParse({
       engine: "claude",
       lane: "implementer",
       contextId: "ctx-1",
@@ -1037,7 +1040,7 @@ describe("graphWorkflowLaneStateSchema", () => {
   });
 
   it("defaults claude lane fields when omitted", () => {
-    const result = graphWorkflowLaneStateSchema.safeParse({
+    const result = graphWorkflowAgentSessionStateSchema.safeParse({
       engine: "claude",
       lane: "implementer",
       contextId: "ctx-1",
@@ -1054,7 +1057,7 @@ describe("graphWorkflowLaneStateSchema", () => {
   });
 
   it("parses a codex lane state", () => {
-    const result = graphWorkflowLaneStateSchema.safeParse({
+    const result = graphWorkflowAgentSessionStateSchema.safeParse({
       engine: "codex",
       lane: "context_validator",
       contextId: "ctx-1",
@@ -1076,7 +1079,7 @@ describe("graphWorkflowLaneStateSchema", () => {
   });
 
   it("defaults codex lane fields when omitted", () => {
-    const result = graphWorkflowLaneStateSchema.safeParse({
+    const result = graphWorkflowAgentSessionStateSchema.safeParse({
       engine: "codex",
       lane: "context_validator",
       contextId: "ctx-1",
@@ -1092,7 +1095,7 @@ describe("graphWorkflowLaneStateSchema", () => {
   });
 
   it("rejects claude lane state with unsupported limitEvaluation", () => {
-    const result = graphWorkflowLaneStateSchema.safeParse({
+    const result = graphWorkflowAgentSessionStateSchema.safeParse({
       engine: "claude",
       lane: "implementer",
       contextId: "ctx-1",
@@ -1104,7 +1107,7 @@ describe("graphWorkflowLaneStateSchema", () => {
   });
 
   it("rejects codex lane state with supported limitEvaluation", () => {
-    const result = graphWorkflowLaneStateSchema.safeParse({
+    const result = graphWorkflowAgentSessionStateSchema.safeParse({
       engine: "codex",
       lane: "context_validator",
       contextId: "ctx-1",
@@ -1116,7 +1119,7 @@ describe("graphWorkflowLaneStateSchema", () => {
   });
 
   it("parses a codex implementer lane state with workflowConversationId", () => {
-    const result = graphWorkflowLaneStateSchema.safeParse({
+    const result = graphWorkflowAgentSessionStateSchema.safeParse({
       engine: "codex",
       lane: "implementer",
       contextId: "ctx-1",
@@ -1144,7 +1147,7 @@ describe("graphWorkflowLaneStateSchema", () => {
   });
 
   it("allows a codex implementer lane state to omit sessionRef before the first turn", () => {
-    const result = graphWorkflowLaneStateSchema.safeParse({
+    const result = graphWorkflowAgentSessionStateSchema.safeParse({
       engine: "codex",
       lane: "implementer",
       contextId: "ctx-1",
@@ -1162,7 +1165,7 @@ describe("graphWorkflowLaneStateSchema", () => {
   });
 
   it("allows workflowConversationId on claude lane state", () => {
-    const result = graphWorkflowLaneStateSchema.safeParse({
+    const result = graphWorkflowAgentSessionStateSchema.safeParse({
       engine: "claude",
       lane: "implementer",
       contextId: "ctx-1",
@@ -1181,7 +1184,7 @@ describe("graphWorkflowLaneStateSchema", () => {
   });
 
   it("defaults workflowConversationId to undefined when omitted", () => {
-    const result = graphWorkflowLaneStateSchema.safeParse({
+    const result = graphWorkflowAgentSessionStateSchema.safeParse({
       engine: "codex",
       lane: "context_validator",
       contextId: "ctx-1",
@@ -1777,5 +1780,417 @@ describe("graphWorkflowExecutionSchema parallel-execution fields", () => {
     expect(reparsed.contextStates["ctx-2"]?.lastMergeError).toBe(
       "Conflict in src/lib/foo.ts",
     );
+  });
+});
+
+describe("graphWorkflowExecutionLaneStateSchema", () => {
+  const baseValidLane = {
+    laneId: "lane-session",
+    kind: "session" as const,
+    status: "active" as const,
+    branchName: "csm/session-1",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+
+  it("parses a minimal valid session lane and defaults audit/recovery fields", () => {
+    const result =
+      graphWorkflowExecutionLaneStateSchema.safeParse(baseValidLane);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.kind).toBe("session");
+      expect(result.data.worktreePath).toBeNull();
+      expect(result.data.includedContextIds).toEqual([]);
+      expect(result.data.lastCommittingContextId).toBeNull();
+      expect(result.data.commitSnapshots).toEqual([]);
+    }
+  });
+
+  it("parses a fully populated worktree lane with commit snapshots", () => {
+    const result = graphWorkflowExecutionLaneStateSchema.safeParse({
+      laneId: "lane-ctx-1",
+      kind: "worktree",
+      status: "active",
+      worktreePath: "/tmp/.worktrees/ctx-1",
+      branchName: "csm/session-1-ctx-1",
+      includedContextIds: ["ctx-1"],
+      lastCommittingContextId: "ctx-1",
+      commitSnapshots: [
+        {
+          contextId: "ctx-1",
+          sha: "abc1234",
+          committedAt: timestamp,
+        },
+        {
+          contextId: "ctx-1",
+          sha: "def5678",
+          committedAt: timestamp,
+        },
+      ],
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.kind).toBe("worktree");
+      expect(result.data.worktreePath).toBe("/tmp/.worktrees/ctx-1");
+      expect(result.data.commitSnapshots).toHaveLength(2);
+      expect(result.data.commitSnapshots[1]?.sha).toBe("def5678");
+      expect(result.data.lastCommittingContextId).toBe("ctx-1");
+    }
+  });
+
+  it("accepts every lane status enum value", () => {
+    for (const status of ["pending", "active", "merged", "halted"] as const) {
+      const result = graphWorkflowExecutionLaneStateSchema.safeParse({
+        ...baseValidLane,
+        status,
+      });
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it("rejects an unknown lane kind", () => {
+    const result = graphWorkflowExecutionLaneStateSchema.safeParse({
+      ...baseValidLane,
+      kind: "shared",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an unknown lane status", () => {
+    const result = graphWorkflowExecutionLaneStateSchema.safeParse({
+      ...baseValidLane,
+      status: "queued",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a lane with a blank branch name", () => {
+    const result = graphWorkflowExecutionLaneStateSchema.safeParse({
+      ...baseValidLane,
+      branchName: "",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a commit snapshot missing the sha", () => {
+    const result = graphWorkflowExecutionLaneStateSchema.safeParse({
+      ...baseValidLane,
+      commitSnapshots: [
+        {
+          contextId: "ctx-1",
+          committedAt: timestamp,
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a lane missing required laneId", () => {
+    const { laneId: _omit, ...withoutLaneId } = baseValidLane;
+    const result =
+      graphWorkflowExecutionLaneStateSchema.safeParse(withoutLaneId);
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("graphWorkflowExecutionJoinStateSchema", () => {
+  const baseValidJoin = {
+    joinId: "join-1",
+    kind: "context_merge" as const,
+    contextId: "ctx-2",
+    targetLaneId: "lane-session",
+    sourceLaneIds: ["lane-ctx-2"],
+    status: "pending" as const,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+
+  it("parses a minimal valid context_merge join with defaults", () => {
+    const result =
+      graphWorkflowExecutionJoinStateSchema.safeParse(baseValidJoin);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.kind).toBe("context_merge");
+      expect(result.data.errorMessage).toBeNull();
+      expect(result.data.conflicts).toBeNull();
+      expect(result.data.completedAt).toBeNull();
+      expect(result.data.contextId).toBe("ctx-2");
+    }
+  });
+
+  it("parses a final_publish join state with multiple source lanes", () => {
+    const result = graphWorkflowExecutionJoinStateSchema.safeParse({
+      joinId: "join-final",
+      kind: "final_publish",
+      contextId: null,
+      targetLaneId: "lane-session",
+      sourceLaneIds: ["lane-ctx-1", "lane-ctx-2"],
+      status: "running",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.kind).toBe("final_publish");
+      expect(result.data.contextId).toBeNull();
+      expect(result.data.sourceLaneIds).toEqual(["lane-ctx-1", "lane-ctx-2"]);
+    }
+  });
+
+  it("captures conflicts and error details when a join fails", () => {
+    const result = graphWorkflowExecutionJoinStateSchema.safeParse({
+      ...baseValidJoin,
+      status: "conflicts",
+      errorMessage: "Automatic merge failed",
+      conflicts: {
+        files: ["src/lib/foo.ts", "src/lib/bar.ts"],
+        message: "Conflicts in two files",
+      },
+      completedAt: timestamp,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.status).toBe("conflicts");
+      expect(result.data.conflicts?.files).toEqual([
+        "src/lib/foo.ts",
+        "src/lib/bar.ts",
+      ]);
+      expect(result.data.errorMessage).toBe("Automatic merge failed");
+    }
+  });
+
+  it("accepts every join status enum value", () => {
+    for (const status of [
+      "pending",
+      "running",
+      "succeeded",
+      "failed",
+      "conflicts",
+    ] as const) {
+      const result = graphWorkflowExecutionJoinStateSchema.safeParse({
+        ...baseValidJoin,
+        status,
+      });
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it("rejects an unknown join kind", () => {
+    const result = graphWorkflowExecutionJoinStateSchema.safeParse({
+      ...baseValidJoin,
+      kind: "rebase",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a join with an empty sourceLaneIds list", () => {
+    const result = graphWorkflowExecutionJoinStateSchema.safeParse({
+      ...baseValidJoin,
+      sourceLaneIds: [],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a join missing the target lane id", () => {
+    const { targetLaneId: _omit, ...withoutTarget } = baseValidJoin;
+    const result =
+      graphWorkflowExecutionJoinStateSchema.safeParse(withoutTarget);
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an unknown join status", () => {
+    const result = graphWorkflowExecutionJoinStateSchema.safeParse({
+      ...baseValidJoin,
+      status: "queued",
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("graphWorkflowExecutionContextStateSchema lane/join references", () => {
+  const baseContextState = {
+    contextId: "ctx-1",
+    status: "ready" as const,
+    totalTaskCount: 1,
+  };
+
+  it("defaults laneId and joinId to null for legacy context state", () => {
+    const result =
+      graphWorkflowExecutionContextStateSchema.safeParse(baseContextState);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.laneId).toBeNull();
+      expect(result.data.joinId).toBeNull();
+    }
+  });
+
+  it("parses populated laneId and joinId references", () => {
+    const result = graphWorkflowExecutionContextStateSchema.safeParse({
+      ...baseContextState,
+      laneId: "lane-ctx-1",
+      joinId: "join-ctx-1",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.laneId).toBe("lane-ctx-1");
+      expect(result.data.joinId).toBe("join-ctx-1");
+    }
+  });
+
+  it("rejects a blank laneId reference", () => {
+    const result = graphWorkflowExecutionContextStateSchema.safeParse({
+      ...baseContextState,
+      laneId: "",
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("graphWorkflowContextStatusSchema lifecycle constraints", () => {
+  it("accepts the five permitted lifecycle statuses", () => {
+    for (const status of [
+      "pending",
+      "ready",
+      "running",
+      "completed",
+      "halted",
+    ] as const) {
+      const result = graphWorkflowContextStatusSchema.safeParse(status);
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it("rejects 'queued' as a context lifecycle status", () => {
+    const result = graphWorkflowContextStatusSchema.safeParse("queued");
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects 'waiting' to confirm wait state is derived, not persisted", () => {
+    const result = graphWorkflowContextStatusSchema.safeParse("waiting");
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("graphWorkflowExecutionSchema lane/join maps", () => {
+  const minimalExecution = {
+    id: "exec-1",
+    seedDefinitionId: "def-1",
+    seedDefinitionRevision: 1,
+    workingDefinition: {
+      schemaVersion: 1,
+      executionContexts: [],
+      tasks: [],
+      edges: [],
+    },
+    status: "running" as const,
+    startedAt: timestamp,
+  };
+
+  it("defaults executionLanes and joins to empty maps for legacy executions", () => {
+    const result = graphWorkflowExecutionSchema.safeParse(minimalExecution);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.executionLanes).toEqual({});
+      expect(result.data.joins).toEqual({});
+    }
+  });
+
+  it("rejects an unrecognised top-level field via the schema's strict context lifecycle (queued not allowed in context state)", () => {
+    const result = graphWorkflowExecutionSchema.safeParse({
+      ...minimalExecution,
+      contextStates: {
+        "ctx-1": {
+          contextId: "ctx-1",
+          status: "queued",
+          totalTaskCount: 1,
+        },
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("persists executionLanes and joins keyed by id with cross-references", () => {
+    const result = graphWorkflowExecutionSchema.safeParse({
+      ...minimalExecution,
+      executionLanes: {
+        "lane-session": {
+          laneId: "lane-session",
+          kind: "session",
+          status: "active",
+          branchName: "csm/session-1",
+          includedContextIds: ["ctx-1"],
+          lastCommittingContextId: "ctx-1",
+          commitSnapshots: [
+            {
+              contextId: "ctx-1",
+              sha: "abc1234",
+              committedAt: timestamp,
+            },
+          ],
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+        "lane-ctx-2": {
+          laneId: "lane-ctx-2",
+          kind: "worktree",
+          status: "pending",
+          worktreePath: "/tmp/.worktrees/ctx-2",
+          branchName: "csm/session-1-ctx-2",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      },
+      joins: {
+        "join-final": {
+          joinId: "join-final",
+          kind: "final_publish",
+          contextId: null,
+          targetLaneId: "lane-session",
+          sourceLaneIds: ["lane-session", "lane-ctx-2"],
+          status: "pending",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      },
+      contextStates: {
+        "ctx-1": {
+          contextId: "ctx-1",
+          status: "completed",
+          totalTaskCount: 1,
+          laneId: "lane-session",
+          joinId: null,
+        },
+        "ctx-2": {
+          contextId: "ctx-2",
+          status: "ready",
+          totalTaskCount: 1,
+          laneId: "lane-ctx-2",
+          joinId: "join-final",
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(Object.keys(result.data.executionLanes).sort()).toEqual([
+        "lane-ctx-2",
+        "lane-session",
+      ]);
+      expect(result.data.joins["join-final"]?.kind).toBe("final_publish");
+      expect(result.data.contextStates["ctx-2"]?.joinId).toBe("join-final");
+      expect(result.data.contextStates["ctx-1"]?.laneId).toBe("lane-session");
+    }
+  });
+
+  it("does not expose a waitReason field — wait state must be derived", () => {
+    const parsed = graphWorkflowExecutionSchema.parse(minimalExecution);
+    expect(parsed).not.toHaveProperty("waitReason");
+    const ctxState = graphWorkflowExecutionContextStateSchema.parse({
+      contextId: "ctx-1",
+      status: "ready",
+      totalTaskCount: 1,
+    });
+    expect(ctxState).not.toHaveProperty("waitReason");
   });
 });

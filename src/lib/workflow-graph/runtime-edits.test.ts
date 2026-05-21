@@ -4,6 +4,7 @@ import {
   GraphWorkflowRuntimeEditValidationError,
   createGraphWorkflowRuntimeEditService,
 } from "./runtime-edits";
+import type { GraphWorkflowExecution } from "@/types";
 
 describe("graph workflow runtime edit service", () => {
   it("appends agent-created tasks to the active execution context", () => {
@@ -27,6 +28,8 @@ describe("graph workflow runtime edit service", () => {
           branchName: null,
           isolation: "session",
           batchId: null,
+          laneId: null,
+          joinId: null,
           mergeStatus: "not-applicable",
           cleanupStatus: "not-applicable",
           lastMergeError: null,
@@ -42,6 +45,8 @@ describe("graph workflow runtime edit service", () => {
           branchName: null,
           isolation: "session",
           batchId: null,
+          laneId: null,
+          joinId: null,
           mergeStatus: "not-applicable",
           cleanupStatus: "not-applicable",
           lastMergeError: null,
@@ -57,6 +62,8 @@ describe("graph workflow runtime edit service", () => {
           branchName: null,
           isolation: "session",
           batchId: null,
+          laneId: null,
+          joinId: null,
           mergeStatus: "not-applicable",
           cleanupStatus: "not-applicable",
           lastMergeError: null,
@@ -115,6 +122,8 @@ describe("graph workflow runtime edit service", () => {
           branchName: null,
           isolation: "session",
           batchId: null,
+          laneId: null,
+          joinId: null,
           mergeStatus: "not-applicable",
           cleanupStatus: "not-applicable",
           lastMergeError: null,
@@ -130,6 +139,8 @@ describe("graph workflow runtime edit service", () => {
           branchName: null,
           isolation: "session",
           batchId: null,
+          laneId: null,
+          joinId: null,
           mergeStatus: "not-applicable",
           cleanupStatus: "not-applicable",
           lastMergeError: null,
@@ -145,6 +156,8 @@ describe("graph workflow runtime edit service", () => {
           branchName: null,
           isolation: "session",
           batchId: null,
+          laneId: null,
+          joinId: null,
           mergeStatus: "not-applicable",
           cleanupStatus: "not-applicable",
           lastMergeError: null,
@@ -408,4 +421,121 @@ describe("graph workflow runtime edit service", () => {
       ).toBe("Read the relevant files and summarize the risks.");
     },
   );
+
+  describe("lane plan recompute", () => {
+    function fanOutExecution(): GraphWorkflowExecution {
+      const base = createWorkflowExecution();
+      return createWorkflowExecution({
+        status: "paused",
+        workingDefinition: {
+          ...base.workingDefinition,
+          edges: [
+            {
+              id: "edge-plan-implement",
+              sourceContextId: "context-plan",
+              targetContextId: "context-implement",
+            },
+            {
+              id: "edge-plan-verify",
+              sourceContextId: "context-plan",
+              targetContextId: "context-verify",
+            },
+          ],
+        },
+        // Stale plan: marks context-implement as inheritor. Adding tasks to
+        // context-verify must flip the tiebreaker so the recompute updates
+        // this to context-verify.
+        lanePlan: {
+          continuationMap: { "context-plan": "context-implement" },
+          longestDownstreamPath: {
+            "context-plan": 1,
+            "context-implement": 0,
+            "context-verify": 0,
+          },
+        },
+      });
+    }
+
+    it("recomputes lanePlan after applyUserEdits when added tasks flip the task-count tiebreaker", () => {
+      let counter = 0;
+      const service = createGraphWorkflowRuntimeEditService({
+        createTaskId() {
+          counter += 1;
+          return `task-user-${counter}`;
+        },
+      });
+      const execution = fanOutExecution();
+
+      const updated = service.applyUserEdits(execution, {
+        operations: [
+          {
+            type: "add",
+            contextId: "context-verify",
+            title: "Extra verify step A",
+            instructions: "Additional verification work.",
+          },
+          {
+            type: "add",
+            contextId: "context-verify",
+            title: "Extra verify step B",
+            instructions: "More verification work.",
+          },
+        ],
+      });
+
+      // context-verify now has 3 tasks vs context-implement's 1, so the
+      // task-count tiebreaker elects context-verify as the inheritor.
+      expect(updated.lanePlan.continuationMap["context-plan"]).toBe(
+        "context-verify",
+      );
+      // Sanity-check that the affected longest-path entry stays at 0 for
+      // the leaf siblings (no new edges were added).
+      expect(updated.lanePlan.longestDownstreamPath["context-verify"]).toBe(0);
+      expect(updated.lanePlan.longestDownstreamPath["context-implement"]).toBe(
+        0,
+      );
+    });
+
+    it("recomputes lanePlan after applyAgentTaskAdd so a stale continuation entry is rewritten", () => {
+      const service = createGraphWorkflowRuntimeEditService({
+        createTaskId() {
+          return "task-agent-extra";
+        },
+      });
+      const base = fanOutExecution();
+      const execution: GraphWorkflowExecution = {
+        ...base,
+        status: "running",
+        activeContextIds: ["context-verify"],
+        workingDefinition: {
+          ...base.workingDefinition,
+          // Enable agent task add on context-verify so applyAgentTaskAdd is
+          // permitted to mutate it.
+          executionContexts: base.workingDefinition.executionContexts.map(
+            (ctx) =>
+              ctx.id === "context-verify"
+                ? { ...ctx, mutability: { allowAgentTaskAdd: true } }
+                : ctx,
+          ),
+        },
+        contextStates: {
+          ...base.contextStates,
+          "context-verify": {
+            ...base.contextStates["context-verify"]!,
+            status: "running",
+          },
+        },
+      };
+
+      const updated = service.applyAgentTaskAdd(execution, "context-verify", {
+        title: "Verify subtask discovered mid-run",
+        instructions: "Cover the newly identified case.",
+      });
+
+      // context-verify gains a task, tipping the task-count tiebreaker.
+      expect(updated.lanePlan.continuationMap["context-plan"]).toBe(
+        "context-verify",
+      );
+    });
+  });
 });

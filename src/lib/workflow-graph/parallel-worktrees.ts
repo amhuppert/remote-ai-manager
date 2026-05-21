@@ -15,7 +15,7 @@ const defaultExecFileAsync = promisify(execFile);
 
 const defaultLogger = createLogger("graph-workflow-parallel-worktrees");
 
-const CONTEXT_ID_PATTERN = /^[A-Za-z0-9_.-]+$/;
+const LANE_ID_PATTERN = /^[A-Za-z0-9_.-]+$/;
 
 export interface ProvisionInput {
   projectPath: string;
@@ -23,6 +23,14 @@ export interface ProvisionInput {
   sessionDir: string;
   sessionBranch: string;
   contextId: string;
+}
+
+export interface ProvisionLaneInput {
+  projectPath: string;
+  sessionName: string;
+  sessionDir: string;
+  sessionBranch: string;
+  laneId: string;
 }
 
 export interface ProvisionResult {
@@ -44,6 +52,12 @@ export interface ParallelWorktrees {
   provision(input: ProvisionInput): Promise<ProvisionResult>;
   provisionBatch(inputs: ProvisionInput[]): Promise<ProvisionResult[]>;
   dispose(input: DisposeInput): Promise<DisposeResult>;
+  /** Provision a worktree for a stable lane id (generalization of provision). */
+  provisionLane(input: ProvisionLaneInput): Promise<ProvisionResult>;
+  /** Provision a batch of lane worktrees, rolling back on failure. */
+  provisionLaneBatch(inputs: ProvisionLaneInput[]): Promise<ProvisionResult[]>;
+  /** Dispose a lane worktree. Identical disk-side semantics to dispose. */
+  disposeLane(input: DisposeInput): Promise<DisposeResult>;
 }
 
 export interface ParallelWorktreesDeps {
@@ -55,41 +69,71 @@ export interface ParallelWorktreesDeps {
   logger?: Logger;
 }
 
-export function validateContextId(contextId: string): void {
-  if (!CONTEXT_ID_PATTERN.test(contextId)) {
+/**
+ * Validate that a lane id is safe to splice into a git branch name and a
+ * filesystem path. Lane ids and per-context ids share the same constraints —
+ * one-context lanes have laneId === contextId, so this single validator
+ * covers both. The validator is exported under a context-named alias so
+ * existing callers continue to compile while the workflow generalizes to
+ * lanes.
+ */
+export function validateLaneId(laneId: string): void {
+  if (!LANE_ID_PATTERN.test(laneId)) {
     throw new Error(
-      `Invalid contextId ${JSON.stringify(contextId)}: must match /^[A-Za-z0-9_.-]+$/`,
+      `Invalid laneId ${JSON.stringify(laneId)}: must match /^[A-Za-z0-9_.-]+$/`,
     );
   }
-  if (contextId.startsWith(".") || contextId.startsWith("-")) {
+  if (laneId.startsWith(".") || laneId.startsWith("-")) {
     throw new Error(
-      `Invalid contextId ${JSON.stringify(contextId)}: must not start with '.' or '-'`,
+      `Invalid laneId ${JSON.stringify(laneId)}: must not start with '.' or '-'`,
     );
   }
-  if (contextId.includes("..")) {
+  if (laneId.includes("..")) {
     throw new Error(
-      `Invalid contextId ${JSON.stringify(contextId)}: must not contain '..'`,
+      `Invalid laneId ${JSON.stringify(laneId)}: must not contain '..'`,
     );
   }
-  if (contextId.endsWith(".") || contextId.endsWith("-")) {
+  if (laneId.endsWith(".") || laneId.endsWith("-")) {
     throw new Error(
-      `Invalid contextId ${JSON.stringify(contextId)}: must not end with '.' or '-'`,
+      `Invalid laneId ${JSON.stringify(laneId)}: must not end with '.' or '-'`,
     );
   }
-  if (contextId.endsWith(".lock")) {
+  if (laneId.endsWith(".lock")) {
     throw new Error(
-      `Invalid contextId ${JSON.stringify(contextId)}: must not end with '.lock'`,
+      `Invalid laneId ${JSON.stringify(laneId)}: must not end with '.lock'`,
     );
   }
 }
 
-function deriveTargets(input: ProvisionInput): ProvisionResult {
+/** Backward-compatible alias retained while callers migrate to validateLaneId. */
+export function validateContextId(contextId: string): void {
+  try {
+    validateLaneId(contextId);
+  } catch (err) {
+    if (err instanceof Error) {
+      throw new Error(err.message.replace(/laneId/g, "contextId"));
+    }
+    throw err;
+  }
+}
+
+/**
+ * Compute deterministic, lane-stable branch and worktree paths from a lane id.
+ * Per-context worktrees in single-context lanes use laneId === contextId, so
+ * the names match the prior per-context derivation byte-for-byte. Pure helper
+ * — no git or filesystem side effects.
+ */
+export function deriveLaneTargets(input: {
+  projectPath: string;
+  sessionDir: string;
+  laneId: string;
+}): ProvisionResult {
   const worktreePath = path.join(
     input.projectPath,
     ".worktrees",
-    `${input.sessionDir}.${input.contextId}`,
+    `${input.sessionDir}.${input.laneId}`,
   );
-  const branchName = `csm/${input.sessionDir}-${input.contextId}`;
+  const branchName = `csm/${input.sessionDir}-${input.laneId}`;
   return { worktreePath, branchName };
 }
 
@@ -127,9 +171,15 @@ export function createParallelWorktrees(
     return null;
   }
 
-  async function provision(input: ProvisionInput): Promise<ProvisionResult> {
-    validateContextId(input.contextId);
-    const targets = deriveTargets(input);
+  async function provisionLane(
+    input: ProvisionLaneInput,
+  ): Promise<ProvisionResult> {
+    validateLaneId(input.laneId);
+    const targets = deriveLaneTargets({
+      projectPath: input.projectPath,
+      sessionDir: input.sessionDir,
+      laneId: input.laneId,
+    });
 
     if (existsSync(targets.worktreePath)) {
       const existingBranch = await getBranchForWorktree(
@@ -140,7 +190,7 @@ export function createParallelWorktrees(
         logger.info("provision_idempotent", {
           projectPath: input.projectPath,
           sessionDir: input.sessionDir,
-          contextId: input.contextId,
+          laneId: input.laneId,
           worktreePath: targets.worktreePath,
           branchName: targets.branchName,
         });
@@ -156,7 +206,7 @@ export function createParallelWorktrees(
     logger.info("provision_start", {
       projectPath: input.projectPath,
       sessionDir: input.sessionDir,
-      contextId: input.contextId,
+      laneId: input.laneId,
       worktreePath: targets.worktreePath,
       branchName: targets.branchName,
       sessionBranch: input.sessionBranch,
@@ -174,10 +224,24 @@ export function createParallelWorktrees(
       input.projectPath,
     );
 
-    await reportDirtyOnCreate(input, targets);
+    await reportDirtyOnCreate(
+      {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        laneId: input.laneId,
+      },
+      targets,
+    );
 
     try {
-      await runInitScript(input, targets);
+      await runInitScript(
+        {
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          laneId: input.laneId,
+        },
+        targets,
+      );
     } catch (err) {
       await dispose({
         projectPath: input.projectPath,
@@ -190,27 +254,43 @@ export function createParallelWorktrees(
     return targets;
   }
 
+  async function provision(input: ProvisionInput): Promise<ProvisionResult> {
+    return provisionLane({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      sessionDir: input.sessionDir,
+      sessionBranch: input.sessionBranch,
+      laneId: input.contextId,
+    });
+  }
+
+  interface InitScriptContext {
+    projectPath: string;
+    sessionName: string;
+    laneId: string;
+  }
+
   async function runInitScript(
-    input: ProvisionInput,
+    context: InitScriptContext,
     targets: ProvisionResult,
   ): Promise<void> {
-    const repoConfig = await readRepoConfig(input.projectPath);
+    const repoConfig = await readRepoConfig(context.projectPath);
     if (!repoConfig?.initScriptPath) {
       return;
     }
 
     const scriptPath = path.isAbsolute(repoConfig.initScriptPath)
       ? repoConfig.initScriptPath
-      : path.join(input.projectPath, repoConfig.initScriptPath);
+      : path.join(context.projectPath, repoConfig.initScriptPath);
 
     if (!existsSync(scriptPath)) {
       throw new Error(`Init script not found: ${scriptPath}`);
     }
 
     logger.info("init_script_start", {
-      projectPath: input.projectPath,
-      sessionName: input.sessionName,
-      contextId: input.contextId,
+      projectPath: context.projectPath,
+      sessionName: context.sessionName,
+      laneId: context.laneId,
       worktreePath: targets.worktreePath,
       scriptPath,
     });
@@ -220,19 +300,22 @@ export function createParallelWorktrees(
         cwd: targets.worktreePath,
         env: {
           ...buildChildEnv(),
-          PROJECT_ROOT: input.projectPath,
-          CLAUDE_PROJECT_DIR: input.projectPath,
+          PROJECT_ROOT: context.projectPath,
+          CLAUDE_PROJECT_DIR: context.projectPath,
           WORKTREE_PATH: targets.worktreePath,
-          SESSION_NAME: input.sessionName,
+          SESSION_NAME: context.sessionName,
           BRANCH_NAME: targets.branchName,
-          CONTEXT_ID: input.contextId,
+          // Per-context init scripts read CONTEXT_ID. For multi-context lanes,
+          // the lane id is set instead so init can branch on lane identity.
+          CONTEXT_ID: context.laneId,
+          LANE_ID: context.laneId,
         } as NodeJS.ProcessEnv,
       });
     } catch (err) {
       logger.warn("init_script_failed", {
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-        contextId: input.contextId,
+        projectPath: context.projectPath,
+        sessionName: context.sessionName,
+        laneId: context.laneId,
         scriptPath,
         reason: getErrorMessage(err),
       });
@@ -240,9 +323,9 @@ export function createParallelWorktrees(
     }
 
     logger.info("init_script_complete", {
-      projectPath: input.projectPath,
-      sessionName: input.sessionName,
-      contextId: input.contextId,
+      projectPath: context.projectPath,
+      sessionName: context.sessionName,
+      laneId: context.laneId,
       scriptPath,
     });
   }
@@ -255,7 +338,7 @@ export function createParallelWorktrees(
    * evidence before shipping repair logic.
    */
   async function reportDirtyOnCreate(
-    input: ProvisionInput,
+    context: { projectPath: string; sessionName: string; laneId: string },
     targets: ProvisionResult,
   ): Promise<void> {
     let dirtyPaths: DirtyPath[];
@@ -269,33 +352,35 @@ export function createParallelWorktrees(
       logger.warn("provision_dirty_check_failed", {
         worktreePath: targets.worktreePath,
         branchName: targets.branchName,
-        contextId: input.contextId,
+        laneId: context.laneId,
+        contextId: context.laneId,
         error: getErrorMessage(err),
       });
       return;
     }
     if (dirtyPaths.length === 0) return;
     logger.warn("provision_dirty_after_create", {
-      projectPath: input.projectPath,
+      projectPath: context.projectPath,
       worktreePath: targets.worktreePath,
       branchName: targets.branchName,
-      contextId: input.contextId,
+      laneId: context.laneId,
+      contextId: context.laneId,
       dirtyCount: dirtyPaths.length,
       dirtyPaths: dirtyPaths.slice(0, 5),
     });
   }
 
-  async function provisionBatch(
-    inputs: ProvisionInput[],
+  async function provisionLaneBatch(
+    inputs: ProvisionLaneInput[],
   ): Promise<ProvisionResult[]> {
     for (const input of inputs) {
-      validateContextId(input.contextId);
+      validateLaneId(input.laneId);
     }
     const created: ProvisionResult[] = [];
-    const createdInputs: ProvisionInput[] = [];
+    const createdInputs: ProvisionLaneInput[] = [];
     try {
       for (const input of inputs) {
-        const result = await provision(input);
+        const result = await provisionLane(input);
         created.push(result);
         createdInputs.push(input);
       }
@@ -306,7 +391,11 @@ export function createParallelWorktrees(
         reason: getErrorMessage(err),
       });
       for (const input of createdInputs) {
-        const targets = deriveTargets(input);
+        const targets = deriveLaneTargets({
+          projectPath: input.projectPath,
+          sessionDir: input.sessionDir,
+          laneId: input.laneId,
+        });
         await dispose({
           projectPath: input.projectPath,
           worktreePath: targets.worktreePath,
@@ -315,6 +404,20 @@ export function createParallelWorktrees(
       }
       throw err;
     }
+  }
+
+  async function provisionBatch(
+    inputs: ProvisionInput[],
+  ): Promise<ProvisionResult[]> {
+    return provisionLaneBatch(
+      inputs.map((input) => ({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        sessionDir: input.sessionDir,
+        sessionBranch: input.sessionBranch,
+        laneId: input.contextId,
+      })),
+    );
   }
 
   async function dispose(input: DisposeInput): Promise<DisposeResult> {
@@ -378,5 +481,16 @@ export function createParallelWorktrees(
     return { status: "removed" };
   }
 
-  return { provision, provisionBatch, dispose };
+  async function disposeLane(input: DisposeInput): Promise<DisposeResult> {
+    return dispose(input);
+  }
+
+  return {
+    provision,
+    provisionBatch,
+    dispose,
+    provisionLane,
+    provisionLaneBatch,
+    disposeLane,
+  };
 }

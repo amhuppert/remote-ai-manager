@@ -61,6 +61,7 @@ import {
   type GraphWorkflowExecutionEventPublisherDeps,
 } from "@/lib/workflow-graph/execution-events";
 import { createScriptValidatorRunner } from "@/lib/workflow-graph/script-validator-runner";
+import { applyJoinProgress } from "@/lib/workflow-graph/lane-join";
 import {
   createWorkflowExecution,
   createResolvedWorkflowDefinition,
@@ -160,6 +161,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
           workflowStatus: status,
           activeContextIds: nextExecution.activeContextIds,
           activeBatchIds: [],
+          activeJoinIds: [],
           haltReason: null,
           pendingHaltReason: null,
           secondaryHaltReasons: [],
@@ -827,11 +829,27 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
         provision: vi.fn(),
         provisionBatch: vi.fn(),
         dispose: vi.fn(),
+        provisionLane: vi.fn(),
+        provisionLaneBatch: vi.fn(),
+        disposeLane: vi.fn(),
       },
       mergeMutex: { withMergeMutex: async (_k, fn) => fn() },
       sessionGitLock: { withSessionGitLock: async (_k, fn) => fn() },
       mergeRunner: { run: vi.fn() },
+      joinRunner: {
+        async run({ joinId, mutateActive }) {
+          await mutateActive((e) =>
+            applyJoinProgress(e, joinId, new Date().toISOString(), {
+              status: "succeeded",
+            }),
+          );
+          return { status: "succeeded" };
+        },
+      },
       soloContextCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      laneCommitter: {
         commit: async () => ({ status: "skipped" }),
       },
       executionTargetResolver: {
@@ -839,6 +857,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
           worktreePath: sessionStub.worktreePath,
           branchName: sessionStub.branchName,
           isolation: "session",
+          laneId: null,
         }),
       },
       getSession: async () => sessionStub as never,

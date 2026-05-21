@@ -1597,6 +1597,16 @@ export const graphWorkflowHaltReasonSchema = z.discriminatedUnion("type", [
     conflictFiles: z.array(z.string()).default([]),
   }),
   z.object({
+    type: z.literal("join_failure"),
+    joinId: z.string().trim().min(1),
+    joinKind: z.enum(["context_merge", "final_publish"]),
+    contextId: z.string().trim().min(1).nullable().default(null),
+    sourceLaneIds: z.array(z.string().trim().min(1)).min(1),
+    targetLaneId: z.string().trim().min(1),
+    message: z.string(),
+    conflictFiles: z.array(z.string()).default([]),
+  }),
+  z.object({
     type: z.literal("merge_precondition_failed"),
     contextId: z.string().trim().min(1),
     targetBranch: z.string().trim().min(1),
@@ -1648,6 +1658,116 @@ export type GraphWorkflowHaltReason = z.infer<
   typeof graphWorkflowHaltReasonSchema
 >;
 
+export const graphWorkflowExecutionLaneIdSchema = z.string().trim().min(1);
+export type GraphWorkflowExecutionLaneId = z.infer<
+  typeof graphWorkflowExecutionLaneIdSchema
+>;
+
+export const graphWorkflowExecutionLaneKindSchema = z.enum([
+  "session",
+  "worktree",
+]);
+export type GraphWorkflowExecutionLaneKind = z.infer<
+  typeof graphWorkflowExecutionLaneKindSchema
+>;
+
+export const graphWorkflowExecutionLaneStatusSchema = z.enum([
+  "pending",
+  "active",
+  "merged",
+  "halted",
+]);
+export type GraphWorkflowExecutionLaneStatus = z.infer<
+  typeof graphWorkflowExecutionLaneStatusSchema
+>;
+
+// Append-only audit/recovery record of commits on a lane. Git remains the
+// authoritative source for the lane's current HEAD; these snapshots exist to
+// reconstruct lane history and to support recovery after crashes.
+export const graphWorkflowExecutionLaneCommitSnapshotSchema = z.object({
+  contextId: z.string().trim().min(1),
+  sha: z.string().trim().min(1),
+  committedAt: z.string(),
+});
+export type GraphWorkflowExecutionLaneCommitSnapshot = z.infer<
+  typeof graphWorkflowExecutionLaneCommitSnapshotSchema
+>;
+
+export const graphWorkflowExecutionLaneStateSchema = z.object({
+  laneId: graphWorkflowExecutionLaneIdSchema,
+  kind: graphWorkflowExecutionLaneKindSchema,
+  status: graphWorkflowExecutionLaneStatusSchema,
+  worktreePath: z.string().nullable().default(null),
+  branchName: z.string().trim().min(1),
+  includedContextIds: z.array(z.string().trim().min(1)).default([]),
+  lastCommittingContextId: z.string().trim().min(1).nullable().default(null),
+  commitSnapshots: z
+    .array(graphWorkflowExecutionLaneCommitSnapshotSchema)
+    .default([]),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type GraphWorkflowExecutionLaneState = z.infer<
+  typeof graphWorkflowExecutionLaneStateSchema
+>;
+
+export const graphWorkflowExecutionJoinIdSchema = z.string().trim().min(1);
+export type GraphWorkflowExecutionJoinId = z.infer<
+  typeof graphWorkflowExecutionJoinIdSchema
+>;
+
+export const graphWorkflowExecutionJoinKindSchema = z.enum([
+  "context_merge",
+  "final_publish",
+]);
+export type GraphWorkflowExecutionJoinKind = z.infer<
+  typeof graphWorkflowExecutionJoinKindSchema
+>;
+
+export const graphWorkflowExecutionJoinStatusSchema = z.enum([
+  "pending",
+  "running",
+  "succeeded",
+  "failed",
+  "conflicts",
+]);
+export type GraphWorkflowExecutionJoinStatus = z.infer<
+  typeof graphWorkflowExecutionJoinStatusSchema
+>;
+
+export const graphWorkflowExecutionJoinConflictDetailSchema = z.object({
+  files: z.array(z.string().trim().min(1)).default([]),
+  message: z.string().nullable().default(null),
+});
+export type GraphWorkflowExecutionJoinConflictDetail = z.infer<
+  typeof graphWorkflowExecutionJoinConflictDetailSchema
+>;
+
+export const graphWorkflowExecutionJoinStateSchema = z.object({
+  joinId: graphWorkflowExecutionJoinIdSchema,
+  kind: graphWorkflowExecutionJoinKindSchema,
+  // context_merge joins are anchored to the joining context. final_publish joins
+  // orchestrate the workflow-wide publish and are not tied to a single context.
+  contextId: z.string().trim().min(1).nullable().default(null),
+  targetLaneId: graphWorkflowExecutionLaneIdSchema,
+  sourceLaneIds: z.array(graphWorkflowExecutionLaneIdSchema).min(1),
+  // Per-source progress for resume-safety. Each merged source lane is appended
+  // here after the merge runner reports success (including no-op merges). The
+  // runner skips lanes already present here on resume.
+  mergedSourceLaneIds: z.array(graphWorkflowExecutionLaneIdSchema).default([]),
+  status: graphWorkflowExecutionJoinStatusSchema,
+  errorMessage: z.string().nullable().default(null),
+  conflicts: graphWorkflowExecutionJoinConflictDetailSchema
+    .nullable()
+    .default(null),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  completedAt: z.string().nullable().default(null),
+});
+export type GraphWorkflowExecutionJoinState = z.infer<
+  typeof graphWorkflowExecutionJoinStateSchema
+>;
+
 export const graphWorkflowExecutionContextStateSchema = z.object({
   contextId: z.string().trim().min(1),
   status: graphWorkflowContextStatusSchema,
@@ -1659,6 +1779,8 @@ export const graphWorkflowExecutionContextStateSchema = z.object({
   branchName: z.string().nullable().default(null),
   isolation: z.enum(["session", "worktree"]).default("session"),
   batchId: z.string().nullable().default(null),
+  laneId: graphWorkflowExecutionLaneIdSchema.nullable().default(null),
+  joinId: graphWorkflowExecutionJoinIdSchema.nullable().default(null),
   mergeStatus: z
     .enum([
       "not-applicable",
@@ -1715,6 +1837,7 @@ export const graphWorkflowStatusEventSchema = z.object({
   workflowStatus: graphWorkflowStatusSchema,
   activeContextIds: z.array(z.string()).default([]),
   activeBatchIds: z.array(z.string()).default([]),
+  activeJoinIds: z.array(z.string()).default([]),
   haltReason: graphWorkflowHaltReasonSchema.nullable().default(null),
   pendingHaltReason: graphWorkflowHaltReasonSchema.nullable().default(null),
   secondaryHaltReasons: z.array(graphWorkflowHaltReasonSchema).default([]),
@@ -1913,6 +2036,42 @@ export type GraphWorkflowSharedDocumentsUpdatedEvent = z.infer<
   typeof graphWorkflowSharedDocumentsUpdatedEventSchema
 >;
 
+export const graphWorkflowLaneStatusEventSchema = z.object({
+  type: z.literal("graph-workflow-lane-status"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  laneId: graphWorkflowExecutionLaneIdSchema,
+  kind: graphWorkflowExecutionLaneKindSchema,
+  status: graphWorkflowExecutionLaneStatusSchema,
+  branchName: z.string(),
+  worktreePath: z.string().nullable(),
+  includedContextIds: z.array(z.string()),
+  lastCommittingContextId: z.string().nullable(),
+});
+export type GraphWorkflowLaneStatusEvent = z.infer<
+  typeof graphWorkflowLaneStatusEventSchema
+>;
+
+export const graphWorkflowJoinStatusEventSchema = z.object({
+  type: z.literal("graph-workflow-join-status"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  joinId: graphWorkflowExecutionJoinIdSchema,
+  kind: graphWorkflowExecutionJoinKindSchema,
+  contextId: z.string().nullable(),
+  status: graphWorkflowExecutionJoinStatusSchema,
+  sourceLaneIds: z.array(graphWorkflowExecutionLaneIdSchema),
+  mergedSourceLaneIds: z.array(graphWorkflowExecutionLaneIdSchema),
+  targetLaneId: graphWorkflowExecutionLaneIdSchema,
+  errorMessage: z.string().nullable(),
+  conflicts: graphWorkflowExecutionJoinConflictDetailSchema.nullable(),
+});
+export type GraphWorkflowJoinStatusEvent = z.infer<
+  typeof graphWorkflowJoinStatusEventSchema
+>;
+
 export const graphWorkflowSseEventSchema = z.discriminatedUnion("type", [
   graphWorkflowStatusEventSchema,
   graphWorkflowContextStatusEventSchema,
@@ -1923,6 +2082,8 @@ export const graphWorkflowSseEventSchema = z.discriminatedUnion("type", [
   graphWorkflowPendingHaltReasonEventSchema,
   graphWorkflowMergeStatusEventSchema,
   graphWorkflowBatchScheduledEventSchema,
+  graphWorkflowLaneStatusEventSchema,
+  graphWorkflowJoinStatusEventSchema,
 ]);
 export type GraphWorkflowSSEEvent = z.infer<typeof graphWorkflowSseEventSchema>;
 
@@ -1944,46 +2105,63 @@ export type ResetExecutionContextRequest = z.infer<
 >;
 
 // ============================================================
-// Lane Runtime State
+// Agent-Session Runtime State
 // ============================================================
 
-const graphWorkflowLaneTurnUsageSchema = z.object({
+const graphWorkflowAgentSessionTurnUsageSchema = z.object({
   inputTokens: z.number().int().min(0),
   cachedInputTokens: z.number().int().min(0),
   outputTokens: z.number().int().min(0),
 });
-export type GraphWorkflowLaneTurnUsage = z.infer<
-  typeof graphWorkflowLaneTurnUsageSchema
+export type GraphWorkflowAgentSessionTurnUsage = z.infer<
+  typeof graphWorkflowAgentSessionTurnUsageSchema
 >;
 
-export const graphWorkflowLaneStateSchema = z.discriminatedUnion("engine", [
-  z.object({
-    lane: graphWorkflowLaneKindSchema,
-    contextId: z.string().trim().min(1),
-    engine: z.literal("claude"),
-    workflowConversationId: z.string().trim().min(1).optional(),
-    sessionRef: graphWorkflowExecutionSessionRefSchema,
-    lastContextTokens: z.number().int().nullable().default(null),
-    lastContextWindowMax: z.number().int().nullable().default(null),
-    rotateBeforeNextTurn: z.boolean().default(false),
-    limitEvaluation: z.enum(["disabled", "supported"]),
-    lastUsedAt: z.string(),
-  }),
-  z.object({
-    lane: graphWorkflowLaneKindSchema,
-    contextId: z.string().trim().min(1),
-    engine: z.literal("codex"),
-    workflowConversationId: z.string().trim().min(1).optional(),
-    sessionRef: graphWorkflowExecutionSessionRefSchema.optional(),
-    lastTurnUsage: graphWorkflowLaneTurnUsageSchema.nullable().default(null),
-    rotateBeforeNextTurn: z.boolean().default(false),
-    limitEvaluation: z.enum(["disabled", "unsupported"]),
-    lastUsedAt: z.string(),
-  }),
-]);
-export type GraphWorkflowLaneState = z.infer<
-  typeof graphWorkflowLaneStateSchema
+export const graphWorkflowAgentSessionStateSchema = z.discriminatedUnion(
+  "engine",
+  [
+    z.object({
+      lane: graphWorkflowLaneKindSchema,
+      contextId: z.string().trim().min(1),
+      engine: z.literal("claude"),
+      workflowConversationId: z.string().trim().min(1).optional(),
+      sessionRef: graphWorkflowExecutionSessionRefSchema,
+      lastContextTokens: z.number().int().nullable().default(null),
+      lastContextWindowMax: z.number().int().nullable().default(null),
+      rotateBeforeNextTurn: z.boolean().default(false),
+      limitEvaluation: z.enum(["disabled", "supported"]),
+      lastUsedAt: z.string(),
+    }),
+    z.object({
+      lane: graphWorkflowLaneKindSchema,
+      contextId: z.string().trim().min(1),
+      engine: z.literal("codex"),
+      workflowConversationId: z.string().trim().min(1).optional(),
+      sessionRef: graphWorkflowExecutionSessionRefSchema.optional(),
+      lastTurnUsage: graphWorkflowAgentSessionTurnUsageSchema
+        .nullable()
+        .default(null),
+      rotateBeforeNextTurn: z.boolean().default(false),
+      limitEvaluation: z.enum(["disabled", "unsupported"]),
+      lastUsedAt: z.string(),
+    }),
+  ],
+);
+export type GraphWorkflowAgentSessionState = z.infer<
+  typeof graphWorkflowAgentSessionStateSchema
 >;
+
+// Advisory lane plan computed at execution seed time. Persists the
+// deterministic continuation choice the scheduler should make at each
+// fan-out point so restarts make the same call. See
+// `src/lib/workflow-graph/lane-plan.ts`.
+export const graphWorkflowLanePlanSchema = z.object({
+  continuationMap: z.record(z.string(), z.string()).default({}),
+  longestDownstreamPath: z
+    .record(z.string(), z.number().int().min(0))
+    .default({}),
+});
+export type GraphWorkflowLanePlan = z.infer<typeof graphWorkflowLanePlanSchema>;
 
 export const graphWorkflowExecutionSchema = z.object({
   id: z.string().trim().min(1),
@@ -1998,8 +2176,21 @@ export const graphWorkflowExecutionSchema = z.object({
   taskStates: z.record(z.string(), graphWorkflowTaskStateSchema).default({}),
   sharedDocuments: z.array(graphWorkflowSharedDocumentEntrySchema).default([]),
   laneStates: z
-    .record(z.string(), z.record(z.string(), graphWorkflowLaneStateSchema))
+    .record(
+      z.string(),
+      z.record(z.string(), graphWorkflowAgentSessionStateSchema),
+    )
     .default({}),
+  executionLanes: z
+    .record(z.string(), graphWorkflowExecutionLaneStateSchema)
+    .default({}),
+  joins: z
+    .record(z.string(), graphWorkflowExecutionJoinStateSchema)
+    .default({}),
+  lanePlan: graphWorkflowLanePlanSchema.default({
+    continuationMap: {},
+    longestDownstreamPath: {},
+  }),
   machineSnapshot: z.unknown().nullable().default(null),
   history: z.array(graphWorkflowExecutionEventSchema).default([]),
   startedAt: z.string(),
@@ -2940,6 +3131,8 @@ export type SSEEvent =
   | GraphWorkflowPendingHaltReasonEvent
   | GraphWorkflowMergeStatusEvent
   | GraphWorkflowBatchScheduledEvent
+  | GraphWorkflowLaneStatusEvent
+  | GraphWorkflowJoinStatusEvent
   | DevServerStatusEvent
   | DebugModeStatusEvent
   | DebugLogReceivedEvent

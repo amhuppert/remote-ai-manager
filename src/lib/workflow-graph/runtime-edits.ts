@@ -12,6 +12,7 @@ import {
   validateWorkflowDefinition,
   validateWorkflowRuntimeEdit,
 } from "./validation";
+import { recomputeLanePlanForSubgraph } from "./lane-plan";
 
 const logger = createLogger("graph-workflow-runtime-edits");
 
@@ -263,6 +264,12 @@ export function createGraphWorkflowRuntimeEditService(
       totalTaskCount: contextState.totalTaskCount + 1,
     };
 
+    nextExecution.lanePlan = recomputeLanePlanForSubgraph({
+      definition: nextExecution.workingDefinition,
+      previousPlan: execution.lanePlan,
+      contextIds: [contextId],
+    });
+
     const execLogger = getExecutionLogger(execution.id);
     execLogger?.task(contextId, "task.added_by_agent", {
       taskId,
@@ -304,6 +311,7 @@ export function createGraphWorkflowRuntimeEditService(
     }
 
     const nextExecution = cloneExecution(execution);
+    const touchedContextIds = new Set<string>();
 
     for (const operation of request.operations) {
       if (operation.type === "add") {
@@ -333,6 +341,7 @@ export function createGraphWorkflowRuntimeEditService(
           failureHistory: [],
         };
         syncContextState(nextExecution, operation.contextId);
+        touchedContextIds.add(operation.contextId);
         continue;
       }
 
@@ -367,6 +376,7 @@ export function createGraphWorkflowRuntimeEditService(
           ),
         );
         syncContextState(nextExecution, task.contextId);
+        touchedContextIds.add(task.contextId);
         continue;
       }
 
@@ -440,6 +450,8 @@ export function createGraphWorkflowRuntimeEditService(
       );
       syncContextState(nextExecution, sourceContextId);
       syncContextState(nextExecution, operation.targetContextId);
+      touchedContextIds.add(sourceContextId);
+      touchedContextIds.add(operation.targetContextId);
     }
 
     const semanticValidation = validateWorkflowDefinition(
@@ -449,6 +461,14 @@ export function createGraphWorkflowRuntimeEditService(
       throw new GraphWorkflowRuntimeEditValidationError(
         semanticValidation.errors,
       );
+    }
+
+    if (touchedContextIds.size > 0) {
+      nextExecution.lanePlan = recomputeLanePlanForSubgraph({
+        definition: nextExecution.workingDefinition,
+        previousPlan: execution.lanePlan,
+        contextIds: Array.from(touchedContextIds),
+      });
     }
 
     logger.info("graph-workflow.user_runtime_edit.applied", {

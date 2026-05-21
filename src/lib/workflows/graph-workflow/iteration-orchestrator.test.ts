@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import type { GraphWorkflowExecution, GraphWorkflowLaneState } from "@/types";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowAgentSessionState,
+} from "@/types";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
@@ -121,6 +124,8 @@ function createExecutionWithPlanTasks(
         branchName: null,
         isolation: "session",
         batchId: null,
+        laneId: null,
+        joinId: null,
         mergeStatus: "not-applicable",
         cleanupStatus: "not-applicable",
         lastMergeError: null,
@@ -136,6 +141,8 @@ function createExecutionWithPlanTasks(
         branchName: null,
         isolation: "session",
         batchId: null,
+        laneId: null,
+        joinId: null,
         mergeStatus: "not-applicable",
         cleanupStatus: "not-applicable",
         lastMergeError: null,
@@ -151,6 +158,8 @@ function createExecutionWithPlanTasks(
         branchName: null,
         isolation: "session",
         batchId: null,
+        laneId: null,
+        joinId: null,
         mergeStatus: "not-applicable",
         cleanupStatus: "not-applicable",
         lastMergeError: null,
@@ -1084,7 +1093,7 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
     const createConversation = vi.fn(async () => ({ id: "conv-1" }));
 
     // Simulate validator-runner persisting updated lane states mid-validation
-    const validatorLaneState: GraphWorkflowLaneState = {
+    const validatorLaneState: GraphWorkflowAgentSessionState = {
       engine: "claude",
       lane: "context_validator",
       contextId: "context-plan",
@@ -2146,6 +2155,8 @@ describe("codex implementer continuity", () => {
           branchName: null,
           isolation: "session",
           batchId: null,
+          laneId: null,
+          joinId: null,
           mergeStatus: "not-applicable",
           cleanupStatus: "not-applicable",
           lastMergeError: null,

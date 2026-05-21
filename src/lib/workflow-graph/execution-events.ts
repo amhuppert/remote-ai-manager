@@ -6,7 +6,11 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
   GraphWorkflowExecutionEvent,
+  GraphWorkflowExecutionJoinState,
+  GraphWorkflowExecutionLaneState,
   GraphWorkflowExecutionSessionRef,
+  GraphWorkflowJoinStatusEvent,
+  GraphWorkflowLaneStatusEvent,
   GraphWorkflowMergeStatusEvent,
   GraphWorkflowPendingHaltReasonEvent,
   GraphWorkflowSSEEvent,
@@ -118,6 +122,17 @@ function orderContextIdsByActive(execution: GraphWorkflowExecution): string[] {
   return out;
 }
 
+function deriveActiveJoinIds(execution: GraphWorkflowExecution): string[] {
+  const out: string[] = [];
+  for (const join of Object.values(execution.joins ?? {})) {
+    if (join.status === "pending" || join.status === "running") {
+      out.push(join.joinId);
+    }
+  }
+  out.sort();
+  return out;
+}
+
 function deriveActiveBatchIds(execution: GraphWorkflowExecution): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -129,6 +144,38 @@ function deriveActiveBatchIds(execution: GraphWorkflowExecution): string[] {
     }
   }
   return out;
+}
+
+function laneFieldsChanged(
+  previous: GraphWorkflowExecutionLaneState | undefined,
+  next: GraphWorkflowExecutionLaneState,
+): boolean {
+  if (!previous) return true;
+  return (
+    previous.status !== next.status ||
+    previous.branchName !== next.branchName ||
+    previous.worktreePath !== next.worktreePath ||
+    previous.lastCommittingContextId !== next.lastCommittingContextId ||
+    JSON.stringify(previous.includedContextIds) !==
+      JSON.stringify(next.includedContextIds)
+  );
+}
+
+function joinFieldsChanged(
+  previous: GraphWorkflowExecutionJoinState | undefined,
+  next: GraphWorkflowExecutionJoinState,
+): boolean {
+  if (!previous) return true;
+  return (
+    previous.status !== next.status ||
+    previous.errorMessage !== next.errorMessage ||
+    JSON.stringify(previous.mergedSourceLaneIds) !==
+      JSON.stringify(next.mergedSourceLaneIds) ||
+    JSON.stringify(previous.sourceLaneIds) !==
+      JSON.stringify(next.sourceLaneIds) ||
+    previous.targetLaneId !== next.targetLaneId ||
+    JSON.stringify(previous.conflicts) !== JSON.stringify(next.conflicts)
+  );
 }
 
 function mergeFieldsChanged(
@@ -267,6 +314,10 @@ export function createGraphWorkflowExecutionEventPublisher(
     const previousActiveBatchIds = previousExecution
       ? deriveActiveBatchIds(previousExecution)
       : [];
+    const nextActiveJoinIds = deriveActiveJoinIds(nextExecution);
+    const previousActiveJoinIds = previousExecution
+      ? deriveActiveJoinIds(previousExecution)
+      : [];
 
     if (
       !previousExecution ||
@@ -275,6 +326,8 @@ export function createGraphWorkflowExecutionEventPublisher(
         JSON.stringify(nextExecution.activeContextIds) ||
       JSON.stringify(previousActiveBatchIds) !==
         JSON.stringify(nextActiveBatchIds) ||
+      JSON.stringify(previousActiveJoinIds) !==
+        JSON.stringify(nextActiveJoinIds) ||
       JSON.stringify(previousExecution.haltReason) !==
         JSON.stringify(nextExecution.haltReason) ||
       JSON.stringify(previousExecution.pendingHaltReason) !==
@@ -290,6 +343,7 @@ export function createGraphWorkflowExecutionEventPublisher(
         workflowStatus: nextExecution.status,
         activeContextIds: [...nextExecution.activeContextIds],
         activeBatchIds: nextActiveBatchIds,
+        activeJoinIds: nextActiveJoinIds,
         haltReason: nextExecution.haltReason,
         pendingHaltReason: nextExecution.pendingHaltReason,
         secondaryHaltReasons: [...nextExecution.secondaryHaltReasons],
@@ -457,6 +511,48 @@ export function createGraphWorkflowExecutionEventPublisher(
           lastMergeError: nextContext.lastMergeError,
         } satisfies GraphWorkflowMergeStatusEvent);
       }
+    }
+
+    for (const [laneId, nextLane] of Object.entries(
+      nextExecution.executionLanes,
+    )) {
+      const previousLane = previousExecution?.executionLanes[laneId];
+      if (!laneFieldsChanged(previousLane, nextLane)) continue;
+      events.push({
+        type: "graph-workflow-lane-status",
+        projectName,
+        sessionName: input.sessionName,
+        executionId: nextExecution.id,
+        laneId: nextLane.laneId,
+        kind: nextLane.kind,
+        status: nextLane.status,
+        branchName: nextLane.branchName,
+        worktreePath: nextLane.worktreePath,
+        includedContextIds: [...nextLane.includedContextIds],
+        lastCommittingContextId: nextLane.lastCommittingContextId,
+      } satisfies GraphWorkflowLaneStatusEvent);
+    }
+
+    for (const [joinId, nextJoin] of Object.entries(
+      nextExecution.joins ?? {},
+    )) {
+      const previousJoin = previousExecution?.joins?.[joinId];
+      if (!joinFieldsChanged(previousJoin, nextJoin)) continue;
+      events.push({
+        type: "graph-workflow-join-status",
+        projectName,
+        sessionName: input.sessionName,
+        executionId: nextExecution.id,
+        joinId: nextJoin.joinId,
+        kind: nextJoin.kind,
+        contextId: nextJoin.contextId,
+        status: nextJoin.status,
+        sourceLaneIds: [...nextJoin.sourceLaneIds],
+        mergedSourceLaneIds: [...nextJoin.mergedSourceLaneIds],
+        targetLaneId: nextJoin.targetLaneId,
+        errorMessage: nextJoin.errorMessage,
+        conflicts: nextJoin.conflicts,
+      } satisfies GraphWorkflowJoinStatusEvent);
     }
 
     if (

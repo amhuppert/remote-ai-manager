@@ -14,6 +14,8 @@ import {
   agentBackendSchema,
   globalConfigSchema,
   graphWorkflowCleanupStatusValueSchema,
+  graphWorkflowExecutionJoinKindSchema,
+  graphWorkflowExecutionJoinStatusSchema,
   graphWorkflowHaltReasonSchema,
   graphWorkflowMergeStatusValueSchema,
   rawGlobalConfigSchema,
@@ -137,6 +139,24 @@ export const activeGraphWorkflowContextMergeProgressSchema = z.object({
   lastMergeError: z.string().nullable(),
 });
 
+export const activeGraphWorkflowJoinProgressSchema = z.object({
+  joinId: z.string(),
+  kind: graphWorkflowExecutionJoinKindSchema,
+  contextId: z.string().nullable(),
+  targetLaneId: z.string(),
+  sourceLaneIds: z.array(z.string()).default([]),
+  mergedSourceLaneIds: z.array(z.string()).default([]),
+  status: graphWorkflowExecutionJoinStatusSchema,
+});
+
+export const activeGraphWorkflowFinalPublishProgressSchema = z.object({
+  joinId: z.string(),
+  targetLaneId: z.string(),
+  sourceLaneIds: z.array(z.string()).default([]),
+  mergedSourceLaneIds: z.array(z.string()).default([]),
+  status: graphWorkflowExecutionJoinStatusSchema,
+});
+
 export const activeGraphWorkflowExecutionSchema = z.object({
   executionId: z.string(),
   status: z.enum([
@@ -157,6 +177,11 @@ export const activeGraphWorkflowExecutionSchema = z.object({
   contextMergeProgress: z
     .array(activeGraphWorkflowContextMergeProgressSchema)
     .default([]),
+  activeJoinIds: z.array(z.string()).default([]),
+  joinProgress: z.array(activeGraphWorkflowJoinProgressSchema).default([]),
+  finalPublishState: activeGraphWorkflowFinalPublishProgressSchema
+    .nullable()
+    .default(null),
   completedContexts: z.number(),
   totalContexts: z.number(),
   startedAt: z.string(),

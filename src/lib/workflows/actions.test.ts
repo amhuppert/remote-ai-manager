@@ -40,6 +40,7 @@ describe("broadcastWorkflowEvent", () => {
       workflowStatus: "running" as const,
       activeContextIds: [],
       activeBatchIds: [],
+      activeJoinIds: [],
       haltReason: null,
       pendingHaltReason: null,
       secondaryHaltReasons: [],

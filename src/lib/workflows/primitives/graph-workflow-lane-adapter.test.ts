@@ -6,16 +6,16 @@ import {
 } from "./graph-workflow-lane-adapter";
 import { createInMemoryLaneStore } from "./lane-store";
 import { createLaneService } from "./lane-service";
-import type { GraphWorkflowLaneState } from "@/lib/schemas";
+import type { GraphWorkflowAgentSessionState } from "@/lib/schemas";
 
 const T0 = "2026-04-28T10:00:00.000Z";
 const T1 = "2026-04-28T10:05:00.000Z";
 
 function buildClaudeImplementer(
   overrides: Partial<
-    Extract<GraphWorkflowLaneState, { engine: "claude" }>
+    Extract<GraphWorkflowAgentSessionState, { engine: "claude" }>
   > = {},
-): GraphWorkflowLaneState {
+): GraphWorkflowAgentSessionState {
   return {
     engine: "claude",
     lane: "implementer",
@@ -36,8 +36,10 @@ function buildClaudeImplementer(
 }
 
 function buildCodexImplementer(
-  overrides: Partial<Extract<GraphWorkflowLaneState, { engine: "codex" }>> = {},
-): GraphWorkflowLaneState {
+  overrides: Partial<
+    Extract<GraphWorkflowAgentSessionState, { engine: "codex" }>
+  > = {},
+): GraphWorkflowAgentSessionState {
   return {
     engine: "codex",
     lane: "implementer",
@@ -143,7 +145,7 @@ describe("graphWorkflowLaneAdapter — Claude implementer round-trip", () => {
 
 describe("graphWorkflowLaneAdapter — Claude context_validator", () => {
   it("infers read_only for context_validator and round-trips identically", () => {
-    const original: GraphWorkflowLaneState = {
+    const original: GraphWorkflowAgentSessionState = {
       engine: "claude",
       lane: "context_validator",
       contextId: "ctx-2",
@@ -197,7 +199,7 @@ describe("graphWorkflowLaneAdapter — Codex round-trip", () => {
   });
 
   it("preserves a Codex lane with no sessionRef (initial pre-thread state)", () => {
-    const original: GraphWorkflowLaneState = {
+    const original: GraphWorkflowAgentSessionState = {
       engine: "codex",
       lane: "implementer",
       contextId: "ctx-1",
@@ -232,7 +234,7 @@ describe("graphWorkflowLaneAdapter — Codex round-trip", () => {
   });
 
   it("preserves a Codex context_validator lane (read_only) round-trip", () => {
-    const original: GraphWorkflowLaneState = {
+    const original: GraphWorkflowAgentSessionState = {
       engine: "codex",
       lane: "context_validator",
       contextId: "ctx-2",

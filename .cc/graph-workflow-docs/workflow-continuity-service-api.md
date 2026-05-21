@@ -104,7 +104,7 @@ Updates codex lane state after a completed turn. Captures the real Codex thread 
 input: {
   execution: GraphWorkflowExecution;
   lane: GraphWorkflowLaneKind;
-  usage: GraphWorkflowLaneTurnUsage | null;
+  usage: GraphWorkflowAgentSessionTurnUsage | null;
   contextLimitTokens: number | undefined;
   newThreadId?: string | null; // real thread ID available after thread.run() completes
 }
@@ -125,12 +125,14 @@ clearForNewContext(
 ): GraphWorkflowExecution
 ```
 
-## Lane State Schema
+## Agent-Session State Schema
 
-Stored in `execution.laneStates` as `Record<string, GraphWorkflowLaneState>`.
-Keys are `GraphWorkflowLaneKind` values: `"implementer"`, `"context_validator"`.
+Stored in `execution.laneStates` as
+`Record<contextId, Record<GraphWorkflowLaneKind, GraphWorkflowAgentSessionState>>`.
+Inner keys are `GraphWorkflowLaneKind` values: `"implementer"`, `"context_validator"`.
 
-Each value is a `GraphWorkflowLaneState` discriminated by `engine: "claude" | "codex"`.
+Each value is a `GraphWorkflowAgentSessionState` discriminated by
+`engine: "claude" | "codex"`.
 
 ## Integration Points (execution-route-handlers.ts)
 

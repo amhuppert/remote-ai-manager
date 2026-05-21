@@ -355,6 +355,9 @@ describe("GET /api/conversations/active", () => {
       activeBatchIds: [],
       pendingHaltReason: null,
       contextMergeProgress: [],
+      activeJoinIds: [],
+      joinProgress: [],
+      finalPublishState: null,
       completedContexts: 0,
       totalContexts: 2,
       startedAt: "2026-01-01T12:00:00.000Z",
@@ -460,6 +463,234 @@ describe("GET /api/conversations/active", () => {
     expect(body.graphWorkflowExecutions[0].activeBatchIds).toEqual([]);
     expect(body.graphWorkflowExecutions[0].pendingHaltReason).toBeNull();
     expect(body.graphWorkflowExecutions[0].contextMergeProgress).toEqual([]);
+  });
+
+  it("exposes activeJoinIds and per-join progress so the active-conversations panel can surface in-flight joins", async () => {
+    vi.mocked(deps.readState).mockResolvedValue(
+      makeState({
+        sessions: {
+          "my-session": {
+            sessionName: "my-session",
+            conversations: [makeConversation({ id: "c1", status: "running" })],
+            graphWorkflowExecution: {
+              id: "exec-1",
+              seedDefinitionId: "def-1",
+              seedDefinitionRevision: 1,
+              workingDefinition: {
+                schemaVersion: 1,
+                executionContexts: [
+                  {
+                    id: "ctx-1",
+                    title: "Plan",
+                    description: "Plan the work",
+                    agent: { model: "opus", reasoningEffort: "high" },
+                    mutability: { allowAgentTaskAdd: false },
+                    circuitBreaker: {},
+                    iterationPolicy: { maxIterations: 3 },
+                  },
+                ],
+                tasks: [],
+                edges: [],
+              },
+              status: "running",
+              activeContextIds: ["ctx-1"],
+              contextStates: {
+                "ctx-1": {
+                  contextId: "ctx-1",
+                  status: "running",
+                  totalTaskCount: 1,
+                  completedTaskCount: 0,
+                  iterationCount: 0,
+                  consecutiveFailureCount: 0,
+                  worktreePath: null,
+                  branchName: null,
+                  isolation: "session",
+                  batchId: null,
+                  mergeStatus: "not-applicable",
+                  cleanupStatus: "not-applicable",
+                  lastMergeError: null,
+                },
+              },
+              taskStates: {},
+              sharedDocuments: [],
+              machineSnapshot: null,
+              history: [],
+              executionLanes: {},
+              joins: {
+                "join-running": {
+                  joinId: "join-running",
+                  kind: "context_merge",
+                  contextId: "ctx-1",
+                  targetLaneId: "lane-target",
+                  sourceLaneIds: ["lane-a", "lane-b"],
+                  mergedSourceLaneIds: ["lane-a"],
+                  status: "running",
+                  errorMessage: null,
+                  conflicts: null,
+                  createdAt: "2026-01-01T12:00:00.000Z",
+                  updatedAt: "2026-01-01T12:00:30.000Z",
+                  completedAt: null,
+                },
+                "join-pending": {
+                  joinId: "join-pending",
+                  kind: "context_merge",
+                  contextId: "ctx-1",
+                  targetLaneId: "lane-other",
+                  sourceLaneIds: ["lane-c"],
+                  mergedSourceLaneIds: [],
+                  status: "pending",
+                  errorMessage: null,
+                  conflicts: null,
+                  createdAt: "2026-01-01T12:00:00.000Z",
+                  updatedAt: "2026-01-01T12:00:00.000Z",
+                  completedAt: null,
+                },
+                "join-done": {
+                  joinId: "join-done",
+                  kind: "context_merge",
+                  contextId: "ctx-1",
+                  targetLaneId: "lane-target",
+                  sourceLaneIds: ["lane-x"],
+                  mergedSourceLaneIds: ["lane-x"],
+                  status: "succeeded",
+                  errorMessage: null,
+                  conflicts: null,
+                  createdAt: "2026-01-01T11:50:00.000Z",
+                  updatedAt: "2026-01-01T11:59:00.000Z",
+                  completedAt: "2026-01-01T11:59:00.000Z",
+                },
+              },
+              startedAt: "2026-01-01T12:00:00.000Z",
+              completedAt: null,
+              haltReason: null,
+              pendingHaltReason: null,
+            },
+          },
+        },
+      }),
+    );
+
+    const response = await handlers.GET();
+    const body = await response.json();
+
+    expect(body.graphWorkflowExecutions).toHaveLength(1);
+    expect(body.graphWorkflowExecutions[0].activeJoinIds).toEqual([
+      "join-pending",
+      "join-running",
+    ]);
+    expect(body.graphWorkflowExecutions[0].joinProgress).toEqual([
+      {
+        joinId: "join-pending",
+        kind: "context_merge",
+        contextId: "ctx-1",
+        targetLaneId: "lane-other",
+        sourceLaneIds: ["lane-c"],
+        mergedSourceLaneIds: [],
+        status: "pending",
+      },
+      {
+        joinId: "join-running",
+        kind: "context_merge",
+        contextId: "ctx-1",
+        targetLaneId: "lane-target",
+        sourceLaneIds: ["lane-a", "lane-b"],
+        mergedSourceLaneIds: ["lane-a"],
+        status: "running",
+      },
+    ]);
+    expect(body.graphWorkflowExecutions[0].finalPublishState).toBeNull();
+  });
+
+  it("surfaces final publish state on the active-conversations summary when a final_publish join is in flight", async () => {
+    vi.mocked(deps.readState).mockResolvedValue(
+      makeState({
+        sessions: {
+          "my-session": {
+            sessionName: "my-session",
+            conversations: [makeConversation({ id: "c1", status: "running" })],
+            graphWorkflowExecution: {
+              id: "exec-1",
+              seedDefinitionId: "def-1",
+              seedDefinitionRevision: 1,
+              workingDefinition: {
+                schemaVersion: 1,
+                executionContexts: [
+                  {
+                    id: "ctx-1",
+                    title: "Plan",
+                    description: "Plan the work",
+                    agent: { model: "opus", reasoningEffort: "high" },
+                    mutability: { allowAgentTaskAdd: false },
+                    circuitBreaker: {},
+                    iterationPolicy: { maxIterations: 3 },
+                  },
+                ],
+                tasks: [],
+                edges: [],
+              },
+              status: "running",
+              activeContextIds: ["ctx-1"],
+              contextStates: {
+                "ctx-1": {
+                  contextId: "ctx-1",
+                  status: "running",
+                  totalTaskCount: 1,
+                  completedTaskCount: 0,
+                  iterationCount: 0,
+                  consecutiveFailureCount: 0,
+                  worktreePath: null,
+                  branchName: null,
+                  isolation: "session",
+                  batchId: null,
+                  mergeStatus: "not-applicable",
+                  cleanupStatus: "not-applicable",
+                  lastMergeError: null,
+                },
+              },
+              taskStates: {},
+              sharedDocuments: [],
+              machineSnapshot: null,
+              history: [],
+              executionLanes: {},
+              joins: {
+                "join-final": {
+                  joinId: "join-final",
+                  kind: "final_publish",
+                  contextId: null,
+                  targetLaneId: "__session__",
+                  sourceLaneIds: ["lane-plan", "lane-impl"],
+                  mergedSourceLaneIds: ["lane-plan"],
+                  status: "running",
+                  errorMessage: null,
+                  conflicts: null,
+                  createdAt: "2026-01-01T12:30:00.000Z",
+                  updatedAt: "2026-01-01T12:30:10.000Z",
+                  completedAt: null,
+                },
+              },
+              startedAt: "2026-01-01T12:00:00.000Z",
+              completedAt: null,
+              haltReason: null,
+              pendingHaltReason: null,
+            },
+          },
+        },
+      }),
+    );
+
+    const response = await handlers.GET();
+    const body = await response.json();
+
+    expect(body.graphWorkflowExecutions[0].activeJoinIds).toEqual([
+      "join-final",
+    ]);
+    expect(body.graphWorkflowExecutions[0].finalPublishState).toEqual({
+      joinId: "join-final",
+      targetLaneId: "__session__",
+      sourceLaneIds: ["lane-plan", "lane-impl"],
+      mergedSourceLaneIds: ["lane-plan"],
+      status: "running",
+    });
   });
 
   it("exposes activeBatchIds, pendingHaltReason, and contextMergeProgress in activeContextIds order", async () => {

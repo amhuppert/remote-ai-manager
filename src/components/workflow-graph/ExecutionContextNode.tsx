@@ -8,6 +8,7 @@ import type {
   ExecutionContextNodeData,
 } from "./derive-graph";
 import { getContextDisplayPhase, getDisplayValidators } from "./derive-graph";
+import type { ContextWaitState } from "./derive-wait-state";
 
 type ExecutionContextNodeType = Node<
   ExecutionContextNodeData,
@@ -18,12 +19,15 @@ type AgentBackend = "claude" | "codex";
 
 function getStatusBadge(
   mode: "builder" | "execution",
-  phase?: ContextDisplayPhase,
+  waitState: ContextWaitState | undefined,
 ): { label: string; className: string } {
   if (mode === "builder") {
     return { label: "Draft", className: "pending" };
   }
-  switch (phase) {
+  if (!waitState) {
+    return { label: "Pending", className: "pending" };
+  }
+  switch (waitState.kind) {
     case "running":
       return { label: "Running", className: "running" };
     case "validating":
@@ -32,29 +36,49 @@ function getStatusBadge(
       return { label: "Merging", className: "merging" };
     case "completed":
       return { label: "Completed", className: "completed" };
+    case "published":
+      return { label: "Published", className: "completed" };
     case "halted":
       return { label: "Halted", className: "halted" };
     case "ready":
       return { label: "Ready", className: "pending" };
-    default:
-      return { label: "Pending", className: "pending" };
+    case "waiting-for-lane":
+      return { label: "Queued", className: "pending" };
+    case "waiting-for-join":
+      return { label: "Queued", className: "pending" };
+    case "waiting-for-capacity":
+      return { label: "Queued", className: "pending" };
+    case "dependency-blocked":
+      return { label: "Blocked", className: "pending" };
   }
 }
 
 function getFooterText(
   mode: "builder" | "execution",
   taskCount: number,
-  phase?: ContextDisplayPhase,
+  waitState: ContextWaitState | undefined,
   completedCount?: number,
   totalCount?: number,
-  targetBranch?: string | null,
 ): string {
   if (mode === "builder") {
     return `${taskCount} tasks`;
   }
-  switch (phase) {
-    case "pending":
-      return "Waiting on upstream";
+  if (!waitState) {
+    return `${taskCount} tasks`;
+  }
+  switch (waitState.kind) {
+    case "dependency-blocked": {
+      const count = waitState.unmetDependencyIds.length;
+      return count === 1
+        ? `Waiting on 1 upstream context`
+        : `Waiting on ${count} upstream contexts`;
+    }
+    case "waiting-for-lane":
+      return "Waiting for lane";
+    case "waiting-for-join":
+      return "Waiting for join";
+    case "waiting-for-capacity":
+      return "Waiting for capacity";
     case "ready":
       return "Ready to start";
     case "running":
@@ -62,13 +86,15 @@ function getFooterText(
     case "validating":
       return "Validating context";
     case "merging":
-      return targetBranch ? `Merging → ${targetBranch}` : "Merging";
+      return waitState.targetBranch
+        ? `Merging → ${waitState.targetBranch}`
+        : "Merging";
     case "completed":
       return "Completed";
+    case "published":
+      return "Published to session";
     case "halted":
       return "Halted";
-    default:
-      return `${taskCount} tasks`;
   }
 }
 
@@ -144,20 +170,18 @@ export default function ExecutionContextNode({
   data,
   selected,
 }: NodeProps<ExecutionContextNodeType>) {
-  const { context, tasks, mode, contextState } = data;
+  const { context, tasks, mode, contextState, waitState } = data;
   const phase = getContextDisplayPhase(contextState);
-  const badge = getStatusBadge(mode, phase);
+  const badge = getStatusBadge(mode, waitState);
   const totalCount = contextState?.totalTaskCount ?? tasks.length;
   const completedCount = contextState?.completedTaskCount ?? 0;
-  const targetBranch = contextState?.branchName ?? null;
 
   const footerText = getFooterText(
     mode,
     tasks.length,
-    phase,
+    waitState,
     completedCount,
     totalCount,
-    targetBranch,
   );
   const progressPercent = getProgressPercent(
     mode,
@@ -176,7 +200,7 @@ export default function ExecutionContextNode({
   const nodeClassName = [
     "graph-node",
     selected && "selected",
-    phase && `status-${phase}`,
+    waitState && `status-${waitState.kind}`,
   ]
     .filter(Boolean)
     .join(" ");
@@ -228,7 +252,9 @@ export default function ExecutionContextNode({
         />
       </div>
 
-      <div className={`graph-node-footer ${phase ?? ""}`}>{footerText}</div>
+      <div className={`graph-node-footer ${waitState?.kind ?? ""}`}>
+        {footerText}
+      </div>
     </div>
   );
 }

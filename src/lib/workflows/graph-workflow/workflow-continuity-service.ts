@@ -15,8 +15,8 @@ import type { LaneState } from "@/lib/workflows/primitives/lane-vocabulary";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowLaneKind,
-  GraphWorkflowLaneState,
-  GraphWorkflowLaneTurnUsage,
+  GraphWorkflowAgentSessionState,
+  GraphWorkflowAgentSessionTurnUsage,
 } from "@/types";
 
 const logger = createLogger("workflow-continuity");
@@ -114,7 +114,7 @@ export interface RecordCodexLaneTurnInput {
   execution: GraphWorkflowExecution;
   contextId: string;
   lane: GraphWorkflowLaneKind;
-  usage: GraphWorkflowLaneTurnUsage | null;
+  usage: GraphWorkflowAgentSessionTurnUsage | null;
   contextLimitTokens: number | undefined;
   /** Real Codex thread ID captured after the turn completes. Updates sessionRef when provided. */
   newThreadId?: string | null;
@@ -132,7 +132,7 @@ function getNow(deps: WorkflowContinuityServiceDeps): string {
 
 /** Returns true when the lane should start a fresh session instead of reusing. */
 function shouldRotate(
-  laneState: GraphWorkflowLaneState | undefined,
+  laneState: GraphWorkflowAgentSessionState | undefined,
   contextId: string,
   continuityEnabled: boolean,
   engine?: "claude" | "codex",
@@ -170,7 +170,7 @@ function withLaneState(
   execution: GraphWorkflowExecution,
   contextId: string,
   lane: GraphWorkflowLaneKind,
-  state: GraphWorkflowLaneState,
+  state: GraphWorkflowAgentSessionState,
 ): GraphWorkflowExecution {
   const previousContextLanes = execution.laneStates[contextId] ?? {};
   return {
@@ -189,7 +189,7 @@ function getCurrentLane(
   execution: GraphWorkflowExecution,
   contextId: string,
   lane: GraphWorkflowLaneKind,
-): GraphWorkflowLaneState | undefined {
+): GraphWorkflowAgentSessionState | undefined {
   return execution.laneStates[contextId]?.[lane];
 }
 
@@ -229,7 +229,7 @@ export function createWorkflowContinuityService(
 
   async function persistLaneState(
     execution: GraphWorkflowExecution,
-    laneState: GraphWorkflowLaneState,
+    laneState: GraphWorkflowAgentSessionState,
     contextId: string,
   ): Promise<void> {
     const adapterCtx = buildAdapterContext(
@@ -243,9 +243,9 @@ export function createWorkflowContinuityService(
 
   async function recordLaneOutcome(
     execution: GraphWorkflowExecution,
-    laneState: GraphWorkflowLaneState,
+    laneState: GraphWorkflowAgentSessionState,
     outcome: LaneOutcome,
-  ): Promise<GraphWorkflowLaneState> {
+  ): Promise<GraphWorkflowAgentSessionState> {
     const adapterCtx = buildAdapterContext(
       execution,
       laneState.lane,
@@ -292,13 +292,16 @@ export function createWorkflowContinuityService(
     reason: string,
     now: string,
     execution: GraphWorkflowExecution,
-  ): Promise<{ laneState: GraphWorkflowLaneState; conversationId: string }> {
+  ): Promise<{
+    laneState: GraphWorkflowAgentSessionState;
+    conversationId: string;
+  }> {
     const conversation = await deps.createConversation(
       projectPath,
       sessionName,
       { role, agentBackend: "claude" },
     );
-    const laneState: GraphWorkflowLaneState = {
+    const laneState: GraphWorkflowAgentSessionState = {
       engine: "claude",
       lane,
       contextId,
@@ -465,10 +468,10 @@ export function createWorkflowContinuityService(
       };
     }
 
-    const updatedLaneState: GraphWorkflowLaneState = {
+    const updatedLaneState: GraphWorkflowAgentSessionState = {
       ...existingLane,
       lastUsedAt: now,
-    } as GraphWorkflowLaneState;
+    } as GraphWorkflowAgentSessionState;
 
     logger.info("workflow-continuity.lane.reuse", {
       lane,
@@ -500,7 +503,7 @@ export function createWorkflowContinuityService(
       { role: "iteration", agentBackend: "codex" },
     );
 
-    const newLaneState: GraphWorkflowLaneState = {
+    const newLaneState: GraphWorkflowAgentSessionState = {
       engine: "codex",
       lane,
       contextId,
@@ -531,7 +534,7 @@ export function createWorkflowContinuityService(
 
   async function reuseCodexImplementerLane(
     execution: GraphWorkflowExecution,
-    existingLane: GraphWorkflowLaneState,
+    existingLane: GraphWorkflowAgentSessionState,
     projectPath: string,
     sessionName: string,
     contextId: string,
@@ -565,10 +568,10 @@ export function createWorkflowContinuityService(
       );
     }
 
-    const updatedLane: GraphWorkflowLaneState = {
+    const updatedLane: GraphWorkflowAgentSessionState = {
       ...existingLane,
       lastUsedAt: now,
-    } as GraphWorkflowLaneState;
+    } as GraphWorkflowAgentSessionState;
 
     logger.info("workflow-continuity.lane.reuse", {
       lane,
@@ -673,10 +676,10 @@ export function createWorkflowContinuityService(
         };
       }
 
-      const updatedLane: GraphWorkflowLaneState = {
+      const updatedLane: GraphWorkflowAgentSessionState = {
         ...laneState!,
         lastUsedAt: now,
-      } as GraphWorkflowLaneState;
+      } as GraphWorkflowAgentSessionState;
 
       logger.info("workflow-continuity.lane.reuse", {
         lane,
@@ -704,7 +707,7 @@ export function createWorkflowContinuityService(
             ? "continuity_disabled"
             : "rotation_scheduled";
 
-      const newLaneState: GraphWorkflowLaneState = {
+      const newLaneState: GraphWorkflowAgentSessionState = {
         engine: "codex",
         lane,
         contextId,
@@ -742,10 +745,10 @@ export function createWorkflowContinuityService(
       const { threadId: resumedThreadId } =
         await deps.resumeCodexThread(storedThreadId);
 
-      const updatedLane: GraphWorkflowLaneState = {
+      const updatedLane: GraphWorkflowAgentSessionState = {
         ...laneState!,
         lastUsedAt: now,
-      } as GraphWorkflowLaneState;
+      } as GraphWorkflowAgentSessionState;
 
       logger.info("workflow-continuity.lane.reuse", {
         lane,
@@ -771,7 +774,7 @@ export function createWorkflowContinuityService(
       });
 
       const { threadId: freshThreadId } = await deps.startCodexThread();
-      const freshLaneState: GraphWorkflowLaneState = {
+      const freshLaneState: GraphWorkflowAgentSessionState = {
         engine: "codex",
         lane,
         contextId,

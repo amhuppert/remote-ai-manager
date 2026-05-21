@@ -11,6 +11,8 @@ import type {
   ApiError,
   GraphWorkflowCleanupStatusValue,
   GraphWorkflowExecution,
+  GraphWorkflowExecutionJoinKind,
+  GraphWorkflowExecutionJoinStatus,
   GraphWorkflowHaltReason,
   GraphWorkflowMergeStatusValue,
   GraphWorkflowStatus,
@@ -53,6 +55,8 @@ import { createGraphWorkflowMergeRunner } from "./graph-merge-runner";
 import { createExecutionTargetResolver } from "./execution-target-resolver";
 import { createGraphWorkflowSignalHaltHandler } from "./graph-workflow-signal-halt";
 import { createSoloContextCommitter } from "./solo-context-committer";
+import { createLaneCommitter } from "./lane-committer";
+import { createJoinRunner } from "./join-runner";
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -217,6 +221,12 @@ const mergeMutex = createPerSessionMergeMutex();
 const sessionGitLock = createSessionGitLock();
 const mergeRunner = createGraphWorkflowMergeRunner();
 const soloContextCommitter = createSoloContextCommitter();
+const laneCommitter = createLaneCommitter();
+const joinRunner = createJoinRunner({
+  mergeRunner,
+  sessionGitLock,
+  mergeMutex,
+});
 const executionTargetResolver = createExecutionTargetResolver();
 
 const executionLoop = createGraphWorkflowExecutionLoop({
@@ -227,6 +237,8 @@ const executionLoop = createGraphWorkflowExecutionLoop({
   sessionGitLock,
   mergeRunner,
   soloContextCommitter,
+  laneCommitter,
+  joinRunner,
   executionTargetResolver,
   getSession: defaultGetSession,
 });
@@ -239,6 +251,24 @@ export interface GraphWorkflowExecutionContextMergeProgress {
   lastMergeError: string | null;
 }
 
+export interface GraphWorkflowExecutionJoinProgress {
+  joinId: string;
+  kind: GraphWorkflowExecutionJoinKind;
+  contextId: string | null;
+  targetLaneId: string;
+  sourceLaneIds: string[];
+  mergedSourceLaneIds: string[];
+  status: GraphWorkflowExecutionJoinStatus;
+}
+
+export interface GraphWorkflowExecutionFinalPublishProgress {
+  joinId: string;
+  targetLaneId: string;
+  sourceLaneIds: string[];
+  mergedSourceLaneIds: string[];
+  status: GraphWorkflowExecutionJoinStatus;
+}
+
 export interface GraphWorkflowExecutionSummary {
   executionId: string;
   definitionId: string;
@@ -249,9 +279,12 @@ export interface GraphWorkflowExecutionSummary {
   activeContextIds: string[];
   activeContextTitles: string[];
   activeBatchIds: string[];
+  activeJoinIds: string[];
   haltReason: GraphWorkflowHaltReason | null;
   pendingHaltReason: GraphWorkflowHaltReason | null;
   contextMergeProgress: GraphWorkflowExecutionContextMergeProgress[];
+  joinProgress: GraphWorkflowExecutionJoinProgress[];
+  finalPublishState: GraphWorkflowExecutionFinalPublishProgress | null;
   archived: boolean;
 }
 
@@ -391,6 +424,37 @@ function summarizeExecution(
     });
   }
 
+  const joinValues = Object.values(execution.joins ?? {});
+  const activeJoins = joinValues.filter(
+    (join) => join.status === "pending" || join.status === "running",
+  );
+  activeJoins.sort((a, b) => a.joinId.localeCompare(b.joinId));
+  const activeJoinIds = activeJoins.map((join) => join.joinId);
+  const joinProgress: GraphWorkflowExecutionJoinProgress[] = activeJoins.map(
+    (join) => ({
+      joinId: join.joinId,
+      kind: join.kind,
+      contextId: join.contextId,
+      targetLaneId: join.targetLaneId,
+      sourceLaneIds: [...join.sourceLaneIds],
+      mergedSourceLaneIds: [...join.mergedSourceLaneIds],
+      status: join.status,
+    }),
+  );
+  const finalPublishJoin = activeJoins.find(
+    (join) => join.kind === "final_publish",
+  );
+  const finalPublishState: GraphWorkflowExecutionFinalPublishProgress | null =
+    finalPublishJoin
+      ? {
+          joinId: finalPublishJoin.joinId,
+          targetLaneId: finalPublishJoin.targetLaneId,
+          sourceLaneIds: [...finalPublishJoin.sourceLaneIds],
+          mergedSourceLaneIds: [...finalPublishJoin.mergedSourceLaneIds],
+          status: finalPublishJoin.status,
+        }
+      : null;
+
   return {
     executionId: execution.id,
     definitionId: execution.seedDefinitionId,
@@ -401,9 +465,12 @@ function summarizeExecution(
     activeContextIds,
     activeContextTitles,
     activeBatchIds,
+    activeJoinIds,
     haltReason: execution.haltReason,
     pendingHaltReason: execution.pendingHaltReason,
     contextMergeProgress,
+    joinProgress,
+    finalPublishState,
     archived,
   };
 }

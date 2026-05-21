@@ -2,12 +2,13 @@ import {
   buildInitialContextState,
   buildInitialTaskState,
 } from "@/lib/workflow-graph/execution-state";
+import { recomputeLanePlanForSubgraph } from "@/lib/workflow-graph/lane-plan";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
   GraphWorkflowExecutionEvent,
   GraphWorkflowLaneKind,
-  GraphWorkflowLaneState,
+  GraphWorkflowAgentSessionState,
   GraphWorkflowTaskState,
 } from "@/types";
 
@@ -94,7 +95,7 @@ export function resetExecutionContext(
 
   const nextLaneStates: Record<
     string,
-    Partial<Record<GraphWorkflowLaneKind, GraphWorkflowLaneState>>
+    Partial<Record<GraphWorkflowLaneKind, GraphWorkflowAgentSessionState>>
   > = {};
   for (const [ctxKey, contextLanes] of Object.entries(execution.laneStates)) {
     if (ctxKey === contextId) continue;
@@ -109,6 +110,12 @@ export function resetExecutionContext(
     },
   );
 
+  const nextLanePlan = recomputeLanePlanForSubgraph({
+    definition: execution.workingDefinition,
+    previousPlan: execution.lanePlan,
+    contextIds: [contextId],
+  });
+
   return {
     ...execution,
     status: "paused",
@@ -120,5 +127,6 @@ export function resetExecutionContext(
     haltReason: null,
     completedAt: null,
     machineSnapshot: null,
+    lanePlan: nextLanePlan,
   };
 }

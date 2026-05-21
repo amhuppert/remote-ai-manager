@@ -245,6 +245,8 @@ describe("deriveNodes", () => {
       branchName: null,
       isolation: "session",
       batchId: null,
+      laneId: null,
+      joinId: null,
       mergeStatus: "not-applicable",
       cleanupStatus: "not-applicable",
       lastMergeError: null,
@@ -276,6 +278,145 @@ describe("deriveNodes", () => {
   });
 });
 
+describe("deriveNodes wait state attachment", () => {
+  function makeCtx(id: string) {
+    return {
+      id,
+      title: id,
+      acceptanceCriteria: "TBD",
+      implementer: {
+        backend: "claude" as const,
+        model: "sonnet" as const,
+        reasoningEffort: "medium" as const,
+      },
+      mutability: { allowAgentTaskAdd: false },
+      circuitBreaker: {},
+      iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+    };
+  }
+
+  function makeCtxState(
+    overrides: Partial<GraphWorkflowExecutionContextState> &
+      Pick<GraphWorkflowExecutionContextState, "contextId" | "status">,
+  ): GraphWorkflowExecutionContextState {
+    return {
+      totalTaskCount: 1,
+      completedTaskCount: 0,
+      iterationCount: 0,
+      consecutiveFailureCount: 0,
+      worktreePath: null,
+      branchName: null,
+      isolation: "session",
+      batchId: null,
+      laneId: null,
+      joinId: null,
+      mergeStatus: "not-applicable",
+      cleanupStatus: "not-applicable",
+      lastMergeError: null,
+      ...overrides,
+    };
+  }
+
+  it("attaches no waitState in builder mode", () => {
+    const def = makeDefinition({ executionContexts: [makeCtx("ctx-1")] });
+    const nodes = deriveNodes(def, makeLayout());
+    expect(nodes[0]!.data.waitState).toBeUndefined();
+  });
+
+  it("marks a pending downstream context as dependency-blocked while its upstream is still running", () => {
+    const def = makeDefinition({
+      executionContexts: [makeCtx("ctx-a"), makeCtx("ctx-b")],
+      edges: [{ id: "e1", sourceContextId: "ctx-a", targetContextId: "ctx-b" }],
+    });
+    const execution = makeExecution({
+      workingDefinition: def as unknown as ResolvedWorkflowSemanticDefinition,
+      contextStates: {
+        "ctx-a": makeCtxState({ contextId: "ctx-a", status: "running" }),
+        "ctx-b": makeCtxState({ contextId: "ctx-b", status: "pending" }),
+      },
+    });
+
+    const nodes = deriveNodes(def, makeLayout(), execution);
+    const ctxB = nodes.find((n) => n.id === "ctx-b");
+    expect(ctxB?.data.waitState).toEqual({
+      kind: "dependency-blocked",
+      unmetDependencyIds: ["ctx-a"],
+    });
+  });
+
+  it("marks a downstream context whose dependencies are satisfied as ready (no false Waiting on upstream)", () => {
+    const def = makeDefinition({
+      executionContexts: [makeCtx("ctx-a"), makeCtx("ctx-b")],
+      edges: [{ id: "e1", sourceContextId: "ctx-a", targetContextId: "ctx-b" }],
+    });
+    const execution = makeExecution({
+      workingDefinition: def as unknown as ResolvedWorkflowSemanticDefinition,
+      contextStates: {
+        "ctx-a": makeCtxState({
+          contextId: "ctx-a",
+          status: "completed",
+          totalTaskCount: 1,
+          completedTaskCount: 1,
+        }),
+        "ctx-b": makeCtxState({ contextId: "ctx-b", status: "pending" }),
+      },
+    });
+
+    const nodes = deriveNodes(def, makeLayout(), execution);
+    const ctxB = nodes.find((n) => n.id === "ctx-b");
+    expect(ctxB?.data.waitState).toEqual({ kind: "ready" });
+  });
+
+  it("falls back to a useful wait state for legacy executions that lack lane/join records", () => {
+    const def = makeDefinition({ executionContexts: [makeCtx("ctx-1")] });
+    const execution = makeExecution({
+      workingDefinition: def as unknown as ResolvedWorkflowSemanticDefinition,
+      contextStates: {
+        "ctx-1": makeCtxState({ contextId: "ctx-1", status: "ready" }),
+      },
+    });
+    delete (execution as Partial<GraphWorkflowExecution>).executionLanes;
+    delete (execution as Partial<GraphWorkflowExecution>).joins;
+
+    const nodes = deriveNodes(def, makeLayout(), execution);
+    expect(nodes[0]!.data.waitState).toEqual({ kind: "ready" });
+  });
+
+  it("surfaces waiting-for-lane when the assigned lane is still pending", () => {
+    const def = makeDefinition({ executionContexts: [makeCtx("ctx-1")] });
+    const execution = makeExecution({
+      workingDefinition: def as unknown as ResolvedWorkflowSemanticDefinition,
+      contextStates: {
+        "ctx-1": makeCtxState({
+          contextId: "ctx-1",
+          status: "ready",
+          laneId: "lane-x",
+        }),
+      },
+      executionLanes: {
+        "lane-x": {
+          laneId: "lane-x",
+          kind: "worktree",
+          status: "pending",
+          worktreePath: null,
+          branchName: "feature/lane-x",
+          includedContextIds: [],
+          lastCommittingContextId: null,
+          commitSnapshots: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      },
+    });
+
+    const nodes = deriveNodes(def, makeLayout(), execution);
+    expect(nodes[0]!.data.waitState).toEqual({
+      kind: "waiting-for-lane",
+      laneId: "lane-x",
+    });
+  });
+});
+
 describe("getContextDisplayPhase", () => {
   function makeState(
     overrides: Partial<GraphWorkflowExecutionContextState> = {},
@@ -291,6 +432,8 @@ describe("getContextDisplayPhase", () => {
       branchName: null,
       isolation: "session",
       batchId: null,
+      laneId: null,
+      joinId: null,
       mergeStatus: "not-applicable",
       cleanupStatus: "not-applicable",
       lastMergeError: null,
@@ -553,6 +696,8 @@ describe("deriveEdges", () => {
           branchName: null,
           isolation: "session",
           batchId: null,
+          laneId: null,
+          joinId: null,
           mergeStatus: "not-applicable",
           cleanupStatus: "not-applicable",
           lastMergeError: null,
@@ -568,6 +713,8 @@ describe("deriveEdges", () => {
           branchName: null,
           isolation: "session",
           batchId: null,
+          laneId: null,
+          joinId: null,
           mergeStatus: "not-applicable",
           cleanupStatus: "not-applicable",
           lastMergeError: null,
