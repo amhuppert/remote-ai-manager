@@ -10,6 +10,7 @@ export const dynamic = "force-dynamic";
 
 /** POST /api/projects/[name]/sessions/[session]/resolve-conflicts — dispatch async conflict resolution job */
 export const POST = withTracing(async (request, { params }) => {
+  const bodyPromise = request.json();
   const resolvedParams = await params;
   const name = resolvedParams["name"] ?? "";
   const sessionSlug = resolvedParams["session"] ?? "";
@@ -39,7 +40,7 @@ export const POST = withTracing(async (request, { params }) => {
     }[];
   };
   try {
-    body = resolveConflictsRequestSchema.parse(await request.json());
+    body = resolveConflictsRequestSchema.parse(await bodyPromise);
   } catch {
     return NextResponse.json(
       { error: "Invalid request body" } satisfies ApiError,

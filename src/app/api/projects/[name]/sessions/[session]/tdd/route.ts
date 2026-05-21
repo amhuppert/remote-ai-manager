@@ -26,6 +26,7 @@ export const dynamic = "force-dynamic";
 
 /** PATCH /api/projects/[name]/sessions/[session]/tdd — toggle TDD mode */
 export const PATCH = withTracing(async (request, { params }) => {
+  const bodyPromise = request.json();
   const resolvedParams = await params;
   const name = resolvedParams["name"] ?? "";
   const sessionSlug = resolvedParams["session"] ?? "";
@@ -49,7 +50,7 @@ export const PATCH = withTracing(async (request, { params }) => {
 
   let body: { tddEnabled: boolean };
   try {
-    body = sessionTddRequestSchema.parse(await request.json());
+    body = sessionTddRequestSchema.parse(await bodyPromise);
   } catch {
     return NextResponse.json(
       { error: "tddEnabled (boolean) is required" } satisfies ApiError,

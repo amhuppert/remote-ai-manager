@@ -17,6 +17,7 @@ const logger = createLogger("api.fork-conversation");
 
 /** POST /api/projects/[name]/sessions/[session]/conversations/[conversationId]/fork — fork a conversation */
 export const POST = withTracing(async (request, { params }) => {
+  const bodyPromise = request.json();
   const resolvedParams = await params;
   const name = resolvedParams["name"] ?? "";
   const sessionSlug = resolvedParams["session"] ?? "";
@@ -60,7 +61,7 @@ export const POST = withTracing(async (request, { params }) => {
 
   let body: { messageIndex: number };
   try {
-    body = forkRequestSchema.parse(await request.json());
+    body = forkRequestSchema.parse(await bodyPromise);
   } catch {
     return NextResponse.json(
       { error: "Invalid request: messageIndex is required" } satisfies ApiError,

@@ -33,7 +33,9 @@ export const GET = withTracing(async (_request, { params }) => {
 
 /** POST /api/projects/[name]/sessions — create a new session */
 export const POST = withTracing(async (request, { params }) => {
-  const name = (await params)["name"] ?? "";
+  const bodyPromise = request.json();
+  const resolvedParams = await params;
+  const name = resolvedParams["name"] ?? "";
   const projectPath = await resolveProjectPath(name);
   if (!projectPath) {
     return NextResponse.json(
@@ -44,7 +46,7 @@ export const POST = withTracing(async (request, { params }) => {
 
   let body: CreateSessionRequest;
   try {
-    body = createSessionRequestSchema.parse(await request.json());
+    body = createSessionRequestSchema.parse(await bodyPromise);
   } catch {
     return NextResponse.json(
       {

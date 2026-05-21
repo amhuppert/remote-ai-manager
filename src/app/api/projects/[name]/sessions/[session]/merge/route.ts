@@ -10,6 +10,7 @@ export const dynamic = "force-dynamic";
 
 /** POST /api/projects/[name]/sessions/[session]/merge — dispatch async merge job */
 export const POST = withTracing(async (request, { params }) => {
+  const bodyPromise = request.json();
   const resolvedParams = await params;
   const name = resolvedParams["name"] ?? "";
   const sessionSlug = resolvedParams["session"] ?? "";
@@ -43,7 +44,7 @@ export const POST = withTracing(async (request, { params }) => {
 
   let body: { autoResolve: boolean };
   try {
-    body = smartMergeRequestSchema.parse(await request.json());
+    body = smartMergeRequestSchema.parse(await bodyPromise);
   } catch {
     return NextResponse.json(
       {

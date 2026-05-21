@@ -10,6 +10,7 @@ export const dynamic = "force-dynamic";
 
 /** POST /api/projects/[name]/sessions/[session]/commit — dispatch async commit job */
 export const POST = withTracing(async (request, { params }) => {
+  const bodyPromise = request.json();
   const resolvedParams = await params;
   const name = resolvedParams["name"] ?? "";
   const sessionSlug = resolvedParams["session"] ?? "";
@@ -43,7 +44,7 @@ export const POST = withTracing(async (request, { params }) => {
 
   let body: { message: string };
   try {
-    body = commitRequestSchema.parse(await request.json());
+    body = commitRequestSchema.parse(await bodyPromise);
   } catch {
     return NextResponse.json(
       { error: "Commit message is required" } satisfies ApiError,
