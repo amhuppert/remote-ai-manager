@@ -4,6 +4,8 @@ import path from "node:path";
 import {
   readConversationMessages,
   readConversationMessagesWithSeq,
+  readLastAssistantContent,
+  _resetLastAssistantCacheForTesting,
   appendTranscriptEntry,
   getTranscriptPath,
   parseCommandContent,
@@ -98,6 +100,250 @@ describe("appendTranscriptEntry", () => {
     const parsed = JSON.parse(raw.trim());
     expect(parsed.type).toBe("system");
     expect(parsed.role).toBeUndefined();
+  });
+});
+
+// ==========================================================================
+// readLastAssistantContent
+// ==========================================================================
+
+describe("readLastAssistantContent", () => {
+  beforeEach(() => {
+    _resetLastAssistantCacheForTesting();
+  });
+
+  it("returns null for null path", async () => {
+    expect(await readLastAssistantContent(null)).toBeNull();
+  });
+
+  it("returns null for a non-existent file", async () => {
+    expect(
+      await readLastAssistantContent("/tmp/nonexistent-tail-xyz.jsonl"),
+    ).toBeNull();
+  });
+
+  it("returns null for an empty file", async () => {
+    const filePath = path.join(TEST_DIR, "transcripts", "empty-tail.jsonl");
+    await writeFile(filePath, "", "utf-8");
+    expect(await readLastAssistantContent(filePath)).toBeNull();
+  });
+
+  it("returns the content blocks of the most recent assistant entry", async () => {
+    const filePath = path.join(TEST_DIR, "transcripts", "tail-simple.jsonl");
+    const lines = [
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "go" }],
+      }),
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:01Z",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Working on it." }],
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n") + "\n", "utf-8");
+
+    const result = await readLastAssistantContent(filePath);
+    expect(result).toEqual([{ type: "text", text: "Working on it." }]);
+  });
+
+  it("ignores entries after the latest assistant when computing the tail (no later assistant)", async () => {
+    const filePath = path.join(TEST_DIR, "transcripts", "tail-trailing.jsonl");
+    const lines = [
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "first" }],
+      }),
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:01Z",
+        type: "assistant",
+        role: "assistant",
+        content: [
+          { type: "tool_use", name: "Edit", input: { file_path: "x.ts" } },
+        ],
+      }),
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:02Z",
+        type: "tool_result",
+        raw: { tool_use_id: "abc" },
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n") + "\n", "utf-8");
+
+    const result = await readLastAssistantContent(filePath);
+    expect(result).toEqual([
+      { type: "tool_use", name: "Edit", input: { file_path: "x.ts" } },
+    ]);
+  });
+
+  it("merges consecutive assistant entries in chronological order", async () => {
+    const filePath = path.join(TEST_DIR, "transcripts", "tail-merge.jsonl");
+    const lines = [
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "go" }],
+      }),
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:01Z",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "Thinking..." }],
+      }),
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:02Z",
+        type: "assistant",
+        role: "assistant",
+        content: [
+          { type: "tool_use", name: "Edit", input: { file_path: "src/y.ts" } },
+        ],
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n") + "\n", "utf-8");
+
+    const result = await readLastAssistantContent(filePath);
+    expect(result).toEqual([
+      { type: "text", text: "Thinking..." },
+      { type: "tool_use", name: "Edit", input: { file_path: "src/y.ts" } },
+    ]);
+  });
+
+  it("stops merging at the prior user entry", async () => {
+    const filePath = path.join(TEST_DIR, "transcripts", "tail-boundary.jsonl");
+    const lines = [
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "earlier reply" }],
+      }),
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:01Z",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "ask again" }],
+      }),
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:02Z",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "later reply" }],
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n") + "\n", "utf-8");
+
+    const result = await readLastAssistantContent(filePath);
+    expect(result).toEqual([{ type: "text", text: "later reply" }]);
+  });
+
+  it("finds the most recent assistant entry in a large file (exercises tail-read window)", async () => {
+    const filePath = path.join(TEST_DIR, "transcripts", "tail-large.jsonl");
+    // Write many large user entries so the file exceeds the 256KB tail window.
+    const padding = "x".repeat(2048);
+    const userLines: string[] = [];
+    for (let i = 0; i < 200; i++) {
+      userLines.push(
+        JSON.stringify({
+          timestamp: "2024-01-01T00:00:00Z",
+          type: "user",
+          role: "user",
+          content: [{ type: "text", text: `${padding}-${i}` }],
+        }),
+      );
+    }
+    const finalAssistant = JSON.stringify({
+      timestamp: "2024-01-01T00:00:01Z",
+      type: "assistant",
+      role: "assistant",
+      content: [{ type: "text", text: "final answer" }],
+    });
+    await writeFile(
+      filePath,
+      [...userLines, finalAssistant].join("\n") + "\n",
+      "utf-8",
+    );
+
+    const result = await readLastAssistantContent(filePath);
+    expect(result).toEqual([{ type: "text", text: "final answer" }]);
+  });
+
+  it("returns null when no assistant entry exists within the tail window of a large file", async () => {
+    const filePath = path.join(TEST_DIR, "transcripts", "tail-no-asst.jsonl");
+    const padding = "y".repeat(2048);
+    const lines: string[] = [
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "very old reply" }],
+      }),
+    ];
+    for (let i = 0; i < 200; i++) {
+      lines.push(
+        JSON.stringify({
+          timestamp: "2024-01-01T00:00:00Z",
+          type: "user",
+          role: "user",
+          content: [{ type: "text", text: `${padding}-${i}` }],
+        }),
+      );
+    }
+    await writeFile(filePath, lines.join("\n") + "\n", "utf-8");
+
+    expect(await readLastAssistantContent(filePath)).toBeNull();
+  });
+
+  it("returns fresh content after an append (cache invalidated by size change)", async () => {
+    const filePath = path.join(
+      TEST_DIR,
+      "transcripts",
+      "tail-invalidate.jsonl",
+    );
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "before" }],
+      }) + "\n",
+      "utf-8",
+    );
+
+    const before = await readLastAssistantContent(filePath);
+    expect(before).toEqual([{ type: "text", text: "before" }]);
+
+    await appendTranscriptEntry(
+      "tail-invalidate",
+      {
+        timestamp: "2024-01-01T00:00:01Z",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "next prompt" }],
+      },
+      TEST_DIR,
+    );
+    await appendTranscriptEntry(
+      "tail-invalidate",
+      {
+        timestamp: "2024-01-01T00:00:02Z",
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "after" }],
+      },
+      TEST_DIR,
+    );
+
+    // appendTranscriptEntry writes to <TEST_DIR>/transcripts/<id>.jsonl, which
+    // is the same filePath we wrote above.
+    const after = await readLastAssistantContent(filePath);
+    expect(after).toEqual([{ type: "text", text: "after" }]);
   });
 });
 

@@ -1,4 +1,11 @@
-import { appendFile, readFile, writeFile, mkdir } from "node:fs/promises";
+import {
+  appendFile,
+  readFile,
+  writeFile,
+  mkdir,
+  open,
+  stat,
+} from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type { TranscriptMessage, MessageContentBlock } from "@/types";
@@ -348,6 +355,135 @@ export async function findForkAnchorUuid(
 
 // Re-export from shared module (also used by client-side use-send-prompt.ts)
 export { parseCommandContent } from "./command-parsing";
+
+// ============================================================
+// Tail-read: most recent assistant content (hot path)
+// ============================================================
+
+// Read only the last TAIL_READ_BYTES of the JSONL to locate the most recent
+// assistant entry — full transcripts can be many MB and reading them on every
+// /api/conversations/active hit pegs the event loop. Cache by (mtimeMs, size)
+// so the common SSE-storm case (state unchanged between invalidations) is O(1).
+const TAIL_READ_BYTES = 256 * 1024;
+const LAST_ASSISTANT_CACHE_MAX = 500;
+
+interface LastAssistantCacheEntry {
+  mtimeMs: number;
+  size: number;
+  blocks: MessageContentBlock[] | null;
+}
+
+const lastAssistantCache = new Map<string, LastAssistantCacheEntry>();
+
+export function _resetLastAssistantCacheForTesting(): void {
+  lastAssistantCache.clear();
+}
+
+async function readLastAssistantContentFromTail(
+  transcriptPath: string,
+  fileSize: number,
+): Promise<MessageContentBlock[] | null> {
+  if (fileSize === 0) return null;
+
+  const fh = await open(transcriptPath, "r");
+  try {
+    const readSize = Math.min(fileSize, TAIL_READ_BYTES);
+    const readStart = fileSize - readSize;
+    const buf = Buffer.alloc(readSize);
+    await fh.read(buf, 0, readSize, readStart);
+
+    let text = buf.toString("utf-8");
+    if (readStart > 0) {
+      // Drop the leading partial line — its start lies before our read window.
+      const firstNewline = text.indexOf("\n");
+      if (firstNewline < 0) return null;
+      text = text.slice(firstNewline + 1);
+    }
+
+    const lines = text.split("\n");
+    const collected: MessageContentBlock[] = [];
+    let foundAssistant = false;
+
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i];
+      if (!line || line.trim().length === 0) continue;
+      let entry: TranscriptEntry;
+      try {
+        entry = JSON.parse(line) as TranscriptEntry;
+      } catch {
+        continue;
+      }
+      if (entry.role === "assistant") {
+        if (entry.content && entry.content.length > 0) {
+          // Walking backward — prepend to keep chronological order across
+          // consecutive assistant entries (matches the merge semantics of
+          // readConversationMessages).
+          collected.unshift(...entry.content);
+        }
+        foundAssistant = true;
+        continue;
+      }
+      if (entry.role === "user" && foundAssistant) {
+        break;
+      }
+    }
+
+    if (!foundAssistant || collected.length === 0) return null;
+    return collected;
+  } finally {
+    await fh.close();
+  }
+}
+
+/**
+ * Read just the content blocks of the most recent assistant entry from a
+ * transcript file. Uses a tail-read (no full-file parse) and an mtime+size
+ * cache so repeated calls between writes are O(1).
+ *
+ * Returns null on missing path, missing file, empty file, or any read failure.
+ * Image-ref blocks are NOT resolved — callers that need inline images must
+ * fall back to `readConversationMessages`.
+ */
+export async function readLastAssistantContent(
+  transcriptPath: string | null,
+): Promise<MessageContentBlock[] | null> {
+  if (!transcriptPath) return null;
+
+  let stats;
+  try {
+    stats = await stat(transcriptPath);
+  } catch {
+    return null;
+  }
+
+  const cached = lastAssistantCache.get(transcriptPath);
+  if (
+    cached &&
+    cached.mtimeMs === stats.mtimeMs &&
+    cached.size === stats.size
+  ) {
+    return cached.blocks;
+  }
+
+  let blocks: MessageContentBlock[] | null;
+  try {
+    blocks = await readLastAssistantContentFromTail(transcriptPath, stats.size);
+  } catch {
+    return cached?.blocks ?? null;
+  }
+
+  // Bounded eviction via insertion-order (oldest first).
+  if (lastAssistantCache.size >= LAST_ASSISTANT_CACHE_MAX) {
+    const firstKey = lastAssistantCache.keys().next().value;
+    if (firstKey !== undefined) lastAssistantCache.delete(firstKey);
+  }
+  lastAssistantCache.set(transcriptPath, {
+    mtimeMs: stats.mtimeMs,
+    size: stats.size,
+    blocks,
+  });
+  return blocks;
+}
 
 /**
  * Read conversation messages from a transcript file.

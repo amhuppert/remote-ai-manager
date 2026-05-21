@@ -111,7 +111,7 @@ function createTestDeps(): ActiveConversationsRouteDeps {
   return {
     readState: vi.fn().mockResolvedValue(makeState()),
     getProjectDisplayName: vi.fn().mockReturnValue("my-project"),
-    readConversationMessages: vi.fn().mockResolvedValue([]),
+    readLastAssistantContent: vi.fn().mockResolvedValue(null),
   };
 }
 
@@ -781,22 +781,11 @@ describe("GET /api/conversations/active", () => {
         },
       }),
     );
-    vi.mocked(deps.readConversationMessages).mockResolvedValue([
+    vi.mocked(deps.readLastAssistantContent).mockResolvedValue([
       {
-        role: "user" as const,
-        content: [{ type: "text" as const, text: "go" }],
-        timestamp: null,
-      },
-      {
-        role: "assistant" as const,
-        content: [
-          {
-            type: "tool_use" as const,
-            name: "Edit",
-            input: { file_path: "src/foo.ts" },
-          },
-        ],
-        timestamp: null,
+        type: "tool_use" as const,
+        name: "Edit",
+        input: { file_path: "src/foo.ts" },
       },
     ]);
 
@@ -963,7 +952,7 @@ describe("GET /api/conversations/active", () => {
         },
       }),
     );
-    vi.mocked(deps.readConversationMessages).mockResolvedValue([]);
+    vi.mocked(deps.readLastAssistantContent).mockResolvedValue(null);
 
     const response = await handlers.GET();
     const body = await response.json();

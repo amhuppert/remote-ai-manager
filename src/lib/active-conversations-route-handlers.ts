@@ -8,7 +8,7 @@
 import { NextResponse } from "next/server";
 import { readState as defaultReadState } from "@/lib/state";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/project-resolver";
-import { readConversationMessages as defaultReadConversationMessages } from "@/lib/transcript";
+import { readLastAssistantContent as defaultReadLastAssistantContent } from "@/lib/transcript";
 import type {
   ActiveConversation,
   ActiveConversationForkedFrom,
@@ -21,7 +21,6 @@ import type {
   GraphWorkflowMergeStatusValue,
   GraphWorkflowStatus,
   MessageContentBlock,
-  TranscriptMessage,
 } from "@/types";
 import type { ApiError } from "@/types";
 
@@ -32,15 +31,15 @@ import type { ApiError } from "@/types";
 export interface ActiveConversationsRouteDeps {
   readState(): Promise<ManagerState>;
   getProjectDisplayName(projectPath: string): string;
-  readConversationMessages(
+  readLastAssistantContent(
     transcriptPath: string | null,
-  ): Promise<TranscriptMessage[]>;
+  ): Promise<MessageContentBlock[] | null>;
 }
 
 const defaultDeps: ActiveConversationsRouteDeps = {
   readState: defaultReadState,
   getProjectDisplayName: defaultGetProjectDisplayName,
-  readConversationMessages: defaultReadConversationMessages,
+  readLastAssistantContent: defaultReadLastAssistantContent,
 };
 
 // ---------------------------------------------------------------------------
@@ -274,28 +273,22 @@ function deriveForkedFrom(
 }
 
 /**
- * Read the most recent assistant transcript message for a conversation.
- * Returns null on missing transcript or any read failure — lastActivitySummary
- * is a best-effort field and must never break the response.
+ * Read the most recent assistant content blocks for a conversation. Returns
+ * null on missing transcript or any read failure — lastActivitySummary is a
+ * best-effort field and must never break the response.
  */
-async function readLastAssistantMessage(
-  readConversationMessages: (
+async function readLastAssistantBlocks(
+  readLastAssistantContent: (
     transcriptPath: string | null,
-  ) => Promise<TranscriptMessage[]>,
+  ) => Promise<MessageContentBlock[] | null>,
   transcriptPath: string | null,
-): Promise<TranscriptMessage | null> {
+): Promise<MessageContentBlock[] | null> {
   if (!transcriptPath) return null;
-  let messages: TranscriptMessage[];
   try {
-    messages = await readConversationMessages(transcriptPath);
+    return await readLastAssistantContent(transcriptPath);
   } catch {
     return null;
   }
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
-    if (msg?.role === "assistant") return msg;
-  }
-  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -340,10 +333,10 @@ export function createActiveConversationsRouteHandlers(
             if (convo.role === "iteration" || convo.role === "validator")
               continue;
 
-            const lastAssistantMessage =
+            const lastAssistantBlocks =
               convo.status === "running"
-                ? await readLastAssistantMessage(
-                    deps.readConversationMessages,
+                ? await readLastAssistantBlocks(
+                    deps.readLastAssistantContent,
                     convo.transcriptPath,
                   )
                 : null;
@@ -365,7 +358,7 @@ export function createActiveConversationsRouteHandlers(
               branchName: session.branchName,
               lastActivitySummary: deriveLastActivitySummary(
                 convo,
-                lastAssistantMessage,
+                lastAssistantBlocks ? { content: lastAssistantBlocks } : null,
               ),
             });
           }
