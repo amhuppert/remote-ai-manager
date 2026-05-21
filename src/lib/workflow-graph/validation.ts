@@ -1,4 +1,5 @@
 import { getEffortLevelsForBackend } from "@/lib/schemas";
+import { createExecutionIndex } from "@/lib/workflow-graph/execution-index";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
@@ -43,10 +44,6 @@ function resultFromErrors(
 
 function createContextIdSet(definition: ValidatableDefinition): Set<string> {
   return new Set(definition.executionContexts.map((context) => context.id));
-}
-
-function createTaskMap(definition: ValidatableDefinition) {
-  return new Map(definition.tasks.map((task) => [task.id, task]));
 }
 
 function isRuntimeEditTaskLocked(
@@ -297,13 +294,12 @@ export function validateWorkflowRuntimeEdit(
   request: WorkflowRuntimeEditRequest,
 ): WorkflowGraphValidationResult {
   const errors: WorkflowGraphValidationError[] = [];
-  const taskMap = createTaskMap(definition);
-  const contextIds = createContextIdSet(definition);
+  const executionIndex = createExecutionIndex(definition, execution);
 
   request.operations.forEach((operation, index) => {
     if (operation.type === "add") {
       const contextState = execution.contextStates[operation.contextId];
-      if (!contextIds.has(operation.contextId)) {
+      if (!executionIndex.contextById.has(operation.contextId)) {
         errors.push({
           code: "runtime-edit-unknown-context",
           message: `Operation references missing context "${operation.contextId}"`,
@@ -325,7 +321,7 @@ export function validateWorkflowRuntimeEdit(
 
     if (operation.type === "reorder") {
       const contextState = execution.contextStates[operation.contextId];
-      if (!contextIds.has(operation.contextId)) {
+      if (!executionIndex.contextById.has(operation.contextId)) {
         errors.push({
           code: "runtime-edit-unknown-context",
           message: `Operation references missing context "${operation.contextId}"`,
@@ -343,9 +339,8 @@ export function validateWorkflowRuntimeEdit(
         });
       }
 
-      const contextTasks = definition.tasks
-        .filter((task) => task.contextId === operation.contextId)
-        .sort((left, right) => left.order - right.order);
+      const contextTasks =
+        executionIndex.tasksByContext.get(operation.contextId) ?? [];
       const editableTaskIds = contextTasks
         .filter((task) => !isRuntimeEditTaskLocked(execution, task.id))
         .map((task) => task.id);
@@ -366,7 +361,7 @@ export function validateWorkflowRuntimeEdit(
       return;
     }
 
-    const task = taskMap.get(operation.taskId);
+    const task = executionIndex.taskById.get(operation.taskId);
     if (!task) {
       errors.push({
         code: "runtime-edit-unknown-task",
@@ -394,7 +389,7 @@ export function validateWorkflowRuntimeEdit(
     }
 
     const destinationState = execution.contextStates[operation.targetContextId];
-    if (!contextIds.has(operation.targetContextId)) {
+    if (!executionIndex.contextById.has(operation.targetContextId)) {
       errors.push({
         code: "runtime-edit-unknown-target-context",
         message: `Move target "${operation.targetContextId}" does not exist`,

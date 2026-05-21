@@ -1,5 +1,9 @@
 import path from "node:path";
 import { publishSessionStatus } from "@/lib/workflows/primitives/default-session-status-bus";
+import {
+  createExecutionIndex,
+  type ExecutionIndex,
+} from "@/lib/workflow-graph/execution-index";
 import type {
   GraphWorkflowBatchScheduledEvent,
   GraphWorkflowCircuitBreakerEvent,
@@ -7,6 +11,7 @@ import type {
   GraphWorkflowExecutionContextState,
   GraphWorkflowExecutionEvent,
   GraphWorkflowExecutionSessionRef,
+  GraphWorkflowHaltReason,
   GraphWorkflowMergeStatusEvent,
   GraphWorkflowPendingHaltReasonEvent,
   GraphWorkflowSSEEvent,
@@ -95,12 +100,14 @@ function getProjectName(projectPath: string): string {
   return path.basename(projectPath);
 }
 
-function getTaskSource(execution: GraphWorkflowExecution, taskId: string) {
-  return execution.workingDefinition.tasks.find((task) => task.id === taskId)
-    ?.source;
+function getTaskSource(index: ExecutionIndex, taskId: string) {
+  return index.taskById.get(taskId)?.source;
 }
 
-function orderContextIdsByActive(execution: GraphWorkflowExecution): string[] {
+function orderContextIdsByActive(
+  execution: GraphWorkflowExecution,
+  index: ExecutionIndex,
+): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const id of execution.activeContextIds) {
@@ -109,13 +116,143 @@ function orderContextIdsByActive(execution: GraphWorkflowExecution): string[] {
       out.push(id);
     }
   }
-  for (const context of execution.workingDefinition.executionContexts) {
+  for (const context of index.contextById.values()) {
     if (!seen.has(context.id)) {
       seen.add(context.id);
       out.push(context.id);
     }
   }
   return out;
+}
+
+function arraysEqual<T>(left: readonly T[], right: readonly T[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((item, index) => item === right[index]);
+}
+
+type DirtyPath = Extract<
+  GraphWorkflowHaltReason,
+  { type: "merge_precondition_failed" | "worktree_creation_dirty" }
+>["dirtyPaths"][number];
+
+function dirtyPathsEqual(
+  left: readonly DirtyPath[],
+  right: readonly DirtyPath[],
+): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((path, index) => {
+    const other = right[index];
+    return (
+      other !== undefined &&
+      path.path === other.path &&
+      path.statusCode === other.statusCode &&
+      path.tracked === other.tracked
+    );
+  });
+}
+
+function haltReasonsEqual(
+  previous: GraphWorkflowHaltReason | null,
+  next: GraphWorkflowHaltReason | null,
+): boolean {
+  if (previous === null || next === null) {
+    return previous === next;
+  }
+
+  if (previous.type !== next.type) {
+    return false;
+  }
+
+  switch (previous.type) {
+    case "circuit_breaker":
+      return (
+        next.type === "circuit_breaker" &&
+        previous.contextId === next.contextId &&
+        previous.condition === next.condition &&
+        previous.failureCount === next.failureCount &&
+        previous.summary === next.summary
+      );
+    case "max_iterations":
+      return (
+        next.type === "max_iterations" &&
+        previous.contextId === next.contextId &&
+        previous.iterationCount === next.iterationCount
+      );
+    case "recovery_error":
+      return (
+        next.type === "recovery_error" && previous.message === next.message
+      );
+    case "aborted":
+      return next.type === "aborted";
+    case "validator_infra_error":
+      return (
+        next.type === "validator_infra_error" &&
+        previous.contextId === next.contextId &&
+        previous.engine === next.engine &&
+        previous.infraReason === next.infraReason &&
+        previous.message === next.message &&
+        previous.summary === next.summary
+      );
+    case "script_validator_missing_command":
+      return (
+        next.type === "script_validator_missing_command" &&
+        previous.contextId === next.contextId &&
+        previous.message === next.message
+      );
+    case "merge_failure":
+      return (
+        next.type === "merge_failure" &&
+        previous.contextId === next.contextId &&
+        previous.message === next.message &&
+        arraysEqual(previous.conflictFiles, next.conflictFiles)
+      );
+    case "merge_precondition_failed":
+      return (
+        next.type === "merge_precondition_failed" &&
+        previous.contextId === next.contextId &&
+        previous.targetBranch === next.targetBranch &&
+        dirtyPathsEqual(previous.dirtyPaths, next.dirtyPaths) &&
+        previous.totalDirtyCount === next.totalDirtyCount &&
+        previous.message === next.message
+      );
+    case "agent_turn_failed":
+      return (
+        next.type === "agent_turn_failed" &&
+        previous.contextId === next.contextId &&
+        previous.engine === next.engine &&
+        previous.cause === next.cause &&
+        previous.message === next.message
+      );
+    case "worktree_creation_dirty":
+      return (
+        next.type === "worktree_creation_dirty" &&
+        previous.contextId === next.contextId &&
+        previous.worktreePath === next.worktreePath &&
+        previous.branchName === next.branchName &&
+        dirtyPathsEqual(previous.dirtyPaths, next.dirtyPaths) &&
+        previous.totalDirtyCount === next.totalDirtyCount
+      );
+    case "execution_loop_failed":
+      return (
+        next.type === "execution_loop_failed" &&
+        previous.contextId === next.contextId &&
+        previous.message === next.message &&
+        previous.cause === next.cause
+      );
+  }
+
+  const exhaustive: never = previous;
+  return exhaustive;
+}
+
+function haltReasonArraysEqual(
+  previous: readonly GraphWorkflowHaltReason[],
+  next: readonly GraphWorkflowHaltReason[],
+): boolean {
+  if (previous.length !== next.length) return false;
+  return previous.every((reason, index) =>
+    haltReasonsEqual(reason, next[index] ?? null),
+  );
 }
 
 function deriveActiveBatchIds(execution: GraphWorkflowExecution): string[] {
@@ -186,6 +323,7 @@ function dispatchPushNotifications(
   events: GraphWorkflowSSEEvent[],
   input: PublishExecutionUpdateInput,
   nextExecution: GraphWorkflowExecution,
+  index: ExecutionIndex,
 ): void {
   if (!deps.dispatchPush) return;
 
@@ -216,9 +354,7 @@ function dispatchPushNotifications(
     }
 
     if (event.type === "graph-workflow-circuit-breaker") {
-      const contextDef = nextExecution.workingDefinition.executionContexts.find(
-        (c) => c.id === event.contextId,
-      );
+      const contextDef = index.contextById.get(event.contextId);
       deps.dispatchPush({
         kind: "circuit-breaker",
         projectName,
@@ -231,14 +367,11 @@ function dispatchPushNotifications(
       event.type === "graph-workflow-context-status" &&
       event.status === "completed"
     ) {
-      const contextDef = nextExecution.workingDefinition.executionContexts.find(
-        (c) => c.id === event.contextId,
-      );
+      const contextDef = index.contextById.get(event.contextId);
       const completedContexts = Object.values(
         nextExecution.contextStates,
       ).filter((cs) => cs.status === "completed").length;
-      const totalContexts =
-        nextExecution.workingDefinition.executionContexts.length;
+      const totalContexts = index.contextById.size;
 
       deps.dispatchPush({
         kind: "context-completed",
@@ -261,6 +394,10 @@ export function createGraphWorkflowExecutionEventPublisher(
     const projectName = getProjectName(input.projectPath);
     const previousExecution = input.previousExecution;
     const nextExecution = input.nextExecution;
+    const nextIndex = createExecutionIndex(
+      nextExecution.workingDefinition,
+      nextExecution,
+    );
     const events: GraphWorkflowSSEEvent[] = [];
 
     const nextActiveBatchIds = deriveActiveBatchIds(nextExecution);
@@ -271,16 +408,23 @@ export function createGraphWorkflowExecutionEventPublisher(
     if (
       !previousExecution ||
       previousExecution.status !== nextExecution.status ||
-      JSON.stringify(previousExecution.activeContextIds) !==
-        JSON.stringify(nextExecution.activeContextIds) ||
-      JSON.stringify(previousActiveBatchIds) !==
-        JSON.stringify(nextActiveBatchIds) ||
-      JSON.stringify(previousExecution.haltReason) !==
-        JSON.stringify(nextExecution.haltReason) ||
-      JSON.stringify(previousExecution.pendingHaltReason) !==
-        JSON.stringify(nextExecution.pendingHaltReason) ||
-      JSON.stringify(previousExecution.secondaryHaltReasons) !==
-        JSON.stringify(nextExecution.secondaryHaltReasons)
+      !arraysEqual(
+        previousExecution.activeContextIds,
+        nextExecution.activeContextIds,
+      ) ||
+      !arraysEqual(previousActiveBatchIds, nextActiveBatchIds) ||
+      !haltReasonsEqual(
+        previousExecution.haltReason,
+        nextExecution.haltReason,
+      ) ||
+      !haltReasonsEqual(
+        previousExecution.pendingHaltReason,
+        nextExecution.pendingHaltReason,
+      ) ||
+      !haltReasonArraysEqual(
+        previousExecution.secondaryHaltReasons,
+        nextExecution.secondaryHaltReasons,
+      )
     ) {
       events.push({
         type: "graph-workflow-status",
@@ -298,8 +442,10 @@ export function createGraphWorkflowExecutionEventPublisher(
 
     if (
       !previousExecution ||
-      JSON.stringify(previousExecution.pendingHaltReason) !==
-        JSON.stringify(nextExecution.pendingHaltReason)
+      !haltReasonsEqual(
+        previousExecution.pendingHaltReason,
+        nextExecution.pendingHaltReason,
+      )
     ) {
       if (
         nextExecution.pendingHaltReason !== null ||
@@ -315,7 +461,7 @@ export function createGraphWorkflowExecutionEventPublisher(
       }
     }
 
-    const orderedContextIds = orderContextIdsByActive(nextExecution);
+    const orderedContextIds = orderContextIdsByActive(nextExecution, nextIndex);
 
     const newlyAssignedBatches = new Map<string, string[]>();
     const batchOrder: string[] = [];
@@ -348,7 +494,7 @@ export function createGraphWorkflowExecutionEventPublisher(
       } satisfies GraphWorkflowBatchScheduledEvent);
     }
 
-    for (const context of nextExecution.workingDefinition.executionContexts) {
+    for (const context of nextIndex.contextById.values()) {
       const previousContext =
         previousExecution?.contextStates[context.id] ?? null;
       const nextContext = nextExecution.contextStates[context.id];
@@ -376,7 +522,7 @@ export function createGraphWorkflowExecutionEventPublisher(
       }
     }
 
-    for (const task of nextExecution.workingDefinition.tasks) {
+    for (const task of nextIndex.taskById.values()) {
       const previousTask = previousExecution?.taskStates[task.id] ?? null;
       const nextTask = nextExecution.taskStates[task.id];
       if (!nextTask) {
@@ -402,7 +548,7 @@ export function createGraphWorkflowExecutionEventPublisher(
           taskId: task.id,
           contextId: nextTask.contextId,
           status: nextTask.status,
-          source: getTaskSource(nextExecution, task.id) ?? "user",
+          source: getTaskSource(nextIndex, task.id) ?? "user",
           order: nextTask.order,
           lastConversationId: nextTask.lastConversationId,
           startedAt: nextTask.startedAt,
@@ -475,7 +621,7 @@ export function createGraphWorkflowExecutionEventPublisher(
 
     const occurredAt = getNow(deps);
     publishEvents(deps, events);
-    dispatchPushNotifications(deps, events, input, nextExecution);
+    dispatchPushNotifications(deps, events, input, nextExecution, nextIndex);
     return appendEvents(nextExecution, occurredAt, events);
   }
 

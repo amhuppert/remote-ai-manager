@@ -11,6 +11,7 @@ import type {
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
 } from "@/types";
+import { createExecutionIndex } from "@/lib/workflow-graph/execution-index";
 
 type DeriveGraphDefinition =
   | WorkflowSemanticDefinition
@@ -79,14 +80,12 @@ export function deriveNodes(
   layout: GraphWorkflowVisualLayout,
   execution?: GraphWorkflowExecution | null,
 ): Node<ExecutionContextNodeData>[] {
-  return definition.executionContexts.map((context) => {
-    const tasks = definition.tasks
-      .filter((t) => t.contextId === context.id)
-      .sort((a, b) => a.order - b.order);
+  const index = createExecutionIndex(definition, execution);
 
+  return definition.executionContexts.map((context) => {
     const data: ExecutionContextNodeData = {
       context,
-      tasks,
+      tasks: index.tasksByContext.get(context.id) ?? [],
       mode: execution ? "execution" : "builder",
     };
 
@@ -96,14 +95,9 @@ export function deriveNodes(
         data.contextState = ctxState;
       }
 
-      const filteredTaskStates: Record<string, GraphWorkflowTaskState> = {};
-      for (const [taskId, taskState] of Object.entries(execution.taskStates)) {
-        if (taskState.contextId === context.id) {
-          filteredTaskStates[taskId] = taskState;
-        }
-      }
-      if (Object.keys(filteredTaskStates).length > 0) {
-        data.taskStates = filteredTaskStates;
+      const taskStates = index.taskStatesByContext.get(context.id);
+      if (taskStates && Object.keys(taskStates).length > 0) {
+        data.taskStates = taskStates;
       }
     }
 

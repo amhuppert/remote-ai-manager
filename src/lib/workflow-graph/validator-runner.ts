@@ -1,6 +1,10 @@
 import { workflowAgentValidatorResultSchema } from "@/lib/schemas";
 import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
+import {
+  createExecutionIndex,
+  type ExecutionIndex,
+} from "@/lib/workflow-graph/execution-index";
 import type {
   AgentTaskResult,
   GraphWorkflowAgentValidatorConfig,
@@ -385,13 +389,8 @@ function resolvedCallToResumeRef(
   return null;
 }
 
-function getContextTaskIds(
-  execution: GraphWorkflowExecution,
-  contextId: string,
-): string[] {
-  return execution.workingDefinition.tasks
-    .filter((task) => task.contextId === contextId)
-    .map((task) => task.id);
+function getContextTaskIds(index: ExecutionIndex, contextId: string): string[] {
+  return (index.tasksByContext.get(contextId) ?? []).map((task) => task.id);
 }
 
 interface ValidatorTaskInvocation {
@@ -853,9 +852,11 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
   async function runContextValidator(
     input: GraphWorkflowContextValidatorInput,
   ): Promise<ValidatorRunResult> {
-    const contextTasks = input.execution.workingDefinition.tasks
-      .filter((task) => task.contextId === input.context.id)
-      .sort((left, right) => left.order - right.order);
+    const index = createExecutionIndex(
+      input.execution.workingDefinition,
+      input.execution,
+    );
+    const contextTasks = index.tasksByContext.get(input.context.id) ?? [];
 
     const prompt = buildContextValidationPrompt({
       context: input.context,
@@ -873,7 +874,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     });
 
     const contextLimitTokens = input.validator.continuity.contextLimitTokens;
-    const allowedTaskIds = getContextTaskIds(input.execution, input.context.id);
+    const allowedTaskIds = getContextTaskIds(index, input.context.id);
 
     const overrideWorktreePath = input.executionTarget?.worktreePath;
 
