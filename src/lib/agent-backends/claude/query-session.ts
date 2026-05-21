@@ -91,6 +91,15 @@ export interface QuerySession {
     options?: TurnOptions,
   ): Promise<TurnResult>;
 
+  /**
+   * Cancel the idle TTL timer because the caller is about to send a new turn.
+   * Must be invoked at the moment the runtime is acquired for a new turn —
+   * before any pre-turn pipeline work (state reads, MCP discovery, capability
+   * cascades) that could otherwise outlast the remaining idle budget and let
+   * the timer close the subprocess mid-prep. No-op on a dead session.
+   */
+  notifyTurnStarting(): void;
+
   /** Terminate the subprocess and clean up all resources */
   close(): void;
 }
@@ -273,6 +282,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       return options.outputFormat;
     },
     sendPrompt,
+    notifyTurnStarting,
     close,
   };
 
@@ -311,7 +321,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     turnOptions?: TurnOptions,
   ): Promise<TurnResult> {
     if (status === "dead") {
-      throw new Error("QuerySession is dead — cannot send prompt");
+      throw createPromptNotDeliveredError();
     }
 
     // Clear idle timer — a new prompt has arrived. Keepalive keeps ticking
@@ -355,6 +365,18 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         void sendSubsequentPrompt(prompt);
       }
     });
+  }
+
+  // ------------------------------------------------------------------
+  // notifyTurnStarting
+  // ------------------------------------------------------------------
+
+  function notifyTurnStarting(): void {
+    if (status === "dead") return;
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
   }
 
   // ------------------------------------------------------------------

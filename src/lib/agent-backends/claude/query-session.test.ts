@@ -882,6 +882,75 @@ describe("QuerySession idle TTL", () => {
 
     vi.useRealTimers();
   });
+
+  it("notifyTurnStarting cancels the idle timer so pre-turn work cannot trip it", async () => {
+    vi.useFakeTimers();
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions({ idleTtlMs: 100 }));
+    const emit = vi.fn();
+
+    // Complete a turn so the idle timer is armed
+    const turn = session.sendPrompt("First", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn;
+
+    expect(session.status).toBe("alive");
+
+    // Caller is about to start a new turn — cancel the idle timer up front
+    session.notifyTurnStarting();
+
+    // Advance past what would have been the TTL — must still be alive
+    vi.advanceTimersByTime(500);
+    expect(session.status).toBe("alive");
+
+    vi.useRealTimers();
+    session.close();
+  });
+
+  it("notifyTurnStarting is a safe no-op on a dead session", () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    session.close();
+    expect(session.status).toBe("dead");
+
+    expect(() => session.notifyTurnStarting()).not.toThrow();
+    expect(session.status).toBe("dead");
+  });
+});
+
+describe("QuerySession.sendPrompt on dead session", () => {
+  it("rejects with a promptNotDelivered-tagged error so the caller can retry", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    session.close();
+    expect(session.status).toBe("dead");
+
+    const emit = vi.fn();
+    let caughtError: unknown;
+    try {
+      await session.sendPrompt("Hello", emit);
+    } catch (error) {
+      caughtError = error;
+    }
+    expect(caughtError).toBeInstanceOf(Error);
+    expect(isUndeliveredQuerySessionError(caughtError)).toBe(true);
+  });
 });
 
 describe("outputFormat passthrough", () => {

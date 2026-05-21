@@ -16,6 +16,11 @@ import {
 } from "./conversation-runtime";
 import { CLAUDE_AGENT_SUPPRESSION_STRATEGY } from "@/lib/agent-capabilities/claude-agent-suppression";
 import type { ConversationBackendEvent } from "../conversation";
+import {
+  isUndeliveredQuerySessionError,
+  QUERY_SESSION_ERROR_CODES,
+  tagQuerySessionError,
+} from "./query-session-errors";
 
 function createFakeMcpServer(): {
   instance: McpServer;
@@ -1062,5 +1067,171 @@ describe("ClaudeConversationRuntime — error result classification", () => {
       backend: "claude",
       sessionId: "sess-aborted",
     });
+  });
+});
+
+describe("ClaudeConversationRuntime — notifyTurnStarting", () => {
+  it("forwards to the underlying QuerySession so the idle timer is cancelled before pre-turn work", async () => {
+    vi.useFakeTimers();
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-notify",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    // Complete a turn so the idle timer is armed
+    const turn1 = runtime.sendTurn({
+      promptText: "hi",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn1;
+
+    expect(runtime.status).toBe("alive");
+    expect(runtime.notifyTurnStarting).toBeTypeOf("function");
+
+    runtime.notifyTurnStarting!();
+
+    // The QuerySession's default idle TTL is 5 minutes — advance past it
+    vi.advanceTimersByTime(6 * 60 * 1000);
+
+    expect(runtime.status).toBe("alive");
+
+    vi.useRealTimers();
+    runtime.close();
+  });
+});
+
+describe("ClaudeConversationRuntime — retryable error propagation", () => {
+  it("re-throws a promptNotDelivered error from sendPrompt instead of swallowing it into the result", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-retryable",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    // Complete a first turn so the session moves past first-prompt state
+    const turn1 = runtime.sendTurn({
+      promptText: "first",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn1;
+
+    // Now make streamInput reject with a tagged promptNotDelivered error —
+    // this is what query-session emits when the SDK pipe is gone before
+    // delivery (e.g. EPIPE, ProcessTransport closed).
+    mock.query.streamInput.mockRejectedValue(
+      tagQuerySessionError(
+        new Error("ProcessTransport is not ready for writing"),
+        QUERY_SESSION_ERROR_CODES.promptNotDelivered,
+      ),
+    );
+
+    let caughtError: unknown;
+    try {
+      await runtime.sendTurn({
+        promptText: "second",
+        imageRefs: [],
+        sessionInstructions: [],
+        autonomous: false,
+        signal: new AbortController().signal,
+        onEvent: () => {},
+      });
+    } catch (error) {
+      caughtError = error;
+    }
+
+    expect(caughtError).toBeInstanceOf(Error);
+    expect(isUndeliveredQuerySessionError(caughtError)).toBe(true);
+
+    runtime.close();
+  });
+
+  it("still returns an aborted result (does not throw) when the abort signal fires", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-aborted-not-thrown",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const ac = new AbortController();
+    const turnPromise = runtime.sendTurn({
+      promptText: "hello",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: ac.signal,
+      onEvent: () => {},
+    });
+
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-abort",
+      uuid: "u1",
+      message: { content: [{ type: "text", text: "partial" }] },
+    } as unknown as SDKMessage);
+
+    await new Promise((r) => setTimeout(r, 5));
+
+    ac.abort();
+    runtime.close();
+
+    const result = await turnPromise;
+
+    expect(result.aborted).toBe(true);
+    expect(result.error).toBeNull();
   });
 });

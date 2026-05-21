@@ -35,6 +35,10 @@ import {
   type QuerySessionOptions,
   type TurnResult,
 } from "./query-session";
+import {
+  isUndeliveredQuerySessionError,
+  isSessionDiedMidTurnError,
+} from "./query-session-errors";
 import { buildClaudePromptBlocks } from "./build-prompt-blocks";
 import { createCanUseTool } from "./native-tooling";
 import { buildChildEnv } from "@/lib/child-env";
@@ -162,6 +166,10 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
     return this._status;
   }
 
+  notifyTurnStarting(): void {
+    this.querySession.notifyTurnStarting();
+  }
+
   async sendTurn(
     input: ConversationBackendTurnInput,
   ): Promise<ConversationBackendTurnResult> {
@@ -251,6 +259,16 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
         aborted: wasAborted,
         sessionId: lastKnownSessionId,
       });
+
+      // Surface retryable QuerySession errors to the caller so the actor's
+      // dispatch-turn proxy can replace the dead runtime and retry. Aborts
+      // continue to flow through the structured aborted-result path below.
+      if (
+        !wasAborted &&
+        (isUndeliveredQuerySessionError(err) || isSessionDiedMidTurnError(err))
+      ) {
+        throw err;
+      }
 
       if (!wasAborted) {
         input.onEvent({ type: "error", message: errorMsg });

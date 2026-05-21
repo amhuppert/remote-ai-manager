@@ -103,6 +103,14 @@ export interface ConversationBackendRuntime {
   sendTurn(
     input: ConversationBackendTurnInput,
   ): Promise<ConversationBackendTurnResult>;
+  /**
+   * Signal that the caller has acquired this runtime and is about to begin a
+   * new turn. Implementations should use this to cancel any inactivity timers
+   * that could otherwise fire during the caller's pre-turn pipeline (state
+   * reads, MCP discovery, capability cascades, etc.) and tear the runtime down
+   * mid-prep. No-op if the runtime is dead.
+   */
+  notifyTurnStarting?(): void;
   queueUserInput?(input: ConversationQueuedUserInput): Promise<void>;
   applyPortableMcpConfig?(config: PortableMcpConfig): Promise<McpApplyResult>;
   /**

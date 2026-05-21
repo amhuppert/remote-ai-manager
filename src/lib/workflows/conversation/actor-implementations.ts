@@ -1199,6 +1199,14 @@ export async function executePromptForMachine(
   // ---------------------------------------------------------------
   let backendRuntime = runtimeState.backendRuntime;
 
+  // Cancel any inactivity timer the existing runtime may have armed after its
+  // last turn. The pre-turn pipeline below (state reads, MCP discovery,
+  // capability cascades) can run long enough to outlast the idle TTL budget;
+  // without this, the timer fires mid-prep and closes the subprocess we are
+  // about to send a prompt to. No-op for new/dead runtimes (the timer can
+  // only be armed once a turn has completed).
+  backendRuntime?.notifyTurnStarting?.();
+
   async function seedRuntimeMcpState(portableMcp: PortableMcpConfig) {
     const hash = computeEffectiveConfigHash(portableMcp);
     await deps.mutateConversation(
