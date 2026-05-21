@@ -4,6 +4,7 @@ import {
   projectKeys,
   configKeys,
   sessionKeys,
+  conflictKeys,
   conversationKeys,
   commandKeys,
   fileKeys,
@@ -41,6 +42,7 @@ import {
 import {
   sessionStateSchema,
   conversationStateSchema,
+  conflictEntrySchema,
   mcpConfigViewResponseSchema,
   mcpToolInventoryResultSchema,
   transcriptMessageSchema,
@@ -232,6 +234,34 @@ export function useCommitDiffQuery(
         sessionDiffSchema,
       ),
     enabled: !!hash,
+  });
+}
+
+const conflictsResponseSchema = z.object({
+  conflicts: z.array(conflictEntrySchema).optional(),
+  jobId: z.string().optional(),
+});
+
+export type ConflictsQueryResult = z.infer<
+  typeof conflictsResponseSchema
+> | null;
+
+export function useConflictsQuery(projectName: string, sessionName: string) {
+  return useQuery<ConflictsQueryResult>({
+    queryKey: conflictKeys.detail(projectName, sessionName),
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conflicts`,
+      );
+      if (res.status === 404) {
+        return null;
+      }
+      if (!res.ok) {
+        throw new Error(`Failed to load conflicts: ${res.status}`);
+      }
+
+      return conflictsResponseSchema.parse(await res.json());
+    },
   });
 }
 

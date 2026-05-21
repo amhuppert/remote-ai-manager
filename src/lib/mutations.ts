@@ -707,6 +707,58 @@ export function useRenameConversationMutation(
   });
 }
 
+export function useAnswerQuestionMutation(
+  projectName: string,
+  sessionName: string,
+  conversationId: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      questionId,
+      answers,
+    }: {
+      questionId: string;
+      answers: Record<string, string>;
+    }) => {
+      const res = await fetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/answer`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ questionId, answers }),
+        },
+      );
+
+      if (res.ok) {
+        return { status: "ok" as const };
+      }
+
+      if (res.status === 410) {
+        const body = (await res.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        return { status: "gone" as const, error: body?.error ?? null };
+      }
+
+      throw new Error(`Answer submission failed: ${res.status}`);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.messages(
+          projectName,
+          sessionName,
+          conversationId,
+        ),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
+      });
+    },
+  });
+}
+
 /** Build the pending-prompt persistence URL for a given conversation. */
 export function pendingPromptUrl(
   projectName: string,

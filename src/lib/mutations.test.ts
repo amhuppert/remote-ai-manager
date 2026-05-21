@@ -7,9 +7,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   useRenameConversationMutation,
   useArchiveConversationMutation,
+  useAnswerQuestionMutation,
   useMarkNotificationAsReadMutation,
 } from "@/lib/mutations";
-import { conversationKeys, notificationKeys } from "@/lib/query-keys";
+import {
+  conversationKeys,
+  notificationKeys,
+  sessionKeys,
+} from "@/lib/query-keys";
 import type { ConversationState, Notification } from "@/types";
 
 function makeClient() {
@@ -236,6 +241,83 @@ describe("useArchiveConversationMutation", () => {
 
     const data = client.getQueryData<ConversationState[]>(listKey);
     expect(data?.[0]?.archived).toBe(false);
+  });
+});
+
+describe("useAnswerQuestionMutation", () => {
+  const fetchSpy = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("submits answers and invalidates messages and session detail", async () => {
+    const client = makeClient();
+    const messagesKey = conversationKeys.messages("p", "s", "c1");
+    const sessionKey = sessionKeys.detail("p", "s");
+    client.setQueryData(messagesKey, []);
+    client.setQueryData(sessionKey, { sessionName: "s" });
+    fetchSpy.mockResolvedValue(jsonResponse({ ok: true }));
+
+    const { result } = renderHook(
+      () => useAnswerQuestionMutation("p", "s", "c1"),
+      { wrapper: wrapperFor(client) },
+    );
+
+    await expect(
+      result.current.mutateAsync({
+        questionId: "q1",
+        answers: { choice: "yes" },
+      }),
+    ).resolves.toEqual({ status: "ok" });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/projects/p/sessions/s/conversations/c1/answer",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          questionId: "q1",
+          answers: { choice: "yes" },
+        }),
+      }),
+    );
+    await waitFor(() => {
+      expect(client.getQueryState(messagesKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(sessionKey)?.isInvalidated).toBe(true);
+    });
+  });
+
+  it("returns gone status for stale questions", async () => {
+    const client = makeClient();
+    const messagesKey = conversationKeys.messages("p", "s", "c1");
+    const sessionKey = sessionKeys.detail("p", "s");
+    client.setQueryData(messagesKey, []);
+    client.setQueryData(sessionKey, { sessionName: "s" });
+    fetchSpy.mockResolvedValue(
+      jsonResponse({ error: "Question expired" }, 410),
+    );
+
+    const { result } = renderHook(
+      () => useAnswerQuestionMutation("p", "s", "c1"),
+      { wrapper: wrapperFor(client) },
+    );
+
+    await expect(
+      result.current.mutateAsync({
+        questionId: "q1",
+        answers: { choice: "yes" },
+      }),
+    ).resolves.toEqual({ status: "gone", error: "Question expired" });
+
+    await waitFor(() => {
+      expect(client.getQueryState(messagesKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(sessionKey)?.isInvalidated).toBe(true);
+    });
   });
 });
 
