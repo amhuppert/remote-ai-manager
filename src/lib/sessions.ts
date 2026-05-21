@@ -467,10 +467,12 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       parentSessionName?: string;
     },
   ): Promise<SessionState> {
-    const baseName = await generateSessionName(objective, projectPath);
+    const [baseName, state] = await Promise.all([
+      generateSessionName(objective, projectPath),
+      readState(),
+    ]);
 
     // Ensure uniqueness within project
-    const state = await readState();
     const project = state.projects[projectPath];
     const existingNames = new Set(Object.keys(project?.sessions ?? {}));
     const sessionName = ensureUniqueName(baseName, existingNames);
@@ -499,10 +501,12 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       parentSessionName?: string;
     },
   ): Promise<SessionState> {
-    const baseName = await generateSessionName(instructions, projectPath);
+    const [baseName, state] = await Promise.all([
+      generateSessionName(instructions, projectPath),
+      readState(),
+    ]);
 
     // Ensure uniqueness within project
-    const state = await readState();
     const project = state.projects[projectPath];
     const existingNames = new Set(Object.keys(project?.sessions ?? {}));
     const sessionName = ensureUniqueName(baseName, existingNames);
