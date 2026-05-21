@@ -6,6 +6,7 @@ import {
   readConversationMessagesWithSeq,
   readLastAssistantContent,
   _resetLastAssistantCacheForTesting,
+  _resetLastSeqCacheForTesting,
   appendTranscriptEntry,
   getTranscriptPath,
   parseCommandContent,
@@ -1780,5 +1781,80 @@ describe("appendTranscriptEntry — message-appended broadcast", () => {
     );
 
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  describe("seq cache", () => {
+    beforeEach(() => {
+      _resetLastSeqCacheForTesting();
+    });
+
+    it("broadcasts seq derived from cache, not from re-reading the file (cache survives external truncation)", async () => {
+      const conversationId = "conv-cache-survives";
+      const filePath = await getTranscriptPath(conversationId, TEST_DIR);
+
+      // Prime the cache: first append creates the file at seq=0.
+      await appendTranscriptEntry(
+        conversationId,
+        makeEntry("user", "first"),
+        TEST_DIR,
+        meta,
+      );
+      expect((captured[0] as { seq: number }).seq).toBe(0);
+
+      // Simulate an external process truncating the file. A correctly-cached
+      // implementation must NOT re-read the now-empty file when computing the
+      // next seq — it must increment from the cached value.
+      await writeFile(filePath, "", "utf-8");
+
+      await appendTranscriptEntry(
+        conversationId,
+        makeEntry("assistant", "second"),
+        TEST_DIR,
+        meta,
+      );
+      expect((captured[1] as { seq: number }).seq).toBe(1);
+    });
+
+    it("computes seq from existing file content on cold cache (lazy init counts pre-existing newlines)", async () => {
+      const conversationId = "conv-cold-init";
+      const filePath = await getTranscriptPath(conversationId, TEST_DIR);
+
+      // Seed the file with 4 pre-existing JSONL lines.
+      const preExisting = [
+        '{"timestamp":"2024-01-01T00:00:00Z","type":"user","role":"user","content":[{"type":"text","text":"a"}]}',
+        '{"timestamp":"2024-01-01T00:00:01Z","type":"assistant","role":"assistant","content":[{"type":"text","text":"b"}]}',
+        '{"timestamp":"2024-01-01T00:00:02Z","type":"user","role":"user","content":[{"type":"text","text":"c"}]}',
+        '{"timestamp":"2024-01-01T00:00:03Z","type":"assistant","role":"assistant","content":[{"type":"text","text":"d"}]}',
+      ];
+      await writeFile(filePath, preExisting.join("\n") + "\n", "utf-8");
+
+      await appendTranscriptEntry(
+        conversationId,
+        makeEntry("user", "e"),
+        TEST_DIR,
+        meta,
+      );
+      expect((captured[0] as { seq: number }).seq).toBe(4);
+
+      await appendTranscriptEntry(
+        conversationId,
+        makeEntry("assistant", "f"),
+        TEST_DIR,
+        meta,
+      );
+      expect((captured[1] as { seq: number }).seq).toBe(5);
+    });
+
+    it("computes seq=0 on cold cache when the file does not yet exist", async () => {
+      const conversationId = "conv-cold-no-file";
+
+      await appendTranscriptEntry(
+        conversationId,
+        makeEntry("user", "first"),
+        TEST_DIR,
+        meta,
+      );
+      expect((captured[0] as { seq: number }).seq).toBe(0);
+    });
   });
 });

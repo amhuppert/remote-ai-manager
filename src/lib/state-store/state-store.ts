@@ -47,6 +47,8 @@ type Db = InstanceType<typeof Database>;
 
 const logger = createLogger("state-store");
 
+const STATE_READ_TIMING_LOG_THRESHOLD_MS = 5;
+
 export interface AllRepos {
   projects: ProjectsRepo;
   sessions: SessionsRepo;
@@ -75,11 +77,8 @@ function emitReadTiming(
   payload: Omit<ReadTimingPayload, "totalMs">,
 ): void {
   const totalMs = +(performance.now() - start).toFixed(3);
+  if (totalMs < STATE_READ_TIMING_LOG_THRESHOLD_MS) return;
   logger.info("state.read.timing", { ...payload, totalMs });
-}
-
-function deepClone<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
 }
 
 /**
@@ -137,6 +136,14 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     logger.warn("state.deprecated_export.used", { name });
   }
 
+  function cloneAndValidate(snapshot: ManagerState): ManagerState {
+    const cloned = structuredClone(snapshot);
+    if (process.env.NODE_ENV !== "production") {
+      return managerStateSchema.parse(cloned);
+    }
+    return cloned;
+  }
+
   // ------------------------------------------------------------------
   // Aggregate read / write
   // ------------------------------------------------------------------
@@ -173,7 +180,7 @@ export function createStateStore(deps: StateStoreDeps = {}) {
   ): Promise<T> {
     return writeQueue.withWriteQueue(label, async () => {
       const snapshot = aggregate.readAll();
-      const mutated = managerStateSchema.parse(deepClone(snapshot));
+      const mutated = cloneAndValidate(snapshot);
       const result = await mutate(mutated);
       aggregate.diffAndCommit(snapshot, mutated);
       logger.info("state.mutation", { label });
@@ -205,7 +212,7 @@ export function createStateStore(deps: StateStoreDeps = {}) {
         );
       }
 
-      const mutated = managerStateSchema.parse(deepClone(snapshot));
+      const mutated = cloneAndValidate(snapshot);
       const mutProject = mutated.projects[projectPath]!;
       const mutSession = mutProject.sessions[sessionName]!;
 

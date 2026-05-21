@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const logger = vi.hoisted(() => ({
+  info: vi.fn(),
+  debug: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
+
 vi.mock("@/lib/logging", () => ({
-  createLogger: () => ({
-    info: vi.fn(),
-    debug: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
+  createLogger: () => logger,
 }));
 
 import { existsSync, mkdtempSync, readdirSync } from "node:fs";
@@ -301,6 +303,87 @@ describe("setProjectArchived / setProjectPinned atomicity (R2)", () => {
     ).rejects.toThrow(/simulated setPinned/i);
 
     expect(projectExists(db, "/p/missing")).toBe(false);
+  });
+});
+
+describe("mutateState clone-and-validate", () => {
+  beforeEach(async () => {
+    await store.getOrCreateProject("/proj-a");
+    await store.mutateState("seed", (state) => {
+      state.projects["/proj-a"]!.sessions["alpha"] = makeSession();
+    });
+  });
+
+  it("skips the snapshot-clone validation under NODE_ENV=production (diffAndCommit still validates mutated)", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const parseSpy = vi.spyOn(managerStateSchema, "parse");
+    try {
+      await store.mutateState("noop", () => {
+        // no-op mutation
+      });
+      // diffAndCommit always validates the mutated state; the snapshot-clone
+      // validation must be skipped — so we expect exactly one parse call.
+      expect(parseSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      parseSpy.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("runs the snapshot-clone validation outside production (cloneAndValidate + diffAndCommit)", async () => {
+    vi.stubEnv("NODE_ENV", "test");
+    const parseSpy = vi.spyOn(managerStateSchema, "parse");
+    try {
+      await store.mutateState("noop", () => {
+        // no-op mutation
+      });
+      expect(parseSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      parseSpy.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+describe("state.read.timing log threshold", () => {
+  beforeEach(() => {
+    logger.info.mockClear();
+  });
+
+  it("does not log state.read.timing for sub-threshold reads", async () => {
+    await store.getArchivedProjects();
+    const timingCalls = logger.info.mock.calls.filter(
+      (call) => call[0] === "state.read.timing",
+    );
+    expect(timingCalls).toEqual([]);
+  });
+
+  it("logs state.read.timing when the read exceeds the threshold", async () => {
+    const realPerfNow = performance.now.bind(performance);
+    let first = true;
+    const nowSpy = vi.spyOn(performance, "now").mockImplementation(() => {
+      if (first) {
+        first = false;
+        return 0;
+      }
+      return 100;
+    });
+    try {
+      await store.getArchivedProjects();
+      const timingCalls = logger.info.mock.calls.filter(
+        (call) => call[0] === "state.read.timing",
+      );
+      expect(timingCalls).toHaveLength(1);
+      const payload = timingCalls[0]![1] as {
+        accessor: string;
+        totalMs: number;
+      };
+      expect(payload.accessor).toBe("getArchivedProjects");
+      expect(payload.totalMs).toBe(100);
+    } finally {
+      nowSpy.mockRestore();
+      void realPerfNow;
+    }
   });
 });
 

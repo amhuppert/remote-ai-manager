@@ -329,6 +329,44 @@ export function createActiveConversationsRouteHandlers(
       const graphWorkflowExecutions: ActiveGraphWorkflowExecution[] = [];
       const activeCollaborationExecutions: ActiveCollaborationExecution[] = [];
 
+      const transcriptTasks: Array<{
+        conversationId: string;
+        transcriptPath: string | null;
+      }> = [];
+      for (const [projectPath, project] of Object.entries(state.projects)) {
+        if (state.archivedProjects.includes(projectPath)) continue;
+        for (const session of Object.values(project.sessions)) {
+          if (session.archived) continue;
+          for (const convo of session.conversations) {
+            if (convo.archived) continue;
+            if (!ACTIVE_STATUSES.has(convo.status)) continue;
+            if (convo.role === "iteration" || convo.role === "validator")
+              continue;
+            if (convo.status !== "running") continue;
+            transcriptTasks.push({
+              conversationId: convo.id,
+              transcriptPath: convo.transcriptPath,
+            });
+          }
+        }
+      }
+
+      const lastBlocksByConvId = new Map<
+        string,
+        MessageContentBlock[] | null
+      >();
+      await Promise.all(
+        transcriptTasks.map(async (t) => {
+          lastBlocksByConvId.set(
+            t.conversationId,
+            await readLastAssistantBlocks(
+              deps.readLastAssistantContent,
+              t.transcriptPath,
+            ),
+          );
+        }),
+      );
+
       for (const [projectPath, project] of Object.entries(state.projects)) {
         if (state.archivedProjects.includes(projectPath)) continue;
 
@@ -359,10 +397,7 @@ export function createActiveConversationsRouteHandlers(
 
             const lastAssistantBlocks =
               convo.status === "running"
-                ? await readLastAssistantBlocks(
-                    deps.readLastAssistantContent,
-                    convo.transcriptPath,
-                  )
+                ? (lastBlocksByConvId.get(convo.id) ?? null)
                 : null;
 
             conversations.push({

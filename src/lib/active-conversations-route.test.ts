@@ -1233,4 +1233,46 @@ describe("GET /api/conversations/active", () => {
     expect(response.status).toBe(500);
     expect(body.error).toBe("Disk error");
   });
+
+  it("parallelizes per-conversation transcript reads", async () => {
+    const N = 10;
+    const LATENCY_MS = 20;
+
+    const sessions: Record<
+      string,
+      {
+        sessionName: string;
+        conversations: ReturnType<typeof makeConversation>[];
+      }
+    > = {};
+    for (let i = 0; i < N; i++) {
+      const sessionName = `session-${i}`;
+      sessions[sessionName] = {
+        sessionName,
+        conversations: [
+          makeConversation({
+            id: `conv-${i}`,
+            status: "running",
+            transcriptPath: `/tmp/transcripts/conv-${i}.jsonl`,
+          }),
+        ],
+      };
+    }
+
+    vi.mocked(deps.readState).mockResolvedValue(makeState({ sessions }));
+    vi.mocked(deps.readLastAssistantContent).mockImplementation(async () => {
+      await new Promise((r) => setTimeout(r, LATENCY_MS));
+      return null;
+    });
+
+    const start = performance.now();
+    const response = await handlers.GET();
+    const elapsed = performance.now() - start;
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.conversations).toHaveLength(N);
+    expect(deps.readLastAssistantContent).toHaveBeenCalledTimes(N);
+    expect(elapsed).toBeLessThan(60);
+  });
 });

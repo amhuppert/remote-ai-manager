@@ -6,7 +6,7 @@ import {
   open,
   stat,
 } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import path from "node:path";
 import type { TranscriptMessage, MessageContentBlock } from "@/types";
 import { getConfigDirPath } from "./config";
@@ -110,6 +110,65 @@ export function _resetTranscriptDepsForTesting(): void {
 // Write Operations
 // ============================================================
 
+// Cache the 0-based JSONL line index of the last appended line per transcript
+// file path. Required because the previous implementation re-read the whole
+// file on every append to count newlines — pathological on long-running
+// conversations. Conversation-level locking serializes appends per filePath,
+// so a simple in-memory counter is safe. Bounded by oldest-first eviction at
+// LAST_SEQ_CACHE_MAX entries (mirrors the lastAssistantCache pattern below).
+//
+// Why: any code path that truncates or rewrites an existing transcript file
+// MUST invalidate the cache for that path via _resetLastSeqCacheForTesting()
+// or by deleting the entry. Today, no production code truncates transcripts
+// in place — `copyTranscriptUpTo` writes to a different target.
+const LAST_SEQ_CACHE_MAX = 500;
+const lastSeqCache = new Map<string, number>();
+
+export function _resetLastSeqCacheForTesting(): void {
+  lastSeqCache.clear();
+}
+
+async function countNewlinesInFile(filePath: string): Promise<number> {
+  return await new Promise<number>((resolve, reject) => {
+    let count = 0;
+    const stream = createReadStream(filePath);
+    stream.on("data", (chunk: string | Buffer) => {
+      const buf =
+        typeof chunk === "string" ? Buffer.from(chunk, "utf-8") : chunk;
+      for (let i = 0; i < buf.length; i++) {
+        if (buf[i] === 0x0a) count++;
+      }
+    });
+    stream.on("end", () => resolve(count));
+    stream.on("error", reject);
+  });
+}
+
+async function getNextAppendSeq(filePath: string): Promise<number> {
+  const cached = lastSeqCache.get(filePath);
+  if (cached !== undefined) {
+    const next = cached + 1;
+    lastSeqCache.set(filePath, next);
+    return next;
+  }
+
+  let preAppendLineCount = 0;
+  if (existsSync(filePath)) {
+    try {
+      preAppendLineCount = await countNewlinesInFile(filePath);
+    } catch {
+      preAppendLineCount = 0;
+    }
+  }
+
+  if (lastSeqCache.size >= LAST_SEQ_CACHE_MAX) {
+    const firstKey = lastSeqCache.keys().next().value;
+    if (firstKey !== undefined) lastSeqCache.delete(firstKey);
+  }
+  lastSeqCache.set(filePath, preAppendLineCount);
+  return preAppendLineCount;
+}
+
 /**
  * Append a single transcript entry to the conversation's JSONL file.
  * Creates the file if it doesn't exist. When `meta` is provided and the entry
@@ -124,18 +183,10 @@ export async function appendTranscriptEntry(
 ): Promise<void> {
   const filePath = await getTranscriptPath(conversationId, configDir);
 
-  // Compute seq from the file's pre-append line count. Only read when we're
-  // actually going to broadcast — saves I/O on fabricated/non-broadcasting
-  // paths (e.g. `copyTranscriptUpTo`).
-  let seq = 0;
-  if (meta && existsSync(filePath)) {
-    try {
-      const prev = await readFile(filePath, "utf-8");
-      seq = prev.match(/\n/g)?.length ?? 0;
-    } catch {
-      seq = 0;
-    }
-  }
+  // Compute seq from the cached pre-append line count. Only compute when
+  // we're actually going to broadcast — saves work on fabricated /
+  // non-broadcasting paths (e.g. `copyTranscriptUpTo`).
+  const seq = meta ? await getNextAppendSeq(filePath) : 0;
 
   const line = JSON.stringify(entry) + "\n";
   await appendFile(filePath, line, "utf-8");
