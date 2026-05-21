@@ -4508,6 +4508,42 @@ textarea {
   float: left;
 }
 
+.prompt-editor__arg-hint {
+  color: var(--text-tertiary);
+  font-style: italic;
+  pointer-events: none;
+  user-select: none;
+  margin-left: var(--space-xs);
+  opacity: 0.7;
+}
+
+.prompt-editor__content .ProseMirror code {
+  padding: 1px 4px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 3px;
+  font-size: 0.82em;
+}
+
+.prompt-editor__content .ProseMirror pre {
+  margin: var(--space-xs) 0;
+  padding: var(--space-sm);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  font-size: 0.82em;
+  line-height: 1.45;
+}
+
+.prompt-editor__content .ProseMirror pre code {
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  font-size: 1em;
+}
+
 .image-marker-chip {
   display: inline-flex;
   align-items: center;
@@ -4567,6 +4603,92 @@ textarea {
     padding: 4px 8px 4px 4px;
   }
   .image-marker-chip__remove {
+    min-width: 24px;
+    min-height: 24px;
+  }
+}
+
+.slash-command-chip,
+.file-mention-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: 2px 4px 2px 6px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1;
+  vertical-align: baseline;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.slash-command-chip[data-selected="true"],
+.file-mention-chip[data-selected="true"] {
+  border-color: var(--cyan-dim);
+  box-shadow: 0 0 0 2px var(--cyan-glow);
+}
+
+.slash-command-chip[data-kind="skill"] {
+  border-color: var(--amber-dim);
+}
+
+.slash-command-chip__trigger,
+.file-mention-chip__at {
+  color: var(--cyan);
+  font-weight: 600;
+}
+
+.slash-command-chip[data-kind="skill"] .slash-command-chip__trigger {
+  color: var(--amber);
+}
+
+.slash-command-chip__name,
+.file-mention-chip__name {
+  color: var(--text-primary);
+}
+
+.slash-command-chip__source,
+.file-mention-chip__ext {
+  color: var(--text-tertiary);
+  font-size: 0.7rem;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--bg-surface);
+  text-transform: lowercase;
+}
+
+.slash-command-chip__remove,
+.file-mention-chip__remove {
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: 3px;
+  line-height: 1;
+  padding: 0;
+  font-size: 12px;
+}
+
+.slash-command-chip__remove:hover,
+.file-mention-chip__remove:hover {
+  background: var(--red-glow);
+  color: var(--red-text);
+}
+
+@media (max-width: 768px) {
+  .slash-command-chip,
+  .file-mention-chip {
+    min-height: 28px;
+    padding: 4px 6px 4px 8px;
+  }
+  .slash-command-chip__remove,
+  .file-mention-chip__remove {
     min-width: 24px;
     min-height: 24px;
   }

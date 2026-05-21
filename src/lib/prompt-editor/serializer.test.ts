@@ -28,6 +28,42 @@ const schema = new Schema({
         fileName: { default: null },
       },
     },
+    slashCommandMarker: {
+      group: "inline",
+      inline: true,
+      atom: true,
+      selectable: true,
+      attrs: {
+        name: { default: "" },
+        trigger: { default: "/" },
+        kind: { default: "command" },
+        source: { default: "" },
+        description: { default: null },
+        argumentHint: { default: null },
+      },
+    },
+    fileMention: {
+      group: "inline",
+      inline: true,
+      atom: true,
+      selectable: true,
+      attrs: {
+        path: { default: "" },
+        basename: { default: "" },
+        ext: { default: "" },
+      },
+    },
+    codeBlock: {
+      group: "block",
+      content: "text*",
+      marks: "",
+      code: true,
+      defining: true,
+      attrs: { language: { default: null } },
+    },
+  },
+  marks: {
+    code: {},
   },
 });
 
@@ -57,6 +93,44 @@ function marker(attrs: {
     thumbnailUrl: attrs.thumbnailUrl ?? "",
     fileName: attrs.fileName ?? null,
   });
+}
+
+function slashChip(attrs: {
+  name: string;
+  trigger?: "/" | "$";
+  kind?: "command" | "skill";
+  source?: string;
+}): ProseMirrorNode {
+  return schema.nodes["slashCommandMarker"]!.create({
+    name: attrs.name,
+    trigger: attrs.trigger ?? "/",
+    kind: attrs.kind ?? "command",
+    source: attrs.source ?? "",
+    description: null,
+    argumentHint: null,
+  });
+}
+
+function fileChip(path: string): ProseMirrorNode {
+  const slash = path.lastIndexOf("/");
+  const basename = slash >= 0 ? path.slice(slash + 1) : path;
+  const dot = basename.lastIndexOf(".");
+  const ext = dot > 0 ? basename.slice(dot + 1) : "";
+  return schema.nodes["fileMention"]!.create({ path, basename, ext });
+}
+
+function code(text: string): ProseMirrorNode {
+  return schema.text(text, [schema.marks["code"]!.create()]);
+}
+
+function codeBlock(
+  text: string,
+  language: string | null = null,
+): ProseMirrorNode {
+  return schema.nodes["codeBlock"]!.create(
+    { language },
+    text.length > 0 ? [schema.text(text)] : [],
+  );
 }
 
 function doc(...paragraphs: ProseMirrorNode[]): ProseMirrorNode {
@@ -222,5 +296,126 @@ describe("serializePromptDoc", () => {
 
     expect(result.prompt).toBe("orphan: [Image #9]");
     expect(result.images).toEqual([]);
+  });
+
+  it("serializes a slash command chip as its name verbatim", () => {
+    const result = serializePromptDoc({
+      doc: doc(p(slashChip({ name: "/spec-init" }))),
+      attachments: [],
+    });
+
+    expect(result.prompt).toBe("/spec-init");
+  });
+
+  it("serializes a codex skill chip with the $ trigger preserved", () => {
+    const result = serializePromptDoc({
+      doc: doc(p(slashChip({ name: "$wave", trigger: "$", kind: "skill" }))),
+      attachments: [],
+    });
+
+    expect(result.prompt).toBe("$wave");
+  });
+
+  it("embeds a slash chip between surrounding text", () => {
+    const result = serializePromptDoc({
+      doc: doc(
+        p(t("please run "), slashChip({ name: "/spec-init" }), t(" now")),
+      ),
+      attachments: [],
+    });
+
+    expect(result.prompt).toBe("please run /spec-init now");
+  });
+
+  it("serializes a file mention chip as @path", () => {
+    const result = serializePromptDoc({
+      doc: doc(p(fileChip("src/lib/foo.ts"))),
+      attachments: [],
+    });
+
+    expect(result.prompt).toBe("@src/lib/foo.ts");
+  });
+
+  it("embeds a file mention between surrounding text", () => {
+    const result = serializePromptDoc({
+      doc: doc(p(t("look at "), fileChip("src/app/page.tsx"), t(" please"))),
+      attachments: [],
+    });
+
+    expect(result.prompt).toBe("look at @src/app/page.tsx please");
+  });
+
+  it("wraps inline code-marked text in backticks", () => {
+    const result = serializePromptDoc({
+      doc: doc(p(t("call "), code("foo()"), t(" first"))),
+      attachments: [],
+    });
+
+    expect(result.prompt).toBe("call `foo()` first");
+  });
+
+  it("preserves multiple inline code spans in one paragraph", () => {
+    const result = serializePromptDoc({
+      doc: doc(p(code("a"), t(" then "), code("b"))),
+      attachments: [],
+    });
+
+    expect(result.prompt).toBe("`a` then `b`");
+  });
+
+  it("serializes a codeBlock without language as a fenced block", () => {
+    const result = serializePromptDoc({
+      doc: doc(codeBlock("const x = 1;\nconst y = 2;")),
+      attachments: [],
+    });
+
+    expect(result.prompt).toBe("```\nconst x = 1;\nconst y = 2;\n```");
+  });
+
+  it("serializes a codeBlock with a language attribute", () => {
+    const result = serializePromptDoc({
+      doc: doc(codeBlock("export const x = 1;", "ts")),
+      attachments: [],
+    });
+
+    expect(result.prompt).toBe("```ts\nexport const x = 1;\n```");
+  });
+
+  it("places a codeBlock between paragraphs joined with single newlines", () => {
+    const result = serializePromptDoc({
+      doc: doc(p(t("before")), codeBlock("body", "ts"), p(t("after"))),
+      attachments: [],
+    });
+
+    expect(result.prompt).toBe("before\n```ts\nbody\n```\nafter");
+  });
+
+  it("handles an empty codeBlock as an empty fenced block", () => {
+    const result = serializePromptDoc({
+      doc: doc(codeBlock("")),
+      attachments: [],
+    });
+
+    expect(result.prompt).toBe("```\n\n```");
+  });
+
+  it("supports mixed chips, code, and plain text in one document", () => {
+    const result = serializePromptDoc({
+      doc: doc(
+        p(
+          slashChip({ name: "/spec-init" }),
+          t(" with "),
+          fileChip("README.md"),
+          t(" using "),
+          code("bun run dev"),
+        ),
+        codeBlock("export {};", "ts"),
+      ),
+      attachments: [],
+    });
+
+    expect(result.prompt).toBe(
+      "/spec-init with @README.md using `bun run dev`\n```ts\nexport {};\n```",
+    );
   });
 });

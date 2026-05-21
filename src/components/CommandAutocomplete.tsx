@@ -16,6 +16,11 @@ import {
   useProjectCommandsQuery,
   useKiroDocTreeQuery,
 } from "@/lib/queries";
+import {
+  useAgentCapabilityViewQuery,
+  type AgentCapabilityScope,
+} from "@/hooks/use-agent-capabilities";
+import { filterDisabledCommandItems } from "@/lib/commands-capability-filter";
 import type { AgentBackendId, CommandItem } from "@/types";
 
 const BUILT_IN_CLAUDE_COMMANDS: readonly CommandItem[] = [
@@ -111,6 +116,25 @@ export const CommandAutocomplete = forwardRef<
   });
   const commandsQuery = sessionName ? sessionQuery : projectQuery;
 
+  const capabilityScope = useMemo<AgentCapabilityScope>(
+    () =>
+      sessionName
+        ? { level: "session", projectName, sessionName }
+        : { level: "project", projectName },
+    [projectName, sessionName],
+  );
+  const pluginsCascade =
+    backend === "codex" ? "codex-plugins" : "claude-plugins";
+  const skillsCascade = backend === "codex" ? "codex-skills" : "claude-skills";
+  const pluginsView = useAgentCapabilityViewQuery(
+    capabilityScope,
+    pluginsCascade,
+  );
+  const skillsView = useAgentCapabilityViewQuery(
+    capabilityScope,
+    skillsCascade,
+  );
+
   // Mode detection: command mode vs feature argument mode
   const commandPrefix =
     backend === "codex" && promptText.startsWith("/")
@@ -121,13 +145,24 @@ export const CommandAutocomplete = forwardRef<
   const isCodexSkillMode = backend === "codex" && commandPrefix === "$";
   const items = useMemo(() => {
     const fetched = commandsQuery.data?.items ?? [];
-    if (isCodexSkillMode) return fetched;
-    const fetchedNames = new Set(fetched.map((i) => i.name));
+    const filtered = filterDisabledCommandItems(
+      fetched,
+      pluginsView.data,
+      skillsView.data,
+    );
+    if (isCodexSkillMode) return filtered;
+    const fetchedNames = new Set(filtered.map((i) => i.name));
     const builtIns = BUILT_IN_CLAUDE_COMMANDS.filter(
       (i) => !fetchedNames.has(i.name),
     );
-    return backend === "codex" ? builtIns : [...builtIns, ...fetched];
-  }, [commandsQuery.data?.items, backend, isCodexSkillMode]);
+    return backend === "codex" ? builtIns : [...builtIns, ...filtered];
+  }, [
+    commandsQuery.data?.items,
+    pluginsView.data,
+    skillsView.data,
+    backend,
+    isCodexSkillMode,
+  ]);
   const commandMode =
     !disabled &&
     promptText.startsWith(commandPrefix) &&

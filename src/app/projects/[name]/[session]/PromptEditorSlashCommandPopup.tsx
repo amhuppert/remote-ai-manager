@@ -14,7 +14,9 @@ import {
   type CommandAutocompleteListItem,
 } from "@/components/CommandAutocompleteList";
 import { fuzzyMatch, compareFuzzyResults, type MatchTier } from "@/lib/fuzzy";
-import { useCommandsQuery, useProjectCommandsQuery } from "@/lib/queries";
+import { useCommandsQuery } from "@/lib/queries";
+import { filterDisabledCommandItems } from "@/lib/commands-capability-filter";
+import { useAgentCapabilityViewQuery } from "@/hooks/use-agent-capabilities";
 import type { AgentBackendId, CommandItem } from "@/types";
 
 const BUILT_IN_CLAUDE_COMMANDS: readonly CommandItem[] = [
@@ -31,16 +33,32 @@ export interface SlashCommandPopupHandle {
   handleKeyDown: (event: KeyboardEvent) => boolean;
 }
 
+export interface SlashCommandSelection {
+  name: string;
+  trigger: "/" | "$";
+  kind: "command" | "skill";
+  source: string;
+  description?: string;
+  argumentHint?: string;
+}
+
 export interface SlashCommandPopupProps {
   /** Text typed after the trigger character (without the leading "/" or "$"). */
   query: string;
   /** Trigger character that initiated the suggestion (e.g. "/" or "$"). */
   triggerChar: string;
   projectName: string;
-  sessionName?: string;
+  sessionName: string;
+  /**
+   * The conversation this popup belongs to. Used to filter the catalog by CC's
+   * effective capability config — items disabled at any cascade layer (global
+   * through conversation) are hidden so users can't pick commands the agent
+   * will reject.
+   */
+  conversationId: string;
   backend?: AgentBackendId;
   /** Insert the chosen command into the editor at the trigger range. */
-  onSelect: (insertText: string) => void;
+  onSelect: (selection: SlashCommandSelection) => void;
   /** Notify the host when an item with `argumentHint` is selected. */
   onShowPlaceholder?: (text: string) => void;
 }
@@ -61,39 +79,64 @@ export const PromptEditorSlashCommandPopup = forwardRef<
     triggerChar,
     projectName,
     sessionName,
+    conversationId,
     backend = "claude",
     onSelect,
     onShowPlaceholder,
   },
   ref,
 ) {
-  const sessionQuery = useCommandsQuery(
-    projectName,
-    sessionName ?? "",
-    backend,
-    { enabled: !!sessionName },
+  const commandsQuery = useCommandsQuery(projectName, sessionName, backend);
+
+  const capabilityScope = useMemo(
+    () =>
+      ({
+        level: "conversation",
+        projectName,
+        sessionName,
+        conversationId,
+      }) as const,
+    [projectName, sessionName, conversationId],
   );
-  const projectQuery = useProjectCommandsQuery(projectName, {
-    enabled: !sessionName,
-  });
-  const commandsQuery = sessionName ? sessionQuery : projectQuery;
+  const pluginsCascade =
+    backend === "codex" ? "codex-plugins" : "claude-plugins";
+  const skillsCascade = backend === "codex" ? "codex-skills" : "claude-skills";
+  const pluginsView = useAgentCapabilityViewQuery(
+    capabilityScope,
+    pluginsCascade,
+  );
+  const skillsView = useAgentCapabilityViewQuery(
+    capabilityScope,
+    skillsCascade,
+  );
 
   const isCodexSkillMode = backend === "codex" && triggerChar === "$";
 
   const items = useMemo<CommandItem[]>(() => {
     const fetched = commandsQuery.data?.items ?? [];
+    const filtered = filterDisabledCommandItems(
+      fetched,
+      pluginsView.data,
+      skillsView.data,
+    );
     if (isCodexSkillMode) {
-      return fetched.filter((i) => i.name.startsWith("$"));
+      return filtered.filter((i) => i.name.startsWith("$"));
     }
     if (backend === "codex") {
       return [...BUILT_IN_CLAUDE_COMMANDS];
     }
-    const fetchedNames = new Set(fetched.map((i) => i.name));
+    const fetchedNames = new Set(filtered.map((i) => i.name));
     const builtIns = BUILT_IN_CLAUDE_COMMANDS.filter(
       (i) => !fetchedNames.has(i.name),
     );
-    return [...builtIns, ...fetched.filter((i) => i.name.startsWith("/"))];
-  }, [commandsQuery.data?.items, backend, isCodexSkillMode]);
+    return [...builtIns, ...filtered.filter((i) => i.name.startsWith("/"))];
+  }, [
+    commandsQuery.data?.items,
+    pluginsView.data,
+    skillsView.data,
+    backend,
+    isCodexSkillMode,
+  ]);
 
   const scored = useMemo<ScoredItem[]>(() => {
     if (items.length === 0) return [];
@@ -171,7 +214,20 @@ export const PromptEditorSlashCommandPopup = forwardRef<
     (index: number) => {
       const target = scoredRef.current[index];
       if (!target) return;
-      onSelect(target.item.name);
+      const trigger: "/" | "$" = target.item.name.startsWith("$") ? "$" : "/";
+      const selection: SlashCommandSelection = {
+        name: target.item.name,
+        trigger,
+        kind: target.item.type,
+        source: target.item.source,
+      };
+      if (typeof target.item.description === "string") {
+        selection.description = target.item.description;
+      }
+      if (typeof target.item.argumentHint === "string") {
+        selection.argumentHint = target.item.argumentHint;
+      }
+      onSelect(selection);
       if (target.item.argumentHint) {
         onShowPlaceholder?.(target.item.argumentHint);
       }

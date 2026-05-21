@@ -1,5 +1,14 @@
 export { ImageMarker } from "./image-marker-node";
 export type { ImageMarkerAttrs, ImageMarkerStorage } from "./image-marker-node";
+export { SlashCommandMarker } from "./slash-command-marker-node";
+export type {
+  SlashCommandKind,
+  SlashCommandMarkerAttrs,
+  SlashCommandTriggerChar,
+} from "./slash-command-marker-node";
+export { FileMentionNode } from "./file-mention-node";
+export type { FileMentionAttrs } from "./file-mention-node";
+export { ArgumentHint } from "./argument-hint-extension";
 export { serializePromptDoc } from "./serializer";
 export type { SerializePromptDocArgs, SerializedPromptDoc } from "./serializer";
 export { ImagePasteHandler } from "./paste-handler-extension";

@@ -1,0 +1,159 @@
+- generic [active] [ref=e1]:
+    - alert [ref=e62]
+    - tooltip
+    - generic [ref=e355]:
+        - banner [ref=e356]:
+            - generic [ref=e357]:
+                - link "CC" [ref=e358] [cursor=pointer]:
+                    - /url: /projects
+                - navigation [ref=e360]:
+                    - link "projects" [ref=e362] [cursor=pointer]:
+                        - /url: /projects
+                    - generic [ref=e363]:
+                        - generic [ref=e364]: /
+                        - link "test-workflow" [ref=e365] [cursor=pointer]:
+                            - /url: /projects/test-workflow
+                    - generic [ref=e366]:
+                        - generic [ref=e367]: /
+                        - link "Debug mode test" [ref=e368] [cursor=pointer]:
+                            - /url: /projects/test-workflow/Debug%20mode%20test
+            - generic [ref=e369]:
+                - link "Workflow Atlas" [ref=e370] [cursor=pointer]:
+                    - /url: /workflows
+                    - img [ref=e371]
+                - link "System Configuration" [ref=e376] [cursor=pointer]:
+                    - /url: /config
+                    - img [ref=e377]
+                - button "☰" [ref=e381] [cursor=pointer]:
+                    - generic [ref=e382]: ☰
+                - generic [ref=e383]:
+                    - generic [ref=e384]: awaiting
+                    - button "Commit" [ref=e387] [cursor=pointer]
+                    - button "Merge" [ref=e388] [cursor=pointer]
+                    - button "Delete session" [ref=e390] [cursor=pointer]:
+                        - img [ref=e391]
+        - main [ref=e394]:
+            - generic [ref=e395]:
+                - generic [ref=e396]:
+                    - generic [ref=e397]:
+                        - button "Branch csm/debug-mode-test-54da75 ⎘" [ref=e398] [cursor=pointer]:
+                            - generic [ref=e399]: Branch
+                            - generic [ref=e400]: csm/debug-mode-test-54da75
+                            - generic [ref=e401]: ⎘
+                        - button "Worktree /home/alex/projects/test-workflow/.worktrees/debug-mode-test-54da75 ⎘" [ref=e403] [cursor=pointer]:
+                            - generic [ref=e404]: Worktree
+                            - generic [ref=e405]: /home/alex/projects/test-workflow/.worktrees/debug-mode-test-54da75
+                            - generic [ref=e406]: ⎘
+                        - generic [ref=e408]:
+                            - generic [ref=e409]: Created
+                            - generic [ref=e410]: May 7, 10:32 PM
+                        - generic [ref=e412]:
+                            - generic [ref=e413]: Conversations
+                            - generic [ref=e414]: "1"
+                        - generic [ref=e416]:
+                            - generic [ref=e417]: Total Prompts
+                            - generic [ref=e418]: "9"
+                        - button "⎘ Context" [ref=e420] [cursor=pointer]
+                        - button "Agent capability configuration" [ref=e422] [cursor=pointer]: Capabilities
+                    - generic [ref=e423]:
+                        - button "Archived (1)" [ref=e424] [cursor=pointer]
+                        - button "+ New Conversation" [ref=e425] [cursor=pointer]:
+                            - generic [ref=e426]: +
+                            - text: New Conversation
+                - generic [ref=e427]:
+                    - generic [ref=e428]: Graph Workflow
+                    - combobox [ref=e429] [cursor=pointer]:
+                        - option "Select a definition…" [selected]
+                        - option "Fan-In Convergence Test Workflow"
+                        - option "Parallel Execution Test Workflow"
+                        - option "Workflow 1"
+                    - generic [ref=e431]:
+                        - link "Edit definitions" [ref=e432] [cursor=pointer]:
+                            - /url: /projects/test-workflow/workflows
+                        - button "Run Workflow" [disabled] [ref=e433] [cursor=pointer]
+                - generic [ref=e434]:
+                    - generic [ref=e435] [cursor=pointer]:
+                        - generic [ref=e436]:
+                            - generic [ref=e437]: ▾
+                            - generic [ref=e438]: Git
+                            - generic [ref=e439]:
+                                - generic [ref=e440]: 9 files changed
+                                - generic [ref=e441]: "+300"
+                                - generic [ref=e442]: −0
+                        - generic [ref=e443]:
+                            - button "Refresh" [ref=e444]
+                            - link "View Diff" [ref=e445]:
+                                - /url: /projects/test-workflow/Debug%20mode%20test/diff
+                            - button "Commit" [ref=e446]
+                            - button "Merge" [ref=e447]
+                    - generic [ref=e448]:
+                        - generic [ref=e449]:
+                            - button "Changes 9" [ref=e450] [cursor=pointer]:
+                                - text: Changes
+                                - generic [ref=e451]: "9"
+                            - button "Commits" [ref=e452] [cursor=pointer]
+                        - generic [ref=e454]:
+                            - generic [ref=e455]:
+                                - img [ref=e456]
+                                - generic [ref=e459]: .debug/052b818a-fc92-4691-9291-9bf776adabb7/logs.jsonl
+                                - generic [ref=e460]:
+                                    - generic [ref=e461]: "+10"
+                                    - generic [ref=e462]: −0
+                            - generic [ref=e463]:
+                                - img [ref=e464]
+                                - generic [ref=e467]: .debug/8d68706d-ff8d-41f4-9c8a-42eb5fed0d0c/instrumentation.json
+                                - generic [ref=e468]:
+                                    - generic [ref=e469]: "+61"
+                                    - generic [ref=e470]: −0
+                            - generic [ref=e471]:
+                                - img [ref=e472]
+                                - generic [ref=e475]: .debug/8d68706d-ff8d-41f4-9c8a-42eb5fed0d0c/logs.jsonl
+                                - generic [ref=e476]:
+                                    - generic [ref=e477]: "+8"
+                                    - generic [ref=e478]: −0
+                            - generic [ref=e479]:
+                                - img [ref=e480]
+                                - generic [ref=e483]: .debug/ab64d664-e91f-44ec-970b-59a8fe40d90d/logs.jsonl
+                                - generic [ref=e484]:
+                                    - generic [ref=e485]: "+9"
+                                    - generic [ref=e486]: −0
+                            - generic [ref=e487]:
+                                - img [ref=e488]
+                                - generic [ref=e491]: .debug/d6fb3183-63f9-4940-97d5-5ecaf377cd54/instrumentation.json
+                                - generic [ref=e492]:
+                                    - generic [ref=e493]: "+21"
+                                    - generic [ref=e494]: −0
+                            - generic [ref=e495]:
+                                - img [ref=e496]
+                                - generic [ref=e499]: .debug/d6fb3183-63f9-4940-97d5-5ecaf377cd54/logs.jsonl
+                                - generic [ref=e500]:
+                                    - generic [ref=e501]: "+3"
+                                    - generic [ref=e502]: −0
+                            - generic [ref=e503]:
+                                - img [ref=e504]
+                                - generic [ref=e507]: .debug/probe.js
+                                - generic [ref=e508]:
+                                    - generic [ref=e509]: "+58"
+                                    - generic [ref=e510]: −0
+                            - generic [ref=e511]:
+                                - img [ref=e512]
+                                - generic [ref=e515]: src/bug.js
+                                - generic [ref=e516]:
+                                    - generic [ref=e517]: "+125"
+                                    - generic [ref=e518]: −0
+                            - generic [ref=e519]:
+                                - img [ref=e520]
+                                - generic [ref=e523]: src/handler.ts
+                                - generic [ref=e524]:
+                                    - generic [ref=e525]: "+5"
+                                    - generic [ref=e526]: −0
+                - link "awaiting Debug mode test 1 9 prompts 13d ago ab64d664 ✎ ⤓" [ref=e528] [cursor=pointer]:
+                    - /url: /projects/test-workflow/Debug%20mode%20test/ab64d664-e91f-44ec-970b-59a8fe40d90d
+                    - generic [ref=e530]: awaiting
+                    - generic [ref=e533]: Debug mode test 1
+                    - generic [ref=e534]:
+                        - generic [ref=e535]: 9 prompts
+                        - generic [ref=e536]: 13d ago
+                        - generic "ab64d664-e91f-44ec-970b-59a8fe40d90d" [ref=e537]: ab64d664
+                        - button "✎" [ref=e538]
+                        - button "⤓" [ref=e539]

@@ -72,12 +72,15 @@ const mockFeatures = {
   },
 };
 
-const { mockUseCommandsQuery, mockUseProjectCommandsQuery } = vi.hoisted(
-  () => ({
-    mockUseCommandsQuery: vi.fn(),
-    mockUseProjectCommandsQuery: vi.fn(),
-  }),
-);
+const {
+  mockUseCommandsQuery,
+  mockUseProjectCommandsQuery,
+  mockUseAgentCapabilityViewQuery,
+} = vi.hoisted(() => ({
+  mockUseCommandsQuery: vi.fn(),
+  mockUseProjectCommandsQuery: vi.fn(),
+  mockUseAgentCapabilityViewQuery: vi.fn(),
+}));
 
 vi.mock("@/lib/queries", () => ({
   useCommandsQuery: mockUseCommandsQuery,
@@ -88,6 +91,10 @@ vi.mock("@/lib/queries", () => ({
     isError: false,
     error: null,
   }),
+}));
+
+vi.mock("@/hooks/use-agent-capabilities", () => ({
+  useAgentCapabilityViewQuery: mockUseAgentCapabilityViewQuery,
 }));
 
 // ---------------------------------------------------------------------------
@@ -136,6 +143,12 @@ beforeEach(() => {
     isError: false,
     error: null,
   }));
+  mockUseAgentCapabilityViewQuery.mockReturnValue({
+    data: undefined,
+    isPending: false,
+    isError: false,
+    error: null,
+  });
   Element.prototype.scrollIntoView = vi.fn();
 });
 
@@ -184,6 +197,84 @@ describe("CommandAutocomplete", () => {
     expect(items[0]?.querySelector(".cmd-desc")?.textContent).toBe(
       "Review recent changes",
     );
+  });
+
+  it("hides plugin skills when the skills cascade marks them disabled", async () => {
+    mockUseCommandsQuery.mockReturnValue({
+      data: {
+        items: [
+          {
+            name: "/ai-resources:approve",
+            description: "Approve a change",
+            type: "skill",
+            source: "ai-resources",
+          },
+          {
+            name: "/commit",
+            description: "Create a commit",
+            type: "command",
+            source: "project",
+          },
+        ],
+      },
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    mockUseAgentCapabilityViewQuery.mockImplementation(
+      (_scope, cascadeKind) => {
+        if (cascadeKind === "claude-skills") {
+          return {
+            data: {
+              level: "session",
+              projectName: "p",
+              sessionName: "s",
+              cascadeKind: "claude-skills",
+              backend: "claude",
+              items: [
+                {
+                  itemId: "approve",
+                  displayName: "approve",
+                  backend: "claude",
+                  capabilityKind: "skill",
+                  cascadeKind: "claude-skills",
+                  source: {
+                    kind: "plugin",
+                    pluginId: "ai-resources@ai-resources",
+                  },
+                  nativeDefault: { enabled: true },
+                  ownEffectiveState: { enabled: false, originLayer: "global" },
+                  effectiveState: { enabled: false, originLayer: "global" },
+                  originLayer: "global",
+                  owningPluginId: "ai-resources@ai-resources",
+                  runtimeVisibility: "runtime-visible",
+                  runtimeEmittable: true,
+                  stale: false,
+                  applyStatus: "none",
+                  diagnostics: [],
+                },
+              ],
+              diagnostics: [],
+              effectiveHash: "h",
+            },
+            isPending: false,
+            isError: false,
+            error: null,
+          };
+        }
+        return {
+          data: undefined,
+          isPending: false,
+          isError: false,
+          error: null,
+        };
+      },
+    );
+    await act(async () => {
+      renderAutocomplete({ promptText: "/" });
+    });
+    expect(screen.queryByText("/ai-resources:approve")).toBeNull();
+    expect(screen.getByText("/commit")).toBeInTheDocument();
   });
 
   it("shows 'No matching commands' for unmatched query", async () => {

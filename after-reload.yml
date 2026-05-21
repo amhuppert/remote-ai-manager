@@ -1,0 +1,234 @@
+- generic [active] [ref=e1]:
+    - generic [ref=e2]:
+        - banner [ref=e3]:
+            - generic [ref=e4]:
+                - link "CC" [ref=e5] [cursor=pointer]:
+                    - /url: /projects
+                - navigation [ref=e7]:
+                    - link "projects" [ref=e9] [cursor=pointer]:
+                        - /url: /projects
+                    - generic [ref=e10]:
+                        - generic [ref=e11]: /
+                        - link "test-workflow" [ref=e12] [cursor=pointer]:
+                            - /url: /projects/test-workflow
+                    - generic [ref=e13]:
+                        - generic [ref=e14]: /
+                        - link "Debug mode test" [ref=e15] [cursor=pointer]:
+                            - /url: /projects/test-workflow/Debug%20mode%20test
+            - generic [ref=e16]:
+                - link "Workflow Atlas" [ref=e17] [cursor=pointer]:
+                    - /url: /workflows
+                    - img [ref=e18]
+                - link "System Configuration" [ref=e23] [cursor=pointer]:
+                    - /url: /config
+                    - img [ref=e24]
+                - button "☰" [ref=e28] [cursor=pointer]:
+                    - generic [ref=e29]: ☰
+                - generic [ref=e33]:
+                    - generic [ref=e34]: awaiting
+                    - button "Toggle red-green TDD" [ref=e37] [cursor=pointer]:
+                        - generic [ref=e40]: TDD
+                    - generic [ref=e42]:
+                        - button [ref=e43] [cursor=pointer]:
+                            - img [ref=e44]
+                        - button [ref=e46] [cursor=pointer]:
+                            - img [ref=e47]
+                        - button [ref=e50] [cursor=pointer]:
+                            - img [ref=e51]
+                        - button [ref=e54] [cursor=pointer]:
+                            - img [ref=e55]
+                    - button "Commit" [ref=e58] [cursor=pointer]
+                    - button "Merge" [ref=e59] [cursor=pointer]
+                    - button "Delete session" [ref=e61] [cursor=pointer]:
+                        - img [ref=e62]
+        - main [ref=e30]:
+            - generic [ref=e31]:
+                - generic [ref=e66]:
+                    - button "Branch csm/debug-mode-test-54da75 ⎘" [ref=e67] [cursor=pointer]:
+                        - generic [ref=e68]: Branch
+                        - generic [ref=e69]: csm/debug-mode-test-54da75
+                        - generic [ref=e70]: ⎘
+                    - generic [ref=e71]: claude
+                    - generic [ref=e72]:
+                        - generic [ref=e73]: Prompts
+                        - generic [ref=e74]: "9"
+                    - button "Worktree debug-mode-test-54da75 ⎘" [ref=e75] [cursor=pointer]:
+                        - generic [ref=e76]: Worktree
+                        - generic [ref=e77]: debug-mode-test-54da75
+                        - generic [ref=e78]: ⎘
+                    - generic [ref=e79]:
+                        - generic [ref=e80]: Context
+                        - generic [ref=e83]: 19%
+                    - button "⎘ Context" [ref=e84] [cursor=pointer]
+                    - button "Agent capability configuration" [ref=e85] [cursor=pointer]: Capabilities
+                    - button "Session details" [ref=e87] [cursor=pointer]: ⓘ
+                - generic [ref=e88]:
+                    - generic [ref=e89]:
+                        - generic [ref=e90]:
+                            - generic [ref=e91]:
+                                - text: Active Conversations
+                                - generic [ref=e92]: (6)
+                            - generic [ref=e93]:
+                                - button "New conversation" [ref=e94] [cursor=pointer]:
+                                    - img [ref=e95]
+                                - button "◀" [ref=e96] [cursor=pointer]
+                        - generic [ref=e97]:
+                            - generic [ref=e98]:
+                                - generic [ref=e99]:
+                                    - img [ref=e100]
+                                    - textbox "Search conversations" [ref=e102]:
+                                        - /placeholder: Filter conversations...
+                                - tablist [ref=e103]:
+                                    - tab "All 6" [selected] [ref=e104] [cursor=pointer]:
+                                        - generic [ref=e105]: All
+                                        - generic [ref=e106]: "6"
+                                    - tab "Needs 0" [ref=e107] [cursor=pointer]:
+                                        - generic [ref=e108]: Needs
+                                        - generic [ref=e109]: "0"
+                                    - tab "Run 0" [ref=e110] [cursor=pointer]:
+                                        - generic [ref=e111]: Run
+                                        - generic [ref=e112]: "0"
+                                    - tab "Session 1" [ref=e113] [cursor=pointer]:
+                                        - generic [ref=e114]: Session
+                                        - generic [ref=e115]: "1"
+                            - generic [ref=e117]:
+                                - generic [ref=e118]: Group by
+                                - radiogroup "Group by" [ref=e119]:
+                                    - radio "Project" [checked] [ref=e120] [cursor=pointer]:
+                                        - img [ref=e121]
+                                        - text: Project
+                                    - radio "Session" [ref=e123] [cursor=pointer]:
+                                        - img [ref=e124]
+                                        - text: Session
+                        - generic [ref=e131]:
+                            - generic [ref=e132]:
+                                - generic [ref=e133]: test-workflow
+                                - generic [ref=e134]: "6"
+                            - generic [ref=e135]:
+                                - link "Open renamed" [ref=e137] [cursor=pointer]:
+                                    - /url: /projects/test-workflow/claude-askq-test/d24177f1-102d-4e81-8a3d-a8ff35fbd0d7
+                                    - button "renamed — awaiting" [ref=e138]:
+                                        - generic [ref=e139]:
+                                            - generic [ref=e140]:
+                                                - generic [ref=e142]: renamed
+                                                - generic "5/18/2026, 10:30:01 PM" [ref=e143]: 2d
+                                            - generic [ref=e144]:
+                                                - 'generic "agent: claude" [ref=e146]': claude
+                                                - generic [ref=e148]: claude-askq-test
+                                - link "Open claude-askq-test 2" [ref=e150] [cursor=pointer]:
+                                    - /url: /projects/test-workflow/claude-askq-test/6b346fd3-c8ec-4d88-ae72-7706042ad066
+                                    - button "claude-askq-test 2 — awaiting" [ref=e151]:
+                                        - generic [ref=e152]:
+                                            - generic [ref=e153]:
+                                                - generic [ref=e155]: claude-askq-test 2
+                                                - generic "5/7/2026, 8:45:41 PM" [ref=e156]: 13d
+                                            - generic [ref=e157]:
+                                                - 'generic "agent: codex" [ref=e159]': codex
+                                                - generic [ref=e161]: claude-askq-test
+                                - link "Open test workflow parallel 1" [ref=e163] [cursor=pointer]:
+                                    - /url: /projects/test-workflow/test%20workflow%20parallel/42bd3c8f-62d3-419e-961d-109a4bf79e1f
+                                    - button "test workflow parallel 1 — awaiting" [ref=e164]:
+                                        - generic [ref=e165]:
+                                            - generic [ref=e166]:
+                                                - generic [ref=e168]: test workflow parallel 1
+                                                - generic "5/16/2026, 2:04:05 AM" [ref=e169]: 5d
+                                            - generic [ref=e170]:
+                                                - 'generic "agent: claude" [ref=e172]': claude
+                                                - generic [ref=e174]: test workflow parallel
+                                - link "Open test workflow 2 1" [ref=e176] [cursor=pointer]:
+                                    - /url: /projects/test-workflow/test%20workflow%202/7549a797-b105-4413-b7cc-6274f2d7135e
+                                    - button "test workflow 2 1 — awaiting" [ref=e177]:
+                                        - generic [ref=e178]:
+                                            - generic [ref=e179]:
+                                                - generic [ref=e181]: test workflow 2 1
+                                                - generic "5/16/2026, 1:38:01 AM" [ref=e182]: 5d
+                                            - generic [ref=e183]:
+                                                - 'generic "agent: claude" [ref=e185]': claude
+                                                - generic [ref=e187]: test workflow 2
+                                - link "Open Debug mode test 1" [ref=e189] [cursor=pointer]:
+                                    - /url: /projects/test-workflow/Debug%20mode%20test/ab64d664-e91f-44ec-970b-59a8fe40d90d
+                                    - button "Debug mode test 1 — awaiting" [ref=e190]:
+                                        - generic [ref=e191]:
+                                            - generic [ref=e192]:
+                                                - generic [ref=e194]: Debug mode test 1
+                                                - generic "5/7/2026, 10:59:01 PM" [ref=e195]: 13d
+                                            - generic [ref=e196]:
+                                                - 'generic "agent: claude" [ref=e198]': claude
+                                                - generic [ref=e200]: Debug mode test
+                                - link "Open Test persistence 1" [ref=e202] [cursor=pointer]:
+                                    - /url: /projects/test-workflow/Test%20persistence/ecf5199a-5693-479e-bc9a-17e2412c3586
+                                    - button "Test persistence 1 — awaiting" [ref=e203]:
+                                        - generic [ref=e204]:
+                                            - generic [ref=e205]:
+                                                - generic [ref=e207]: Test persistence 1
+                                                - generic "5/7/2026, 12:42:40 AM" [ref=e208]: 14d
+                                            - generic [ref=e209]:
+                                                - 'generic "agent: claude" [ref=e211]': claude
+                                                - generic [ref=e213]: Test persistence
+                    - generic [ref=e214]:
+                        - generic [ref=e215]:
+                            - generic [ref=e216]: Conversation
+                            - generic [ref=e217]:
+                                - generic [ref=e218]:
+                                    - button "First message" [ref=e219] [cursor=pointer]:
+                                        - img [ref=e220]
+                                    - button "Previous message" [ref=e222] [cursor=pointer]:
+                                        - img [ref=e223]
+                                - generic [ref=e225]: 0 / 0
+                                - generic [ref=e226]:
+                                    - button "Next message" [ref=e227] [cursor=pointer]:
+                                        - img [ref=e228]
+                                    - button "Last message" [ref=e230] [cursor=pointer]:
+                                        - img [ref=e231]
+                        - generic [ref=e235]:
+                            - generic [ref=e236]: No messages yet
+                            - generic [ref=e237]: Send a prompt to start the conversation.
+                        - generic [ref=e239]:
+                            - paragraph [ref=e243]: /plugin-dev:create-plugin my plugin idea
+                            - generic [ref=e244]:
+                                - generic [ref=e245]:
+                                    - button "Attach image" [ref=e246] [cursor=pointer]:
+                                        - img [ref=e247]
+                                    - generic [ref=e249]: Claude
+                                    - button "Opus ▼" [ref=e251] [cursor=pointer]:
+                                        - generic [ref=e252]: Opus
+                                        - generic [ref=e253]: ▼
+                                    - 'button "Effort: Medium — Moderate" [ref=e255] [cursor=pointer]':
+                                        - generic [ref=e256]: Medium
+                                        - generic [ref=e257]: ▼
+                                    - button "Debug" [ref=e258] [cursor=pointer]:
+                                        - generic [ref=e260]: Debug
+                                    - button "Agent capability configuration" [ref=e261] [cursor=pointer]:
+                                        - generic [ref=e262]: Capabilities
+                                - generic [ref=e263]:
+                                    - button "Voice input" [ref=e264] [cursor=pointer]:
+                                        - img [ref=e265]
+                                    - button "▶" [ref=e268] [cursor=pointer]
+    - alert [ref=e269]
+    - tooltip
+    - generic:
+        - button "Opus Most capable":
+            - generic: Opus
+            - generic: Most capable
+        - button "Sonnet Balanced":
+            - generic: Sonnet
+            - generic: Balanced
+        - button "Haiku Fastest":
+            - generic: Haiku
+            - generic: Fastest
+    - generic:
+        - button "Low Minimal":
+            - generic: Low
+            - generic: Minimal
+        - button "Medium Moderate":
+            - generic: Medium
+            - generic: Moderate
+        - button "High Default":
+            - generic: High
+            - generic: Default
+        - button "XHigh Extra high":
+            - generic: XHigh
+            - generic: Extra high
+        - button "Max Maximum":
+            - generic: Max
+            - generic: Maximum

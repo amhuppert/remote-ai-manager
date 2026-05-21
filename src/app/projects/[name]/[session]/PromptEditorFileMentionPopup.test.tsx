@@ -93,7 +93,11 @@ describe("PromptEditorFileMentionPopup", () => {
         new KeyboardEvent("keydown", { key: "Enter" }),
       );
     });
-    expect(onSelect).toHaveBeenCalledWith("src/components/Modal.tsx");
+    expect(onSelect).toHaveBeenCalledWith({
+      path: "src/components/Modal.tsx",
+      basename: "Modal.tsx",
+      ext: "tsx",
+    });
   });
 
   it("ArrowDown then Enter selects second item", async () => {

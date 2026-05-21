@@ -21,13 +21,27 @@ export interface FileMentionPopupHandle {
   handleKeyDown: (event: KeyboardEvent) => boolean;
 }
 
+export interface FileMentionSelection {
+  path: string;
+  basename: string;
+  ext: string;
+}
+
 export interface FileMentionPopupProps {
   /** Text typed after `@` (without the leading `@`). */
   query: string;
   projectName: string;
   sessionName: string;
-  /** Insert the chosen path into the editor at the trigger range. */
-  onSelect: (path: string) => void;
+  /** Insert the chosen file into the editor at the trigger range. */
+  onSelect: (selection: FileMentionSelection) => void;
+}
+
+function deriveBasenameAndExt(path: string): { basename: string; ext: string } {
+  const slash = path.lastIndexOf("/");
+  const basename = slash >= 0 ? path.slice(slash + 1) : path;
+  const dot = basename.lastIndexOf(".");
+  const ext = dot > 0 ? basename.slice(dot + 1) : "";
+  return { basename, ext };
 }
 
 export const PromptEditorFileMentionPopup = forwardRef<
@@ -80,7 +94,8 @@ export const PromptEditorFileMentionPopup = forwardRef<
     (index: number) => {
       const target = displayRef.current[index];
       if (!target) return;
-      onSelect(target.item.path);
+      const { basename, ext } = deriveBasenameAndExt(target.item.path);
+      onSelect({ path: target.item.path, basename, ext });
     },
     [onSelect],
   );

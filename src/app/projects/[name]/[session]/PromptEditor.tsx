@@ -12,11 +12,14 @@ import type { Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import {
+  ArgumentHint,
   FileMention,
+  FileMentionNode,
   ImageMarker,
   ImagePasteHandler,
   serializePromptDoc,
   SlashCommand,
+  SlashCommandMarker,
   TerminalHotkeys,
   type SerializedPromptDoc,
   type SlashCommandTrigger,
@@ -26,10 +29,12 @@ import type { AgentBackendId } from "@/types";
 import {
   PromptEditorSlashCommandPopup,
   type SlashCommandPopupHandle,
+  type SlashCommandSelection,
 } from "./PromptEditorSlashCommandPopup";
 import {
   PromptEditorFileMentionPopup,
   type FileMentionPopupHandle,
+  type FileMentionSelection,
 } from "./PromptEditorFileMentionPopup";
 
 export interface PromptEditorHandle {
@@ -81,12 +86,12 @@ export interface PromptEditorProps {
 interface SlashSuggestionState {
   triggerChar: string;
   query: string;
-  command: (item: { insertText: string }) => void;
+  command: (item: SlashCommandSelection) => void;
 }
 
 interface FileSuggestionState {
   query: string;
-  command: (item: { path: string }) => void;
+  command: (item: FileMentionSelection) => void;
 }
 
 function buildSlashTriggers(args: {
@@ -104,14 +109,14 @@ function buildSlashTriggers(args: {
         setSlashState({
           triggerChar: char,
           query: props.query,
-          command: props.command as (item: { insertText: string }) => void,
+          command: props.command as (item: SlashCommandSelection) => void,
         });
       },
       onUpdate: (props) => {
         setSlashState({
           triggerChar: char,
           query: props.query,
-          command: props.command as (item: { insertText: string }) => void,
+          command: props.command as (item: SlashCommandSelection) => void,
         });
       },
       onExit: () => {
@@ -185,6 +190,7 @@ function notifyInlineMarkersIfChanged(
 export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
   function PromptEditor(props, ref) {
     const {
+      conversationId,
       value,
       onChange,
       onSubmit,
@@ -232,8 +238,6 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
           blockquote: false,
           bold: false,
           bulletList: false,
-          code: false,
-          codeBlock: false,
           heading: false,
           horizontalRule: false,
           italic: false,
@@ -247,6 +251,9 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
         }),
         Placeholder.configure({ placeholder }),
         ImageMarker,
+        SlashCommandMarker,
+        FileMentionNode,
+        ArgumentHint,
         ImagePasteHandler.configure({
           onAddImage: (file) =>
             onAddImageRef.current(file).then((att) =>
@@ -273,13 +280,13 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
             onStart: (props) => {
               setFileState({
                 query: props.query,
-                command: props.command as (item: { path: string }) => void,
+                command: props.command as (item: FileMentionSelection) => void,
               });
             },
             onUpdate: (props) => {
               setFileState({
                 query: props.query,
-                command: props.command as (item: { path: string }) => void,
+                command: props.command as (item: FileMentionSelection) => void,
               });
             },
             onExit: () => {
@@ -361,15 +368,16 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
 
     return (
       <div className="prompt-editor" title={title}>
-        {slashState && projectName ? (
+        {slashState && projectName && sessionName ? (
           <PromptEditorSlashCommandPopup
             ref={slashPopupRef}
             query={slashState.query}
             triggerChar={slashState.triggerChar}
             projectName={projectName}
             sessionName={sessionName}
+            conversationId={conversationId}
             backend={backend}
-            onSelect={(insertText) => slashState.command({ insertText })}
+            onSelect={(selection) => slashState.command(selection)}
             onShowPlaceholder={onShowPlaceholder}
           />
         ) : null}
@@ -379,7 +387,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
             query={fileState.query}
             projectName={projectName}
             sessionName={sessionName}
-            onSelect={(path) => fileState.command({ path })}
+            onSelect={(selection) => fileState.command(selection)}
           />
         ) : null}
         <EditorContent editor={editor} className="prompt-editor__content" />

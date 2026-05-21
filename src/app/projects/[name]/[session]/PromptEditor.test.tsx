@@ -290,7 +290,7 @@ describe("PromptEditor", () => {
       clipboardData: {
         items: [],
         files: [],
-        getData: () => "plain text",
+        getData: (type: string) => (type === "text/plain" ? "plain text" : ""),
       },
     });
     expect(onAddImage).not.toHaveBeenCalled();

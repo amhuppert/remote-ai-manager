@@ -12,14 +12,20 @@ const FILE_MENTION_PLUGIN_KEY = new PluginKey("fileMentionSuggestion");
  * A single file candidate offered by the host's file index for `@`-mention
  * autocomplete. The extension is generic — the host decides matching,
  * scoring, and popup rendering.
+ *
+ * On select, the extension inserts a `fileMention` chip node carrying these
+ * attributes. `serializePromptDoc` emits the chip back as `@<path>` so the
+ * agent payload is identical to the pre-chip plain-text behavior.
  */
 export interface FileMentionItem {
   /** Stable id used as React key */
   id: string;
-  /** The path inserted into the document on select (e.g. `src/lib/foo.ts`) */
+  /** Project-relative path (e.g. `src/lib/foo.ts`). */
   path: string;
-  /** Optional payload preserved for the popup renderer */
-  data?: Record<string, unknown>;
+  /** Filename without directory portion, used for the chip's primary label. */
+  basename: string;
+  /** Filename extension without the leading dot (`ts`, `tsx`, `md`, ...). */
+  ext: string;
 }
 
 export interface FileMentionExtensionOptions {
@@ -67,7 +73,21 @@ export const FileMention = Extension.create<FileMentionExtensionOptions>({
       items: ({ query }) => items({ query }),
       render,
       command: ({ editor, range, props }) => {
-        editor.chain().focus().insertContentAt(range, `@${props.path} `).run();
+        editor
+          .chain()
+          .focus()
+          .insertContentAt(range, [
+            {
+              type: "fileMention",
+              attrs: {
+                path: props.path,
+                basename: props.basename,
+                ext: props.ext,
+              },
+            },
+            { type: "text", text: " " },
+          ])
+          .run();
       },
     };
 

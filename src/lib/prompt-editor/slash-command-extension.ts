@@ -10,14 +10,26 @@ import Suggestion, {
  * Item shape provided by the host application's command catalog. The
  * extension is intentionally generic; the host decides what command items
  * mean and how to render them in the popup.
+ *
+ * On select, the extension inserts a `slashCommandMarker` chip node carrying
+ * these attributes so the editor can render a styled badge while
+ * `serializePromptDoc` round-trips the original name verbatim on the wire.
  */
 export interface SlashCommandItem {
   /** Stable id used as React key */
   id: string;
-  /** The text inserted into the document on select (e.g. `/spec-init`) */
-  insertText: string;
-  /** Optional payload preserved for the popup renderer */
-  data?: Record<string, unknown>;
+  /** Full command name including the trigger character (e.g. `/spec-init`). */
+  name: string;
+  /** Trigger character that produced this item — `/` for commands, `$` for skills. */
+  trigger: "/" | "$";
+  /** Display category for badge/source styling. */
+  kind: "command" | "skill";
+  /** Human-readable origin (e.g. `built-in`, `user`, `project`). */
+  source: string;
+  /** Optional description, surfaced as the chip's tooltip. */
+  description?: string;
+  /** Optional argument hint shown as ghost text after the chip. */
+  argumentHint?: string;
 }
 
 export interface SlashCommandTriggerHandlers {
@@ -78,7 +90,20 @@ export const SlashCommand = Extension.create<SlashCommandExtensionOptions>({
           editor
             .chain()
             .focus()
-            .insertContentAt(range, `${props.insertText} `)
+            .insertContentAt(range, [
+              {
+                type: "slashCommandMarker",
+                attrs: {
+                  name: props.name,
+                  trigger: props.trigger,
+                  kind: props.kind,
+                  source: props.source,
+                  description: props.description ?? null,
+                  argumentHint: props.argumentHint ?? null,
+                },
+              },
+              { type: "text", text: " " },
+            ])
             .run();
         },
       };
