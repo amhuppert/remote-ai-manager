@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useState, useEffect, useCallback } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { PrismLight as SyntaxHighlighter } from "react-syntax-highlighter";
 import dynamic from "next/dynamic";
@@ -9,6 +9,8 @@ import dynamic from "next/dynamic";
 const MermaidDiagram = dynamic(() => import("./MermaidDiagram"), {
   ssr: false,
 });
+
+const LANGUAGE_CLASS_RE = /language-([^\s]+)/;
 
 const LANGUAGE_LOADERS: Record<string, () => Promise<{ default: unknown }>> = {
   bash: () => import("react-syntax-highlighter/dist/esm/languages/prism/bash"),
@@ -238,33 +240,38 @@ function CodeBlockInner({
   );
 }
 
+const MarkdownCodeRenderer: NonNullable<Components["code"]> =
+  function MarkdownCodeRenderer({ className, children, ...props }) {
+    const rawText = String(children);
+    const codeString = rawText.replace(/\n$/, "");
+    const match = LANGUAGE_CLASS_RE.exec(className || "");
+
+    // Fenced code blocks: have a language class OR trailing newline
+    // (react-markdown adds trailing \n to fenced block content)
+    if (match || rawText.endsWith("\n")) {
+      if (match?.[1] === "mermaid") {
+        return <MermaidDiagram code={codeString} />;
+      }
+
+      return <CodeBlockInner code={codeString} lang={match?.[1]} />;
+    }
+
+    return (
+      <code className={className} {...props}>
+        {children}
+      </code>
+    );
+  };
+
+const MARKDOWN_COMPONENTS: Components = {
+  code: MarkdownCodeRenderer,
+};
+
 function MarkdownContent({ content }: Props): React.JSX.Element {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
-      components={{
-        code({ className, children, ...props }) {
-          const rawText = String(children);
-          const codeString = rawText.replace(/\n$/, "");
-          const match = /language-([^\s]+)/.exec(className || "");
-
-          // Fenced code blocks: have a language class OR trailing newline
-          // (react-markdown adds trailing \n to fenced block content)
-          if (match || rawText.endsWith("\n")) {
-            if (match?.[1] === "mermaid") {
-              return <MermaidDiagram code={codeString} />;
-            }
-
-            return <CodeBlockInner code={codeString} lang={match?.[1]} />;
-          }
-
-          return (
-            <code className={className} {...props}>
-              {children}
-            </code>
-          );
-        },
-      }}
+      components={MARKDOWN_COMPONENTS}
     >
       {content}
     </ReactMarkdown>
