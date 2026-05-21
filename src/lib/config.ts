@@ -2,6 +2,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { cache } from "react";
 import { rawGlobalConfigSchema } from "./schemas";
 import type { GlobalConfig, PerRepoConfig } from "@/types";
 import { createLogger } from "@/lib/logging";
@@ -341,7 +342,7 @@ async function ensureConfigDir(): Promise<void> {
 }
 
 /** Read the global config, creating a default one if it doesn't exist */
-export async function readConfig(): Promise<GlobalConfig> {
+async function readConfigUncached(): Promise<GlobalConfig> {
   await ensureConfigDir();
 
   if (!existsSync(CONFIG_FILE)) {
@@ -355,6 +356,8 @@ export async function readConfig(): Promise<GlobalConfig> {
 
   return mergeConfigWithDefaults(defaultConfig(), parsed);
 }
+
+export const readConfig = cache(readConfigUncached);
 
 /** Read the raw config from disk without merging defaults. Returns {} if file doesn't exist. */
 export async function readRawConfig(): Promise<Partial<GlobalConfig>> {
