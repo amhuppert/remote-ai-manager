@@ -41,6 +41,7 @@ import {
   useForkConversationMutation,
   useTddToggleMutation,
   useUpdatePendingPromptTextMutation,
+  useAnswerQuestionMutation,
   sendPendingPromptBeacon,
 } from "@/lib/mutations";
 import TddToggle from "@/components/TddToggle";
@@ -775,6 +776,11 @@ export default function ConversationDetailPage({
   );
   const cumulativeImageCount = cumulativeImageCountQuery.data ?? 0;
   const failPrompt = useFailPrompt();
+  const answerMutation = useAnswerQuestionMutation(
+    projectName,
+    sessionName,
+    conversationId,
+  );
 
   const debugToggleMutation = useDebugModeToggleMutation(
     projectName,
@@ -1365,38 +1371,25 @@ export default function ConversationDetailPage({
 
   const handleAnswerSubmit = useCallback(
     async (questionId: string, answers: Record<string, string>) => {
-      const url = `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/answer`;
       try {
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ questionId, answers }),
+        const result = await answerMutation.mutateAsync({
+          questionId,
+          answers,
         });
-        if (res.ok) {
+        if (result.status === "ok") {
           clearQuestions();
-        } else if (res.status === 410) {
-          // Prompt is no longer running (server restarted)
+        } else {
           clearQuestions();
-          const body = await res.json().catch(() => null);
           failPrompt(
-            body?.error ??
+            result.error ??
               "The prompt that asked this question is no longer running.",
           );
-          // Refresh session data to pick up updated status
-          void sessionQuery.refetch();
         }
       } catch {
         // Best effort — the question panel remains visible for retry
       }
     },
-    [
-      projectName,
-      sessionName,
-      conversationId,
-      clearQuestions,
-      failPrompt,
-      sessionQuery,
-    ],
+    [clearQuestions, failPrompt, answerMutation],
   );
 
   const handleDelete = useCallback(() => {

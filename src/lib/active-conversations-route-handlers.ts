@@ -9,6 +9,7 @@ import { NextResponse } from "next/server";
 import { readState as defaultReadState } from "@/lib/state";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/project-resolver";
 import { readLastAssistantContent as defaultReadLastAssistantContent } from "@/lib/transcript";
+import { createExecutionIndex } from "@/lib/workflow-graph/execution-index";
 import type {
   ActiveConversation,
   ActiveConversationForkedFrom,
@@ -389,11 +390,10 @@ export function createActiveConversationsRouteHandlers(
           // Collect active graph workflow executions
           const exec = session.graphWorkflowExecution;
           if (exec && ACTIVE_GW_STATUSES.has(exec.status)) {
+            const index = createExecutionIndex(exec.workingDefinition, exec);
             const activeContextIds = [...exec.activeContextIds];
             const activeContextTitles = activeContextIds.map((id) => {
-              const context = exec.workingDefinition.executionContexts.find(
-                (c) => c.id === id,
-              );
+              const context = index.contextById.get(id);
               return context?.title ?? id;
             });
 

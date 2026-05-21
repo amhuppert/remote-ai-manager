@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
+import {
+  createExecutionIndex,
+  type ExecutionIndex,
+} from "@/lib/workflow-graph/execution-index";
 import type {
   GraphWorkflowExecution,
   WorkflowGraphValidationError,
@@ -77,19 +81,17 @@ function getContextDefinition(
 function getContextTasks(
   execution: GraphWorkflowExecution,
   contextId: string,
+  index: ExecutionIndex = createExecutionIndex(execution.workingDefinition),
 ): GraphWorkflowTaskDefinition[] {
-  return execution.workingDefinition.tasks
-    .filter((task) => task.contextId === contextId)
-    .sort((left, right) => left.order - right.order);
+  return index.tasksByContext.get(contextId) ?? [];
 }
 
 function getTaskDefinition(
   execution: GraphWorkflowExecution,
   taskId: string,
+  index: ExecutionIndex = createExecutionIndex(execution.workingDefinition),
 ): GraphWorkflowTaskDefinition {
-  const task = execution.workingDefinition.tasks.find(
-    (entry) => entry.id === taskId,
-  );
+  const task = index.taskById.get(taskId);
   if (!task) {
     throw new Error(`Task "${taskId}" was not found`);
   }

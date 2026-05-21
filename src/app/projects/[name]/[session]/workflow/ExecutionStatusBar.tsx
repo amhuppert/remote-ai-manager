@@ -1,9 +1,14 @@
 "use client";
 
+import { useMemo } from "react";
 import type { GraphWorkflowExecution } from "@/types";
 import ContextHaltCard, {
   formatGraphWorkflowHaltReason,
 } from "@/components/workflow-graph/ContextHaltCard";
+import {
+  createExecutionIndex,
+  type ExecutionIndex,
+} from "@/lib/workflow-graph/execution-index";
 
 export { formatGraphWorkflowHaltReason };
 
@@ -18,24 +23,20 @@ interface ExecutionStatusBarProps {
 
 function getActiveContextTitle(
   execution: GraphWorkflowExecution,
+  index: ExecutionIndex,
 ): string | null {
   const activeContextId = execution.activeContextIds[0];
   if (!activeContextId) return null;
-  return (
-    execution.workingDefinition.executionContexts.find(
-      (ctx) => ctx.id === activeContextId,
-    )?.title ?? null
-  );
+  return index.contextById.get(activeContextId)?.title ?? null;
 }
 
 function getFirstIncompleteTaskTitle(
   execution: GraphWorkflowExecution,
+  index: ExecutionIndex,
 ): string | null {
   const activeContextId = execution.activeContextIds[0];
   if (!activeContextId) return null;
-  const contextTasks = execution.workingDefinition.tasks
-    .filter((t) => t.contextId === activeContextId)
-    .sort((a, b) => a.order - b.order);
+  const contextTasks = index.tasksByContext.get(activeContextId) ?? [];
   const firstIncomplete = contextTasks.find(
     (t) => execution.taskStates[t.id]?.status !== "completed",
   );
@@ -53,8 +54,13 @@ export default function ExecutionStatusBar({
   onClear,
   isMutating,
 }: ExecutionStatusBarProps) {
-  const contextTitle = getActiveContextTitle(execution);
-  const taskTitle = getFirstIncompleteTaskTitle(execution);
+  const definition = execution.workingDefinition;
+  const index = useMemo(
+    () => createExecutionIndex(definition, execution),
+    [definition, execution],
+  );
+  const contextTitle = getActiveContextTitle(execution, index);
+  const taskTitle = getFirstIncompleteTaskTitle(execution, index);
   const showPause = execution.status === "running";
   const showResume = resumableStatuses.has(execution.status);
   const showAbort =

@@ -327,6 +327,10 @@ vi.mock("@/lib/mutations", () => ({
     mutate: vi.fn(),
     isPending: false,
   }),
+  useAnswerQuestionMutation: () => ({
+    mutateAsync: vi.fn(async () => ({ status: "ok" as const })),
+    isPending: false,
+  }),
   useForkConversationMutation: () => ({
     mutate: vi.fn(),
     mutateAsync: vi.fn(),

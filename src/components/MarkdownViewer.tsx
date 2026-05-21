@@ -2,7 +2,11 @@
 
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import MermaidDiagram from "./MermaidDiagram";
+import dynamic from "next/dynamic";
+
+const MermaidDiagram = dynamic(() => import("./MermaidDiagram"), {
+  ssr: false,
+});
 
 interface MarkdownViewerProps {
   /** Raw markdown content to render, or null if not yet loaded */

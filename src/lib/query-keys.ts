@@ -24,6 +24,12 @@ export const sessionKeys = {
     [...sessionKeys.all, "commitDiff", projectName, sessionName, hash] as const,
 };
 
+export const conflictKeys = {
+  all: ["conflicts"] as const,
+  detail: (projectName: string, sessionName: string) =>
+    [...conflictKeys.all, projectName, sessionName] as const,
+};
+
 export const referenceDocumentKeys = {
   all: ["reference-documents"] as const,
   lists: () => [...referenceDocumentKeys.all, "list"] as const,

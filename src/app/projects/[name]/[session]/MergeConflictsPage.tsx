@@ -24,6 +24,7 @@ interface MergeConflictsPageProps {
   branchName: string;
   targetBranch?: string;
   conflicts: ConflictEntry[];
+  error?: string | null;
   /** Callback when user clicks "Accept All and Fix" — fires async job */
   onAcceptAll?: () => void;
   /** Callback when user clicks "Fix with Claude" — fires async job with decisions */
@@ -211,6 +212,7 @@ export default function MergeConflictsPage({
   branchName,
   targetBranch = "main",
   conflicts,
+  error = null,
   onAcceptAll,
   onFixApproved,
   onBack,
@@ -285,6 +287,21 @@ export default function MergeConflictsPage({
   ).length;
   const pendingCount = decisions.filter((d) => d.decision === "pending").length;
   const hasAnyDecision = approvedCount > 0 || rejectedCount > 0;
+
+  if (error) {
+    return (
+      <div className="app">
+        <main className="main">
+          <div className="empty-state">
+            <div className="empty-state-title">{error}</div>
+            <button className="btn btn-sm" onClick={onBack}>
+              Back to session
+            </button>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="cr-page">
