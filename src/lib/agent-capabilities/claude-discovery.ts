@@ -23,7 +23,11 @@
 
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readdir as fsReaddir, readFile as fsReadFile } from "node:fs/promises";
+import {
+  readdir as fsReaddir,
+  readFile as fsReadFile,
+  stat as fsStat,
+} from "node:fs/promises";
 import path from "node:path";
 
 import { createLogger } from "@/lib/logging";
@@ -55,11 +59,31 @@ interface ClaudeDiscoveryDeps {
 const defaultDeps: ClaudeDiscoveryDeps = {
   async readDir(dir) {
     const entries = await fsReaddir(dir, { withFileTypes: true });
-    return entries.map((entry) => ({
-      name: entry.name,
-      isDirectory: entry.isDirectory(),
-      isFile: entry.isFile(),
-    }));
+    // Skills/agents are commonly installed as symlinks (e.g.
+    // ~/.claude/skills/foo → ~/.agents/skills/foo). Dirent.isDirectory() and
+    // isFile() return false for symlinks; stat the target so callers see the
+    // resolved type and discover symlinked sources the same as direct ones.
+    return Promise.all(
+      entries.map(async (entry) => {
+        if (entry.isSymbolicLink()) {
+          try {
+            const stats = await fsStat(path.join(dir, entry.name));
+            return {
+              name: entry.name,
+              isDirectory: stats.isDirectory(),
+              isFile: stats.isFile(),
+            };
+          } catch {
+            return { name: entry.name, isDirectory: false, isFile: false };
+          }
+        }
+        return {
+          name: entry.name,
+          isDirectory: entry.isDirectory(),
+          isFile: entry.isFile(),
+        };
+      }),
+    );
   },
   async readFile(file) {
     return fsReadFile(file, "utf-8");

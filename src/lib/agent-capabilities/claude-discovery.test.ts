@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -146,6 +153,27 @@ describe("Claude skill discovery", () => {
       expect(item.nativeDefault.enabled).toBe(true);
       expect(item.runtimeVisibility).toBe("source-only");
     }
+  });
+
+  it("discovers a skill installed as a symlinked directory under ~/.claude/skills", async () => {
+    const realSkillDir = path.join(home, ".agents", "skills", "find-skills");
+    await mkdir(realSkillDir, { recursive: true });
+    await writeFile(
+      path.join(realSkillDir, "SKILL.md"),
+      `---\nname: find-skills\ndescription: Discover and install agent skills\n---\nBody.\n`,
+      "utf-8",
+    );
+
+    const linkParent = path.join(home, ".claude", "skills");
+    await mkdir(linkParent, { recursive: true });
+    await symlink(realSkillDir, path.join(linkParent, "find-skills"), "dir");
+
+    const result = await discoverClaudeSkills({ worktreePath: workTree, home });
+    const ids = result.items.map((i) => i.itemId);
+    expect(ids).toContain("find-skills");
+    const item = result.items.find((i) => i.itemId === "find-skills");
+    expect(item?.capabilityKind).toBe("skill");
+    expect(item?.source.kind).toBe("user-file");
   });
 
   it("links plugin-contributed skills via owningPluginId", async () => {

@@ -1,7 +1,7 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, symlink, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { parseFrontmatter, discoverCommands } from "./commands";
 
@@ -202,5 +202,42 @@ Body.`,
       ]),
     );
     expect(items.every((item) => !item.name.includes(" "))).toBe(true);
+  });
+
+  it("discovers a Claude skill installed as a symlink in ~/.claude/skills", async () => {
+    const homeDir = await mkdtemp(path.join(tmpdir(), "commands-home-"));
+    const worktreePath = await mkdtemp(
+      path.join(tmpdir(), "commands-worktree-"),
+    );
+    cleanupPaths.push(homeDir, worktreePath);
+    vi.spyOn(os, "homedir").mockReturnValue(homeDir);
+
+    const realSkillDir = path.join(homeDir, ".agents", "skills", "find-skills");
+    await mkdir(realSkillDir, { recursive: true });
+    await writeFile(
+      path.join(realSkillDir, "SKILL.md"),
+      `---
+name: find-skills
+description: Discover and install agent skills
+---
+Body.`,
+    );
+
+    const linkDir = path.join(homeDir, ".claude", "skills");
+    await mkdir(linkDir, { recursive: true });
+    await symlink(realSkillDir, path.join(linkDir, "find-skills"), "dir");
+
+    const items = await (
+      discoverCommands as unknown as (
+        worktreePath: string,
+        backend: string,
+      ) => Promise<Array<{ name: string; source: string }>>
+    )(worktreePath, "claude");
+
+    expect(items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "/find-skills", source: "user" }),
+      ]),
+    );
   });
 });

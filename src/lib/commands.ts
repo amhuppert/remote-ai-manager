@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -183,9 +183,27 @@ async function scanSkillsDir(
     try {
       const entries = await readdir(currentDir, { withFileTypes: true });
       for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
         if (options.ignoreDirNames?.has(entry.name)) continue;
-        await walk(path.join(currentDir, entry.name));
+        const entryPath = path.join(currentDir, entry.name);
+        if (entry.isDirectory()) {
+          await walk(entryPath);
+          continue;
+        }
+        // Skills are commonly installed as symlinks (e.g. ~/.claude/skills/foo
+        // → ~/.agents/skills/foo). Resolve symlinks so directory targets are
+        // walked the same as real directories. Dirent.isDirectory() returns
+        // false for symlinks even when they point to directories.
+        if (entry.isSymbolicLink()) {
+          try {
+            const stats = await stat(entryPath);
+            if (stats.isDirectory()) await walk(entryPath);
+          } catch (err) {
+            logger.warn("commands.skills_symlink_error", {
+              path: entryPath,
+              error: getErrorMessage(err),
+            });
+          }
+        }
       }
     } catch (err) {
       logger.warn("commands.skills_scan_error", {
