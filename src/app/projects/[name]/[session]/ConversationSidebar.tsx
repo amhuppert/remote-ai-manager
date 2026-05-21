@@ -11,8 +11,13 @@ import {
   useArchiveConversationMutation,
   useRenameConversationMutation,
   useGenericArchiveConversationMutation,
+  useGenericArchiveSessionMutation,
   useGenericRenameConversationMutation,
 } from "@/lib/mutations";
+import { apiFetch } from "@/lib/api-client";
+import { sessionStateSchema } from "@/lib/schemas";
+import { buildConversationContext } from "@/lib/copy-context";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import {
   useSidebarCollapsed,
   useToggleSidebar,
@@ -178,6 +183,7 @@ function ConversationSidebar({
   );
   const genericArchiveMutation = useGenericArchiveConversationMutation();
   const genericRenameMutation = useGenericRenameConversationMutation();
+  const genericArchiveSessionMutation = useGenericArchiveSessionMutation();
 
   // --- Local UI state ---
   const [activeListFilter, setActiveListFilter] = useSidebarActiveListFilter();
@@ -189,6 +195,10 @@ function ConversationSidebar({
     scope: { projectName: string; sessionName: string };
     x: number;
     y: number;
+  } | null>(null);
+  const [pendingArchiveSession, setPendingArchiveSession] = useState<{
+    projectName: string;
+    sessionName: string;
   } | null>(null);
   const editScopeRef = useRef<{
     projectName: string;
@@ -309,6 +319,23 @@ function ConversationSidebar({
       }
     },
     [archiveConvoMutation, genericArchiveMutation, projectName, sessionName],
+  );
+
+  const handleCopyContext = useCallback(
+    async (row: SidebarConversation): Promise<void> => {
+      const session = await apiFetch(
+        `/api/projects/${encodeURIComponent(row.projectName)}/sessions/${encodeURIComponent(row.sessionName)}`,
+        sessionStateSchema,
+      );
+      const text = buildConversationContext({
+        projectName: row.projectName,
+        sessionName: row.sessionName,
+        session,
+        conversationId: row.id,
+      });
+      await navigator.clipboard.writeText(text);
+    },
+    [],
   );
 
   const activeRows: SidebarConversation[] = activeConvoList;
@@ -548,6 +575,14 @@ function ConversationSidebar({
           void navigator.clipboard.writeText(row.branchName);
         },
       },
+      {
+        kind: "item",
+        label: "Copy context",
+        hotkey: "\u2318\u21E7C",
+        onSelect: () => {
+          void handleCopyContext(row);
+        },
+      },
       { kind: "divider" },
       {
         kind: "item",
@@ -558,9 +593,19 @@ function ConversationSidebar({
       },
       {
         kind: "item",
-        label: archived ? "Unarchive" : "Archive",
+        label: archived ? "Unarchive conversation" : "Archive conversation",
         onSelect: () => {
           handleArchive(row.id, !archived, scope);
+        },
+      },
+      {
+        kind: "item",
+        label: "Archive session",
+        onSelect: () => {
+          setPendingArchiveSession({
+            projectName: row.projectName,
+            sessionName: row.sessionName,
+          });
         },
       },
     ];
@@ -569,6 +614,7 @@ function ConversationSidebar({
     ctxMenu,
     activeListFilter,
     handleArchive,
+    handleCopyContext,
     handleRenameStart,
     onMobileClose,
     router,
@@ -738,6 +784,23 @@ function ConversationSidebar({
           onClose={() => setCtxMenu(null)}
         />
       )}
+      <ConfirmDialog
+        open={pendingArchiveSession !== null}
+        title="Archive session"
+        message="This archives all conversations on this session and removes the worktree."
+        confirmLabel="Archive session"
+        danger
+        onConfirm={() => {
+          if (pendingArchiveSession === null) return;
+          genericArchiveSessionMutation.mutate({
+            projectName: pendingArchiveSession.projectName,
+            sessionName: pendingArchiveSession.sessionName,
+            archived: true,
+          });
+          setPendingArchiveSession(null);
+        }}
+        onCancel={() => setPendingArchiveSession(null)}
+      />
     </>
   );
 }

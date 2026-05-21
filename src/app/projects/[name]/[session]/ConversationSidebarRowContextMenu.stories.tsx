@@ -61,9 +61,16 @@ const baseItems: ContextMenuItem[] = [
   },
   { kind: "item", label: "Open project page", onSelect: fn() },
   { kind: "item", label: "Copy branch name", onSelect: fn() },
+  {
+    kind: "item",
+    label: "Copy context",
+    onSelect: fn(),
+    hotkey: "\u2318\u21E7C",
+  },
   { kind: "divider" },
   { kind: "item", label: "Rename…", onSelect: fn() },
-  { kind: "item", label: "Archive", onSelect: fn() },
+  { kind: "item", label: "Archive conversation", onSelect: fn() },
+  { kind: "item", label: "Archive session", onSelect: fn() },
 ];
 
 export const Default = {
@@ -75,8 +82,8 @@ export const Default = {
 export const Unarchive = {
   args: {
     items: baseItems.map((item) =>
-      item.kind === "item" && item.label === "Archive"
-        ? { ...item, label: "Unarchive" }
+      item.kind === "item" && item.label === "Archive conversation"
+        ? { ...item, label: "Unarchive conversation" }
         : item,
     ),
   },

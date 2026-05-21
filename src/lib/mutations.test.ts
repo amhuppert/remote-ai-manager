@@ -9,6 +9,7 @@ import {
   useArchiveConversationMutation,
   useAnswerQuestionMutation,
   useMarkNotificationAsReadMutation,
+  useGenericArchiveSessionMutation,
 } from "@/lib/mutations";
 import {
   conversationKeys,
@@ -241,6 +242,47 @@ describe("useArchiveConversationMutation", () => {
 
     const data = client.getQueryData<ConversationState[]>(listKey);
     expect(data?.[0]?.archived).toBe(false);
+  });
+});
+
+describe("useGenericArchiveSessionMutation", () => {
+  const fetchSpy = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("PATCHes the session archive endpoint with the archived flag and invalidates the session list on success", async () => {
+    const client = makeClient();
+    const listKey = sessionKeys.list("p");
+    client.setQueryData(listKey, []);
+    fetchSpy.mockResolvedValue(jsonResponse({ ok: true }));
+
+    const { result } = renderHook(() => useGenericArchiveSessionMutation(), {
+      wrapper: wrapperFor(client),
+    });
+
+    await result.current.mutateAsync({
+      projectName: "p",
+      sessionName: "s",
+      archived: true,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/projects/p/sessions/s/archive",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ archived: true }),
+      }),
+    );
+    await waitFor(() => {
+      expect(client.getQueryState(listKey)?.isInvalidated).toBe(true);
+    });
   });
 });
 

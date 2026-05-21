@@ -961,6 +961,44 @@ export function useGenericArchiveConversationMutation() {
 }
 
 /**
+ * Archive a session from any project. Accepts project/session as mutation
+ * variables — used from the active conversations sidebar where rows can
+ * belong to sessions other than the one this component is bound to.
+ */
+export function useGenericArchiveSessionMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      projectName,
+      sessionName,
+      archived,
+    }: {
+      projectName: string;
+      sessionName: string;
+      archived: boolean;
+    }) =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/archive`,
+        "archive-session",
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ archived }),
+        },
+      ),
+    onSuccess: (_data, { projectName }) => {
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.list(projectName),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.active(),
+      });
+    },
+  });
+}
+
+/**
  * Rename a conversation from any project/session.
  * Accepts project/session as part of the mutation variables.
  */
