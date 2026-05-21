@@ -2,8 +2,16 @@
 
 import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
+import dynamic from "next/dynamic";
 import { useDevToolsEnabled } from "@/stores/dev-tools-visibility.store";
+
+const ReactQueryDevtools = dynamic(
+  () =>
+    import("@tanstack/react-query-devtools").then(
+      (m) => m.ReactQueryDevtools,
+    ),
+  { ssr: false },
+);
 
 function makeQueryClient(): QueryClient {
   return new QueryClient({
