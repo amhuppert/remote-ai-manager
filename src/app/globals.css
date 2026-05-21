@@ -18964,3 +18964,24 @@ html[data-dev-tools-enabled] nextjs-portal {
 .virtuoso-fallback {
   width: 100%;
 }
+
+/* --- content-visibility opt-in for long lists --- */
+.np-list > li {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 72px;
+}
+
+.project-card {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 180px;
+}
+
+.convo-card {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 96px;
+}
+
+.wb-transcript-body .message {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 120px;
+}
