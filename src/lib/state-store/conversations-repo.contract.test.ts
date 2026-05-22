@@ -419,3 +419,241 @@ describe("canonicalConversationRow", () => {
     );
   });
 });
+
+describe("conversations-repo setPendingPromptText focused write", () => {
+  it("sets pending_prompt_text on the targeted row without touching siblings", () => {
+    insertParentSession(PROJECT_PATH, "other-session");
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "target", pendingPromptText: null }),
+    );
+    repo.upsert(
+      PROJECT_PATH,
+      "other-session",
+      makeMinimalConversation({
+        id: "sibling",
+        pendingPromptText: "do not touch",
+      }),
+    );
+
+    const result = repo.setPendingPromptText(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "target",
+      "drafted text",
+    );
+    expect(result).toBe(true);
+
+    expect(repo.findById("target")?.pendingPromptText).toBe("drafted text");
+    expect(repo.findById("sibling")?.pendingPromptText).toBe("do not touch");
+  });
+
+  it("clears the column when given null", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c1", pendingPromptText: "to-clear" }),
+    );
+
+    expect(
+      repo.setPendingPromptText(PROJECT_PATH, SESSION_NAME, "c1", null),
+    ).toBe(true);
+    expect(repo.findById("c1")?.pendingPromptText).toBeNull();
+  });
+
+  it("returns false when the conversation does not exist (no row updated)", () => {
+    expect(
+      repo.setPendingPromptText(PROJECT_PATH, SESSION_NAME, "missing", "x"),
+    ).toBe(false);
+  });
+
+  it("requires the projectPath and sessionName to match the row's key", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c1", pendingPromptText: "untouched" }),
+    );
+
+    expect(
+      repo.setPendingPromptText("/wrong-project", SESSION_NAME, "c1", "x"),
+    ).toBe(false);
+    expect(
+      repo.setPendingPromptText(PROJECT_PATH, "wrong-session", "c1", "x"),
+    ).toBe(false);
+    expect(repo.findById("c1")?.pendingPromptText).toBe("untouched");
+  });
+});
+
+describe("conversations-repo findAll caching", () => {
+  it("returns identical references for unchanged rows across calls (cache hit)", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeFullConversation({ id: "c-a" }),
+    );
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-b" }),
+    );
+
+    const first = repo.findAll();
+    const second = repo.findAll();
+
+    expect(second).toHaveLength(first.length);
+    for (let i = 0; i < first.length; i += 1) {
+      const a = first[i];
+      const b = second[i];
+      expect(a).toBeDefined();
+      expect(b).toBeDefined();
+      // Reference equality proves the cached parsed value was returned, not re-parsed.
+      expect(b!.conversation).toBe(a!.conversation);
+    }
+  });
+
+  it("returns a new reference for a row after upsert mutates it", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeFullConversation({ id: "c-changed", promptCount: 1 }),
+    );
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-stable" }),
+    );
+
+    const first = repo.findAll();
+    const firstChanged = first.find((r) => r.conversation.id === "c-changed");
+    const firstStable = first.find((r) => r.conversation.id === "c-stable");
+    expect(firstChanged).toBeDefined();
+    expect(firstStable).toBeDefined();
+
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeFullConversation({ id: "c-changed", promptCount: 99 }),
+    );
+
+    const second = repo.findAll();
+    const secondChanged = second.find((r) => r.conversation.id === "c-changed");
+    const secondStable = second.find((r) => r.conversation.id === "c-stable");
+    expect(secondChanged?.conversation.promptCount).toBe(99);
+    expect(secondChanged?.conversation).not.toBe(firstChanged!.conversation);
+    expect(secondStable?.conversation).toBe(firstStable!.conversation);
+  });
+
+  it("returns a new reference after setPendingPromptText mutates a row", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-pp", pendingPromptText: null }),
+    );
+
+    const first = repo.findAll();
+    const firstEntry = first.find((r) => r.conversation.id === "c-pp");
+    expect(firstEntry).toBeDefined();
+
+    repo.setPendingPromptText(PROJECT_PATH, SESSION_NAME, "c-pp", "typed");
+
+    const second = repo.findAll();
+    const secondEntry = second.find((r) => r.conversation.id === "c-pp");
+    expect(secondEntry?.conversation.pendingPromptText).toBe("typed");
+    expect(secondEntry?.conversation).not.toBe(firstEntry!.conversation);
+  });
+
+  it("returns the same array reference across calls when no writes occurred", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-a" }),
+    );
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-b" }),
+    );
+
+    const first = repo.findAll();
+    const second = repo.findAll();
+
+    expect(second).toBe(first);
+  });
+
+  it("invalidates the array cache after upsert", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-x" }),
+    );
+
+    const first = repo.findAll();
+
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-x", promptCount: 5 }),
+    );
+
+    const second = repo.findAll();
+    expect(second).not.toBe(first);
+    expect(
+      second.find((r) => r.conversation.id === "c-x")?.conversation.promptCount,
+    ).toBe(5);
+  });
+
+  it("invalidates the array cache after setPendingPromptText", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-pp2", pendingPromptText: null }),
+    );
+
+    const first = repo.findAll();
+    repo.setPendingPromptText(PROJECT_PATH, SESSION_NAME, "c-pp2", "drafted");
+    const second = repo.findAll();
+
+    expect(second).not.toBe(first);
+    expect(
+      second.find((r) => r.conversation.id === "c-pp2")?.conversation
+        .pendingPromptText,
+    ).toBe("drafted");
+  });
+
+  it("drops cache entries when their underlying row is deleted", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-keep" }),
+    );
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-drop" }),
+    );
+
+    const first = repo.findAll();
+    expect(first.map((r) => r.conversation.id).sort()).toEqual([
+      "c-drop",
+      "c-keep",
+    ]);
+
+    repo.delete("c-drop");
+
+    const second = repo.findAll();
+    expect(second.map((r) => r.conversation.id)).toEqual(["c-keep"]);
+
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-drop" }),
+    );
+
+    const third = repo.findAll();
+    const thirdDrop = third.find((r) => r.conversation.id === "c-drop");
+    const firstDrop = first.find((r) => r.conversation.id === "c-drop");
+    // Re-inserted row is parsed fresh, not served from stale cache.
+    expect(thirdDrop?.conversation).not.toBe(firstDrop!.conversation);
+  });
+});

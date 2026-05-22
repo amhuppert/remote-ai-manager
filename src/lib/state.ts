@@ -16,6 +16,7 @@ export const getSession = defaultStore.getSession;
 export const getConversation = defaultStore.getConversation;
 export const getSessionConversations = defaultStore.getSessionConversations;
 export const getReferenceDocuments = defaultStore.getReferenceDocuments;
+export const getProjectMcpOverrides = defaultStore.getProjectMcpOverrides;
 export const getArchivedProjects = defaultStore.getArchivedProjects;
 export const getPinnedProjects = defaultStore.getPinnedProjects;
 export const getOrCreateProject = defaultStore.getOrCreateProject;
@@ -25,6 +26,8 @@ export const setSessionArchived = defaultStore.setSessionArchived;
 export const setSessionTddEnabled = defaultStore.setSessionTddEnabled;
 export const setSessionFinished = defaultStore.setSessionFinished;
 export const setProjectArchived = defaultStore.setProjectArchived;
+export const setConversationPendingPromptText =
+  defaultStore.setConversationPendingPromptText;
 export const setProjectPinned = defaultStore.setProjectPinned;
 export const createReferenceDocument = defaultStore.createReferenceDocument;
 export const deleteReferenceDocument = defaultStore.deleteReferenceDocument;

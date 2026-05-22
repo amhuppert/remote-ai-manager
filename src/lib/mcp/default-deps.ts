@@ -63,8 +63,7 @@ const defaultStateManager = createStateManager();
 export async function defaultReadProjectOverrides(
   projectPath: string,
 ): Promise<McpOverrides | undefined> {
-  const state = await defaultStateManager.readState();
-  return state.projects[projectPath]?.mcpOverrides;
+  return defaultStateManager.getProjectMcpOverrides(projectPath);
 }
 
 /**
@@ -134,8 +133,7 @@ const composePortableForConversation = createComposePortableMcpForConversation({
     return defaultGlobalOverrideStore.read();
   },
   async readProjectOverrides(projectPath) {
-    const state = await defaultStateManager.readState();
-    return state.projects[projectPath]?.mcpOverrides;
+    return defaultStateManager.getProjectMcpOverrides(projectPath);
   },
   async readSessionOverrides(projectPath, sessionName) {
     const session = await defaultStateManager.getSession(

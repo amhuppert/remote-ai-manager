@@ -162,6 +162,64 @@ describe("mutateSession", () => {
   });
 });
 
+describe("setConversationPendingPromptText focused write", () => {
+  beforeEach(async () => {
+    await store.getOrCreateProject("/proj-a");
+    await store.mutateState("seed", (state) => {
+      const session = makeSession();
+      session.conversations.push(makeConversation({ id: "conv-1" }));
+      state.projects["/proj-a"]!.sessions["alpha"] = session;
+    });
+  });
+
+  it("persists a string value without invoking the whole-state aggregate", async () => {
+    const aggregateSpy = vi.spyOn(managerStateSchema, "parse");
+    aggregateSpy.mockClear();
+
+    await store.setConversationPendingPromptText(
+      "/proj-a",
+      "alpha",
+      "conv-1",
+      "draft text",
+    );
+
+    expect(aggregateSpy).not.toHaveBeenCalled();
+    aggregateSpy.mockRestore();
+
+    const after = await store.getConversation("/proj-a", "alpha", "conv-1");
+    expect(after?.pendingPromptText).toBe("draft text");
+  });
+
+  it("clears the column when given null", async () => {
+    await store.setConversationPendingPromptText(
+      "/proj-a",
+      "alpha",
+      "conv-1",
+      "draft",
+    );
+    await store.setConversationPendingPromptText(
+      "/proj-a",
+      "alpha",
+      "conv-1",
+      null,
+    );
+
+    const after = await store.getConversation("/proj-a", "alpha", "conv-1");
+    expect(after?.pendingPromptText).toBeNull();
+  });
+
+  it("throws when the conversation does not exist", async () => {
+    await expect(
+      store.setConversationPendingPromptText(
+        "/proj-a",
+        "alpha",
+        "missing",
+        "x",
+      ),
+    ).rejects.toThrow(/missing/);
+  });
+});
+
 describe("mutateConversation", () => {
   it("mutates a conversation in the target session and bumps lastActivityAt on both", async () => {
     await store.getOrCreateProject("/proj-a");

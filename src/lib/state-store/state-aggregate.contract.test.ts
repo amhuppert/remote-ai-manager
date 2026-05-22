@@ -270,6 +270,7 @@ describe("state-aggregate.readAll", () => {
         upsert: () => {},
         delete: () => {},
         upsertWithSessionTouch: () => {},
+        setPendingPromptText: () => false,
       },
       referenceDocuments: {
         findBySession: () => [],

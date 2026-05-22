@@ -3,6 +3,7 @@ import type Database from "better-sqlite3";
 import type {
   ConversationState,
   ManagerState,
+  McpOverrides,
   ProjectState,
   ReferenceDocument,
   SessionListItem,
@@ -488,6 +489,21 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     }
   }
 
+  async function getProjectMcpOverrides(
+    projectPath: string,
+  ): Promise<McpOverrides | undefined> {
+    const start = performance.now();
+    try {
+      const project = repos.projects.findByRootPath(projectPath);
+      return project?.mcpOverrides;
+    } finally {
+      emitReadTiming(start, {
+        accessor: "getProjectMcpOverrides",
+        projectPath,
+      });
+    }
+  }
+
   async function getArchivedProjects(): Promise<Set<string>> {
     const start = performance.now();
     try {
@@ -598,6 +614,41 @@ export function createStateStore(deps: StateStoreDeps = {}) {
         session.finished = true;
         session.archived = true;
       },
+    );
+  }
+
+  async function setConversationPendingPromptText(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    text: string | null,
+  ): Promise<void> {
+    return writeQueue.withWriteQueue(
+      `setConversationPendingPromptText[${sessionName}]`,
+      async () =>
+        timed(
+          logger,
+          "state.mutate",
+          {
+            label: "setConversationPendingPromptText",
+            projectPath,
+            sessionName,
+            conversationId,
+          },
+          async () => {
+            const updated = repos.conversations.setPendingPromptText(
+              projectPath,
+              sessionName,
+              conversationId,
+              text,
+            );
+            if (!updated) {
+              throw new Error(
+                `Conversation "${conversationId}" not found in session "${sessionName}"`,
+              );
+            }
+          },
+        ),
     );
   }
 
@@ -715,6 +766,7 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     getConversation,
     getSessionConversations,
     getReferenceDocuments,
+    getProjectMcpOverrides,
     getArchivedProjects,
     getPinnedProjects,
     getOrCreateProject,
@@ -723,6 +775,7 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     setSessionArchived,
     setSessionTddEnabled,
     setSessionFinished,
+    setConversationPendingPromptText,
     setProjectArchived,
     setProjectPinned,
     createReferenceDocument,

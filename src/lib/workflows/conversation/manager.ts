@@ -85,16 +85,10 @@ async function defaultLoadActorInput(
   sessionName: string,
   conversationId: string,
 ): Promise<EnsureActorInputData> {
-  const { readState } = await import("@/lib/state");
+  const { getSession } = await import("@/lib/state");
   const { getProjectDisplayName } = await import("@/lib/project-resolver");
 
-  const state = await readState();
-  const project = state.projects[projectPath];
-  if (!project) {
-    throw new Error(`Project not found: ${projectPath}`);
-  }
-
-  const session = project.sessions[sessionName];
+  const session = await getSession(projectPath, sessionName);
   if (!session) {
     throw new Error(`Session not found: ${sessionName}`);
   }

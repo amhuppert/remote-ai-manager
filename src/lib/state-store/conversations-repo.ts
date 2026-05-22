@@ -54,6 +54,12 @@ export interface ConversationsRepo {
     conversation: ConversationState,
     lastActivityAt: string,
   ): void;
+  setPendingPromptText(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    text: string | null,
+  ): boolean;
 }
 
 /**
@@ -484,7 +490,62 @@ function timed<T>(
   }
 }
 
+const CONVERSATION_COLUMN_KEYS: ReadonlyArray<keyof ConversationsTableRow> = [
+  "id",
+  "project_path",
+  "session_name",
+  "name",
+  "transcript_path",
+  "status",
+  "prompt_count",
+  "created_at",
+  "last_activity_at",
+  "source",
+  "summary",
+  "archived",
+  "total_cost_usd",
+  "total_duration_ms",
+  "total_turns",
+  "pending_question_id",
+  "pending_questions",
+  "pending_prompt_text",
+  "forked_from",
+  "role",
+  "context_tokens",
+  "context_window_max",
+  "debug_mode",
+  "machine_snapshot",
+  "agent_backend",
+  "backend_ref",
+  "mcp_overrides",
+  "mcp_runtime",
+  "agent_capability_overrides",
+  "agent_capabilities_runtime",
+];
+
+function rawRowsEqual(
+  a: Record<string, unknown>,
+  b: Record<string, unknown>,
+): boolean {
+  for (const key of CONVERSATION_COLUMN_KEYS) {
+    if (a[key] !== b[key]) return false;
+  }
+  return true;
+}
+
 export function createConversationsRepo(db: Db): ConversationsRepo {
+  type ParsedRow = {
+    projectPath: string;
+    sessionName: string;
+    conversation: ConversationState;
+  };
+  const findAllCache = new Map<
+    string,
+    { rawRow: Record<string, unknown>; parsed: ParsedRow }
+  >();
+  let cacheVersion = 0;
+  let lastFindAllVersion = -1;
+  let lastFindAllResult: ParsedRow[] = [];
   const findByIdStmt = db.prepare(
     `SELECT * FROM conversations WHERE id = ? LIMIT 1`,
   );
@@ -558,6 +619,11 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        agent_capabilities_runtime = excluded.agent_capabilities_runtime`,
   );
   const deleteStmt = db.prepare(`DELETE FROM conversations WHERE id = ?`);
+  const setPendingPromptTextStmt = db.prepare(
+    `UPDATE conversations
+     SET pending_prompt_text = ?
+     WHERE project_path = ? AND session_name = ? AND id = ?`,
+  );
   const sessionTouchStmt = db.prepare(
     `UPDATE sessions
      SET last_activity_at = ?
@@ -627,8 +693,33 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
     },
     findAll() {
       return timed("findAll", {}, () => {
-        const rows = findAllStmt.all() as unknown[];
-        return rows.map(rowToDomain);
+        if (cacheVersion === lastFindAllVersion) {
+          return lastFindAllResult;
+        }
+        const rows = findAllStmt.all() as Array<Record<string, unknown>>;
+        const out: ParsedRow[] = new Array(rows.length);
+        const seenIds = new Set<string>();
+        for (let i = 0; i < rows.length; i += 1) {
+          const row = rows[i]!;
+          const id = row.id as string;
+          seenIds.add(id);
+          const cached = findAllCache.get(id);
+          if (cached !== undefined && rawRowsEqual(cached.rawRow, row)) {
+            out[i] = cached.parsed;
+            continue;
+          }
+          const parsed = rowToDomain(row);
+          findAllCache.set(id, { rawRow: row, parsed });
+          out[i] = parsed;
+        }
+        if (findAllCache.size > seenIds.size) {
+          for (const id of findAllCache.keys()) {
+            if (!seenIds.has(id)) findAllCache.delete(id);
+          }
+        }
+        lastFindAllVersion = cacheVersion;
+        lastFindAllResult = out;
+        return out;
       });
     },
     upsert(projectPath, sessionName, conversation) {
@@ -639,11 +730,14 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
           conversation,
         );
         upsertStmt.run(bind);
+        cacheVersion += 1;
       });
     },
     delete(id) {
       timed("delete", { id }, () => {
         deleteStmt.run(id);
+        findAllCache.delete(id);
+        cacheVersion += 1;
       });
     },
     upsertWithSessionTouch(
@@ -662,6 +756,24 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
             conversation,
           );
           upsertWithSessionTouchTxn.immediate(bind, lastActivityAt);
+          cacheVersion += 1;
+        },
+      );
+    },
+    setPendingPromptText(projectPath, sessionName, conversationId, text) {
+      return timed(
+        "setPendingPromptText",
+        { id: conversationId, projectPath, sessionName },
+        () => {
+          const info = setPendingPromptTextStmt.run(
+            text,
+            projectPath,
+            sessionName,
+            conversationId,
+          );
+          const changed = info.changes > 0;
+          if (changed) cacheVersion += 1;
+          return changed;
         },
       );
     },

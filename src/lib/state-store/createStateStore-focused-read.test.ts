@@ -178,6 +178,7 @@ describe("createStateStore — focused read DI guard", () => {
       getSession: store.getSession,
       getConversation: store.getConversation,
       getSessionConversations: store.getSessionConversations,
+      setConversationPendingPromptText: store.setConversationPendingPromptText,
     });
 
     const found = await conversationService.getConversation(
@@ -198,5 +199,86 @@ describe("createStateStore — focused read DI guard", () => {
     expect(list).toHaveLength(1);
     expect(spyAggregate.readAll).not.toHaveBeenCalled();
     expect(spyAggregate.diffAndCommit).not.toHaveBeenCalled();
+  });
+
+  it("getProjectMcpOverrides bypasses aggregate.readAll/diffAndCommit and returns the project's mcpOverrides", async () => {
+    const projects = createProjectsRepo(db);
+    const sessions = createSessionsRepo(db);
+    const conversations = createConversationsRepo(db);
+
+    projects.upsert({
+      rootPath: "/proj-a",
+      mcpOverrides: {
+        servers: {
+          "my-server": { enabled: false },
+        },
+      },
+    });
+    sessions.upsert(
+      "/proj-a",
+      sessionStateSchema.parse({
+        sessionName: "alpha",
+        worktreePath: "/wt/alpha",
+        branchName: "csm/alpha",
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+    conversations.upsert(
+      "/proj-a",
+      "alpha",
+      conversationStateSchema.parse({
+        id: "conv-1",
+        transcriptPath: null,
+        status: "idle",
+        promptCount: 0,
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+
+    const spyAggregate: StateAggregate = {
+      readAll: vi.fn(() => {
+        throw new Error(
+          "spyAggregate.readAll must NOT be called from getProjectMcpOverrides focused-read path",
+        );
+      }),
+      diffAndCommit: vi.fn(() => {
+        throw new Error(
+          "spyAggregate.diffAndCommit must NOT be called from getProjectMcpOverrides focused-read path",
+        );
+      }),
+    };
+
+    const store = createStateStore({ db, aggregate: spyAggregate });
+
+    const overrides = await store.getProjectMcpOverrides("/proj-a");
+    expect(overrides).toEqual({
+      servers: {
+        "my-server": { enabled: false },
+      },
+    });
+    expect(spyAggregate.readAll).not.toHaveBeenCalled();
+    expect(spyAggregate.diffAndCommit).not.toHaveBeenCalled();
+  });
+
+  it("getProjectMcpOverrides returns undefined for missing project", async () => {
+    createProjectsRepo(db);
+    createSessionsRepo(db);
+    createConversationsRepo(db);
+
+    const spyAggregate: StateAggregate = {
+      readAll: vi.fn(() => {
+        throw new Error("readAll must not be called");
+      }),
+      diffAndCommit: vi.fn(() => {
+        throw new Error("diffAndCommit must not be called");
+      }),
+    };
+
+    const store = createStateStore({ db, aggregate: spyAggregate });
+
+    const overrides = await store.getProjectMcpOverrides("/missing-project");
+    expect(overrides).toBeUndefined();
   });
 });

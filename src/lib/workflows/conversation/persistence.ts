@@ -8,11 +8,11 @@
 
 import type { Snapshot } from "xstate";
 import {
+  getConversation as defaultGetConversation,
   mutateConversation as defaultMutateConversation,
-  readState as defaultReadState,
 } from "@/lib/state";
 import { createLogger } from "@/lib/logging";
-import type { ConversationState, ManagerState } from "@/types";
+import type { ConversationState } from "@/types";
 
 const logger = createLogger("conversation-persistence");
 
@@ -22,7 +22,7 @@ const logger = createLogger("conversation-persistence");
 
 export interface ConversationPersistenceDeps {
   mutateConversation: typeof defaultMutateConversation;
-  readState: () => Promise<ManagerState>;
+  getConversation: typeof defaultGetConversation;
 }
 
 let _deps: ConversationPersistenceDeps | null = null;
@@ -31,7 +31,7 @@ function getDeps(): ConversationPersistenceDeps {
   if (!_deps) {
     _deps = {
       mutateConversation: defaultMutateConversation,
-      readState: defaultReadState,
+      getConversation: defaultGetConversation,
     };
   }
   return _deps;
@@ -161,15 +161,10 @@ export async function restoreConversationSnapshot(
   expectedSchemaVersion: number,
 ): Promise<Snapshot<unknown> | null> {
   try {
-    const state = await getDeps().readState();
-    const project = state.projects[projectPath];
-    if (!project) return null;
-
-    const session = project.sessions[sessionName];
-    if (!session) return null;
-
-    const conversation = session.conversations.find(
-      (c) => c.id === conversationId,
+    const conversation = await getDeps().getConversation(
+      projectPath,
+      sessionName,
+      conversationId,
     );
     if (!conversation) return null;
 

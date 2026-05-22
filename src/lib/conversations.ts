@@ -13,6 +13,7 @@ import {
   getSession as defaultGetSession,
   getConversation as defaultGetConversation,
   getSessionConversations as defaultGetSessionConversations,
+  setConversationPendingPromptText as defaultSetConversationPendingPromptText,
 } from "./state";
 import { createLogger } from "./logging";
 import {
@@ -86,6 +87,7 @@ export interface ConversationsDeps {
   getSession: typeof defaultGetSession;
   getConversation: typeof defaultGetConversation;
   getSessionConversations: typeof defaultGetSessionConversations;
+  setConversationPendingPromptText: typeof defaultSetConversationPendingPromptText;
   /**
    * Override config dir for transcript path resolution. When omitted, the
    * global config dir (resolved from CC_CONFIG_DIR / OS defaults) is used.
@@ -101,6 +103,7 @@ export const defaultConversationsDeps: ConversationsDeps = {
   getSession: defaultGetSession,
   getConversation: defaultGetConversation,
   getSessionConversations: defaultGetSessionConversations,
+  setConversationPendingPromptText: defaultSetConversationPendingPromptText,
   forkSession: sdkForkSession,
 };
 
@@ -116,6 +119,7 @@ export function createConversationService(
     getSession,
     getConversation,
     getSessionConversations,
+    setConversationPendingPromptText: setPendingPromptTextDep,
     configDir,
     forkSession = sdkForkSession,
   } = deps;
@@ -266,22 +270,11 @@ export function createConversationService(
     conversationId: string,
     text: string | null,
   ): Promise<void> {
-    await mutateSession(
+    await setPendingPromptTextDep(
       projectPath,
       sessionName,
-      "setConversationPendingPromptText",
-      (session) => {
-        const conversation = session.conversations.find(
-          (c) => c.id === conversationId,
-        );
-        if (!conversation) {
-          throw new Error(
-            `Conversation "${conversationId}" not found in session "${sessionName}"`,
-          );
-        }
-
-        conversation.pendingPromptText = text;
-      },
+      conversationId,
+      text,
     );
 
     logger.info("conversation.pending_prompt_updated", {

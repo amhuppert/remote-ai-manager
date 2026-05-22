@@ -65,6 +65,7 @@ function createTestServices(
     getSession: state.getSession,
     getConversation: state.getConversation,
     getSessionConversations: state.getSessionConversations,
+    setConversationPendingPromptText: state.setConversationPendingPromptText,
     configDir: TEST_DIR,
     forkSession: fakeFork,
   });

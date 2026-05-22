@@ -418,8 +418,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
       readGlobalOverrides: () =>
         globalStoreMod.defaultGlobalOverrideStore.read(),
       readProjectOverrides: async (projectPath) => {
-        const state = await stateMod.readState();
-        return state.projects[projectPath]?.mcpOverrides;
+        return stateMod.getProjectMcpOverrides(projectPath);
       },
       readSessionOverrides: async (projectPath, sessionName) => {
         const session = await stateMod.getSession(projectPath, sessionName);

@@ -7,7 +7,7 @@ import {
   setPersistenceDeps,
   _resetForTesting,
 } from "./persistence";
-import type { ManagerState, ConversationState } from "@/types";
+import type { ConversationState } from "@/types";
 
 function makeConversation(
   overrides: Partial<ConversationState> = {},
@@ -41,50 +41,17 @@ function makeConversation(
   };
 }
 
-function makeState(conversation: ConversationState): ManagerState {
-  return {
-    projects: {
-      "/repo": {
-        rootPath: "/repo",
-        sessions: {
-          "sess-1": {
-            sessionName: "sess-1",
-            worktreePath: "/repo/.worktrees/sess-1",
-            branchName: "csm/sess-1",
-            createdAt: "2024-01-01T00:00:00Z",
-            lastActivityAt: "2024-01-01T00:00:00Z",
-            archived: false,
-            finished: false,
-            conversations: [conversation],
-            source: "cc",
-            objective: null,
-            creationMode: "fast",
-            tddEnabled: true,
-            targetBranch: "main",
-            parentSessionName: null,
-            graphWorkflowExecution: null,
-            graphWorkflowExecutionHistory: [],
-            referenceDocuments: [],
-          },
-        },
-      },
-    },
-    archivedProjects: [],
-    pinnedProjects: [],
-  };
-}
-
 describe("conversation persistence", () => {
   const mockMutateConversation = vi.fn();
-  const mockReadState = vi.fn();
+  const mockGetConversation = vi.fn();
 
   beforeEach(() => {
     _resetForTesting();
     mockMutateConversation.mockReset();
-    mockReadState.mockReset();
+    mockGetConversation.mockReset();
     setPersistenceDeps({
       mutateConversation: mockMutateConversation,
-      readState: mockReadState,
+      getConversation: mockGetConversation,
     });
   });
 
@@ -150,7 +117,7 @@ describe("conversation persistence", () => {
         value: "idle",
       };
       const conv = makeConversation({ machineSnapshot: snapshot });
-      mockReadState.mockResolvedValue(makeState(conv));
+      mockGetConversation.mockResolvedValue(conv);
 
       const result = await restoreConversationSnapshot(
         "/repo",
@@ -167,7 +134,7 @@ describe("conversation persistence", () => {
         value: "idle",
       };
       const conv = makeConversation({ machineSnapshot: snapshot });
-      mockReadState.mockResolvedValue(makeState(conv));
+      mockGetConversation.mockResolvedValue(conv);
 
       const result = await restoreConversationSnapshot(
         "/repo",
@@ -180,7 +147,7 @@ describe("conversation persistence", () => {
 
     it("returns null when no snapshot exists", async () => {
       const conv = makeConversation({ machineSnapshot: null });
-      mockReadState.mockResolvedValue(makeState(conv));
+      mockGetConversation.mockResolvedValue(conv);
 
       const result = await restoreConversationSnapshot(
         "/repo",
@@ -192,9 +159,7 @@ describe("conversation persistence", () => {
     });
 
     it("returns null when conversation not found", async () => {
-      mockReadState.mockResolvedValue(
-        makeState(makeConversation({ id: "other-conv" })),
-      );
+      mockGetConversation.mockResolvedValue(null);
 
       const result = await restoreConversationSnapshot(
         "/repo",
@@ -216,7 +181,7 @@ describe("conversation persistence", () => {
       const result = validateRestoredSnapshot(snapshot, "conv-1", 1);
 
       expect(result).toEqual(snapshot);
-      expect(mockReadState).not.toHaveBeenCalled();
+      expect(mockGetConversation).not.toHaveBeenCalled();
     });
 
     it("returns null when schema version mismatches without reading state", () => {
@@ -228,7 +193,7 @@ describe("conversation persistence", () => {
       const result = validateRestoredSnapshot(snapshot, "conv-1", 1);
 
       expect(result).toBeNull();
-      expect(mockReadState).not.toHaveBeenCalled();
+      expect(mockGetConversation).not.toHaveBeenCalled();
     });
 
     it("returns null when snapshot is null", () => {
