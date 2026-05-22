@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import {
   persistConversationSnapshot,
   restoreConversationSnapshot,
+  validateRestoredSnapshot,
   clearConversationSnapshot,
   setPersistenceDeps,
   _resetForTesting,
@@ -201,6 +202,42 @@ describe("conversation persistence", () => {
         "conv-1",
         1,
       );
+      expect(result).toBeNull();
+    });
+  });
+
+  describe("validateRestoredSnapshot", () => {
+    it("returns snapshot when schema version matches without reading state", () => {
+      const snapshot = {
+        context: { _schemaVersion: 1, conversationId: "conv-1" },
+        value: "idle",
+      };
+
+      const result = validateRestoredSnapshot(snapshot, "conv-1", 1);
+
+      expect(result).toEqual(snapshot);
+      expect(mockReadState).not.toHaveBeenCalled();
+    });
+
+    it("returns null when schema version mismatches without reading state", () => {
+      const snapshot = {
+        context: { _schemaVersion: 99, conversationId: "conv-1" },
+        value: "idle",
+      };
+
+      const result = validateRestoredSnapshot(snapshot, "conv-1", 1);
+
+      expect(result).toBeNull();
+      expect(mockReadState).not.toHaveBeenCalled();
+    });
+
+    it("returns null when snapshot is null", () => {
+      const result = validateRestoredSnapshot(null, "conv-1", 1);
+      expect(result).toBeNull();
+    });
+
+    it("returns null when snapshot has no context", () => {
+      const result = validateRestoredSnapshot({ value: "idle" }, "conv-1", 1);
       expect(result).toBeNull();
     });
   });

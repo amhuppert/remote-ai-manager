@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { runLogAnalysisCli, type LogAnalysisCliRuntime } from "./cli";
 
-function runtime(files: Record<string, string>): LogAnalysisCliRuntime & {
+interface RuntimeOptions {
+  stats?: Record<string, { size: number; mtimeMs: number }>;
+  nowIso?: string;
+}
+
+function runtime(
+  files: Record<string, string>,
+  options: RuntimeOptions = {},
+): LogAnalysisCliRuntime & {
   stdoutText(): string;
   stderrText(): string;
 } {
@@ -18,6 +26,14 @@ function runtime(files: Record<string, string>): LogAnalysisCliRuntime & {
       return content;
     },
     writeFile: async () => {},
+    stat: async (filePath) => {
+      const s = options.stats?.[filePath];
+      if (!s) throw new Error(`no stat for ${filePath}`);
+      return s;
+    },
+    ...(options.nowIso !== undefined
+      ? { now: () => options.nowIso as string }
+      : {}),
     resolveDefaultServerLogPath: async () => ({
       path: "/default.log",
       checkedPaths: ["/default.log"],
@@ -95,5 +111,134 @@ describe("runLogAnalysisCli", () => {
 
     expect(exitCode).toBe(2);
     expect(rt.stderrText()).toContain("invalid --since");
+  });
+
+  describe("input banner", () => {
+    it("announces explicit --in path with size, mtime, and age on stderr", async () => {
+      const nowIso = "2026-05-22T12:00:00.000Z";
+      const mtimeMs = Date.parse("2026-05-22T11:53:00.000Z");
+      const rt = runtime(
+        { "/explicit.log": logLine },
+        {
+          stats: { "/explicit.log": { size: 2048, mtimeMs } },
+          nowIso,
+        },
+      );
+
+      const exitCode = await runLogAnalysisCli(
+        ["report", "--in", "/explicit.log", "--format", "json"],
+        rt,
+      );
+
+      expect(exitCode).toBe(0);
+      const stderr = rt.stderrText();
+      expect(stderr).toContain("[logs:analyze] reading /explicit.log");
+      expect(stderr).toContain("resolved=explicit");
+      expect(stderr).toContain("size=2.0KB");
+      expect(stderr).toContain("mtime=2026-05-22T11:53:00.000Z");
+      expect(stderr).toContain("age=7m");
+    });
+
+    it("announces default-resolved path and labels resolution as default", async () => {
+      const nowIso = "2026-05-22T12:00:00.000Z";
+      const mtimeMs = Date.parse("2026-05-20T12:00:00.000Z");
+      const rt = runtime(
+        { "/default.log": logLine },
+        {
+          stats: { "/default.log": { size: 16_777_216, mtimeMs } },
+          nowIso,
+        },
+      );
+
+      const exitCode = await runLogAnalysisCli(
+        ["report", "--format", "json"],
+        rt,
+      );
+
+      expect(exitCode).toBe(0);
+      expect(rt.stderrText()).toContain("[logs:analyze] reading /default.log");
+      expect(rt.stderrText()).toContain("resolved=default");
+      expect(rt.stderrText()).toContain("size=16.0MB");
+      expect(rt.stderrText()).toContain("age=2d");
+    });
+
+    it("never writes the banner to stdout (keeps JSON output clean)", async () => {
+      const rt = runtime(
+        { "/explicit.log": logLine },
+        {
+          stats: {
+            "/explicit.log": {
+              size: 100,
+              mtimeMs: Date.parse("2026-05-22T12:00:00.000Z"),
+            },
+          },
+          nowIso: "2026-05-22T12:00:00.000Z",
+        },
+      );
+
+      const exitCode = await runLogAnalysisCli(
+        ["report", "--in", "/explicit.log", "--format", "json"],
+        rt,
+      );
+
+      expect(exitCode).toBe(0);
+      expect(rt.stdoutText()).not.toContain("[logs:analyze]");
+      expect(() => JSON.parse(rt.stdoutText())).not.toThrow();
+    });
+
+    it("falls back to a stat-unavailable banner when stat throws", async () => {
+      const rt = runtime(
+        { "/explicit.log": logLine },
+        { stats: {}, nowIso: "2026-05-22T12:00:00.000Z" },
+      );
+
+      const exitCode = await runLogAnalysisCli(
+        ["report", "--in", "/explicit.log", "--format", "json"],
+        rt,
+      );
+
+      expect(exitCode).toBe(0);
+      expect(rt.stderrText()).toContain("stat unavailable");
+      expect(rt.stderrText()).toContain("/explicit.log");
+    });
+
+    it("announces both files for compare", async () => {
+      const nowIso = "2026-05-22T12:00:00.000Z";
+      const rt = runtime(
+        { "/before.log": logLine, "/after.log": logLine },
+        {
+          stats: {
+            "/before.log": {
+              size: 512,
+              mtimeMs: Date.parse("2026-05-22T11:30:00.000Z"),
+            },
+            "/after.log": {
+              size: 1024,
+              mtimeMs: Date.parse("2026-05-22T11:59:00.000Z"),
+            },
+          },
+          nowIso,
+        },
+      );
+
+      const exitCode = await runLogAnalysisCli(
+        [
+          "compare",
+          "--before",
+          "/before.log",
+          "--after",
+          "/after.log",
+          "--format",
+          "json",
+        ],
+        rt,
+      );
+
+      expect(exitCode).toBe(0);
+      expect(rt.stderrText()).toContain("/before.log");
+      expect(rt.stderrText()).toContain("/after.log");
+      expect(rt.stderrText()).toContain("age=30m");
+      expect(rt.stderrText()).toContain("age=1m");
+    });
   });
 });

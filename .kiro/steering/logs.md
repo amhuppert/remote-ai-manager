@@ -4,41 +4,63 @@ Persistent data lives under config dir (`~/.config/cc` Linux, `~/Library/Applica
 
 ```
 <config-dir>/
-├── cc-debug.log                              # NDJSON debug log
-├── state.json                                 # Manager state
-├── config.json                                # Global config
-├── notifications.db                           # SQLite (jobs/notifications, WAL mode)
-├── transcripts/{conversationId}.jsonl         # Per-conversation
-├── transcripts/images/{conversationId}/...    # Externalized images
-└── workflow-logs/{executionId}/               # Graph workflow execution logs
+├── logs/
+│   ├── global.log                              # NDJSON debug log (default sink)
+│   └── sessions/<projectSlug>__<sessionSlug>/
+│       ├── session.log                          # Session-scoped NDJSON
+│       └── conversations/<conversationSlug>.log # Conversation-scoped NDJSON
+├── config.json                                  # Global config
+├── notifications.db                             # SQLite (jobs/notifications, WAL mode)
+├── transcripts/{conversationId}.jsonl           # Per-conversation
+├── transcripts/images/{conversationId}/...      # Externalized images
+└── workflow-logs/{executionId}/                 # Graph workflow execution logs
 ```
 
-## Debug Log (`cc-debug.log`) — NDJSON
+State now lives in `notifications.db` (SQLite); the legacy `state.json` is removed.
+
+## Debug Log — NDJSON
 
 Every API request gets a trace context that auto-enriches log entries.
 
+### Scoped routing
+
+`logger.ts` resolves the destination at write time from the active `TraceContext`:
+
+- Conversation-scoped (`projectName + sessionName + conversationId`) → `logs/sessions/<projectSlug>__<sessionSlug>/conversations/<conversationSlug>.log`
+- Session-scoped (`projectName + sessionName`) → `logs/sessions/<projectSlug>__<sessionSlug>/session.log`
+- Otherwise → `logs/global.log`
+
+Path components are sanitized (non-`[A-Za-z0-9._-]` → `_`, leading dots stripped, truncated to 80 chars with a SHA-256 suffix). On sanitization failure the logger falls back to the next-priority scope and emits a `logger.path.sanitize_failure` diagnostic.
+
+**Dual-write exception:** `request.start` / `request.complete` from the `tracing` module are written to BOTH the scoped destination AND `logs/global.log` so operators retain a chronological cross-session timeline.
+
+Setting `CC_LOG_FILE` or `CC_LOG_SCOPED=0` collapses all writes to a single file (the override path or `logs/global.log` respectively).
+
 ```json
 { "timestamp": "ISO 8601", "level": "debug|info|warn|error",
-  "module": "prompt|sessions|state|tracing|...", "message": "event.name",
-  "traceId": "uuid", "action": "...", "projectName": "...", "sessionName": "..." }
+  "module": "prompt|sessions|state-store|tracing|...", "message": "event.name",
+  "traceId": "uuid", "action": "...", "projectName": "...",
+  "sessionName": "...", "conversationId": "..." }
 ```
 
 ### Key events
 
 | Module | Event | Notes |
 |---|---|---|
-| `tracing` | `request.start` / `request.complete` / `request.error` | `complete` includes `status`, `durationMs` |
-| `prompt` | `prompt.submit` | `promptLength`, `model`, `resume` |
-| `prompt` | `prompt.complete` / `prompt.timeout` / `prompt.aborted` / `prompt.sdk_error` | |
-| `state` | `state.recover_stale_conversation` | Stale "running" reset on startup |
-| `sessions` | `session.create` | `worktreePath`, `branchName`, `mode` |
+| `tracing` | `request.start` / `request.complete` / `request.error` | `complete` includes `status`, `durationMs` (non-SSE) |
+| `prompt` | `prompt.submit` | `sessionName`, `promptLength`, `model`, `backend`, `conversationId` |
+| `prompt` | `prompt.complete` / `prompt.timeout` / `prompt.aborted` / `prompt.sdk_error` | Emitted from the conversation actor; SDK-driven |
+| `sessions` | `session.create` / `session.create_failure` / `session.delete` / `session.worktree_remove_failure` | `worktreePath`, `branchName`, `mode` on create |
+| `lock` | `lock.acquired` / `lock.released` / `lock.rejected` | Conversation-level single-flight lock |
+| `lock` | `project-lock.*` / `conversation-lock.*` | Project- and conversation-scoped variants |
 
 ### Config
 
 - `CC_LOG_LEVEL` — `debug` / `info` (default) / `warn` / `error`
-- `CC_LOG_FILE` — override path
-- `CC_LOG_SILENT` — suppress stderr emission
-- `warn`/`error` also go to stderr
+- `CC_LOG_FILE` — explicit single-file destination (overrides scoped routing)
+- `CC_LOG_SCOPED` — set to `0` to disable scoped routing (everything → `global.log`)
+- `CC_LOG_SILENT` — set to `1` to suppress stderr emission entirely
+- `warn`/`error` also go to stderr unless `CC_LOG_SILENT=1`
 
 ### Timing & performance config
 
@@ -51,13 +73,16 @@ Below `CC_TIMING_INFO_MS`, `timed()` complete logs land at `debug` and only surf
 
 ### jq queries
 
+The default sink is `logs/global.log`. Cross-session timelines (`request.start` / `request.complete`) live there; deeper drill-downs may need the per-session or per-conversation file under `logs/sessions/`.
+
 ```bash
-jq 'select(.level == "error")' cc-debug.log
-jq 'select(.traceId == "UUID")' cc-debug.log
-jq 'select(.sessionName == "NAME" and (.message | startswith("prompt.")))' cc-debug.log
-jq 'select(.message == "request.complete" and .durationMs > 1000)' cc-debug.log
-jq 'select(.message | startswith("git.")) | {action, args: .argsPreview, durationMs}' cc-debug.log
-jq 'select(.message == "sse.broadcast.complete" and .durationMs > 10)' cc-debug.log
+LOG="$CC_CONFIG_DIR/logs/global.log"     # or "$HOME/.config/cc/logs/global.log"
+jq 'select(.level == "error")' "$LOG"
+jq 'select(.traceId == "UUID")' "$LOG"
+jq 'select(.sessionName == "NAME" and (.message | startswith("prompt.")))' "$LOG"
+jq 'select(.message == "request.complete" and .durationMs > 1000)' "$LOG"
+jq 'select(.message | startswith("git.")) | {action, args: .argsPreview, durationMs}' "$LOG"
+jq 'select(.message == "sse.broadcast.complete" and .durationMs > 10)' "$LOG"
 ```
 
 ## Timing & Performance Events
@@ -76,8 +101,10 @@ All `timed()`-emitted logs inherit `traceId`/`action`/`projectName`/`sessionName
 | `sse-broadcaster` | `sse.broadcast.complete` | `eventType`, `seq`, `subscriberCount`, `delivered`, `payloadBytes`, `durationMs` |
 | `sse-broadcaster` | `broadcast.no_clients` | Zero subscribers (warn) |
 | `transcript` | `transcript.read.complete` | `messageCount`, `durationMs` |
-| `state-store/state-db` (via `notification-db`) | `state-db.createNotification` / `.createJobRecord` / `.updateJobRecord` / `.recoverStaleJobs` / `.cleanupOldNotifications` `.complete` | Per-write fields (`notificationId`, `jobId`, `status`, `deleted`, `recoveredCount`) |
+| `state-db` (via `notification-db`) | `state-db.createNotification` / `.createJobRecord` / `.updateJobRecord` / `.recoverStaleJobs` / `.cleanupOldNotifications` `.complete` | Per-write fields (`notificationId`, `jobId`, `status`, `deleted`, `recoveredCount`) |
 | `state-store` | `state.mutate.complete` | `label`, `sessionName`, `durationMs` |
+| `state-store` | `state.read.timing` | `accessor`, `totalMs` (and optionally `projectPath`, `sessionName`, `conversationId`); only emitted when `totalMs >= STATE_READ_TIMING_LOG_THRESHOLD_MS` |
+| `state-store` | `state-store.write_queue.timing` | `label`, `waitMs`, `holdMs` — feeds the log-analysis `state-store` finding |
 | `file-scanner` | `file-scanner.scan.complete` | `rootPath`, `fileCount`, `truncated`, `durationMs` |
 | `worktree` | `worktree.create.complete` / `worktree.remove.complete` | `laneId`, `worktreePath`, `branchName`, `status`, `durationMs` |
 | `diff` | `diff.compute.complete` | `worktreePath`, `fileCount`, `durationMs` |
@@ -89,7 +116,7 @@ Existing `tracing.request.complete` augmented:
 
 ## Client-Side Timing
 
-`tracedFetch` and the `NotificationListener` SSE handler emit `console.debug` logs in the browser. They are not shipped to the server in this pass; correlate via `traceId` with `cc-debug.log`.
+`tracedFetch` and the `NotificationListener` SSE handler emit `console.debug` logs in the browser. They are not shipped to the server in this pass; correlate via `traceId` with `logs/global.log`.
 
 | Console event | Source | Fields |
 |---|---|---|
@@ -138,7 +165,7 @@ Options shared across commands:
 --slow-ms <n> --hotspot-ms <n> --include-self --pretty
 ```
 
-Default log path resolution checks `CC_LOG_FILE`, `<config-dir>/logs/global.log`, `<config-dir>/cc-debug.log`, `./.config/logs/global.log`, and `./.config/cc-debug.log`.
+Default log path resolution (analysis CLI only) checks `CC_LOG_FILE`, `<config-dir>/logs/global.log`, `<config-dir>/cc-debug.log` (legacy), `./.config/logs/global.log`, and `./.config/cc-debug.log` (legacy). Scoped per-session/per-conversation files under `logs/sessions/` are not auto-discovered — pass them explicitly with `--in`.
 
 ## Speedscope Export (hotspot aggregation)
 
@@ -176,17 +203,13 @@ Content blocks: `text`, `tool_use`, `tool_result`, `command` (parsed slash comma
 
 `readConversationMessages()` in `transcript.ts` filters visible messages, merges consecutive same-role entries, resolves `image_ref` → inline `image`, detects slash commands.
 
-## State File (`state.json`)
+## State Store (SQLite)
 
-Atomic writes (temp + rename). Hierarchy:
-
-```
-ManagerState → projects → sessions → conversations[]
-```
+State lives in `notifications.db` (WAL mode) and is accessed through a write queue (`src/lib/state-store/`). The aggregate exposes the legacy `ManagerState → projects → sessions → conversations[]` hierarchy to callers.
 
 Key `ConversationState` fields: `id` (matches transcript filename), `status` (`new`/`awaiting`/`running`/`waiting_for_input`), `claudeSessionId` (SDK resume), `transcriptPath`, `totalCostUsd`, `totalDurationMs`, `totalTurns`, `promptCount`.
 
-Startup: `recoverStaleConversations()` resets stuck `running`/`waiting_for_input` → `awaiting`.
+Startup: stale `running`/`waiting_for_input` conversations are reset to `awaiting` during recovery.
 
 ## SSE Events
 
@@ -207,17 +230,21 @@ Broadcast via `sse-broadcaster.ts`; client-side Zod-validated.
 
 ```
 HTTP request (X-Trace-Id) → withTracing() middleware
-  → AsyncLocalStorage trace context (traceId, action, projectName, sessionName)
-    → all createLogger() calls auto-enriched → cc-debug.log
-  → prompt.ts → transcript.ts (jsonl) + transcript-images.ts + broadcast()
-  → state.ts (atomic write)
+  → AsyncLocalStorage trace context
+    (traceId, action, projectName, sessionName, conversationId)
+    → all createLogger() calls auto-enriched
+      → logs/global.log  +  logs/sessions/<proj>__<sess>/[conversations/<conv>.]log
+  → prompt.ts → conversation actor → transcript.ts (jsonl) + transcript-images.ts + broadcast()
+  → state-store (SQLite via write queue)
 ```
 
-Every API route wrapped with `withTracing()`. TraceId links debug entries for one request; transcripts are separate (conversation content, not request lifecycle).
+Every API route wrapped with `withTracing()`. TraceId links debug entries for one request; `request.start`/`request.complete` from the `tracing` module are dual-written to both the scoped destination and `global.log`. Transcripts are separate (conversation content, not request lifecycle).
+
+Background entrypoints (jobs, workflow execution, SDK turns, SSE broadcasts) call `runAsTrace(action, fn, inherit?)` so all `timed()` calls during the unit of work share a `traceId` for hotspot aggregation.
 
 ## Workflow Execution Logs (`workflow-logs/{executionId}/`)
 
-Per-execution structured logs for graph workflow forensics. Separate from `cc-debug.log` — captures full decision trail for AI agent post-hoc investigation.
+Per-execution structured logs for graph workflow forensics. Separate from `logs/global.log` — captures full decision trail for AI agent post-hoc investigation.
 
 ```
 workflow-logs/<executionId>/

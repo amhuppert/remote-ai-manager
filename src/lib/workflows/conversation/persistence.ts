@@ -121,6 +121,36 @@ async function writeSnapshot(
 }
 
 /**
+ * Validate an already-loaded snapshot against the expected schema version.
+ * Pure function — does not read state. Use this when the caller already has
+ * the snapshot in memory (e.g. during startup rehydration loops) to avoid
+ * O(N) full-state reads inside a per-conversation loop.
+ */
+export function validateRestoredSnapshot(
+  snapshot: unknown,
+  conversationId: string,
+  expectedSchemaVersion: number,
+): Snapshot<unknown> | null {
+  if (!snapshot) return null;
+
+  const context = (snapshot as { context?: { _schemaVersion?: number } })
+    .context;
+  if (context?._schemaVersion !== expectedSchemaVersion) {
+    logger.warn("conversation-persistence.schema_mismatch", {
+      conversationId,
+      expected: expectedSchemaVersion,
+      actual: context?._schemaVersion,
+    });
+    return null;
+  }
+
+  logger.info("conversation-persistence.snapshot_restored", {
+    conversationId,
+  });
+  return snapshot as Snapshot<unknown>;
+}
+
+/**
  * Restore a conversation machine snapshot from persisted state.
  * Returns the snapshot if found and schema version matches, null otherwise.
  */
@@ -143,28 +173,11 @@ export async function restoreConversationSnapshot(
     );
     if (!conversation) return null;
 
-    const snapshot = conversation.machineSnapshot as
-      | Snapshot<unknown>
-      | null
-      | undefined;
-    if (!snapshot) return null;
-
-    // Validate schema version
-    const context = (snapshot as { context?: { _schemaVersion?: number } })
-      .context;
-    if (context?._schemaVersion !== expectedSchemaVersion) {
-      logger.warn("conversation-persistence.schema_mismatch", {
-        conversationId,
-        expected: expectedSchemaVersion,
-        actual: context?._schemaVersion,
-      });
-      return null;
-    }
-
-    logger.info("conversation-persistence.snapshot_restored", {
+    return validateRestoredSnapshot(
+      conversation.machineSnapshot,
       conversationId,
-    });
-    return snapshot;
+      expectedSchemaVersion,
+    );
   } catch (err) {
     logger.error("conversation-persistence.snapshot_restore_failed", {
       conversationId,

@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { createLogger } from "@/lib/logging";
+import { timed } from "@/lib/logging/timed";
 import { getErrorMessage } from "@/lib/errors";
 import type { AgentBackendId, CommandItem } from "@/types";
 
@@ -397,25 +398,33 @@ export async function discoverCommands(
   worktreePath: string,
   backend: AgentBackendId = "claude",
 ): Promise<CommandItem[]> {
-  const allItems =
-    backend === "codex"
-      ? await discoverCodexItems(worktreePath)
-      : await discoverClaudeItems(worktreePath);
+  return timed(
+    logger,
+    "commands.discover",
+    { backend, worktreePath },
+    async () => {
+      const allItems =
+        backend === "codex"
+          ? await discoverCodexItems(worktreePath)
+          : await discoverClaudeItems(worktreePath);
 
-  const seen = new Set<string>();
-  const deduplicated: CommandItem[] = [];
-  for (const item of allItems) {
-    if (!seen.has(item.name)) {
-      seen.add(item.name);
-      deduplicated.push(item);
-    }
-  }
+      const seen = new Set<string>();
+      const deduplicated: CommandItem[] = [];
+      for (const item of allItems) {
+        if (!seen.has(item.name)) {
+          seen.add(item.name);
+          deduplicated.push(item);
+        }
+      }
 
-  logger.info("commands.discovered", {
-    backend,
-    worktreePath,
-    itemCount: deduplicated.length,
-  });
+      logger.info("commands.discovered", {
+        backend,
+        worktreePath,
+        itemCount: deduplicated.length,
+      });
 
-  return deduplicated;
+      return deduplicated;
+    },
+    (result) => ({ itemCount: result.length }),
+  );
 }

@@ -1,28 +1,37 @@
 ---
-description: This skill should be used when diagnosing CC issues, analyzing failures, tracing user actions through logs, investigating hook problems, state corruption, prompt execution errors, or understanding what happened in recent runs. Use when asked to "check logs", "debug", "what went wrong", "trace request", "find errors", or "analyze recent activity".
+description: This skill should be used when diagnosing CC issues, analyzing failures, tracing user actions through logs, investigating state corruption, prompt execution errors, lock contention, or understanding what happened in recent runs. Use when asked to "check logs", "debug", "what went wrong", "trace request", "find errors", or "analyze recent activity".
 name: debug-logs
 ---
 
 # CC Debug Log Analysis
 
-Structured NDJSON logs trace every user action from UI through API routes to Claude CLI execution. Each log line is a self-contained JSON object. All entries from one user action share a `traceId` UUID.
+Structured NDJSON logs trace every user action from UI through API routes to the Claude Agent SDK. Each log line is a self-contained JSON object. All entries from one user action share a `traceId` UUID.
 
 ## Log File Location
 
+Default routing is scoped: writes land in `<config-dir>/logs/global.log`, `<config-dir>/logs/sessions/<projectSlug>__<sessionSlug>/session.log`, or `<config-dir>/logs/sessions/<projectSlug>__<sessionSlug>/conversations/<conversationSlug>.log` depending on the active trace context. `request.start` / `request.complete` from the `tracing` module are dual-written to BOTH the scoped destination and `global.log`, so `global.log` retains a full cross-session timeline.
+
 ```bash
 # Linux (default)
-LOG="${CC_LOG_FILE:-$HOME/.config/cc/cc-debug.log}"
+CONFIG_DIR="${CC_CONFIG_DIR:-$HOME/.config/cc}"
 # macOS (default)
-LOG="${CC_LOG_FILE:-$HOME/Library/Application Support/cc/cc-debug.log}"
+CONFIG_DIR="${CC_CONFIG_DIR:-$HOME/Library/Application Support/cc}"
+
+LOG="${CC_LOG_FILE:-$CONFIG_DIR/logs/global.log}"
+# Per-session / per-conversation files:
+ls "$CONFIG_DIR/logs/sessions/"
+ls "$CONFIG_DIR/logs/sessions/<projectSlug>__<sessionSlug>/conversations/"
 ```
 
-Verify: `wc -l "$LOG"` to confirm file exists and check size before querying.
+`CC_LOG_FILE` collapses everything to one file. `CC_LOG_SCOPED=0` disables scoped routing (everything → `global.log`).
+
+Verify: `wc -l "$LOG"` to confirm file exists and check size before querying. Start with `global.log` for cross-session triage; switch to the scoped file once narrowed to one session/conversation for deep drill-downs.
 
 ## Log Entry Structure
 
 Every line: `{"timestamp":"ISO8601","level":"info","module":"prompt","message":"prompt.complete","traceId":"uuid",...}`
 
-Auto-enriched context fields (from AsyncLocalStorage): `traceId`, `action`, `projectName`, `sessionName`.
+Auto-enriched context fields (from AsyncLocalStorage): `traceId`, `action`, `projectName`, `sessionName`, `conversationId`.
 
 ## Quick Diagnosis (Start Here)
 
@@ -75,17 +84,23 @@ This shows the complete request lifecycle and every operation that happened with
 ### Prompt Execution Failures
 
 ```bash
-# All prompt failures with key context
-grep '"message":"prompt.failure"' "$LOG" | jq '{sessionName,error,cliArgs,cwd,stderr}'
+# All SDK errors with key context
+grep '"message":"prompt.sdk_error"' "$LOG" | jq '{sessionName,conversationId,error,backend}'
+
+# Timeouts and aborts
+grep -E '"message":"prompt\.(timeout|aborted)"' "$LOG" | jq '{message,sessionName,conversationId,durationMs,reason}'
+
+# Facade-level failures (validation, dispatch, backend selection)
+grep -E '"message":"prompt\.(facade_error|backend_mismatch|collab_dispatch_failed|model_effort_validation_failed)"' "$LOG" | jq .
 
 # Slow prompts (>30s)
-grep '"message":"prompt.complete"' "$LOG" | jq 'select(.durationMs > 30000) | {sessionName,durationMs}'
+grep '"message":"prompt.complete"' "$LOG" | jq 'select(.durationMs > 30000) | {sessionName,conversationId,durationMs}'
 
 # All prompt activity for a session
-grep '"sessionName":"SESSION_NAME"' "$LOG" | grep '"module":"prompt"' | jq '{message,durationMs,error,exitCode}'
+grep '"sessionName":"SESSION_NAME"' "$LOG" | grep '"module":"prompt"' | jq '{message,durationMs,error,backend}'
 ```
 
-Key fields in `prompt.failure`: `sessionName`, `cliArgs` (sans prompt text), `cwd`, `error`, `stderr`, `stack`.
+Prompts run inside an XState conversation actor that drives the Claude Agent SDK; there is no Claude CLI subprocess. Errors surface as `prompt.sdk_error`, `prompt.timeout`, or `prompt.aborted` from the actor, plus `prompt.facade_error` / dispatcher events from the HTTP route layer.
 
 ### Session Lifecycle Issues
 
@@ -100,29 +115,25 @@ grep '"message":"session.worktree_remove_failure"' "$LOG" | jq '{sessionName,wor
 grep -E '"message":"session\.(create|delete)"' "$LOG" | jq '{message,sessionName,branchName,worktreeCleanup}'
 ```
 
-### Hook Problems
+### State Store Issues
+
+State persistence lives in SQLite (`notifications.db`, WAL mode) accessed through a write queue.
 
 ```bash
-# Events from sessions CC doesn't know about
-grep '"message":"hook.unknown_session"' "$LOG" | jq '{cwd,eventType}'
+# Schema validation failures (state on disk no longer matches Zod schemas)
+grep -E '"message":"state-store\..*\.schema_validation_failure"' "$LOG" | jq '{module,message,error}'
 
-# Malformed hook payloads
-grep '"message":"hook.validation_failure"' "$LOG" | jq .
+# Aggregate merge failures
+grep '"message":"state-store.aggregate.merge_failure"' "$LOG" | jq '{error,stack}'
 
-# All received hook events
-grep '"message":"hook.event_received"' "$LOG" | jq '{eventType,sessionId,timestamp}'
-```
+# Fatal state-store errors
+grep '"message":"state-store.fatal"' "$LOG" | jq '{error,stack}'
 
-Hook events get their own traceId (originating from Claude CLI, not UI). Correlate to the originating prompt via `sessionName` + timestamp proximity.
+# Read accessor timing (only emitted when totalMs >= threshold)
+grep '"message":"state.read.timing"' "$LOG" | jq '{accessor,totalMs,sessionName,conversationId}'
 
-### State File Corruption
-
-```bash
-# Read/parse failures
-grep '"message":"state.read_failure"' "$LOG" | jq '{errorType,filePath,error}'
-
-# Atomic rename failures (indicates filesystem issues)
-grep '"message":"state.rename_failure"' "$LOG" | jq '{tmpPath,finalPath,error}'
+# Write-queue hold/wait timing (feeds cc-performance-log-analysis state-store finding)
+grep '"message":"state-store.write_queue.timing"' "$LOG" | jq 'select(.holdMs > 100) | {label,waitMs,holdMs}'
 ```
 
 ### Lock Contention (Concurrent Prompts)
@@ -163,63 +174,74 @@ grep "\"timestamp\":\"$(date -u +%Y-%m-%dT%H)" "$LOG" | jq .
 
 ## Configuration
 
-| Variable        | Default                      | Effect                           |
-| --------------- | ---------------------------- | -------------------------------- |
-| `CC_LOG_LEVEL` | `info`                       | Filter: debug, info, warn, error |
-| `CC_LOG_FILE`  | `<config-dir>/cc-debug.log` | Log file path                    |
+| Variable        | Default                         | Effect                                                                  |
+| --------------- | ------------------------------- | ----------------------------------------------------------------------- |
+| `CC_LOG_LEVEL`  | `info`                          | Filter: `debug` / `info` / `warn` / `error`                             |
+| `CC_LOG_FILE`   | (scoped routing)                | Collapse all writes to a single file at this path                       |
+| `CC_LOG_SCOPED` | `1`                             | Set to `0` to disable scoped routing (everything → `global.log`)         |
+| `CC_LOG_SILENT` | `0`                             | Set to `1` to suppress stderr emission entirely                          |
 
-Set `CC_LOG_LEVEL=debug` to include state writes (`state.write`, `state.atomic_write`) and lock events (`lock.acquired`, `lock.released`).
+Set `CC_LOG_LEVEL=debug` to include lock events (`lock.acquired`, `lock.released`) and verbose internals.
 
-Warn/error entries also go to stderr for immediate visibility.
+Warn/error entries also go to stderr (unless `CC_LOG_SILENT=1`) for immediate visibility.
 
 ## Complete Log Message Catalog
 
 ### Request Lifecycle (module: tracing)
 
-| Message            | Level | Key Fields                             | Meaning               |
-| ------------------ | ----- | -------------------------------------- | --------------------- |
-| `request.start`    | info  | method, path                           | API request received  |
-| `request.complete` | info  | method, path, status, durationMs       | API request finished  |
-| `request.error`    | error | method, path, error, stack, durationMs | Unhandled route error |
+| Message            | Level | Key Fields                             | Meaning                                       |
+| ------------------ | ----- | -------------------------------------- | --------------------------------------------- |
+| `request.start`    | info  | method, path                           | API request received                          |
+| `request.complete` | info  | method, path, status, durationMs       | API request finished (non-SSE; dual-written)  |
+| `request.error`    | error | method, path, error, stack, durationMs | Unhandled route error                         |
 
 ### Prompt Execution (module: prompt)
 
-| Message           | Level | Key Fields                                                | Meaning                   |
-| ----------------- | ----- | --------------------------------------------------------- | ------------------------- |
-| `prompt.submit`   | info  | sessionName, promptLength, cliArgs                        | Prompt sent to Claude CLI |
-| `prompt.complete` | info  | sessionName, exitCode, durationMs, stdoutSize, stderrSize | Prompt succeeded          |
-| `prompt.failure`  | error | sessionName, cliArgs, cwd, error, stderr, stack           | Prompt failed             |
+| Message                                  | Level | Key Fields                                                    | Meaning                                       |
+| ---------------------------------------- | ----- | ------------------------------------------------------------- | --------------------------------------------- |
+| `prompt.submit`                          | info  | sessionName, promptLength, model, backend, conversationId      | Prompt accepted by HTTP facade                |
+| `prompt.complete`                        | info  | sessionName, conversationId, durationMs, model                 | SDK turn finished cleanly                     |
+| `prompt.sdk_error`                       | error | sessionName, conversationId, error, backend                    | SDK / backend reported an error               |
+| `prompt.timeout`                         | warn  | sessionName, conversationId, durationMs, timeoutMs             | Turn exceeded configured timeout              |
+| `prompt.aborted`                         | warn  | sessionName, conversationId, reason                            | Turn aborted (cancel / superseded)            |
+| `prompt.facade_error`                    | error | sessionName, error                                             | Pre-actor validation/dispatch failure         |
+| `prompt.backend_adopted` / `_mismatch`    | info/warn | sessionName, backend, requestedBackend                     | Backend selection decision                    |
+| `prompt.collab_dispatch[_failed]`         | info/error | targetSession, conversationId                              | Collaboration handoff to another session      |
+| `prompt.model_effort_validation_failed[_actor]` | warn | model, requestedEffort                                  | Invalid model/effort combination              |
 
 ### Session Lifecycle (module: sessions)
 
-| Message                           | Level | Key Fields                                         | Meaning                  |
-| --------------------------------- | ----- | -------------------------------------------------- | ------------------------ |
-| `session.create`                  | info  | projectName, sessionName, worktreePath, branchName | Session creation started |
-| `session.create_failure`          | error | projectName, sessionName, error, stack             | Session creation failed  |
-| `session.delete`                  | info  | sessionName, worktreeCleanup                       | Session deleted          |
-| `session.worktree_remove_failure` | error | sessionName, worktreePath, error                   | Worktree removal failed  |
+| Message                           | Level | Key Fields                                          | Meaning                  |
+| --------------------------------- | ----- | --------------------------------------------------- | ------------------------ |
+| `session.create`                  | info  | projectName, sessionName, worktreePath, branchName, mode | Session creation succeeded |
+| `session.create_failure`          | error | projectName, sessionName, error, stack              | Session creation failed  |
+| `session.delete`                  | info  | sessionName, worktreeCleanup                        | Session deleted          |
+| `session.worktree_remove_failure` | error | sessionName, worktreePath, error                    | Worktree removal failed  |
 
-### Hook Events (module: hooks / hooks.route)
+### State Store (module: state-store)
 
-| Message                   | Level | Key Fields                      | Meaning                    |
-| ------------------------- | ----- | ------------------------------- | -------------------------- |
-| `hook.event_received`     | info  | eventType, sessionId, timestamp | Hook event from Claude CLI |
-| `hook.unknown_session`    | warn  | cwd, eventType                  | Unrecognized session cwd   |
-| `hook.validation_failure` | warn  | rawPayload                      | Malformed hook payload     |
+State persistence runs through a write queue over SQLite (`notifications.db`, WAL mode). Tracked events:
 
-### State File (module: state)
-
-| Message                | Level | Key Fields                           | Meaning                 |
-| ---------------------- | ----- | ------------------------------------ | ----------------------- |
-| `state.write`          | debug | projectCount, sessionCount, fileSize | State persisted         |
-| `state.atomic_write`   | debug | tmpPath, finalPath                   | Atomic write paths      |
-| `state.read_failure`   | error | errorType, filePath, error, stack    | State read/parse failed |
-| `state.rename_failure` | error | tmpPath, finalPath, error, stack     | Atomic rename failed    |
+| Message                                            | Level | Key Fields                                  | Meaning                                                  |
+| -------------------------------------------------- | ----- | ------------------------------------------- | -------------------------------------------------------- |
+| `state.read.timing`                                | info  | accessor, totalMs, sessionName, conversationId | Slow read accessor (only above threshold)            |
+| `state-store.write_queue.timing`                   | info  | label, waitMs, holdMs                       | Per-write queue cost; feeds the perf log-analysis tool   |
+| `state-store.aggregate.diff.timing`                | info  | label, durationMs                           | Diff/commit cost during a mutation                       |
+| `state-store.aggregate.merge_failure`              | error | error, stack                                | Aggregate merge produced an invalid snapshot             |
+| `state-store.*.schema_validation_failure`          | error | module, error                               | Stored row failed Zod schema validation                  |
+| `state-store.workflow_envelopes_parse_failed`      | error | error                                       | Persisted workflow envelope JSON failed parse            |
+| `state-store.fatal`                                | error | error, stack                                | Unrecoverable store error                                |
+| `state-db.{createNotification,createJobRecord,updateJobRecord,recoverStaleJobs,cleanupOldNotifications}.complete` | info | per-write fields | Notification/job DB write completed |
 
 ### Lock (module: lock)
 
-| Message         | Level | Key Fields               | Meaning                   |
-| --------------- | ----- | ------------------------ | ------------------------- |
-| `lock.acquired` | debug | projectPath, sessionName | Session lock acquired     |
-| `lock.released` | debug | projectPath, sessionName | Session lock released     |
-| `lock.rejected` | warn  | projectPath, sessionName | Concurrent prompt blocked |
+| Message                                     | Level | Key Fields                            | Meaning                                  |
+| ------------------------------------------- | ----- | ------------------------------------- | ---------------------------------------- |
+| `lock.acquired` / `lock.released`           | debug | projectPath, sessionName              | Session-level single-flight lock         |
+| `lock.rejected`                             | warn  | projectPath, sessionName              | Concurrent prompt blocked                |
+| `project-lock.acquired` / `.released`        | debug | projectPath                           | Project-level lock                       |
+| `conversation-lock.acquired` / `.released`   | debug | projectPath, sessionName, conversationId | Conversation-level lock              |
+
+## Related Skills
+
+- `cc-performance-log-analysis` — wraps `bun run logs:analyze` to produce structured findings (slow requests, state-store contention, SSE backpressure). Prefer it when the question is "is anything slow?"; this skill is the manual-`jq` reference for arbitrary forensic queries.

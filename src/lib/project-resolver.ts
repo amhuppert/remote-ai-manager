@@ -1,7 +1,11 @@
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { readConfig as readConfigDefault } from "./config";
+import { createLogger } from "@/lib/logging";
+import { timed } from "@/lib/logging/timed";
 import type { GlobalConfig } from "@/types";
+
+const logger = createLogger("project-resolver");
 
 /* ------------------------------------------------------------------ */
 /*  DI factory                                                         */
@@ -30,15 +34,22 @@ export function createProjectResolver(
       projectName: string,
       baseDir?: string,
     ): Promise<string | null> {
-      const resolvedBaseDir = baseDir ?? (await deps.readConfig()).baseDir;
-      const projectPath = path.join(resolvedBaseDir, projectName);
+      return timed(
+        logger,
+        "project-resolver.resolve",
+        { projectName },
+        async () => {
+          const resolvedBaseDir = baseDir ?? (await deps.readConfig()).baseDir;
+          const projectPath = path.join(resolvedBaseDir, projectName);
 
-      if (!existsSync(projectPath)) return null;
+          if (!existsSync(projectPath)) return null;
 
-      const gitPath = path.join(projectPath, ".git");
-      if (!existsSync(gitPath)) return null;
+          const gitPath = path.join(projectPath, ".git");
+          if (!existsSync(gitPath)) return null;
 
-      return projectPath;
+          return projectPath;
+        },
+      );
     },
   };
 }

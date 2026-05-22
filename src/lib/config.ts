@@ -12,8 +12,13 @@ import { createLogger } from "@/lib/logging";
  *
  * Priority:
  * 1. CC_CONFIG_DIR env var (explicit override)
- * 2. OS-appropriate default, with "cc-dev" suffix when NODE_ENV=development
- *    to isolate dev server state from production
+ * 2. OS-appropriate default, with "cc-dev" suffix when CC_ENV=dev
+ *    to isolate dev server state from production.
+ *
+ * CC_ENV is intentionally separate from NODE_ENV: NODE_ENV is held at
+ * "development" project-wide for tooling reasons (test/build resolution),
+ * so it is not a reliable signal for dev-vs-prod runtime state. CC_ENV is
+ * set explicitly by the `dev` script and nowhere else.
  */
 export function resolveConfigDir(): string {
   const override = process.env["CC_CONFIG_DIR"];
@@ -21,7 +26,7 @@ export function resolveConfigDir(): string {
     return override;
   }
 
-  const dirName = process.env["NODE_ENV"] === "development" ? "cc-dev" : "cc";
+  const dirName = process.env["CC_ENV"] === "dev" ? "cc-dev" : "cc";
 
   const platform = os.platform();
   if (platform === "darwin") {

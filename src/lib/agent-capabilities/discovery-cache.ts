@@ -22,6 +22,7 @@
  */
 
 import { createLogger } from "@/lib/logging";
+import { timed } from "@/lib/logging/timed";
 import { getErrorMessage } from "@/lib/errors";
 
 import type {
@@ -108,7 +109,19 @@ export async function runDiscoveryThroughCache<
 >(input: RunDiscoveryThroughCacheInput<T>): Promise<T> {
   const { cache, cascadeKind, scope, fetcher, force = false } = input;
   const previous = cache.get(cascadeKind, scope);
-  const fresh = await fetcher();
+  const fresh = await timed(
+    logger,
+    "discovery_cache.fetch",
+    {
+      cascadeKind,
+      scopeLevel: scope.level,
+      projectName: scope.projectName,
+      sessionName: scope.sessionName,
+      conversationId: scope.conversationId,
+      force,
+    },
+    () => fetcher(),
+  );
 
   if (
     !force &&

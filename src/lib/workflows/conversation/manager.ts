@@ -662,7 +662,7 @@ export function shouldRehydrateSnapshot(snapshot: Snapshot<unknown>): boolean {
 export async function rehydrateConversationActors(): Promise<number> {
   const { readState } = await import("@/lib/state");
   const { getProjectDisplayName } = await import("@/lib/project-resolver");
-  const { restoreConversationSnapshot } = await import("./persistence");
+  const { validateRestoredSnapshot } = await import("./persistence");
 
   const state = await readState();
   let count = 0;
@@ -673,9 +673,8 @@ export async function rehydrateConversationActors(): Promise<number> {
       for (const conversation of session.conversations) {
         if (!conversation.machineSnapshot) continue;
 
-        const snapshot = await restoreConversationSnapshot(
-          projectPath,
-          sessionName,
+        const snapshot = validateRestoredSnapshot(
+          conversation.machineSnapshot,
           conversation.id,
           1, // expected schema version
         );

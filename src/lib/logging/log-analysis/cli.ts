@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { buildTrace } from "@/lib/logging/speedscope-export";
 import { createLogger } from "@/lib/logging";
@@ -33,6 +33,11 @@ export interface LogAnalysisCliRuntime {
   stderr: { write(chunk: string): unknown };
   readFile?(filePath: string): Promise<string> | string;
   writeFile?(filePath: string, content: string): Promise<void> | void;
+  stat?(
+    filePath: string,
+  ):
+    | Promise<{ size: number; mtimeMs: number }>
+    | { size: number; mtimeMs: number };
   resolveDefaultServerLogPath?():
     | Promise<ResolvedServerLogPath>
     | ResolvedServerLogPath;
@@ -235,6 +240,52 @@ async function resolveInputPath(
   return await resolveDefaultServerLogPath();
 }
 
+function formatBytes(size: number): string {
+  if (size < 1024) return `${size}B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)}KB`;
+  if (size < 1024 * 1024 * 1024)
+    return `${(size / (1024 * 1024)).toFixed(1)}MB`;
+  return `${(size / (1024 * 1024 * 1024)).toFixed(2)}GB`;
+}
+
+function formatAge(ageMs: number): string {
+  if (ageMs < 0) return "0s";
+  const sec = Math.floor(ageMs / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h`;
+  const day = Math.floor(hr / 24);
+  return `${day}d`;
+}
+
+async function emitInputBanner(input: {
+  runtime: LogAnalysisCliRuntime;
+  filePath: string;
+  resolution: "explicit" | "default";
+}): Promise<void> {
+  const { runtime, filePath, resolution } = input;
+  try {
+    const stats = runtime.stat
+      ? await runtime.stat(filePath)
+      : await stat(filePath);
+    const nowMs = Date.parse(runtime.now?.() ?? new Date().toISOString());
+    const ageMs = Number.isFinite(nowMs) ? nowMs - stats.mtimeMs : 0;
+    const mtimeIso = new Date(stats.mtimeMs).toISOString();
+    writeStderr(
+      runtime,
+      `[logs:analyze] reading ${filePath} (resolved=${resolution}, size=${formatBytes(stats.size)}, mtime=${mtimeIso}, age=${formatAge(ageMs)})`,
+    );
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    writeStderr(
+      runtime,
+      `[logs:analyze] reading ${filePath} (resolved=${resolution}, stat unavailable: ${reason})`,
+    );
+  }
+}
+
 function parseLog(raw: string): {
   records: ReturnType<typeof parseServerLogLines>["records"];
   parseStats: ReportParseStats;
@@ -317,6 +368,11 @@ async function runReport(
   options: ParsedCliOptions,
 ): Promise<number> {
   const resolved = await resolveInputPath(runtime, options.inPath);
+  await emitInputBanner({
+    runtime,
+    filePath: resolved.path,
+    resolution: options.inPath !== undefined ? "explicit" : "default",
+  });
   const rawLog = await readText(runtime, resolved.path);
   const clientLogRaw = options.clientLogPath
     ? await readText(runtime, options.clientLogPath)
@@ -352,6 +408,11 @@ async function runTrace(
   }
 
   const resolved = await resolveInputPath(runtime, options.inPath);
+  await emitInputBanner({
+    runtime,
+    filePath: resolved.path,
+    resolution: options.inPath !== undefined ? "explicit" : "default",
+  });
   const rawLog = await readText(runtime, resolved.path);
   const parsed = parseLog(rawLog);
   const filtered = applyServerLogFilters(parsed.records, options.filters);
@@ -405,6 +466,16 @@ async function runCompare(
     return 2;
   }
 
+  await emitInputBanner({
+    runtime,
+    filePath: options.beforePath,
+    resolution: "explicit",
+  });
+  await emitInputBanner({
+    runtime,
+    filePath: options.afterPath,
+    resolution: "explicit",
+  });
   const beforeRaw = await readText(runtime, options.beforePath);
   const afterRaw = await readText(runtime, options.afterPath);
   const beforeParsed = parseLog(beforeRaw);
