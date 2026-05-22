@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { readFileSync, existsSync, unlinkSync, mkdirSync } from "node:fs";
+import path from "node:path";
+import os from "node:os";
 import {
   addClient,
   removeClient,
@@ -9,6 +12,7 @@ import {
 } from "./sse-broadcaster";
 import type { ConversationStatusEvent } from "@/types";
 import { conversationStatusEventSchema } from "./schemas";
+import { _resetLoggerForTesting } from "./logging/logger";
 
 const TEST_EVENT: ConversationStatusEvent = {
   type: "conversation-status",
@@ -80,10 +84,36 @@ describe("sse-broadcaster", () => {
     broadcast(TEST_EVENT);
 
     const decoder = new TextDecoder();
-    const expected = `id: 1\nevent: conversation-status\ndata: ${JSON.stringify(TEST_EVENT)}\n\n`;
+    const frame1 = decoder.decode(client1.chunks[0]);
+    const frame2 = decoder.decode(client2.chunks[0]);
 
-    expect(decoder.decode(client1.chunks[0])).toBe(expected);
-    expect(decoder.decode(client2.chunks[0])).toBe(expected);
+    expect(frame1).toMatch(/^id: 1\nevent: conversation-status\ndata: /);
+    expect(frame1.endsWith("\n\n")).toBe(true);
+    expect(frame2).toBe(frame1);
+
+    const dataLine = frame1.split("\n")[2]!.slice("data: ".length);
+    const parsed = JSON.parse(dataLine) as Record<string, unknown>;
+    expect(parsed).toMatchObject(TEST_EVENT);
+    expect(typeof parsed["_sentAt"]).toBe("number");
+  });
+
+  it("broadcast embeds _sentAt in the data envelope", () => {
+    const { controller, chunks } = makeController();
+    addClient(controller);
+
+    const before = Date.now();
+    broadcast(TEST_EVENT);
+    const after = Date.now();
+
+    const decoder = new TextDecoder();
+    const frame = decoder.decode(chunks[0]);
+    const dataLine = frame.split("\n")[2]!.slice("data: ".length);
+    const parsed = JSON.parse(dataLine) as Record<string, unknown>;
+
+    const sentAt = parsed["_sentAt"];
+    expect(typeof sentAt).toBe("number");
+    expect(sentAt as number).toBeGreaterThanOrEqual(before);
+    expect(sentAt as number).toBeLessThanOrEqual(after);
   });
 
   it("broadcast removes client whose enqueue throws", () => {
@@ -283,6 +313,101 @@ describe("sse-broadcaster seq + replay buffer", () => {
     broadcast(TEST_EVENT);
     const decoder = new TextDecoder();
     expect(decoder.decode(chunks[0])).toMatch(/^id: 1\n/);
+  });
+});
+
+describe("sse-broadcaster timing log", () => {
+  const tmpDir = path.join(os.tmpdir(), "cc-sse-broadcaster-test");
+  const testLogFile = path.join(tmpDir, "test.log");
+
+  function readLogLines(): Record<string, unknown>[] {
+    if (!existsSync(testLogFile)) return [];
+    const content = readFileSync(testLogFile, "utf-8").trim();
+    if (!content) return [];
+    return content
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+  }
+
+  function cleanup(): void {
+    try {
+      if (existsSync(testLogFile)) unlinkSync(testLogFile);
+    } catch {
+      // ignore
+    }
+  }
+
+  beforeEach(() => {
+    cleanup();
+    _resetForTesting();
+    _resetLoggerForTesting();
+    delete process.env["CC_LOG_SILENT"];
+    process.env["CC_LOG_FILE"] = testLogFile;
+    process.env["CC_LOG_LEVEL"] = "debug";
+    if (!existsSync(tmpDir)) {
+      mkdirSync(tmpDir, { recursive: true });
+    }
+  });
+
+  afterEach(() => {
+    cleanup();
+    _resetLoggerForTesting();
+    process.env["CC_LOG_SILENT"] = "1";
+    delete process.env["CC_LOG_FILE"];
+    delete process.env["CC_LOG_LEVEL"];
+  });
+
+  it("emits sse.broadcast.complete with eventType, seq, subscriberCount, delivered, payloadBytes, durationMs", () => {
+    const { controller } = makeController();
+    addClient(controller);
+
+    broadcast(TEST_EVENT);
+
+    const lines = readLogLines();
+    const log = lines.find((l) => l["message"] === "sse.broadcast.complete");
+    expect(log).toBeDefined();
+    expect(log?.["eventType"]).toBe("conversation-status");
+    expect(log?.["seq"]).toBe(1);
+    expect(log?.["subscriberCount"]).toBe(1);
+    expect(log?.["delivered"]).toBe(1);
+    expect(typeof log?.["payloadBytes"]).toBe("number");
+    expect((log?.["payloadBytes"] as number) > 0).toBe(true);
+    expect(typeof log?.["durationMs"]).toBe("number");
+  });
+
+  it("logs delivered:0 when all subscribers throw on enqueue", () => {
+    const { controller: c1 } = makeController();
+    const { controller: c2 } = makeController();
+    c1.enqueue = () => {
+      throw new Error("stream closed");
+    };
+    c2.enqueue = () => {
+      throw new Error("stream closed");
+    };
+    addClient(c1);
+    addClient(c2);
+
+    broadcast(TEST_EVENT);
+
+    const lines = readLogLines();
+    const log = lines.find((l) => l["message"] === "sse.broadcast.complete");
+    expect(log).toBeDefined();
+    expect(log?.["subscriberCount"]).toBe(2);
+    expect(log?.["delivered"]).toBe(0);
+  });
+
+  it("logs broadcast.no_clients when there are no subscribers", () => {
+    broadcast(TEST_EVENT);
+
+    const lines = readLogLines();
+    const log = lines.find((l) => l["message"] === "broadcast.no_clients");
+    expect(log).toBeDefined();
+    expect(log?.["eventType"]).toBe("conversation-status");
+
+    const complete = lines.find(
+      (l) => l["message"] === "sse.broadcast.complete",
+    );
+    expect(complete).toBeUndefined();
   });
 });
 

@@ -67,8 +67,10 @@ export function broadcast(event: SSEEvent): void {
   counter.value += 1;
   const seq = counter.value;
 
+  const sentAt = Date.now();
+  const envelope = { ...event, _sentAt: sentAt };
   const frame = encoder.encode(
-    `id: ${seq}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
+    `id: ${seq}\nevent: ${event.type}\ndata: ${JSON.stringify(envelope)}\n\n`,
   );
 
   const buffer = getBuffer();
@@ -84,13 +86,27 @@ export function broadcast(event: SSEEvent): void {
     return;
   }
 
+  const subscriberCount = clients.size;
+  const start = Date.now();
+  let delivered = 0;
   for (const controller of clients) {
     try {
       controller.enqueue(frame);
+      delivered += 1;
     } catch {
       clients.delete(controller);
     }
   }
+  const durationMs = Date.now() - start;
+
+  logger.debug("sse.broadcast.complete", {
+    eventType: event.type,
+    seq,
+    subscriberCount,
+    delivered,
+    payloadBytes: frame.byteLength,
+    durationMs,
+  });
 }
 
 /**

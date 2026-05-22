@@ -1,5 +1,4 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { execFile as timedExecFile } from "./exec";
 import { getErrorMessage } from "@/lib/errors";
 import { createLogger } from "./logging";
 
@@ -17,7 +16,8 @@ export interface TailscaleDeps {
 }
 
 export const defaultTailscaleDeps: TailscaleDeps = {
-  execFileAsync: promisify(execFile),
+  execFileAsync: (cmd, args) =>
+    timedExecFile(cmd, args, { eventPrefix: "tailscale" }),
 };
 
 export interface TailscaleService {

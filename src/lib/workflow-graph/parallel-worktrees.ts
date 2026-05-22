@@ -1,17 +1,24 @@
-import { execFile } from "node:child_process";
 import { existsSync as defaultExistsSync } from "node:fs";
 import path from "node:path";
-import { promisify } from "node:util";
 import { buildChildEnv as defaultBuildChildEnv } from "@/lib/child-env";
+import { execFile as timedExecFile, type ExecFileOptions } from "@/lib/exec";
 import { defaultGitClient, type GitClient } from "@/lib/git-client";
 import { createLogger, type Logger } from "@/lib/logging";
+import { timed } from "@/lib/logging/timed";
 import { getErrorMessage } from "@/lib/errors";
 import { readRepoConfig as defaultReadRepoConfig } from "@/lib/repo-config";
 import type { PerRepoConfig } from "@/lib/schemas";
 import { parseDirtyPaths } from "@/lib/git-operations";
 import type { DirtyPath } from "@/lib/workflows/graph-workflow/errors";
 
-const defaultExecFileAsync = promisify(execFile);
+type ExecFileAsync = (
+  cmd: string,
+  args: string[],
+  opts?: ExecFileOptions,
+) => Promise<{ stdout: string; stderr: string }>;
+
+const defaultExecFileAsync: ExecFileAsync = (cmd, args, opts) =>
+  timedExecFile(cmd, args, { ...opts, eventPrefix: "init-script" });
 
 const defaultLogger = createLogger("graph-workflow-parallel-worktrees");
 
@@ -64,7 +71,7 @@ export interface ParallelWorktreesDeps {
   gitClient?: GitClient;
   existsSync?: (p: string) => boolean;
   readRepoConfig?(repoRoot: string): Promise<PerRepoConfig | null>;
-  execFileAsync?: typeof defaultExecFileAsync;
+  execFileAsync?: ExecFileAsync;
   buildChildEnv?(): NodeJS.ProcessEnv;
   logger?: Logger;
 }
@@ -180,7 +187,22 @@ export function createParallelWorktrees(
       sessionDir: input.sessionDir,
       laneId: input.laneId,
     });
+    return timed(
+      logger,
+      "worktree.create",
+      {
+        laneId: input.laneId,
+        worktreePath: targets.worktreePath,
+        branchName: targets.branchName,
+      },
+      () => provisionLaneImpl(input, targets),
+    );
+  }
 
+  async function provisionLaneImpl(
+    input: ProvisionLaneInput,
+    targets: ProvisionResult,
+  ): Promise<ProvisionResult> {
     if (existsSync(targets.worktreePath)) {
       const existingBranch = await getBranchForWorktree(
         input.projectPath,
@@ -421,6 +443,19 @@ export function createParallelWorktrees(
   }
 
   async function dispose(input: DisposeInput): Promise<DisposeResult> {
+    return timed(
+      logger,
+      "worktree.remove",
+      {
+        worktreePath: input.worktreePath,
+        branchName: input.branchName,
+      },
+      () => disposeImpl(input),
+      (result) => ({ status: result.status }),
+    );
+  }
+
+  async function disposeImpl(input: DisposeInput): Promise<DisposeResult> {
     let removeError: unknown = null;
     try {
       await gitClient.git(

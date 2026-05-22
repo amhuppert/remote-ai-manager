@@ -12,6 +12,9 @@ import type { TranscriptMessage, MessageContentBlock } from "@/types";
 import { getConfigDirPath } from "./config";
 import { resolveImageRefs } from "./transcript-images";
 import { createLogger } from "./logging";
+import { timed } from "./logging/timed";
+
+const transcriptLogger = createLogger("transcript");
 import { getErrorMessage } from "./errors";
 import { parseCommandContent } from "./command-parsing";
 import {
@@ -565,6 +568,18 @@ export async function readConversationMessagesWithSeq(
 
   if (!existsSync(transcriptPath)) return [];
 
+  return timed(
+    transcriptLogger,
+    "transcript.read",
+    {},
+    () => readConversationMessagesWithSeqImpl(transcriptPath),
+    (messages) => ({ messageCount: messages.length }),
+  );
+}
+
+async function readConversationMessagesWithSeqImpl(
+  transcriptPath: string,
+): Promise<Array<TranscriptMessage & { seq: number }>> {
   const raw = await readFile(transcriptPath, "utf-8");
   const lines = raw.split("\n");
   const messages: Array<TranscriptMessage & { seq: number }> = [];
@@ -650,7 +665,6 @@ export async function readConversationMessagesWithSeq(
  * Append a transcript entry, logging failures but not throwing.
  * Used by prompt.ts and orchestrator.ts for fire-and-forget transcript writes.
  */
-const transcriptLogger = createLogger("transcript");
 
 export async function safeAppendTranscriptEntry(
   conversationId: string,

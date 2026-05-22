@@ -79,6 +79,50 @@ export default function NotificationListener(): null {
   useEffect(() => {
     const es = new EventSource("/api/events");
 
+    // SSE per-message instrumentation. The broadcaster embeds `_sentAt` in
+    // every event envelope so we can compute transportMs (sentAt→received
+    // wall-clock delta — clock-skew sensitive) and handlerMs (cache
+    // invalidation / store mutation cost) per message. Wrapped at the
+    // EventSource layer so every listener picks it up without modification;
+    // Zod schemas drop the unknown `_sentAt` field by default.
+    const SSE_LOG_HANDLER_MS_THRESHOLD = 1;
+    const SSE_LOG_TRANSPORT_MS_THRESHOLD = 50;
+    const originalAdd = es.addEventListener.bind(es);
+    const instrumentedAdd = ((
+      type: string,
+      listener: (event: MessageEvent) => void,
+    ) => {
+      const wrapped = (event: MessageEvent) => {
+        let sentAt: number | null = null;
+        try {
+          const peek = JSON.parse(event.data) as { _sentAt?: unknown };
+          if (typeof peek._sentAt === "number") sentAt = peek._sentAt;
+        } catch {
+          // best-effort
+        }
+        const start = performance.now();
+        try {
+          listener(event);
+        } finally {
+          const handlerMs = Math.round(performance.now() - start);
+          const transportMs = sentAt != null ? Date.now() - sentAt : null;
+          if (
+            handlerMs >= SSE_LOG_HANDLER_MS_THRESHOLD ||
+            (transportMs != null &&
+              transportMs >= SSE_LOG_TRANSPORT_MS_THRESHOLD)
+          ) {
+            console.debug("sse.message", {
+              eventType: type,
+              transportMs,
+              handlerMs,
+            });
+          }
+        }
+      };
+      originalAdd(type, wrapped as EventListener);
+    }) as typeof es.addEventListener;
+    es.addEventListener = instrumentedAdd;
+
     const invalidateAgentCapabilityViews = (data: {
       level: "global" | "project" | "session" | "conversation";
       projectName?: string;

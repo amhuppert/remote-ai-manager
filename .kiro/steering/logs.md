@@ -37,7 +37,17 @@ Every API request gets a trace context that auto-enriches log entries.
 
 - `CC_LOG_LEVEL` — `debug` / `info` (default) / `warn` / `error`
 - `CC_LOG_FILE` — override path
+- `CC_LOG_SILENT` — suppress stderr emission
 - `warn`/`error` also go to stderr
+
+### Timing & performance config
+
+- `CC_TIMING_INFO_MS` (default `50`) — `timed()` `.complete` logs at `info` when `durationMs >=` this
+- `CC_TIMING_WARN_MS` (default `1000`) — `timed()` `.complete` logs at `warn` when `durationMs >=` this
+- `CC_TIMING_START` (default `0`) — set to `1` to emit `<event>.start` debug logs for every `timed()` call
+- `CC_REQUEST_SLOW_MS` (default `500`) — `request.complete` logs at `warn` when `durationMs >=` this (non-streaming responses only)
+
+Below `CC_TIMING_INFO_MS`, `timed()` complete logs land at `debug` and only surface when `CC_LOG_LEVEL=debug`.
 
 ### jq queries
 
@@ -46,7 +56,73 @@ jq 'select(.level == "error")' cc-debug.log
 jq 'select(.traceId == "UUID")' cc-debug.log
 jq 'select(.sessionName == "NAME" and (.message | startswith("prompt.")))' cc-debug.log
 jq 'select(.message == "request.complete" and .durationMs > 1000)' cc-debug.log
+jq 'select(.message | startswith("git.")) | {action, args: .argsPreview, durationMs}' cc-debug.log
+jq 'select(.message == "sse.broadcast.complete" and .durationMs > 10)' cc-debug.log
 ```
+
+## Timing & Performance Events
+
+All `timed()`-emitted logs inherit `traceId`/`action`/`projectName`/`sessionName`/`conversationId` from AsyncLocalStorage. Each event emits `<event>.complete` on success (level by duration threshold) and `<event>.error` at `warn` on throw; optional `<event>.start` at `debug` when `CC_TIMING_START=1`.
+
+| Module | Event | Fields |
+|---|---|---|
+| `exec` | `exec.complete` / `exec.error` | `command`, `argsPreview`, `cwd`, `durationMs`, `stdoutBytes`, `stderrBytes`, `exitCode` |
+| `exec` | `spawn.start` / `spawn.exit` / `spawn.spawn_error` | `command`, `argsPreview`, `cwd`, `pid`, `durationMs`, `exitCode`, `signal` |
+| `git-client` (via exec, `eventPrefix: "git"`) | `git.complete` / `git.error` | All git ops via `GitClient`; `command="git"`, `argsPreview`, `durationMs` |
+| `repo-config` (via exec, `eventPrefix: "pre-merge.script"`) | `pre-merge.script.complete` / `.error` | Pre-merge validation script invocations |
+| `tailscale` (via exec, `eventPrefix: "tailscale"`) | `tailscale.complete` / `.error` | All `tailscale` CLI calls |
+| `dev-server` (via exec, `eventPrefix: "dev-server"`) | `dev-server.start` / `dev-server.exit` | Per-session dev server process lifecycle |
+| `init-script` (via exec, `eventPrefix: "init-script"`) | `init-script.complete` / `.error` | Worktree init scripts |
+| `sse-broadcaster` | `sse.broadcast.complete` | `eventType`, `seq`, `subscriberCount`, `delivered`, `payloadBytes`, `durationMs` |
+| `sse-broadcaster` | `broadcast.no_clients` | Zero subscribers (warn) |
+| `transcript` | `transcript.read.complete` | `messageCount`, `durationMs` |
+| `state-store/state-db` (via `notification-db`) | `state-db.createNotification` / `.createJobRecord` / `.updateJobRecord` / `.recoverStaleJobs` / `.cleanupOldNotifications` `.complete` | Per-write fields (`notificationId`, `jobId`, `status`, `deleted`, `recoveredCount`) |
+| `state-store` | `state.mutate.complete` | `label`, `sessionName`, `durationMs` |
+| `file-scanner` | `file-scanner.scan.complete` | `rootPath`, `fileCount`, `truncated`, `durationMs` |
+| `worktree` | `worktree.create.complete` / `worktree.remove.complete` | `laneId`, `worktreePath`, `branchName`, `status`, `durationMs` |
+| `diff` | `diff.compute.complete` | `worktreePath`, `fileCount`, `durationMs` |
+| `workflow-storage` | `workflow-storage.list` / `.get` / `.create` / `.update` / `.delete` `.complete` | `workflowId` (where applicable), `workflowCount`/`found`/`revision`/`deleted`, `durationMs` |
+
+Existing `tracing.request.complete` augmented:
+- Non-SSE responses: includes `durationMs`, response headers include `Server-Timing: total;dur=<ms>`; logs at `warn` when `durationMs >= CC_REQUEST_SLOW_MS`, else `info`.
+- SSE responses (content-type `text/event-stream`): `streaming: true`, `durationMs: null`, logged at `debug`; no `Server-Timing` header.
+
+## Client-Side Timing
+
+`tracedFetch` and the `NotificationListener` SSE handler emit `console.debug` logs in the browser. They are not shipped to the server in this pass; correlate via `traceId` with `cc-debug.log`.
+
+| Console event | Source | Fields |
+|---|---|---|
+| `api.fetch` | `traced-fetch.ts` | `traceId`, `action`, `method`, `url` (pathname only), `status`, `totalMs`, `serverMs`, `networkMs` |
+| `api.fetch.error` | `traced-fetch.ts` | `traceId`, `action`, `method`, `url`, `totalMs`, `error` |
+| `sse.message` | `NotificationListener.tsx` | `eventType`, `transportMs`, `handlerMs` |
+
+`serverMs` parsed from response `Server-Timing: total;dur=<ms>` (null if absent). `networkMs = totalMs - serverMs` when `serverMs` is known. `sse.message` only logs when `handlerMs >= 1` or `transportMs >= 50`.
+
+## SSE Timing Model
+
+Three timing surfaces, not connection lifetime:
+
+1. **Server broadcast time** — `sse.broadcast.complete` measures the fan-out enqueue across all subscribers (server-side only). Sub-millisecond fan-outs stay at `debug`.
+2. **Transport time** — server injects `_sentAt: Date.now()` into the SSE data envelope; the browser computes `transportMs = Date.now() - _sentAt`. **Clock-skew sensitive** between server/client; use for relative comparisons, not absolute SLAs.
+3. **Client handler time** — `handlerMs = performance.now()` delta around the message dispatch in the browser.
+
+`request.complete` for SSE GETs logs `streaming: true` / `durationMs: null` — connection lifetime is not the metric we care about.
+
+## Perfetto / Chrome Trace Export
+
+Visualize `timed()` durations as a flamegraph by converting the NDJSON log into Chrome Trace Event Format and dropping the result into https://ui.perfetto.dev/.
+
+```bash
+bun run trace:perfetto                                  # global.log → trace.json
+bun run trace:perfetto -- --trace <traceId>             # filter to one HTTP request
+bun run trace:perfetto -- --since 2026-05-21T12:00:00Z  # drop older entries
+bun run trace:perfetto -- --in path/to/log --out my-trace.json
+```
+
+Each unique `traceId` becomes its own track (thread row) labeled by `action`; entries without a `traceId` land on a shared `background` track. Within a track, nested spans render as stacked bars based on overlapping intervals — no explicit parent-child wiring is required because every `timed()` call propagates `traceId` via AsyncLocalStorage.
+
+Implementation: pure converter in `src/lib/logging/perfetto-export.ts`; CLI entry in `scripts/perfetto-export.ts`.
 
 ## Transcripts (`transcripts/{id}.jsonl`)
 

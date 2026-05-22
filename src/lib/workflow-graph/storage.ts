@@ -15,11 +15,15 @@ import type {
   WorkflowSemanticDefinition,
 } from "@/types";
 import { getConfigDirPath } from "../config";
+import { createLogger } from "../logging";
+import { timed } from "../logging/timed";
 import { validateWorkflowDefinition } from "./validation";
 import {
   assertDefinitionRecordSupported,
   assertNoLegacyWorkflowFields,
 } from "./schema-cutover-guard";
+
+const logger = createLogger("workflow-storage");
 
 export interface WorkflowStorageDeps {
   resolveConfigDir?: () => string;
@@ -81,40 +85,56 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
   async function list(
     projectPath: string,
   ): Promise<WorkflowDefinitionSummary[]> {
-    const dir = getProjectStorageDir(resolveConfigDir(), projectPath);
-    if (!existsSync(dir)) {
-      return [];
-    }
+    return timed(
+      logger,
+      "workflow-storage.list",
+      { projectPath },
+      async () => {
+        const dir = getProjectStorageDir(resolveConfigDir(), projectPath);
+        if (!existsSync(dir)) {
+          return [];
+        }
 
-    const entries = await readdir(dir);
-    const records = await Promise.all(
-      entries
-        .filter((entry) => entry.endsWith(".json"))
-        .map((entry) => readRecord(path.join(dir, entry))),
+        const entries = await readdir(dir);
+        const records = await Promise.all(
+          entries
+            .filter((entry) => entry.endsWith(".json"))
+            .map((entry) => readRecord(path.join(dir, entry))),
+        );
+
+        return records.map((record) => ({
+          id: record.id,
+          name: record.name,
+          description: record.description,
+          revision: record.revision,
+          createdAt: record.createdAt,
+          updatedAt: record.updatedAt,
+        }));
+      },
+      (summaries) => ({ workflowCount: summaries.length }),
     );
-
-    return records.map((record) => ({
-      id: record.id,
-      name: record.name,
-      description: record.description,
-      revision: record.revision,
-      createdAt: record.createdAt,
-      updatedAt: record.updatedAt,
-    }));
   }
 
   async function get(
     projectPath: string,
     workflowId: string,
   ): Promise<WorkflowDefinitionRecord | null> {
-    const filePath = path.join(
-      getProjectStorageDir(resolveConfigDir(), projectPath),
-      `${workflowId}.json`,
+    return timed(
+      logger,
+      "workflow-storage.get",
+      { workflowId },
+      async () => {
+        const filePath = path.join(
+          getProjectStorageDir(resolveConfigDir(), projectPath),
+          `${workflowId}.json`,
+        );
+        if (!existsSync(filePath)) {
+          return null;
+        }
+        return readRecord(filePath);
+      },
+      (record) => ({ found: record !== null }),
     );
-    if (!existsSync(filePath)) {
-      return null;
-    }
-    return readRecord(filePath);
   }
 
   async function create(
@@ -128,28 +148,36 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
     assertValidDefinition(draft.definition);
 
     const workflowId = randomUUID();
-    const now = new Date().toISOString();
-    const record: WorkflowDefinitionRecord = {
-      id: workflowId,
-      name: draft.name,
-      description: draft.description,
-      schemaVersion: 1,
-      revision: 1,
-      definition: draft.definition,
-      layout: {
-        ...draft.layout,
-        workflowId,
-      },
-      createdAt: now,
-      updatedAt: now,
-    };
 
-    const filePath = path.join(
-      getProjectStorageDir(resolveConfigDir(), projectPath),
-      `${workflowId}.json`,
+    return timed(
+      logger,
+      "workflow-storage.create",
+      { workflowId },
+      async () => {
+        const now = new Date().toISOString();
+        const record: WorkflowDefinitionRecord = {
+          id: workflowId,
+          name: draft.name,
+          description: draft.description,
+          schemaVersion: 1,
+          revision: 1,
+          definition: draft.definition,
+          layout: {
+            ...draft.layout,
+            workflowId,
+          },
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        const filePath = path.join(
+          getProjectStorageDir(resolveConfigDir(), projectPath),
+          `${workflowId}.json`,
+        );
+        await writeJsonAtomically(filePath, record);
+        return record;
+      },
     );
-    await writeJsonAtomically(filePath, record);
-    return record;
   }
 
   async function update(
@@ -163,45 +191,61 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
     );
     assertValidDefinition(draft.definition);
 
-    const existing = await get(projectPath, workflowId);
-    if (!existing) {
-      throw new Error(`Workflow "${workflowId}" not found`);
-    }
+    return timed(
+      logger,
+      "workflow-storage.update",
+      { workflowId },
+      async () => {
+        const existing = await get(projectPath, workflowId);
+        if (!existing) {
+          throw new Error(`Workflow "${workflowId}" not found`);
+        }
 
-    const record: WorkflowDefinitionRecord = {
-      ...existing,
-      name: draft.name,
-      description: draft.description,
-      revision: existing.revision + 1,
-      definition: draft.definition,
-      layout: {
-        ...draft.layout,
-        workflowId,
+        const record: WorkflowDefinitionRecord = {
+          ...existing,
+          name: draft.name,
+          description: draft.description,
+          revision: existing.revision + 1,
+          definition: draft.definition,
+          layout: {
+            ...draft.layout,
+            workflowId,
+          },
+          updatedAt: new Date().toISOString(),
+        };
+
+        const filePath = path.join(
+          getProjectStorageDir(resolveConfigDir(), projectPath),
+          `${workflowId}.json`,
+        );
+        await writeJsonAtomically(filePath, record);
+        return record;
       },
-      updatedAt: new Date().toISOString(),
-    };
-
-    const filePath = path.join(
-      getProjectStorageDir(resolveConfigDir(), projectPath),
-      `${workflowId}.json`,
+      (record) => ({ revision: record.revision }),
     );
-    await writeJsonAtomically(filePath, record);
-    return record;
   }
 
   async function remove(
     projectPath: string,
     workflowId: string,
   ): Promise<boolean> {
-    const filePath = path.join(
-      getProjectStorageDir(resolveConfigDir(), projectPath),
-      `${workflowId}.json`,
+    return timed(
+      logger,
+      "workflow-storage.delete",
+      { workflowId },
+      async () => {
+        const filePath = path.join(
+          getProjectStorageDir(resolveConfigDir(), projectPath),
+          `${workflowId}.json`,
+        );
+        if (!existsSync(filePath)) {
+          return false;
+        }
+        await rm(filePath, { force: true });
+        return true;
+      },
+      (deleted) => ({ deleted }),
     );
-    if (!existsSync(filePath)) {
-      return false;
-    }
-    await rm(filePath, { force: true });
-    return true;
   }
 
   return {

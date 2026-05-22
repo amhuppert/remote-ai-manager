@@ -15,6 +15,7 @@
     "typecheck": "tsc --noEmit --pretty",
     "typecheck:ai": "tsc --noEmit --pretty false",
     "check:ai": "npx eslint . --quiet --no-color --no-warn-ignored && tsc --noEmit --pretty false && NODE_ENV=test vitest run --project unit --no-color",
+    "trace:perfetto": "bun scripts/perfetto-export.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "storybook": "NODE_ENV=development storybook dev -p 6006",

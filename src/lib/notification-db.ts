@@ -10,6 +10,7 @@ import {
 import type { BroadcastFn } from "./sse-broadcaster";
 import { publishSessionStatus } from "./workflows/primitives/default-session-status-bus";
 import { createLogger } from "./logging";
+import { timedSync } from "./logging/timed";
 import {
   notificationSchema,
   backgroundJobSchema,
@@ -336,70 +337,78 @@ export function createNotification(
   broadcast: BroadcastFn = defaultBroadcast,
 ): Notification {
   const id = randomUUID();
-  const createdAt = sqliteUtcNow();
+  return timedSync(
+    notificationLogger,
+    "state-db.createNotification",
+    {
+      notificationId: id,
+      notificationType: input.type,
+      projectName: input.projectName,
+      sessionName: input.sessionName,
+    },
+    () => {
+      const createdAt = sqliteUtcNow();
 
-  const candidate: Record<string, unknown> = {
-    id,
-    type: input.type,
-    title: input.title,
-    message: input.message,
-    read: false,
-    projectName: input.projectName,
-    sessionName: input.sessionName,
-    branchName: input.branchName,
-    jobId: input.jobId,
-    jobType: input.jobType,
-    createdAt,
-  };
-  if (input.mergeHash !== undefined) candidate.mergeHash = input.mergeHash;
-  if (input.commitHash !== undefined) candidate.commitHash = input.commitHash;
-  if (input.conflictCount !== undefined)
-    candidate.conflictCount = input.conflictCount;
-  if (input.conflictFiles !== undefined)
-    candidate.conflictFiles = input.conflictFiles;
-  if (input.targetBranch !== undefined)
-    candidate.targetBranch = input.targetBranch;
-  if (input.errorMessage !== undefined)
-    candidate.errorMessage = input.errorMessage;
+      const candidate: Record<string, unknown> = {
+        id,
+        type: input.type,
+        title: input.title,
+        message: input.message,
+        read: false,
+        projectName: input.projectName,
+        sessionName: input.sessionName,
+        branchName: input.branchName,
+        jobId: input.jobId,
+        jobType: input.jobType,
+        createdAt,
+      };
+      if (input.mergeHash !== undefined) candidate.mergeHash = input.mergeHash;
+      if (input.commitHash !== undefined)
+        candidate.commitHash = input.commitHash;
+      if (input.conflictCount !== undefined)
+        candidate.conflictCount = input.conflictCount;
+      if (input.conflictFiles !== undefined)
+        candidate.conflictFiles = input.conflictFiles;
+      if (input.targetBranch !== undefined)
+        candidate.targetBranch = input.targetBranch;
+      if (input.errorMessage !== undefined)
+        candidate.errorMessage = input.errorMessage;
 
-  const validated = parseNotificationOrFail(candidate, id);
+      const validated = parseNotificationOrFail(candidate, id);
 
-  const db = getStateDb();
-  db.prepare(
-    `INSERT INTO notifications (id, type, title, message, read, project_name, session_name, branch_name, job_id, job_type, merge_hash, commit_hash, conflict_count, conflict_files, target_branch, error_message, created_at)
+      const db = getStateDb();
+      db.prepare(
+        `INSERT INTO notifications (id, type, title, message, read, project_name, session_name, branch_name, job_id, job_type, merge_hash, commit_hash, conflict_count, conflict_files, target_branch, error_message, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    validated.id,
-    validated.type,
-    validated.title,
-    validated.message,
-    validated.read ? 1 : 0,
-    validated.projectName,
-    validated.sessionName,
-    validated.branchName,
-    validated.jobId,
-    validated.jobType,
-    validated.mergeHash ?? null,
-    validated.commitHash ?? null,
-    validated.conflictCount ?? null,
-    validated.conflictFiles ? JSON.stringify(validated.conflictFiles) : null,
-    validated.targetBranch ?? null,
-    validated.errorMessage ?? null,
-    validated.createdAt,
+      ).run(
+        validated.id,
+        validated.type,
+        validated.title,
+        validated.message,
+        validated.read ? 1 : 0,
+        validated.projectName,
+        validated.sessionName,
+        validated.branchName,
+        validated.jobId,
+        validated.jobType,
+        validated.mergeHash ?? null,
+        validated.commitHash ?? null,
+        validated.conflictCount ?? null,
+        validated.conflictFiles
+          ? JSON.stringify(validated.conflictFiles)
+          : null,
+        validated.targetBranch ?? null,
+        validated.errorMessage ?? null,
+        validated.createdAt,
+      );
+
+      broadcast({ type: "notification-created", notification: validated });
+
+      dispatchPushForNotification(validated);
+
+      return validated;
+    },
   );
-
-  broadcast({ type: "notification-created", notification: validated });
-
-  dispatchPushForNotification(validated);
-
-  notificationLogger.info("notification.created", {
-    notificationId: id,
-    notificationType: input.type,
-    projectName: input.projectName,
-    sessionName: input.sessionName,
-  });
-
-  return validated;
 }
 
 export interface GetNotificationsOptions {
@@ -518,27 +527,39 @@ export interface JobRecordUpdate {
 }
 
 export function createJobRecord(job: BackgroundJob): void {
-  const validated = parseBackgroundJobOrFail(job, job.jobId);
-  const db = getStateDb();
-  db.prepare(
-    `INSERT OR REPLACE INTO job_records (job_id, job_type, status, project_name, session_name, branch_name, started_at)
+  timedSync(
+    jobRecordLogger,
+    "state-db.createJobRecord",
+    { jobId: job.jobId, jobType: job.jobType },
+    () => {
+      const validated = parseBackgroundJobOrFail(job, job.jobId);
+      const db = getStateDb();
+      db.prepare(
+        `INSERT OR REPLACE INTO job_records (job_id, job_type, status, project_name, session_name, branch_name, started_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    validated.jobId,
-    validated.jobType,
-    validated.status,
-    validated.projectName,
-    validated.sessionName,
-    validated.branchName,
-    validated.startedAt,
+      ).run(
+        validated.jobId,
+        validated.jobType,
+        validated.status,
+        validated.projectName,
+        validated.sessionName,
+        validated.branchName,
+        validated.startedAt,
+      );
+    },
   );
 }
 
 export function updateJobRecord(jobId: string, update: JobRecordUpdate): void {
-  const validated = parseJobRecordUpdateOrFail(update, jobId);
-  const db = getStateDb();
-  db.prepare(
-    `UPDATE job_records SET
+  timedSync(
+    jobRecordLogger,
+    "state-db.updateJobRecord",
+    { jobId, status: update.status },
+    () => {
+      const validated = parseJobRecordUpdateOrFail(update, jobId);
+      const db = getStateDb();
+      db.prepare(
+        `UPDATE job_records SET
        status = ?,
        completed_at = datetime('now'),
        merge_hash = ?,
@@ -547,14 +568,18 @@ export function updateJobRecord(jobId: string, update: JobRecordUpdate): void {
        conflict_files = ?,
        error_message = ?
      WHERE job_id = ?`,
-  ).run(
-    validated.status,
-    validated.mergeHash ?? null,
-    validated.commitHash ?? null,
-    validated.conflictCount ?? null,
-    validated.conflictFiles ? JSON.stringify(validated.conflictFiles) : null,
-    validated.errorMessage ?? null,
-    jobId,
+      ).run(
+        validated.status,
+        validated.mergeHash ?? null,
+        validated.commitHash ?? null,
+        validated.conflictCount ?? null,
+        validated.conflictFiles
+          ? JSON.stringify(validated.conflictFiles)
+          : null,
+        validated.errorMessage ?? null,
+        jobId,
+      );
+    },
   );
 }
 
@@ -606,6 +631,16 @@ export function deriveNotificationTitle(type: NotificationType): string {
 }
 
 export function recoverStaleJobs(): number {
+  return timedSync(
+    jobRecordLogger,
+    "state-db.recoverStaleJobs",
+    {},
+    () => recoverStaleJobsImpl(),
+    (count) => ({ recoveredCount: count }),
+  );
+}
+
+function recoverStaleJobsImpl(): number {
   const db = getStateDb();
 
   const rawStaleRows = db
@@ -672,19 +707,22 @@ export function recoverStaleJobs(): number {
 }
 
 export function cleanupOldNotifications(retentionDays = 7): number {
-  const db = getStateDb();
-  // Use <= for the boundary so that retentionDays=0 correctly deletes everything
-  const result = db
-    .prepare(
-      `DELETE FROM notifications WHERE created_at <= datetime('now', ? || ' days')`,
-    )
-    .run(`-${retentionDays}`);
-  if (result.changes > 0) {
-    notificationLogger.info("notification-db.cleanup", {
-      deleted: result.changes,
-    });
-  }
-  return result.changes;
+  return timedSync(
+    notificationLogger,
+    "state-db.cleanupOldNotifications",
+    { retentionDays },
+    () => {
+      const db = getStateDb();
+      // Use <= for the boundary so that retentionDays=0 correctly deletes everything
+      const result = db
+        .prepare(
+          `DELETE FROM notifications WHERE created_at <= datetime('now', ? || ' days')`,
+        )
+        .run(`-${retentionDays}`);
+      return result.changes;
+    },
+    (deleted) => ({ deleted }),
+  );
 }
 
 // ============================================================

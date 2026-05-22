@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync, existsSync, unlinkSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { withTracing } from "./tracing";
+import { withTracing, _resetTracingForTesting } from "./tracing";
 import { getTraceContext } from "./context";
 import { _resetLoggerForTesting } from "./logger";
 
@@ -48,6 +48,7 @@ describe("withTracing", () => {
   beforeEach(() => {
     cleanup();
     _resetLoggerForTesting();
+    _resetTracingForTesting();
     // Override test-wide CC_LOG_SILENT so tracing tests can verify real output
     delete process.env["CC_LOG_SILENT"];
     process.env["CC_LOG_FILE"] = testLogFile;
@@ -60,10 +61,12 @@ describe("withTracing", () => {
   afterEach(() => {
     cleanup();
     _resetLoggerForTesting();
+    _resetTracingForTesting();
     // Restore CC_LOG_SILENT for other tests
     process.env["CC_LOG_SILENT"] = "1";
     delete process.env["CC_LOG_FILE"];
     delete process.env["CC_LOG_LEVEL"];
+    delete process.env["CC_REQUEST_SLOW_MS"];
     vi.restoreAllMocks();
   });
 
@@ -248,5 +251,56 @@ describe("withTracing", () => {
 
     const lines = readLogLines();
     expect(lines.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("sets Server-Timing total header on non-streaming responses", async () => {
+    const handler = vi.fn(async () => new Response("ok", { status: 200 }));
+    const wrapped = withTracing(handler);
+
+    const req = makeRequest("http://localhost:3000/api/test");
+    const response = await wrapped(req, makeParams());
+
+    const serverTiming = response.headers.get("Server-Timing");
+    expect(serverTiming).toMatch(/^total;dur=\d+$/);
+  });
+
+  it("logs request.complete at warn when duration exceeds CC_REQUEST_SLOW_MS", async () => {
+    process.env["CC_REQUEST_SLOW_MS"] = "0";
+    _resetTracingForTesting();
+
+    const handler = vi.fn(async () => new Response("ok"));
+    const wrapped = withTracing(handler);
+
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const req = makeRequest("http://localhost:3000/api/slow");
+    await wrapped(req, makeParams());
+
+    const lines = readLogLines();
+    const completeLog = lines.find((l) => l["message"] === "request.complete");
+    expect(completeLog?.["level"]).toBe("warn");
+
+    stderrSpy.mockRestore();
+  });
+
+  it("tags SSE responses with streaming: true and durationMs: null, no Server-Timing", async () => {
+    const handler = vi.fn(
+      async () =>
+        new Response("data: x\n\n", {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+    );
+    const wrapped = withTracing(handler);
+
+    const req = makeRequest("http://localhost:3000/api/events");
+    const response = await wrapped(req, makeParams());
+
+    expect(response.headers.get("Server-Timing")).toBeNull();
+
+    const lines = readLogLines();
+    const completeLog = lines.find((l) => l["message"] === "request.complete");
+    expect(completeLog?.["streaming"]).toBe(true);
+    expect(completeLog?.["durationMs"]).toBeNull();
+    expect(completeLog?.["level"]).toBe("debug");
   });
 });

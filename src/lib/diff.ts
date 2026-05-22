@@ -5,8 +5,11 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { unlink as unlinkDefault } from "node:fs/promises";
 import type { SessionDiff, FileDiff, DiffHunk, DiffLine } from "@/types";
+import { createLogger } from "@/lib/logging";
+import { timed } from "@/lib/logging/timed";
 
 const execFileAsyncDefault = promisify(execFile);
+const logger = createLogger("diff");
 
 const MAX_BUFFER = 10 * 1024 * 1024;
 
@@ -37,6 +40,19 @@ export const defaultComputeDiffDeps: ComputeDiffDeps = {
 export async function computeDiff(
   worktreePath: string,
   deps: ComputeDiffDeps = defaultComputeDiffDeps,
+): Promise<SessionDiff> {
+  return timed(
+    logger,
+    "diff.compute",
+    { worktreePath },
+    () => computeDiffImpl(worktreePath, deps),
+    (result) => ({ fileCount: result.files.length }),
+  );
+}
+
+async function computeDiffImpl(
+  worktreePath: string,
+  deps: ComputeDiffDeps,
 ): Promise<SessionDiff> {
   let rawDiff: string;
   const tmpIndex = join(tmpdir(), `cc-diff-${randomUUID()}`);

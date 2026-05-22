@@ -1,8 +1,7 @@
-import { execFile as execFileCb } from "node:child_process";
 import { existsSync as defaultExistsSync } from "node:fs";
 import { readFile as defaultReadFile } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
+import { execFile as timedExecFile } from "./exec";
 import { buildChildEnv as defaultBuildChildEnv } from "./child-env";
 import { perRepoConfigSchema, type PerRepoConfig } from "./schemas";
 import {
@@ -13,7 +12,23 @@ import { createLogger } from "./logging";
 
 const logger = createLogger("repo-config");
 
-const defaultExecFileAsync = promisify(execFileCb);
+const defaultExecFileAsync = (
+  cmd: string,
+  args: string[],
+  opts?: {
+    cwd?: string;
+    env?: NodeJS.ProcessEnv;
+    timeout?: number;
+    maxBuffer?: number;
+  },
+): Promise<{ stdout: string; stderr: string }> =>
+  timedExecFile(cmd, args, {
+    cwd: opts?.cwd,
+    env: opts?.env,
+    timeout: opts?.timeout,
+    maxBuffer: opts?.maxBuffer,
+    eventPrefix: "pre-merge.script",
+  });
 
 // ============================================================
 // Types

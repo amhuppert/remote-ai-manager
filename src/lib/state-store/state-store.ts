@@ -19,6 +19,7 @@ import { z } from "zod";
 import { PersistenceError } from "../errors";
 import { readConfig } from "../config";
 import { createLogger } from "@/lib/logging";
+import { timed } from "@/lib/logging/timed";
 
 import { getDb } from "./state-db";
 import {
@@ -178,14 +179,15 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     label: string,
     mutate: (state: ManagerState) => T | Promise<T>,
   ): Promise<T> {
-    return writeQueue.withWriteQueue(label, async () => {
-      const snapshot = aggregate.readAll();
-      const mutated = cloneAndValidate(snapshot);
-      const result = await mutate(mutated);
-      aggregate.diffAndCommit(snapshot, mutated);
-      logger.info("state.mutation", { label });
-      return result;
-    });
+    return writeQueue.withWriteQueue(label, async () =>
+      timed(logger, "state.mutate", { label }, async () => {
+        const snapshot = aggregate.readAll();
+        const mutated = cloneAndValidate(snapshot);
+        const result = await mutate(mutated);
+        aggregate.diffAndCommit(snapshot, mutated);
+        return result;
+      }),
+    );
   }
 
   async function mutateSession<T = void>(
@@ -194,56 +196,57 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     label: string,
     mutate: (session: SessionState, project: ProjectState) => T | Promise<T>,
   ): Promise<T> {
-    return writeQueue.withWriteQueue(`${label}[${sessionName}]`, async () => {
-      const snapshot = aggregate.readAll();
-      const snapProject = snapshot.projects[projectPath];
-      if (!snapProject || !snapProject.sessions[sessionName]) {
-        throw new Error(
-          `Session "${sessionName}" not found in project "${projectPath}" during ${label}`,
-        );
-      }
-
-      const siblingCanonicalsBefore = new Map<string, string>();
-      for (const [name, sess] of Object.entries(snapProject.sessions)) {
-        if (name === sessionName) continue;
-        siblingCanonicalsBefore.set(
-          name,
-          canonicalSessionWithChildren(projectPath, sess),
-        );
-      }
-
-      const mutated = cloneAndValidate(snapshot);
-      const mutProject = mutated.projects[projectPath]!;
-      const mutSession = mutProject.sessions[sessionName]!;
-
-      const result = await mutate(mutSession, mutProject);
-
-      for (const [name, sess] of Object.entries(mutProject.sessions)) {
-        if (name === sessionName) continue;
-        const before = siblingCanonicalsBefore.get(name);
-        if (
-          before === undefined ||
-          canonicalSessionWithChildren(projectPath, sess) !== before
-        ) {
-          throw new PersistenceError({
-            kind: "constraint",
-            constraint: "mutateSession_sibling_session_out_of_scope",
-          });
+    return writeQueue.withWriteQueue(`${label}[${sessionName}]`, async () =>
+      timed(logger, "state.mutate", { label, sessionName }, async () => {
+        const snapshot = aggregate.readAll();
+        const snapProject = snapshot.projects[projectPath];
+        if (!snapProject || !snapProject.sessions[sessionName]) {
+          throw new Error(
+            `Session "${sessionName}" not found in project "${projectPath}" during ${label}`,
+          );
         }
-      }
-      for (const name of siblingCanonicalsBefore.keys()) {
-        if (!(name in mutProject.sessions)) {
-          throw new PersistenceError({
-            kind: "constraint",
-            constraint: "mutateSession_sibling_session_out_of_scope",
-          });
-        }
-      }
 
-      aggregate.diffAndCommit(snapshot, mutated);
-      logger.info("state.mutation", { label, sessionName });
-      return result;
-    });
+        const siblingCanonicalsBefore = new Map<string, string>();
+        for (const [name, sess] of Object.entries(snapProject.sessions)) {
+          if (name === sessionName) continue;
+          siblingCanonicalsBefore.set(
+            name,
+            canonicalSessionWithChildren(projectPath, sess),
+          );
+        }
+
+        const mutated = cloneAndValidate(snapshot);
+        const mutProject = mutated.projects[projectPath]!;
+        const mutSession = mutProject.sessions[sessionName]!;
+
+        const result = await mutate(mutSession, mutProject);
+
+        for (const [name, sess] of Object.entries(mutProject.sessions)) {
+          if (name === sessionName) continue;
+          const before = siblingCanonicalsBefore.get(name);
+          if (
+            before === undefined ||
+            canonicalSessionWithChildren(projectPath, sess) !== before
+          ) {
+            throw new PersistenceError({
+              kind: "constraint",
+              constraint: "mutateSession_sibling_session_out_of_scope",
+            });
+          }
+        }
+        for (const name of siblingCanonicalsBefore.keys()) {
+          if (!(name in mutProject.sessions)) {
+            throw new PersistenceError({
+              kind: "constraint",
+              constraint: "mutateSession_sibling_session_out_of_scope",
+            });
+          }
+        }
+
+        aggregate.diffAndCommit(snapshot, mutated);
+        return result;
+      }),
+    );
   }
 
   async function mutateConversation<T = void>(
@@ -604,20 +607,21 @@ export function createStateStore(deps: StateStoreDeps = {}) {
   ): Promise<void> {
     return writeQueue.withWriteQueue(
       `setProjectArchived[${projectPath}]`,
-      async () => {
-        const txn = db.transaction(() => {
-          if (!repos.projects.findByRootPath(projectPath)) {
-            repos.projects.upsert({ rootPath: projectPath });
-          }
-          repos.projects.setArchived(projectPath, archived);
-        });
-        txn.immediate();
-        logger.info("state.mutation", {
-          label: "setProjectArchived",
-          projectPath,
-          archived,
-        });
-      },
+      async () =>
+        timed(
+          logger,
+          "state.mutate",
+          { label: "setProjectArchived", projectPath, archived },
+          async () => {
+            const txn = db.transaction(() => {
+              if (!repos.projects.findByRootPath(projectPath)) {
+                repos.projects.upsert({ rootPath: projectPath });
+              }
+              repos.projects.setArchived(projectPath, archived);
+            });
+            txn.immediate();
+          },
+        ),
     );
   }
 
@@ -627,20 +631,21 @@ export function createStateStore(deps: StateStoreDeps = {}) {
   ): Promise<void> {
     return writeQueue.withWriteQueue(
       `setProjectPinned[${projectPath}]`,
-      async () => {
-        const txn = db.transaction(() => {
-          if (!repos.projects.findByRootPath(projectPath)) {
-            repos.projects.upsert({ rootPath: projectPath });
-          }
-          repos.projects.setPinned(projectPath, pinned);
-        });
-        txn.immediate();
-        logger.info("state.mutation", {
-          label: "setProjectPinned",
-          projectPath,
-          pinned,
-        });
-      },
+      async () =>
+        timed(
+          logger,
+          "state.mutate",
+          { label: "setProjectPinned", projectPath, pinned },
+          async () => {
+            const txn = db.transaction(() => {
+              if (!repos.projects.findByRootPath(projectPath)) {
+                repos.projects.upsert({ rootPath: projectPath });
+              }
+              repos.projects.setPinned(projectPath, pinned);
+            });
+            txn.immediate();
+          },
+        ),
     );
   }
 

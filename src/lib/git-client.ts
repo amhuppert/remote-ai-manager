@@ -7,11 +7,8 @@
  * Tests can inject a fake GitClient to avoid mocking node:child_process.
  */
 
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { execFile } from "./exec";
 import { buildChildEnv } from "./child-env";
-
-const execFileAsync = promisify(execFile);
 
 export interface GitResult {
   stdout: string;
@@ -27,17 +24,18 @@ export interface GitClient {
   ): Promise<GitResult>;
 }
 
-/** Default GitClient implementation backed by child_process.execFile. */
+/** Default GitClient implementation backed by the timed exec wrapper. */
 export class ExecFileGitClient implements GitClient {
   async git(
     args: string[],
     cwd: string,
     options?: { maxBuffer?: number },
   ): Promise<GitResult> {
-    return execFileAsync("git", args, {
+    return execFile("git", args, {
       cwd,
       maxBuffer: options?.maxBuffer,
       env: buildChildEnv(),
+      eventPrefix: "git",
     });
   }
 }

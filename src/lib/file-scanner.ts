@@ -2,6 +2,7 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import ignore from "ignore";
 import { createLogger } from "./logging";
+import { timed } from "./logging/timed";
 import { getErrorMessage } from "@/lib/errors";
 import type { FileItem } from "@/types";
 
@@ -28,22 +29,33 @@ export async function scanProjectFiles(
   projectPath: string,
   options: ScanOptions,
 ): Promise<ScanResult> {
-  const maxResults = options.maxResults ?? DEFAULT_MAX_RESULTS;
-  const matcher = ignore().add(options.ignorePatterns);
+  return timed(
+    logger,
+    "file-scanner.scan",
+    { rootPath: projectPath },
+    async () => {
+      const maxResults = options.maxResults ?? DEFAULT_MAX_RESULTS;
+      const matcher = ignore().add(options.ignorePatterns);
 
-  const state = {
-    items: [] as FileItem[],
-    scannedCount: 0,
-    truncated: false,
-  };
+      const state = {
+        items: [] as FileItem[],
+        scannedCount: 0,
+        truncated: false,
+      };
 
-  await walkDir(projectPath, "", matcher, maxResults, state);
+      await walkDir(projectPath, "", matcher, maxResults, state);
 
-  return {
-    items: state.items,
-    truncated: state.truncated,
-    scannedCount: state.scannedCount,
-  };
+      return {
+        items: state.items,
+        truncated: state.truncated,
+        scannedCount: state.scannedCount,
+      };
+    },
+    (result) => ({
+      fileCount: result.items.length,
+      truncated: result.truncated,
+    }),
+  );
 }
 
 type Matcher = ReturnType<typeof ignore>;

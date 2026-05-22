@@ -4,6 +4,15 @@
  *
  * Extracts X-Trace-Id and X-Action from request headers, sets up
  * AsyncLocalStorage trace context, and logs request lifecycle events.
+ *
+ * Also emits a `Server-Timing: total;dur=<ms>` response header so the
+ * browser's Network panel (and `tracedFetch` on the client) can read the
+ * server-side duration without an extra round trip.
+ *
+ * SSE responses (`content-type: text/event-stream`) are tagged with
+ * `streaming: true` and `durationMs: null` so connection lifetime never
+ * dominates the slow-request sort — per-message timing for SSE lives in
+ * `sse-broadcaster.ts`.
  */
 
 import { randomUUID } from "node:crypto";
@@ -12,6 +21,29 @@ import { getErrorMessage } from "@/lib/errors";
 import { createLogger } from "./logger";
 
 const logger = createLogger("tracing");
+
+const DEFAULT_SLOW_REQUEST_MS = 500;
+let cachedSlowRequestMs: number | undefined;
+
+function getSlowRequestMs(): number {
+  if (cachedSlowRequestMs === undefined) {
+    const raw = process.env["CC_REQUEST_SLOW_MS"];
+    const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+    cachedSlowRequestMs =
+      Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_SLOW_REQUEST_MS;
+  }
+  return cachedSlowRequestMs;
+}
+
+/** Reset cached env-var reads (testing only). */
+export function _resetTracingForTesting(): void {
+  cachedSlowRequestMs = undefined;
+}
+
+function isStreamingResponse(response: Response): boolean {
+  const contentType = response.headers.get("content-type") ?? "";
+  return contentType.startsWith("text/event-stream");
+}
 
 type RouteHandler = (
   request: Request,
@@ -25,8 +57,8 @@ type RouteHandler = (
  * - Extracts X-Action from request header
  * - Extracts projectName/sessionName from URL params (keys "name" and "session")
  * - Initializes ALS trace context for handler duration
- * - Logs request start and completion at info level
- * - Adds X-Trace-Id to response header
+ * - Logs request start (info) and completion (info / warn by duration; debug for SSE)
+ * - Adds X-Trace-Id and Server-Timing to response header
  * - Catches unhandled errors, logs with full context, re-throws
  */
 export function withTracing(handler: RouteHandler): RouteHandler {
@@ -73,12 +105,31 @@ export function withTracing(handler: RouteHandler): RouteHandler {
         const response = await handler(request, context);
 
         const durationMs = Date.now() - start;
-        logger.info("request.complete", {
-          method: request.method,
-          path: url.pathname,
-          status: response.status,
-          durationMs,
-        });
+        const streaming = isStreamingResponse(response);
+
+        if (streaming) {
+          logger.debug("request.complete", {
+            method: request.method,
+            path: url.pathname,
+            status: response.status,
+            streaming: true,
+            durationMs: null,
+          });
+        } else {
+          const level = durationMs >= getSlowRequestMs() ? "warn" : "info";
+          const completeFields = {
+            method: request.method,
+            path: url.pathname,
+            status: response.status,
+            durationMs,
+          };
+          if (level === "warn") {
+            logger.warn("request.complete", completeFields);
+          } else {
+            logger.info("request.complete", completeFields);
+          }
+          response.headers.set("Server-Timing", `total;dur=${durationMs}`);
+        }
 
         // Add trace ID to response headers
         response.headers.set("x-trace-id", traceId);

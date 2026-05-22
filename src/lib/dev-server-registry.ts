@@ -1,4 +1,5 @@
-import { execSync, spawn, type ChildProcess } from "node:child_process";
+import { execSync, type ChildProcess } from "node:child_process";
+import { spawn as timedSpawn } from "./exec";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import net from "node:net";
@@ -467,12 +468,13 @@ export function createDevServerRegistry(
         ? startMode.cwd
         : worktreePath;
 
-    const child = spawn(command, {
+    const child = timedSpawn(command, [], {
       shell: true,
       detached: true,
       cwd: spawnCwd,
       stdio: "pipe",
       env,
+      eventPrefix: "dev-server",
     });
 
     const entry: DevServerEntry = {
