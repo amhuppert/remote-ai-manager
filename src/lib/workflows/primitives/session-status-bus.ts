@@ -210,17 +210,6 @@ export function resolveSessionStatusScope(
         status: mapJobStatus(e.status),
       };
     }
-    case "session-finished": {
-      const scopeId =
-        pickString(e.branchName) ??
-        pickString(e.sessionName) ??
-        FALLBACK_SCOPE_ID;
-      return {
-        scope: "merge_job",
-        scopeId,
-        status: "completed",
-      };
-    }
     case "notification-created": {
       const notification = (e.notification ?? {}) as { id?: unknown };
       return {

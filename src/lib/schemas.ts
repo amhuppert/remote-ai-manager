@@ -2344,7 +2344,6 @@ export const globalConfigSchema = z.object({
   defaultModel: claudeModelSchema.default("opus"),
   defaultEffort: effortLevelSchema.optional(),
   maxTurns: z.number().int().positive().optional(),
-  mergeCheckIntervalMs: z.number().int().positive().optional(),
   preMergeTimeoutMs: z.number().int().positive().optional(),
   maxConcurrentQueries: z.number().int().positive().optional(),
   tailscaleEnabled: z.boolean().optional(),
@@ -2387,7 +2386,6 @@ export const rawGlobalConfigSchema = z.object({
   defaultModel: claudeModelSchema.optional(),
   defaultEffort: effortLevelSchema.optional(),
   maxTurns: z.number().int().positive().optional(),
-  mergeCheckIntervalMs: z.number().int().positive().optional(),
   preMergeTimeoutMs: z.number().int().positive().optional(),
   maxConcurrentQueries: z.number().int().positive().optional(),
   tailscaleEnabled: z.boolean().optional(),
@@ -2921,15 +2919,6 @@ export type ResolveConflictsRequest = z.infer<
   typeof resolveConflictsRequestSchema
 >;
 
-export const sessionFinishedEventSchema = z.object({
-  type: z.literal("session-finished"),
-  projectName: z.string(),
-  sessionName: z.string(),
-  branchName: z.string(),
-  detectionMethod: z.enum(["ancestor", "commit-message"]),
-});
-export type SessionFinishedEvent = z.infer<typeof sessionFinishedEventSchema>;
-
 // ============================================================
 // Notification Schemas
 // ============================================================
@@ -3118,7 +3107,6 @@ export type SSEEvent =
   | ConversationArchivedEvent
   | AskQuestionEvent
   | JobStatusEvent
-  | SessionFinishedEvent
   | NotificationCreatedEvent
   | NotificationUpdatedEvent
   | MessageQueuedEvent

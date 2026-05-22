@@ -7,7 +7,7 @@
  *
  *  - Migrated publishers still deliver the on-the-wire SSE payload shapes
  *    that current consumers expect (conversation-status, graph-workflow-*,
- *    job-status, session-finished, debug-*).
+ *    job-status, debug-*).
  *  - Feature-owned status payloads survive intact (no global payload schema).
  *  - Status delivery failures stay isolated (the wire throwing does not
  *    corrupt the calling workflow).
@@ -78,7 +78,7 @@ describe("section 4 — shared status + artifact handling (end to end)", () => {
     await fs.rm(workingDir, { recursive: true, force: true });
   });
 
-  it("preserves the on-the-wire payload shape for every migrated publisher (conversation, graph workflow, job, session-finished, debug)", () => {
+  it("preserves the on-the-wire payload shape for every migrated publisher (conversation, graph workflow, job, debug)", () => {
     const wire = vi.fn<(event: SSEEvent) => void>();
     setDefaultSessionStatusBusBroadcastForTesting(wire);
 
@@ -138,13 +138,6 @@ describe("section 4 — shared status + artifact handling (end to end)", () => {
         sessionName: "s",
         jobId: "job-1",
         branchName: "csm/x",
-      },
-      {
-        type: "session-finished",
-        projectName: "p",
-        sessionName: "s",
-        branchName: "csm/x",
-        detectionMethod: "ancestor",
       },
     ];
 

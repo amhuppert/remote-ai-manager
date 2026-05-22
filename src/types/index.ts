@@ -105,7 +105,6 @@ export type {
   JobStatusEvent,
   JobDispatchResponse,
   BackgroundJob,
-  SessionFinishedEvent,
   SmartMergeRequest,
   ConflictEntry,
   ConflictDecisionInput,

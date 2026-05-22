@@ -36,9 +36,6 @@ describe("resolveSessionStatusScope", () => {
     expect(
       resolveSessionStatusScope({ type: "graph-workflow-task-status" }).scope,
     ).toBe("graph_workflow");
-    expect(resolveSessionStatusScope({ type: "session-finished" }).scope).toBe(
-      "merge_job",
-    );
     expect(
       resolveSessionStatusScope({ type: "job-status", jobType: "merge" }).scope,
     ).toBe("merge_job");

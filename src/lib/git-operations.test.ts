@@ -698,89 +698,6 @@ describe("mergeTargetIntoFeature", () => {
 });
 
 // ===========================================================================
-// isBranchAncestorOfTarget
-// ===========================================================================
-
-describe("isBranchAncestorOfTarget", () => {
-  it("returns true when branch is ancestor and has diverged from merge base", async () => {
-    mockGitSequence([
-      { stdout: "" },
-      { stdout: "abc1234\n" },
-      { stdout: "def5678\n" },
-    ]);
-
-    const result = await ops.isBranchAncestorOfTarget(
-      "/project",
-      "csm/my-session",
-    );
-    expect(result).toBe(true);
-  });
-
-  it("returns false when branch tip equals merge base (never diverged)", async () => {
-    mockGitSequence([
-      { stdout: "" },
-      { stdout: "abc1234\n" },
-      { stdout: "abc1234\n" },
-    ]);
-
-    const result = await ops.isBranchAncestorOfTarget(
-      "/project",
-      "csm/my-session",
-    );
-    expect(result).toBe(false);
-  });
-
-  it("checks against non-main target branch when specified", async () => {
-    mockGitSequence([
-      { stdout: "" },
-      { stdout: "abc1234\n" },
-      { stdout: "def5678\n" },
-    ]);
-
-    const result = await ops.isBranchAncestorOfTarget(
-      "/project",
-      "csm/child",
-      "csm/parent",
-    );
-    expect(result).toBe(true);
-
-    // Verify the target branch was used in merge-base --is-ancestor
-    expect(gitMock.mock.calls[0]![0]).toEqual([
-      "merge-base",
-      "--is-ancestor",
-      "csm/child",
-      "csm/parent",
-    ]);
-    // Verify merge-base uses target branch
-    expect(gitMock.mock.calls[2]![0]).toEqual([
-      "merge-base",
-      "csm/child",
-      "csm/parent",
-    ]);
-  });
-
-  it("returns false when branch is not ancestor of target", async () => {
-    mockGitSequence([{ error: new Error("not ancestor") }]);
-
-    const result = await ops.isBranchAncestorOfTarget(
-      "/project",
-      "csm/my-session",
-    );
-    expect(result).toBe(false);
-  });
-
-  it("returns false when git commands fail", async () => {
-    mockGitSequence([{ stdout: "" }, { error: new Error("fatal: bad ref") }]);
-
-    const result = await ops.isBranchAncestorOfTarget(
-      "/project",
-      "csm/my-session",
-    );
-    expect(result).toBe(false);
-  });
-});
-
-// ===========================================================================
 // targetBranch parameter — cross-cutting tests
 // ===========================================================================
 
@@ -826,25 +743,6 @@ describe("targetBranch parameter", () => {
       "merge-base",
       "csm/parent",
       "abc123",
-    ]);
-  });
-
-  it("isBranchMentionedInTargetLog uses custom targetBranch", async () => {
-    mockGitSuccess("abc1234 Merge csm/child\n");
-
-    const result = await ops.isBranchMentionedInTargetLog(
-      "/project",
-      "csm/child",
-      "csm/parent",
-    );
-    expect(result).toBe(true);
-
-    expect(gitMock.mock.calls[0]![0]).toEqual([
-      "log",
-      "csm/parent",
-      "--oneline",
-      "-100",
-      "--grep=csm/child",
     ]);
   });
 

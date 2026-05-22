@@ -14,7 +14,6 @@ const fullConfig = {
   claudeTimeoutMs: 3_600_000,
   defaultModel: "opus" as const,
   defaultAgentBackend: "claude" as const,
-  mergeCheckIntervalMs: 300_000,
   preMergeTimeoutMs: 300_000,
   maxConcurrentQueries: 3,
   tailscaleEnabled: true,

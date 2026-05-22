@@ -10,8 +10,6 @@
  * The primary migrations are in place:
  *  - `background-jobs.ts` defaults to `publishSessionStatus` for every
  *    job-status broadcast (running / completed / failed / conflicts).
- *  - `merge-detection.ts` defaults to `publishSessionStatus` for every
- *    `session-finished` broadcast.
  *  - `validation-fix.ts` builds `task_run` `AgentCallRequest`s and dispatches
  *    them through the shared `executeAgentCall` facade (verified by the
  *    "validation-fix.fixValidationErrors builds a write_capable task_run
@@ -30,9 +28,8 @@
  * These tests act as parity guards: every job-status lifecycle variant the
  * existing UI consumes must still pass through the shared bus unchanged, all
  * optional job-status fields (mergeHash, commitHash, conflictCount,
- * conflictFiles, errorMessage, phase) must survive intact, every documented
- * `MergePhase` string must round-trip, and `session-finished` events must
- * remain scoped under `merge_job`. The dispatchMergeJob integration check
+ * conflictFiles, errorMessage, phase) must survive intact, and every documented
+ * `MergePhase` string must round-trip. The dispatchMergeJob integration check
  * locks the default broadcast wiring so that a future refactor cannot
  * silently drop the shared-bus routing without this test failing.
  */
@@ -79,7 +76,6 @@ import {
 import type {
   JobStatus,
   JobStatusEvent,
-  SessionFinishedEvent,
   SSEEvent,
   SessionState,
 } from "@/types";
@@ -220,49 +216,6 @@ describe("section 6.3 — merge + optimistic workflow parity (Task 6.3)", () => 
       .map((e) => e.phase);
 
     expect(phasesOnWire).toEqual(phases);
-  });
-
-  it("preserves session-finished payload through the shared bus with the merge_job scope envelope (ancestor detection)", () => {
-    const wire = captureWire();
-    const { envelopes, unsubscribe } = captureEnvelopes();
-
-    const event: SessionFinishedEvent = {
-      type: "session-finished",
-      projectName: "acme",
-      sessionName: "session-1",
-      branchName: "csm/session-1",
-      detectionMethod: "ancestor",
-    };
-
-    const outcome = publishSessionStatus(event);
-    unsubscribe();
-
-    expect(outcome.delivered).toBe(true);
-    expect(wire.mock.calls[0]?.[0]).toEqual(event);
-    expect(envelopes).toHaveLength(1);
-    expect(envelopes[0]?.scope).toBe("merge_job");
-    expect(envelopes[0]?.scopeId).toBe("csm/session-1");
-    expect(envelopes[0]?.status).toBe("completed");
-  });
-
-  it("preserves session-finished payload through the shared bus with the merge_job scope envelope (commit-message detection)", () => {
-    const wire = captureWire();
-    const { envelopes, unsubscribe } = captureEnvelopes();
-
-    const event: SessionFinishedEvent = {
-      type: "session-finished",
-      projectName: "acme",
-      sessionName: "session-1",
-      branchName: "csm/session-1",
-      detectionMethod: "commit-message",
-    };
-
-    publishSessionStatus(event);
-    unsubscribe();
-
-    expect(wire.mock.calls[0]?.[0]).toEqual(event);
-    expect(envelopes[0]?.scope).toBe("merge_job");
-    expect(envelopes[0]?.status).toBe("completed");
   });
 
   it("dispatchMergeJob default broadcast routes job-status events through the shared session status bus end-to-end", async () => {

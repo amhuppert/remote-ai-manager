@@ -111,13 +111,6 @@ describe("default session status bus", () => {
         jobId: "job-9",
         branchName: "csm/x",
       },
-      {
-        type: "session-finished",
-        projectName: "p",
-        sessionName: "s",
-        branchName: "csm/x",
-        detectionMethod: "ancestor",
-      },
     ];
 
     for (const e of events) {

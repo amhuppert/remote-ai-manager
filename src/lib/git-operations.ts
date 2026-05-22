@@ -293,76 +293,6 @@ export function createGitOperations(client: GitClient = defaultGitClient) {
   }
 
   // ----------------------------------------------------------
-  // Merge Detection
-  // ----------------------------------------------------------
-
-  /**
-   * Check if a branch has been merged into the target branch via regular merge commit.
-   * Returns true if the branch tip is an ancestor of the target AND the branch
-   * actually has commits beyond the merge base (i.e., it diverged from the target
-   * at some point). Branches that never diverged (tip == merge-base) are
-   * not considered merged — they just never had any unique commits.
-   */
-  async function isBranchAncestorOfTarget(
-    projectPath: string,
-    branchName: string,
-    targetBranch = "main",
-  ): Promise<boolean> {
-    try {
-      await git(projectPath, [
-        "merge-base",
-        "--is-ancestor",
-        branchName,
-        targetBranch,
-      ]);
-
-      // Branch is ancestor of target — but did it ever diverge?
-      // Compare the branch tip to the merge base. If they're identical,
-      // the branch never had unique commits and shouldn't be considered merged.
-      const { stdout: branchTip } = await git(projectPath, [
-        "rev-parse",
-        branchName,
-      ]);
-      const { stdout: mergeBase } = await git(projectPath, [
-        "merge-base",
-        branchName,
-        targetBranch,
-      ]);
-
-      if (branchTip.trim() === mergeBase.trim()) {
-        return false;
-      }
-
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Check if the target branch's recent commit log mentions the branch name.
-   * Catches squash/rebase merges where the commit message references the branch.
-   */
-  async function isBranchMentionedInTargetLog(
-    projectPath: string,
-    branchName: string,
-    targetBranch = "main",
-  ): Promise<boolean> {
-    try {
-      const { stdout } = await git(projectPath, [
-        "log",
-        targetBranch,
-        "--oneline",
-        "-100",
-        `--grep=${branchName}`,
-      ]);
-      return stdout.trim().length > 0;
-    } catch {
-      return false;
-    }
-  }
-
-  // ----------------------------------------------------------
   // Merge Target into Feature Branch
   // ----------------------------------------------------------
 
@@ -521,8 +451,6 @@ export function createGitOperations(client: GitClient = defaultGitClient) {
     commitChanges,
     getCommitLog,
     getCommitDiff,
-    isBranchAncestorOfTarget,
-    isBranchMentionedInTargetLog,
     mergeTargetIntoFeature,
     squashMerge,
   };
@@ -539,8 +467,5 @@ export const getCurrentBranch = defaultOps.getCurrentBranch;
 export const commitChanges = defaultOps.commitChanges;
 export const getCommitLog = defaultOps.getCommitLog;
 export const getCommitDiff = defaultOps.getCommitDiff;
-export const isBranchAncestorOfTarget = defaultOps.isBranchAncestorOfTarget;
-export const isBranchMentionedInTargetLog =
-  defaultOps.isBranchMentionedInTargetLog;
 export const mergeTargetIntoFeature = defaultOps.mergeTargetIntoFeature;
 export const squashMerge = defaultOps.squashMerge;

@@ -219,7 +219,6 @@ Broadcast via `sse-broadcaster.ts`; client-side Zod-validated.
 |---|---|
 | `conversation-status` | `running` / `awaiting` / `waiting_for_input` transitions |
 | `ask-question` | SDK requests permission/input |
-| `session-finished` | Terminal session state |
 | `message-queued` | Queued via `streamInput()` into running conversation |
 | `job-status` | Background job state change |
 | `notification-created` / `notification-updated` | Notification lifecycle |

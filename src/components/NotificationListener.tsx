@@ -41,7 +41,6 @@ import {
   conversationRenamedEventSchema,
   conversationArchivedEventSchema,
   askQuestionEventSchema,
-  sessionFinishedEventSchema,
   debugModeStatusEventSchema,
 } from "@/lib/schemas";
 import type { ConversationState } from "@/types";
@@ -340,17 +339,6 @@ export default function NotificationListener(): null {
       void queryClient.invalidateQueries({
         queryKey: conversationKeys.active(),
       });
-      void queryClient.invalidateQueries({
-        queryKey: sessionKeys.detail(d.projectName, d.sessionName),
-      });
-    });
-
-    es.addEventListener("session-finished", (event) => {
-      const parsed = sessionFinishedEventSchema.safeParse(
-        JSON.parse(event.data),
-      );
-      if (!parsed.success) return;
-      const d = parsed.data;
       void queryClient.invalidateQueries({
         queryKey: sessionKeys.detail(d.projectName, d.sessionName),
       });

@@ -30,7 +30,6 @@ const fullConfigData: { config: GlobalConfig; raw: RawGlobalConfig } = {
     defaultAgentBackend: "claude",
     claudeTimeoutMs: 3_600_000,
     maxConcurrentQueries: 3,
-    mergeCheckIntervalMs: 300_000,
     preMergeTimeoutMs: 300_000,
     ignorePatterns: ["node_modules"],
     tailscaleEnabled: false,

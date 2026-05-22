@@ -424,7 +424,6 @@ export default function ConfigEditor(): React.JSX.Element {
       "claudeTimeoutMs",
       "maxTurns",
       "maxConcurrentQueries",
-      "mergeCheckIntervalMs",
       "preMergeTimeoutMs",
       "idleQuerySessionTtlMs",
       "tailscaleEnabled",
@@ -860,22 +859,6 @@ export default function ConfigEditor(): React.JSX.Element {
                 }
                 positive
                 integer
-              />
-            </ConfigField>
-            <ConfigField
-              label="Merge check interval"
-              fieldPath="mergeCheckIntervalMs"
-              isDefault={isDefault("mergeCheckIntervalMs")}
-              isModified={isModified("mergeCheckIntervalMs")}
-              hint="minutes"
-            >
-              <ConfigNumericInput
-                value={formState.mergeCheckIntervalMs}
-                onChange={(value) =>
-                  handleChange("mergeCheckIntervalMs", value)
-                }
-                displayAsMinutes
-                positive
               />
             </ConfigField>
             <ConfigField

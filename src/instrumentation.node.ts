@@ -1,5 +1,4 @@
 import { readState } from "./lib/state";
-import { startMergeDetection } from "./lib/merge-detection";
 import { initialize as initNotificationDb } from "./lib/notification-db";
 import { setConfigReader } from "./lib/push-dispatcher";
 import { readConfig } from "./lib/config";
@@ -17,7 +16,6 @@ export interface StartupDeps {
   initNotificationDb: typeof initNotificationDb;
   setConfigReader: typeof setConfigReader;
   readConfig: typeof readConfig;
-  startMergeDetection: typeof startMergeDetection;
   recoverActiveWorkflowEnvelopes: typeof recoverActiveWorkflowEnvelopes;
 }
 
@@ -26,7 +24,6 @@ const defaultStartupDeps: StartupDeps = {
   initNotificationDb,
   setConfigReader,
   readConfig,
-  startMergeDetection,
   recoverActiveWorkflowEnvelopes,
 };
 
@@ -117,14 +114,6 @@ export function createStartupRegistrar(
 
     // Wire up push notification config reader
     deps.setConfigReader(deps.readConfig);
-
-    try {
-      await deps.startMergeDetection();
-    } catch (err) {
-      logger.error("startup.merge_detection_failed", {
-        error: getErrorMessage(err),
-      });
-    }
   };
 }
 

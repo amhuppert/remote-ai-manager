@@ -467,34 +467,4 @@ describe("section 4 production paths — migrated publishers go through the shar
     expect(envelopes[0]?.scopeId).toBe("job-prod-1");
     expect(envelopes[0]?.status).toBe("running");
   });
-
-  it("merge-detection publishers route session-finished events through the shared default session status bus without an explicit broadcast override", () => {
-    const wire = vi.fn<(event: SSEEvent) => void>();
-    setDefaultSessionStatusBusBroadcastForTesting(wire);
-
-    const envelopes: StatusBusEnvelope[] = [];
-    const unsubscribe = subscribeSessionStatus((envelope) => {
-      envelopes.push(envelope);
-    });
-
-    publishSessionStatus({
-      type: "session-finished",
-      projectName: "p",
-      sessionName: "s",
-      branchName: "csm/x",
-      detectionMethod: "ancestor",
-    });
-
-    unsubscribe();
-
-    expect(envelopes).toHaveLength(1);
-    expect(envelopes[0]?.scope).toBe("merge_job");
-    expect(envelopes[0]?.scopeId).toBe("csm/x");
-    expect(envelopes[0]?.status).toBe("completed");
-    expect(wire.mock.calls[0]?.[0]).toMatchObject({
-      type: "session-finished",
-      branchName: "csm/x",
-      detectionMethod: "ancestor",
-    });
-  });
 });

@@ -14,7 +14,6 @@ const defaultConfig: GlobalConfig = {
   defaultAgentBackend: "claude",
   claudeTimeoutMs: 3_600_000,
   maxConcurrentQueries: 3,
-  mergeCheckIntervalMs: 300_000,
   preMergeTimeoutMs: 300_000,
   ignorePatterns: [
     "node_modules",
@@ -43,7 +42,6 @@ const fullyConfiguredRaw: RawGlobalConfig = {
   claudeTimeoutMs: 7_200_000,
   maxTurns: 50,
   maxConcurrentQueries: 5,
-  mergeCheckIntervalMs: 600_000,
   preMergeTimeoutMs: 600_000,
   idleQuerySessionTtlMs: 1_800_000,
   tailscaleEnabled: false,

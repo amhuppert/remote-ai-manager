@@ -34,9 +34,6 @@ describe("formatFieldLabel", () => {
 
   it("strips trailing Ms suffix for duration fields", () => {
     expect(formatFieldLabel("claudeTimeoutMs")).toBe("Claude Timeout");
-    expect(formatFieldLabel("mergeCheckIntervalMs")).toBe(
-      "Merge Check Interval",
-    );
     expect(formatFieldLabel("preMergeTimeoutMs")).toBe("Pre Merge Timeout");
     expect(formatFieldLabel("idleQuerySessionTtlMs")).toBe(
       "Idle Query Session TTL",

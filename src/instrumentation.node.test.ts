@@ -24,9 +24,6 @@ describe("createStartupRegistrar", () => {
           "readConfig should not be called during startup wiring",
         );
       },
-      startMergeDetection: async () => {
-        calls.push("merge");
-      },
       recoverActiveWorkflowEnvelopes: async () => {
         calls.push("envelope-recovery");
         return {
@@ -60,7 +57,6 @@ describe("createStartupRegistrar", () => {
       initNotificationDb: () => {},
       setConfigReader: () => {},
       readConfig: async () => ({}) as never,
-      startMergeDetection: async () => {},
       recoverActiveWorkflowEnvelopes: async () => {
         traces["recover"] = getTraceContext();
         return {
@@ -99,7 +95,6 @@ describe("createStartupRegistrar", () => {
           "readConfig should not be called during startup wiring",
         );
       },
-      startMergeDetection: async () => {},
       recoverActiveWorkflowEnvelopes: async () => {
         calls.push("envelope-recovery-failed");
         throw new Error("simulated recovery failure");
