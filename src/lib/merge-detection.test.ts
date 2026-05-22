@@ -6,6 +6,7 @@ import {
   _resetForTesting,
   type MergeDetectionDeps,
 } from "./merge-detection";
+import { getTraceContext, type TraceContext } from "./logging";
 import type { ManagerState, SessionFinishedEvent } from "@/types";
 
 // ============================================================
@@ -543,5 +544,60 @@ describe("checkAllSessionsForMerge — targetBranch", () => {
     await checkAllSessionsForMerge(deps);
 
     expect(mockRetargetOrphanedChildren).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================
+// Trace context propagation
+// ============================================================
+
+describe("startMergeDetection — trace context", () => {
+  it("wraps the initial check in a poll:merge-detection trace", async () => {
+    const captured: (TraceContext | undefined)[] = [];
+    mockReadState.mockImplementation(async () => {
+      captured.push(getTraceContext());
+      return {
+        projects: {},
+        archivedProjects: [],
+        pinnedProjects: [],
+      } satisfies ManagerState;
+    });
+
+    await startMergeDetection(deps);
+    // Initial check is fire-and-forget; flush microtasks so it runs.
+    await new Promise((r) => setImmediate(r));
+    stopMergeDetection();
+
+    expect(captured.length).toBeGreaterThan(0);
+    const ctx = captured[0];
+    expect(ctx?.action).toBe("poll:merge-detection");
+    expect(ctx?.traceId).toBeTypeOf("string");
+    expect(ctx?.traceId.length).toBeGreaterThan(0);
+  });
+
+  it("mints a fresh traceId for each poll cycle", async () => {
+    const traceIds: string[] = [];
+    mockReadState.mockImplementation(async () => {
+      const id = getTraceContext()?.traceId;
+      if (id) traceIds.push(id);
+      return {
+        projects: {},
+        archivedProjects: [],
+        pinnedProjects: [],
+      } satisfies ManagerState;
+    });
+
+    // Run two cycles via direct invocation of the poll entrypoint.
+    // (We don't want to wait for a real setInterval to fire.)
+    await startMergeDetection(deps);
+    await new Promise((r) => setImmediate(r));
+    stopMergeDetection();
+
+    await startMergeDetection(deps);
+    await new Promise((r) => setImmediate(r));
+    stopMergeDetection();
+
+    expect(traceIds.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(traceIds).size).toBe(traceIds.length);
   });
 });

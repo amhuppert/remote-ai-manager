@@ -23,6 +23,11 @@ import {
   type GraphWorkflowExecutionLoopDeps,
   type GraphWorkflowExecutionLoopWorkflowManager,
 } from "./execution-loop";
+import {
+  getTraceContext,
+  runWithTrace,
+  type TraceContext,
+} from "@/lib/logging";
 import { IterationFailureWithProgressError } from "./iteration-failure-with-progress";
 import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
 import type {
@@ -2207,5 +2212,97 @@ describe("execution loop", () => {
 
     expect(joinRunSpy).not.toHaveBeenCalled();
     expect(result.status).toBe("completed");
+  });
+
+  describe("trace context propagation", () => {
+    it("runs each execution inside a workflow:<id> trace so downstream timed() logs aggregate per execution", async () => {
+      const definition = createSingleContextDefinition(5);
+      const initial = createRunningExecution(definition, {
+        id: "exec-trace-1",
+      });
+      let captured: TraceContext | null = null;
+      const harness = buildHarness({
+        initialExecution: initial,
+        iterationOrchestrator: {
+          async runIteration(): Promise<GraphWorkflowIterationResult> {
+            captured = getTraceContext() ?? null;
+            const next = structuredClone(harness.getCurrent());
+            next.contextStates["ctx-1"]!.iterationCount = 1;
+            next.contextStates["ctx-1"]!.status = "completed";
+            next.contextStates["ctx-1"]!.completedTaskCount = 1;
+            next.taskStates["task-1"]!.status = "completed";
+            next.activeContextIds = [];
+            harness.setCurrent(next);
+            return {
+              conversationId: "conv-1",
+              execution: next,
+              shouldContinueInContext: false,
+            };
+          },
+        },
+      });
+
+      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      await loop.run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: initial,
+      });
+
+      expect(captured).not.toBeNull();
+      expect(captured!.action).toBe("workflow:exec-trace-1");
+      expect(captured!.traceId).toBeTypeOf("string");
+      expect(captured!.traceId.length).toBeGreaterThan(0);
+    });
+
+    it("inherits the caller's traceId when an HTTP handler kicks off the execution, so the request and workflow group into one Speedscope stack", async () => {
+      const definition = createSingleContextDefinition(5);
+      const initial = createRunningExecution(definition, {
+        id: "exec-trace-2",
+      });
+      let captured: TraceContext | null = null;
+      const harness = buildHarness({
+        initialExecution: initial,
+        iterationOrchestrator: {
+          async runIteration(): Promise<GraphWorkflowIterationResult> {
+            captured = getTraceContext() ?? null;
+            const next = structuredClone(harness.getCurrent());
+            next.contextStates["ctx-1"]!.iterationCount = 1;
+            next.contextStates["ctx-1"]!.status = "completed";
+            next.contextStates["ctx-1"]!.completedTaskCount = 1;
+            next.taskStates["task-1"]!.status = "completed";
+            next.activeContextIds = [];
+            harness.setCurrent(next);
+            return {
+              conversationId: "conv-1",
+              execution: next,
+              shouldContinueInContext: false,
+            };
+          },
+        },
+      });
+
+      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const parent: TraceContext = {
+        traceId: "parent-request-trace",
+        action: "request:POST /api/workflows/run",
+        projectName: "test",
+        sessionName: "session-1",
+      };
+
+      await runWithTrace(parent, () =>
+        loop.run({
+          projectPath: "/repo",
+          projectName: "test",
+          sessionName: "session-1",
+          execution: initial,
+        }),
+      );
+
+      expect(captured).not.toBeNull();
+      expect(captured!.traceId).toBe("parent-request-trace");
+      expect(captured!.action).toBe("workflow:exec-trace-2");
+    });
   });
 });

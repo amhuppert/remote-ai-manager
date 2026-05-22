@@ -109,20 +109,55 @@ Three timing surfaces, not connection lifetime:
 
 `request.complete` for SSE GETs logs `streaming: true` / `durationMs: null` — connection lifetime is not the metric we care about.
 
-## Perfetto / Chrome Trace Export
+## Agent Log Analysis CLI
 
-Visualize `timed()` durations as a flamegraph by converting the NDJSON log into Chrome Trace Event Format and dropping the result into https://ui.perfetto.dev/.
+Use `logs:analyze` as the first tool for performance diagnosis. It emits bounded JSON by default so agents can rank evidence without reading the entire log.
 
 ```bash
-bun run trace:perfetto                                  # global.log → trace.json
-bun run trace:perfetto -- --trace <traceId>             # filter to one HTTP request
-bun run trace:perfetto -- --since 2026-05-21T12:00:00Z  # drop older entries
-bun run trace:perfetto -- --in path/to/log --out my-trace.json
+bun run logs:analyze -- report
+bun run logs:analyze -- report --in path/to/log --format markdown
+bun run logs:analyze -- report --since 2026-05-21T12:00:00Z --top 20
+bun run logs:analyze -- report --projectName NAME --sessionName SESSION
+bun run logs:analyze -- trace <traceId> --format markdown
+bun run logs:analyze -- compare --before before.log --after after.log
 ```
 
-Each unique `traceId` becomes its own track (thread row) labeled by `action`; entries without a `traceId` land on a shared `background` track. Within a track, nested spans render as stacked bars based on overlapping intervals — no explicit parent-child wiring is required because every `timed()` call propagates `traceId` via AsyncLocalStorage.
+`report` runs slow request ranking, operation hotspot aggregation, duplicate-work detection, state-store diagnostics, external command diagnostics, SSE broadcast diagnostics, client timing analysis when `--client-log` is provided, error correlation, and instrumentation-gap detection.
 
-Implementation: pure converter in `src/lib/logging/perfetto-export.ts`; CLI entry in `scripts/perfetto-export.ts`.
+`trace <traceId>` reconstructs timed operation intervals for one trace and reports inclusive time, exclusive time, duplicate work, warnings/errors, and unexplained request time. If unexplained time dominates, add `timed()` coverage before optimizing code.
+
+`compare` reports before/after endpoint p95 deltas, operation p95 deltas, new duplicate-work signatures, and new warnings/errors.
+
+Options shared across commands:
+
+```bash
+--in <path> --format json|markdown --out <path> --markdown-out <path>
+--speedscope-out <path> --since <iso> --until <iso>
+--projectName <name> --sessionName <name> --conversationId <id>
+--path <api-path> --action <action> --top <n>
+--slow-ms <n> --hotspot-ms <n> --include-self --pretty
+```
+
+Default log path resolution checks `CC_LOG_FILE`, `<config-dir>/logs/global.log`, `<config-dir>/cc-debug.log`, `./.config/logs/global.log`, and `./.config/cc-debug.log`.
+
+## Speedscope Export (hotspot aggregation)
+
+Aggregate `timed()` durations across the whole app and view them in https://speedscope.app. Designed for answering "where does most execution time go?" via Speedscope's **Left Heavy** and **Sandwich** views.
+
+```bash
+bun run trace:speedscope                                  # global.log → trace.json
+bun run trace:speedscope -- --trace <traceId>             # filter to one HTTP request
+bun run trace:speedscope -- --since 2026-05-21T12:00:00Z  # drop older entries
+bun run trace:speedscope -- --in path/to/log --out my-trace.json
+```
+
+The exporter serializes every trace end-to-end onto a single `aggregated` thread (tid=1). Within each group, parent/child nesting is reconstructed from time containment; events that overlap as siblings (e.g. `Promise.all`) are promoted to additional roots. Entries without a `traceId` each become their own single-event group.
+
+**Tradeoff:** wall-clock fidelity is intentionally lost so Speedscope's aggregating views show trustworthy per-frame totals. The Time Order view will display a synthetic serialized timeline rather than real wall clock — use `--trace <id>` if you need to inspect a single request in time order.
+
+The output is valid Chrome Trace Event Format, so Perfetto / chrome://tracing will load it, but only Speedscope's aggregating views answer the question this tool is built for.
+
+Implementation: pure converter in `src/lib/logging/speedscope-export.ts`; CLI entry in `scripts/speedscope-export.ts`.
 
 ## Transcripts (`transcripts/{id}.jsonl`)
 

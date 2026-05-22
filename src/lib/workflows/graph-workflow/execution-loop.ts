@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getErrorMessage } from "@/lib/errors";
-import { createLogger } from "@/lib/logging";
+import { captureTraceContext, createLogger, runAsTrace } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import {
   MergePreconditionFailed,
@@ -189,7 +189,17 @@ export function createGraphWorkflowExecutionLoop(
     deps.runCircuitBreakerGate ?? defaultRunCircuitBreakerGate;
   const createJobId = deps.createJobId ?? (() => randomUUID());
 
-  async function run(
+  function run(
+    input: GraphWorkflowExecutionLoopInput,
+  ): Promise<GraphWorkflowExecution> {
+    return runAsTrace(
+      `workflow:${input.execution.id}`,
+      () => runImpl(input),
+      captureTraceContext(),
+    );
+  }
+
+  async function runImpl(
     input: GraphWorkflowExecutionLoopInput,
   ): Promise<GraphWorkflowExecution> {
     const key = loopKey(input.projectPath, input.sessionName);

@@ -1,0 +1,2 @@
+{"timestamp":"2026-05-21T12:00:00.100Z","level":"info","module":"tracing","message":"request.complete","traceId":"trace-before","action":"load-session","method":"GET","path":"/api/projects/demo/sessions/main","status":200,"durationMs":120}
+{"timestamp":"2026-05-21T12:00:00.200Z","level":"info","module":"state-store","message":"state.read.timing","traceId":"trace-before","action":"load-session","accessor":"getSession","totalMs":40}

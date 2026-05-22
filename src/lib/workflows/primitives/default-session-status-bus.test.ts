@@ -6,6 +6,11 @@ import {
   setDefaultSessionStatusBusBroadcastForTesting,
   subscribeSessionStatus,
 } from "./default-session-status-bus";
+import {
+  getTraceContext,
+  runWithTrace,
+  type TraceContext,
+} from "@/lib/logging";
 import type { ScopedStatusEvent, SSEEvent } from "@/types";
 
 describe("default session status bus", () => {
@@ -334,6 +339,68 @@ describe("publishScopedStatusEvent", () => {
         process.env["CC_LOG_SILENT"] = originalLogSilent;
       }
     }
+  });
+
+  it("runs each broadcast in a fresh sse:broadcast:<type> trace so wire and subscriber work aggregates per event type", () => {
+    const captured: Array<TraceContext | null> = [];
+    const wire = vi.fn<(event: SSEEvent) => void>(() => {
+      captured.push(getTraceContext() ?? null);
+    });
+    setDefaultSessionStatusBusBroadcastForTesting(wire);
+
+    publishSessionStatus({
+      type: "conversation-status",
+      projectName: "p",
+      sessionName: "s",
+      conversationId: "conv-trace",
+      status: "running",
+    });
+    publishSessionStatus({
+      type: "job-status",
+      jobType: "merge",
+      status: "running",
+      projectName: "p",
+      sessionName: "s",
+      jobId: "job-trace",
+      branchName: "csm/x",
+    });
+
+    expect(captured).toHaveLength(2);
+    expect(captured[0]?.action).toBe("sse:broadcast:conversation-status");
+    expect(captured[1]?.action).toBe("sse:broadcast:job-status");
+    expect(captured[0]?.traceId).toBeTypeOf("string");
+    expect(captured[1]?.traceId).toBeTypeOf("string");
+    expect(captured[0]?.traceId).not.toBe(captured[1]?.traceId);
+  });
+
+  it("mints a fresh root traceId for each broadcast even when called inside an existing trace scope (so SSE broadcasts aggregate per event type, not per caller)", () => {
+    let captured: TraceContext | null = null;
+    const wire = vi.fn<(event: SSEEvent) => void>(() => {
+      captured = getTraceContext() ?? null;
+    });
+    setDefaultSessionStatusBusBroadcastForTesting(wire);
+
+    const outer: TraceContext = {
+      traceId: "outer-request-trace",
+      action: "request:POST /api/foo",
+      projectName: "p",
+      sessionName: "s",
+    };
+
+    runWithTrace(outer, () => {
+      publishSessionStatus({
+        type: "conversation-status",
+        projectName: "p",
+        sessionName: "s",
+        conversationId: "conv-1",
+        status: "running",
+      });
+    });
+
+    expect(captured).not.toBeNull();
+    expect(captured!.action).toBe("sse:broadcast:conversation-status");
+    expect(captured!.traceId).not.toBe("outer-request-trace");
+    expect(captured!.traceId).toBeTypeOf("string");
   });
 
   it("notifies in-process subscribers with an envelope whose scope reflects the scoped-status field (not a fallback)", () => {

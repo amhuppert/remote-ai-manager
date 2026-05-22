@@ -16,7 +16,7 @@ import { createActor } from "xstate";
 import { acquireSessionLock as defaultAcquireSessionLock } from "./lock";
 import type { BroadcastFn } from "./sse-broadcaster";
 import { publishSessionStatus } from "./workflows/primitives/default-session-status-bus";
-import { createLogger } from "./logging";
+import { captureTraceContext, createLogger, runAsTrace } from "./logging";
 import {
   createJobRecord,
   updateJobRecord,
@@ -480,6 +480,29 @@ export function dispatchMergeJob(params: {
   acquireSessionLock?: AcquireSessionLockFn;
   machine?: MergeMachineType;
 }): Result<{ jobId: string }, JobDispatchError> {
+  // Inherit the caller's traceId (request that triggered dispatch) so the
+  // background actor's timed() calls aggregate under the same trace.
+  return runAsTrace(
+    "job:merge",
+    () => dispatchMergeJobImpl(params),
+    captureTraceContext(),
+  );
+}
+
+function dispatchMergeJobImpl(params: {
+  projectPath: string;
+  projectName: string;
+  sessionName: string;
+  worktreePath: string;
+  branchName: string;
+  message: string;
+  autoResolve: boolean;
+  targetBranch?: string;
+  targetWorktreePath?: string;
+  broadcast?: BroadcastFn;
+  acquireSessionLock?: AcquireSessionLockFn;
+  machine?: MergeMachineType;
+}): Result<{ jobId: string }, JobDispatchError> {
   const {
     projectPath,
     projectName,
@@ -560,6 +583,24 @@ export function dispatchCommitJob(params: {
   acquireSessionLock?: AcquireSessionLockFn;
   machine?: CommitMachineType;
 }): Result<{ jobId: string }, JobDispatchError> {
+  return runAsTrace(
+    "job:commit",
+    () => dispatchCommitJobImpl(params),
+    captureTraceContext(),
+  );
+}
+
+function dispatchCommitJobImpl(params: {
+  projectPath: string;
+  projectName: string;
+  sessionName: string;
+  worktreePath: string;
+  branchName: string;
+  message: string;
+  broadcast?: BroadcastFn;
+  acquireSessionLock?: AcquireSessionLockFn;
+  machine?: CommitMachineType;
+}): Result<{ jobId: string }, JobDispatchError> {
   const {
     projectPath,
     projectName,
@@ -621,6 +662,27 @@ export function dispatchCommitJob(params: {
  * conflict resolution, then proceeds through validation and squash merge.
  */
 export function dispatchResolveConflictsJob(params: {
+  projectPath: string;
+  projectName: string;
+  sessionName: string;
+  worktreePath: string;
+  branchName: string;
+  mergeMessage: string;
+  decisions?: ConflictDecisionInput[];
+  targetBranch?: string;
+  targetWorktreePath?: string;
+  broadcast?: BroadcastFn;
+  acquireSessionLock?: AcquireSessionLockFn;
+  machine?: MergeMachineType;
+}): Result<{ jobId: string }, JobDispatchError> {
+  return runAsTrace(
+    "job:resolve-conflicts",
+    () => dispatchResolveConflictsJobImpl(params),
+    captureTraceContext(),
+  );
+}
+
+function dispatchResolveConflictsJobImpl(params: {
   projectPath: string;
   projectName: string;
   sessionName: string;

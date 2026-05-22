@@ -1,0 +1,5 @@
+{"timestamp":"2026-05-21T12:00:00.100Z","level":"warn","module":"tracing","message":"request.complete","traceId":"trace-after","action":"load-session","method":"GET","path":"/api/projects/demo/sessions/main","status":200,"durationMs":360}
+{"timestamp":"2026-05-21T12:00:00.300Z","level":"info","module":"state-store","message":"state.read.timing","traceId":"trace-after","action":"load-session","accessor":"getSession","totalMs":140}
+{"timestamp":"2026-05-21T12:00:00.450Z","level":"info","module":"state-store","message":"state.read.timing","traceId":"trace-after","action":"load-session","accessor":"getSession","totalMs":140}
+{"timestamp":"2026-05-21T12:00:00.600Z","level":"info","module":"state-store","message":"state.read.timing","traceId":"trace-after","action":"load-session","accessor":"getSession","totalMs":140}
+{"timestamp":"2026-05-21T12:00:00.700Z","level":"error","module":"prompt","message":"prompt.failure","traceId":"trace-after","action":"load-session","error":"fixture failure"}

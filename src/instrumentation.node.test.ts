@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createStartupRegistrar } from "./instrumentation.node";
+import { getTraceContext, type TraceContext } from "./lib/logging";
 
 describe("createStartupRegistrar", () => {
   it("rehydrates conversation actors before envelope recovery and notifications init", async () => {
@@ -45,6 +46,42 @@ describe("createStartupRegistrar", () => {
     );
     expect(calls).toContain("envelope-recovery");
     expect(calls).toContain("notifications");
+  });
+
+  it("runs rehydrate and envelope recovery inside distinct startup traces", async () => {
+    const traces: Record<string, TraceContext | undefined> = {};
+    const register = createStartupRegistrar({
+      loadConversationManager: async () => ({
+        rehydrateConversationActors: async () => {
+          traces["rehydrate"] = getTraceContext();
+          return 0;
+        },
+      }),
+      initNotificationDb: () => {},
+      setConfigReader: () => {},
+      readConfig: async () => ({}) as never,
+      startMergeDetection: async () => {},
+      recoverActiveWorkflowEnvelopes: async () => {
+        traces["recover"] = getTraceContext();
+        return {
+          scanned: 0,
+          failed: 0,
+          preservedPaused: 0,
+          preservedRunning: 0,
+          movedToPaused: 0,
+        };
+      },
+    });
+
+    await register();
+
+    expect(traces["rehydrate"]?.action).toBe("startup:rehydrate-conversations");
+    expect(traces["recover"]?.action).toBe(
+      "startup:recover-workflow-envelopes",
+    );
+    expect(traces["rehydrate"]?.traceId).toBeTypeOf("string");
+    expect(traces["recover"]?.traceId).toBeTypeOf("string");
+    expect(traces["rehydrate"]?.traceId).not.toBe(traces["recover"]?.traceId);
   });
 
   it("invokes envelope recovery and surfaces failures without breaking startup", async () => {

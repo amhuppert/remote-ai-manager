@@ -14,7 +14,7 @@
  * use.
  */
 import type { ScopedStatusEvent, SSEEvent } from "@/types";
-import { createLogger } from "@/lib/logging";
+import { createLogger, runAsTrace } from "@/lib/logging";
 import {
   createSessionStatusBus,
   publishScopedStatus,
@@ -55,7 +55,11 @@ function getDefaultSessionStatusBus(): SessionStatusBus {
 export function publishSessionStatus(
   event: SSEEvent,
 ): StatusBusDeliveryOutcome {
-  return publishScopedStatus(event, { bus: getDefaultSessionStatusBus() });
+  // Fresh root trace per broadcast so subscriber + wire work aggregates under
+  // `sse:broadcast:<type>` in Speedscope regardless of who called us.
+  return runAsTrace(`sse:broadcast:${event.type}`, () =>
+    publishScopedStatus(event, { bus: getDefaultSessionStatusBus() }),
+  );
 }
 
 export interface PublishScopedStatusEventInput {

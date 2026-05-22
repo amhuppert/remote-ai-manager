@@ -4,7 +4,7 @@ import { initialize as initNotificationDb } from "./lib/notification-db";
 import { setConfigReader } from "./lib/push-dispatcher";
 import { readConfig } from "./lib/config";
 import { getErrorMessage } from "@/lib/errors";
-import { createLogger } from "./lib/logging";
+import { createLogger, runAsTrace } from "./lib/logging";
 import { recoverActiveWorkflowEnvelopes } from "./lib/workflows/primitives/recover-workflow-envelopes";
 import { createSessionWorkflowEnvelopeRepositoryForProduction } from "./lib/workflows/primitives/default-session-workflow-envelope-store";
 
@@ -38,7 +38,10 @@ export function createStartupRegistrar(
     try {
       const { rehydrateConversationActors } =
         await deps.loadConversationManager();
-      const rehydrated = await rehydrateConversationActors();
+      const rehydrated = await runAsTrace(
+        "startup:rehydrate-conversations",
+        rehydrateConversationActors,
+      );
       if (rehydrated > 0) {
         logger.info("startup.rehydrated_conversation_actors", {
           count: rehydrated,
@@ -51,38 +54,42 @@ export function createStartupRegistrar(
     }
 
     try {
-      const envelopeSummary = await deps.recoverActiveWorkflowEnvelopes({
-        readState,
-        createRepository: ({ projectPath, sessionName }) =>
-          createSessionWorkflowEnvelopeRepositoryForProduction({
-            projectPath,
-            sessionName,
+      const envelopeSummary = await runAsTrace(
+        "startup:recover-workflow-envelopes",
+        () =>
+          deps.recoverActiveWorkflowEnvelopes({
+            readState,
+            createRepository: ({ projectPath, sessionName }) =>
+              createSessionWorkflowEnvelopeRepositoryForProduction({
+                projectPath,
+                sessionName,
+              }),
+            // Collaboration Mode runs in-process via `createCollaborationManager`,
+            // which fires `runCollaborationSlice` from a route handler and does not
+            // register the slice with any cross-process worker registry. A process
+            // restart therefore severs the slice; recovery surfaces this by
+            // marking previously-`running` envelopes `failed` with a restart
+            // errorSummary. Paused envelopes are recoverable and preserved so the
+            // UI can surface a resume affordance. Once an in-memory worker
+            // registry exists, swap this predicate for a lookup against it.
+            isWorkerActive: () => false,
+            // Collaboration envelopes are recoverable: we mark them `paused` with
+            // a synthetic resume token so the UI can surface a recovery action
+            // that triggers `manager.resume` and replays the slice from the last
+            // completed round. Other workflow types fall through to the default
+            // `markFailed` behavior.
+            resolveInactiveAction: ({ envelope }) => {
+              if (envelope.workflowType === "collaboration") {
+                return {
+                  kind: "preserve_paused",
+                  pauseGateKind: "human_approval",
+                  resumeToken: `recovery-${envelope.workflowId}`,
+                };
+              }
+              return { kind: "fail" };
+            },
           }),
-        // Collaboration Mode runs in-process via `createCollaborationManager`,
-        // which fires `runCollaborationSlice` from a route handler and does not
-        // register the slice with any cross-process worker registry. A process
-        // restart therefore severs the slice; recovery surfaces this by
-        // marking previously-`running` envelopes `failed` with a restart
-        // errorSummary. Paused envelopes are recoverable and preserved so the
-        // UI can surface a resume affordance. Once an in-memory worker
-        // registry exists, swap this predicate for a lookup against it.
-        isWorkerActive: () => false,
-        // Collaboration envelopes are recoverable: we mark them `paused` with
-        // a synthetic resume token so the UI can surface a recovery action
-        // that triggers `manager.resume` and replays the slice from the last
-        // completed round. Other workflow types fall through to the default
-        // `markFailed` behavior.
-        resolveInactiveAction: ({ envelope }) => {
-          if (envelope.workflowType === "collaboration") {
-            return {
-              kind: "preserve_paused",
-              pauseGateKind: "human_approval",
-              resumeToken: `recovery-${envelope.workflowId}`,
-            };
-          }
-          return { kind: "fail" };
-        },
-      });
+      );
       if (
         envelopeSummary.failed > 0 ||
         envelopeSummary.preservedPaused > 0 ||

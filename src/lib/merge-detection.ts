@@ -19,7 +19,7 @@ import { stopAllForSession as defaultStopAllForSession } from "./dev-server-regi
 import { retargetOrphanedChildren as defaultRetargetOrphanedChildren } from "./sessions";
 import type { BroadcastFn } from "./sse-broadcaster";
 import { publishSessionStatus } from "./workflows/primitives/default-session-status-bus";
-import { createLogger } from "./logging";
+import { createLogger, runAsTrace } from "./logging";
 import { getErrorMessage } from "@/lib/errors";
 import type { ManagerState, SessionFinishedEvent } from "@/types";
 
@@ -253,8 +253,12 @@ export async function startMergeDetection(
 
   logger.info("merge-detection.start", { intervalMs });
 
-  // Fire initial check immediately (fire-and-forget)
-  void checkAllSessionsForMerge().catch((err) => {
+  // Fire initial check immediately (fire-and-forget). Wrap in a fresh trace
+  // so all downstream `timed()` calls (readState, findAll, git ops) aggregate
+  // under `poll:merge-detection` in the Speedscope export.
+  void runAsTrace("poll:merge-detection", () =>
+    checkAllSessionsForMerge(deps),
+  ).catch((err) => {
     logger.error("merge-detection.initial_check_failed", {
       error: getErrorMessage(err),
     });
@@ -266,7 +270,9 @@ export async function startMergeDetection(
   // feeding a UI `useQuery`, so it cannot be hoisted to TanStack
   // `refetchInterval` — `setInterval` is the correct primitive here.
   const ref = setInterval(() => {
-    void checkAllSessionsForMerge().catch((err) => {
+    void runAsTrace("poll:merge-detection", () =>
+      checkAllSessionsForMerge(deps),
+    ).catch((err) => {
       logger.error("merge-detection.cycle_failed", {
         error: getErrorMessage(err),
       });

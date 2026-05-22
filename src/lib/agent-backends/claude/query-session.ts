@@ -20,7 +20,12 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { MessageContentBlock, ToolResultMetrics } from "@/types";
 import type { EffortLevel } from "@/lib/schemas";
-import { createLogger } from "@/lib/logging";
+import {
+  captureTraceContext,
+  createLogger,
+  runAsTrace,
+  type TraceContext,
+} from "@/lib/logging";
 import { extractContextTokens, extractContextWindow } from "@/lib/context-fill";
 import { parseToolResultMetrics } from "@/lib/parse-tool-result";
 import {
@@ -172,6 +177,12 @@ interface PendingTurn {
   /** Map from tool_use.id → tool name, for parsing tool_result metrics. */
   toolNamesById: Map<string, string>;
   structuredOutput?: unknown;
+  /**
+   * Snapshot of the caller's trace context at sendPrompt time. The pump uses
+   * this as the parent for each `sdk:turn:<conversationId>` wrap so downstream
+   * emit/log work folds into the originating request's Speedscope group.
+   */
+  traceContext: TraceContext | null;
 }
 
 // ============================================================
@@ -338,6 +349,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       isFirstPrompt,
     });
 
+    const callerTraceContext = captureTraceContext();
     return new Promise<TurnResult>((resolve, reject) => {
       pendingTurn = {
         resolve,
@@ -351,6 +363,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         contextWindow: null,
         contentBlocks: [],
         toolNamesById: new Map(),
+        traceContext: callerTraceContext,
       };
 
       if (isFirstPrompt) {
@@ -426,7 +439,12 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   async function runPump(): Promise<void> {
     try {
       for await (const message of q) {
-        processMessage(message);
+        const parent = pendingTurn?.traceContext ?? null;
+        runAsTrace(
+          `sdk:turn:${options.conversationId}`,
+          () => processMessage(message),
+          parent,
+        );
       }
       // Generator completed normally (subprocess exited cleanly)
       if (status === "alive") {
@@ -676,6 +694,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         contextWindow: null,
         contentBlocks: [],
         toolNamesById: new Map(),
+        traceContext: null,
       };
 
       logger.info("query-session.external_turn_started", {

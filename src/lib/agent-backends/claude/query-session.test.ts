@@ -5,6 +5,11 @@ import {
   isSessionDiedMidTurnError,
   isSdkPipeBrokenError,
 } from "./query-session-errors";
+import {
+  getTraceContext,
+  runWithTrace,
+  type TraceContext,
+} from "@/lib/logging";
 
 // ---------------------------------------------------------------------------
 // Mock the SDK
@@ -2333,5 +2338,106 @@ describe("QuerySession externalTurnHandler (auto-continuation)", () => {
 
     expect(externalOnComplete).not.toHaveBeenCalled();
     expect(session.status).toBe("dead");
+  });
+});
+
+describe("createQuerySession — trace context propagation", () => {
+  it("runs each turn's message processing under sdk:turn:<conversationId>, inheriting the caller's traceId so downstream emit work groups with the request", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(
+      makeDefaultOptions({ conversationId: "conv-trace-xyz" }),
+    );
+
+    const captured: TraceContext[] = [];
+    const emit = vi.fn(() => {
+      const ctx = getTraceContext();
+      if (ctx) captured.push(ctx);
+    });
+
+    const parent: TraceContext = {
+      traceId: "parent-request-trace",
+      action: "request:POST /api/conversations/prompt",
+      projectName: "p",
+      sessionName: "s",
+      conversationId: "conv-trace-xyz",
+    };
+
+    const turnPromise = runWithTrace(parent, () =>
+      session.sendPrompt("Hello", emit),
+    );
+
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-trace",
+      uuid: "u1",
+      message: { content: [{ type: "text", text: "Reply" }] },
+    } as unknown as SDKMessage);
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-trace",
+      uuid: "u2",
+      total_cost_usd: 0,
+      duration_ms: 1,
+      num_turns: 1,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+
+    await turnPromise;
+
+    expect(captured.length).toBeGreaterThan(0);
+    expect(captured[0]?.action).toBe("sdk:turn:conv-trace-xyz");
+    expect(captured[0]?.traceId).toBe("parent-request-trace");
+
+    session.close();
+  });
+
+  it("mints a fresh sdk:turn:<conversationId> trace when there is no caller scope (autonomous/background-initiated turns)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(
+      makeDefaultOptions({ conversationId: "conv-trace-fresh" }),
+    );
+
+    const captured: TraceContext[] = [];
+    const emit = vi.fn(() => {
+      const ctx = getTraceContext();
+      if (ctx) captured.push(ctx);
+    });
+
+    const turnPromise = session.sendPrompt("Hello", emit);
+
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-trace-2",
+      uuid: "u1",
+      message: { content: [{ type: "text", text: "Reply" }] },
+    } as unknown as SDKMessage);
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-trace-2",
+      uuid: "u2",
+      total_cost_usd: 0,
+      duration_ms: 1,
+      num_turns: 1,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+
+    await turnPromise;
+
+    expect(captured.length).toBeGreaterThan(0);
+    expect(captured[0]?.action).toBe("sdk:turn:conv-trace-fresh");
+    expect(captured[0]?.traceId).toBeTypeOf("string");
+    expect(captured[0]?.traceId.length).toBeGreaterThan(0);
+
+    session.close();
   });
 });

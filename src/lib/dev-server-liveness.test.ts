@@ -3,6 +3,7 @@ import { getGlobalSingleton } from "./global-singleton";
 import type { DevServerEntry } from "./dev-server-registry";
 import * as liveness from "./dev-server-liveness";
 import { setLivenessDeps, type LivenessDeps } from "./dev-server-liveness";
+import { getTraceContext, type TraceContext } from "./logging";
 import type {
   PortOwnershipInput,
   PortOwnershipResult,
@@ -195,5 +196,30 @@ describe("LivenessPoller", () => {
     // The poller should have auto-stopped since no active servers
     // Verify by checking that further ticks don't cause errors
     await vi.advanceTimersByTimeAsync(10_000);
+  });
+
+  it("runs each poll cycle inside a poll:dev-server-liveness trace", async () => {
+    const reg = getRegistryMap();
+    const captured: (TraceContext | undefined)[] = [];
+    mockClassifyPortOwnership.mockImplementation(async () => {
+      captured.push(getTraceContext());
+      return { status: "owned", pid: 1, cwd: "/tmp" };
+    });
+
+    const entry = createMockEntry({ port: 3000, status: "running" });
+    reg.set("/proj::s1::web", entry);
+
+    liveness.start();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(captured.length).toBeGreaterThanOrEqual(2);
+    for (const ctx of captured) {
+      expect(ctx?.action).toBe("poll:dev-server-liveness");
+      expect(ctx?.traceId).toBeTypeOf("string");
+    }
+    // Each cycle should mint a fresh traceId.
+    const ids = captured.map((c) => c?.traceId).filter(Boolean) as string[];
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });

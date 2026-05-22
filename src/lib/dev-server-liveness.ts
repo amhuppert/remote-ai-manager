@@ -1,4 +1,4 @@
-import { createLogger } from "./logging";
+import { createLogger, runAsTrace } from "./logging";
 import type { BroadcastFn } from "./sse-broadcaster";
 import { publishSessionStatus } from "./workflows/primitives/default-session-status-bus";
 import * as tailscale from "./tailscale";
@@ -144,13 +144,23 @@ async function poll(): Promise<void> {
   }
 
   // Schedule next poll (setTimeout chain for async safety)
-  setTimerId(setTimeout(() => void poll(), POLL_INTERVAL_MS));
+  setTimerId(
+    setTimeout(
+      () => void runAsTrace("poll:dev-server-liveness", poll),
+      POLL_INTERVAL_MS,
+    ),
+  );
 }
 
 /** Start the polling loop. Idempotent — calling when already running is a no-op. */
 export function start(): void {
   if (getTimerId() !== null) return;
-  setTimerId(setTimeout(() => void poll(), POLL_INTERVAL_MS));
+  setTimerId(
+    setTimeout(
+      () => void runAsTrace("poll:dev-server-liveness", poll),
+      POLL_INTERVAL_MS,
+    ),
+  );
 }
 
 /** Stop the polling loop. */

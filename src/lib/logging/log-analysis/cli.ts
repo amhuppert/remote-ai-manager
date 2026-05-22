@@ -1,0 +1,470 @@
+import { readFile, writeFile } from "node:fs/promises";
+import { parseArgs } from "node:util";
+import { buildTrace } from "@/lib/logging/speedscope-export";
+import { createLogger } from "@/lib/logging";
+import { buildLogComparisonReport } from "./analyses/compare";
+import { analyzeTrace } from "./analyses/trace";
+import {
+  resolveDefaultServerLogPath,
+  type ResolvedServerLogPath,
+} from "./default-paths";
+import { applyServerLogFilters } from "./filters";
+import {
+  renderComparisonMarkdown,
+  renderLogAnalysisMarkdown,
+  renderTraceAnalysisMarkdown,
+} from "./markdown";
+import { parseServerLogLines } from "./parser";
+import { buildLogAnalysisReport, type ReportParseStats } from "./report";
+import type {
+  AgentLogAnalysisReport,
+  AgentLogComparisonReport,
+  AgentTraceAnalysisReport,
+} from "./schemas";
+import { clampTop } from "./stats";
+import type { LogAnalysisFilters, LogAnalysisThresholds } from "./types";
+
+const logger = createLogger("log-analysis");
+
+export interface LogAnalysisCliRuntime {
+  env: Record<string, string | undefined>;
+  cwd(): string;
+  stdout: { write(chunk: string): unknown };
+  stderr: { write(chunk: string): unknown };
+  readFile?(filePath: string): Promise<string> | string;
+  writeFile?(filePath: string, content: string): Promise<void> | void;
+  resolveDefaultServerLogPath?():
+    | Promise<ResolvedServerLogPath>
+    | ResolvedServerLogPath;
+  now?(): string;
+}
+
+interface ParsedCliOptions {
+  command: "report" | "trace" | "compare";
+  traceId?: string;
+  inPath?: string;
+  beforePath?: string;
+  afterPath?: string;
+  clientLogPath?: string;
+  format: "json" | "markdown";
+  outPath?: string;
+  markdownOutPath?: string;
+  speedscopeOutPath?: string;
+  pretty: boolean;
+  filters: LogAnalysisFilters;
+  thresholds: LogAnalysisThresholds;
+}
+
+const HELP_TEXT = `Usage: bun run logs:analyze -- <command> [options]
+
+Commands:
+  report              Analyze one server log (default)
+  trace <traceId>     Deep-dive one trace
+  compare             Compare --before and --after logs
+
+Options:
+  --in <path>
+  --before <path>
+  --after <path>
+  --client-log <path>
+  --format <json|markdown>
+  --out <path>
+  --markdown-out <path>
+  --speedscope-out <path>
+  --since <iso>
+  --until <iso>
+  --projectName <name>
+  --sessionName <name>
+  --conversationId <id>
+  --path <api-path>
+  --action <action>
+  --top <n>
+  --slow-ms <n>
+  --hotspot-ms <n>
+  --include-self
+  --pretty
+`;
+
+function writeStderr(runtime: LogAnalysisCliRuntime, message: string): void {
+  runtime.stderr.write(message.endsWith("\n") ? message : `${message}\n`);
+}
+
+function dateOptionMs(
+  name: "--since" | "--until",
+  value: string | undefined,
+): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`invalid ${name}: ${value}`);
+  }
+  return parsed;
+}
+
+function numberOption(value: string | undefined, defaultValue: number): number {
+  if (value === undefined) return defaultValue;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : defaultValue;
+}
+
+function parseCliOptions(args: readonly string[]): ParsedCliOptions | "help" {
+  const parsed = parseArgs({
+    args,
+    allowPositionals: true,
+    options: {
+      in: { type: "string" },
+      before: { type: "string" },
+      after: { type: "string" },
+      "client-log": { type: "string" },
+      format: { type: "string", default: "json" },
+      out: { type: "string" },
+      "markdown-out": { type: "string" },
+      "speedscope-out": { type: "string" },
+      since: { type: "string" },
+      until: { type: "string" },
+      projectName: { type: "string" },
+      sessionName: { type: "string" },
+      conversationId: { type: "string" },
+      path: { type: "string" },
+      action: { type: "string" },
+      top: { type: "string" },
+      "slow-ms": { type: "string" },
+      "hotspot-ms": { type: "string" },
+      "include-self": { type: "boolean", default: false },
+      pretty: { type: "boolean", default: false },
+      help: { type: "boolean", short: "h", default: false },
+    },
+  });
+
+  if (parsed.values.help === true) return "help";
+
+  const command = (parsed.positionals[0] ?? "report") as string;
+  if (command !== "report" && command !== "trace" && command !== "compare") {
+    throw new Error(`unknown command: ${command}`);
+  }
+
+  const format = parsed.values.format;
+  if (format !== "json" && format !== "markdown") {
+    throw new Error(`invalid --format: ${String(format)}`);
+  }
+
+  return {
+    command,
+    ...(parsed.positionals[1] !== undefined
+      ? { traceId: parsed.positionals[1] }
+      : {}),
+    ...(parsed.values.in !== undefined ? { inPath: parsed.values.in } : {}),
+    ...(parsed.values.before !== undefined
+      ? { beforePath: parsed.values.before }
+      : {}),
+    ...(parsed.values.after !== undefined
+      ? { afterPath: parsed.values.after }
+      : {}),
+    ...(parsed.values["client-log"] !== undefined
+      ? { clientLogPath: parsed.values["client-log"] }
+      : {}),
+    format,
+    ...(parsed.values.out !== undefined ? { outPath: parsed.values.out } : {}),
+    ...(parsed.values["markdown-out"] !== undefined
+      ? { markdownOutPath: parsed.values["markdown-out"] }
+      : {}),
+    ...(parsed.values["speedscope-out"] !== undefined
+      ? { speedscopeOutPath: parsed.values["speedscope-out"] }
+      : {}),
+    pretty: parsed.values.pretty === true,
+    filters: {
+      ...(dateOptionMs("--since", parsed.values.since) !== undefined
+        ? { sinceMs: dateOptionMs("--since", parsed.values.since) }
+        : {}),
+      ...(dateOptionMs("--until", parsed.values.until) !== undefined
+        ? { untilMs: dateOptionMs("--until", parsed.values.until) }
+        : {}),
+      ...(parsed.values.projectName !== undefined
+        ? { projectName: parsed.values.projectName }
+        : {}),
+      ...(parsed.values.sessionName !== undefined
+        ? { sessionName: parsed.values.sessionName }
+        : {}),
+      ...(parsed.values.conversationId !== undefined
+        ? { conversationId: parsed.values.conversationId }
+        : {}),
+      ...(parsed.values.path !== undefined ? { path: parsed.values.path } : {}),
+      ...(parsed.values.action !== undefined
+        ? { action: parsed.values.action }
+        : {}),
+      includeSelf: parsed.values["include-self"] === true,
+    },
+    thresholds: {
+      slowMs: numberOption(parsed.values["slow-ms"], 500),
+      hotspotMs: numberOption(parsed.values["hotspot-ms"], 1000),
+      top: clampTop(numberOption(parsed.values.top, 10)),
+    },
+  };
+}
+
+async function readText(
+  runtime: LogAnalysisCliRuntime,
+  filePath: string,
+): Promise<string> {
+  if (runtime.readFile) return await runtime.readFile(filePath);
+  return await readFile(filePath, "utf-8");
+}
+
+async function writeText(
+  runtime: LogAnalysisCliRuntime,
+  filePath: string,
+  content: string,
+): Promise<void> {
+  if (runtime.writeFile) {
+    await runtime.writeFile(filePath, content);
+    return;
+  }
+  await writeFile(filePath, content);
+}
+
+async function resolveInputPath(
+  runtime: LogAnalysisCliRuntime,
+  explicitPath: string | undefined,
+): Promise<ResolvedServerLogPath> {
+  if (explicitPath !== undefined) {
+    return { path: explicitPath, checkedPaths: [explicitPath] };
+  }
+  if (runtime.resolveDefaultServerLogPath) {
+    return await runtime.resolveDefaultServerLogPath();
+  }
+  return await resolveDefaultServerLogPath();
+}
+
+function parseLog(raw: string): {
+  records: ReturnType<typeof parseServerLogLines>["records"];
+  parseStats: ReportParseStats;
+} {
+  const parsed = parseServerLogLines(raw.split(/\r?\n/));
+  return {
+    records: parsed.records,
+    parseStats: {
+      malformedLineCount: parsed.malformedLineCount,
+      invalidTimestampCount: parsed.invalidTimestampCount,
+      invalidShapeCount: parsed.invalidShapeCount,
+    },
+  };
+}
+
+function stringifyJson(value: unknown, pretty: boolean): string {
+  return `${JSON.stringify(value, null, pretty ? 2 : 0)}\n`;
+}
+
+function asUnknownRecord<T extends object>(value: T): Record<string, unknown> {
+  const record: Record<string, unknown> = {};
+  for (const [key, entryValue] of Object.entries(value)) {
+    record[key] = entryValue;
+  }
+  return record;
+}
+
+function asUnknownRecords<T extends object>(
+  values: readonly T[],
+): Record<string, unknown>[] {
+  return values.map(asUnknownRecord);
+}
+
+async function emitOutput(
+  runtime: LogAnalysisCliRuntime,
+  options: ParsedCliOptions,
+  report:
+    | AgentLogAnalysisReport
+    | AgentTraceAnalysisReport
+    | AgentLogComparisonReport,
+  markdown: string,
+): Promise<void> {
+  const primary =
+    options.format === "json"
+      ? stringifyJson(report, options.pretty)
+      : markdown;
+  if (options.outPath) {
+    await writeText(runtime, options.outPath, primary);
+  } else {
+    runtime.stdout.write(primary);
+  }
+
+  if (options.markdownOutPath) {
+    await writeText(runtime, options.markdownOutPath, markdown);
+  }
+}
+
+async function maybeWriteSpeedscope(input: {
+  runtime: LogAnalysisCliRuntime;
+  options: ParsedCliOptions;
+  rawLog: string;
+  traceId?: string;
+}): Promise<void> {
+  if (!input.options.speedscopeOutPath) return;
+  const trace = buildTrace(input.rawLog.split(/\r?\n/), {
+    ...(input.traceId !== undefined ? { traceId: input.traceId } : {}),
+    ...(input.options.filters.sinceMs !== undefined
+      ? { sinceMs: input.options.filters.sinceMs }
+      : {}),
+  });
+  await writeText(
+    input.runtime,
+    input.options.speedscopeOutPath,
+    JSON.stringify(trace),
+  );
+}
+
+async function runReport(
+  runtime: LogAnalysisCliRuntime,
+  options: ParsedCliOptions,
+): Promise<number> {
+  const resolved = await resolveInputPath(runtime, options.inPath);
+  const rawLog = await readText(runtime, resolved.path);
+  const clientLogRaw = options.clientLogPath
+    ? await readText(runtime, options.clientLogPath)
+    : null;
+  const parsed = parseLog(rawLog);
+  const filtered = applyServerLogFilters(parsed.records, options.filters);
+  if (filtered.length === 0) {
+    writeStderr(runtime, "no usable records after parsing and filtering");
+    return 3;
+  }
+
+  const report = buildLogAnalysisReport({
+    records: parsed.records,
+    parseStats: parsed.parseStats,
+    filters: options.filters,
+    thresholds: options.thresholds,
+    input: { serverLogPath: resolved.path },
+    generatedAt: runtime.now?.() ?? new Date().toISOString(),
+    clientLogRaw,
+  });
+  await emitOutput(runtime, options, report, renderLogAnalysisMarkdown(report));
+  await maybeWriteSpeedscope({ runtime, options, rawLog });
+  return 0;
+}
+
+async function runTrace(
+  runtime: LogAnalysisCliRuntime,
+  options: ParsedCliOptions,
+): Promise<number> {
+  if (!options.traceId) {
+    writeStderr(runtime, "trace requires a traceId");
+    return 2;
+  }
+
+  const resolved = await resolveInputPath(runtime, options.inPath);
+  const rawLog = await readText(runtime, resolved.path);
+  const parsed = parseLog(rawLog);
+  const filtered = applyServerLogFilters(parsed.records, options.filters);
+  if (!filtered.some((record) => record.traceId === options.traceId)) {
+    writeStderr(runtime, `trace not found: ${options.traceId}`);
+    return 3;
+  }
+
+  const traceAnalysis = analyzeTrace(
+    filtered,
+    options.traceId,
+    options.thresholds,
+  );
+  const report: AgentTraceAnalysisReport = {
+    schemaVersion: 1,
+    generatedAt: runtime.now?.() ?? new Date().toISOString(),
+    command: "trace",
+    traceId: options.traceId,
+    request: traceAnalysis.request,
+    summary: traceAnalysis.summary,
+    timeline: asUnknownRecords(traceAnalysis.timeline),
+    inclusiveSpans: asUnknownRecords(traceAnalysis.inclusiveSpans),
+    exclusiveSpans: asUnknownRecords(traceAnalysis.exclusiveSpans),
+    duplicateWork: asUnknownRecords(traceAnalysis.duplicateWork),
+    warningsAndErrors: asUnknownRecords(traceAnalysis.warningsAndErrors),
+    unexplainedTime: asUnknownRecord(traceAnalysis.unexplainedTime),
+    findings: traceAnalysis.findings,
+    artifacts: [],
+  };
+  await emitOutput(
+    runtime,
+    options,
+    report,
+    renderTraceAnalysisMarkdown(report),
+  );
+  await maybeWriteSpeedscope({
+    runtime,
+    options,
+    rawLog,
+    traceId: options.traceId,
+  });
+  return 0;
+}
+
+async function runCompare(
+  runtime: LogAnalysisCliRuntime,
+  options: ParsedCliOptions,
+): Promise<number> {
+  if (!options.beforePath || !options.afterPath) {
+    writeStderr(runtime, "--before and --after are required for compare");
+    return 2;
+  }
+
+  const beforeRaw = await readText(runtime, options.beforePath);
+  const afterRaw = await readText(runtime, options.afterPath);
+  const beforeParsed = parseLog(beforeRaw);
+  const afterParsed = parseLog(afterRaw);
+  const report = buildLogComparisonReport({
+    beforeRecords: beforeParsed.records,
+    afterRecords: afterParsed.records,
+    filters: options.filters,
+    thresholds: options.thresholds,
+    beforeInput: { serverLogPath: options.beforePath },
+    afterInput: { serverLogPath: options.afterPath },
+    generatedAt: runtime.now?.() ?? new Date().toISOString(),
+  });
+  await emitOutput(runtime, options, report, renderComparisonMarkdown(report));
+  await maybeWriteSpeedscope({ runtime, options, rawLog: afterRaw });
+  return 0;
+}
+
+export async function runLogAnalysisCli(
+  args: readonly string[],
+  runtime: LogAnalysisCliRuntime,
+): Promise<number> {
+  const start = Date.now();
+  let command = "unknown";
+  try {
+    const options = parseCliOptions(args);
+    if (options === "help") {
+      runtime.stdout.write(HELP_TEXT);
+      return 0;
+    }
+    command = options.command;
+    logger.info("log_analysis.start", {
+      command,
+      format: options.format,
+      filters: options.filters,
+    });
+
+    let exitCode: number;
+    if (options.command === "report") {
+      exitCode = await runReport(runtime, options);
+    } else if (options.command === "trace") {
+      exitCode = await runTrace(runtime, options);
+    } else {
+      exitCode = await runCompare(runtime, options);
+    }
+
+    logger.info("log_analysis.complete", {
+      command,
+      durationMs: Date.now() - start,
+      exitCode,
+    });
+    return exitCode;
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    logger.error("log_analysis.error", {
+      command,
+      durationMs: Date.now() - start,
+      error,
+    });
+    writeStderr(runtime, error);
+    return error.startsWith("invalid") || error.startsWith("unknown") ? 2 : 1;
+  }
+}

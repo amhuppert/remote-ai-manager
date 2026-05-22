@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildTrace, parseTimedLogLine } from "./perfetto-export";
+import { buildTrace, parseTimedLogLine } from "./speedscope-export";
 
 function logLine(entry: Record<string, unknown>): string {
   return JSON.stringify(entry);
@@ -85,7 +85,60 @@ describe("buildTrace", () => {
     });
   });
 
-  it("emits one duration event per timed-complete log, with args from extra fields", () => {
+  it("places all duration events on a single aggregated tid for whole-app flamegraph aggregation", () => {
+    const trace = buildTrace([
+      logLine({
+        timestamp: T1,
+        level: "info",
+        module: "git",
+        message: "git.complete",
+        durationMs: 10,
+        traceId: "trace-A",
+      }),
+      logLine({
+        timestamp: T2,
+        level: "info",
+        module: "diff",
+        message: "diff.compute.complete",
+        durationMs: 20,
+        traceId: "trace-B",
+      }),
+      logLine({
+        timestamp: T2,
+        level: "info",
+        module: "poll",
+        message: "poll.tick",
+        durationMs: 5,
+      }),
+    ]);
+
+    const duration = trace.traceEvents.filter((e) => e.ph === "X");
+    expect(duration).toHaveLength(3);
+    const tids = new Set(duration.map((e) => e.tid));
+    expect(tids.size).toBe(1);
+    expect(tids.has(0)).toBe(false);
+  });
+
+  it("labels the aggregated thread", () => {
+    const trace = buildTrace([
+      logLine({
+        timestamp: T1,
+        level: "info",
+        module: "git",
+        message: "git.complete",
+        durationMs: 10,
+        traceId: "trace-A",
+      }),
+    ]);
+
+    const threadName = trace.traceEvents.find(
+      (e) => e.ph === "M" && e.name === "thread_name",
+    );
+    expect(threadName).toBeDefined();
+    expect(threadName?.args).toEqual({ name: "aggregated" });
+  });
+
+  it("preserves traceId, action, and extra fields in args", () => {
     const trace = buildTrace([
       logLine({
         timestamp: T1,
@@ -106,9 +159,7 @@ describe("buildTrace", () => {
     expect(event.name).toBe("diff.compute.complete");
     expect(event.cat).toBe("diff");
     expect(event.pid).toBe(1);
-    expect(event.tid).toBeGreaterThan(0);
     expect(event.dur).toBe(500_000);
-    expect(event.ts).toBe((Date.parse(T1) - 500) * 1000);
     expect(event.args).toEqual({
       traceId: "trace-1",
       action: "GET /api/diff",
@@ -117,14 +168,17 @@ describe("buildTrace", () => {
     });
   });
 
-  it("places entries sharing a traceId on the same tid, and different traceIds on different tids", () => {
+  it("serializes traces end-to-end so the total span sums per-trace durations", () => {
+    // Two non-overlapping traces in wall-clock, each with one event.
+    // Serialized span should equal sum of durations (not max), proving
+    // groups are placed back-to-back rather than overlapping.
     const trace = buildTrace([
       logLine({
         timestamp: T1,
         level: "info",
         module: "git",
         message: "git.complete",
-        durationMs: 10,
+        durationMs: 100,
         traceId: "trace-A",
       }),
       logLine({
@@ -132,87 +186,112 @@ describe("buildTrace", () => {
         level: "info",
         module: "diff",
         message: "diff.compute.complete",
-        durationMs: 20,
-        traceId: "trace-A",
-      }),
-      logLine({
-        timestamp: T2,
-        level: "info",
-        module: "git",
-        message: "git.complete",
-        durationMs: 5,
+        durationMs: 200,
         traceId: "trace-B",
       }),
     ]);
 
     const duration = trace.traceEvents.filter((e) => e.ph === "X");
-    expect(duration).toHaveLength(3);
-
-    const tidByMessage = new Map<string, number[]>();
-    for (const e of duration) {
-      const key = `${e.name}@${e.cat}`;
-      const list = tidByMessage.get(key) ?? [];
-      list.push(e.tid);
-      tidByMessage.set(key, list);
-    }
-
-    const traceAEvents = duration.filter(
-      (e) => (e.args as { traceId: string }).traceId === "trace-A",
-    );
-    const traceBEvents = duration.filter(
-      (e) => (e.args as { traceId: string }).traceId === "trace-B",
-    );
-
-    expect(new Set(traceAEvents.map((e) => e.tid)).size).toBe(1);
-    expect(new Set(traceBEvents.map((e) => e.tid)).size).toBe(1);
-    expect(traceAEvents[0]!.tid).not.toBe(traceBEvents[0]!.tid);
+    expect(duration).toHaveLength(2);
+    const minTs = Math.min(...duration.map((e) => e.ts));
+    const maxEnd = Math.max(...duration.map((e) => e.ts + (e.dur ?? 0)));
+    expect(maxEnd - minTs).toBe(300_000);
   });
 
-  it("emits a thread_name metadata event labeled by action and short trace id", () => {
+  it("preserves within-trace nesting: child sits inside parent in virtual time", () => {
+    // Parent spans T0..T0+100ms; child spans T0+10..T0+30ms.
+    // After serialization, child.ts should be parent.ts + 10ms and
+    // child end <= parent end.
+    const parentEnd = "2026-05-21T12:00:00.100Z";
+    const childEnd = "2026-05-21T12:00:00.030Z";
+
     const trace = buildTrace([
       logLine({
-        timestamp: T1,
+        timestamp: parentEnd,
         level: "info",
-        module: "git",
-        message: "git.complete",
-        durationMs: 10,
-        traceId: "abcdef1234567890",
-        action: "POST /api/sessions",
+        module: "handler",
+        message: "handler.complete",
+        durationMs: 100,
+        traceId: "trace-A",
+      }),
+      logLine({
+        timestamp: childEnd,
+        level: "info",
+        module: "db",
+        message: "db.read",
+        durationMs: 20,
+        traceId: "trace-A",
       }),
     ]);
 
-    const threadName = trace.traceEvents.find(
-      (e) => e.ph === "M" && e.name === "thread_name",
+    const duration = trace.traceEvents.filter((e) => e.ph === "X");
+    const parent = duration.find((e) => e.name === "handler.complete");
+    const child = duration.find((e) => e.name === "db.read");
+    expect(parent).toBeDefined();
+    expect(child).toBeDefined();
+    expect(child!.ts).toBe(parent!.ts + 10_000);
+    expect(child!.ts + (child!.dur ?? 0)).toBeLessThanOrEqual(
+      parent!.ts + (parent!.dur ?? 0),
     );
-    expect(threadName).toBeDefined();
-    expect(threadName?.args).toEqual({ name: "POST /api/sessions (abcdef12)" });
   });
 
-  it("routes entries without traceId to a shared 'background' track at tid 0", () => {
+  it("promotes overlapping-but-not-nested siblings to roots within the same group", () => {
+    // Two events in same traceId that overlap as siblings (e.g. Promise.all).
+    // Each ends at T2 but with different durations, so neither contains the other.
+    // Result: both should be roots, serialized back-to-back, no nesting.
+    const trace = buildTrace([
+      logLine({
+        timestamp: "2026-05-21T12:00:00.100Z",
+        level: "info",
+        module: "a",
+        message: "a.complete",
+        durationMs: 60, // starts at T+40ms
+        traceId: "trace-A",
+      }),
+      logLine({
+        timestamp: "2026-05-21T12:00:00.120Z",
+        level: "info",
+        module: "b",
+        message: "b.complete",
+        durationMs: 50, // starts at T+70ms — overlaps a but ends later
+        traceId: "trace-A",
+      }),
+    ]);
+
+    const duration = trace.traceEvents.filter((e) => e.ph === "X");
+    expect(duration).toHaveLength(2);
+    const a = duration.find((e) => e.name === "a.complete")!;
+    const b = duration.find((e) => e.name === "b.complete")!;
+    // a was promoted as the first root, b as the second root, back-to-back
+    expect(b.ts).toBeGreaterThanOrEqual(a.ts + (a.dur ?? 0));
+  });
+
+  it("treats each background entry as its own group", () => {
+    // Two concurrent background polls; they should be serialized one after
+    // the other rather than collapsed into a single parent/child pair.
     const trace = buildTrace([
       logLine({
         timestamp: T1,
         level: "info",
-        module: "init-script",
-        message: "init-script.complete",
+        module: "poll",
+        message: "poll.tick",
         durationMs: 200,
       }),
       logLine({
-        timestamp: T2,
+        timestamp: T1,
         level: "info",
-        module: "tailscale",
-        message: "tailscale.complete",
+        module: "poll",
+        message: "poll.tick",
         durationMs: 50,
       }),
     ]);
 
     const duration = trace.traceEvents.filter((e) => e.ph === "X");
-    expect(duration.every((e) => e.tid === 0)).toBe(true);
-
-    const backgroundLabel = trace.traceEvents.find(
-      (e) => e.ph === "M" && e.name === "thread_name" && e.tid === 0,
+    expect(duration).toHaveLength(2);
+    const sortedByTs = [...duration].sort((a, b) => a.ts - b.ts);
+    expect(sortedByTs[1]!.ts).toBeGreaterThanOrEqual(
+      sortedByTs[0]!.ts + (sortedByTs[0]!.dur ?? 0),
     );
-    expect(backgroundLabel?.args).toEqual({ name: "background" });
   });
 
   it("filters by traceId when options.traceId is set", () => {
