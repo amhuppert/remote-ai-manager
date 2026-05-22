@@ -505,6 +505,27 @@ export function deleteAllNotifications(): number {
   return result.changes;
 }
 
+export function deleteNotificationsForSession(
+  projectName: string,
+  sessionName: string,
+): number {
+  const db = getStateDb();
+  const result = db
+    .prepare(
+      "DELETE FROM notifications WHERE project_name = ? AND session_name = ?",
+    )
+    .run(projectName, sessionName);
+  return result.changes;
+}
+
+export function deleteNotificationsForProject(projectName: string): number {
+  const db = getStateDb();
+  const result = db
+    .prepare("DELETE FROM notifications WHERE project_name = ?")
+    .run(projectName);
+  return result.changes;
+}
+
 export function getUnreadCount(): number {
   const db = getStateDb();
   const row = db
@@ -581,6 +602,27 @@ export function updateJobRecord(jobId: string, update: JobRecordUpdate): void {
       );
     },
   );
+}
+
+export function deleteJobRecordsForSession(
+  projectName: string,
+  sessionName: string,
+): number {
+  const db = getStateDb();
+  const result = db
+    .prepare(
+      "DELETE FROM job_records WHERE project_name = ? AND session_name = ?",
+    )
+    .run(projectName, sessionName);
+  return result.changes;
+}
+
+export function deleteJobRecordsForProject(projectName: string): number {
+  const db = getStateDb();
+  const result = db
+    .prepare("DELETE FROM job_records WHERE project_name = ?")
+    .run(projectName);
+  return result.changes;
 }
 
 // ============================================================

@@ -80,6 +80,27 @@ export function createDiscoveryService(
         });
       }
 
+      // Surface state-only (orphan) projects so they can be deleted from the UI.
+      const discoveredPaths = new Set(projects.map((p) => p.path));
+      for (const [statePath, projectState] of Object.entries(state.projects)) {
+        if (discoveredPaths.has(statePath)) continue;
+        if (existsSync(statePath)) continue;
+
+        const sessions = Object.values(projectState.sessions);
+        const nonArchivedSessions = sessions.filter((s) => !s.archived);
+        const hasRunningSession = nonArchivedSessions.some(
+          (s) => deriveSessionStatus(s) === "running",
+        );
+
+        projects.push({
+          name: path.basename(statePath),
+          path: statePath,
+          activeSessions: nonArchivedSessions.length,
+          hasRunningSession,
+          missing: true,
+        });
+      }
+
       // Sort: projects with active sessions first, then alphabetical
       projects.sort((a, b) => {
         if (a.activeSessions > 0 && b.activeSessions === 0) return -1;

@@ -13,6 +13,10 @@ import {
   notificationExists,
   deriveNotificationType,
   deriveNotificationTitle,
+  deleteNotificationsForSession,
+  deleteJobRecordsForSession,
+  deleteNotificationsForProject,
+  deleteJobRecordsForProject,
   _createTestDb,
   _installTestDb,
   _resetForTesting,
@@ -424,6 +428,168 @@ describe("cleanupOldNotifications", () => {
     const cleaned = cleanupOldNotifications(7);
     expect(cleaned).toBe(0);
     expect(getNotifications().total).toBe(1);
+  });
+});
+
+// ============================================================
+// Bulk delete by session / project
+// ============================================================
+
+describe("deleteNotificationsForSession", () => {
+  it("removes only notifications matching the project+session pair", () => {
+    createTestNotification({
+      projectName: "proj-a",
+      sessionName: "keep",
+      jobId: "job-keep",
+    });
+    createTestNotification({
+      projectName: "proj-a",
+      sessionName: "doomed",
+      jobId: "job-doomed-1",
+    });
+    createTestNotification({
+      projectName: "proj-a",
+      sessionName: "doomed",
+      jobId: "job-doomed-2",
+    });
+    createTestNotification({
+      projectName: "proj-b",
+      sessionName: "doomed",
+      jobId: "job-other-project",
+    });
+
+    const deleted = deleteNotificationsForSession("proj-a", "doomed");
+
+    expect(deleted).toBe(2);
+    const remaining = getNotifications().notifications.map((n) => n.jobId);
+    expect(remaining.sort()).toEqual(["job-keep", "job-other-project"]);
+  });
+
+  it("returns 0 when no rows match", () => {
+    createTestNotification({ projectName: "p", sessionName: "s" });
+    expect(deleteNotificationsForSession("p", "missing")).toBe(0);
+    expect(getNotifications().total).toBe(1);
+  });
+});
+
+describe("deleteJobRecordsForSession", () => {
+  it("removes only job_records matching the project+session pair", () => {
+    createJobRecord({
+      jobId: "keep-1",
+      jobType: "merge",
+      status: "completed",
+      projectName: "proj-a",
+      sessionName: "keep",
+      branchName: "csm/keep",
+      startedAt: new Date().toISOString(),
+    });
+    createJobRecord({
+      jobId: "doomed-1",
+      jobType: "merge",
+      status: "completed",
+      projectName: "proj-a",
+      sessionName: "doomed",
+      branchName: "csm/doomed",
+      startedAt: new Date().toISOString(),
+    });
+    createJobRecord({
+      jobId: "doomed-2",
+      jobType: "commit",
+      status: "completed",
+      projectName: "proj-a",
+      sessionName: "doomed",
+      branchName: "csm/doomed",
+      startedAt: new Date().toISOString(),
+    });
+    createJobRecord({
+      jobId: "other-project",
+      jobType: "merge",
+      status: "completed",
+      projectName: "proj-b",
+      sessionName: "doomed",
+      branchName: "csm/doomed",
+      startedAt: new Date().toISOString(),
+    });
+
+    const deleted = deleteJobRecordsForSession("proj-a", "doomed");
+
+    expect(deleted).toBe(2);
+    const db = getSharedStateDb();
+    const survivors = db
+      .prepare("SELECT job_id FROM job_records ORDER BY job_id")
+      .all() as Array<{ job_id: string }>;
+    expect(survivors.map((r) => r.job_id)).toEqual(["keep-1", "other-project"]);
+  });
+
+  it("returns 0 when no rows match", () => {
+    expect(deleteJobRecordsForSession("nope", "nope")).toBe(0);
+  });
+});
+
+describe("deleteNotificationsForProject", () => {
+  it("removes every notification for the given project across all sessions", () => {
+    createTestNotification({
+      projectName: "proj-a",
+      sessionName: "s1",
+      jobId: "a1",
+    });
+    createTestNotification({
+      projectName: "proj-a",
+      sessionName: "s2",
+      jobId: "a2",
+    });
+    createTestNotification({
+      projectName: "proj-b",
+      sessionName: "s1",
+      jobId: "b1",
+    });
+
+    const deleted = deleteNotificationsForProject("proj-a");
+
+    expect(deleted).toBe(2);
+    const remaining = getNotifications().notifications.map((n) => n.jobId);
+    expect(remaining).toEqual(["b1"]);
+  });
+});
+
+describe("deleteJobRecordsForProject", () => {
+  it("removes every job_record for the given project across all sessions", () => {
+    createJobRecord({
+      jobId: "a1",
+      jobType: "merge",
+      status: "completed",
+      projectName: "proj-a",
+      sessionName: "s1",
+      branchName: "csm/s1",
+      startedAt: new Date().toISOString(),
+    });
+    createJobRecord({
+      jobId: "a2",
+      jobType: "commit",
+      status: "completed",
+      projectName: "proj-a",
+      sessionName: "s2",
+      branchName: "csm/s2",
+      startedAt: new Date().toISOString(),
+    });
+    createJobRecord({
+      jobId: "b1",
+      jobType: "merge",
+      status: "completed",
+      projectName: "proj-b",
+      sessionName: "s1",
+      branchName: "csm/s1",
+      startedAt: new Date().toISOString(),
+    });
+
+    const deleted = deleteJobRecordsForProject("proj-a");
+
+    expect(deleted).toBe(2);
+    const db = getSharedStateDb();
+    const survivors = db
+      .prepare("SELECT job_id FROM job_records")
+      .all() as Array<{ job_id: string }>;
+    expect(survivors.map((r) => r.job_id)).toEqual(["b1"]);
   });
 });
 

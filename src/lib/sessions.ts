@@ -23,6 +23,12 @@ import { getErrorMessage } from "@/lib/errors";
 import { getProjectDisplayName } from "./project-resolver";
 import { executeOptimisticWorkflow } from "./optimistic";
 import { getRuntime } from "@/lib/agent-backends/runtime-registry";
+import {
+  deleteNotificationsForSession as defaultDeleteNotificationsForSession,
+  deleteJobRecordsForSession as defaultDeleteJobRecordsForSession,
+  deleteNotificationsForProject as defaultDeleteNotificationsForProject,
+  deleteJobRecordsForProject as defaultDeleteJobRecordsForProject,
+} from "./notification-db";
 import type { ArtifactRegistry } from "./workflows/primitives/artifact-registry";
 import { createSessionArtifactRegistryForProduction } from "./workflows/primitives/default-session-artifact-registry";
 
@@ -103,6 +109,13 @@ export interface SessionDeps {
     projectPath: string;
     sessionName: string;
   }): ArtifactRegistry;
+  deleteNotificationsForSession(
+    projectName: string,
+    sessionName: string,
+  ): number;
+  deleteJobRecordsForSession(projectName: string, sessionName: string): number;
+  deleteNotificationsForProject(projectName: string): number;
+  deleteJobRecordsForProject(projectName: string): number;
 }
 
 export const defaultSessionDeps: SessionDeps = {
@@ -120,6 +133,10 @@ export const defaultSessionDeps: SessionDeps = {
   buildChildEnv,
   query,
   createSessionArtifactRegistry: createSessionArtifactRegistryForProduction,
+  deleteNotificationsForSession: defaultDeleteNotificationsForSession,
+  deleteJobRecordsForSession: defaultDeleteJobRecordsForSession,
+  deleteNotificationsForProject: defaultDeleteNotificationsForProject,
+  deleteJobRecordsForProject: defaultDeleteJobRecordsForProject,
 };
 
 // ============================================================
@@ -146,6 +163,10 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     buildChildEnv,
     query,
     createSessionArtifactRegistry,
+    deleteNotificationsForSession,
+    deleteJobRecordsForSession,
+    deleteNotificationsForProject,
+    deleteJobRecordsForProject,
   } = deps;
 
   /** Execute a git command in the given working directory */
@@ -564,9 +585,11 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
 
   /**
    * Delete a session.
-   * - For CC-created sessions: removes the worktree directory from disk
-   * - For imported sessions: only removes the session record from state
-   * - Does NOT delete the branch or transcripts
+   * - Removes the worktree directory from disk (for both CC-created and imported sessions)
+   * - Removes transcript files for every conversation in the session
+   * - Removes notification and job-record rows for the (project, session) pair
+   * - Removes the session row from state (which cascades conversations + reference docs)
+   * - Does NOT delete the git branch or the project directory on disk
    */
   async function deleteSession(
     projectPath: string,
@@ -626,16 +649,44 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       }
     }
 
+    // Transcripts are stored centrally under $configDir/transcripts/, not in
+    // the worktree, so they survive worktree removal unless purged explicitly.
+    for (const conv of session.conversations) {
+      if (!conv.transcriptPath) continue;
+      try {
+        await rm(conv.transcriptPath, { force: true });
+      } catch (err) {
+        logger.warn("session.transcript_remove_failure", {
+          sessionName,
+          conversationId: conv.id,
+          transcriptPath: conv.transcriptPath,
+          error: getErrorMessage(err),
+        });
+      }
+    }
+
+    const projectName = getProjectDisplayName(projectPath);
+    const notificationsRemoved = deleteNotificationsForSession(
+      projectName,
+      sessionName,
+    );
+    const jobRecordsRemoved = deleteJobRecordsForSession(
+      projectName,
+      sessionName,
+    );
+
     logger.info("session.delete", {
       sessionName,
       source,
       worktreeCleanup,
+      notificationsRemoved,
+      jobRecordsRemoved,
     });
 
     // Retarget any child sessions before removing parent from state
     await retargetOrphanedChildren(projectPath, sessionName);
 
-    // Remove from state
+    // Remove from state (cascades to conversations + reference_documents)
     await mutateState("deleteSession", (state) => {
       const proj = state.projects[projectPath];
       if (proj) {
@@ -646,6 +697,63 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     return { worktreeRemoved };
   }
 
+  /**
+   * Delete a project and every trace of it from CC state.
+   * - Iterates every session and runs the full session-delete path (worktrees,
+   *   transcripts, dev servers, per-session notification/job rows)
+   * - Bulk-removes any remaining notification/job rows for the project name
+   * - Removes the project row from state (cascades sessions/conversations/refs)
+   * - Does NOT delete the project directory on disk or any git branches
+   */
+  async function deleteProject(
+    projectPath: string,
+  ): Promise<{ sessionsRemoved: number }> {
+    const state = await readState();
+    const project = state.projects[projectPath];
+    if (!project) {
+      throw new Error(`Project not found: ${projectPath}`);
+    }
+
+    const sessionNames = Object.keys(project.sessions);
+    let sessionsRemoved = 0;
+    for (const sessionName of sessionNames) {
+      try {
+        await deleteSession(projectPath, sessionName);
+        sessionsRemoved += 1;
+      } catch (err) {
+        logger.warn("project.delete.session_remove_failure", {
+          projectPath,
+          sessionName,
+          error: getErrorMessage(err),
+        });
+        sessionsRemoved += 1;
+      }
+    }
+
+    const projectName = getProjectDisplayName(projectPath);
+    const notificationsRemoved = deleteNotificationsForProject(projectName);
+    const jobRecordsRemoved = deleteJobRecordsForProject(projectName);
+
+    await mutateState("deleteProject", (state) => {
+      delete state.projects[projectPath];
+      state.archivedProjects = state.archivedProjects.filter(
+        (p) => p !== projectPath,
+      );
+      state.pinnedProjects = state.pinnedProjects.filter(
+        (p) => p !== projectPath,
+      );
+    });
+
+    logger.info("project.delete", {
+      projectPath,
+      sessionsRemoved,
+      notificationsRemoved,
+      jobRecordsRemoved,
+    });
+
+    return { sessionsRemoved };
+  }
+
   return {
     generateSessionName,
     provisionSession,
@@ -654,6 +762,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     createSessionOptimistic,
     retargetOrphanedChildren,
     deleteSession,
+    deleteProject,
   };
 }
 
@@ -670,3 +779,4 @@ export const createSessionFocus = defaultService.createSessionFocus;
 export const createSessionOptimistic = defaultService.createSessionOptimistic;
 export const retargetOrphanedChildren = defaultService.retargetOrphanedChildren;
 export const deleteSession = defaultService.deleteSession;
+export const deleteProject = defaultService.deleteProject;

@@ -17,6 +17,7 @@ const defaultProps = {
   onMenuToggle: vi.fn(),
   onArchive: vi.fn(),
   onPin: vi.fn(),
+  onDelete: vi.fn(),
 };
 
 describe("ProjectCard", () => {

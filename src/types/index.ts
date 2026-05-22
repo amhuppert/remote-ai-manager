@@ -77,6 +77,8 @@ export interface DiscoveredProject {
   activeSessions: number;
   /** Whether any session is currently running */
   hasRunningSession: boolean;
+  /** True when the project exists in state but the directory is no longer present on disk */
+  missing?: boolean;
 }
 
 export type {

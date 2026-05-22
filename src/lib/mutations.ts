@@ -223,6 +223,33 @@ export function useArchiveProjectMutation() {
   });
 }
 
+export function useDeleteProjectMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      projectName,
+      projectPath,
+    }: {
+      projectName: string;
+      projectPath: string;
+    }) =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}?projectPath=${encodeURIComponent(projectPath)}`,
+        "delete-project",
+        { method: "DELETE" },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: projectKeys.list(),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: projectKeys.preferences(),
+      });
+    },
+  });
+}
+
 export function usePinProjectMutation() {
   const queryClient = useQueryClient();
 

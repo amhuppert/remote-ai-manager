@@ -112,6 +112,10 @@ function createTestDeps() {
       .mockReturnValue({}) as unknown as SessionDeps["buildChildEnv"],
     query: queryMock as unknown as SessionDeps["query"],
     createSessionArtifactRegistry: createSessionArtifactRegistryMock,
+    deleteNotificationsForSession: vi.fn().mockReturnValue(0),
+    deleteJobRecordsForSession: vi.fn().mockReturnValue(0),
+    deleteNotificationsForProject: vi.fn().mockReturnValue(0),
+    deleteJobRecordsForProject: vi.fn().mockReturnValue(0),
   };
 
   return {
@@ -1151,6 +1155,201 @@ describe("deleteSession", () => {
     await expect(
       service.deleteSession("/projects/repo", "ghost"),
     ).rejects.toThrow('Session "ghost" not found in project');
+  });
+
+  it("purges transcript files, notifications, and job records", async () => {
+    readStateMock.mockResolvedValue(
+      stateWithSession("/projects/repo", "to-delete", {
+        conversations: [
+          {
+            id: "conv-a",
+            transcriptPath: "/cfg/transcripts/conv-a.jsonl",
+          },
+          {
+            id: "conv-b",
+            transcriptPath: null,
+          },
+          {
+            id: "conv-c",
+            transcriptPath: "/cfg/transcripts/conv-c.jsonl",
+          },
+        ],
+      }),
+    );
+    existsSyncMock.mockReturnValue(true);
+    mockGitSuccess();
+
+    await service.deleteSession("/projects/repo", "to-delete");
+
+    expect(deps.rm).toHaveBeenCalledWith("/cfg/transcripts/conv-a.jsonl", {
+      force: true,
+    });
+    expect(deps.rm).toHaveBeenCalledWith("/cfg/transcripts/conv-c.jsonl", {
+      force: true,
+    });
+    expect(deps.deleteNotificationsForSession).toHaveBeenCalledWith(
+      "repo",
+      "to-delete",
+    );
+    expect(deps.deleteJobRecordsForSession).toHaveBeenCalledWith(
+      "repo",
+      "to-delete",
+    );
+  });
+
+  it("does not fail when transcript file removal throws", async () => {
+    readStateMock.mockResolvedValue(
+      stateWithSession("/projects/repo", "to-delete", {
+        conversations: [
+          { id: "conv-a", transcriptPath: "/cfg/transcripts/conv-a.jsonl" },
+        ],
+      }),
+    );
+    existsSyncMock.mockReturnValue(true);
+    mockGitSuccess();
+    (deps.rm as Mock).mockImplementation(async (target: string) => {
+      if (target.startsWith("/cfg/transcripts")) {
+        throw new Error("ENOENT");
+      }
+    });
+
+    await expect(
+      service.deleteSession("/projects/repo", "to-delete"),
+    ).resolves.toMatchObject({ worktreeRemoved: true });
+    expect(deps.deleteNotificationsForSession).toHaveBeenCalled();
+    expect(deps.deleteJobRecordsForSession).toHaveBeenCalled();
+  });
+});
+
+// ===========================================================================
+// 1.6.b – Project deletion
+// ===========================================================================
+
+describe("deleteProject", () => {
+  function stateWithProject(
+    projectPath: string,
+    sessions: Record<string, Record<string, unknown>> = {},
+  ) {
+    const sessionEntries: Record<string, unknown> = {};
+    for (const [name, overrides] of Object.entries(sessions)) {
+      sessionEntries[name] = {
+        sessionName: name,
+        worktreePath: `${projectPath}/.worktrees/${name}`,
+        branchName: `csm/${name}`,
+        createdAt: "2024-01-01T00:00:00Z",
+        lastActivityAt: "2024-01-01T00:00:00Z",
+        archived: false,
+        finished: false,
+        conversations: [],
+        source: "cc",
+        objective: null,
+        creationMode: "fast" as const,
+        tddEnabled: true,
+        ...overrides,
+      };
+    }
+    return {
+      projects: {
+        [projectPath]: {
+          rootPath: projectPath,
+          sessions: sessionEntries,
+        },
+      },
+      archivedProjects: [] as string[],
+      pinnedProjects: [] as string[],
+    };
+  }
+
+  it("removes each session, the project row, and project-level notifications/jobs", async () => {
+    readStateMock.mockResolvedValue(
+      stateWithProject("/projects/repo", {
+        alpha: {
+          conversations: [
+            { id: "conv-a", transcriptPath: "/cfg/transcripts/conv-a.jsonl" },
+          ],
+        },
+        beta: {
+          conversations: [],
+        },
+      }),
+    );
+    existsSyncMock.mockReturnValue(true);
+    mockGitSuccess();
+
+    const result = await service.deleteProject("/projects/repo");
+
+    expect(result.sessionsRemoved).toBe(2);
+
+    // Each session's worktree should have been removed via git
+    expect(gitMock).toHaveBeenCalledWith(
+      ["worktree", "remove", "--force", "/projects/repo/.worktrees/alpha"],
+      "/projects/repo",
+    );
+    expect(gitMock).toHaveBeenCalledWith(
+      ["worktree", "remove", "--force", "/projects/repo/.worktrees/beta"],
+      "/projects/repo",
+    );
+
+    // Transcript for alpha's conversation should be removed
+    expect(deps.rm).toHaveBeenCalledWith("/cfg/transcripts/conv-a.jsonl", {
+      force: true,
+    });
+
+    // Project-level bulk purge
+    expect(deps.deleteNotificationsForProject).toHaveBeenCalledWith("repo");
+    expect(deps.deleteJobRecordsForProject).toHaveBeenCalledWith("repo");
+
+    // Final mutateState call removes the project entry
+    const lastWriteState =
+      writeStateMock.mock.calls[writeStateMock.mock.calls.length - 1]![0];
+    expect(lastWriteState.projects["/projects/repo"]).toBeUndefined();
+  });
+
+  it("succeeds for a project with zero sessions", async () => {
+    readStateMock.mockResolvedValue(stateWithProject("/projects/empty"));
+
+    const result = await service.deleteProject("/projects/empty");
+
+    expect(result.sessionsRemoved).toBe(0);
+    expect(deps.deleteNotificationsForProject).toHaveBeenCalledWith("empty");
+    expect(deps.deleteJobRecordsForProject).toHaveBeenCalledWith("empty");
+    const lastWriteState =
+      writeStateMock.mock.calls[writeStateMock.mock.calls.length - 1]![0];
+    expect(lastWriteState.projects["/projects/empty"]).toBeUndefined();
+  });
+
+  it("throws when the project does not exist in state", async () => {
+    readStateMock.mockResolvedValue(emptyState());
+
+    await expect(service.deleteProject("/projects/ghost")).rejects.toThrow(
+      "Project not found: /projects/ghost",
+    );
+    expect(deps.deleteNotificationsForProject).not.toHaveBeenCalled();
+    expect(deps.deleteJobRecordsForProject).not.toHaveBeenCalled();
+  });
+
+  it("continues purging when one session's removal fails", async () => {
+    readStateMock.mockResolvedValue(
+      stateWithProject("/projects/repo", {
+        alpha: { conversations: [] },
+        beta: { conversations: [] },
+      }),
+    );
+    existsSyncMock.mockReturnValue(true);
+    // First git call (alpha worktree remove) fails; subsequent succeed.
+    mockGitSequence([
+      { error: new Error("worktree remove failed") },
+      // Fallback path uses rm, then beta's worktree remove succeeds.
+      { stdout: "", stderr: "" },
+    ]);
+
+    const result = await service.deleteProject("/projects/repo");
+
+    expect(result.sessionsRemoved).toBe(2);
+    expect(deps.deleteNotificationsForProject).toHaveBeenCalledWith("repo");
+    const lastWriteState =
+      writeStateMock.mock.calls[writeStateMock.mock.calls.length - 1]![0];
+    expect(lastWriteState.projects["/projects/repo"]).toBeUndefined();
   });
 });
 

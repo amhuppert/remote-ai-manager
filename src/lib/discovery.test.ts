@@ -387,6 +387,85 @@ describe("discoverProjects — session metadata enrichment", () => {
 });
 
 // ============================================================
+// Orphan projects (in state but not on disk)
+// ============================================================
+describe("discoverProjects — orphan/missing projects", () => {
+  it("surfaces projects present in state but missing from disk with missing: true", async () => {
+    await createGitRepo("real-repo");
+    const orphanPath = "/tmp/cc-orphan-" + Date.now();
+
+    const state = {
+      projects: {
+        [orphanPath]: {
+          rootPath: orphanPath,
+          sessions: {},
+        } as never,
+      },
+    };
+
+    const service = createTestService(state);
+    const projects = await service.discoverProjects();
+
+    const orphan = projects.find((p) => p.path === orphanPath);
+    expect(orphan).toBeDefined();
+    expect(orphan!.missing).toBe(true);
+    expect(orphan!.name).toBe(path.basename(orphanPath));
+
+    const real = projects.find((p) => p.name === "real-repo");
+    expect(real).toBeDefined();
+    expect(real!.missing).toBeFalsy();
+  });
+
+  it("does not duplicate on-disk projects that also have state entries", async () => {
+    const repoPath = await createGitRepo("dual-repo");
+    const state = {
+      projects: {
+        [repoPath]: {
+          rootPath: repoPath,
+          sessions: {},
+        } as never,
+      },
+    };
+
+    const service = createTestService(state);
+    const projects = await service.discoverProjects();
+
+    expect(projects.filter((p) => p.path === repoPath)).toHaveLength(1);
+    expect(projects[0]!.missing).toBeFalsy();
+  });
+
+  it("counts sessions for orphan projects so the UI shows what will be purged", async () => {
+    const orphanPath = "/tmp/cc-orphan-with-sessions-" + Date.now();
+    const state = {
+      projects: {
+        [orphanPath]: {
+          rootPath: orphanPath,
+          sessions: {
+            s1: {
+              sessionName: "s1",
+              worktreePath: "/tmp/wt1",
+              branchName: "csm/s1",
+              createdAt: "2026-01-01T00:00:00Z",
+              lastActivityAt: "2026-01-01T00:00:00Z",
+              archived: false,
+              finished: false,
+              conversations: [],
+            },
+          },
+        } as never,
+      },
+    };
+
+    const service = createTestService(state);
+    const projects = await service.discoverProjects();
+
+    const orphan = projects.find((p) => p.path === orphanPath);
+    expect(orphan).toBeDefined();
+    expect(orphan!.activeSessions).toBe(1);
+  });
+});
+
+// ============================================================
 // Task 1.3: Result Ordering (Req 3.1–3.2)
 // ============================================================
 describe("discoverProjects — result ordering", () => {

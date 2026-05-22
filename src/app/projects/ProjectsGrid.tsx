@@ -2,7 +2,9 @@
 
 import { useState, useMemo, useCallback } from "react";
 import Topbar from "@/components/Topbar";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import ProjectCard from "./ProjectCard";
+import type { DiscoveredProject } from "@/types";
 import {
   useProjectsQuery,
   useProjectPreferencesQuery,
@@ -10,6 +12,7 @@ import {
 } from "@/lib/queries";
 import {
   useArchiveProjectMutation,
+  useDeleteProjectMutation,
   usePinProjectMutation,
 } from "@/lib/mutations";
 import {
@@ -24,6 +27,9 @@ import {
 
 export default function ProjectsGrid(): React.JSX.Element {
   const [searchQuery, setSearchQuery] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<DiscoveredProject | null>(
+    null,
+  );
 
   // --- TanStack Query ---
   const projectsQuery = useProjectsQuery();
@@ -42,6 +48,7 @@ export default function ProjectsGrid(): React.JSX.Element {
   // --- Mutations ---
   const archiveMutation = useArchiveProjectMutation();
   const pinMutation = usePinProjectMutation();
+  const deleteMutation = useDeleteProjectMutation();
 
   // --- Derived data ---
   const projects = useMemo(
@@ -154,6 +161,24 @@ export default function ProjectsGrid(): React.JSX.Element {
     [pinnedSet, pinMutation, closeProjectMenu],
   );
 
+  const handleDelete = useCallback(
+    (project: DiscoveredProject) => {
+      setDeleteTarget(project);
+      closeProjectMenu();
+    },
+    [closeProjectMenu],
+  );
+
+  const confirmDelete = useCallback(() => {
+    if (!deleteTarget) return;
+    deleteMutation.mutate(
+      { projectName: deleteTarget.name, projectPath: deleteTarget.path },
+      { onSettled: () => setDeleteTarget(null) },
+    );
+  }, [deleteTarget, deleteMutation]);
+
+  const cancelDelete = useCallback(() => setDeleteTarget(null), []);
+
   const handleMenuToggle = useCallback(
     (projectPath: string) => {
       if (openMenuId === projectPath) {
@@ -265,6 +290,7 @@ export default function ProjectsGrid(): React.JSX.Element {
                         onMenuToggle={() => handleMenuToggle(project.path)}
                         onArchive={handleArchive}
                         onPin={handlePin}
+                        onDelete={handleDelete}
                       />
                     ))}
                   </div>
@@ -287,6 +313,7 @@ export default function ProjectsGrid(): React.JSX.Element {
                     onMenuToggle={() => handleMenuToggle(project.path)}
                     onArchive={handleArchive}
                     onPin={handlePin}
+                    onDelete={handleDelete}
                   />
                 ))}
               </div>
@@ -312,6 +339,19 @@ export default function ProjectsGrid(): React.JSX.Element {
           </div>
         )}
       </main>
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="Delete Project"
+        message={
+          deleteTarget
+            ? `Permanently remove "${deleteTarget.name}" from Command Center? This deletes all sessions, worktrees, transcripts, notifications, and job records for this project. The project directory on disk and any git branches are preserved.`
+            : ""
+        }
+        confirmLabel={deleteMutation.isPending ? "Deleting…" : "Delete"}
+        danger
+        onConfirm={confirmDelete}
+        onCancel={cancelDelete}
+      />
     </div>
   );
 }

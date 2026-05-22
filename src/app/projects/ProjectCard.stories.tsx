@@ -18,6 +18,7 @@ const meta = {
     onMenuToggle: fn(),
     onArchive: fn(),
     onPin: fn(),
+    onDelete: fn(),
   },
   decorators: [
     (Story) => (
@@ -77,5 +78,13 @@ export const MenuOpen = {
     archived: false,
     pinned: false,
     menuOpen: true,
+  },
+} satisfies Story;
+
+export const Missing = {
+  args: {
+    project: { ...baseProject, missing: true, activeSessions: 1 },
+    archived: false,
+    pinned: false,
   },
 } satisfies Story;
