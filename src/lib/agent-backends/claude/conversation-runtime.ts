@@ -64,7 +64,7 @@ export interface ClaudeFactoryDeps {
   createSessionMcpServer(params: SessionMcpServerParams): Promise<McpServer>;
 }
 
-export const defaultClaudeFactoryDeps: ClaudeFactoryDeps = {
+const defaultClaudeFactoryDeps: ClaudeFactoryDeps = {
   createSessionMcpServer,
 };
 
@@ -771,4 +771,4 @@ const claudeConversationBackendFactory = {
 
 registerConversationBackendFactory(claudeConversationBackendFactory);
 
-export { ClaudeConversationRuntime, claudeConversationBackendFactory };
+export { claudeConversationBackendFactory };

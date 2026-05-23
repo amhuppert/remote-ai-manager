@@ -35,7 +35,6 @@ import {
   fullConfigResponseSchema,
   installPresetResponseSchema,
   workflowDefinitionMutationResponseSchema,
-  workflowGeneratedDraftResponseSchema,
   collaborationStartResponseSchema,
   collaborationResumeResponseSchema,
   collaborationStopResponseSchema,
@@ -45,7 +44,6 @@ import type {
   GlobalConfig,
   ImagePayload,
   SessionState,
-  WorkflowPlanRequest,
   WorkflowDefinitionRecord,
   WorkflowRuntimeEditRequest,
 } from "@/types";
@@ -384,22 +382,6 @@ export function useDeleteWorkflowDefinitionMutation(projectName: string) {
         queryKey: workflowDefinitionKeys.list(projectName),
       });
     },
-  });
-}
-
-export function useGenerateWorkflowDraftMutation(projectName: string) {
-  return useMutation({
-    mutationFn: (request: WorkflowPlanRequest) =>
-      mutationFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/workflows/generate`,
-        "generate-workflow-draft",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(request),
-        },
-        workflowGeneratedDraftResponseSchema,
-      ),
   });
 }
 
@@ -813,7 +795,7 @@ export function useAnswerQuestionMutation(
 }
 
 /** Build the pending-prompt persistence URL for a given conversation. */
-export function pendingPromptUrl(
+function pendingPromptUrl(
   projectName: string,
   sessionName: string,
   conversationId: string,

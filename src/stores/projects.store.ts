@@ -82,4 +82,3 @@ export const useOpenProjectMenu = () =>
   useProjectsStore((s) => s.openProjectMenu);
 export const useCloseProjectMenu = () =>
   useProjectsStore((s) => s.closeProjectMenu);
-export const useResetFilters = () => useProjectsStore((s) => s.resetFilters);

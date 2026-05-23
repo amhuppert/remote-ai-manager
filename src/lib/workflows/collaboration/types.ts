@@ -13,27 +13,21 @@
 import { z } from "zod";
 
 export {
-  collaborationArtifactAgreementSchema,
   type CollaborationArtifactAgreement,
-  collaborationArtifactDisagreementSchema,
   type CollaborationArtifactDisagreement,
   collaborationArtifactSchema,
   type CollaborationArtifact,
   collaborationAutonomousResolutionThresholdSchema,
   type CollaborationAutonomousResolutionThreshold,
-  collaborationChangeProposalSchema,
   type CollaborationChangeProposal,
   collaborationCounterProposalOutputSchema,
   type CollaborationCounterProposalOutput,
   collaborationCrossReviewOutputSchema,
   type CollaborationCrossReviewOutput,
-  collaborationDisagreementCategorySchema,
   type CollaborationDisagreementCategory,
-  collaborationDisagreementSeveritySchema,
   type CollaborationDisagreementSeverity,
   collaborationFinalAnswerOutputSchema,
   type CollaborationFinalAnswerOutput,
-  collaborationFlowAgentSchema,
   type CollaborationFlowAgent,
   collaborationInitialDraftOutputSchema,
   type CollaborationInitialDraftOutput,
@@ -41,21 +35,16 @@ export {
   type CollaborationOpenConflictsOutput,
   collaborationProposedChangesOutputSchema,
   type CollaborationProposedChangesOutput,
-  collaborationReferenceSchema,
   type CollaborationReference,
-  collaborationReviseSelfArtifactSchema,
   type CollaborationReviseSelfArtifact,
-  collaborationResolvedDisagreementSchema,
   type CollaborationResolvedDisagreement,
-  collaborationResolutionDecisionNextActionSchema,
   type CollaborationResolutionDecisionNextAction,
   collaborationResolutionDecisionOutputSchema,
   type CollaborationResolutionDecisionOutput,
-  collaborationUserQuestionSchema,
   type CollaborationUserQuestion,
 } from "@/lib/schemas";
 
-export const collaborationAgentSchema = z.enum(["claude", "codex"]);
+const collaborationAgentSchema = z.enum(["claude", "codex"]);
 export type CollaborationAgent = z.infer<typeof collaborationAgentSchema>;
 
 const REFERENCE_JSON_SCHEMA = {

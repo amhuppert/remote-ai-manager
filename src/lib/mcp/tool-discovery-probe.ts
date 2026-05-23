@@ -29,7 +29,7 @@ const DEFAULT_TOOL_TIMEOUT_MS = 10_000;
 // Public contract
 // ---------------------------------------------------------------------------
 
-export interface DirectToolProbeInput {
+interface DirectToolProbeInput {
   serverKey: string;
   server: McpCanonicalServerConfig;
   /** Optional overrides for the default timeouts (e.g. per-server). */

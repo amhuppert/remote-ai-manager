@@ -6,7 +6,7 @@ import type {
   ParsedServerLogRecord,
 } from "../types";
 
-export interface SseEventSummary {
+interface SseEventSummary {
   eventType: string;
   count: number;
   p95Ms: number | null;

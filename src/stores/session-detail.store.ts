@@ -14,7 +14,7 @@ import type {
 type MobilePanel = "chat" | "diff" | "docs" | "specs" | "info";
 type RightPaneTab = "diff" | "docs" | "specs";
 
-export interface SidebarSessionFilter {
+interface SidebarSessionFilter {
   projectName: string;
   sessionName: string;
 }
@@ -437,8 +437,6 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
 export const useLayout = () => useSessionDetailStore((s) => s.layout);
 export const useMobilePanel = () => useSessionDetailStore((s) => s.mobilePanel);
 export const useSending = () => useSessionDetailStore((s) => s.sending);
-export const useIsVoiceRecording = () =>
-  useSessionDetailStore((s) => s.isVoiceRecording);
 export const usePromptPlaceholder = () =>
   useSessionDetailStore((s) => s.promptPlaceholder);
 export const usePromptError = () => useSessionDetailStore((s) => s.promptError);
@@ -543,8 +541,6 @@ export const useSelectSpecCategory = () =>
   useSessionDetailStore((s) => s.selectSpecCategory);
 export const useSelectSpecFile = () =>
   useSessionDetailStore((s) => s.selectSpecFile);
-export const useClearSpecSelection = () =>
-  useSessionDetailStore((s) => s.clearSpecSelection);
 export const useOpenDocById = () => useSessionDetailStore((s) => s.openDocById);
 export const useSelectDocId = () => useSessionDetailStore((s) => s.selectDocId);
 export const useClearConversationMessages = () =>

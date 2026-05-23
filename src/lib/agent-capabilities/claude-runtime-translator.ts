@@ -73,7 +73,7 @@ export interface ClaudeRuntimeCapabilityConfig {
   agentSuppressionStrategy: ClaudeAgentSuppressionStrategy;
 }
 
-export interface ClaudeCascadeEmission {
+interface ClaudeCascadeEmission {
   cascadeKind: "claude-skills" | "claude-plugins" | "claude-agents";
   /**
    * Rows that contributed to the emitted payload for this cascade. Used by

@@ -159,7 +159,7 @@ function sessionToSqlBind(
   };
 }
 
-export function domainToSessionRow(
+function domainToSessionRow(
   projectPath: string,
   session: SessionState,
 ): SqlBindRow {

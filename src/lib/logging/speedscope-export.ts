@@ -48,7 +48,7 @@ export interface TimedLogEntry {
   [key: string]: unknown;
 }
 
-export interface TraceEvent {
+interface TraceEvent {
   name: string;
   cat: string;
   ph: "X" | "M";

@@ -54,18 +54,6 @@ interface WorkflowInspectorPanelProps {
 
 export type InspectorTab = "workflow" | "context";
 
-export const DEFAULT_SECTION_IDS = [
-  "header",
-  "implementer",
-  "context-validator",
-  "script-validator",
-  "iteration-policy",
-  "circuit-breaker",
-  "mutability",
-  "tasks",
-  "delete-context",
-] as const;
-
 const SEEDED_DEFAULTS: WorkflowDefaults = {
   implementer: {
     backend: "claude",

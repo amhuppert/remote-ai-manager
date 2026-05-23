@@ -38,7 +38,7 @@ export type CollaborationPolicyDecision =
   | { kind: "ask_user"; reason: PolicyAskUserReason }
   | { kind: "fail" };
 
-export type PolicyAskUserReason =
+type PolicyAskUserReason =
   | "explicit_ask_user"
   | "objective_disagreement"
   | "rounds_exhausted_above_threshold"

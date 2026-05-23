@@ -175,7 +175,7 @@ export interface ApplyServiceDeps {
   applyCodexRuntime?(input: CodexApplyPortInput): Promise<CodexApplyPortResult>;
 }
 
-export interface CascadeApplyOutcome {
+interface CascadeApplyOutcome {
   cascadeKind: AgentCapabilityCascadeKind;
   disposition:
     | "applied"
@@ -189,7 +189,7 @@ export interface CascadeApplyOutcome {
   error?: string;
 }
 
-export interface ConversationApplyOutcome {
+interface ConversationApplyOutcome {
   projectPath: string;
   sessionName: string;
   conversationId: string;
@@ -198,18 +198,18 @@ export interface ConversationApplyOutcome {
   diagnostics: readonly AgentCapabilityDiagnostic[];
 }
 
-export interface ApplyAfterMutationInput {
+interface ApplyAfterMutationInput {
   scope: MutationScope;
   cascadeKind: AgentCapabilityCascadeKind;
   changedItemIds: readonly string[];
   operationId?: string;
 }
 
-export interface ApplyAfterMutationResult {
+interface ApplyAfterMutationResult {
   conversations: readonly ConversationApplyOutcome[];
 }
 
-export interface ApplyAtConversationInput {
+interface ApplyAtConversationInput {
   projectPath: string;
   projectName: string;
   sessionName: string;

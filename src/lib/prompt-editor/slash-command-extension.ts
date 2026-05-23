@@ -32,7 +32,7 @@ export interface SlashCommandItem {
   argumentHint?: string;
 }
 
-export interface SlashCommandTriggerHandlers {
+interface SlashCommandTriggerHandlers {
   onStart?: (props: SuggestionProps<SlashCommandItem>) => void;
   onUpdate?: (props: SuggestionProps<SlashCommandItem>) => void;
   onExit?: (props: SuggestionProps<SlashCommandItem>) => void;

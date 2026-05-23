@@ -40,7 +40,7 @@ export interface ToolInventoryCompletionEvent {
   result: McpToolInventoryResult;
 }
 
-export type ToolInventoryCompletionListener = (
+type ToolInventoryCompletionListener = (
   event: ToolInventoryCompletionEvent,
 ) => void;
 

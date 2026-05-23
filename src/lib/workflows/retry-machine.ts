@@ -23,7 +23,7 @@ import { extractErrorMessage } from "./utils";
 // ============================================================
 
 /** Input to the retry machine. */
-export interface RetryMachineInput<TWorkInput> {
+interface RetryMachineInput<TWorkInput> {
   /** Maximum number of retries (0 = no retries, fail on first error). */
   maxRetries: number;
   /** Input passed to the work actor on each attempt. */
@@ -31,7 +31,7 @@ export interface RetryMachineInput<TWorkInput> {
 }
 
 /** Output from the retry machine. */
-export interface RetryMachineOutput<TWorkOutput> {
+interface RetryMachineOutput<TWorkOutput> {
   /** Whether the work ultimately succeeded. */
   success: boolean;
   /** Result from the work actor (present only on success). */

@@ -161,7 +161,7 @@ export const collaborationStartRequestSchema = z.object({
   // older clients and direct API callers keep working.
   backend: agentBackendSchema.optional(),
 });
-export type CollaborationStartRequest = z.infer<
+type CollaborationStartRequest = z.infer<
   typeof collaborationStartRequestSchema
 >;
 
@@ -170,43 +170,41 @@ export const collaborationResumeRequestSchema = z.object({
   conversationId: z.string().trim().min(1, "conversationId is required"),
   userAnswers: z.record(z.string(), z.string()).default({}),
 });
-export type CollaborationResumeRequest = z.infer<
+type CollaborationResumeRequest = z.infer<
   typeof collaborationResumeRequestSchema
 >;
 
 export const collaborationStopRequestSchema = z.object({
   conversationId: z.string().trim().min(1, "conversationId is required"),
 });
-export type CollaborationStopRequest = z.infer<
-  typeof collaborationStopRequestSchema
->;
+type CollaborationStopRequest = z.infer<typeof collaborationStopRequestSchema>;
 
-export interface CollaborationManagerStartInput extends CollaborationStartRequest {
+interface CollaborationManagerStartInput extends CollaborationStartRequest {
   projectPath: string;
   sessionName: string;
 }
 
-export interface CollaborationManagerStartResult {
+interface CollaborationManagerStartResult {
   workflowId: string;
   status: "started";
 }
 
-export interface CollaborationManagerStopInput extends CollaborationStopRequest {
+interface CollaborationManagerStopInput extends CollaborationStopRequest {
   projectPath: string;
   sessionName: string;
   workflowId: string;
 }
 
-export interface CollaborationManagerStopResult {
+interface CollaborationManagerStopResult {
   workflowId: string;
   status: "stopped";
 }
 
-export interface CollaborationManagerSessionResolution {
+interface CollaborationManagerSessionResolution {
   worktreePath: string;
 }
 
-export interface CollaborationManagerConversationResolution {
+interface CollaborationManagerConversationResolution {
   agentBackend: AgentBackendId;
   /**
    * The conversation's stored backend session ref. The manager forwards
@@ -533,13 +531,13 @@ export class CollaborationNotStoppableError extends Error {
   }
 }
 
-export interface CollaborationManagerResumeInput extends CollaborationResumeRequest {
+interface CollaborationManagerResumeInput extends CollaborationResumeRequest {
   projectPath: string;
   sessionName: string;
   workflowId: string;
 }
 
-export interface CollaborationManagerResumeResult {
+interface CollaborationManagerResumeResult {
   workflowId: string;
   status: "resumed";
 }
@@ -1036,8 +1034,4 @@ export function getDefaultCollaborationManager(): CollaborationManager {
     cachedManager = createCollaborationManager();
   }
   return cachedManager;
-}
-
-export function _resetDefaultCollaborationManagerForTesting(): void {
-  cachedManager = null;
 }

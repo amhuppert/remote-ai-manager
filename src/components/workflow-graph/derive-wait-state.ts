@@ -21,8 +21,6 @@ export type ContextWaitState =
   | { kind: "halted" }
   | { kind: "published" };
 
-export type ContextWaitStateKind = ContextWaitState["kind"];
-
 export function deriveContextWaitState(input: {
   contextId: string;
   definition: WaitStateDefinition;

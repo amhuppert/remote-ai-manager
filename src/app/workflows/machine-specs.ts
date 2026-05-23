@@ -794,17 +794,4 @@ export function getMachineSpec(id: MachineId): MachineSpec {
 }
 
 // Re-export universal helpers for convenience at the import site.
-export {
-  isMachineId,
-  getMachineStats,
-  type MachineId,
-  type MachineSpec,
-  type StateInfo,
-  type EventInfo,
-  type ActorInfo,
-  type GuardInfo,
-  type ActionInfo,
-  type StateNodeKind,
-  type StateStatus,
-  type MachineStats,
-} from "./machine-spec-types";
+export { type MachineId, type MachineSpec } from "./machine-spec-types";

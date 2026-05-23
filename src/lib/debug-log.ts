@@ -20,6 +20,7 @@ const MANIFEST_FILE = "instrumentation.json";
  * (e.g. self-debugging), start it with `PORT=3001 bun run dev` so log POSTs
  * land on the CC instance the user is operating, not the main one.
  */
+/** @public Accessed via dynamic `import()` in actor-implementations. */
 export function getDebugLogUrl(conversationId: string): string {
   const baseUrl = process.env.CC_PUBLIC_URL;
   if (baseUrl) {

@@ -39,7 +39,7 @@ import {
 } from "@/lib/workflows/primitives/circuit-breaker-gate";
 import type { GraphWorkflowLifecycleSnapshot } from "./workflow-manager";
 
-export interface GraphWorkflowIterationExecutionRepository {
+interface GraphWorkflowIterationExecutionRepository {
   getActive(
     projectPath: string,
     sessionName: string,
@@ -53,7 +53,7 @@ export interface GraphWorkflowIterationExecutionRepository {
   ): Promise<GraphWorkflowExecution>;
 }
 
-export interface GraphWorkflowIterationConversation {
+interface GraphWorkflowIterationConversation {
   id: string;
 }
 
@@ -105,7 +105,7 @@ export interface GraphWorkflowAgentIterationResult {
   sessionRef?: AgentSessionRef | null;
 }
 
-export interface IterationOrchestratorContinuityService {
+interface IterationOrchestratorContinuityService {
   resolveImplementerCall(
     input: ResolveImplementerCallInput,
   ): Promise<ResolvedImplementerCall>;
@@ -129,7 +129,7 @@ export interface IterationOrchestratorScriptValidatorInput {
   executionTarget?: ExecutionTarget;
 }
 
-export interface IterationOrchestratorScriptValidatorService {
+interface IterationOrchestratorScriptValidatorService {
   runScriptValidator(
     input: IterationOrchestratorScriptValidatorInput,
   ): Promise<ScriptValidatorOutcome>;
@@ -201,7 +201,7 @@ export class IterationHaltedError extends Error {
   }
 }
 
-export interface GraphWorkflowSignalHaltInput {
+interface GraphWorkflowSignalHaltInput {
   projectPath: string;
   sessionName: string;
   contextId?: string;

@@ -32,19 +32,16 @@ const logger = createLogger("mcp.backend-capabilities");
 // Capability shape
 // ---------------------------------------------------------------------------
 
-export type McpServerDisableMechanism = "native" | "omit" | "unsupported";
+type McpServerDisableMechanism = "native" | "omit" | "unsupported";
 
-export type McpBetweenTurnApplyMode =
-  | "live-when-idle"
-  | "next-turn"
-  | "unsupported";
+type McpBetweenTurnApplyMode = "live-when-idle" | "next-turn" | "unsupported";
 
 export type McpToolFilteringMode =
   | "native"
   | "permission-layer"
   | "unsupported";
 
-export interface McpToolFilteringCapability {
+interface McpToolFilteringCapability {
   /** Aggregated mode across all transports. `mixed` indicates that different
    * transports use different mechanisms and the UI should lean on `byTransport`
    * for accurate rendering. */
@@ -52,9 +49,9 @@ export interface McpToolFilteringCapability {
   byTransport: Record<McpTransport, McpToolFilteringMode>;
 }
 
-export type McpToolDiscoveryMode = "runtime-status" | "probe" | "unsupported";
+type McpToolDiscoveryMode = "runtime-status" | "probe" | "unsupported";
 
-export interface McpToolDiscoveryCapability {
+interface McpToolDiscoveryCapability {
   preferred: McpToolDiscoveryMode;
   /** When `preferred` is not `probe`, whether a direct MCP SDK probe is
    * available as a secondary path (e.g. for inactive runtimes or manual

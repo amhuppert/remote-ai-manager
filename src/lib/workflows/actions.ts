@@ -83,15 +83,6 @@ function getDefaultDeps(): WorkflowActionDeps {
   return _deps;
 }
 
-/**
- * Get the current action dependencies.
- * Used by workflow-specific action modules to access the shared
- * broadcast/persist infrastructure.
- */
-export function getActionDeps(): WorkflowActionDeps {
-  return getDefaultDeps();
-}
-
 /** Override dependencies (for testing). */
 export function setActionDeps(deps: WorkflowActionDeps): void {
   _deps = deps;
@@ -142,16 +133,3 @@ export function createNotificationAction(
 ): void {
   getDefaultDeps().createNotification(params);
 }
-
-/**
- * Generic workflow actions for use in setup({ actions }).
- *
- * Usage:
- *   import { workflowActions } from '@/lib/workflows/actions';
- *   const machine = setup({ actions: { ...workflowActions } }).createMachine(...)
- */
-export const workflowActions = {
-  broadcastWorkflowEvent,
-  persistSnapshot,
-  createNotificationAction,
-} as const;

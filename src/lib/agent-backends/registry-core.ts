@@ -46,16 +46,3 @@ export function getTaskRunner(backend: AgentBackendId): AgentTaskRunner {
   logger.debug("Retrieved task runner", { backend });
   return runner;
 }
-
-export function resolveConversationBackend(
-  configDefault: AgentBackendId,
-  requested?: AgentBackendId,
-): AgentBackendId {
-  const resolved = requested ?? configDefault;
-  logger.debug("Resolved conversation backend", {
-    configDefault,
-    requested,
-    resolved,
-  });
-  return resolved;
-}

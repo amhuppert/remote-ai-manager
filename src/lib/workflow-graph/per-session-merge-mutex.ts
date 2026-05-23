@@ -2,7 +2,7 @@ import { createLogger } from "@/lib/logging";
 
 const logger = createLogger("graph-workflow-merge-mutex");
 
-export interface MergeMutexKey {
+interface MergeMutexKey {
   projectPath: string;
   sessionName: string;
 }

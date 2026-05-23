@@ -9,7 +9,7 @@ import type { BaseWorkflowContext } from "../types";
 import type { AgentSessionRef } from "@/lib/agent-backends/types";
 
 /** Phase tracking for SSE broadcast. */
-export type CommitPhase =
+type CommitPhase =
   | "committing"
   | "validating"
   | "fixing-validation"

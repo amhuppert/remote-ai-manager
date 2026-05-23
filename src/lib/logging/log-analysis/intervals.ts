@@ -77,7 +77,7 @@ export function buildIntervalForest(
   return roots;
 }
 
-export function computeUnionDuration(
+function computeUnionDuration(
   intervals: readonly Pick<TimedInterval, "startMs" | "endMs">[],
 ): number {
   const sorted = intervals

@@ -6,7 +6,7 @@ import type { SharedDocumentUpsertInput } from "./shared-documents";
 
 const logger = createLogger("graph-workflow-execution-tool-context");
 
-export interface GraphWorkflowExecutionToolContextRuntimeEditService {
+interface GraphWorkflowExecutionToolContextRuntimeEditService {
   applyAgentTaskAdd(
     execution: GraphWorkflowExecution,
     contextId: string,
@@ -14,7 +14,7 @@ export interface GraphWorkflowExecutionToolContextRuntimeEditService {
   ): GraphWorkflowExecution;
 }
 
-export interface GraphWorkflowExecutionToolContextSharedDocumentRegistry {
+interface GraphWorkflowExecutionToolContextSharedDocumentRegistry {
   upsert(
     worktreePath: string,
     execution: GraphWorkflowExecution,
@@ -22,7 +22,7 @@ export interface GraphWorkflowExecutionToolContextSharedDocumentRegistry {
   ): Promise<GraphWorkflowExecution>;
 }
 
-export interface GraphWorkflowExecutionToolContextWorkflowManager {
+interface GraphWorkflowExecutionToolContextWorkflowManager {
   mutateActive(
     projectPath: string,
     sessionName: string,
@@ -39,7 +39,7 @@ export interface GraphWorkflowExecutionToolContextDeps {
   now?(): string;
 }
 
-export interface CreateGraphWorkflowExecutionToolContextInput {
+interface CreateGraphWorkflowExecutionToolContextInput {
   projectPath: string;
   sessionName: string;
   executionId: string;
@@ -50,7 +50,7 @@ export interface CreateGraphWorkflowExecutionToolContextInput {
   allowAgentTaskAdd: boolean;
 }
 
-export interface BoundGraphWorkflowExecutionToolContext {
+interface BoundGraphWorkflowExecutionToolContext {
   executionContextTitle: string;
   allowAgentTaskAdd: boolean;
   completeTask(

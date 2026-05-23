@@ -48,7 +48,7 @@ export interface DevServerReconciliationDeps {
   getRegistry(): Map<string, DevServerEntry>;
 }
 
-export interface ReconcileConfiguredServer {
+interface ReconcileConfiguredServer {
   name: string;
   command: string;
   /**
@@ -296,7 +296,7 @@ const defaultReconcilerBroadcast: BroadcastFn = (event) => {
   publishSessionStatus(event);
 };
 
-export const defaultDevServerReconciliationDeps: DevServerReconciliationDeps = {
+const defaultDevServerReconciliationDeps: DevServerReconciliationDeps = {
   classifyPortOwnership: defaultPortOwnershipService.classifyPort,
   findOwnedListenerInRange:
     defaultPortOwnershipService.findOwnedListenerInRange,

@@ -10,8 +10,6 @@ import {
 import { createPortal } from "react-dom";
 import type { EffortLevel } from "@/lib/schemas";
 
-export type { EffortLevel };
-
 export interface EffortOption {
   id: EffortLevel;
   label: string;

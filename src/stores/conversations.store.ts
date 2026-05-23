@@ -50,8 +50,6 @@ const useConversationsStore = create<ConversationsStore>()(
 
 export const useShowArchivedConversations = () =>
   useConversationsStore((s) => s.showArchived);
-export const useDeleteTargetConversationId = () =>
-  useConversationsStore((s) => s.deleteTargetId);
 
 // ---------------------------------------------------------------------------
 // Action hooks
@@ -59,10 +57,6 @@ export const useDeleteTargetConversationId = () =>
 
 export const useToggleArchivedConversations = () =>
   useConversationsStore((s) => s.toggleArchived);
-export const useRequestDeleteConversation = () =>
-  useConversationsStore((s) => s.requestDeleteConversation);
-export const useCancelDeleteConversation = () =>
-  useConversationsStore((s) => s.cancelDeleteConversation);
 
 /** @internal — exposed for direct state testing */
 export { useConversationsStore as _useConversationsStore };

@@ -13,7 +13,7 @@ const denialLogger = createLogger("mcp.tool-denial");
 // Types
 // ============================================================
 
-export type CanUseToolResult =
+type CanUseToolResult =
   | { behavior: "deny"; message: string; interrupt?: boolean }
   | { behavior: "allow"; updatedInput: Record<string, unknown> };
 

@@ -79,7 +79,7 @@ function referenceDocumentToSqlBind(
   };
 }
 
-export function domainToReferenceDocumentRow(
+function domainToReferenceDocumentRow(
   projectPath: string,
   sessionName: string,
   doc: ReferenceDocument,

@@ -11,7 +11,7 @@ import type {
 
 const logger = createLogger("graph-workflow-lane-commit");
 
-export interface LaneCommitterInput {
+interface LaneCommitterInput {
   projectPath: string;
   sessionName: string;
   contextId: string;
@@ -19,7 +19,7 @@ export interface LaneCommitterInput {
   laneWorktreePath: string;
 }
 
-export type LaneCommitterResult =
+type LaneCommitterResult =
   | { status: "committed"; snapshot: GraphWorkflowExecutionLaneCommitSnapshot }
   | { status: "skipped" }
   | { status: "failed"; errorMessage: string };

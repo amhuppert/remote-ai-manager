@@ -17,7 +17,7 @@ import type {
   GraphWorkflowContextStatus,
 } from "@/types";
 
-export type EventDotKind =
+type EventDotKind =
   | "pass"
   | "fail"
   | "retry"

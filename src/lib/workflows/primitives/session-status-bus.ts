@@ -46,7 +46,7 @@ import {
  * SHOULD reuse the `workflow` scope unless they have UI semantics that
  * justify a dedicated scope name.
  */
-export type SessionStatusScope =
+type SessionStatusScope =
   | "conversation"
   | "debug"
   | "graph_workflow"

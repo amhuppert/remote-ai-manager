@@ -5,7 +5,7 @@ import type { SessionListItem, DerivedSessionStatus } from "@/types";
 import CCCheckbox from "./CCCheckbox";
 import SessionRow from "./SessionRow";
 
-export type SortableColumn =
+type SortableColumn =
   | "sessionName"
   | "branchName"
   | "targetBranch"
@@ -31,7 +31,7 @@ function statusSortKey(s: SessionListItem): number {
   return STATUS_ORDER.indexOf(s.derivedStatus);
 }
 
-export function compareSessions(
+function compareSessions(
   a: SessionListItem,
   b: SessionListItem,
   sort: SortState,

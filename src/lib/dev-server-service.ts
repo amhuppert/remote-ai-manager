@@ -42,12 +42,12 @@ export interface DevServerStatusItem {
   ownerPid: number | null;
 }
 
-export interface ListDevServersParams {
+interface ListDevServersParams {
   projectPath: string;
   sessionName: string;
 }
 
-export interface EnsureDevServerParams {
+interface EnsureDevServerParams {
   projectPath: string;
   sessionName: string;
   serverName?: string;
@@ -55,7 +55,7 @@ export interface EnsureDevServerParams {
   timeoutMs?: number;
 }
 
-export interface StopDevServerParams {
+interface StopDevServerParams {
   projectPath: string;
   sessionName: string;
   serverName: string;

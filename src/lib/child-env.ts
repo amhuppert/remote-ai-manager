@@ -186,8 +186,3 @@ function pushVersionedDirs(
     // Directory unreadable
   }
 }
-
-/** Reset the cached node directory — only for tests. */
-export function _resetNodeDirCache(): void {
-  cachedNodeDir = undefined;
-}

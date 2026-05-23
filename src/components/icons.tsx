@@ -40,22 +40,6 @@ export function PlusIcon({ size, className }: IconProps) {
   );
 }
 
-export function ArrowLeftIcon({ size, className }: IconProps) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width={size}
-      height={size}
-      className={className}
-      {...baseSvgProps}
-      aria-hidden="true"
-    >
-      <line x1="19" y1="12" x2="5" y2="12" />
-      <polyline points="12 19 5 12 12 5" />
-    </svg>
-  );
-}
-
 export function CopyIcon({ size, className }: IconProps) {
   return (
     <svg
@@ -153,22 +137,6 @@ export function ArchiveIcon({ size, className }: IconProps) {
     >
       <rect x="3" y="4" width="18" height="4" />
       <path d="M5 8v12h14V8M10 13h4" />
-    </svg>
-  );
-}
-
-export function TerminalIcon({ size, className }: IconProps) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width={size}
-      height={size}
-      className={className}
-      {...baseSvgProps}
-      aria-hidden="true"
-    >
-      <rect x="3" y="4" width="18" height="16" />
-      <path d="M7 9l3 3-3 3M12 15h5" />
     </svg>
   );
 }

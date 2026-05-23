@@ -24,7 +24,7 @@ export interface PortSelectionInput {
   maxAttempts?: number;
 }
 
-export type PortSelectionSource = "external-adopted" | "available";
+type PortSelectionSource = "external-adopted" | "available";
 
 export interface PortSelectionDiagnostic {
   port: number;

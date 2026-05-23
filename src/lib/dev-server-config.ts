@@ -14,14 +14,14 @@ const DEFAULT_PORT_RANGE = 100;
 const DEFAULT_TCP_READINESS_TIMEOUT_MS = 60_000;
 const DEFAULT_STDOUT_READINESS_TIMEOUT_MS = 60_000;
 
-export interface NormalizedDevServerPort {
+interface NormalizedDevServerPort {
   strategy: DevServerPortStrategy;
   base: number | null;
   range: number;
   envAlias: string | null;
 }
 
-export interface NormalizedDevServerReadiness {
+interface NormalizedDevServerReadiness {
   type: DevServerReadinessType;
   timeoutMs: number;
 }

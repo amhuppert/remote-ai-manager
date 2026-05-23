@@ -42,7 +42,7 @@ const logger = createLogger("query-session");
 // Types
 // ============================================================
 
-export interface TurnOptions {
+interface TurnOptions {
   /** When true, AskUserQuestion tool is denied (used by autonomous callers) */
   autonomous?: boolean;
 }
@@ -60,7 +60,7 @@ export interface TurnResult {
   error: string | null;
 }
 
-export type TurnEmit = (event: string, data: unknown) => void;
+type TurnEmit = (event: string, data: unknown) => void;
 
 export interface QuerySession {
   /** Current health status */

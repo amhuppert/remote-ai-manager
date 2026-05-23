@@ -54,7 +54,7 @@ export function generateRandomSuffix(): string {
  * Ensure a session name is unique within a project's existing sessions.
  * Appends numeric suffix (e.g., `name-2`, `name-3`) if needed.
  */
-export function ensureUniqueName(
+function ensureUniqueName(
   baseName: string,
   existingNames: Set<string>,
 ): string {
@@ -87,10 +87,6 @@ export function validateSessionName(name: string): string | null {
 // Types
 // ============================================================
 
-export type MergeMainResult =
-  | { status: "clean" }
-  | { status: "conflicts"; conflictFiles: string[] };
-
 export interface SessionDeps {
   existsSync: typeof existsSync;
   rm: typeof rm;
@@ -118,7 +114,7 @@ export interface SessionDeps {
   deleteJobRecordsForProject(projectName: string): number;
 }
 
-export const defaultSessionDeps: SessionDeps = {
+const defaultSessionDeps: SessionDeps = {
   existsSync,
   rm,
   execFileAsync,
@@ -772,8 +768,6 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
 
 const defaultService = createSessionService();
 
-export const generateSessionName = defaultService.generateSessionName;
-export const provisionSession = defaultService.provisionSession;
 export const createSessionFast = defaultService.createSessionFast;
 export const createSessionFocus = defaultService.createSessionFocus;
 export const createSessionOptimistic = defaultService.createSessionOptimistic;

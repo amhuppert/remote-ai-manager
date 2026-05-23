@@ -21,10 +21,6 @@ export function rightAnchor(b: NodeBox, dy = 0): Point {
   return { x: b.x + b.width, y: b.y + b.height / 2 + dy };
 }
 
-export function centerAnchor(b: NodeBox): Point {
-  return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
-}
-
 /** Box constructor that forwards width/height defaults from the layout. */
 export function box(x: number, y: number, width = 200, height = 56): NodeBox {
   return { x, y, width, height };

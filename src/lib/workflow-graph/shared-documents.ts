@@ -13,10 +13,7 @@ import type {
 
 const logger = createLogger("graph-workflow-shared-documents");
 
-export const SHARED_DOCUMENT_DIRECTORY = path.join(
-  ".cc",
-  "graph-workflow-docs",
-);
+const SHARED_DOCUMENT_DIRECTORY = path.join(".cc", "graph-workflow-docs");
 
 export interface SharedDocumentUpsertInput {
   relativePath: string;

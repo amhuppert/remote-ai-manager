@@ -288,9 +288,7 @@ export function createPortOwnershipService(deps: PortOwnershipDeps) {
  * subprocesses run. Throws when ALL inspection tools fail — the caller must
  * treat that as `unknown`.
  */
-export async function defaultListListeningPids(
-  port: number,
-): Promise<number[]> {
+async function defaultListListeningPids(port: number): Promise<number[]> {
   const pids = new Set<number>();
   let ssOk = false;
   let lsofOk = false;
@@ -342,9 +340,7 @@ export async function defaultListListeningPids(
  * treat that as "no adoption candidates found" rather than an error, because
  * adoption is best-effort.
  */
-export async function defaultListAllListeningPorts(): Promise<
-  Map<number, number[]>
-> {
+async function defaultListAllListeningPorts(): Promise<Map<number, number[]>> {
   try {
     const { stdout } = await execFileAsync("ss", ["-H", "-tlnp"], {
       encoding: "utf-8",
@@ -501,9 +497,7 @@ export async function listListeningPidsWithExec(
 }
 
 /** Production cwd resolver via /proc/<pid>/cwd (Linux). Falls back to lsof (macOS). */
-export async function defaultGetProcessCwd(
-  pid: number,
-): Promise<string | null> {
+async function defaultGetProcessCwd(pid: number): Promise<string | null> {
   try {
     return await readlink(`/proc/${pid}/cwd`);
   } catch {
@@ -527,7 +521,7 @@ export async function defaultGetProcessCwd(
 }
 
 /** Production realpath wrapper that returns null on failure (path doesn't exist). */
-export async function defaultRealpath(p: string): Promise<string | null> {
+async function defaultRealpath(p: string): Promise<string | null> {
   try {
     return await nodeRealpath(p);
   } catch {
@@ -535,7 +529,7 @@ export async function defaultRealpath(p: string): Promise<string | null> {
   }
 }
 
-export const defaultPortOwnershipDeps: PortOwnershipDeps = {
+const defaultPortOwnershipDeps: PortOwnershipDeps = {
   listListeningPids: defaultListListeningPids,
   listAllListeningPorts: defaultListAllListeningPorts,
   getProcessCwd: defaultGetProcessCwd,

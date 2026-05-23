@@ -319,7 +319,7 @@ export interface ValidatorRunResult {
   metadata: ValidatorExecutionMetadata;
 }
 
-export interface ValidatorContinuityService {
+interface ValidatorContinuityService {
   resolveValidatorCall(
     input: ResolveValidatorCallInput,
   ): Promise<ResolvedValidatorCall>;
@@ -331,7 +331,7 @@ export interface ValidatorContinuityService {
   ): Promise<GraphWorkflowExecution>;
 }
 
-export interface ValidatorContinuityRepository {
+interface ValidatorContinuityRepository {
   mutateActive(
     projectPath: string,
     sessionName: string,

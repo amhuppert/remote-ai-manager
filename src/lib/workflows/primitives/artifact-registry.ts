@@ -34,7 +34,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
-export const ARTIFACT_KINDS = [
+const ARTIFACT_KINDS = [
   "reference_document",
   "focus_memory",
   "codex_output",
@@ -46,9 +46,9 @@ export const ARTIFACT_KINDS = [
 export const artifactKindSchema = z.enum(ARTIFACT_KINDS);
 export type ArtifactKind = z.infer<typeof artifactKindSchema>;
 
-export const ARTIFACT_AUDIENCES = ["user_facing", "internal_log"] as const;
-export const artifactAudienceSchema = z.enum(ARTIFACT_AUDIENCES);
-export type ArtifactAudience = z.infer<typeof artifactAudienceSchema>;
+const ARTIFACT_AUDIENCES = ["user_facing", "internal_log"] as const;
+const artifactAudienceSchema = z.enum(ARTIFACT_AUDIENCES);
+type ArtifactAudience = z.infer<typeof artifactAudienceSchema>;
 
 export interface ArtifactKindPathRule {
   /** Locked, canonical path for kinds that resolve to a single fixed location (e.g. focus.md). */
@@ -77,13 +77,13 @@ export const ARTIFACT_KIND_PATH_RULES: Record<
   workflow_report: {},
 };
 
-export const artifactSourceSchema = z.object({
+const artifactSourceSchema = z.object({
   workflowId: z.string().min(1).optional(),
   laneId: z.string().min(1).optional(),
   round: z.number().int().nonnegative().optional(),
   createdAt: z.string().min(1),
 });
-export type ArtifactSource = z.infer<typeof artifactSourceSchema>;
+type ArtifactSource = z.infer<typeof artifactSourceSchema>;
 
 export const artifactRecordSchema = z.object({
   artifactId: z.string().min(1),
@@ -145,7 +145,7 @@ export interface ArtifactRegistration {
   }): Promise<void>;
 }
 
-export interface ArtifactRegistryLogger {
+interface ArtifactRegistryLogger {
   info?(event: string, fields: Record<string, unknown>): void;
   warn?(event: string, fields: Record<string, unknown>): void;
   error?(event: string, fields: Record<string, unknown>): void;

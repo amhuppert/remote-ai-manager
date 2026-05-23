@@ -6,7 +6,7 @@ import type {
   ParsedServerLogRecord,
 } from "../types";
 
-export interface OperationHotspot {
+interface OperationHotspot {
   key: string;
   module: string;
   message: string;

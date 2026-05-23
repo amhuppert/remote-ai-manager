@@ -175,7 +175,7 @@ const SCHEMA_DDL = `
   DROP TABLE IF EXISTS roadmap_items;
 `;
 
-export class SchemaVersionConflictError extends Error {
+class SchemaVersionConflictError extends Error {
   constructor(
     public readonly recordedVersion: number,
     public readonly knownVersion: number,

@@ -99,12 +99,12 @@ export function planCascadeApply(
   }
 }
 
-export interface ComposedCascadeAttempt {
+interface ComposedCascadeAttempt {
   attemptedHash: string;
   attemptedItemIds: readonly string[];
 }
 
-export type IdempotentNoOpReason =
+type IdempotentNoOpReason =
   | "not-pending"
   | "not-turn-start-pending"
   | "missing-composed-cascade"
@@ -308,7 +308,7 @@ export function planMissingTargetCascadeAfterMutation(
   };
 }
 
-export type CascadeFailureKind = "compose-throw" | "failed-discovery";
+type CascadeFailureKind = "compose-throw" | "failed-discovery";
 
 export type CascadeFailurePlan =
   | {

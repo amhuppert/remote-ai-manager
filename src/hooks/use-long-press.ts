@@ -9,7 +9,7 @@ import {
   type MutableRefObject,
 } from "react";
 
-export interface LongPressPoint {
+interface LongPressPoint {
   x: number;
   y: number;
 }
@@ -20,7 +20,7 @@ export interface UseLongPressOptions {
   slopPx?: number;
 }
 
-export interface LongPressHandlers {
+interface LongPressHandlers {
   onTouchStart: (event: ReactTouchEvent<HTMLElement>) => void;
   onTouchMove: (event: ReactTouchEvent<HTMLElement>) => void;
   onTouchEnd: (event: ReactTouchEvent<HTMLElement>) => void;

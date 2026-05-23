@@ -67,7 +67,7 @@ export interface MutationRequest {
   request: AgentCapabilityPatchRequest;
 }
 
-export interface MutationAppliedResult {
+interface MutationAppliedResult {
   status: "applied";
   scope: MutationScope;
   cascadeKind: AgentCapabilityCascadeKind;
@@ -77,7 +77,7 @@ export interface MutationAppliedResult {
   operationId: string;
 }
 
-export interface MutationConflictResult {
+interface MutationConflictResult {
   status: "conflict";
   scope: MutationScope;
   cascadeKind: AgentCapabilityCascadeKind;
@@ -121,7 +121,7 @@ export interface CapabilityMutationService {
   mutate(input: MutationRequest): Promise<MutationResult>;
 }
 
-export class CapabilityHashConflictError extends Error {
+class CapabilityHashConflictError extends Error {
   readonly expectedHash: string;
   readonly actualHash: string;
   constructor(expectedHash: string, actualHash: string) {

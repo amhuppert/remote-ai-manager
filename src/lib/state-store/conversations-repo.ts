@@ -206,7 +206,7 @@ function conversationToSqlBind(
   };
 }
 
-export function domainToConversationRow(
+function domainToConversationRow(
   projectPath: string,
   sessionName: string,
   conversation: ConversationState,

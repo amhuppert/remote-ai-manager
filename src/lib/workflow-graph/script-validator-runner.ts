@@ -226,7 +226,3 @@ export function createScriptValidatorRunner(
 
   return { runScriptValidator };
 }
-
-export type ScriptValidatorRunner = ReturnType<
-  typeof createScriptValidatorRunner
->;

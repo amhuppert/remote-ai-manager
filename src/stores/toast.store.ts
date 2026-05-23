@@ -41,8 +41,6 @@ const useToastStore = create<ToastStore>()(
 );
 
 export const useToasts = (): ToastItem[] => useToastStore((s) => s.toasts);
-export const usePushToast = (): ((message: string) => void) =>
-  useToastStore((s) => s.push);
 export const useDismissToast = (): ((id: string) => void) =>
   useToastStore((s) => s.dismiss);
 

@@ -18,7 +18,7 @@ const logger = createLogger("conflict-resolution");
 
 // Anthropic tool input_schema requires `type: "object"` at the root, so the
 // array of entries is wrapped under a `conflicts` property.
-export const CONFLICT_ENTRIES_OUTPUT_SCHEMA = {
+const CONFLICT_ENTRIES_OUTPUT_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["conflicts"],

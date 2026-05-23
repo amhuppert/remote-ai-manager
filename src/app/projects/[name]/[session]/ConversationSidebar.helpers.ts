@@ -20,7 +20,7 @@ export type SidebarConversation = ActiveConversationBase & {
   branchName: string | null;
 };
 
-export type SidebarStatus = SidebarConversation["status"];
+type SidebarStatus = SidebarConversation["status"];
 
 const NEEDS_YOU_STATUSES = new Set<SidebarStatus>(["waiting_for_input"]);
 
@@ -132,7 +132,7 @@ export function clusterBySession<T extends SidebarConversation>(
 // annotateSessionPos
 // ---------------------------------------------------------------------------
 
-export type SessionPosition = "first" | "middle" | "last" | "only";
+type SessionPosition = "first" | "middle" | "last" | "only";
 
 export type AnnotatedSidebarConversation<T extends SidebarConversation> = T & {
   isFirstInSession: boolean;

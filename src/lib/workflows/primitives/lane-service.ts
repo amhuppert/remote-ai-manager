@@ -54,7 +54,7 @@ const codexLaneOutcomeSchema = z
   })
   .strict();
 
-export const laneOutcomeSchema = z.discriminatedUnion("backend", [
+const laneOutcomeSchema = z.discriminatedUnion("backend", [
   claudeLaneOutcomeSchema,
   codexLaneOutcomeSchema,
 ]);

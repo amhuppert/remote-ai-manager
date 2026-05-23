@@ -29,8 +29,6 @@ import {
   sessionDiffSchema,
   commitsResponseSchema,
   activeConversationsResponseSchema,
-  type ActiveConversation,
-  type ActiveConversationForkedFrom,
   contentResponseSchema,
   kiroDocTreeSchema,
   presetsResponseSchema,
@@ -269,8 +267,6 @@ export function useConflictsQuery(projectName: string, sessionName: string) {
 // Conversation Queries
 // ---------------------------------------------------------------------------
 
-export type { ActiveConversation, ActiveConversationForkedFrom };
-
 export function useActiveConversationsQuery() {
   return useQuery({
     queryKey: conversationKeys.active(),
@@ -443,15 +439,6 @@ export function useNotificationsQuery(options?: { enabled?: boolean }) {
 // Preset Queries
 // ---------------------------------------------------------------------------
 
-export interface PresetInfo {
-  id: string;
-  name: string;
-  description: string;
-  badge: string;
-  files: string[];
-  installed: boolean;
-}
-
 export function usePresetsQuery(projectName: string) {
   return useQuery({
     queryKey: presetKeys.list(projectName),
@@ -596,44 +583,5 @@ export function useCollaborationListQuery(
         collaborationListResponseSchema,
       ).then((r) => r.envelopes),
     enabled: options?.enabled ?? true,
-  });
-}
-
-export type CollaborationArtifactType =
-  | "merged-design"
-  | "transcript"
-  | "open-questions";
-
-export function useCollaborationArtifactQuery(
-  projectName: string,
-  sessionName: string,
-  workflowId: string,
-  artifactType: CollaborationArtifactType,
-  options?: { enabled?: boolean },
-) {
-  return useQuery({
-    queryKey: collaborationKeys.artifact(
-      projectName,
-      sessionName,
-      workflowId,
-      artifactType,
-    ),
-    queryFn: async () => {
-      const response = await fetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/collaboration/${encodeURIComponent(workflowId)}/artifacts/${encodeURIComponent(artifactType)}`,
-        { cache: "no-store" },
-      );
-      if (!response.ok) {
-        throw new Error(
-          `Failed to fetch collaboration artifact (${artifactType}): ${response.status}`,
-        );
-      }
-      return response.text();
-    },
-    enabled:
-      (options?.enabled ?? true) &&
-      projectName.length > 0 &&
-      sessionName.length > 0 &&
-      workflowId.length > 0,
   });
 }

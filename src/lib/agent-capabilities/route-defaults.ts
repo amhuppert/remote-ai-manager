@@ -52,7 +52,7 @@ const stateManager = createStateManager();
 const discoveryCache =
   createAgentCapabilityDiscoveryCache<AgentCapabilityInventory>();
 
-export async function resolveAgentCapabilityRouteView(input: {
+async function resolveAgentCapabilityRouteView(input: {
   scope: CapabilityRouteScope;
   cascadeKind: AgentCapabilityCascadeKind;
   refresh?: boolean;
@@ -87,7 +87,7 @@ export async function resolveAgentCapabilityRouteView(input: {
   });
 }
 
-export async function refreshAgentCapabilityRouteDiscovery(input: {
+async function refreshAgentCapabilityRouteDiscovery(input: {
   scope: CapabilityRouteScope;
   cascadeKind: AgentCapabilityCascadeKind;
 }): Promise<{

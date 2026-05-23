@@ -58,11 +58,6 @@ export interface GraphWorkflowNotification extends BaseNotification {
   totalContexts: number;
 }
 
-export type ServerNotificationItem =
-  | MergeNotification
-  | CommitNotification
-  | ResolveConflictsNotification;
-
 export type NotificationItem =
   | ConversationNotification
   | MergeNotification

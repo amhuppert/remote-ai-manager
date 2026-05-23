@@ -26,7 +26,7 @@ export interface ComputeDiffDeps {
   unlink: (path: string) => Promise<void>;
 }
 
-export const defaultComputeDiffDeps: ComputeDiffDeps = {
+const defaultComputeDiffDeps: ComputeDiffDeps = {
   execFileAsync: execFileAsyncDefault,
   unlink: unlinkDefault,
 };

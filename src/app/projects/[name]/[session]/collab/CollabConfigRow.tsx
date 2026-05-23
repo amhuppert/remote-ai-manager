@@ -2,9 +2,9 @@
 
 import { useId, useState } from "react";
 
-export type CollabAgent = "claude" | "codex";
+type CollabAgent = "claude" | "codex";
 
-export type CollabAutonomousResolutionThreshold =
+type CollabAutonomousResolutionThreshold =
   | "none"
   | "minor"
   | "major"

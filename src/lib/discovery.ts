@@ -15,7 +15,7 @@ export interface DiscoveryDeps {
   readState: () => Promise<ManagerState>;
 }
 
-export const defaultDiscoveryDeps: DiscoveryDeps = {
+const defaultDiscoveryDeps: DiscoveryDeps = {
   readConfig: readConfigDefault,
   readState: readStateDefault,
 };

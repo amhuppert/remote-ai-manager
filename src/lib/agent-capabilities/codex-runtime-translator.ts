@@ -55,7 +55,7 @@ export interface CodexRuntimeCapabilityConfig {
   config: CodexCapabilityEmittedConfig;
 }
 
-export interface CodexCascadeEmission {
+interface CodexCascadeEmission {
   cascadeKind: "codex-skills" | "codex-plugins";
   /**
    * Rows that contributed to the emitted payload for this cascade. Identical

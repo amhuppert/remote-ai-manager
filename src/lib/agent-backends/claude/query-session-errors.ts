@@ -15,7 +15,7 @@ export function tagQuerySessionError<T extends Error>(
   return error as T & { code: QuerySessionErrorCode };
 }
 
-export function hasQuerySessionErrorCode(
+function hasQuerySessionErrorCode(
   error: unknown,
   code: QuerySessionErrorCode,
 ): boolean {

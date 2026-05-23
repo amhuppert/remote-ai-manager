@@ -13,7 +13,7 @@ const SYNTHETIC_FORK_TRUNCATION_PREFIX = "[truncated historical context]\n\n";
  * `TranscriptMessage[]`; tests and the conversation actor may pass narrower
  * objects with just role + content.
  */
-export interface SyntheticForkSourceMessage {
+interface SyntheticForkSourceMessage {
   role: string;
   content: MessageContentBlock[];
 }

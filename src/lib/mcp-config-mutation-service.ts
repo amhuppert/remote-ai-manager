@@ -27,7 +27,7 @@ import type {
 
 type StateManager = Pick<ReturnType<typeof createStateManager>, "mutateState">;
 
-export type McpConfigMutationResult =
+type McpConfigMutationResult =
   | {
       ok: true;
       changedServerKeys: readonly string[];

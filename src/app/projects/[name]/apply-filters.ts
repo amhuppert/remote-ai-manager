@@ -1,7 +1,7 @@
 import type { SessionListItem, DerivedSessionStatus } from "@/types";
 import type { FilterToken } from "./filter-tokens";
 
-export type SortableColumn =
+type SortableColumn =
   | "sessionName"
   | "branchName"
   | "targetBranch"

@@ -13,7 +13,7 @@ import type {
   McpTransport,
 } from "@/lib/schemas";
 
-export interface McpCanonicalStdioServerConfig {
+interface McpCanonicalStdioServerConfig {
   transport: "stdio";
   command: string;
   args?: readonly string[];
@@ -23,7 +23,7 @@ export interface McpCanonicalStdioServerConfig {
   toolTimeoutSec?: number;
 }
 
-export interface McpCanonicalHttpServerConfig {
+interface McpCanonicalHttpServerConfig {
   transport: "streamable-http";
   url: string;
   headers?: Readonly<Record<string, string>>;
@@ -32,7 +32,7 @@ export interface McpCanonicalHttpServerConfig {
   toolTimeoutSec?: number;
 }
 
-export interface McpCanonicalSseServerConfig {
+interface McpCanonicalSseServerConfig {
   transport: "sse";
   url: string;
   headers?: Readonly<Record<string, string>>;

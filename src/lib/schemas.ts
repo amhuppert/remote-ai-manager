@@ -65,14 +65,13 @@ export function clampEffortToModel(
 // Push Notification Config
 // ============================================================
 
-export const pushTriggerSchema = z.object({
+const pushTriggerSchema = z.object({
   jobCompleted: z.boolean().default(true),
   waitingForInput: z.boolean().default(true),
   workflowCompleted: z.boolean().default(true),
   workflowHalted: z.boolean().default(true),
   conversationIdle: z.boolean().default(true),
 });
-export type PushTriggers = z.infer<typeof pushTriggerSchema>;
 
 export const pushNotificationConfigSchema = z.object({
   enabled: z.boolean().default(false),
@@ -103,11 +102,6 @@ export const codexModelSchema = z.enum([
 ]);
 export type CodexModel = z.infer<typeof codexModelSchema>;
 
-/** Returns all known Codex model identifiers. */
-export function getCodexModels(): CodexModel[] {
-  return codexModelSchema.options;
-}
-
 /** Returns the default Codex model. */
 export function getDefaultCodexModel(): CodexModel {
   return "gpt-5.4";
@@ -122,7 +116,7 @@ export const codexReasoningEffortSchema = z.enum([
 ]);
 export type CodexReasoningEffort = z.infer<typeof codexReasoningEffortSchema>;
 
-export const codexConfigSchema = z.object({
+const codexConfigSchema = z.object({
   enabled: z.boolean().default(false),
   model: z.string().optional().default("gpt-5.4"),
   reasoningEffort: codexReasoningEffortSchema.optional(),
@@ -182,7 +176,7 @@ export type ConversationStatus =
   | "waiting_for_input";
 
 /** Session-level derived status (waiting_for_input > running > awaiting > new > idle) */
-export const derivedSessionStatusSchema = z.enum([
+const derivedSessionStatusSchema = z.enum([
   "waiting_for_input",
   "running",
   "awaiting",
@@ -191,7 +185,7 @@ export const derivedSessionStatusSchema = z.enum([
 ]);
 export type DerivedSessionStatus = z.infer<typeof derivedSessionStatusSchema>;
 
-export const toolResultMetricsSchema = z.object({
+const toolResultMetricsSchema = z.object({
   lineCount: z.number().int().nonnegative().optional(),
   fileCount: z.number().int().nonnegative().optional(),
   matchCount: z.number().int().nonnegative().optional(),
@@ -211,7 +205,7 @@ const debugModePhaseLiterals = z.enum([
   "cleanup_instrumentation",
 ]);
 
-export const messageContentBlockSchema = z.discriminatedUnion("type", [
+const messageContentBlockSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
   z.object({
     type: z.literal("tool_use"),
@@ -268,11 +262,10 @@ export const transcriptMessageSchema = z.object({
 });
 
 // AskUserQuestion schemas (defined before conversationStateSchema which references them)
-export const askQuestionOptionSchema = z.object({
+const askQuestionOptionSchema = z.object({
   label: z.string(),
   description: z.string().optional(),
 });
-export type AskQuestionOption = z.infer<typeof askQuestionOptionSchema>;
 
 export const askQuestionItemSchema = z.object({
   question: z.string(),
@@ -307,14 +300,14 @@ export type ConversationRole = z.infer<typeof conversationRoleSchema>;
 // Debug Mode Schemas
 // ============================================================
 
-export const debugHypothesisSchema = z.object({
+const debugHypothesisSchema = z.object({
   id: z.string(),
   description: z.string(),
   instrumentationPlan: z.string().optional(),
 });
 export type DebugHypothesis = z.infer<typeof debugHypothesisSchema>;
 
-export const debugModePhaseSchema = z.enum([
+const debugModePhaseSchema = z.enum([
   "hypothesizing",
   "awaiting_reproduction",
   "analyzing_evidence",
@@ -347,12 +340,11 @@ export const debugLogEntrySchema = z.object({
 });
 export type DebugLogEntry = z.infer<typeof debugLogEntrySchema>;
 
-export const debugProbeEntrySchema = z.object({
+const debugProbeEntrySchema = z.object({
   id: z.string(),
   file: z.string(),
   description: z.string(),
 });
-export type DebugProbeEntry = z.infer<typeof debugProbeEntrySchema>;
 
 export const debugInstrumentationManifestSchema = z.object({
   conversationId: z.string(),
@@ -375,16 +367,7 @@ export const mcpConfigLevelSchema = z.enum([
 ]);
 export type McpConfigLevel = z.infer<typeof mcpConfigLevelSchema>;
 
-export const mcpBackendAvailabilitySchema = z.enum([
-  "claude",
-  "codex",
-  "shared",
-]);
-export type McpBackendAvailability = z.infer<
-  typeof mcpBackendAvailabilitySchema
->;
-
-export const mcpDefinitionScopeSchema = z.enum(["global", "project"]);
+const mcpDefinitionScopeSchema = z.enum(["global", "project"]);
 export type McpDefinitionScope = z.infer<typeof mcpDefinitionScopeSchema>;
 
 export const mcpTransportSchema = z.enum(["stdio", "streamable-http", "sse"]);
@@ -423,7 +406,6 @@ export type McpApplyDisposition = z.infer<typeof mcpApplyDispositionSchema>;
 export const mcpToolOverrideSchema = z.object({
   enabled: z.boolean().optional(),
 });
-export type McpToolOverride = z.infer<typeof mcpToolOverrideSchema>;
 
 export const mcpServerOverrideSchema = z.object({
   enabled: z.boolean().optional(),
@@ -441,7 +423,6 @@ export const mcpGlobalStateSchema = z.object({
   overrides: mcpOverridesSchema,
   updatedAt: z.string(),
 });
-export type McpGlobalStateFile = z.infer<typeof mcpGlobalStateSchema>;
 
 // ---------------------------------------------------------------------------
 // Runtime application state — conversation-level tracking of apply dispositions
@@ -462,13 +443,13 @@ export type McpRuntimeApplicationState = z.infer<
 // API view model shared across discovery, resolver, and API layer
 // ---------------------------------------------------------------------------
 
-export const mcpSourceRefSchema = z.object({
+const mcpSourceRefSchema = z.object({
   scope: mcpDefinitionScopeSchema,
   filePath: z.string(),
 });
 export type McpSourceRef = z.infer<typeof mcpSourceRefSchema>;
 
-export const mcpDiagnosticSchema = z.object({
+const mcpDiagnosticSchema = z.object({
   severity: z.enum(["info", "warning", "error"]),
   code: z.string(),
   message: z.string(),
@@ -477,7 +458,7 @@ export const mcpDiagnosticSchema = z.object({
 });
 export type McpDiagnostic = z.infer<typeof mcpDiagnosticSchema>;
 
-export const mcpServerCompatibilityViewSchema = z.object({
+const mcpServerCompatibilityViewSchema = z.object({
   backends: z.array(
     z.object({
       backend: agentBackendSchema,
@@ -490,7 +471,7 @@ export type McpServerCompatibilityView = z.infer<
   typeof mcpServerCompatibilityViewSchema
 >;
 
-export const mcpToolViewSchema = z.object({
+const mcpToolViewSchema = z.object({
   name: z.string(),
   enabled: z.boolean(),
   inherited: z.boolean(),
@@ -502,7 +483,7 @@ export const mcpToolViewSchema = z.object({
 });
 export type McpToolView = z.infer<typeof mcpToolViewSchema>;
 
-export const mcpToolListViewSchema = z.object({
+const mcpToolListViewSchema = z.object({
   state: toolDiscoveryStateSchema,
   tools: z.array(mcpToolViewSchema),
   diagnostics: z.array(mcpDiagnosticSchema),
@@ -510,7 +491,7 @@ export const mcpToolListViewSchema = z.object({
 });
 export type McpToolListView = z.infer<typeof mcpToolListViewSchema>;
 
-export const mcpServerViewSchema = z.object({
+const mcpServerViewSchema = z.object({
   serverKey: z.string(),
   displayName: z.string(),
   nativeId: z.string(),
@@ -576,7 +557,7 @@ export type McpConfigPatchRequest = z.infer<typeof mcpConfigPatchRequestSchema>;
 // Tool inventory API result
 // ---------------------------------------------------------------------------
 
-export const mcpDiscoveredToolSchema = z.object({
+const mcpDiscoveredToolSchema = z.object({
   name: z.string(),
   description: z.string().optional(),
   inputSchema: z.unknown().optional(),
@@ -592,11 +573,6 @@ export const mcpToolInventoryResultSchema = z.object({
 export type McpToolInventoryResult = z.infer<
   typeof mcpToolInventoryResultSchema
 >;
-
-export const mcpToolRefreshRequestSchema = z.object({
-  backend: agentBackendSchema.optional(),
-});
-export type McpToolRefreshRequest = z.infer<typeof mcpToolRefreshRequestSchema>;
 
 // ============================================================
 // Agent Capability Configuration Schemas
@@ -637,7 +613,7 @@ export const AGENT_CAPABILITY_CASCADE_BACKEND_OWNERSHIP: Readonly<
   "codex-plugins": "codex",
 };
 
-export function requireAgentCapabilityCascadeBackendOwnership(
+function requireAgentCapabilityCascadeBackendOwnership(
   value: {
     cascadeKind: AgentCapabilityCascadeKind;
     backend: AgentBackendId;
@@ -655,7 +631,7 @@ export function requireAgentCapabilityCascadeBackendOwnership(
   }
 }
 
-export const agentCapabilityCapabilityKindSchema = z.enum([
+const agentCapabilityCapabilityKindSchema = z.enum([
   "skill",
   "plugin",
   "agent",
@@ -708,16 +684,13 @@ export type AgentCapabilityRuntimeVisibility = z.infer<
   typeof agentCapabilityRuntimeVisibilitySchema
 >;
 
-export const agentCapabilityApplySemanticsSchema = z.enum([
+const agentCapabilityApplySemanticsSchema = z.enum([
   "idle-live-apply",
   "next-turn",
   "next-conversation",
 ]);
-export type AgentCapabilityApplySemantics = z.infer<
-  typeof agentCapabilityApplySemanticsSchema
->;
 
-export const agentCapabilityDiscoverySupportSchema = z.enum([
+const agentCapabilityDiscoverySupportSchema = z.enum([
   "available",
   "unavailable-pending-verification",
 ]);
@@ -725,24 +698,18 @@ export type AgentCapabilityDiscoverySupport = z.infer<
   typeof agentCapabilityDiscoverySupportSchema
 >;
 
-export const agentCapabilityMetadataRuntimeVisibilitySchema = z.enum([
+const agentCapabilityMetadataRuntimeVisibilitySchema = z.enum([
   "sdk-runtime",
   "source-only",
   "unsupported",
 ]);
-export type AgentCapabilityMetadataRuntimeVisibility = z.infer<
-  typeof agentCapabilityMetadataRuntimeVisibilitySchema
->;
 
-export const agentCapabilityCompositionSupportSchema = z.enum([
+const agentCapabilityCompositionSupportSchema = z.enum([
   "native",
   "translator",
   "verification-gated",
   "diagnostic-only",
 ]);
-export type AgentCapabilityCompositionSupport = z.infer<
-  typeof agentCapabilityCompositionSupportSchema
->;
 
 // ---------------------------------------------------------------------------
 // Persistent override storage — sparse per-cascade item records
@@ -753,10 +720,6 @@ export type AgentCapabilityCompositionSupport = z.infer<
 export const agentCapabilityItemOverrideSchema = z.object({
   enabled: z.boolean(),
 });
-export type AgentCapabilityItemOverride = z.infer<
-  typeof agentCapabilityItemOverrideSchema
->;
-
 export const agentCapabilityCascadeOverrideSchema = z.object({
   items: z.record(z.string(), agentCapabilityItemOverrideSchema),
 });
@@ -788,10 +751,6 @@ export const agentCapabilityGlobalStateSchema = z.object({
   overrides: agentCapabilityOverridesSchema,
   updatedAt: z.string(),
 });
-export type AgentCapabilityGlobalStateFile = z.infer<
-  typeof agentCapabilityGlobalStateSchema
->;
-
 // ---------------------------------------------------------------------------
 // Runtime apply state — conversation-level per-cascade tracking
 // ---------------------------------------------------------------------------
@@ -860,7 +819,7 @@ export type AgentCapabilitySourceRef = z.infer<
   typeof agentCapabilitySourceRefSchema
 >;
 
-export const agentCapabilityNativeDefaultSchema = z.object({
+const agentCapabilityNativeDefaultSchema = z.object({
   enabled: z.boolean(),
   mode: z.string().optional(),
 });
@@ -868,7 +827,7 @@ export type AgentCapabilityNativeDefault = z.infer<
   typeof agentCapabilityNativeDefaultSchema
 >;
 
-export const agentCapabilityEffectiveStateSchema = z.object({
+const agentCapabilityEffectiveStateSchema = z.object({
   enabled: z.boolean(),
   originLayer: agentCapabilityOriginLayerSchema,
 });
@@ -876,7 +835,7 @@ export type AgentCapabilityEffectiveState = z.infer<
   typeof agentCapabilityEffectiveStateSchema
 >;
 
-export const agentCapabilityInheritedDisableReasonSchema = z.object({
+const agentCapabilityInheritedDisableReasonSchema = z.object({
   pluginId: z.string(),
   originLayer: agentCapabilityOriginLayerSchema,
 });
@@ -960,8 +919,7 @@ export type AgentCapabilityViewRow = z.infer<
 // - The metadata registry (`src/lib/agent-capabilities/metadata.ts`) which
 //   parses every record at construction time.
 // - API view responses, where the metadata field describes the same cascade
-//   the response targets. Re-exported below as `agentCapabilityViewMetadataSchema`
-//   so downstream consumers see one canonical shape, not a duplicate.
+//   the response targets.
 export const agentCapabilityMetadataSchema = z
   .object({
     cascadeKind: agentCapabilityCascadeKindSchema,
@@ -978,9 +936,6 @@ export type AgentCapabilityMetadata = z.infer<
   typeof agentCapabilityMetadataSchema
 >;
 
-export const agentCapabilityViewMetadataSchema = agentCapabilityMetadataSchema;
-export type AgentCapabilityViewMetadata = AgentCapabilityMetadata;
-
 export const agentCapabilityViewResponseSchema = z
   .object({
     level: agentCapabilityCascadeLayerSchema,
@@ -992,7 +947,7 @@ export const agentCapabilityViewResponseSchema = z
     items: z.array(agentCapabilityViewRowSchema),
     diagnostics: z.array(agentCapabilityDiagnosticSchema),
     effectiveHash: z.string(),
-    metadata: agentCapabilityViewMetadataSchema.optional(),
+    metadata: agentCapabilityMetadataSchema.optional(),
   })
   .superRefine(requireAgentCapabilityCascadeBackendOwnership)
   .superRefine((value, ctx) => {
@@ -1054,10 +1009,6 @@ export type AgentCapabilityPatchRequest = z.infer<
 export const agentCapabilityRefreshRequestSchema = z.object({
   cascadeKind: agentCapabilityCascadeKindSchema,
 });
-export type AgentCapabilityRefreshRequest = z.infer<
-  typeof agentCapabilityRefreshRequestSchema
->;
-
 export const agentCapabilityInvalidationHintsSchema = z
   .object({
     level: agentCapabilityCascadeLayerSchema,
@@ -1211,7 +1162,6 @@ export const conversationStateSchema = z.object({
 export type ConversationState = z.infer<typeof conversationStateSchema>;
 
 export const sessionSourceSchema = z.enum(["cc", "imported"]);
-export type SessionSource = z.infer<typeof sessionSourceSchema>;
 
 export const sessionCreationModeSchema = z.enum([
   "fast",
@@ -1225,13 +1175,13 @@ export type SessionCreationMode = z.infer<typeof sessionCreationModeSchema>;
 // (defined before sessionStateSchema so it can reference graphWorkflowExecutionSchema)
 // ============================================================
 
-export const graphWorkflowClaudeAgentConfigSchema = z.object({
+const graphWorkflowClaudeAgentConfigSchema = z.object({
   backend: z.literal("claude"),
   model: claudeModelSchema,
   reasoningEffort: effortLevelSchema,
 });
 
-export const graphWorkflowCodexAgentConfigSchema = z.object({
+const graphWorkflowCodexAgentConfigSchema = z.object({
   backend: z.literal("codex"),
   model: codexModelSchema,
   reasoningEffort: codexReasoningEffortSchema,
@@ -1260,12 +1210,7 @@ export type GraphWorkflowMutabilityPolicy = z.infer<
   typeof graphWorkflowMutabilityPolicySchema
 >;
 
-export const graphWorkflowCircuitBreakerConditionSchema = z.enum([
-  "retry_exhaustion",
-]);
-export type GraphWorkflowCircuitBreakerCondition = z.infer<
-  typeof graphWorkflowCircuitBreakerConditionSchema
->;
+const graphWorkflowCircuitBreakerConditionSchema = z.enum(["retry_exhaustion"]);
 
 export const graphWorkflowCircuitBreakerPolicySchema = z.object({
   consecutiveFailureThreshold: z.number().int().min(1).optional(),
@@ -1278,10 +1223,6 @@ export const graphWorkflowLaneContinuityPolicySchema = z.object({
   enabled: z.boolean().default(true),
   contextLimitTokens: z.number().int().positive().optional(),
 });
-export type GraphWorkflowLaneContinuityPolicy = z.infer<
-  typeof graphWorkflowLaneContinuityPolicySchema
->;
-
 export const graphWorkflowIterationPolicySchema = z.object({
   maxIterations: z.number().int().min(1),
   continuity: graphWorkflowLaneContinuityPolicySchema.default({
@@ -1299,13 +1240,13 @@ const graphWorkflowValidatorBaseSchema = z.object({
   }),
 });
 
-export const graphWorkflowClaudeValidatorConfigSchema =
+const graphWorkflowClaudeValidatorConfigSchema =
   graphWorkflowValidatorBaseSchema.extend({
     type: z.literal("claude"),
     agent: graphWorkflowAgentConfigSchema,
   });
 
-export const graphWorkflowCodexValidatorConfigSchema =
+const graphWorkflowCodexValidatorConfigSchema =
   graphWorkflowValidatorBaseSchema.extend({
     type: z.literal("codex"),
     codex: z
@@ -1326,19 +1267,6 @@ export const graphWorkflowAgentValidatorConfigSchema = z.discriminatedUnion(
 export type GraphWorkflowAgentValidatorConfig = z.infer<
   typeof graphWorkflowAgentValidatorConfigSchema
 >;
-export type GraphWorkflowClaudeValidatorConfig = z.infer<
-  typeof graphWorkflowClaudeValidatorConfigSchema
->;
-export type GraphWorkflowCodexValidatorConfig = z.infer<
-  typeof graphWorkflowCodexValidatorConfigSchema
->;
-
-export const graphWorkflowContextValidationSchema =
-  graphWorkflowAgentValidatorConfigSchema;
-export type GraphWorkflowContextValidation = z.infer<
-  typeof graphWorkflowContextValidationSchema
->;
-
 export const graphWorkflowScriptValidatorConfigSchema = z.object({
   enabled: z.boolean().default(false),
 });
@@ -1376,12 +1304,8 @@ export type GraphWorkflowExecutionContextDefinition = z.infer<
   typeof graphWorkflowExecutionContextDefinitionSchema
 >;
 
-export const graphWorkflowTaskSourceSchema = z.enum(["user", "agent"]);
-export type GraphWorkflowTaskSource = z.infer<
-  typeof graphWorkflowTaskSourceSchema
->;
-
-export const graphWorkflowTaskDefinitionSchema = z.object({
+const graphWorkflowTaskSourceSchema = z.enum(["user", "agent"]);
+const graphWorkflowTaskDefinitionSchema = z.object({
   id: z.string().trim().min(1),
   contextId: z.string().trim().min(1),
   order: z.number().int().min(1),
@@ -1394,7 +1318,7 @@ export type GraphWorkflowTaskDefinition = z.infer<
   typeof graphWorkflowTaskDefinitionSchema
 >;
 
-export const graphWorkflowContextEdgeSchema = z.object({
+const graphWorkflowContextEdgeSchema = z.object({
   id: z.string().trim().min(1),
   sourceContextId: z.string().trim().min(1),
   targetContextId: z.string().trim().min(1),
@@ -1456,18 +1380,16 @@ export type ResolvedWorkflowSemanticDefinition = z.infer<
   typeof resolvedWorkflowSemanticDefinitionSchema
 >;
 
-export const graphWorkflowPositionSchema = z.object({
+const graphWorkflowPositionSchema = z.object({
   x: z.number(),
   y: z.number(),
 });
-export type GraphWorkflowPosition = z.infer<typeof graphWorkflowPositionSchema>;
 
-export const graphWorkflowViewportSchema = z.object({
+const graphWorkflowViewportSchema = z.object({
   x: z.number().default(0),
   y: z.number().default(0),
   zoom: z.number().positive().default(1),
 });
-export type GraphWorkflowViewport = z.infer<typeof graphWorkflowViewportSchema>;
 
 export const graphWorkflowVisualLayoutSchema = z.object({
   workflowId: z.string().trim().min(1),
@@ -1495,7 +1417,7 @@ export type WorkflowDefinitionRecord = z.infer<
   typeof workflowDefinitionRecordSchema
 >;
 
-export const workflowValidatorIssueSchema = z.object({
+const workflowValidatorIssueSchema = z.object({
   taskId: z.string().trim().min(1),
   title: z.string().trim().min(1),
   description: z.string().trim().min(1),
@@ -1508,11 +1430,8 @@ export const workflowAgentValidatorResultSchema = z.object({
   summary: z.string(),
   issues: z.array(workflowValidatorIssueSchema).default([]),
 });
-export type WorkflowAgentValidatorResult = z.infer<
-  typeof workflowAgentValidatorResultSchema
->;
 
-export const graphWorkflowSharedDocumentEntrySchema = z.object({
+const graphWorkflowSharedDocumentEntrySchema = z.object({
   id: z.string().trim().min(1),
   relativePath: z.string().trim().min(1),
   description: z.string().trim().min(1),
@@ -1525,7 +1444,7 @@ export type GraphWorkflowSharedDocumentEntry = z.infer<
   typeof graphWorkflowSharedDocumentEntrySchema
 >;
 
-export const graphWorkflowStatusSchema = z.enum([
+const graphWorkflowStatusSchema = z.enum([
   "pending",
   "running",
   "paused",
@@ -1546,7 +1465,7 @@ export type GraphWorkflowContextStatus = z.infer<
   typeof graphWorkflowContextStatusSchema
 >;
 
-export const graphWorkflowTaskStatusSchema = z.enum([
+const graphWorkflowTaskStatusSchema = z.enum([
   "pending",
   "running",
   "interrupted",
@@ -1658,33 +1577,21 @@ export type GraphWorkflowHaltReason = z.infer<
   typeof graphWorkflowHaltReasonSchema
 >;
 
-export const graphWorkflowExecutionLaneIdSchema = z.string().trim().min(1);
-export type GraphWorkflowExecutionLaneId = z.infer<
-  typeof graphWorkflowExecutionLaneIdSchema
->;
+const graphWorkflowExecutionLaneIdSchema = z.string().trim().min(1);
 
-export const graphWorkflowExecutionLaneKindSchema = z.enum([
-  "session",
-  "worktree",
-]);
-export type GraphWorkflowExecutionLaneKind = z.infer<
-  typeof graphWorkflowExecutionLaneKindSchema
->;
+const graphWorkflowExecutionLaneKindSchema = z.enum(["session", "worktree"]);
 
-export const graphWorkflowExecutionLaneStatusSchema = z.enum([
+const graphWorkflowExecutionLaneStatusSchema = z.enum([
   "pending",
   "active",
   "merged",
   "halted",
 ]);
-export type GraphWorkflowExecutionLaneStatus = z.infer<
-  typeof graphWorkflowExecutionLaneStatusSchema
->;
 
 // Append-only audit/recovery record of commits on a lane. Git remains the
 // authoritative source for the lane's current HEAD; these snapshots exist to
 // reconstruct lane history and to support recovery after crashes.
-export const graphWorkflowExecutionLaneCommitSnapshotSchema = z.object({
+const graphWorkflowExecutionLaneCommitSnapshotSchema = z.object({
   contextId: z.string().trim().min(1),
   sha: z.string().trim().min(1),
   committedAt: z.string(),
@@ -1711,11 +1618,7 @@ export type GraphWorkflowExecutionLaneState = z.infer<
   typeof graphWorkflowExecutionLaneStateSchema
 >;
 
-export const graphWorkflowExecutionJoinIdSchema = z.string().trim().min(1);
-export type GraphWorkflowExecutionJoinId = z.infer<
-  typeof graphWorkflowExecutionJoinIdSchema
->;
-
+const graphWorkflowExecutionJoinIdSchema = z.string().trim().min(1);
 export const graphWorkflowExecutionJoinKindSchema = z.enum([
   "context_merge",
   "final_publish",
@@ -1735,14 +1638,10 @@ export type GraphWorkflowExecutionJoinStatus = z.infer<
   typeof graphWorkflowExecutionJoinStatusSchema
 >;
 
-export const graphWorkflowExecutionJoinConflictDetailSchema = z.object({
+const graphWorkflowExecutionJoinConflictDetailSchema = z.object({
   files: z.array(z.string().trim().min(1)).default([]),
   message: z.string().nullable().default(null),
 });
-export type GraphWorkflowExecutionJoinConflictDetail = z.infer<
-  typeof graphWorkflowExecutionJoinConflictDetailSchema
->;
-
 export const graphWorkflowExecutionJoinStateSchema = z.object({
   joinId: graphWorkflowExecutionJoinIdSchema,
   kind: graphWorkflowExecutionJoinKindSchema,
@@ -1800,15 +1699,11 @@ export type GraphWorkflowExecutionContextState = z.infer<
   typeof graphWorkflowExecutionContextStateSchema
 >;
 
-export const graphWorkflowTaskValidationFailureSchema = z.object({
+const graphWorkflowTaskValidationFailureSchema = z.object({
   message: z.string(),
   timestamp: z.string(),
 });
-export type GraphWorkflowTaskValidationFailure = z.infer<
-  typeof graphWorkflowTaskValidationFailureSchema
->;
-
-export const graphWorkflowTaskStateSchema = z.object({
+const graphWorkflowTaskStateSchema = z.object({
   taskId: z.string().trim().min(1),
   contextId: z.string().trim().min(1),
   order: z.number().int().min(1),
@@ -1824,7 +1719,7 @@ export type GraphWorkflowTaskState = z.infer<
   typeof graphWorkflowTaskStateSchema
 >;
 
-export const graphWorkflowValidatorTypeSchema = z.enum(["context"]);
+const graphWorkflowValidatorTypeSchema = z.enum(["context"]);
 export type GraphWorkflowValidatorType = z.infer<
   typeof graphWorkflowValidatorTypeSchema
 >;
@@ -1916,7 +1811,7 @@ export const graphWorkflowContextStatusEventSchema = z.object({
   remainingTaskCount: z.number().int().min(0),
   iterationCount: z.number().int().min(0),
 });
-export type GraphWorkflowContextStatusEvent = z.infer<
+type GraphWorkflowContextStatusEvent = z.infer<
   typeof graphWorkflowContextStatusEventSchema
 >;
 
@@ -1936,11 +1831,11 @@ export const graphWorkflowTaskStatusEventSchema = z.object({
   summary: z.string().nullable().optional(),
   failureMessage: z.string().nullable().optional(),
 });
-export type GraphWorkflowTaskStatusEvent = z.infer<
+type GraphWorkflowTaskStatusEvent = z.infer<
   typeof graphWorkflowTaskStatusEventSchema
 >;
 
-export const graphWorkflowLaneKindSchema = z.enum([
+const graphWorkflowLaneKindSchema = z.enum([
   "implementer",
   "context_validator",
 ]);
@@ -1965,7 +1860,7 @@ export type GraphWorkflowExecutionSessionRef = z.infer<
   typeof graphWorkflowExecutionSessionRefSchema
 >;
 
-export const graphWorkflowValidationReviewArtifactSchema = z.discriminatedUnion(
+const graphWorkflowValidationReviewArtifactSchema = z.discriminatedUnion(
   "engine",
   [
     z.object({
@@ -2036,7 +1931,7 @@ export type GraphWorkflowSharedDocumentsUpdatedEvent = z.infer<
   typeof graphWorkflowSharedDocumentsUpdatedEventSchema
 >;
 
-export const graphWorkflowLaneStatusEventSchema = z.object({
+const graphWorkflowLaneStatusEventSchema = z.object({
   type: z.literal("graph-workflow-lane-status"),
   projectName: z.string(),
   sessionName: z.string(),
@@ -2053,7 +1948,7 @@ export type GraphWorkflowLaneStatusEvent = z.infer<
   typeof graphWorkflowLaneStatusEventSchema
 >;
 
-export const graphWorkflowJoinStatusEventSchema = z.object({
+const graphWorkflowJoinStatusEventSchema = z.object({
   type: z.literal("graph-workflow-join-status"),
   projectName: z.string(),
   sessionName: z.string(),
@@ -2072,7 +1967,7 @@ export type GraphWorkflowJoinStatusEvent = z.infer<
   typeof graphWorkflowJoinStatusEventSchema
 >;
 
-export const graphWorkflowSseEventSchema = z.discriminatedUnion("type", [
+const graphWorkflowSseEventSchema = z.discriminatedUnion("type", [
   graphWorkflowStatusEventSchema,
   graphWorkflowContextStatusEventSchema,
   graphWorkflowTaskStatusEventSchema,
@@ -2100,9 +1995,6 @@ export const resetExecutionContextRequestSchema = z.object({
   executionId: z.string().trim().min(1),
   contextId: z.string().trim().min(1),
 });
-export type ResetExecutionContextRequest = z.infer<
-  typeof resetExecutionContextRequestSchema
->;
 
 // ============================================================
 // Agent-Session Runtime State
@@ -2155,13 +2047,12 @@ export type GraphWorkflowAgentSessionState = z.infer<
 // deterministic continuation choice the scheduler should make at each
 // fan-out point so restarts make the same call. See
 // `src/lib/workflow-graph/lane-plan.ts`.
-export const graphWorkflowLanePlanSchema = z.object({
+const graphWorkflowLanePlanSchema = z.object({
   continuationMap: z.record(z.string(), z.string()).default({}),
   longestDownstreamPath: z
     .record(z.string(), z.number().int().min(0))
     .default({}),
 });
-export type GraphWorkflowLanePlan = z.infer<typeof graphWorkflowLanePlanSchema>;
 
 export const graphWorkflowExecutionSchema = z.object({
   id: z.string().trim().min(1),
@@ -2248,17 +2139,13 @@ const workflowRuntimeEditMoveOperationSchema = z.object({
   targetOrder: z.number().int().min(1),
 });
 
-export const workflowRuntimeEditOperationSchema = z.discriminatedUnion("type", [
+const workflowRuntimeEditOperationSchema = z.discriminatedUnion("type", [
   workflowRuntimeEditAddOperationSchema,
   workflowRuntimeEditUpdateOperationSchema,
   workflowRuntimeEditRemoveOperationSchema,
   workflowRuntimeEditReorderOperationSchema,
   workflowRuntimeEditMoveOperationSchema,
 ]);
-export type WorkflowRuntimeEditOperation = z.infer<
-  typeof workflowRuntimeEditOperationSchema
->;
-
 export const workflowRuntimeEditRequestSchema = z.object({
   operations: z.array(workflowRuntimeEditOperationSchema).min(1),
 });
@@ -2266,7 +2153,7 @@ export type WorkflowRuntimeEditRequest = z.infer<
   typeof workflowRuntimeEditRequestSchema
 >;
 
-export const workflowGraphValidationErrorSchema = z.object({
+const workflowGraphValidationErrorSchema = z.object({
   code: z.string().trim().min(1),
   message: z.string().trim().min(1),
   contextId: z.string().trim().min(1).optional(),
@@ -2278,11 +2165,10 @@ export type WorkflowGraphValidationError = z.infer<
   typeof workflowGraphValidationErrorSchema
 >;
 
-export const workflowPlanReferenceSchema = z.object({
+const workflowPlanReferenceSchema = z.object({
   filePath: z.string().trim().min(1),
   description: z.string().trim().min(1),
 });
-export type WorkflowPlanReference = z.infer<typeof workflowPlanReferenceSchema>;
 
 export const workflowPlanRequestSchema = z.object({
   objective: z.string().trim().min(1),
@@ -2467,7 +2353,7 @@ export const bulkSessionsRequestSchema = z.object({
 });
 export type BulkSessionsRequest = z.infer<typeof bulkSessionsRequestSchema>;
 
-export const bulkSessionResultSchema = z.object({
+const bulkSessionResultSchema = z.object({
   sessionName: z.string(),
   success: z.boolean(),
   error: z.string().optional(),
@@ -2510,13 +2396,10 @@ export type ManagerState = z.infer<typeof managerStateSchema>;
 // Dev Server Schemas
 // ============================================================
 
-export const devServerPortStrategySchema = z.enum([
-  "stdout-cc-port",
-  "cc-assigned",
-]);
+const devServerPortStrategySchema = z.enum(["stdout-cc-port", "cc-assigned"]);
 export type DevServerPortStrategy = z.infer<typeof devServerPortStrategySchema>;
 
-export const devServerPortConfigSchema = z
+const devServerPortConfigSchema = z
   .object({
     strategy: devServerPortStrategySchema.default("cc-assigned"),
     base: z.number().int().min(1).max(65535).optional(),
@@ -2540,21 +2423,16 @@ export const devServerPortConfigSchema = z
       });
     }
   });
-export type DevServerPortConfig = z.infer<typeof devServerPortConfigSchema>;
 
-export const devServerReadinessTypeSchema = z.enum(["stdout-cc-port", "tcp"]);
+const devServerReadinessTypeSchema = z.enum(["stdout-cc-port", "tcp"]);
 export type DevServerReadinessType = z.infer<
   typeof devServerReadinessTypeSchema
 >;
 
-export const devServerReadinessConfigSchema = z.object({
+const devServerReadinessConfigSchema = z.object({
   type: devServerReadinessTypeSchema,
   timeoutMs: z.number().int().min(100).max(600_000).optional(),
 });
-export type DevServerReadinessConfig = z.infer<
-  typeof devServerReadinessConfigSchema
->;
-
 export const devServerConfigSchema = z.object({
   name: z.string().min(1),
   command: z.string().min(1),
@@ -2564,7 +2442,7 @@ export const devServerConfigSchema = z.object({
 });
 export type DevServerConfig = z.infer<typeof devServerConfigSchema>;
 
-export const devServerStatusSchema = z.enum([
+const devServerStatusSchema = z.enum([
   "starting",
   "running",
   "stopped",
@@ -2572,10 +2450,10 @@ export const devServerStatusSchema = z.enum([
 ]);
 export type DevServerStatus = z.infer<typeof devServerStatusSchema>;
 
-export const devServerSourceSchema = z.enum(["cc-started", "external-adopted"]);
+const devServerSourceSchema = z.enum(["cc-started", "external-adopted"]);
 export type DevServerSource = z.infer<typeof devServerSourceSchema>;
 
-export const devServerStatusEventSchema = z.object({
+const devServerStatusEventSchema = z.object({
   type: z.literal("dev-server-status"),
   projectName: z.string(),
   sessionName: z.string(),
@@ -2591,7 +2469,7 @@ export const devServerStatusEventSchema = z.object({
 });
 export type DevServerStatusEvent = z.infer<typeof devServerStatusEventSchema>;
 
-export const devServerRuntimeStateSchema = z.object({
+const devServerRuntimeStateSchema = z.object({
   serverName: z.string(),
   command: z.string(),
   status: devServerStatusSchema,
@@ -2607,7 +2485,7 @@ export const devServerRuntimeStateSchema = z.object({
 });
 export type DevServerRuntimeState = z.infer<typeof devServerRuntimeStateSchema>;
 
-export const devServersStatusResponseSchema = z.object({
+const devServersStatusResponseSchema = z.object({
   servers: z.array(devServerRuntimeStateSchema),
 });
 export type DevServersStatusResponse = z.infer<
@@ -2631,7 +2509,7 @@ export type PerRepoConfig = z.infer<typeof perRepoConfigSchema>;
 // API Request Schemas
 // ============================================================
 
-export const imageMediaTypeSchema = z.enum([
+const imageMediaTypeSchema = z.enum([
   "image/jpeg",
   "image/png",
   "image/gif",
@@ -2639,7 +2517,7 @@ export const imageMediaTypeSchema = z.enum([
 ]);
 export type ImageMediaType = z.infer<typeof imageMediaTypeSchema>;
 
-export const imagePayloadSchema = z.object({
+const imagePayloadSchema = z.object({
   attachmentId: z.string().min(1),
   mediaType: imageMediaTypeSchema,
   base64Data: z.string().min(1),
@@ -2695,41 +2573,32 @@ export type RunPromptRequest = z.infer<typeof runPromptRequestSchema>;
 export const commitRequestSchema = z.object({
   message: z.string().trim().min(1),
 });
-export type CommitRequest = z.infer<typeof commitRequestSchema>;
 
 export const sessionArchiveRequestSchema = z.object({
   archived: z.boolean(),
 });
-export type SessionArchiveRequest = z.infer<typeof sessionArchiveRequestSchema>;
 
 export const sessionTddRequestSchema = z.object({
   tddEnabled: z.boolean(),
 });
-export type SessionTddRequest = z.infer<typeof sessionTddRequestSchema>;
 
 export const renameConversationRequestSchema = z.object({
   name: z.string().trim().min(1).max(200),
 });
-export type RenameConversationRequest = z.infer<
-  typeof renameConversationRequestSchema
->;
 
 export const forkRequestSchema = z.object({
   messageIndex: z.number().int().min(0),
 });
-export type ForkRequest = z.infer<typeof forkRequestSchema>;
 
 export const forkResponseSchema = z.object({
   conversationId: z.string(),
   name: z.string(),
   forkMode: z.enum(["native", "synthetic"]).nullable(),
 });
-export type ForkResponse = z.infer<typeof forkResponseSchema>;
 
 export const pendingPromptRequestSchema = z.object({
   text: z.string().nullable(),
 });
-export type PendingPromptRequest = z.infer<typeof pendingPromptRequestSchema>;
 
 export const debugModeRequestSchema = z.object({
   action: z.enum([
@@ -2743,12 +2612,10 @@ export const debugModeRequestSchema = z.object({
     "retry_turn",
   ]),
 });
-export type DebugModeRequest = z.infer<typeof debugModeRequestSchema>;
 
 export const debugRecordingRequestSchema = z.object({
   recording: z.boolean(),
 });
-export type DebugRecordingRequest = z.infer<typeof debugRecordingRequestSchema>;
 
 // ============================================================
 // Git Operations Schemas
@@ -2797,7 +2664,7 @@ export const messageUpdatedEventSchema = z.object({
   seq: z.number().int().nonnegative(),
   message: transcriptMessageSchema,
 });
-export type MessageUpdatedEvent = z.infer<typeof messageUpdatedEventSchema>;
+type MessageUpdatedEvent = z.infer<typeof messageUpdatedEventSchema>;
 
 export const conversationCreatedEventSchema = z.object({
   type: z.literal("conversation-created"),
@@ -2805,9 +2672,7 @@ export const conversationCreatedEventSchema = z.object({
   sessionName: z.string(),
   conversation: conversationStateSchema,
 });
-export type ConversationCreatedEvent = z.infer<
-  typeof conversationCreatedEventSchema
->;
+type ConversationCreatedEvent = z.infer<typeof conversationCreatedEventSchema>;
 
 export const conversationRenamedEventSchema = z.object({
   type: z.literal("conversation-renamed"),
@@ -2816,9 +2681,7 @@ export const conversationRenamedEventSchema = z.object({
   conversationId: z.string(),
   name: z.string().nullable(),
 });
-export type ConversationRenamedEvent = z.infer<
-  typeof conversationRenamedEventSchema
->;
+type ConversationRenamedEvent = z.infer<typeof conversationRenamedEventSchema>;
 
 export const conversationArchivedEventSchema = z.object({
   type: z.literal("conversation-archived"),
@@ -2827,7 +2690,7 @@ export const conversationArchivedEventSchema = z.object({
   conversationId: z.string(),
   archived: z.boolean(),
 });
-export type ConversationArchivedEvent = z.infer<
+type ConversationArchivedEvent = z.infer<
   typeof conversationArchivedEventSchema
 >;
 
@@ -2849,13 +2712,12 @@ export const answerQuestionRequestSchema = z.object({
   questionId: z.string(),
   answers: z.record(z.string(), z.string()),
 });
-export type AnswerQuestionRequest = z.infer<typeof answerQuestionRequestSchema>;
 
 // ============================================================
 // Background Job Schemas
 // ============================================================
 
-export const jobTypeSchema = z.enum(["commit", "merge", "resolve-conflicts"]);
+const jobTypeSchema = z.enum(["commit", "merge", "resolve-conflicts"]);
 export type JobType = z.infer<typeof jobTypeSchema>;
 
 export const jobStatusSchema = z.enum([
@@ -2908,12 +2770,10 @@ export const jobDispatchResponseSchema = z.object({
   branchName: z.string(),
   startedAt: z.string(),
 });
-export type JobDispatchResponse = z.infer<typeof jobDispatchResponseSchema>;
 
 export const smartMergeRequestSchema = z.object({
   autoResolve: z.boolean(),
 });
-export type SmartMergeRequest = z.infer<typeof smartMergeRequestSchema>;
 
 export const conflictEntrySchema = z.object({
   file: z.string(),
@@ -2923,7 +2783,7 @@ export const conflictEntrySchema = z.object({
 });
 export type ConflictEntry = z.infer<typeof conflictEntrySchema>;
 
-export const conflictDecisionInputSchema = z.object({
+const conflictDecisionInputSchema = z.object({
   file: z.string(),
   decision: z.enum(["approved", "rejected", "pending"]),
   feedback: z.string().optional(),
@@ -2933,15 +2793,11 @@ export type ConflictDecisionInput = z.infer<typeof conflictDecisionInputSchema>;
 export const resolveConflictsRequestSchema = z.object({
   decisions: z.array(conflictDecisionInputSchema).optional(),
 });
-export type ResolveConflictsRequest = z.infer<
-  typeof resolveConflictsRequestSchema
->;
-
 // ============================================================
 // Notification Schemas
 // ============================================================
 
-export const notificationTypeSchema = z.enum([
+const notificationTypeSchema = z.enum([
   "merge-completed",
   "merge-failed",
   "merge-conflicts",
@@ -2977,46 +2833,41 @@ export const notificationCreatedEventSchema = z.object({
   type: z.literal("notification-created"),
   notification: notificationSchema,
 });
-export type NotificationCreatedEvent = z.infer<
-  typeof notificationCreatedEventSchema
->;
+type NotificationCreatedEvent = z.infer<typeof notificationCreatedEventSchema>;
 
 export const notificationUpdatedEventSchema = z.object({
   type: z.literal("notification-updated"),
   id: z.string(),
   read: z.boolean(),
 });
-export type NotificationUpdatedEvent = z.infer<
-  typeof notificationUpdatedEventSchema
->;
+type NotificationUpdatedEvent = z.infer<typeof notificationUpdatedEventSchema>;
 
 export const getNotificationsQuerySchema = z.object({
   unread: z.coerce.boolean().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
   offset: z.coerce.number().int().min(0).default(0),
 });
-export type GetNotificationsQuery = z.infer<typeof getNotificationsQuerySchema>;
 
 export const notificationsResponseSchema = z.object({
   notifications: z.array(notificationSchema),
   total: z.number(),
   unreadCount: z.number(),
 });
+/** @public Referenced via import("@/lib/schemas").NotificationsResponse in mutations.ts. */
 export type NotificationsResponse = z.infer<typeof notificationsResponseSchema>;
 
 export const markReadRequestSchema = z.object({
   read: z.literal(true),
 });
-export type MarkReadRequest = z.infer<typeof markReadRequestSchema>;
 
-export const messageQueuedEventSchema = z.object({
+const messageQueuedEventSchema = z.object({
   type: z.literal("message-queued"),
   projectName: z.string(),
   sessionName: z.string(),
   conversationId: z.string(),
   text: z.string(),
 });
-export type MessageQueuedEvent = z.infer<typeof messageQueuedEventSchema>;
+type MessageQueuedEvent = z.infer<typeof messageQueuedEventSchema>;
 
 // ============================================================
 // Debug Mode SSE Event Schemas
@@ -3039,7 +2890,7 @@ export const debugLogReceivedEventSchema = z.object({
   conversationId: z.string(),
   entryCount: z.number(),
 });
-export type DebugLogReceivedEvent = z.infer<typeof debugLogReceivedEventSchema>;
+type DebugLogReceivedEvent = z.infer<typeof debugLogReceivedEventSchema>;
 
 // ============================================================
 // MCP Live-Update SSE Event Schemas
@@ -3152,10 +3003,9 @@ export type SSEEvent =
 // Command Autocomplete Schemas
 // ============================================================
 
-export const commandTypeSchema = z.enum(["command", "skill"]);
-export type CommandType = z.infer<typeof commandTypeSchema>;
+const commandTypeSchema = z.enum(["command", "skill"]);
 
-export const commandItemSchema = z.object({
+const commandItemSchema = z.object({
   name: z.string(),
   description: z.string(),
   argumentHint: z.string().optional(),
@@ -3173,7 +3023,7 @@ export type CommandsResponse = z.infer<typeof commandsResponseSchema>;
 // File Autocomplete Schemas
 // ============================================================
 
-export const fileItemSchema = z.object({
+const fileItemSchema = z.object({
   path: z.string(),
 });
 export type FileItem = z.infer<typeof fileItemSchema>;
@@ -3183,7 +3033,6 @@ export const projectFilesResponseSchema = z.object({
   truncated: z.boolean(),
   scannedCount: z.number().int().nonnegative(),
 });
-export type ProjectFilesResponse = z.infer<typeof projectFilesResponseSchema>;
 
 // ============================================================
 // Collaboration Mode — asymmetric artifact contract
@@ -3196,7 +3045,7 @@ export type ProjectFilesResponse = z.infer<typeof projectFilesResponseSchema>;
 // open_conflicts). Convergence and routing are decided by the orchestrator
 // from the resolution_decision artifact, not by the agent narrative.
 
-export const collaborationDisagreementSeveritySchema = z.enum([
+const collaborationDisagreementSeveritySchema = z.enum([
   "minor",
   "major",
   "blocking",
@@ -3205,12 +3054,12 @@ export type CollaborationDisagreementSeverity = z.infer<
   typeof collaborationDisagreementSeveritySchema
 >;
 
-export const collaborationFlowAgentSchema = z.enum(["agent_one", "agent_two"]);
+const collaborationFlowAgentSchema = z.enum(["agent_one", "agent_two"]);
 export type CollaborationFlowAgent = z.infer<
   typeof collaborationFlowAgentSchema
 >;
 
-export const collaborationDisagreementCategorySchema = z.enum([
+const collaborationDisagreementCategorySchema = z.enum([
   "objective",
   "implementation",
 ]);
@@ -3228,7 +3077,7 @@ export type CollaborationAutonomousResolutionThreshold = z.infer<
   typeof collaborationAutonomousResolutionThresholdSchema
 >;
 
-export const collaborationReferenceSchema = z
+const collaborationReferenceSchema = z
   .object({
     artifact: z.string().min(1),
     locator: z.string().min(1).optional(),
@@ -3238,7 +3087,7 @@ export type CollaborationReference = z.infer<
   typeof collaborationReferenceSchema
 >;
 
-export const collaborationArtifactAgreementSchema = z
+const collaborationArtifactAgreementSchema = z
   .object({
     id: z.string().min(1),
     claim: z.string().min(1),
@@ -3249,7 +3098,7 @@ export type CollaborationArtifactAgreement = z.infer<
   typeof collaborationArtifactAgreementSchema
 >;
 
-export const collaborationArtifactDisagreementSchema = z
+const collaborationArtifactDisagreementSchema = z
   .object({
     id: z.string().min(1),
     category: collaborationDisagreementCategorySchema,
@@ -3264,7 +3113,7 @@ export type CollaborationArtifactDisagreement = z.infer<
   typeof collaborationArtifactDisagreementSchema
 >;
 
-export const collaborationUserQuestionSchema = z
+const collaborationUserQuestionSchema = z
   .object({
     id: z.string().min(1),
     question: z.string().min(1),
@@ -3275,7 +3124,7 @@ export type CollaborationUserQuestion = z.infer<
   typeof collaborationUserQuestionSchema
 >;
 
-export const collaborationReviseSelfArtifactSchema = z
+const collaborationReviseSelfArtifactSchema = z
   .object({
     change: z.string().min(1),
     because: z.string().min(1),
@@ -3285,7 +3134,7 @@ export type CollaborationReviseSelfArtifact = z.infer<
   typeof collaborationReviseSelfArtifactSchema
 >;
 
-export const collaborationChangeProposalSchema = z
+const collaborationChangeProposalSchema = z
   .object({
     id: z.string().min(1),
     change: z.string().min(1),
@@ -3364,7 +3213,7 @@ export type CollaborationCounterProposalOutput = z.infer<
   typeof collaborationCounterProposalOutputSchema
 >;
 
-export const collaborationResolutionDecisionNextActionSchema = z.enum([
+const collaborationResolutionDecisionNextActionSchema = z.enum([
   "final",
   "continue_negotiation",
   "ask_user",
@@ -3374,7 +3223,7 @@ export type CollaborationResolutionDecisionNextAction = z.infer<
   typeof collaborationResolutionDecisionNextActionSchema
 >;
 
-export const collaborationResolvedDisagreementSchema = z
+const collaborationResolvedDisagreementSchema = z
   .object({
     disagreementId: z.string().min(1),
     resolution: z.string().min(1),

@@ -13,13 +13,13 @@ import {
 
 import { applyOperations } from "./overrides-patch";
 
-export const MCP_GLOBAL_STATE_FILENAME = "mcp-global.json";
+const MCP_GLOBAL_STATE_FILENAME = "mcp-global.json";
 
-export function getDefaultGlobalOverridesPath(): string {
+function getDefaultGlobalOverridesPath(): string {
   return path.join(resolveConfigDir(), MCP_GLOBAL_STATE_FILENAME);
 }
 
-export const MCP_GLOBAL_DEFINITION_FILENAME = ".mcp.json";
+const MCP_GLOBAL_DEFINITION_FILENAME = ".mcp.json";
 
 export function getDefaultGlobalMcpDefinitionPath(): string {
   return path.join(resolveConfigDir(), MCP_GLOBAL_DEFINITION_FILENAME);
@@ -32,11 +32,11 @@ export interface GlobalOverrideStoreDeps {
   filePath: string;
 }
 
-export interface GlobalOverridePatchInput {
+interface GlobalOverridePatchInput {
   operations: readonly McpOverrideOperation[];
 }
 
-export interface GlobalOverridePatchResult {
+interface GlobalOverridePatchResult {
   overrides: McpOverrides;
   changedServerKeys: readonly string[];
 }

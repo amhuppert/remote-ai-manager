@@ -10,7 +10,7 @@
 import { execFile } from "./exec";
 import { buildChildEnv } from "./child-env";
 
-export interface GitResult {
+interface GitResult {
   stdout: string;
   stderr: string;
 }
@@ -25,7 +25,7 @@ export interface GitClient {
 }
 
 /** Default GitClient implementation backed by the timed exec wrapper. */
-export class ExecFileGitClient implements GitClient {
+class ExecFileGitClient implements GitClient {
   async git(
     args: string[],
     cwd: string,

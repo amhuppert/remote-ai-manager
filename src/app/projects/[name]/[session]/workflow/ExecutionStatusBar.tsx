@@ -2,15 +2,11 @@
 
 import { useMemo } from "react";
 import type { GraphWorkflowExecution } from "@/types";
-import ContextHaltCard, {
-  formatGraphWorkflowHaltReason,
-} from "@/components/workflow-graph/ContextHaltCard";
+import ContextHaltCard from "@/components/workflow-graph/ContextHaltCard";
 import {
   createExecutionIndex,
   type ExecutionIndex,
 } from "@/lib/workflow-graph/execution-index";
-
-export { formatGraphWorkflowHaltReason };
 
 interface ExecutionStatusBarProps {
   execution: GraphWorkflowExecution;

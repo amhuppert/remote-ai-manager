@@ -266,5 +266,5 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
 // Register task runner
 // ============================================================
 
-export const claudeTaskRunner = new ClaudeTaskRunner();
+const claudeTaskRunner = new ClaudeTaskRunner();
 registerTaskRunner(claudeTaskRunner);

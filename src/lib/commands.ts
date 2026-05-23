@@ -220,6 +220,7 @@ async function scanSkillsDir(
 
 /**
  * Resolve enabled plugin paths from user settings and installed plugins cache.
+ * @public Accessed via dynamic `import()` in actor-implementations.
  */
 export async function resolvePluginPaths(): Promise<
   Array<{ name: string; path: string }>

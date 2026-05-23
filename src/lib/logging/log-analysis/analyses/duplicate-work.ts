@@ -39,7 +39,7 @@ function contextValue(value: string | undefined): string {
   return value ?? "unknown";
 }
 
-export function duplicateSignature(record: ParsedServerLogRecord): string {
+function duplicateSignature(record: ParsedServerLogRecord): string {
   if (record.message === "state.read.timing") {
     return [
       "state.read",

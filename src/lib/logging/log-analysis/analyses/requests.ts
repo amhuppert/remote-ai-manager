@@ -5,7 +5,7 @@ import type {
   ParsedServerLogRecord,
 } from "../types";
 
-export interface SlowRequestGroup {
+interface SlowRequestGroup {
   key: string;
   method: string;
   path: string;

@@ -10,7 +10,6 @@ import {
   sessionListItemSchema,
   commitLogEntrySchema,
   workflowDefinitionRecordSchema,
-  workflowGeneratedDraftSchema,
   agentBackendSchema,
   globalConfigSchema,
   graphWorkflowCleanupStatusValueSchema,
@@ -103,7 +102,7 @@ export const commitsResponseSchema = z.object({
 });
 
 // -- Conversations --
-export const activeConversationForkedFromSchema = z.object({
+const activeConversationForkedFromSchema = z.object({
   conversationId: z.string(),
   messageIndex: z.number().int().min(0),
   mode: z.enum(["synthetic", "native"]),
@@ -131,7 +130,7 @@ export const activeConversationSchema = z.object({
 });
 export type ActiveConversation = z.infer<typeof activeConversationSchema>;
 
-export const activeGraphWorkflowContextMergeProgressSchema = z.object({
+const activeGraphWorkflowContextMergeProgressSchema = z.object({
   contextId: z.string(),
   branchName: z.string().nullable(),
   mergeStatus: graphWorkflowMergeStatusValueSchema,
@@ -139,7 +138,7 @@ export const activeGraphWorkflowContextMergeProgressSchema = z.object({
   lastMergeError: z.string().nullable(),
 });
 
-export const activeGraphWorkflowJoinProgressSchema = z.object({
+const activeGraphWorkflowJoinProgressSchema = z.object({
   joinId: z.string(),
   kind: graphWorkflowExecutionJoinKindSchema,
   contextId: z.string().nullable(),
@@ -149,7 +148,7 @@ export const activeGraphWorkflowJoinProgressSchema = z.object({
   status: graphWorkflowExecutionJoinStatusSchema,
 });
 
-export const activeGraphWorkflowFinalPublishProgressSchema = z.object({
+const activeGraphWorkflowFinalPublishProgressSchema = z.object({
   joinId: z.string(),
   targetLaneId: z.string(),
   sourceLaneIds: z.array(z.string()).default([]),
@@ -157,7 +156,7 @@ export const activeGraphWorkflowFinalPublishProgressSchema = z.object({
   status: graphWorkflowExecutionJoinStatusSchema,
 });
 
-export const activeGraphWorkflowExecutionSchema = z.object({
+const activeGraphWorkflowExecutionSchema = z.object({
   executionId: z.string(),
   status: z.enum([
     "pending",
@@ -187,7 +186,7 @@ export const activeGraphWorkflowExecutionSchema = z.object({
   startedAt: z.string(),
 });
 
-export const activeCollaborationExecutionSchema = z.object({
+const activeCollaborationExecutionSchema = z.object({
   workflowId: z.string(),
   status: z.enum(["running", "paused"]),
   phase: z.string(),
@@ -221,7 +220,7 @@ export const kiroDocTreeSchema = z.object({
 });
 
 // -- Presets --
-export const presetInfoSchema = z.object({
+const presetInfoSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string(),
@@ -234,12 +233,8 @@ export const presetsResponseSchema = z.object({
   presets: z.array(presetInfoSchema),
 });
 
-export const statusResponseSchema = z.object({
-  status: z.string(),
-});
-
 // -- Graph workflow definitions --
-export const workflowDefinitionSummarySchema = z.object({
+const workflowDefinitionSummarySchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string().nullable(),
@@ -261,9 +256,6 @@ export const workflowDefinitionGetResponseSchema = z.object({
   resolved: resolvedWorkflowSemanticDefinitionSchema,
 });
 
-export const workflowGeneratedDraftResponseSchema =
-  workflowGeneratedDraftSchema;
-
 // -- Debug log stats --
 export const debugLogStatsResponseSchema = z.object({
   entryCount: z.number(),
@@ -275,7 +267,7 @@ export const imageCountResponseSchema = z.object({
 });
 
 // -- Collaboration --
-export const collaborationEnvelopeSchema = z.object({
+const collaborationEnvelopeSchema = z.object({
   workflowId: z.string(),
   workflowType: z.string(),
   status: z.enum(["running", "paused", "completed", "failed"]),
@@ -294,10 +286,6 @@ export const collaborationEnvelopeSchema = z.object({
     .optional(),
   featureSnapshot: z.unknown(),
 });
-export type CollaborationEnvelopeView = z.infer<
-  typeof collaborationEnvelopeSchema
->;
-
 export const collaborationListResponseSchema = z.object({
   envelopes: z.array(collaborationEnvelopeSchema),
 });

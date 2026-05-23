@@ -12,7 +12,7 @@ export interface ScopeOverrideStoreDeps {
   stateManager: StateManager;
 }
 
-export interface ScopeOverridePatchResult {
+interface ScopeOverridePatchResult {
   overrides: McpOverrides;
   changedServerKeys: readonly string[];
 }

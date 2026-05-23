@@ -5,12 +5,12 @@ import type {
   GraphWorkflowTaskState,
 } from "@/types";
 
-export interface LatestContextValidationFailureFeedbackIssue {
+interface LatestContextValidationFailureFeedbackIssue {
   title: string;
   description: string;
 }
 
-export interface LatestContextValidationFailureFeedbackIssueGroup {
+interface LatestContextValidationFailureFeedbackIssueGroup {
   heading: string;
   issues: LatestContextValidationFailureFeedbackIssue[];
 }

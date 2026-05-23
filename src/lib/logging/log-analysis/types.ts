@@ -5,7 +5,7 @@ export type LogAnalysisSeverity =
   | "low"
   | "info";
 
-export type LogAnalysisCategory =
+type LogAnalysisCategory =
   | "slow-request"
   | "operation-hotspot"
   | "duplicate-work"
@@ -59,11 +59,6 @@ export interface ParsedClientTimingRecord {
   handlerMs?: number;
 }
 
-export interface ClientTimingParseResult {
-  records: ParsedClientTimingRecord[];
-  malformedRecordCount: number;
-}
-
 export interface LogAnalysisFilters {
   sinceMs?: number;
   untilMs?: number;
@@ -81,7 +76,7 @@ export interface LogAnalysisThresholds {
   top: number;
 }
 
-export interface FindingEvidence {
+interface FindingEvidence {
   label: string;
   value: string | number | boolean | null;
   unit?: "ms" | "count" | "percent" | "bytes";

@@ -137,7 +137,7 @@ const defaultRegistryBroadcast: BroadcastFn = (event) => {
   publishSessionStatus(event);
 };
 
-export const defaultDevServerRegistryDeps: DevServerRegistryDeps = {
+const defaultDevServerRegistryDeps: DevServerRegistryDeps = {
   broadcast: defaultRegistryBroadcast,
   tailscale: {
     register: defaultTailscale.register,
@@ -1030,7 +1030,7 @@ function isPortListening(port: number): Promise<boolean> {
  * More reliable than bind test for detecting running servers.
  * Used by liveness poller and exit handler.
  */
-export function isPortAlive(port: number): Promise<boolean> {
+function isPortAlive(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = new net.Socket();
     socket.setTimeout(2000);
@@ -1147,10 +1147,8 @@ const defaultRegistry = createDevServerRegistry();
 export const startServer = defaultRegistry.startServer;
 export const stopServer = defaultRegistry.stopServer;
 export const stopAllForSession = defaultRegistry.stopAllForSession;
-export const stopAll = defaultRegistry.stopAll;
 export const getSessionServers = defaultRegistry.getSessionServers;
 export const getServer = defaultRegistry.getServer;
-export const _resetForTesting = defaultRegistry._resetForTesting;
 
 // ============================================================
 // SIGTERM Shutdown Handler

@@ -15,9 +15,9 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 
-export type CollabAgent = "claude" | "codex";
+type CollabAgent = "claude" | "codex";
 
-export type CollabAutonomousResolutionThreshold =
+type CollabAutonomousResolutionThreshold =
   | "none"
   | "minor"
   | "major"

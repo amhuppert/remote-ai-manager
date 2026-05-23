@@ -591,7 +591,7 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function shouldRetryUndeliveredPrompt(
+function shouldRetryUndeliveredPrompt(
   error: unknown,
   runtime: { status: string } | undefined,
   abortSignal: AbortSignal,
@@ -677,7 +677,7 @@ export function resolveBackendTimeoutMs(
   return config.claudeTimeoutMs;
 }
 
-export function buildNonClaudeTranscriptEntries(input: {
+function buildNonClaudeTranscriptEntries(input: {
   backend: Exclude<AgentBackendId, "claude">;
   backendRef: AgentSessionRef | null;
   contentBlocks: MessageContentBlock[];

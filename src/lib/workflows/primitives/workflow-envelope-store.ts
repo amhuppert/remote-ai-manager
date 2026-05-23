@@ -26,7 +26,7 @@ import type { ArtifactRegistry } from "./artifact-registry";
 
 const logger = createLogger("workflows.primitives.workflow-envelope.store");
 
-export type WorkflowEnvelopeMutator = (
+type WorkflowEnvelopeMutator = (
   existing: WorkflowEnvelope | null,
 ) => WorkflowEnvelope | Promise<WorkflowEnvelope>;
 

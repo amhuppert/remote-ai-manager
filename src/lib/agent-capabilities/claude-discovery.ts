@@ -115,7 +115,7 @@ export interface ClaudeAgentDiscoveryResult {
   sourceSignature: string;
 }
 
-export interface ClaudePluginNativeRecordSnapshot {
+interface ClaudePluginNativeRecordSnapshot {
   pluginId: string;
   nativeEnabled: boolean;
   /** Adapter-private. The literal `enabledPlugins[pluginId]` value from

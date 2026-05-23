@@ -24,18 +24,18 @@ import type { SSEEvent } from "@/types";
 import type { StatusBusDeliveryOutcome } from "@/lib/workflows/primitives/status-bus";
 import { publishSessionStatus } from "@/lib/workflows/primitives/default-session-status-bus";
 
-export interface DebugOutputFormat {
+interface DebugOutputFormat {
   type: "json_schema";
   schema: Record<string, unknown>;
 }
 
-export interface DebugTarget {
+interface DebugTarget {
   projectPath: string;
   sessionName: string;
   conversationId: string;
 }
 
-export interface DebugStatusInput {
+interface DebugStatusInput {
   projectName: string;
   sessionName: string;
   conversationId: string;
@@ -43,21 +43,21 @@ export interface DebugStatusInput {
   recording: boolean;
 }
 
-export interface DebugLogReceivedInput {
+interface DebugLogReceivedInput {
   projectName: string;
   sessionName: string;
   conversationId: string;
   entryCount: number;
 }
 
-export type SendConversationEventFn = (
+type SendConversationEventFn = (
   projectPath: string,
   sessionName: string,
   conversationId: string,
   event: ConversationEvent,
 ) => boolean;
 
-export type PublishSSEFn = (event: SSEEvent) => StatusBusDeliveryOutcome;
+type PublishSSEFn = (event: SSEEvent) => StatusBusDeliveryOutcome;
 
 export interface DebugAdapterDeps {
   sendConversationEvent?: SendConversationEventFn;

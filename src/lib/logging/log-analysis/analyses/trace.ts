@@ -14,7 +14,7 @@ import type {
   ParsedServerLogRecord,
 } from "../types";
 
-export interface TraceSpanSummary {
+interface TraceSpanSummary {
   lineNumber: number;
   module: string;
   message: string;
@@ -24,7 +24,7 @@ export interface TraceSpanSummary {
   endMs: number;
 }
 
-export interface TraceRequestSummary {
+interface TraceRequestSummary {
   method?: string;
   path?: string;
   action?: string;

@@ -17,25 +17,15 @@ import {
   AGENT_CAPABILITY_CASCADE_KINDS,
   agentCapabilityMetadataSchema,
   type AgentBackendId,
-  type AgentCapabilityApplySemantics,
   type AgentCapabilityCascadeKind,
-  type AgentCapabilityCompositionSupport,
-  type AgentCapabilityDiscoverySupport,
-  type AgentCapabilityKind,
   type AgentCapabilityMetadata,
-  type AgentCapabilityMetadataRuntimeVisibility as AgentCapabilityRuntimeVisibility,
 } from "@/lib/schemas";
 
 export {
   AGENT_CAPABILITY_CASCADE_KINDS,
   agentCapabilityMetadataSchema,
-  type AgentCapabilityApplySemantics,
   type AgentCapabilityCascadeKind,
-  type AgentCapabilityCompositionSupport,
-  type AgentCapabilityDiscoverySupport,
-  type AgentCapabilityKind,
   type AgentCapabilityMetadata,
-  type AgentCapabilityRuntimeVisibility,
 };
 
 export interface AgentCapabilityMetadataRegistry {

@@ -5,7 +5,7 @@ import type {
   ParsedServerLogRecord,
 } from "../types";
 
-export interface SlowTraceCorrelation {
+interface SlowTraceCorrelation {
   traceId: string;
   request: ParsedServerLogRecord;
   warningsAndErrors: ParsedServerLogRecord[];

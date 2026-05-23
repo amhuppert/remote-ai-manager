@@ -56,7 +56,7 @@ export const CODEX_SKILL_DISCOVERY_PATHS: readonly CodexSkillSource[] = [
   { layer: "system", relative: ".codex/skills/.system", source: "system" },
 ];
 
-export interface CodexDiscoveredSkill {
+interface CodexDiscoveredSkill {
   itemId: string;
   source: "project" | "user" | "system";
   sourcePath: string;
@@ -68,7 +68,7 @@ export interface CodexDiscoveredSkill {
   owningPluginId?: string;
 }
 
-export interface CodexDiscoveryDiagnostic {
+interface CodexDiscoveryDiagnostic {
   code: string;
   severity: "warning" | "error";
   message: string;
@@ -82,7 +82,7 @@ export interface CodexSkillDiscoveryResult {
   sourceSignature: string;
 }
 
-export interface CodexDiscoveredPlugin {
+interface CodexDiscoveredPlugin {
   /** Plugin id — bare name (e.g. `oh-my-codex`) for config-only plugins, or
    * `<name>@<marketplace>` for marketplace-sourced plugins. */
   itemId: string;

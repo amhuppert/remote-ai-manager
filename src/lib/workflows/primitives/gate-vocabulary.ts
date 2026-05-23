@@ -108,8 +108,8 @@ export interface GateFailInput {
   details?: Record<string, unknown>;
 }
 
-export type MidTurnGateKind = Exclude<GateKind, "human_approval">;
-export type PostTurnGateKind = Exclude<GateKind, "ask_user">;
+type MidTurnGateKind = Exclude<GateKind, "human_approval">;
+type PostTurnGateKind = Exclude<GateKind, "ask_user">;
 
 export interface GatePauseMidTurnInput {
   kind: MidTurnGateKind;

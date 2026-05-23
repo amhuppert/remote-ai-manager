@@ -18,7 +18,7 @@ export type JoinRunnerMutateActive = (
   ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
 ) => Promise<GraphWorkflowExecution>;
 
-export interface JoinRunnerRunInput {
+interface JoinRunnerRunInput {
   projectPath: string;
   projectName: string;
   sessionName: string;
@@ -26,7 +26,7 @@ export interface JoinRunnerRunInput {
   mutateActive: JoinRunnerMutateActive;
 }
 
-export type JoinRunResult =
+type JoinRunResult =
   | { status: "succeeded" }
   | {
       status: "failed";

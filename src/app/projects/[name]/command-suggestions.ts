@@ -1,8 +1,6 @@
 import type { SessionListItem } from "@/types";
 import type { FilterToken } from "./filter-tokens";
 
-export type SuggestionKind = "action" | "filter";
-
 export interface ActionSuggestion {
   kind: "action";
   id: "new" | "install-preset" | "capabilities" | "workflow-builder";

@@ -70,7 +70,7 @@ interface ResolutionDecisionInput {
   negotiationRound: number;
 }
 
-export interface CollaborationUserAnswer {
+interface CollaborationUserAnswer {
   questionId: string;
   question: string;
   answer: string;

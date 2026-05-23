@@ -49,7 +49,7 @@ export function setLivenessDeps(deps: LivenessDeps): void {
   _deps = deps;
 }
 
-export function _resetLivenessDepsForTesting(): void {
+function _resetLivenessDepsForTesting(): void {
   _deps = null;
 }
 

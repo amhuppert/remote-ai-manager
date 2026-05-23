@@ -11,7 +11,7 @@ export interface NetworkDeps {
   networkInterfaces: () => NodeJS.Dict<os.NetworkInterfaceInfo[]>;
 }
 
-export const defaultNetworkDeps: NetworkDeps = {
+const defaultNetworkDeps: NetworkDeps = {
   networkInterfaces: () => os.networkInterfaces(),
 };
 
@@ -61,10 +61,6 @@ export function createNetworkService(
 /* ------------------------------------------------------------------ */
 
 const defaultService = createNetworkService();
-
-export function getLanIp(): string | null {
-  return defaultService.getLanIp();
-}
 
 export function getLanUrl(port: number): string | null {
   return defaultService.getLanUrl(port);

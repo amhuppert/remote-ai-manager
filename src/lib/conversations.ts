@@ -27,7 +27,7 @@ import { buildSyntheticForkSeed } from "./synthetic-fork-seed";
 import { getErrorMessage } from "./errors";
 
 /** Subset of @anthropic-ai/claude-agent-sdk's forkSession API used at fork creation. */
-export interface SdkForkSession {
+interface SdkForkSession {
   (
     sessionId: string,
     options?: { dir?: string; upToMessageId?: string },
@@ -98,7 +98,7 @@ export interface ConversationsDeps {
   forkSession?: SdkForkSession;
 }
 
-export const defaultConversationsDeps: ConversationsDeps = {
+const defaultConversationsDeps: ConversationsDeps = {
   mutateSession: defaultMutateSession,
   getSession: defaultGetSession,
   getConversation: defaultGetConversation,
@@ -752,8 +752,4 @@ export const finalizeInitialization = defaultService.finalizeInitialization;
 // ============================================================
 
 // Re-export pure derive functions from client-safe module
-export {
-  deriveSessionStatus,
-  deriveSessionPromptCount,
-  deriveSessionLastActivity,
-} from "./session-derived";
+export { deriveSessionStatus } from "./session-derived";

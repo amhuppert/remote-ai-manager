@@ -9,7 +9,7 @@ const logger = createLogger("graph-workflow-session-git-lock");
 const DEFAULT_MAX_WAIT_MS = 30_000;
 const DEFAULT_RETRY_MS = 100;
 
-export interface SessionGitLockKey {
+interface SessionGitLockKey {
   projectPath: string;
   sessionName: string;
 }

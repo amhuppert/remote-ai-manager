@@ -2,7 +2,7 @@
 
 import type { DerivedSessionStatus } from "@/types";
 
-export type StatusPillStatus = DerivedSessionStatus | "merged" | "error";
+type StatusPillStatus = DerivedSessionStatus | "merged" | "error";
 
 interface StatusPillProps {
   status: StatusPillStatus;

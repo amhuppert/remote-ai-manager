@@ -7,14 +7,14 @@ import { createLogger } from "@/lib/logging";
 
 const logger = createLogger("graph-workflow-solo-commit");
 
-export interface SoloContextCommitterInput {
+interface SoloContextCommitterInput {
   projectPath: string;
   sessionName: string;
   contextId: string;
   sessionWorktreePath: string;
 }
 
-export type SoloContextCommitterResult =
+type SoloContextCommitterResult =
   | { status: "committed"; hash: string }
   | { status: "skipped" }
   | { status: "failed"; errorMessage: string };

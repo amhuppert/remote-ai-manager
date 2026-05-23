@@ -6,21 +6,21 @@ import type {
   ParsedServerLogRecord,
 } from "../types";
 
-export interface StateAccessorSummary {
+interface StateAccessorSummary {
   accessor: string;
   count: number;
   p95Ms: number | null;
   maxMs: number | null;
 }
 
-export interface StateRepoOperationSummary {
+interface StateRepoOperationSummary {
   operation: string;
   count: number;
   p95Ms: number | null;
   maxMs: number | null;
 }
 
-export interface StateWriteQueueSummary {
+interface StateWriteQueueSummary {
   label: string;
   count: number;
   p95WaitMs: number | null;
@@ -29,7 +29,7 @@ export interface StateWriteQueueSummary {
   maxHoldMs: number | null;
 }
 
-export interface FacadeRepoGap {
+interface FacadeRepoGap {
   traceId: string;
   accessor: string;
   facadeMs: number;

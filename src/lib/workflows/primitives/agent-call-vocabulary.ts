@@ -61,33 +61,26 @@ export const agentCallRequestSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 export type AgentCallRequest = z.infer<typeof agentCallRequestSchema>;
-export type AgentCallRequestKind = AgentCallRequest["kind"];
+type AgentCallRequestKind = AgentCallRequest["kind"];
 
-export const continuationStrengthSchema = z.enum([
+const continuationStrengthSchema = z.enum([
   "precise_session",
   "synthetic_thread",
   "none",
 ]);
-export type ContinuationStrength = z.infer<typeof continuationStrengthSchema>;
 
-export const structuredOutputEnforcementSchema = z.enum([
+const structuredOutputEnforcementSchema = z.enum([
   "backend_native",
   "post_validation",
   "unsupported",
 ]);
-export type StructuredOutputEnforcement = z.infer<
-  typeof structuredOutputEnforcementSchema
->;
 
-export const mcpApplicationBoundarySchema = z.enum([
+const mcpApplicationBoundarySchema = z.enum([
   "startup_only",
   "between_turns",
   "per_request",
   "unsupported",
 ]);
-export type McpApplicationBoundary = z.infer<
-  typeof mcpApplicationBoundarySchema
->;
 
 export const backendCapabilityViewSchema = z.object({
   backend: agentBackendSchema,
@@ -99,7 +92,7 @@ export const backendCapabilityViewSchema = z.object({
 });
 export type BackendCapabilityView = z.infer<typeof backendCapabilityViewSchema>;
 
-export const agentCallUsageMetricsSchema = z.object({
+const agentCallUsageMetricsSchema = z.object({
   inputTokens: z.number().int().nonnegative().optional(),
   outputTokens: z.number().int().nonnegative().optional(),
   cachedInputTokens: z.number().int().nonnegative().optional(),
@@ -110,23 +103,20 @@ export const agentCallUsageMetricsSchema = z.object({
 });
 export type AgentCallUsageMetrics = z.infer<typeof agentCallUsageMetricsSchema>;
 
-export const artifactRefSchema = z.object({
+const artifactRefSchema = z.object({
   kind: z.string().min(1),
   relativePath: z.string().min(1),
   description: z.string().optional(),
 });
 export type ArtifactRef = z.infer<typeof artifactRefSchema>;
 
-export const normalizedAgentCallFailureKindSchema = z.enum([
+const normalizedAgentCallFailureKindSchema = z.enum([
   "timeout",
   "schema_validation",
   "backend_error",
   "aborted",
   "capability_unavailable",
 ]);
-export type NormalizedAgentCallFailureKind = z.infer<
-  typeof normalizedAgentCallFailureKindSchema
->;
 
 export const normalizedAgentCallErrorSchema = z.object({
   failureKind: normalizedAgentCallFailureKindSchema,
@@ -134,9 +124,6 @@ export const normalizedAgentCallErrorSchema = z.object({
   message: z.string(),
   backendDetails: z.unknown().optional(),
 });
-export type NormalizedAgentCallError = z.infer<
-  typeof normalizedAgentCallErrorSchema
->;
 
 export const pauseKindSchema = z.enum(["mid_turn", "post_turn"]);
 export type PauseKind = z.infer<typeof pauseKindSchema>;
@@ -158,8 +145,8 @@ const agentCallOutcomeSchema = z.discriminatedUnion("kind", [
     error: normalizedAgentCallErrorSchema,
   }),
 ]);
-export type AgentCallOutcome = z.infer<typeof agentCallOutcomeSchema>;
-export type AgentCallOutcomeKind = AgentCallOutcome["kind"];
+type AgentCallOutcome = z.infer<typeof agentCallOutcomeSchema>;
+type AgentCallOutcomeKind = AgentCallOutcome["kind"];
 
 export const agentCallResultSchema = z.object({
   backend: agentBackendSchema,
@@ -199,8 +186,4 @@ export function buildAgentCallLogFields(
     fields["artifactKinds"] = input.artifactKinds;
   }
   return fields;
-}
-
-export interface AgentCallService {
-  execute(request: AgentCallRequest): Promise<AgentCallResult>;
 }

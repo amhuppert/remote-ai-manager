@@ -2,7 +2,7 @@ import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import type { ImageMarkerAttrs } from "./image-marker-node";
 
-export interface AddImageResult {
+interface AddImageResult {
   attachmentId: string;
   thumbnailUrl: string;
   mediaType: string;

@@ -15,7 +15,7 @@ export interface ExecutionTarget {
   laneId: string | null;
 }
 
-export interface ResolveExecutionTargetInput {
+interface ResolveExecutionTargetInput {
   execution: GraphWorkflowExecution;
   contextId: string;
   session: SessionState;

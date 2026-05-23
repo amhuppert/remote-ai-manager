@@ -25,7 +25,7 @@ import {
   type GatePassResult,
 } from "./gate-vocabulary";
 
-export type ChangeSetExpectation = "required" | "forbidden";
+type ChangeSetExpectation = "required" | "forbidden";
 
 export interface RunChangeSetGateInput {
   hasChanges: boolean;

@@ -28,11 +28,11 @@ const logger = createLogger("workflows.primitives.workflow-envelope.recovery");
 const PROCESS_RESTART_ERROR_SUMMARY =
   "process restart - in-memory worker not found";
 
-export type RecoveryAction =
+type RecoveryAction =
   | { kind: "fail" }
   | { kind: "preserve_paused"; pauseGateKind: GateKind; resumeToken: string };
 
-export type RecoveryActionResolver = (input: {
+type RecoveryActionResolver = (input: {
   envelope: WorkflowEnvelope;
   projectPath: string;
   sessionName: string;

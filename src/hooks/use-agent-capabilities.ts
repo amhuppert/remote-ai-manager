@@ -96,7 +96,7 @@ export function agentCapabilityScopeQueryKey(
   }
 }
 
-export function agentCapabilityScopeUrl(scope: AgentCapabilityScope): string {
+function agentCapabilityScopeUrl(scope: AgentCapabilityScope): string {
   switch (scope.level) {
     case "global":
       return "/api/config/agent-capabilities";
@@ -109,9 +109,7 @@ export function agentCapabilityScopeUrl(scope: AgentCapabilityScope): string {
   }
 }
 
-export function agentCapabilityRefreshScopeUrl(
-  scope: AgentCapabilityScope,
-): string {
+function agentCapabilityRefreshScopeUrl(scope: AgentCapabilityScope): string {
   return `${agentCapabilityScopeUrl(scope)}/refresh`;
 }
 

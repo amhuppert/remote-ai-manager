@@ -428,6 +428,7 @@ function getClaudeRuntimeProbe(
  * defaultCapabilityRuntimeApplyService.applyAfterOverrideChange` so the
  * fanout always runs after the persist.
  */
+/** @public Accessed via dynamic `import()` in actor-implementations. */
 export const defaultCapabilityRuntimeApplyService: CapabilityRuntimeApplyService =
   createCapabilityRuntimeApplyService({
     listAffectedConversations: defaultListAffectedConversations,
@@ -506,6 +507,7 @@ async function defaultApplyCodexRuntime(
   return runtime.applyCodexCapabilityConfig(input.config);
 }
 
+/** @public Referenced via `import("...").ComposedClaudeCapabilitySeed` in actor-implementations. */
 export interface ComposedClaudeCapabilitySeed {
   config: ClaudeRuntimeCapabilityConfig;
   /**
@@ -518,6 +520,7 @@ export interface ComposedClaudeCapabilitySeed {
   runtimeState: AgentCapabilityRuntimeApplicationState;
 }
 
+/** @public Referenced via `import("...").ComposedCodexCapabilitySeed` in actor-implementations. */
 export interface ComposedCodexCapabilitySeed {
   config: CodexRuntimeCapabilityConfig;
   runtimeState: AgentCapabilityRuntimeApplicationState;
@@ -554,6 +557,7 @@ function promoteClaudeSeededRuntimeState(
  * `conversation.agentCapabilitiesRuntime` so the apply service can promote /
  * compare against this baseline on subsequent mutations.
  */
+/** @public Accessed via dynamic `import()` in actor-implementations. */
 export async function composeClaudeCapabilityConfigForConversation(input: {
   projectPath: string;
   projectName: string;
@@ -577,6 +581,7 @@ export async function composeClaudeCapabilityConfigForConversation(input: {
  * conversation. See `composeClaudeCapabilityConfigForConversation` for the
  * actor wiring contract.
  */
+/** @public Accessed via dynamic `import()` in actor-implementations. */
 export async function composeCodexCapabilityConfigForConversation(input: {
   projectPath: string;
   projectName: string;

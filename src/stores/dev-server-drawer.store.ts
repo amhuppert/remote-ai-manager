@@ -55,7 +55,5 @@ export const useDevServerDrawerOpen = () =>
 
 export const useToggleDevServerDrawer = () =>
   useDevServerDrawerStore((s) => s.toggle);
-export const useOpenDevServerDrawer = () =>
-  useDevServerDrawerStore((s) => s.open);
 export const useCloseDevServerDrawer = () =>
   useDevServerDrawerStore((s) => s.close);

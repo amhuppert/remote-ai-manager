@@ -38,7 +38,7 @@ import CollabPassageControls from "./CollabPassageControls";
 import { CollabCardOrchestrationProvider } from "./CollabCollapsibleCard";
 import type { CollabPassageStatus } from "./envelope-adapter";
 
-export interface CollabPauseHandlers {
+interface CollabPauseHandlers {
   drafts: Record<string, string>;
   onDraftChange: (questionId: string, value: string) => void;
   onSubmit: () => void;
@@ -165,7 +165,7 @@ export function trajectoryThroughRound(
   return series;
 }
 
-export function verdictFor(
+function verdictFor(
   status: CollabPassageStatus,
 ): CollabPhaseVerdict | undefined {
   if (status === "converged") return "converged";

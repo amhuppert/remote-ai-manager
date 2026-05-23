@@ -38,7 +38,7 @@ import {
 
 const logger = createLogger("workflows.primitives.lane.graph-workflow-adapter");
 
-export type GraphLaneLimitEvaluation = "disabled" | "supported" | "unsupported";
+type GraphLaneLimitEvaluation = "disabled" | "supported" | "unsupported";
 
 export interface GraphWorkflowLaneAdapterInputContext {
   executionId: string;

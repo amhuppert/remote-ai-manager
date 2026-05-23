@@ -17,7 +17,7 @@ export function redactAgentCapabilityText(raw: string): string {
     .replace(POSIX_HOME_PATH, "~");
 }
 
-export function redactAgentCapabilityDiagnostic(
+function redactAgentCapabilityDiagnostic(
   diagnostic: AgentCapabilityDiagnostic,
 ): AgentCapabilityDiagnostic {
   return {

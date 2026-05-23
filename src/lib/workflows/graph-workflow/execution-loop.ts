@@ -103,7 +103,7 @@ export interface GraphWorkflowExecutionLoopWorkflowManager {
   ): Promise<GraphWorkflowExecution>;
 }
 
-export interface GraphWorkflowExecutionLoopIterationOrchestrator {
+interface GraphWorkflowExecutionLoopIterationOrchestrator {
   runIteration(input: {
     projectPath: string;
     projectName: string;

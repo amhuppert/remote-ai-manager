@@ -118,7 +118,7 @@ export interface ClassifySchedulabilityInput {
   options?: ClassifySchedulabilityOptions;
 }
 
-export interface ClassifySchedulabilityOptions {
+interface ClassifySchedulabilityOptions {
   /**
    * Remaining concurrency budget for new contexts. When 0, the classifier
    * returns wait-for-capacity even if dependencies are otherwise ready.

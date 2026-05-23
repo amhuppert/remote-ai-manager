@@ -300,5 +300,3 @@ export function createWorkflowExecution(
     ...overrides,
   };
 }
-
-export { timestamp as workflowFixtureTimestamp };

@@ -11,8 +11,6 @@ import {
 import { createPortal } from "react-dom";
 import type { AgentBackendId } from "@/lib/schemas";
 
-export type ModelId = "opus" | "sonnet" | "haiku";
-
 interface ModelOption {
   id: string;
   label: string;

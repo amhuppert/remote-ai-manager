@@ -21,7 +21,6 @@ import {
   agentCapabilityRuntimeVisibilitySchema,
   agentCapabilityScopeContextSchema,
   agentCapabilitySourceRefSchema,
-  agentCapabilityViewMetadataSchema,
   agentCapabilityViewResponseSchema,
   agentCapabilityViewRowSchema,
   agentCapabilitiesDiscoveryUpdatedEventSchema,
@@ -1075,15 +1074,6 @@ describe("agentCapabilityMetadataSchema (canonical capability metadata)", () => 
     delete partial.compositionSupport;
     const result = agentCapabilityMetadataSchema.safeParse(partial);
     expect(result.success).toBe(false);
-  });
-
-  it("is the canonical source for agentCapabilityViewMetadataSchema (no duplicate shape)", () => {
-    // The view metadata field is the same shape as the canonical metadata
-    // schema. Aliasing prevents downstream consumers from drifting two parallel
-    // metadata definitions out of sync.
-    expect(agentCapabilityViewMetadataSchema).toBe(
-      agentCapabilityMetadataSchema,
-    );
   });
 });
 

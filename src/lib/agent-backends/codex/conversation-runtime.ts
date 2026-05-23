@@ -50,7 +50,7 @@ const logger = createLogger("codex:conversation-runtime");
 // Injectable dependency surface
 // ============================================================
 
-export interface CodexClientLike {
+interface CodexClientLike {
   startThread(options?: ThreadOptions): CodexThreadLike;
   resumeThread(id: string, options?: ThreadOptions): CodexThreadLike;
 }

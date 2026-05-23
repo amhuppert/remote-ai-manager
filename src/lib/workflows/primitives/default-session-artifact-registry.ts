@@ -89,7 +89,7 @@ export function createDefaultSessionArtifactRegistry(
  * Convenience helper that resolves the project state's `createReferenceDocument`
  * function lazily to avoid bootstrapping the state module before first use.
  */
-export function getDefaultReferenceDocumentRegistrar(): ReferenceDocumentRegistrarFn {
+function getDefaultReferenceDocumentRegistrar(): ReferenceDocumentRegistrarFn {
   return async (input) => {
     const stateModule: {
       createReferenceDocument: (

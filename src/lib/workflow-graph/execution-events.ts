@@ -71,7 +71,7 @@ function toExecutionSessionRef(
   return { engine: "codex", lane: "context_validator", threadId: ref.threadId };
 }
 
-export interface GraphWorkflowPushInfo {
+interface GraphWorkflowPushInfo {
   kind:
     | "workflow-completed"
     | "workflow-halted"

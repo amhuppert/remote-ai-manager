@@ -53,7 +53,7 @@ export interface ConversationRuntimeResolution {
   syntheticForkSeed?: ConversationBackendTurnInput["syntheticForkSeed"];
 }
 
-export interface TaskRunnerResolution {
+interface TaskRunnerResolution {
   runner: import("@/types").AgentTaskRunner;
   capabilityView: BackendCapabilityView;
   workingDirectory: string;

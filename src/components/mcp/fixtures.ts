@@ -3,7 +3,7 @@ import type { McpServerView, McpToolView, McpInheritanceStatus } from "./types";
 const CC_GLOBAL_MCP = "/home/alex/.config/cc/.mcp.json";
 const CC_PROJECT_MCP = "/home/alex/repos/acme-dashboard/.mcp.json";
 
-export function mkTool(
+function mkTool(
   name: string,
   opts: Partial<McpToolView> = {},
   description?: string,

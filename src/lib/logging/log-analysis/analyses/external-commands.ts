@@ -6,7 +6,7 @@ import type {
   ParsedServerLogRecord,
 } from "../types";
 
-export interface ExternalCommandSummary {
+interface ExternalCommandSummary {
   key: string;
   command: string;
   argsPreview: string;

@@ -28,5 +28,3 @@ export function ContextFillIndicator({
     </div>
   );
 }
-
-export default ContextFillIndicator;

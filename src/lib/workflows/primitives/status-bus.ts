@@ -22,16 +22,14 @@
 
 import { z } from "zod";
 
-export const STATUS_BUS_LIFECYCLE_STATUSES = [
+const STATUS_BUS_LIFECYCLE_STATUSES = [
   "running",
   "paused",
   "completed",
   "failed",
 ] as const;
 
-export const statusBusLifecycleStatusSchema = z.enum(
-  STATUS_BUS_LIFECYCLE_STATUSES,
-);
+const statusBusLifecycleStatusSchema = z.enum(STATUS_BUS_LIFECYCLE_STATUSES);
 export type StatusBusLifecycleStatus = z.infer<
   typeof statusBusLifecycleStatusSchema
 >;
@@ -45,7 +43,7 @@ export const statusBusEnvelopeSchema = z.object({
 });
 export type StatusBusEnvelope = z.infer<typeof statusBusEnvelopeSchema>;
 
-export interface StatusBusPublishInput {
+interface StatusBusPublishInput {
   scope: string;
   scopeId: string;
   status: StatusBusLifecycleStatus;

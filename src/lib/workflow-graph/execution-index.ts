@@ -6,7 +6,7 @@ import type {
   GraphWorkflowTaskState,
 } from "@/types";
 
-export type ExecutionIndexContext =
+type ExecutionIndexContext =
   | GraphWorkflowExecutionContextDefinition
   | GraphWorkflowResolvedContext;
 

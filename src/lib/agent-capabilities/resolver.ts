@@ -33,7 +33,6 @@ import { createHash } from "node:crypto";
 
 import {
   AGENT_CAPABILITY_CASCADE_BACKEND_OWNERSHIP,
-  type AgentBackendId,
   type AgentCapabilityApplyStatus,
   type AgentCapabilityCascadeKind,
   type AgentCapabilityCascadeLayer,
@@ -563,4 +562,3 @@ function computeEffectiveHash(
 
 // Re-export for downstream consumers that need to know the cascade backend
 // ownership without re-importing from schemas.
-export type { AgentBackendId };

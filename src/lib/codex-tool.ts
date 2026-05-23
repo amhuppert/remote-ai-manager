@@ -32,7 +32,7 @@ export interface CodexToolContext {
   timeoutMs?: number;
 }
 
-export interface CodexRunResult {
+interface CodexRunResult {
   response: string | null;
   structuredOutput?: unknown;
   error: string | null;
@@ -90,7 +90,7 @@ export const CODEX_OUTPUT_SCHEMA = {
 // SDK Runner (via task runner abstraction)
 // ============================================================
 
-export async function runCodexDefault(input: {
+async function runCodexDefault(input: {
   prompt: string;
   workingDirectory: string;
   model?: string;

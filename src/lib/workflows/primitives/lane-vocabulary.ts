@@ -15,13 +15,11 @@
 import { z } from "zod";
 import { agentBackendSchema } from "@/lib/schemas";
 import {
-  laneRefSchema,
   laneWriteCapabilitySchema,
   type LaneRef,
   type LaneWriteCapability,
 } from "./agent-call-vocabulary";
 
-export { laneRefSchema, laneWriteCapabilitySchema };
 export type { LaneRef, LaneWriteCapability };
 
 export const lanePolicySchema = z.object({
@@ -50,7 +48,6 @@ export const laneBackendStateSchema = z.discriminatedUnion("backend", [
   claudeLaneBackendStateSchema,
   codexLaneBackendStateSchema,
 ]);
-export type LaneBackendState = z.infer<typeof laneBackendStateSchema>;
 
 const codexLaneTurnUsageSchema = z.object({
   inputTokens: z.number().int().nonnegative(),

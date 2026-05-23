@@ -61,7 +61,7 @@ export interface WorkflowAgentCallContinuity {
  * reference is stale and a fresh backend session should be created. Either
  * the backend factory or the underlying callAgent can throw with this flag.
  */
-export const STALE_BACKEND_REF_FLAG = "__workflowAgentCallerStaleBackendRef";
+const STALE_BACKEND_REF_FLAG = "__workflowAgentCallerStaleBackendRef";
 
 export interface StaleBackendRefError extends Error {
   [STALE_BACKEND_REF_FLAG]: true;
@@ -72,9 +72,7 @@ export function markStaleBackendRefError(err: Error): StaleBackendRefError {
   return err as StaleBackendRefError;
 }
 
-export function isStaleBackendRefError(
-  err: unknown,
-): err is StaleBackendRefError {
+function isStaleBackendRefError(err: unknown): err is StaleBackendRefError {
   return (
     err instanceof Error &&
     (err as Partial<StaleBackendRefError>)[STALE_BACKEND_REF_FLAG] === true

@@ -63,9 +63,6 @@ const useDevToolsVisibilityStore = create<DevToolsVisibilityStore>()(
 export const useDevToolsEnabled = () =>
   useDevToolsVisibilityStore((s) => s.enabled);
 
-export const useDevToolsHydrated = () =>
-  useDevToolsVisibilityStore((s) => s.hydrated);
-
 // ---------------------------------------------------------------------------
 // Action hooks
 // ---------------------------------------------------------------------------

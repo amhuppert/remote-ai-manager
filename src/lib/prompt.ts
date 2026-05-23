@@ -418,7 +418,7 @@ export interface PromptStreamResult {
   error?: string | null;
 }
 
-export interface CollabPromptConfig {
+interface CollabPromptConfig {
   negotiationRounds?: number;
   autonomousResolutionThreshold?: CollaborationAutonomousResolutionThreshold;
 }

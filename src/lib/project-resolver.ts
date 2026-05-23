@@ -15,7 +15,7 @@ export interface ProjectResolverDeps {
   readConfig: () => Promise<GlobalConfig>;
 }
 
-export const defaultProjectResolverDeps: ProjectResolverDeps = {
+const defaultProjectResolverDeps: ProjectResolverDeps = {
   readConfig: readConfigDefault,
 };
 

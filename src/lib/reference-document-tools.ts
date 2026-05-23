@@ -46,7 +46,7 @@ async function defaultDeleteFile(filePath: string): Promise<void> {
   }
 }
 
-export const defaultReferenceDocumentToolDeps: ReferenceDocumentToolDeps = {
+const defaultReferenceDocumentToolDeps: ReferenceDocumentToolDeps = {
   createReferenceDocument: createReferenceDocumentDefault,
   deleteReferenceDocument: deleteReferenceDocumentDefault,
   getReferenceDocuments: getReferenceDocumentsDefault,

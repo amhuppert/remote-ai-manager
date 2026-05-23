@@ -9,7 +9,7 @@ import {
 import { useNotificationsQuery } from "@/lib/queries";
 import { useActiveJobs } from "@/stores/notification.store";
 
-export interface BreadcrumbSegment {
+interface BreadcrumbSegment {
   label: string;
   href?: string;
   isSession?: boolean;

@@ -31,7 +31,7 @@ export interface ClaudeRuntimeToolSourceDeps {
   capabilityRegistry?: McpCapabilityRegistry;
 }
 
-export interface RuntimeToolLookupInput {
+interface RuntimeToolLookupInput {
   conversationId: string;
   serverKey: string;
 }

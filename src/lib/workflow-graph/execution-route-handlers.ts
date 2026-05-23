@@ -243,7 +243,7 @@ const executionLoop = createGraphWorkflowExecutionLoop({
   getSession: defaultGetSession,
 });
 
-export interface GraphWorkflowExecutionContextMergeProgress {
+interface GraphWorkflowExecutionContextMergeProgress {
   contextId: string;
   branchName: string | null;
   mergeStatus: GraphWorkflowMergeStatusValue;
@@ -251,7 +251,7 @@ export interface GraphWorkflowExecutionContextMergeProgress {
   lastMergeError: string | null;
 }
 
-export interface GraphWorkflowExecutionJoinProgress {
+interface GraphWorkflowExecutionJoinProgress {
   joinId: string;
   kind: GraphWorkflowExecutionJoinKind;
   contextId: string | null;
@@ -261,7 +261,7 @@ export interface GraphWorkflowExecutionJoinProgress {
   status: GraphWorkflowExecutionJoinStatus;
 }
 
-export interface GraphWorkflowExecutionFinalPublishProgress {
+interface GraphWorkflowExecutionFinalPublishProgress {
   joinId: string;
   targetLaneId: string;
   sourceLaneIds: string[];

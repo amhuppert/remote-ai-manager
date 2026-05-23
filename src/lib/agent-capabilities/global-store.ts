@@ -43,10 +43,9 @@ import {
 import { applyCapabilityOperations } from "./patch";
 import { redactAgentCapabilityText } from "./redaction";
 
-export const AGENT_CAPABILITIES_GLOBAL_FILENAME =
-  "agent-capabilities-global.json";
+const AGENT_CAPABILITIES_GLOBAL_FILENAME = "agent-capabilities-global.json";
 
-export function getDefaultGlobalCapabilityOverridesPath(): string {
+function getDefaultGlobalCapabilityOverridesPath(): string {
   return path.join(resolveConfigDir(), AGENT_CAPABILITIES_GLOBAL_FILENAME);
 }
 
@@ -69,7 +68,7 @@ export interface GlobalCapabilityPatchInput {
   precondition?(current: AgentCapabilityOverrides): Promise<void> | void;
 }
 
-export interface GlobalCapabilityPatchResult {
+interface GlobalCapabilityPatchResult {
   overrides: AgentCapabilityOverrides;
   changedItemIds: readonly string[];
 }

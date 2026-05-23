@@ -24,7 +24,7 @@ import {
   type GatePassResult,
 } from "./gate-vocabulary";
 
-export type ConvergenceDecision = "accept" | "reject";
+type ConvergenceDecision = "accept" | "reject";
 
 export interface ConvergenceVote {
   voter: string;

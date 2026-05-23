@@ -10,7 +10,7 @@ import {
 } from "react";
 
 /** A file item from the project file index */
-export interface FileItem {
+interface FileItem {
   /** Relative path from project root (e.g., "src/components/FileAutocomplete.tsx") */
   path: string;
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
 /**
  * Item shape consumed by the presentational command/skill popup. The
@@ -139,21 +139,4 @@ function HighlightedName({
     }
   }
   return <span className="cmd-name">{chars}</span>;
-}
-
-/**
- * Hook helper for the suggestion popup's selectedIndex bookkeeping. Resets
- * to 0 when the items list changes (state-during-render pattern).
- */
-export function useSelectedIndex(itemsKey: number | string): {
-  selectedIndex: number;
-  setSelectedIndex: (i: number) => void;
-} {
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const [prevKey, setPrevKey] = useState(itemsKey);
-  if (prevKey !== itemsKey) {
-    setPrevKey(itemsKey);
-    setSelectedIndex(0);
-  }
-  return { selectedIndex, setSelectedIndex };
 }

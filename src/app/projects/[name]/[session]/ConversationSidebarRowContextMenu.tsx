@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
-export interface ContextMenuActionItem {
+interface ContextMenuActionItem {
   kind: "item";
   label: string;
   onSelect: () => void;
@@ -12,7 +12,7 @@ export interface ContextMenuActionItem {
   danger?: boolean;
 }
 
-export interface ContextMenuDivider {
+interface ContextMenuDivider {
   kind: "divider";
 }
 

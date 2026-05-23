@@ -1,12 +1,12 @@
 import { z } from "zod";
 
-export const findingEvidenceSchema = z.object({
+const findingEvidenceSchema = z.object({
   label: z.string(),
   value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
   unit: z.enum(["ms", "count", "percent", "bytes"]).optional(),
 });
 
-export const logAnalysisFindingSchema = z.object({
+const logAnalysisFindingSchema = z.object({
   id: z.string(),
   severity: z.enum(["critical", "high", "medium", "low", "info"]),
   confidence: z.number().min(0).max(1),
@@ -60,7 +60,7 @@ export const agentLogAnalysisReportSchema = z.object({
   artifacts: z.array(unknownObjectSchema),
 });
 
-export const agentTraceAnalysisReportSchema = z.object({
+const agentTraceAnalysisReportSchema = z.object({
   schemaVersion: z.literal(1),
   generatedAt: z.string(),
   command: z.literal("trace"),
@@ -77,7 +77,7 @@ export const agentTraceAnalysisReportSchema = z.object({
   artifacts: z.array(unknownObjectSchema),
 });
 
-export const agentLogComparisonReportSchema = z.object({
+const agentLogComparisonReportSchema = z.object({
   schemaVersion: z.literal(1),
   generatedAt: z.string(),
   command: z.literal("compare"),

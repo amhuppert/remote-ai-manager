@@ -6,7 +6,7 @@ export interface AssembleUserContentBlocksArgs {
   startIndex: number;
 }
 
-export interface AssembledImageAssignment {
+interface AssembledImageAssignment {
   attachmentId: string;
   serverIndex: number;
   mediaType: ImagePayload["mediaType"];

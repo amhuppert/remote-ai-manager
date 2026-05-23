@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 
-export interface DevServerPreset {
+interface DevServerPreset {
   id: string;
   name: string;
   description: string;
@@ -10,7 +10,7 @@ export interface DevServerPreset {
   files: string[];
 }
 
-export const PRESETS: DevServerPreset[] = [
+const PRESETS: DevServerPreset[] = [
   {
     id: "nextjs",
     name: "Next.js",

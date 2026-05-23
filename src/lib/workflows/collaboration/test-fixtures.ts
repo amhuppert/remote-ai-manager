@@ -49,7 +49,7 @@ const supportingPath = (segment: string, file: string): string =>
 // Leaf fixtures: agreements, disagreements, change proposals.
 // ============================================================
 
-export function makeAgreement(
+function makeAgreement(
   overrides: Partial<CollaborationArtifactAgreement> = {},
 ): CollaborationArtifactAgreement {
   return {
@@ -120,7 +120,7 @@ export function makeObjectiveDisagreement(
   };
 }
 
-export function makeChangeProposal(
+function makeChangeProposal(
   overrides: Partial<CollaborationChangeProposal> = {},
 ): CollaborationChangeProposal {
   return {

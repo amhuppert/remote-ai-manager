@@ -1,6 +1,6 @@
 "use client";
 
-export type CollabPhaseKind =
+type CollabPhaseKind =
   | { kind: "initial_draft" }
   | { kind: "cross_review" }
   | { kind: "negotiation"; round: number }
@@ -8,7 +8,7 @@ export type CollabPhaseKind =
   | { kind: "final_answer" }
   | { kind: "failed" };
 
-export type CollabPhaseStatus = "pending" | "active" | "done";
+type CollabPhaseStatus = "pending" | "active" | "done";
 
 export type CollabPhaseVerdict =
   | "converged"

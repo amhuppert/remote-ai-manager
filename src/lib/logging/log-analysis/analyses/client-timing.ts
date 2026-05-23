@@ -6,7 +6,7 @@ import type {
   ParsedClientTimingRecord,
 } from "../types";
 
-export interface ClientApiFetchSummary {
+interface ClientApiFetchSummary {
   key: string;
   action: string;
   method: string;
@@ -19,7 +19,7 @@ export interface ClientApiFetchSummary {
   traceIds: string[];
 }
 
-export interface ClientSseMessageSummary {
+interface ClientSseMessageSummary {
   eventType: string;
   count: number;
   p95TransportMs: number | null;

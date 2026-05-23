@@ -163,7 +163,7 @@ export interface DiscoverBackendCapabilitiesInput<
   refresh?: boolean;
 }
 
-export interface DiscoveryFailure {
+interface DiscoveryFailure {
   cascadeKind: AgentCapabilityCascadeKind;
   message: string;
 }

@@ -311,5 +311,5 @@ async function listNativeMcpServerNames(
 // Register task runner
 // ============================================================
 
-export const codexTaskRunner = new CodexTaskRunner();
+const codexTaskRunner = new CodexTaskRunner();
 registerTaskRunner(codexTaskRunner);

@@ -10,24 +10,6 @@
 
 import type { Snapshot } from "xstate";
 
-// ============================================================
-// Dependency Injection (kept for API compatibility with tests)
-// ============================================================
-
-export interface PersistenceDeps {
-  mutateSession: (...args: unknown[]) => Promise<void>;
-  readState: () => Promise<unknown>;
-}
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function setPersistenceDeps(_deps: PersistenceDeps): void {
-  // No-op — legacy DI surface kept for test compatibility
-}
-
-export function _resetPersistenceDepsForTesting(): void {
-  // No-op
-}
-
 /**
  * Persist a workflow snapshot to the session's state.
  * Debounced to avoid excessive writes during rapid state transitions.
@@ -59,15 +41,7 @@ export async function restoreWorkflowSnapshot(
   return null;
 }
 
-/**
- * Flush any pending debounced writes immediately.
- * No-op since snapshot persistence was removed with Ralph Loop.
- */
-export function flushPendingWrites(): void {
-  // No-op
-}
-
 /** Reset state for testing — do not use in production. */
 export function _resetForTesting(): void {
-  _resetPersistenceDepsForTesting();
+  // No-op
 }

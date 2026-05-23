@@ -17,6 +17,7 @@ function getRegistry(): Map<string, AbortController> {
 /**
  * Register an AbortController for a running conversation.
  * Called when `executePromptStream` starts SDK execution.
+ * @public Accessed via dynamic `import()` in actor-implementations.
  */
 export function registerAbortController(
   conversationId: string,
@@ -28,6 +29,7 @@ export function registerAbortController(
 
 /**
  * Remove a registered AbortController (called on normal completion).
+ * @public Accessed via dynamic `import()` in actor-implementations.
  */
 export function unregisterAbortController(conversationId: string): void {
   getRegistry().delete(conversationId);
@@ -56,9 +58,4 @@ export function abortConversation(conversationId: string): boolean {
 
   logger.info("abort.signaled", { conversationId });
   return true;
-}
-
-/** Reset state for testing */
-export function _resetForTesting(): void {
-  getRegistry().clear();
 }

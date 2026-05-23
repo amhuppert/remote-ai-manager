@@ -17,7 +17,7 @@ import type { StateNodeKind } from "./machine-spec-types";
 // Output types
 // ============================================================
 
-export interface IntrospectedEvent {
+interface IntrospectedEvent {
   event: string;
   target?: string;
   guard?: string;

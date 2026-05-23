@@ -153,16 +153,6 @@ export const useActiveJobs = () => {
     [jobs],
   );
 };
-export const useJobsBySession = (projectName: string, sessionName: string) => {
-  const jobs = useNotificationStore((s) => s.jobs);
-  return useMemo(
-    () =>
-      Array.from(jobs.values()).filter(
-        (j) => j.projectName === projectName && j.sessionName === sessionName,
-      ),
-    [jobs, projectName, sessionName],
-  );
-};
 
 // ---------------------------------------------------------------------------
 // Action hooks

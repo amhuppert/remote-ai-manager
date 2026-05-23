@@ -19,6 +19,7 @@
     "trace:speedscope": "bun scripts/speedscope-export.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "knip": "knip",
     "storybook": "NODE_ENV=development storybook dev -p 6006",
     "build-storybook": "storybook build",
     "prepare": "husky"
@@ -30,7 +31,6 @@
     "@react-hookz/web": "^25.2.0",
     "@tanstack/react-query": "^5.90.21",
     "@tanstack/react-query-devtools": "^5.91.3",
-    "@tanstack/react-table": "^8.21.3",
     "@tiptap/core": "^3.22.5",
     "@tiptap/extension-placeholder": "^3.22.5",
     "@tiptap/pm": "^3.22.5",
@@ -58,19 +58,6 @@
     "zod": "^4.3.6",
     "zustand": "^5.0.11"
   },
-  "lint-staged": {
-    "*.{ts,tsx}": [
-      "eslint",
-      "prettier --write"
-    ],
-    "*.{js,mjs,cjs}": [
-      "eslint",
-      "prettier --write"
-    ],
-    "*.{json,md,css}": [
-      "prettier --write"
-    ]
-  },
   "devDependencies": {
     "@chromatic-com/storybook": "^5.0.1",
     "@storybook/addon-a11y": "^10.2.10",
@@ -93,7 +80,7 @@
     "eslint-plugin-storybook": "^10.2.10",
     "husky": "^9.1.7",
     "jsdom": "^28.0.0",
-    "lint-staged": "^16.2.7",
+    "knip": "^6.14.2",
     "playwright": "^1.58.2",
     "prettier": "^3.8.1",
     "storybook": "^10.2.10",

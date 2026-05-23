@@ -15,7 +15,7 @@ export interface TailscaleDeps {
   ) => Promise<{ stdout: string; stderr: string }>;
 }
 
-export const defaultTailscaleDeps: TailscaleDeps = {
+const defaultTailscaleDeps: TailscaleDeps = {
   execFileAsync: (cmd, args) =>
     timedExecFile(cmd, args, { eventPrefix: "tailscale" }),
 };
@@ -112,10 +112,6 @@ export function createTailscaleService(
 /* ------------------------------------------------------------------ */
 
 const defaultService = createTailscaleService();
-
-export async function getHostname(): Promise<string | null> {
-  return defaultService.getHostname();
-}
 
 export async function register(port: number): Promise<string | null> {
   return defaultService.register(port);

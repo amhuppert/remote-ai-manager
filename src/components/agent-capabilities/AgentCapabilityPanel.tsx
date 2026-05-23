@@ -5,7 +5,6 @@ import { useMemo, useState } from "react";
 import type {
   AgentCapabilityApplyStatus,
   AgentCapabilityCascadeKind,
-  AgentCapabilityCascadeLayer,
   AgentCapabilityDiagnostic,
   AgentCapabilitySourceRef,
   AgentCapabilityViewResponse,
@@ -296,30 +295,6 @@ export function ClaudeSkillsPanel(
 ): React.JSX.Element {
   return (
     <AgentCapabilityPanel {...props} title={CASCADE_TITLES["claude-skills"]} />
-  );
-}
-
-export function ClaudePluginsPanel(
-  props: Omit<AgentCapabilityPanelProps, "title">,
-): React.JSX.Element {
-  return (
-    <AgentCapabilityPanel {...props} title={CASCADE_TITLES["claude-plugins"]} />
-  );
-}
-
-export function ClaudeSubAgentsPanel(
-  props: Omit<AgentCapabilityPanelProps, "title">,
-): React.JSX.Element {
-  return (
-    <AgentCapabilityPanel {...props} title={CASCADE_TITLES["claude-agents"]} />
-  );
-}
-
-export function CodexSkillsPanel(
-  props: Omit<AgentCapabilityPanelProps, "title">,
-): React.JSX.Element {
-  return (
-    <AgentCapabilityPanel {...props} title={CASCADE_TITLES["codex-skills"]} />
   );
 }
 
@@ -643,10 +618,4 @@ export function titleForCapabilityCascade(
   cascadeKind: AgentCapabilityCascadeKind,
 ): string {
   return CASCADE_TITLES[cascadeKind];
-}
-
-export function levelForScope(
-  scope: AgentCapabilityScope,
-): AgentCapabilityCascadeLayer {
-  return scope.level;
 }

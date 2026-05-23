@@ -32,7 +32,7 @@ const logger = createLogger("debug-logs-ingest");
  * the debug-log path itself produces an infinite POST loop when the
  * agent self-debugs Command Center's debug mode.
  */
-export const DEBUG_LOG_SELF_HEADER = "x-cc-debug-log";
+const DEBUG_LOG_SELF_HEADER = "x-cc-debug-log";
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",

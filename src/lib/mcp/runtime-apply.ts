@@ -147,7 +147,7 @@ export interface AfterOverrideChangeInput {
   changedServerKeys: readonly string[];
 }
 
-export interface AtTurnStartInput {
+interface AtTurnStartInput {
   projectPath: string;
   sessionName: string;
   conversationId: string;
