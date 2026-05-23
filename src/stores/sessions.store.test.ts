@@ -5,7 +5,6 @@ function resetStore() {
   _useSessionsStore.setState({
     showCreateModal: false,
     deleteTarget: null,
-    showArchived: false,
   });
 }
 
@@ -52,21 +51,5 @@ describe("sessions.store", () => {
     });
     _useSessionsStore.getState().cancelDeleteSession();
     expect(_useSessionsStore.getState().deleteTarget).toBeNull();
-  });
-
-  // -----------------------------------------------------------------------
-  // showArchived
-  // -----------------------------------------------------------------------
-
-  it("starts with showArchived = false", () => {
-    expect(_useSessionsStore.getState().showArchived).toBe(false);
-  });
-
-  it("toggleArchived flips the value", () => {
-    _useSessionsStore.getState().toggleArchived();
-    expect(_useSessionsStore.getState().showArchived).toBe(true);
-
-    _useSessionsStore.getState().toggleArchived();
-    expect(_useSessionsStore.getState().showArchived).toBe(false);
   });
 });

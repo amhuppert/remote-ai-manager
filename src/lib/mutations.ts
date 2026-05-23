@@ -23,6 +23,9 @@ import {
   jobDispatchResponseSchema,
   mcpToolInventoryResultSchema,
   forkResponseSchema,
+  bulkSessionsResponseSchema,
+  type BulkSessionsRequest,
+  type BulkSessionsResponse,
   type McpConfigViewResponse,
   type McpOverrideOperation,
 } from "@/lib/schemas";
@@ -179,6 +182,29 @@ export function useTddToggleMutation(projectName: string, sessionName: string) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ tddEnabled }),
         },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.list(projectName),
+      });
+    },
+  });
+}
+
+export function useBulkSessionsMutation(projectName: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (req: BulkSessionsRequest): Promise<BulkSessionsResponse> =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/bulk`,
+        "bulk-sessions",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(req),
+        },
+        bulkSessionsResponseSchema,
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({

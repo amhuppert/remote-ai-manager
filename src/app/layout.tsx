@@ -8,6 +8,7 @@ import NotificationsPanelContainer from "@/components/NotificationsPanelContaine
 import MergeToastContainer from "@/components/MergeToastContainer";
 import InputNeededToastContainer from "@/components/InputNeededToastContainer";
 import PromptErrorToastContainer from "@/components/PromptErrorToastContainer";
+import ToastContainer from "@/components/ToastContainer";
 import DevToolsGate from "@/components/DevToolsGate";
 import ReactScanInstrumentation from "@/components/ReactScanInstrumentation";
 import "./globals.css";
@@ -76,6 +77,7 @@ export default function RootLayout({
           <MergeToastContainer />
           <InputNeededToastContainer />
           <PromptErrorToastContainer />
+          <ToastContainer />
 
           <DevToolsGate />
           <ReactScanInstrumentation />

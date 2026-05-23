@@ -27,7 +27,9 @@ export type HotkeyId =
   | "nextFile"
   | "prevFile"
   | "nextChange"
-  | "prevChange";
+  | "prevChange"
+  | "newSession"
+  | "focusCommandConsole";
 
 export type HotkeyRegistry = Record<HotkeyId, HotkeyDefinition>;
 
@@ -153,6 +155,24 @@ export const HOTKEY_REGISTRY: HotkeyRegistry = {
     label: "Previous change",
     description: "Jump to the previous diff hunk",
     category: "diff",
+  },
+  newSession: {
+    id: "newSession",
+    keys: "mod+n",
+    label: "New session",
+    description: "Open the New Session modal on the project page",
+    category: "general",
+    enableOnFormTags: true,
+    enableOnContentEditable: true,
+  },
+  focusCommandConsole: {
+    id: "focusCommandConsole",
+    keys: "mod+k",
+    label: "Focus command console",
+    description: "Focus the project page command console",
+    category: "general",
+    enableOnFormTags: true,
+    enableOnContentEditable: true,
   },
 };
 

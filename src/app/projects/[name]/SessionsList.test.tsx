@@ -25,12 +25,25 @@ vi.mock(
 
 // File-specific mocks
 const routerPushMock = vi.fn();
+const routerReplaceMock = vi.fn();
+const mockSearchParams = new URLSearchParams();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
     push: routerPushMock,
+    replace: routerReplaceMock,
   }),
   usePathname: vi.fn(() => "/projects/test-project"),
+  useSearchParams: () => mockSearchParams,
 }));
+
+vi.mock(
+  "@/components/agent-capabilities/ScopedAgentCapabilitiesConfig",
+  () => ({
+    __esModule: true,
+    default: ({ open }: { open?: boolean }) =>
+      open ? <div data-testid="capabilities-drawer-stub" /> : null,
+  }),
+);
 
 const mockSessionsData = {
   data: undefined as SessionListItem[] | undefined,
@@ -69,6 +82,7 @@ vi.mock("@/lib/mutations", () => ({
   useArchiveSessionMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useInstallPresetMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useTddToggleMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useBulkSessionsMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useToggleMcpServerMutation: () => ({ mutate: vi.fn() }),
   useResetMcpServerMutation: () => ({ mutate: vi.fn() }),
   useToggleMcpToolMutation: () => ({ mutate: vi.fn() }),
@@ -79,13 +93,11 @@ vi.mock("@/lib/mutations", () => ({
 let storeShowCreateModal = false;
 let storeDeleteTarget: { sessionName: string; projectName: string } | null =
   null;
-let storeShowArchived = false;
 
 vi.mock("@/stores/sessions.store", () => ({
   useShowCreateModal: () => storeShowCreateModal,
   useBranchFromParent: () => null,
   useDeleteTarget: () => storeDeleteTarget,
-  useShowArchivedSessions: () => storeShowArchived,
   useOpenCreateModal: () => () => {
     storeShowCreateModal = true;
   },
@@ -95,14 +107,12 @@ vi.mock("@/stores/sessions.store", () => ({
       storeDeleteTarget = target;
     },
   useCancelDeleteSession: () => vi.fn(),
-  useToggleArchivedSessions: () => vi.fn(),
 }));
 
 beforeEach(() => {
   vi.clearAllMocks();
   storeShowCreateModal = false;
   storeDeleteTarget = null;
-  storeShowArchived = false;
   mockSessionsData.data = undefined;
   mockSessionsData.isPending = false;
 });
@@ -171,7 +181,7 @@ describe("SessionsList", () => {
     const { container } = renderWithQuery(
       <SessionsList projectName="my-project" />,
     );
-    const badges = container.querySelectorAll(".session-status");
+    const badges = container.querySelectorAll(".s-status");
     expect(badges.length).toBe(2);
     expect(badges[0]!.textContent).toContain("running");
     expect(badges[1]!.textContent).toContain("awaiting");
@@ -179,10 +189,12 @@ describe("SessionsList", () => {
 
   it("renders prompt counts in table (Req 2.2)", () => {
     mockSessionsData.data = makeSessions(3);
-    renderWithQuery(<SessionsList projectName="my-project" />);
-    expect(screen.getByText("0")).toBeInTheDocument();
-    expect(screen.getByText("3")).toBeInTheDocument();
-    expect(screen.getByText("6")).toBeInTheDocument();
+    const { container } = renderWithQuery(
+      <SessionsList projectName="my-project" />,
+    );
+    const promptCells = container.querySelectorAll(".v3-prompts");
+    const counts = Array.from(promptCells).map((c) => c.textContent);
+    expect(counts).toEqual(["0", "3", "6"]);
   });
 
   it("links session name to detail page (Req 2.4)", () => {
@@ -192,22 +204,38 @@ describe("SessionsList", () => {
     expect(link?.getAttribute("href")).toBe("/projects/my-project/session-1");
   });
 
-  it("renders New Session button (Req 3.1)", () => {
+  it("renders primary New session CTA in page header (Req 3.1)", () => {
     mockSessionsData.data = [];
-    renderWithQuery(<SessionsList projectName="my-project" />);
-    expect(screen.getByText("New Session")).toBeInTheDocument();
+    const { container } = renderWithQuery(
+      <SessionsList projectName="my-project" />,
+    );
+    const primary = container.querySelector(".cc-page-header .cc-primary");
+    expect(primary).not.toBeNull();
+    expect(primary?.textContent).toContain("New session");
+  });
+
+  it("renders command console", () => {
+    mockSessionsData.data = [];
+    const { container } = renderWithQuery(
+      <SessionsList projectName="my-project" />,
+    );
+    expect(container.querySelector(".v2-console")).not.toBeNull();
   });
 
   it("renders table with all column headers (Req 2.1)", () => {
     mockSessionsData.data = makeSessions(1);
     renderWithQuery(<SessionsList projectName="my-project" />);
-    expect(screen.getByText("Session")).toBeInTheDocument();
     expect(
-      screen.getByRole("columnheader", { name: /Branch/ }),
+      screen.getByRole("button", { name: /^Session/ }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Status")).toBeInTheDocument();
-    expect(screen.getByText("Last Activity")).toBeInTheDocument();
-    expect(screen.getByText("Prompts")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Branch/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Status/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Last Activity/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Prompts/ }),
+    ).toBeInTheDocument();
   });
 
   it("shows loading state when pending", () => {
@@ -216,7 +244,7 @@ describe("SessionsList", () => {
     expect(screen.getByText("Loading sessions...")).toBeInTheDocument();
   });
 
-  it("renders optimistic badge for optimistic mode sessions", () => {
+  it("renders optimistic mode indicator for optimistic mode sessions", () => {
     mockSessionsData.data = [
       {
         ...makeSessions(1)[0]!,
@@ -226,16 +254,7 @@ describe("SessionsList", () => {
     const { container } = renderWithQuery(
       <SessionsList projectName="my-project" />,
     );
-    const badges = container.querySelectorAll(".cc-badge");
-    const optimisticBadge = Array.from(badges).find(
-      (b) => b.textContent?.trim() === "optimistic",
-    );
-    expect(optimisticBadge).not.toBeNull();
-  });
-
-  it("renders Quick Task button for standalone optimistic dialog", () => {
-    mockSessionsData.data = [];
-    renderWithQuery(<SessionsList projectName="my-project" />);
-    expect(screen.getByText("Quick Task")).toBeInTheDocument();
+    const dot = container.querySelector('.s-mode-dot[data-mode="optimistic"]');
+    expect(dot).not.toBeNull();
   });
 });

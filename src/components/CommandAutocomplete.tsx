@@ -102,7 +102,7 @@ export const CommandAutocomplete = forwardRef<
   const listRef = useRef<HTMLDivElement>(null);
 
   // Fetch commands via TanStack Query — session-level when sessionName is provided,
-  // otherwise project-level (e.g. in OptimisticDialog before a session exists)
+  // otherwise project-level (before a session exists, e.g. the new-session optimistic flow)
   const sessionQuery = useCommandsQuery(
     projectName,
     sessionName ?? "",

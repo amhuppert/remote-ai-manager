@@ -15,7 +15,6 @@ interface SessionsState {
   /** Pre-filled parent session name when branching from a session */
   branchFromParent: string | null;
   deleteTarget: DeleteTarget | null;
-  showArchived: boolean;
 }
 
 interface SessionsActions {
@@ -23,7 +22,6 @@ interface SessionsActions {
   closeCreateModal: () => void;
   confirmDeleteSession: (target: DeleteTarget) => void;
   cancelDeleteSession: () => void;
-  toggleArchived: () => void;
 }
 
 type SessionsStore = SessionsState & SessionsActions;
@@ -37,7 +35,6 @@ const useSessionsStore = create<SessionsStore>()(
     showCreateModal: false,
     branchFromParent: null,
     deleteTarget: null,
-    showArchived: false,
 
     openCreateModal: (parentSessionName) =>
       set((state) => {
@@ -60,11 +57,6 @@ const useSessionsStore = create<SessionsStore>()(
       set((state) => {
         state.deleteTarget = null;
       }),
-
-    toggleArchived: () =>
-      set((state) => {
-        state.showArchived = !state.showArchived;
-      }),
   })),
 );
 
@@ -77,8 +69,6 @@ export const useShowCreateModal = () =>
 export const useBranchFromParent = () =>
   useSessionsStore((s) => s.branchFromParent);
 export const useDeleteTarget = () => useSessionsStore((s) => s.deleteTarget);
-export const useShowArchivedSessions = () =>
-  useSessionsStore((s) => s.showArchived);
 
 // ---------------------------------------------------------------------------
 // Action hooks
@@ -92,8 +82,6 @@ export const useConfirmDeleteSession = () =>
   useSessionsStore((s) => s.confirmDeleteSession);
 export const useCancelDeleteSession = () =>
   useSessionsStore((s) => s.cancelDeleteSession);
-export const useToggleArchivedSessions = () =>
-  useSessionsStore((s) => s.toggleArchived);
 
 /** @internal — exposed for direct state testing */
 export { useSessionsStore as _useSessionsStore };

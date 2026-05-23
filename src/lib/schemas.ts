@@ -2461,6 +2461,24 @@ export const sessionListItemSchema = z.object({
 });
 export type SessionListItem = z.infer<typeof sessionListItemSchema>;
 
+export const bulkSessionsRequestSchema = z.object({
+  op: z.enum(["archive", "unarchive", "delete"]),
+  sessionNames: z.array(z.string().min(1)).min(1).max(200),
+});
+export type BulkSessionsRequest = z.infer<typeof bulkSessionsRequestSchema>;
+
+export const bulkSessionResultSchema = z.object({
+  sessionName: z.string(),
+  success: z.boolean(),
+  error: z.string().optional(),
+});
+export type BulkSessionResult = z.infer<typeof bulkSessionResultSchema>;
+
+export const bulkSessionsResponseSchema = z.object({
+  results: z.array(bulkSessionResultSchema),
+});
+export type BulkSessionsResponse = z.infer<typeof bulkSessionsResponseSchema>;
+
 export const projectStateSchema = z.object({
   rootPath: z.string(),
   sessions: z.record(z.string(), sessionStateSchema),

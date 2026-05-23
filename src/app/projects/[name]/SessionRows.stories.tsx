@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
 import type { SessionListItem } from "@/types";
-import SessionsTable from "./SessionsTable";
+import SessionRows from "./SessionRows";
 
 const now = new Date().toISOString();
 const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
@@ -68,13 +68,16 @@ const sampleSessions: SessionListItem[] = [
 ];
 
 const meta = {
-  title: "Sessions/SessionsTable",
-  component: SessionsTable,
+  title: "Sessions/SessionRows",
+  component: SessionRows,
   args: {
     sessions: sampleSessions,
     projectName: "my-app",
-    nameFilter: "",
-    onNameFilterChange: fn(),
+    sort: { id: "lastActivityAt", desc: true },
+    onSortChange: fn(),
+    selection: new Set<string>(),
+    onToggleSelect: fn(),
+    onToggleAll: fn(),
     onBranch: fn(),
   },
   decorators: [
@@ -84,12 +87,12 @@ const meta = {
       </div>
     ),
   ],
-} satisfies Meta<typeof SessionsTable>;
+} satisfies Meta<typeof SessionRows>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** Default table with mixed main/child sessions */
+/** Default rows with mixed main/child sessions */
 export const Default = {
   args: {},
 } satisfies Story;
@@ -108,14 +111,14 @@ export const ChildSessions = {
   },
 } satisfies Story;
 
-/** Empty table */
+/** Empty rows */
 export const Empty = {
   args: {
     sessions: [],
   },
 } satisfies Story;
 
-/** Without onBranch — Branch button hidden */
+/** Without onBranch — Branch kebab option still renders, just no-ops */
 export const NoBranchAction = {
   args: {
     onBranch: undefined,

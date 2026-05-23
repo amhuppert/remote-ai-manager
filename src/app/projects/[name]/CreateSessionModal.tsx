@@ -330,19 +330,19 @@ export default function CreateSessionModal({
             </button>
             <button
               type="button"
-              className={`mode-btn${mode === "optimistic" ? " active" : ""}`}
-              onClick={() => setMode("optimistic")}
-              disabled={createMutation.isPending}
-            >
-              Optimistic
-            </button>
-            <button
-              type="button"
               className={`mode-btn${mode === "focus" ? " active" : ""}`}
               onClick={() => setMode("focus")}
               disabled={createMutation.isPending}
             >
               Focus
+            </button>
+            <button
+              type="button"
+              className={`mode-btn${mode === "optimistic" ? " active" : ""}`}
+              onClick={() => setMode("optimistic")}
+              disabled={createMutation.isPending}
+            >
+              Optimistic
             </button>
           </div>
 

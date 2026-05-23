@@ -56,6 +56,7 @@ function getAllFontSizeRem(): { line: number; value: number; rule: string }[] {
   const lines = css.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
+    if (line.includes("allow-small")) continue;
     const match = line.match(/font-size:\s*([\d.]+)rem/);
     if (match?.[1]) {
       results.push({

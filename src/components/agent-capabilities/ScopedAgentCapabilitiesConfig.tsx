@@ -18,6 +18,9 @@ interface ScopedAgentCapabilitiesConfigProps {
   disabled?: boolean;
   disabledTooltip?: string;
   className?: string;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  renderTrigger?: boolean;
 }
 
 export default function ScopedAgentCapabilitiesConfig({
@@ -28,9 +31,21 @@ export default function ScopedAgentCapabilitiesConfig({
   disabled,
   disabledTooltip,
   className,
+  open: controlledOpen,
+  onOpenChange,
+  renderTrigger = true,
 }: ScopedAgentCapabilitiesConfigProps): React.JSX.Element {
-  const [open, setOpen] = useState(false);
-  const close = useCallback(() => setOpen(false), []);
+  const controlled = controlledOpen !== undefined;
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlled ? controlledOpen : internalOpen;
+  const setOpen = useCallback(
+    (next: boolean) => {
+      if (!controlled) setInternalOpen(next);
+      onOpenChange?.(next);
+    },
+    [controlled, onOpenChange],
+  );
+  const close = useCallback(() => setOpen(false), [setOpen]);
   const initialScope = useMemo<AgentCapabilityScope>(
     () =>
       buildInitialScope({
@@ -58,17 +73,19 @@ export default function ScopedAgentCapabilitiesConfig({
 
   return (
     <>
-      <button
-        type="button"
-        className={className ?? "mcp-config-trigger agent-capability-trigger"}
-        onClick={() => setOpen(true)}
-        disabled={disabled}
-        aria-label={title}
-        aria-expanded={open}
-        title={title}
-      >
-        <span className="mcp-config-trigger__label">Capabilities</span>
-      </button>
+      {renderTrigger && (
+        <button
+          type="button"
+          className={className ?? "mcp-config-trigger agent-capability-trigger"}
+          onClick={() => setOpen(true)}
+          disabled={disabled}
+          aria-label={title}
+          aria-expanded={open}
+          title={title}
+        >
+          <span className="mcp-config-trigger__label">Capabilities</span>
+        </button>
+      )}
       <ScopedAgentCapabilitiesDrawer
         open={open}
         onClose={close}
