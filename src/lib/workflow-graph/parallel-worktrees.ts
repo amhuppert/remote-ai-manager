@@ -1,15 +1,18 @@
 import { existsSync as defaultExistsSync } from "node:fs";
 import path from "node:path";
-import { buildChildEnv as defaultBuildChildEnv } from "@/lib/child-env";
-import { execFile as timedExecFile, type ExecFileOptions } from "@/lib/exec";
-import { defaultGitClient, type GitClient } from "@/lib/git-client";
+import { buildChildEnv as defaultBuildChildEnv } from "@/lib/shared/child-env";
+import {
+  execFile as timedExecFile,
+  type ExecFileOptions,
+} from "@/lib/shared/exec";
+import { defaultGitClient, type GitClient } from "@/lib/git/client";
 import { createLogger, type Logger } from "@/lib/logging";
 import { timed } from "@/lib/logging/timed";
-import { getErrorMessage } from "@/lib/errors";
-import { readRepoConfig as defaultReadRepoConfig } from "@/lib/repo-config";
-import type { PerRepoConfig } from "@/lib/schemas";
-import { parseDirtyPaths } from "@/lib/git-operations";
-import type { DirtyPath } from "@/lib/workflows/graph-workflow/errors";
+import { getErrorMessage } from "@/lib/shared/errors";
+import { readRepoConfig as defaultReadRepoConfig } from "@/lib/projects/repo-config";
+import type { PerRepoConfig } from "@/lib/config/schemas";
+import { parseDirtyPaths } from "@/lib/git/worktree";
+import type { DirtyPath } from "@/lib/workflow-graph/errors";
 
 type ExecFileAsync = (
   cmd: string,

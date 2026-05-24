@@ -1,10 +1,9 @@
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
-import { referenceDocumentSchema } from "../schemas";
-import { PersistenceError } from "../errors";
-import type { ReferenceDocument } from "@/types";
-
+import { referenceDocumentSchema } from "@/lib/reference-documents/schemas";
+import { PersistenceError } from "../shared/errors";
+import type { ReferenceDocument } from "@/lib/reference-documents/schemas";
 type Db = InstanceType<typeof Database>;
 
 const logger = createLogger("state-store.reference-documents");

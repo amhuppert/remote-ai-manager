@@ -26,14 +26,14 @@
 import path from "node:path";
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
-import { getErrorMessage } from "@/lib/errors";
+import { getErrorMessage } from "@/lib/shared/errors";
 import {
   runAsymmetricCollaborationSlice,
   type AsymmetricCollaborationSliceDeps,
   type AsymmetricCollaborationSliceInput,
   type AsymmetricCollaborationSliceResult,
   type AsymmetricDispatchInfo,
-} from "./asymmetric-slice";
+} from "./envelope";
 import { createCollaborationDeps } from "./deps-factory";
 import { createCollaborationProductionCallAgent } from "./agent-caller-production";
 import { createSessionWorkflowEnvelopeRepositoryForProduction } from "@/lib/workflows/primitives/default-session-workflow-envelope-store";
@@ -44,12 +44,13 @@ import {
   type LaneService,
 } from "@/lib/workflows/primitives/lane-service";
 import { createSessionLaneStoreForProduction } from "@/lib/workflows/primitives/lane-store";
-import { getSession as defaultGetSession } from "@/lib/state";
-import { getConversation as defaultGetConversation } from "@/lib/conversations";
-import type { AgentBackendId } from "@/types";
-import { agentBackendSchema, type AgentSessionRef } from "@/lib/schemas";
+import { getSession as defaultGetSession } from "@/lib/state-store";
+import { getConversation as defaultGetConversation } from "@/lib/conversations/service";
+import type { AgentBackendId } from "@/lib/shared/schemas";
+import { type AgentSessionRef } from "@/lib/agent-backends/schemas";
+import { agentBackendSchema } from "@/lib/shared/schemas";
 import { collaborationAutonomousResolutionThresholdSchema } from "./types";
-import { dispatchPushForCollaborationEvent } from "@/lib/push-dispatcher";
+import { dispatchPushForCollaborationEvent } from "@/lib/push-notification/dispatcher";
 import {
   publishScopedStatusEvent,
   type PublishScopedStatusEventInput,

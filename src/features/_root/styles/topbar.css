@@ -1,0 +1,113 @@
+/* ============================================================
+   Topbar
+   ============================================================ */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--topbar-height);
+  padding: 0 var(--space-lg);
+  background: rgba(11, 16, 25, 0.85);
+  backdrop-filter: blur(16px) saturate(140%);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.topbar-logo {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.1rem;
+  letter-spacing: -0.02em;
+  color: var(--cyan);
+  text-shadow: 0 0 20px var(--cyan-glow-text);
+}
+
+.topbar-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border-default);
+}
+
+.topbar-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+.topbar-breadcrumb .bc-sep {
+  color: var(--text-tertiary);
+}
+
+.topbar-breadcrumb a:hover {
+  color: var(--text-primary);
+}
+
+.topbar-breadcrumb .bc-session {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.topbar-mobile-back {
+  display: none;
+}
+
+.topbar-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.topbar-status-default,
+.topbar-status-session {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.topbar-sep {
+  width: 1px;
+  height: 24px;
+  background: var(--border-default);
+  flex-shrink: 0;
+}
+
+.topbar-nav-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  transition: all 0.15s ease;
+  text-decoration: none;
+}
+
+.topbar-nav-link:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.topbar-nav-link.active {
+  color: var(--cyan);
+}
+
+@media (max-width: 768px) {
+  .topbar-nav-link {
+    width: 44px;
+    height: 44px;
+  }
+}

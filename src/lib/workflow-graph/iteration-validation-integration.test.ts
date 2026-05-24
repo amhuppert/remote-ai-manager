@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import type { GraphWorkflowExecution, GraphWorkflowHaltReason } from "@/types";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowHaltReason,
+} from "@/lib/workflows/schemas";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
@@ -7,7 +10,7 @@ import {
 import {
   createGraphWorkflowIterationOrchestrator,
   type GraphWorkflowIterationToolServerInput,
-} from "@/lib/workflows/graph-workflow/iteration-orchestrator";
+} from "@/lib/workflow-graph/iteration-orchestrator";
 
 interface InMemoryExecutionRepository {
   getActive(

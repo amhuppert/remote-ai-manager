@@ -1,16 +1,20 @@
 import { NextResponse } from "next/server";
-import { workflowRuntimeEditRequestSchema } from "@/lib/schemas";
-import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/project-resolver";
-import { getSession as defaultGetSession, mutateSession } from "@/lib/state";
+import { withTracing } from "@/lib/logging";
+import { workflowRuntimeEditRequestSchema } from "@/lib/workflows/schemas";
+import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
+import {
+  getSession as defaultGetSession,
+  mutateSession,
+} from "@/lib/state-store";
+import type { ApiError } from "@/lib/api/errors";
+import type { SessionState } from "@/lib/sessions/schemas";
 import type {
-  ApiError,
   GraphWorkflowExecution,
-  SessionState,
   WorkflowRuntimeEditRequest,
-} from "@/types";
+} from "@/lib/workflows/schemas";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import { createWorkflowStorageService } from "./storage";
-import { createGraphWorkflowManager } from "@/lib/workflows/graph-workflow/workflow-manager";
+import { createGraphWorkflowManager } from "@/lib/workflow-graph/workflow-manager";
 import { createParallelWorktrees } from "./parallel-worktrees";
 import {
   GraphWorkflowRuntimeEditValidationError,
@@ -189,3 +193,10 @@ export function createGraphWorkflowRuntimeEditRouteHandlers(
 
   return { POST };
 }
+
+const defaultGraphWorkflowRuntimeEditHandlers =
+  createGraphWorkflowRuntimeEditRouteHandlers();
+
+export const applyGraphWorkflowRuntimeEdits = withTracing(
+  defaultGraphWorkflowRuntimeEditHandlers.POST,
+);

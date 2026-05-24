@@ -21,8 +21,7 @@
  * the query layer can invalidate scoped views and surface orphan flags.
  */
 import { createLogger } from "@/lib/logging";
-import type { McpToolInventoryResult } from "@/lib/schemas";
-
+import type { McpToolInventoryResult } from "@/lib/mcp/schemas";
 const logger = createLogger("mcp.tool-discovery");
 
 export interface ToolInventoryKey {

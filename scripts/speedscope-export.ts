@@ -20,7 +20,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { getConfigDirPath } from "../src/lib/config";
+import { getConfigDirPath } from "../src/lib/config/loader";
 import { buildTrace } from "../src/lib/logging/speedscope-export";
 
 const HELP_TEXT = `Usage: bun scripts/speedscope-export.ts [options]

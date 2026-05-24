@@ -11,8 +11,7 @@ import {
   runWithTrace,
   type TraceContext,
 } from "@/lib/logging";
-import type { ScopedStatusEvent, SSEEvent } from "@/types";
-
+import type { ScopedStatusEvent, SSEEvent } from "@/lib/api/sse-events";
 describe("default session status bus", () => {
   beforeEach(() => {
     _resetDefaultSessionStatusBusForTesting();

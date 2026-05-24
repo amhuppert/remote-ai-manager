@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ConversationState, SessionState } from "@/types";
+import type { ConversationState } from "@/lib/conversations/schemas";
+import type { SessionState } from "@/lib/sessions/schemas";
 import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
 import type { ExecutionTarget } from "./execution-target-resolver";
 

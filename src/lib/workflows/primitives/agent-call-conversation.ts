@@ -23,8 +23,8 @@ import type {
   ConversationBackendTurnInput,
   ConversationBackendTurnResult,
   ConversationImageRef,
-  PortableMcpConfig,
-} from "@/types";
+} from "@/lib/agent-backends/conversation";
+import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import {
   buildAgentCallLogFields,
   type AgentCallRequest,

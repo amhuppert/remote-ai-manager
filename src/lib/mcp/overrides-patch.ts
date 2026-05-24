@@ -2,8 +2,7 @@ import type {
   McpOverrideOperation,
   McpOverrides,
   McpServerOverride,
-} from "@/lib/schemas";
-
+} from "@/lib/mcp/schemas";
 export interface OverridesPatchResult {
   overrides: McpOverrides;
   changedServerKeys: readonly string[];

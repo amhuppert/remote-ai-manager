@@ -9,8 +9,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import type { AgentBackendId } from "@/lib/schemas";
-
+import type { AgentBackendId } from "@/lib/shared/schemas";
 interface ModelOption {
   id: string;
   label: string;

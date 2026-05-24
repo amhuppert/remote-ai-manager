@@ -1,6 +1,6 @@
 "use client";
 
-import type { DebugModePhase } from "@/types";
+import type { DebugModePhase } from "@/lib/debug-log/schemas";
 import {
   debugEvidenceAnalysisSchema,
   type DebugCleanupResultOutput,

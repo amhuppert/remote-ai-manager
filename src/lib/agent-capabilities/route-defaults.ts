@@ -4,8 +4,8 @@ import { getRuntime } from "@/lib/agent-backends/runtime-registry";
 import {
   getProjectDisplayName,
   resolveProjectPath,
-} from "@/lib/project-resolver";
-import { createStateManager } from "@/lib/state";
+} from "@/lib/projects/resolver";
+import { createStateManager } from "@/lib/state-store";
 import {
   type AgentCapabilityCascadeKind,
   type AgentCapabilityCascadeLayer,
@@ -14,7 +14,7 @@ import {
   type AgentCapabilityRuntimeApplicationState,
   type AgentCapabilityScopeContext,
   type AgentCapabilityViewResponse,
-} from "@/lib/schemas";
+} from "./schemas";
 
 import {
   discoverClaudeAgents,

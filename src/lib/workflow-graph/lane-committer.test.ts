@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { graphWorkflowExecutionLaneStateSchema } from "@/lib/schemas";
-import type { GraphWorkflowExecution } from "@/types";
+import { graphWorkflowExecutionLaneStateSchema } from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 import { createWorkflowExecution } from "./test-fixtures";
 import {
   applyLaneCommitSnapshot,

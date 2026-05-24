@@ -8,7 +8,7 @@ import type {
   GraphWorkflowVisualLayout,
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
-} from "@/types";
+} from "@/lib/workflows/schemas";
 import {
   deriveEdges,
   deriveNodes,

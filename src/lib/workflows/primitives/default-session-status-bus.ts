@@ -13,7 +13,7 @@
  * workflows/actions, which avoid bootstrapping the broadcaster until first
  * use.
  */
-import type { ScopedStatusEvent, SSEEvent } from "@/types";
+import type { ScopedStatusEvent, SSEEvent } from "@/lib/api/sse-events";
 import { createLogger, runAsTrace } from "@/lib/logging";
 import {
   createSessionStatusBus,
@@ -38,7 +38,7 @@ function defaultBroadcast(event: SSEEvent): void {
   }
   const sseBroadcaster: { broadcast: (event: SSEEvent) => void } =
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    require("@/lib/sse-broadcaster");
+    require("@/lib/events/broadcaster");
   sseBroadcaster.broadcast(event);
 }
 

@@ -1,5 +1,5 @@
-import ConversationDetailPage from "../ConversationDetailPage";
-import { readConfig } from "@/lib/config";
+import ConversationDetailPage from "@/features/session/SessionPage";
+import { readConfig } from "@/lib/config/loader";
 
 interface PageProps {
   params: Promise<{ name: string; session: string; conversationId: string }>;

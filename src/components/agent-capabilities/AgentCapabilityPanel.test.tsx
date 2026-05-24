@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 
-import type { AgentCapabilityViewResponse } from "@/lib/schemas";
+import type { AgentCapabilityViewResponse } from "@/lib/agent-capabilities/schemas";
 
 import {
   AgentCapabilityPanel,

@@ -2,8 +2,11 @@
 
 import { memo, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import type { MessageContentBlock, ToolResultMetrics } from "@/types";
-import { formatToolUse } from "@/lib/format-tool-use";
+import type {
+  MessageContentBlock,
+  ToolResultMetrics,
+} from "@/lib/conversations/schemas";
+import { formatToolUse } from "@/lib/conversations/format-tool-use";
 
 const LazyMarkdownContent = dynamic(() => import("./MarkdownContent"), {
   ssr: false,

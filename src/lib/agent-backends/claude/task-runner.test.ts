@@ -14,13 +14,13 @@ vi.mock("@/lib/logging", () => ({
   }),
 }));
 
-vi.mock("@/lib/sdk-env", () => ({}));
+vi.mock("@/lib/shared/sdk-env", () => ({}));
 
 vi.mock("../registry-core", () => ({
   registerTaskRunner: vi.fn(),
 }));
 
-vi.mock("@/lib/child-env", () => ({
+vi.mock("@/lib/shared/child-env", () => ({
   buildChildEnv: () => ({}),
 }));
 

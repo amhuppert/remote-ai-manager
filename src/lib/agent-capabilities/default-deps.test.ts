@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { AgentCapabilityOverrides } from "@/lib/schemas";
+import type { AgentCapabilityOverrides } from "./schemas";
 
 import { mutationAffectsConversationRuntime } from "./default-deps";
 

@@ -10,11 +10,10 @@ import type { ConversationBackendCapabilities } from "@/lib/agent-backends/types
 import type { McpServerDefinition } from "@/lib/mcp/types";
 import { createClaudeRuntimeToolSource } from "@/lib/mcp/tool-discovery-runtime";
 import type {
-  AgentBackendId,
   McpDiscoveredTool,
   McpServerCompatibilityView,
-} from "@/lib/schemas";
-
+} from "@/lib/mcp/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
   buildCompatibilityLookup,
   createMcpCapabilityRegistry,

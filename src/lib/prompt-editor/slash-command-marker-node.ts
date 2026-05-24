@@ -1,6 +1,6 @@
 import { Node, mergeAttributes } from "@tiptap/core";
 import { ReactNodeViewRenderer } from "@tiptap/react";
-import SlashCommandChip from "@/app/projects/[name]/[session]/SlashCommandChip";
+import SlashCommandChip from "@/features/session/prompt/SlashCommandChip";
 
 export type SlashCommandKind = "command" | "skill";
 export type SlashCommandTriggerChar = "/" | "$";

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   WorkflowDefinitionRecord,
   WorkflowSemanticDefinition,
-} from "@/types";
+} from "@/lib/workflows/schemas";
 import { createWorkflowDefinitionRecord } from "./test-fixtures";
 
 describe("workflow graph planner", () => {

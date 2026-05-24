@@ -1,5 +1,1 @@
-import ProjectsGrid from "./ProjectsGrid";
-
-export default function ProjectsPage(): React.JSX.Element {
-  return <ProjectsGrid />;
-}
+export { default } from "@/features/projects-index/ProjectsIndexPage";

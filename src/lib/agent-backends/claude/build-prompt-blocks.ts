@@ -1,5 +1,5 @@
-import type { ConversationImageRef, MessageContentBlock } from "@/types";
-
+import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
+import type { MessageContentBlock } from "@/lib/conversations/schemas";
 export interface BuildClaudePromptBlocksArgs {
   promptText: string;
   imageRefs: readonly ConversationImageRef[];

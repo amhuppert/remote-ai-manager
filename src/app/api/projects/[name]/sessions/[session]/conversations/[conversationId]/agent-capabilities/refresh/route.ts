@@ -1,3 +1,3 @@
-export const dynamic = "force-dynamic";
+export { conversationPOST as POST } from "@/lib/agent-capabilities/route-bindings";
 
-export { POST } from "../route";
+export const dynamic = "force-dynamic";

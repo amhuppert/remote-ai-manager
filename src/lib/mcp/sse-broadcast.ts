@@ -15,14 +15,13 @@ import { createLogger } from "@/lib/logging";
 import type {
   McpConfigRouteBroadcast,
   McpConfigRouteBroadcastPayload,
-} from "@/lib/mcp-config-route-handlers";
-import { broadcast as defaultBroadcast } from "@/lib/sse-broadcaster";
+} from "@/lib/mcp/config-route-handlers";
+import { broadcast as defaultBroadcast } from "@/lib/events/broadcaster";
+import type { SSEEvent } from "@/lib/api/sse-events";
 import type {
   McpConfigUpdatedEvent,
   McpToolsUpdatedEvent,
-  SSEEvent,
-} from "@/types";
-
+} from "@/lib/mcp/schemas";
 const log = createLogger("mcp.sse");
 
 type EmitFn = (event: SSEEvent) => void;

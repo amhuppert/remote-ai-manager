@@ -1,14 +1,21 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { readConfig } from "@/lib/config";
-import { resetExecutionContextRequestSchema } from "@/lib/schemas";
-import { createConversation, getConversation } from "@/lib/conversations";
-import { createLogger } from "@/lib/logging";
-import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/project-resolver";
-import { getSession as defaultGetSession, mutateSession } from "@/lib/state";
+import { readConfig } from "@/lib/config/loader";
+import { resetExecutionContextRequestSchema } from "@/lib/workflows/schemas";
+import {
+  createConversation,
+  getConversation,
+} from "@/lib/conversations/service";
+import { createLogger, withTracing } from "@/lib/logging";
+import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
+import {
+  getSession as defaultGetSession,
+  mutateSession,
+} from "@/lib/state-store";
 import { getTaskRunner } from "@/lib/agent-backends/registry";
+import type { ApiError } from "@/lib/api/errors";
+import type { SessionState } from "@/lib/sessions/schemas";
 import type {
-  ApiError,
   GraphWorkflowCleanupStatusValue,
   GraphWorkflowExecution,
   GraphWorkflowExecutionJoinKind,
@@ -16,9 +23,8 @@ import type {
   GraphWorkflowHaltReason,
   GraphWorkflowMergeStatusValue,
   GraphWorkflowStatus,
-  SessionState,
-} from "@/types";
-import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-dispatcher";
+} from "@/lib/workflows/schemas";
+import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-notification/dispatcher";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import { createGraphWorkflowValidationService } from "./execution-validation";
@@ -34,19 +40,19 @@ import { buildGraphWorkflowPortableMcp } from "@/lib/mcp-gateway/portable-config
 import {
   createGraphWorkflowExecutionLoop,
   isExecutionLoopActive,
-} from "@/lib/workflows/graph-workflow/execution-loop";
+} from "@/lib/workflow-graph/execution-loop";
 import {
   createGraphWorkflowIterationOrchestrator,
   type IterationOrchestratorScriptValidatorInput,
-} from "@/lib/workflows/graph-workflow/iteration-orchestrator";
+} from "@/lib/workflow-graph/iteration-orchestrator";
 import {
   createGraphWorkflowManager,
   type RecordPendingHaltReasonInput,
   type RecordPendingHaltReasonResult,
   type DrainAndHaltInput,
-} from "@/lib/workflows/graph-workflow/workflow-manager";
-import { toHaltReason } from "@/lib/workflows/graph-workflow/errors";
-import { createWorkflowContinuityService } from "@/lib/workflows/graph-workflow/workflow-continuity-service";
+} from "@/lib/workflow-graph/workflow-manager";
+import { toHaltReason } from "@/lib/workflow-graph/errors";
+import { createWorkflowContinuityService } from "@/lib/workflow-graph/workflow-continuity-service";
 import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
 import { createParallelWorktrees } from "./parallel-worktrees";
 import { createPerSessionMergeMutex } from "./per-session-merge-mutex";
@@ -961,3 +967,31 @@ export function createGraphWorkflowExecutionRouteHandlers(
     CLEAR,
   };
 }
+
+const defaultGraphWorkflowExecutionHandlers =
+  createGraphWorkflowExecutionRouteHandlers();
+
+export const startGraphWorkflowExecution = withTracing(
+  defaultGraphWorkflowExecutionHandlers.START,
+);
+export const getGraphWorkflowExecutionStatus = withTracing(
+  defaultGraphWorkflowExecutionHandlers.STATUS,
+);
+export const getGraphWorkflowExecutionHistory = withTracing(
+  defaultGraphWorkflowExecutionHandlers.HISTORY,
+);
+export const pauseGraphWorkflowExecution = withTracing(
+  defaultGraphWorkflowExecutionHandlers.PAUSE,
+);
+export const resumeGraphWorkflowExecution = withTracing(
+  defaultGraphWorkflowExecutionHandlers.RESUME,
+);
+export const abortGraphWorkflowExecution = withTracing(
+  defaultGraphWorkflowExecutionHandlers.ABORT,
+);
+export const resetGraphWorkflowExecutionContext = withTracing(
+  defaultGraphWorkflowExecutionHandlers.RESET_CONTEXT,
+);
+export const clearGraphWorkflowExecution = withTracing(
+  defaultGraphWorkflowExecutionHandlers.CLEAR,
+);

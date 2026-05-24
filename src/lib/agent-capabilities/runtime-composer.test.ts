@@ -4,7 +4,7 @@ import {
   type AgentCapabilityCascadeKind,
   type AgentCapabilityDiscoveredItem,
   type AgentCapabilityOverrides,
-} from "@/lib/schemas";
+} from "./schemas";
 
 import type { ClaudePluginNativeRecord } from "./claude-plugin-translator";
 import { composeConversationStartRuntime } from "./runtime-composer";

@@ -1,3 +1,3 @@
 export const dynamic = "force-dynamic";
 
-export { POST } from "../route";
+export { projectPOST as POST } from "@/lib/agent-capabilities/route-bindings";

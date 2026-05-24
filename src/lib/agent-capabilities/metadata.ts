@@ -6,20 +6,20 @@
  * decisions can branch on data rather than scattered backend identity checks.
  *
  * The `AgentCapabilityMetadata` shape is derived from
- * `agentCapabilityMetadataSchema` in `@/lib/schemas` (the same Zod schema also
+ * `agentCapabilityMetadataSchema` in `./schemas` (the same Zod schema also
  * powers the API view's `metadata` field). Every record handed to
  * `createAgentCapabilityMetadataRegistry()` is parsed at the boundary so
  * cascade/backend ownership and field completeness are enforced structurally —
  * there are no hand-written types or trust-the-caller paths in this module.
  */
 
+import { type AgentBackendId } from "@/lib/shared/schemas";
 import {
   AGENT_CAPABILITY_CASCADE_KINDS,
   agentCapabilityMetadataSchema,
-  type AgentBackendId,
   type AgentCapabilityCascadeKind,
   type AgentCapabilityMetadata,
-} from "@/lib/schemas";
+} from "./schemas";
 
 export {
   AGENT_CAPABILITY_CASCADE_KINDS,

@@ -1,7 +1,7 @@
 import type {
   AgentCapabilityCascadeKind,
   AgentCapabilityCascadeLayer,
-} from "@/lib/schemas";
+} from "./schemas";
 
 export interface AgentCapabilityEventIdentifiers {
   level: AgentCapabilityCascadeLayer;

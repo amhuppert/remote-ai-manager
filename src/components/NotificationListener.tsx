@@ -2,48 +2,54 @@
 
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  projectKeys,
-  sessionKeys,
-  conversationKeys,
-  notificationKeys,
-  devServerKeys,
-  debugLogKeys,
-  mcpConfigKeys,
-  mcpToolsKeys,
-  collaborationKeys,
-} from "@/lib/query-keys";
+import { conversationKeys } from "@/lib/conversations/query-keys";
+import { debugLogKeys } from "@/lib/debug-log/query-keys";
+import { mcpConfigKeys, mcpToolsKeys } from "@/lib/mcp/query-keys";
+import { collaborationKeys } from "@/lib/workflows/query-keys";
+import { devServerKeys } from "@/lib/dev-server/query-keys";
+import { notificationKeys } from "@/lib/notifications/query-keys";
+import { projectKeys } from "@/lib/projects/query-keys";
+import { sessionKeys } from "@/lib/sessions/query-keys";
 import { computeAgentCapabilityInvalidations } from "@/lib/agent-capabilities/sse-invalidation";
 import { computeMcpConfigInvalidations } from "@/lib/mcp/sse-invalidation";
-import { reconnectReconcile } from "@/lib/sse-reconnect";
-import { backgroundJobSchema } from "@/lib/schemas";
+import { reconnectReconcile } from "@/lib/events/sse-reconnect";
+import { backgroundJobSchema, jobStatusEventSchema } from "@/lib/jobs/schemas";
 import { z } from "zod";
 import {
-  conversationStatusEventSchema,
-  jobStatusEventSchema,
   notificationCreatedEventSchema,
   notificationUpdatedEventSchema,
-  debugLogReceivedEventSchema,
-  graphWorkflowStatusEventSchema,
-  graphWorkflowContextStatusEventSchema,
-  graphWorkflowTaskStatusEventSchema,
-  graphWorkflowValidationResultEventSchema,
-  graphWorkflowCircuitBreakerEventSchema,
-  graphWorkflowSharedDocumentsUpdatedEventSchema,
-  agentCapabilitiesDiscoveryUpdatedEventSchema,
-  agentCapabilitiesUpdatedEventSchema,
-  mcpConfigUpdatedEventSchema,
-  mcpToolsUpdatedEventSchema,
-  scopedStatusEventSchema,
+} from "@/lib/notifications/schemas";
+import { scopedStatusEventSchema } from "@/lib/api/sse-events";
+import {
+  conversationStatusEventSchema,
   messageAppendedEventSchema,
   messageUpdatedEventSchema,
   conversationCreatedEventSchema,
   conversationRenamedEventSchema,
   conversationArchivedEventSchema,
   askQuestionEventSchema,
+} from "@/lib/conversations/schemas";
+import {
+  debugLogReceivedEventSchema,
   debugModeStatusEventSchema,
-} from "@/lib/schemas";
-import type { ConversationState } from "@/types";
+} from "@/lib/debug-log/schemas";
+import {
+  mcpConfigUpdatedEventSchema,
+  mcpToolsUpdatedEventSchema,
+} from "@/lib/mcp/schemas";
+import {
+  agentCapabilitiesDiscoveryUpdatedEventSchema,
+  agentCapabilitiesUpdatedEventSchema,
+} from "@/lib/agent-capabilities/schemas";
+import {
+  graphWorkflowStatusEventSchema,
+  graphWorkflowContextStatusEventSchema,
+  graphWorkflowTaskStatusEventSchema,
+  graphWorkflowValidationResultEventSchema,
+  graphWorkflowCircuitBreakerEventSchema,
+  graphWorkflowSharedDocumentsUpdatedEventSchema,
+} from "@/lib/workflows/schemas";
+import type { ConversationState } from "@/lib/conversations/schemas";
 import {
   useAddOrUpdateJob,
   useReconcileJobs,

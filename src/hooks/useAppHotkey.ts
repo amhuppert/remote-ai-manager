@@ -1,7 +1,7 @@
 "use client";
 
 import { useHotkeys } from "react-hotkeys-hook";
-import { HOTKEY_REGISTRY, type HotkeyId } from "@/lib/hotkeys";
+import { HOTKEY_REGISTRY, type HotkeyId } from "@/lib/shared/hotkeys";
 
 export function useAppHotkey(
   id: HotkeyId,

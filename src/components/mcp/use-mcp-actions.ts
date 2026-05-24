@@ -9,8 +9,7 @@ import {
   useToggleMcpServerMutation,
   useToggleMcpToolMutation,
   type McpMutationScope,
-} from "@/lib/mutations";
-
+} from "@/lib/mcp/mutations";
 import type { McpServerCardActions, McpServerView } from "./types";
 
 /**

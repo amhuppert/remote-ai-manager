@@ -29,7 +29,7 @@
  */
 
 import { createLogger, type Logger } from "@/lib/logging";
-import type { AgentSessionRef } from "@/lib/schemas";
+import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
 import type {
   AgentCallRequest,
   AgentCallResult,

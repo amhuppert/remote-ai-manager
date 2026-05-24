@@ -6,7 +6,7 @@ import type {
   GraphWorkflowResolvedContext,
   GraphWorkflowValidationReviewArtifact,
   WorkflowValidatorIssue,
-} from "@/types";
+} from "@/lib/workflows/schemas";
 import type { AgentSessionRef } from "@/lib/agent-backends/types";
 import type { ValidatorOutcome, ValidatorRunResult } from "./validator-runner";
 import type { ExecutionTarget } from "./execution-target-resolver";

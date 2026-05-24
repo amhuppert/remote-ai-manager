@@ -1,42 +1,6 @@
-import { withTracing } from "@/lib/logging";
-import { createSessionMcpConfigHandlers } from "@/lib/mcp-config-route-handlers";
-import {
-  defaultDiscoverAllSources,
-  defaultMcpConfigMutationService,
-  defaultGlobalMcpDefinitionPath,
-  defaultGlobalStore,
-  defaultListSessionRuntimeTargets,
-  defaultMcpRuntimeApplyService,
-  defaultReadProjectOverrides,
-  defaultScopeStore,
-  defaultToolInventoryCache,
-  recordKnownDefinition,
-} from "@/lib/mcp/default-deps";
-import { createMcpRouteBroadcast } from "@/lib/mcp/sse-broadcast";
-import { resolveProjectPath } from "@/lib/project-resolver";
-import { getSession } from "@/lib/state";
-
 export const dynamic = "force-dynamic";
 
-const handlers = createSessionMcpConfigHandlers({
-  globalStore: defaultGlobalStore,
-  scopeStore: defaultScopeStore,
-  mutationService: defaultMcpConfigMutationService,
-  discoverAllSources: defaultDiscoverAllSources,
-  globalConfigPath: defaultGlobalMcpDefinitionPath,
-  resolveProjectPath,
-  getSession,
-  readProjectOverrides: defaultReadProjectOverrides,
-  listSessionRuntimeTargets: defaultListSessionRuntimeTargets,
-  applyAfterOverrideChange:
-    defaultMcpRuntimeApplyService.applyAfterOverrideChange,
-  broadcast: createMcpRouteBroadcast(),
-  toolInventoryCache: defaultToolInventoryCache,
-  onDefinitionLoaded: recordKnownDefinition,
-});
-
-/** GET /api/projects/[name]/sessions/[session]/mcp-config */
-export const GET = withTracing(handlers.GET);
-
-/** PATCH /api/projects/[name]/sessions/[session]/mcp-config */
-export const PATCH = withTracing(handlers.PATCH);
+export {
+  sessionConfigGET as GET,
+  sessionConfigPATCH as PATCH,
+} from "@/lib/mcp/route-bindings";

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import type { ConversationImageRef, MessageContentBlock } from "@/types";
+import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
+import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import { buildClaudePromptBlocks } from "./build-prompt-blocks";
 
 function ref(

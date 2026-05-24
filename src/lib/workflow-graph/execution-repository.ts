@@ -1,5 +1,5 @@
-import { readConfig } from "@/lib/config";
-import { graphWorkflowExecutionSchema } from "@/lib/schemas";
+import { readConfig } from "@/lib/config/loader";
+import { graphWorkflowExecutionSchema } from "@/lib/workflows/schemas";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import {
   buildInitialContextStates,
@@ -12,13 +12,12 @@ import {
   GraphWorkflowValidationError,
   validateResolvedWorkflow,
 } from "./validation";
+import type { GlobalConfig } from "@/lib/config/schemas";
+import type { SessionState } from "@/lib/sessions/schemas";
 import type {
-  GlobalConfig,
   GraphWorkflowExecution,
-  SessionState,
   WorkflowSemanticDefinition,
-} from "@/types";
-
+} from "@/lib/workflows/schemas";
 export { GraphWorkflowValidationError } from "./validation";
 
 export interface GraphWorkflowExecutionSeed {

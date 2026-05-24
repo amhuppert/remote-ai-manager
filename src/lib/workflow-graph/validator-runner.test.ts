@@ -12,7 +12,7 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowResolvedContext,
   GraphWorkflowTaskDefinition,
-} from "@/types";
+} from "@/lib/workflows/schemas";
 import type { AgentBackendId } from "@/lib/agent-backends/types";
 import type {
   AgentTaskRunner,
@@ -22,8 +22,8 @@ import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
 } from "./test-fixtures";
-import { createWorkflowContinuityService } from "@/lib/workflows/graph-workflow/workflow-continuity-service";
-import { graphWorkflowExecutionSchema } from "@/lib/schemas";
+import { createWorkflowContinuityService } from "@/lib/workflow-graph/workflow-continuity-service";
+import { graphWorkflowExecutionSchema } from "@/lib/workflows/schemas";
 
 function mockGetTaskRunner(
   claudeRun: ReturnType<typeof vi.fn> = vi.fn(),

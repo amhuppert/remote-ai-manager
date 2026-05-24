@@ -12,9 +12,8 @@ vi.mock("@/lib/logging", () => ({
 import type Database from "better-sqlite3";
 import { _createTestDb } from "./state-db";
 import { createProjectsRepo, type ProjectsRepo } from "./projects-repo";
-import { projectRowSchema } from "../schemas";
-import type { ProjectRow } from "@/types";
-
+import { projectRowSchema } from "@/lib/projects/schemas";
+import type { ProjectRow } from "@/lib/projects/schemas";
 type Db = InstanceType<typeof Database>;
 
 let db: Db;

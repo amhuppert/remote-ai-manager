@@ -13,8 +13,11 @@ import type {
   Usage,
   McpToolCallItem,
 } from "@openai/codex-sdk";
-import type { MessageContentBlock, ToolResultMetrics } from "@/types";
-import { parseToolResultMetrics } from "@/lib/parse-tool-result";
+import type {
+  MessageContentBlock,
+  ToolResultMetrics,
+} from "@/lib/conversations/schemas";
+import { parseToolResultMetrics } from "@/lib/conversations/parse-tool-result";
 import type { AgentBackendId, ConversationBackendCapabilities } from "../types";
 import type {
   CodexCapabilityApplyResult,
@@ -30,13 +33,13 @@ import { registerConversationBackendFactory } from "../registry-core";
 import {
   codexReasoningEffortSchema,
   getCodexReasoningLevelsForModel,
-} from "@/lib/schemas";
+} from "@/lib/agent-backends/schemas";
 import { createLogger } from "@/lib/logging";
 import type { CodexRuntimeCapabilityConfig } from "@/lib/agent-capabilities/codex-runtime-translator";
 
 // Default dep implementations (used at runtime, injected in tests)
 import { Codex } from "@openai/codex-sdk";
-import { buildChildEnv } from "@/lib/child-env";
+import { buildChildEnv } from "@/lib/shared/child-env";
 import { toStringEnv } from "./shared";
 import { translatePortableMcpToCodex } from "./mcp-translation";
 import {

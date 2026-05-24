@@ -2,13 +2,14 @@
 
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { tracedFetch } from "@/lib/traced-fetch";
+import { tracedFetch } from "@/lib/shared/traced-fetch";
 import {
   useCompletePrompt,
   useClearQuestions,
   useMarkCancelled,
 } from "@/stores/session-detail.store";
-import { sessionKeys, conversationKeys } from "@/lib/query-keys";
+import { conversationKeys } from "@/lib/conversations/query-keys";
+import { gitKeys } from "@/lib/git/query-keys";
 
 /**
  * Hook that aborts a running prompt by:
@@ -51,10 +52,10 @@ export function useAbortPrompt(
           ),
         });
         void queryClient.invalidateQueries({
-          queryKey: sessionKeys.diff(projectName, sessionName),
+          queryKey: gitKeys.diff(projectName, sessionName),
         });
         void queryClient.invalidateQueries({
-          queryKey: sessionKeys.commits(projectName, sessionName),
+          queryKey: gitKeys.commits(projectName, sessionName),
         });
       }
     } catch {

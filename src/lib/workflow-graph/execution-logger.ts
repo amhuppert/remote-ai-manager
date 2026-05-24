@@ -13,13 +13,12 @@
 
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { resolveConfigDir } from "@/lib/config";
+import { resolveConfigDir } from "@/lib/config/loader";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
   ResolvedWorkflowSemanticDefinition,
-} from "@/types";
-
+} from "@/lib/workflows/schemas";
 // -- Configuration -----------------------------------------------------------
 
 const WORKFLOW_LOGS_DIR = "workflow-logs";

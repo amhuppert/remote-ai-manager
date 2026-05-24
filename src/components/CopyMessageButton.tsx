@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import type { MessageContentBlock } from "@/types";
+import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import { extractCopyText } from "./copy-message-text";
 
 interface CopyMessageButtonProps {

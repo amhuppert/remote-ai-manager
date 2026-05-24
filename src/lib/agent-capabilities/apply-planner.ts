@@ -29,11 +29,11 @@
  * circuit without writing pending state or calling the backend.
  */
 
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
-  AgentBackendId,
   AgentCapabilityCascadeRuntimeState,
   AgentCapabilityMetadata,
-} from "@/lib/schemas";
+} from "./schemas";
 
 import { computeCascadeRuntimeHash } from "./runtime-hashes";
 

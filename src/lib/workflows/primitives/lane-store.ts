@@ -9,7 +9,7 @@
  */
 
 import { createLogger } from "@/lib/logging";
-import type { SessionState } from "@/types";
+import type { SessionState } from "@/lib/sessions/schemas";
 import {
   laneStateSchema,
   laneStorageKey,
@@ -176,7 +176,7 @@ interface StateModuleAccessors {
 }
 
 async function loadStateAccessors(): Promise<StateModuleAccessors> {
-  const stateModule: StateModuleAccessors = await import("@/lib/state");
+  const stateModule: StateModuleAccessors = await import("@/lib/state-store");
   return {
     mutateSession: stateModule.mutateSession,
     getSession: stateModule.getSession,

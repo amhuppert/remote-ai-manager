@@ -1,8 +1,8 @@
-import { readState } from "./lib/state";
-import { initialize as initNotificationDb } from "./lib/notification-db";
-import { setConfigReader } from "./lib/push-dispatcher";
-import { readConfig } from "./lib/config";
-import { getErrorMessage } from "@/lib/errors";
+import { readState } from "./lib/state-store";
+import { initialize as initNotificationDb } from "./lib/notifications/repo";
+import { setConfigReader } from "./lib/push-notification/dispatcher";
+import { readConfig } from "./lib/config/loader";
+import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger, runAsTrace } from "./lib/logging";
 import { recoverActiveWorkflowEnvelopes } from "./lib/workflows/primitives/recover-workflow-envelopes";
 import { createSessionWorkflowEnvelopeRepositoryForProduction } from "./lib/workflows/primitives/default-session-workflow-envelope-store";

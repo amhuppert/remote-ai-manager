@@ -8,9 +8,8 @@
  * UI sees the same effective config another client just patched.
  */
 
-import { mcpConfigKeys } from "@/lib/query-keys";
-import type { McpConfigLevel } from "@/lib/schemas";
-
+import { mcpConfigKeys } from "@/lib/mcp/query-keys";
+import type { McpConfigLevel } from "@/lib/mcp/schemas";
 export interface McpConfigEventIdentifiers {
   level: McpConfigLevel;
   projectName?: string;

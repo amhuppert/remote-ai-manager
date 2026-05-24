@@ -3,8 +3,7 @@ import { describe, it, expect } from "vitest";
 import type {
   McpConfigViewResponse,
   McpServerView as ApiServerView,
-} from "@/types";
-
+} from "@/lib/mcp/schemas";
 import { adaptServerViewsForLevel } from "./view-adapter";
 
 function apiServer(

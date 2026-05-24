@@ -2,8 +2,7 @@ import type {
   GraphWorkflowExecutionContextState,
   GraphWorkflowTaskState,
   ResolvedWorkflowSemanticDefinition,
-} from "@/types";
-
+} from "@/lib/workflows/schemas";
 type ResolvedContext =
   ResolvedWorkflowSemanticDefinition["executionContexts"][number];
 type ResolvedTask = ResolvedWorkflowSemanticDefinition["tasks"][number];

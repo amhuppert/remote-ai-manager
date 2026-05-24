@@ -3,10 +3,12 @@ import type {
   ConversationBackendRuntime,
   ConversationBackendTurnInput,
   ConversationBackendTurnResult,
-  AgentSessionRef,
+} from "@/lib/agent-backends/conversation";
+import type {
   PortableMcpConfig,
   McpApplyResult,
-} from "@/types";
+} from "@/lib/agent-backends/portable-mcp";
+import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
 import { dispatchConversationTurn } from "./agent-call-conversation";
 import type { BackendCapabilityView } from "./agent-call-vocabulary";
 

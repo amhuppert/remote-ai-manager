@@ -1,5 +1,5 @@
 import { createLogger } from "@/lib/logging";
-import type { GraphWorkflowExecution } from "@/types";
+import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 import type { ExecutionTarget } from "./execution-target-resolver";
 import type { AgentAddedTask } from "./runtime-edits";
 import type { SharedDocumentUpsertInput } from "./shared-documents";

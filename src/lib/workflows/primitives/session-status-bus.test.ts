@@ -4,8 +4,7 @@ import {
   publishScopedStatus,
   resolveSessionStatusScope,
 } from "./session-status-bus";
-import type { SSEEvent } from "@/types";
-
+import type { SSEEvent } from "@/lib/api/sse-events";
 interface CapturedBroadcast {
   events: SSEEvent[];
 }

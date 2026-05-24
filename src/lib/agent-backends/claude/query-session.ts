@@ -18,23 +18,29 @@ import type {
   Options,
   Settings,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { MessageContentBlock, ToolResultMetrics } from "@/types";
-import type { EffortLevel } from "@/lib/schemas";
+import type {
+  MessageContentBlock,
+  ToolResultMetrics,
+} from "@/lib/conversations/schemas";
+import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import {
   captureTraceContext,
   createLogger,
   runAsTrace,
   type TraceContext,
 } from "@/lib/logging";
-import { extractContextTokens, extractContextWindow } from "@/lib/context-fill";
-import { parseToolResultMetrics } from "@/lib/parse-tool-result";
+import {
+  extractContextTokens,
+  extractContextWindow,
+} from "@/lib/conversations/context-fill";
+import { parseToolResultMetrics } from "@/lib/conversations/parse-tool-result";
 import {
   QUERY_SESSION_ERROR_CODES,
   tagQuerySessionError,
 } from "./query-session-errors";
 
 // Prevent nested session detection when CC runs inside Claude Code
-import "@/lib/sdk-env";
+import "@/lib/shared/sdk-env";
 
 const logger = createLogger("query-session");
 

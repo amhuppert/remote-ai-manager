@@ -5,7 +5,7 @@ import type {
   AgentCapabilityCascadeKind,
   AgentCapabilityViewResponse,
   AgentCapabilityViewRow,
-} from "@/lib/schemas";
+} from "@/lib/agent-capabilities/schemas";
 
 import { AgentCapabilityPanel } from "./AgentCapabilityPanel";
 

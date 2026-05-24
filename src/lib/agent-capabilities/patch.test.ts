@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type {
   AgentCapabilityOverrideOperation,
   AgentCapabilityOverrides,
-} from "@/lib/schemas";
+} from "./schemas";
 
 import { applyCapabilityOperations } from "./patch";
 

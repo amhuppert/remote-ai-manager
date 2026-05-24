@@ -1,5 +1,5 @@
-import type { AgentBackendId, SessionState } from "@/types";
-
+import type { SessionState } from "@/lib/sessions/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 export interface RuntimeTarget {
   projectPath: string;
   projectName: string;

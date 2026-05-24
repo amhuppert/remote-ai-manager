@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createWorkflowDefinition } from "./test-fixtures";
-import type { GraphWorkflowExecutionContextDefinition } from "@/types";
-
+import type { GraphWorkflowExecutionContextDefinition } from "@/lib/workflows/schemas";
 describe("execution context implementer config with backend support", () => {
   it("existing fixtures without backend field still produce valid definitions", () => {
     const definition = createWorkflowDefinition();

@@ -17,8 +17,7 @@ import {
   type McpCapabilityRegistry,
 } from "@/lib/mcp/backend-capabilities";
 import { createLogger } from "@/lib/logging";
-import type { McpDiscoveredTool } from "@/lib/schemas";
-
+import type { McpDiscoveredTool } from "@/lib/mcp/schemas";
 const logger = createLogger("mcp.tool-discovery");
 
 export interface ClaudeRuntimeToolSourceDeps {

@@ -4,14 +4,11 @@ import { render, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import NotificationListener from "./NotificationListener";
-import {
-  collaborationKeys,
-  conversationKeys,
-  agentCapabilityKeys,
-  mcpConfigKeys,
-  mcpToolsKeys,
-  sessionKeys,
-} from "@/lib/query-keys";
+import { conversationKeys } from "@/lib/conversations/query-keys";
+import { mcpConfigKeys, mcpToolsKeys } from "@/lib/mcp/query-keys";
+import { agentCapabilityKeys } from "@/lib/agent-capabilities/query-keys";
+import { collaborationKeys } from "@/lib/workflows/query-keys";
+import { sessionKeys } from "@/lib/sessions/query-keys";
 
 vi.mock("@/stores/notification.store", () => ({
   useAddOrUpdateJob: () => vi.fn(),

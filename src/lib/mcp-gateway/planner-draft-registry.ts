@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { WorkflowSemanticDefinition } from "@/types";
-
+import type { WorkflowSemanticDefinition } from "@/lib/workflows/schemas";
 const DRAFT_TTL_MS = 15 * 60 * 1000;
 const GLOBAL_KEY = "__cc_planner_draft_registry" as const;
 

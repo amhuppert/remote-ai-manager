@@ -68,13 +68,12 @@ import type {
   ArtifactWriteOutcome,
 } from "./artifact-registry";
 import { registerFocusMemoryIfPresent } from "@/lib/workflows/conversation/actor-implementations";
+import type { SSEEvent } from "@/lib/api/sse-events";
 import type {
   AskQuestionEvent,
   ConversationStatusEvent,
-  DebugModeStatusEvent,
-  SSEEvent,
-} from "@/types";
-
+} from "@/lib/conversations/schemas";
+import type { DebugModeStatusEvent } from "@/lib/debug-log/schemas";
 interface CapturedRegistryCall {
   type: "write" | "writeOptional" | "register";
   request:

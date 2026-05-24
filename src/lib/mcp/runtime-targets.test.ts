@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import type { AgentBackendId, ConversationState, SessionState } from "@/types";
-
+import type { ConversationState } from "@/lib/conversations/schemas";
+import type { SessionState } from "@/lib/sessions/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import { collectRuntimeTargets } from "./runtime-targets";
 
 function mkConversation(id: string): ConversationState {

@@ -1,8 +1,3 @@
-import { createArchiveRouteHandlers } from "@/lib/archive-route-handlers";
+export { archiveProject as POST } from "@/lib/sessions/archive-route-handlers";
 
 export const dynamic = "force-dynamic";
-
-const handlers = createArchiveRouteHandlers();
-
-/** POST /api/projects/[name]/archive — archive or unarchive a project */
-export const POST = handlers.POST;

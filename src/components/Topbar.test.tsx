@@ -15,8 +15,11 @@ vi.mock("@/stores/unified-panel.store", () => ({
   useToggleUnifiedPanel: () => vi.fn(),
 }));
 
-vi.mock("@/lib/queries", () => ({
+vi.mock("@/lib/active-conversations/queries", () => ({
   useActiveConversationsQuery: () => ({ data: undefined }),
+}));
+
+vi.mock("@/lib/notifications/queries", () => ({
   useNotificationsQuery: () => ({ data: undefined }),
 }));
 

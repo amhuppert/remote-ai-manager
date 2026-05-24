@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { WorkflowSemanticDefinition } from "@/types";
-
+import type { WorkflowSemanticDefinition } from "@/lib/workflows/schemas";
 const submittedDefinition: WorkflowSemanticDefinition = {
   schemaVersion: 1,
   workflowConfig: {},

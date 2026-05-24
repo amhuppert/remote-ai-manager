@@ -7,8 +7,8 @@
  */
 
 import type { BaseWorkflowContext } from "../types";
-import type { ImagePayload, SessionState } from "@/types";
-
+import type { ImagePayload } from "@/lib/images/schemas";
+import type { SessionState } from "@/lib/sessions/schemas";
 /** Machine context for the optimistic workflow. */
 export interface OptimisticContext extends BaseWorkflowContext {
   /** The instructions to execute. */

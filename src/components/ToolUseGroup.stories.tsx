@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import type { MessageContentBlock } from "@/types";
+import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import ToolUseGroup from "./ToolUseGroup";
 import { buildToolResultLookup } from "./MessageContent";
 

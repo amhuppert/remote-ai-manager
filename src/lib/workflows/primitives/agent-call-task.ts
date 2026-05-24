@@ -15,13 +15,13 @@
  */
 
 import { createLogger, type Logger } from "@/lib/logging";
+import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
+import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
 import type {
   AgentTaskRunner,
   AgentTaskRequest,
   AgentTaskResult,
-  AgentSessionRef,
-  PortableMcpConfig,
-} from "@/types";
+} from "@/lib/agent-backends/task";
 import {
   buildAgentCallLogFields,
   type AgentCallRequest,

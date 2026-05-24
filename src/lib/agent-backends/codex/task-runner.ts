@@ -1,6 +1,6 @@
 import { Codex } from "@openai/codex-sdk";
 import type { CodexOptions, ThreadOptions } from "@openai/codex-sdk";
-import { buildChildEnv } from "@/lib/child-env";
+import { buildChildEnv } from "@/lib/shared/child-env";
 import { createLogger } from "@/lib/logging";
 import { registerTaskRunner } from "../registry-core";
 import type {
@@ -17,7 +17,7 @@ import {
 import {
   codexReasoningEffortSchema,
   type CodexReasoningEffort,
-} from "@/lib/schemas";
+} from "@/lib/agent-backends/schemas";
 import { toStringEnv } from "./shared";
 
 const logger = createLogger("codex:task-runner");

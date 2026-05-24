@@ -21,7 +21,7 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: queryMock,
 }));
 
-vi.mock("@/lib/sdk-env", () => ({}));
+vi.mock("@/lib/shared/sdk-env", () => ({}));
 
 // ---------------------------------------------------------------------------
 // Import module under test

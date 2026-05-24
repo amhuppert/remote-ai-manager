@@ -6,7 +6,7 @@
  */
 
 import type { BaseWorkflowContext } from "../types";
-import type { ConflictEntry, ConflictDecisionInput } from "@/lib/schemas";
+import type { ConflictEntry, ConflictDecisionInput } from "@/lib/jobs/schemas";
 import type { AgentSessionRef } from "@/lib/agent-backends/types";
 
 /** Phase tracking for SSE broadcast. */

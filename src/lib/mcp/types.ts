@@ -11,8 +11,7 @@ import type {
   McpDiagnostic,
   McpSourceRef,
   McpTransport,
-} from "@/lib/schemas";
-
+} from "@/lib/mcp/schemas";
 interface McpCanonicalStdioServerConfig {
   transport: "stdio";
   command: string;

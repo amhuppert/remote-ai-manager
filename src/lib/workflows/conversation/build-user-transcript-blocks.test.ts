@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildUserTranscriptBlocks } from "./build-user-transcript-blocks";
-import type { ConversationImageRef } from "@/types";
-
+import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
 function ref(
   index: number,
   path: string,

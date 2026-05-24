@@ -1,6 +1,6 @@
 import { fromPromise } from "xstate";
-import { squashMerge } from "@/lib/git-operations";
-import { acquireProjectLock } from "@/lib/lock";
+import { squashMerge } from "@/lib/git/worktree";
+import { acquireProjectLock } from "@/lib/prompt/single-flight";
 import { createLogger } from "@/lib/logging";
 import type {
   SquashMergeInput,

@@ -8,8 +8,7 @@ import type {
   DispatchMergeInput,
   DispatchMergeOutput,
 } from "./actors";
-import type { SessionState } from "@/types";
-
+import type { SessionState } from "@/lib/sessions/schemas";
 // ============================================================
 // Test Helpers
 // ============================================================

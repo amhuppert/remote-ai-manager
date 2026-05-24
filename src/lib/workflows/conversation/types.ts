@@ -5,19 +5,21 @@
  * for the conversation XState machine.
  */
 
+import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
 import type {
   ConversationStatus,
   ConversationRole,
   ForkedFrom,
   AskQuestionItem,
+  MessageContentBlock,
+} from "@/lib/conversations/schemas";
+import type {
   DebugHypothesis,
   DebugModePhase,
   DebugModeState,
-  ImagePayload,
-  MessageContentBlock,
-  AgentBackendId,
-  AgentSessionRef,
-} from "@/types";
+} from "@/lib/debug-log/schemas";
+import type { ImagePayload } from "@/lib/images/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { DebugCleanupResultOutput } from "./debug-schemas";
 
 // ============================================================

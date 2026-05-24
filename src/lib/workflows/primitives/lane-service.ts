@@ -14,7 +14,7 @@
 
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
-import { agentBackendSchema } from "@/lib/schemas";
+import { agentBackendSchema } from "@/lib/shared/schemas";
 import type { LaneStore } from "./lane-store";
 import {
   laneStateSchema,

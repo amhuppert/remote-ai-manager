@@ -12,7 +12,7 @@
  * adapters that all need to populate the same fields with the same values.
  */
 
-import type { AgentBackendId } from "@/types";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { BackendCapabilityView } from "./agent-call-vocabulary";
 
 export const CLAUDE_CAPABILITY_VIEW: BackendCapabilityView = {

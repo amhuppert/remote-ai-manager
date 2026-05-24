@@ -3,8 +3,7 @@ import type {
   GraphWorkflowExecutionContextState,
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
-} from "@/types";
-
+} from "@/lib/workflows/schemas";
 type ReadinessDefinition =
   | WorkflowSemanticDefinition
   | ResolvedWorkflowSemanticDefinition;

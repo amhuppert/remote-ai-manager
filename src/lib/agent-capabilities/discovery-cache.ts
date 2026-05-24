@@ -23,12 +23,12 @@
 
 import { createLogger } from "@/lib/logging";
 import { timed } from "@/lib/logging/timed";
-import { getErrorMessage } from "@/lib/errors";
+import { getErrorMessage } from "@/lib/shared/errors";
 
 import type {
   AgentCapabilityCascadeKind,
   AgentCapabilityScopeContext,
-} from "@/lib/schemas";
+} from "./schemas";
 
 import { redactAgentCapabilityText } from "./redaction";
 

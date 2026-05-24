@@ -2,8 +2,7 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { createLogger } from "@/lib/logging";
-import type { McpDefinitionScope, McpDiagnostic } from "@/lib/schemas";
-
+import type { McpDefinitionScope, McpDiagnostic } from "@/lib/mcp/schemas";
 import { signatureFor } from "./signature";
 import type {
   McpCanonicalServerConfig,

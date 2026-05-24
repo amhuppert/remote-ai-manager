@@ -7,8 +7,7 @@ import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionEvent,
-} from "@/types";
-
+} from "@/lib/workflows/schemas";
 function executionWithHistory(
   history: Array<Omit<GraphWorkflowExecutionEvent, "preReset">>,
 ): GraphWorkflowExecution {

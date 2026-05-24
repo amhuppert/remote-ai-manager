@@ -12,14 +12,16 @@
 
 import { describe, it, expect, vi } from "vitest";
 import type {
-  AgentTaskRunner,
-  AgentTaskRequest,
-  AgentTaskResult,
   ConversationBackendRuntime,
   ConversationBackendTurnInput,
   ConversationBackendTurnResult,
-  AgentSessionRef,
-} from "@/types";
+} from "@/lib/agent-backends/conversation";
+import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import type {
+  AgentTaskRunner,
+  AgentTaskRequest,
+  AgentTaskResult,
+} from "@/lib/agent-backends/task";
 import {
   executeAgentCall,
   resolveSchedulingHint,

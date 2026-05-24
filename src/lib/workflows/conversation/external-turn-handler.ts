@@ -1,6 +1,6 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { MessageContentBlock } from "@/types";
-import type { TranscriptEntry } from "@/lib/transcript";
+import type { MessageContentBlock } from "@/lib/conversations/schemas";
+import type { TranscriptEntry } from "@/lib/prompt/transcript";
 import type { ConversationBackendEvent } from "@/lib/agent-backends/conversation";
 import { createLogger } from "@/lib/logging";
 import { processMessage } from "./actor-implementations";

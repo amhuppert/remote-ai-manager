@@ -1,12 +1,12 @@
-import { workflowAgentValidatorResultSchema } from "@/lib/schemas";
+import { workflowAgentValidatorResultSchema } from "@/lib/workflows/schemas";
 import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import {
   createExecutionIndex,
   type ExecutionIndex,
 } from "@/lib/workflow-graph/execution-index";
+import type { AgentTaskResult } from "@/lib/agent-backends/task";
 import type {
-  AgentTaskResult,
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowExecution,
   GraphWorkflowResolvedContext,
@@ -14,7 +14,7 @@ import type {
   GraphWorkflowTaskDefinition,
   GraphWorkflowValidationReviewArtifact,
   WorkflowValidatorIssue,
-} from "@/types";
+} from "@/lib/workflows/schemas";
 import type {
   AgentBackendId,
   AgentSessionRef,
@@ -26,7 +26,7 @@ import type {
   ResolvedValidatorCall,
   RecordClaudeLaneTurnInput,
   RecordCodexLaneTurnInput,
-} from "@/lib/workflows/graph-workflow/workflow-continuity-service";
+} from "@/lib/workflow-graph/workflow-continuity-service";
 import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
 import type { AgentCallFacadeDeps } from "@/lib/workflows/primitives/agent-call-facade";
 import type {

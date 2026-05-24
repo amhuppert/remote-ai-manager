@@ -3,7 +3,7 @@ import { fn } from "storybook/test";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionEvent,
-} from "@/types";
+} from "@/lib/workflows/schemas";
 import WorkflowEventLog from "./WorkflowEventLog";
 import "./workflow-graph.css";
 

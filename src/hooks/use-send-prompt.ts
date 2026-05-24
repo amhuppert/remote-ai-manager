@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { conversationKeys, sessionKeys } from "@/lib/query-keys";
-import { parseCommandContent } from "@/lib/command-parsing";
+import { conversationKeys } from "@/lib/conversations/query-keys";
+import { gitKeys } from "@/lib/git/query-keys";
+import { parseCommandContent } from "@/lib/commands/parsing";
 import {
   useSubmitPrompt,
   useReceiveStreamContent,
@@ -11,15 +12,14 @@ import {
   useQueueMessage,
   useSending,
 } from "@/stores/session-detail.store";
-import { tracedFetch } from "@/lib/traced-fetch";
+import { tracedFetch } from "@/lib/shared/traced-fetch";
+import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type {
-  AgentBackendId,
-  EffortLevel,
-  ImagePayload,
   MessageContentBlock,
   AskQuestionItem,
-} from "@/types";
-
+} from "@/lib/conversations/schemas";
+import type { ImagePayload } from "@/lib/images/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 /**
  * Hook that coordinates prompt submission with:
  * - Zustand store (optimistic UI state)
@@ -249,10 +249,10 @@ export function useSendPrompt(
           });
         }
         void queryClient.invalidateQueries({
-          queryKey: sessionKeys.diff(projectName, sessionName),
+          queryKey: gitKeys.diff(projectName, sessionName),
         });
         void queryClient.invalidateQueries({
-          queryKey: sessionKeys.commits(projectName, sessionName),
+          queryKey: gitKeys.commits(projectName, sessionName),
         });
       }
     },

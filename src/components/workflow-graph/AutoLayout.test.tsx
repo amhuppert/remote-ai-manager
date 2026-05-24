@@ -2,8 +2,7 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import AutoLayout from "./AutoLayout";
-import type { WorkflowSemanticDefinition } from "@/types";
-
+import type { WorkflowSemanticDefinition } from "@/lib/workflows/schemas";
 type MeasuredNode = {
   id: string;
   measured?: { width: number; height: number };

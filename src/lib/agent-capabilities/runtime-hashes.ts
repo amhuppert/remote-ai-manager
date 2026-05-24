@@ -27,7 +27,7 @@ import type {
   AgentCapabilityCascadeKind,
   AgentCapabilityCascadeRuntimeState,
   AgentCapabilityRuntimeApplicationState,
-} from "@/lib/schemas";
+} from "./schemas";
 
 import { redactAgentCapabilityText } from "./redaction";
 

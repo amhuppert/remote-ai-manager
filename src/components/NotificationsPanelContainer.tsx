@@ -9,15 +9,13 @@ import NotificationsPanel, {
   type CommitNotification,
   type ResolveConflictsNotification,
 } from "./NotificationsPanel";
-import {
-  useActiveConversationsQuery,
-  useNotificationsQuery,
-} from "@/lib/queries";
+import { useActiveConversationsQuery } from "@/lib/active-conversations/queries";
+import { useNotificationsQuery } from "@/lib/notifications/queries";
 import {
   useMarkNotificationAsReadMutation,
   useMarkAllNotificationsAsReadMutation,
   useDismissNotificationMutation,
-} from "@/lib/mutations";
+} from "@/lib/notifications/mutations";
 import { useNotificationJobs } from "@/stores/notification.store";
 import {
   useUnifiedPanelOpen,

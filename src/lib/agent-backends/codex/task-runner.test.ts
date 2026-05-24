@@ -20,7 +20,7 @@ vi.mock("@/lib/logging", () => ({
   }),
 }));
 
-vi.mock("@/lib/child-env", () => ({
+vi.mock("@/lib/shared/child-env", () => ({
   buildChildEnv: () => ({}),
 }));
 

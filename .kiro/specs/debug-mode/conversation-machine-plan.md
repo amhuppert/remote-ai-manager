@@ -104,12 +104,11 @@ This keeps API consumers stable while still giving the machine finer-grained int
 import type { BaseWorkflowContext } from "../types";
 import type {
   AskQuestionItem,
-  ClaudeModel,
   ConversationStatus,
-  EffortLevel,
-  ImagePayload,
   MessageContentBlock,
-} from "@/types";
+} from "@/lib/conversations/schemas";
+import type { ClaudeModel, EffortLevel } from "@/lib/agent-backends/schemas";
+import type { ImagePayload } from "@/lib/images/schemas";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 export type ConversationDebugPhase =

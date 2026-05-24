@@ -8,8 +8,8 @@ import {
   useGlobalMcpConfigQuery,
   useProjectMcpConfigQuery,
   useSessionMcpConfigQuery,
-} from "@/lib/queries";
-import type { McpMutationScope } from "@/lib/mutations";
+} from "@/lib/mcp/queries";
+import type { McpMutationScope } from "@/lib/mcp/mutations";
 import { adaptServerViewsForLevel } from "@/components/mcp/view-adapter";
 import { useMcpActions } from "@/components/mcp/use-mcp-actions";
 import type { McpServerView, McpToolView } from "@/components/mcp/types";

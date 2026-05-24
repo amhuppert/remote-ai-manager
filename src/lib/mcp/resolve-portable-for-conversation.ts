@@ -1,7 +1,6 @@
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { ConversationToolingOverrides } from "@/lib/agent-backends/types";
-import type { AgentBackendId } from "@/lib/schemas";
-
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ComposePortableMcpArgs } from "./compose-for-conversation";
 import type { ResolvedPortableForConversation } from "./runtime-apply";
 

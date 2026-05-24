@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
-import type { DevServerRuntimeState } from "@/types";
+import type { DevServerRuntimeState } from "@/lib/dev-server/schemas";
 import DevServerDrawer from "./DevServerDrawer";
 
 // ── Test data ──────────────────────────────────────────────────

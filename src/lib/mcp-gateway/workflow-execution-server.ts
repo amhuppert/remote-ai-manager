@@ -1,8 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createLogger } from "@/lib/logging";
-import { resolveProjectPath } from "@/lib/project-resolver";
-import { getSession, mutateSession } from "@/lib/state";
-import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-dispatcher";
+import { resolveProjectPath } from "@/lib/projects/resolver";
+import { getSession, mutateSession } from "@/lib/state-store";
+import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-notification/dispatcher";
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import { createGraphWorkflowExecutionRepository } from "@/lib/workflow-graph/execution-repository";
 import { createExecutionTargetResolver } from "@/lib/workflow-graph/execution-target-resolver";
@@ -11,12 +11,12 @@ import { createGraphWorkflowRuntimeEditService } from "@/lib/workflow-graph/runt
 import { createGraphWorkflowSharedDocumentRegistryService } from "@/lib/workflow-graph/shared-documents";
 import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
 import { createParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
-import { createGraphWorkflowManager } from "@/lib/workflows/graph-workflow/workflow-manager";
+import { createGraphWorkflowManager } from "@/lib/workflow-graph/workflow-manager";
 import {
   registerGraphWorkflowExecutionTools,
   type GraphWorkflowToolServerContext,
-} from "@/lib/workflows/graph-workflow/tool-server";
-import type { GraphWorkflowExecution } from "@/types";
+} from "@/lib/workflow-graph/tool-server";
+import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 import { McpRouteError } from "./route-handler";
 
 const logger = createLogger("workflow-execution-server");

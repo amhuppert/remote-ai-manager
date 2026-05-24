@@ -7,7 +7,7 @@ import {
   getCategoryLabel,
   type HotkeyCategory,
   type HotkeyDefinition,
-} from "@/lib/hotkeys";
+} from "@/lib/shared/hotkeys";
 
 interface HotkeyHelpModalProps {
   open: boolean;

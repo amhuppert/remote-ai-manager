@@ -16,18 +16,18 @@
 import os from "node:os";
 
 import { createLogger } from "@/lib/logging";
-import { getErrorMessage } from "@/lib/errors";
+import { getErrorMessage } from "@/lib/shared/errors";
 import { getRuntime } from "@/lib/agent-backends/runtime-registry";
-import { getProjectDisplayName } from "@/lib/project-resolver";
-import { createStateManager } from "@/lib/state";
+import { getProjectDisplayName } from "@/lib/projects/resolver";
+import { createStateManager } from "@/lib/state-store";
 
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
-  AgentBackendId,
   AgentCapabilityCascadeKind,
   AgentCapabilityCascadeLayer,
   AgentCapabilityOverrides,
   AgentCapabilityRuntimeApplicationState,
-} from "@/lib/schemas";
+} from "./schemas";
 
 import { defaultGlobalCapabilityOverrideStore } from "./global-store";
 import {
@@ -53,7 +53,7 @@ import {
   type ClaudeApplyPortResult,
   type CodexApplyPortInput,
   type CodexApplyPortResult,
-} from "./apply-service";
+} from "./apply";
 import type { ClaudeRuntimeCapabilityConfig } from "./claude-runtime-translator";
 import type { CodexRuntimeCapabilityConfig } from "./codex-runtime-translator";
 import {

@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { SessionState } from "@/types";
+import type { SessionState } from "@/lib/sessions/schemas";
 import { createWorkflowExecution } from "./test-fixtures";
 import { createGraphWorkflowRuntimeEditRouteHandlers } from "./runtime-edit-route-handlers";
 

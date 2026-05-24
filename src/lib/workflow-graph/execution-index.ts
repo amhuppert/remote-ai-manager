@@ -4,8 +4,7 @@ import type {
   GraphWorkflowResolvedContext,
   GraphWorkflowTaskDefinition,
   GraphWorkflowTaskState,
-} from "@/types";
-
+} from "@/lib/workflows/schemas";
 type ExecutionIndexContext =
   | GraphWorkflowExecutionContextDefinition
   | GraphWorkflowResolvedContext;

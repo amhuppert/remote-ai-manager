@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, memo } from "react";
-import type { MessageContentBlock } from "@/types";
-import { formatToolUse } from "@/lib/format-tool-use";
+import type { MessageContentBlock } from "@/lib/conversations/schemas";
+import { formatToolUse } from "@/lib/conversations/format-tool-use";
 import type { ToolResultLookup } from "./MessageContent";
 
 interface Props {

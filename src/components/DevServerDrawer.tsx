@@ -2,8 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { DevServerRuntimeState } from "@/types";
-
+import type { DevServerRuntimeState } from "@/lib/dev-server/schemas";
 // ── Types ──────────────────────────────────────────────────────
 
 export interface DevServerDrawerProps {

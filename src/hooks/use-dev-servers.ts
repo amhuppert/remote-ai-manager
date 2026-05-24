@@ -1,9 +1,11 @@
 "use client";
 
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
-import { devServerKeys } from "@/lib/query-keys";
-import type { DevServersStatusResponse, DevServerRuntimeState } from "@/types";
-
+import { devServerKeys } from "@/lib/dev-server/query-keys";
+import type {
+  DevServersStatusResponse,
+  DevServerRuntimeState,
+} from "@/lib/dev-server/schemas";
 async function apiFetch<T>(url: string): Promise<T> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`API error: ${res.status}`);

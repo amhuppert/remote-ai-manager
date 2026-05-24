@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { McpOverrides } from "@/lib/schemas";
-
+import type { McpOverrides } from "@/lib/mcp/schemas";
 import { applyOperations } from "./overrides-patch";
 
 function empty(): McpOverrides {

@@ -8,8 +8,9 @@
  * can be provided/overridden via machine.provide() in tests.
  */
 
-import type { SSEEvent, NotificationType, JobType } from "@/types";
-
+import type { SSEEvent } from "@/lib/api/sse-events";
+import type { JobType } from "@/lib/jobs/schemas";
+import type { NotificationType } from "@/lib/notifications/schemas";
 // ============================================================
 // Action parameter types
 // ============================================================
@@ -70,7 +71,7 @@ function getDefaultDeps(): WorkflowActionDeps {
     const notificationDb: {
       createNotification: WorkflowActionDeps["createNotification"];
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-    } = require("@/lib/notification-db");
+    } = require("@/lib/notifications/repo");
 
     _deps = {
       broadcast: (event) => {

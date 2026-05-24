@@ -25,7 +25,7 @@ import type {
   GraphWorkflowValidationReviewArtifact,
   GraphWorkflowValidatorType,
   WorkflowValidatorIssue,
-} from "@/types";
+} from "@/lib/workflows/schemas";
 import type { AgentSessionRef } from "@/lib/agent-backends/types";
 
 function defaultBroadcast(event: GraphWorkflowSSEEvent): void {

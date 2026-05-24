@@ -10,7 +10,7 @@ import type {
   GraphWorkflowVisualLayout,
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
-} from "@/types";
+} from "@/lib/workflows/schemas";
 import {
   deriveContextWaitState,
   type ContextWaitState,

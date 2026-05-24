@@ -1,10 +1,3 @@
-import { withTracing } from "@/lib/logging";
-import { createCollaborationRouteHandlers } from "@/lib/workflows/collaboration/route-handlers";
+export { getCollaborationArtifact as GET } from "@/lib/workflows/collaboration/route-handlers";
 
 export const dynamic = "force-dynamic";
-
-const handlers = createCollaborationRouteHandlers();
-
-export const GET = withTracing(async (request, context) =>
-  handlers.GET_ARTIFACT(request, context),
-);

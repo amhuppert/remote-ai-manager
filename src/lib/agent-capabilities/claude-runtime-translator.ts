@@ -44,7 +44,7 @@ import {
 import type {
   AgentCapabilityDiagnostic,
   AgentCapabilityViewResponse,
-} from "@/lib/schemas";
+} from "./schemas";
 
 export interface ClaudeRuntimeTranslationInput {
   skillsView: AgentCapabilityViewResponse | undefined;

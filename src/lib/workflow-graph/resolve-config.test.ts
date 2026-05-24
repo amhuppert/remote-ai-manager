@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import type { GlobalConfig, WorkflowDefaults } from "@/lib/config/schemas";
 import type {
-  GlobalConfig,
   GraphWorkflowAgentConfig,
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowCircuitBreakerPolicy,
@@ -9,9 +9,8 @@ import type {
   GraphWorkflowMutabilityPolicy,
   GraphWorkflowScriptValidatorConfig,
   WorkflowConfigOverride,
-  WorkflowDefaults,
   WorkflowSemanticDefinition,
-} from "@/types";
+} from "@/lib/workflows/schemas";
 import {
   resolveContext,
   resolveWorkflowConfig,

@@ -37,13 +37,15 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type {
+  ConversationBackendRuntime,
+  ConversationBackendTurnResult,
+} from "@/lib/agent-backends/conversation";
+import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import type {
   AgentTaskRunner,
   AgentTaskRequest,
   AgentTaskResult,
-  ConversationBackendRuntime,
-  ConversationBackendTurnResult,
-  AgentSessionRef,
-} from "@/types";
+} from "@/lib/agent-backends/task";
 import {
   CLAUDE_CAPABILITY_VIEW,
   CODEX_CAPABILITY_VIEW,

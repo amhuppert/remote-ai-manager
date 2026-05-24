@@ -23,9 +23,8 @@ import {
   createProjectsRepo,
   type ProjectsRepo,
 } from "./projects-repo";
-import { PersistenceError } from "../errors";
-import type { ProjectRow } from "@/types";
-
+import { PersistenceError } from "../shared/errors";
+import type { ProjectRow } from "@/lib/projects/schemas";
 type Db = InstanceType<typeof Database>;
 
 let db: Db;

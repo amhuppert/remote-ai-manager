@@ -6,8 +6,7 @@ import {
   CommandAutocomplete,
   type CommandAutocompleteHandle,
 } from "./CommandAutocomplete";
-import type { CommandItem } from "@/types";
-
+import type { CommandItem } from "@/lib/commands/schemas";
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
@@ -82,9 +81,12 @@ const {
   mockUseAgentCapabilityViewQuery: vi.fn(),
 }));
 
-vi.mock("@/lib/queries", () => ({
+vi.mock("@/lib/commands/queries", () => ({
   useCommandsQuery: mockUseCommandsQuery,
   useProjectCommandsQuery: mockUseProjectCommandsQuery,
+}));
+
+vi.mock("@/lib/kiro/queries", () => ({
   useKiroDocTreeQuery: () => ({
     data: mockFeatures,
     isPending: false,

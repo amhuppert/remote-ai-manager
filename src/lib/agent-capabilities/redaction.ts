@@ -3,7 +3,7 @@ import type {
   AgentCapabilityInventory,
   AgentCapabilityViewResponse,
   AgentCapabilityViewRow,
-} from "@/lib/schemas";
+} from "./schemas";
 
 const SECRET_ASSIGNMENT =
   /\b([A-Za-z0-9_.-]*(?:token|secret|password|api[_-]?key|authorization)[A-Za-z0-9_.-]*)\s*[:=]\s*("[^"]*"|'[^']*'|[^\s,}]+)/gi;

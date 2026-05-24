@@ -1,7 +1,10 @@
 import { notFound } from "next/navigation";
-import MachineDetail from "./MachineDetail";
-import { getMachineSpec, machineSpecs } from "../machine-specs";
-import { isMachineId } from "../machine-spec-types";
+import MachineDetail from "@/features/workflows-catalog/machine/MachineDetail";
+import {
+  getMachineSpec,
+  machineSpecs,
+} from "@/features/workflows-catalog/machine-specs";
+import { isMachineId } from "@/features/workflows-catalog/machine-spec-types";
 
 interface PageProps {
   params: Promise<{ machine: string }>;

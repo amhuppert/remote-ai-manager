@@ -1,23 +1,29 @@
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
+import { agentBackendSchema } from "@/lib/shared/schemas";
+import { agentSessionRefSchema } from "@/lib/agent-backends/schemas";
 import {
-  agentBackendSchema,
-  agentCapabilityOverridesSchema,
-  agentCapabilityRuntimeApplicationStateSchema,
-  agentSessionRefSchema,
   askQuestionItemSchema,
   conversationStateSchema,
   conversationStatusSchema,
   conversationRoleSchema,
-  debugModeStateSchema,
   forkedFromSchema,
+} from "@/lib/conversations/schemas";
+import { debugModeStateSchema } from "@/lib/debug-log/schemas";
+import {
   mcpOverridesSchema,
   mcpRuntimeApplicationStateSchema,
-} from "../schemas";
-import { PersistenceError, getErrorMessage } from "../errors";
-import type { ConversationState, ConversationStatus } from "@/types";
-
+} from "@/lib/mcp/schemas";
+import {
+  agentCapabilityOverridesSchema,
+  agentCapabilityRuntimeApplicationStateSchema,
+} from "@/lib/agent-capabilities/schemas";
+import { PersistenceError, getErrorMessage } from "../shared/errors";
+import type {
+  ConversationState,
+  ConversationStatus,
+} from "@/lib/conversations/schemas";
 type Db = InstanceType<typeof Database>;
 
 const logger = createLogger("state-store.conversations");

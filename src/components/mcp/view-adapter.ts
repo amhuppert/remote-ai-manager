@@ -4,8 +4,7 @@ import type {
   McpToolView as ApiToolView,
   McpInheritanceStatus as ApiInheritanceStatus,
   McpToolListView as ApiToolListView,
-} from "@/types";
-
+} from "@/lib/mcp/schemas";
 import type {
   McpInheritanceStatus,
   McpScope,

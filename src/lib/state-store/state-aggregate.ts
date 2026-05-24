@@ -1,14 +1,14 @@
 import type Database from "better-sqlite3";
 import { createLogger } from "@/lib/logging";
+import type { ConversationState } from "@/lib/conversations/schemas";
+import type { ReferenceDocument } from "@/lib/reference-documents/schemas";
 import {
   managerStateSchema,
-  type ConversationState,
   type ManagerState,
   type ProjectState,
-  type ReferenceDocument,
-  type SessionState,
-} from "../schemas";
-import { PersistenceError } from "../errors";
+} from "@/lib/projects/schemas";
+import { type SessionState } from "@/lib/sessions/schemas";
+import { PersistenceError } from "../shared/errors";
 import { type ProjectsRepo } from "./projects-repo";
 import { type SessionsRepo, canonicalSessionRow } from "./sessions-repo";
 import {

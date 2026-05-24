@@ -16,8 +16,7 @@ import type {
   McpDiagnostic,
   McpDiscoveredTool,
   McpToolInventoryResult,
-} from "@/lib/schemas";
-
+} from "@/lib/mcp/schemas";
 import type { McpCanonicalServerConfig } from "./types";
 
 const logger = createLogger("mcp.tool-discovery");

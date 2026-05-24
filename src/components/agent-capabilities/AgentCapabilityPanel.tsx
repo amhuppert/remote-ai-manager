@@ -9,7 +9,7 @@ import type {
   AgentCapabilitySourceRef,
   AgentCapabilityViewResponse,
   AgentCapabilityViewRow,
-} from "@/lib/schemas";
+} from "@/lib/agent-capabilities/schemas";
 import type { AgentCapabilityScope } from "@/hooks/use-agent-capabilities";
 
 export interface AgentCapabilityLayerOption {

@@ -15,11 +15,17 @@
 
 import { createLogger, type Logger } from "@/lib/logging";
 import type {
-  AgentBackendId,
   ConversationBackendEvent,
+  ConversationBackendRuntime,
   ConversationBackendTurnInput,
   ConversationImageRef,
-} from "@/types";
+} from "@/lib/agent-backends/conversation";
+import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import type {
+  AgentTaskRequest,
+  AgentTaskRunner,
+} from "@/lib/agent-backends/task";
 import { dispatchConversationTurn } from "./agent-call-conversation";
 import { dispatchTaskRun } from "./agent-call-task";
 import {
@@ -40,7 +46,7 @@ import {
 const defaultLogger = createLogger("workflows.primitives.agent-call.facade");
 
 export interface ConversationRuntimeResolution {
-  runtime: import("@/types").ConversationBackendRuntime;
+  runtime: ConversationBackendRuntime;
   capabilityView: BackendCapabilityView;
   signal: AbortSignal;
   modelId?: string;
@@ -54,18 +60,18 @@ export interface ConversationRuntimeResolution {
 }
 
 interface TaskRunnerResolution {
-  runner: import("@/types").AgentTaskRunner;
+  runner: AgentTaskRunner;
   capabilityView: BackendCapabilityView;
   workingDirectory: string;
   modelId?: string;
   reasoningEffort?: string;
   autonomous?: boolean;
-  resumeRef?: import("@/types").AgentSessionRef | null;
+  resumeRef?: AgentSessionRef | null;
   defaultTimeoutMs?: number;
-  sandboxMode?: import("@/types").AgentTaskRequest["sandboxMode"];
-  approvalPolicy?: import("@/types").AgentTaskRequest["approvalPolicy"];
+  sandboxMode?: AgentTaskRequest["sandboxMode"];
+  approvalPolicy?: AgentTaskRequest["approvalPolicy"];
   networkAccessEnabled?: boolean;
-  webSearchMode?: import("@/types").AgentTaskRequest["webSearchMode"];
+  webSearchMode?: AgentTaskRequest["webSearchMode"];
   additionalDirectories?: readonly string[];
   skipGitRepoCheck?: boolean;
   artifacts?: readonly ArtifactRef[];

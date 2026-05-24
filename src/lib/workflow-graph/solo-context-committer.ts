@@ -1,8 +1,8 @@
-import { getErrorMessage } from "@/lib/errors";
+import { getErrorMessage } from "@/lib/shared/errors";
 import {
   commitChanges as defaultCommitChanges,
   hasUncommittedChanges as defaultHasUncommittedChanges,
-} from "@/lib/git-operations";
+} from "@/lib/git/commits";
 import { createLogger } from "@/lib/logging";
 
 const logger = createLogger("graph-workflow-solo-commit");

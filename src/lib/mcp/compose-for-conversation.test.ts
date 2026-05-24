@@ -4,8 +4,7 @@ import type {
   PortableMcpConfig,
   PortableMcpServerConfig,
 } from "@/lib/agent-backends/portable-mcp";
-import type { McpOverrides } from "@/lib/schemas";
-
+import type { McpOverrides } from "@/lib/mcp/schemas";
 import {
   composePortableForConversation,
   createComposePortableMcpForConversation,

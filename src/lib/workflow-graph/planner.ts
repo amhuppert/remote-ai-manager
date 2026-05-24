@@ -4,13 +4,13 @@ import type {
   WorkflowGeneratedDraft,
   WorkflowPlanRequest,
   WorkflowSemanticDefinition,
-} from "@/types";
-import { getErrorMessage } from "@/lib/errors";
+} from "@/lib/workflows/schemas";
+import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger } from "@/lib/logging";
 import {
   workflowGeneratedDraftSchema,
   workflowSemanticDefinitionSchema,
-} from "@/lib/schemas";
+} from "@/lib/workflows/schemas";
 import { getTaskRunner as defaultGetTaskRunner } from "@/lib/agent-backends/registry";
 import type { AgentTaskRunner } from "@/lib/agent-backends/task";
 import { buildWorkflowDraftPortableMcp as defaultBuildWorkflowDraftPortableMcp } from "@/lib/mcp-gateway/portable-config";

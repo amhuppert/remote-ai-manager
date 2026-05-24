@@ -10,8 +10,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
-import { createConfigReader } from "@/lib/config";
-import { createStateManager } from "@/lib/state";
+import { createConfigReader } from "@/lib/config/loader";
+import { createStateManager } from "@/lib/state-store";
 import {
   _createTestDb,
   _installTestDb,

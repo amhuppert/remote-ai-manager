@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { GraphWorkflowExecution } from "@/types";
+import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 import {
   createGraphWorkflowExecutionToolContext,
   type GraphWorkflowExecutionToolContextDeps,

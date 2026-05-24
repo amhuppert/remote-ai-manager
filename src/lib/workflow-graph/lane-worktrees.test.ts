@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type GitClient } from "@/lib/git-client";
+import { type GitClient } from "@/lib/git/client";
 import {
   createParallelWorktrees,
   deriveLaneTargets,

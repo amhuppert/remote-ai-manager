@@ -1,17 +1,17 @@
 import { createLogger } from "@/lib/logging";
-import { getConversation as defaultGetConversation } from "@/lib/conversations";
+import { getConversation as defaultGetConversation } from "@/lib/conversations/service";
 import {
   executePromptStream as defaultExecutePromptStream,
   type PromptStreamResult,
-} from "@/lib/prompt";
+} from "@/lib/prompt/sdk-driver";
 import type {
   AgentBackendId,
   AgentSessionRef,
 } from "@/lib/agent-backends/types";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
-import type { SessionState } from "@/types";
-import { AgentTurnFailedError } from "@/lib/workflows/graph-workflow/errors";
+import type { SessionState } from "@/lib/sessions/schemas";
+import { AgentTurnFailedError } from "@/lib/workflow-graph/errors";
 
 function toAgentTurnEngine(backend: AgentBackendId): "claude" | "codex" {
   return backend === "codex" ? "codex" : "claude";

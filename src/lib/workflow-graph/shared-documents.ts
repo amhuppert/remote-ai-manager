@@ -9,8 +9,7 @@ import {
 import type {
   GraphWorkflowExecution,
   GraphWorkflowSharedDocumentEntry,
-} from "@/types";
-
+} from "@/lib/workflows/schemas";
 const logger = createLogger("graph-workflow-shared-documents");
 
 const SHARED_DOCUMENT_DIRECTORY = path.join(".cc", "graph-workflow-docs");

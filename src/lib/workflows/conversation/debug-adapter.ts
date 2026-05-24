@@ -14,13 +14,13 @@
  * machine. Tests can inject a fake sender directly through `createDebugAdapter`.
  */
 import type { ConversationEvent } from "./types";
-import type { DebugModePhase } from "@/lib/schemas";
+import type { DebugModePhase } from "@/lib/debug-log/schemas";
 import {
   debugCleanupResultSchema,
   debugEvidenceAnalysisOutputSchema,
   debugHypothesisOutputSchema,
 } from "./debug-schemas";
-import type { SSEEvent } from "@/types";
+import type { SSEEvent } from "@/lib/api/sse-events";
 import type { StatusBusDeliveryOutcome } from "@/lib/workflows/primitives/status-bus";
 import { publishSessionStatus } from "@/lib/workflows/primitives/default-session-status-bus";
 

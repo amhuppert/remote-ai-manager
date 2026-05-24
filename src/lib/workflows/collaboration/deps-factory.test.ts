@@ -5,18 +5,18 @@
  * `AsymmetricCollaborationSliceDeps` so the manager can call
  * `runAsymmetricCollaborationSlice(input, deps)` with the result without
  * further threading. We deliberately do NOT exercise the full slice here —
- * the slice has its own coverage in `asymmetric-slice.test.ts`. The shape
+ * the slice has its own coverage in `envelope.test.ts`. The shape
  * and the in-process StatusBus default behavior are what callers depend on.
  *
  * `vi.mock` is intentionally avoided per project standards: the production
  * factory is invoked directly. Filesystem-backed sub-services (envelope
  * store, artifact registry) are constructed but never written through, so
- * the lazy `require("@/lib/state")` call doesn't actually hit disk.
+ * the lazy `require("@/lib/state-store")` call doesn't actually hit disk.
  */
 import { describe, it, expect, vi } from "vitest";
 
 import { createCollaborationDeps } from "./deps-factory";
-import type { AsymmetricCollaborationSliceDeps } from "./asymmetric-slice";
+import type { AsymmetricCollaborationSliceDeps } from "./envelope";
 import {
   createStatusBus,
   type StatusBusEnvelope,
@@ -24,8 +24,8 @@ import {
 import {
   setTranscriptDeps,
   _resetTranscriptDepsForTesting,
-} from "@/lib/transcript";
-import type { SSEEvent } from "@/lib/schemas";
+} from "@/lib/prompt/transcript";
+import type { SSEEvent } from "@/lib/api/sse-events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

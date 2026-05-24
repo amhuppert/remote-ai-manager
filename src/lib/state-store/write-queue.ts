@@ -8,7 +8,7 @@
  */
 
 import { createLogger } from "@/lib/logging";
-import { getGlobalSingleton } from "../global-singleton";
+import { getGlobalSingleton } from "../shared/global-singleton";
 
 const logger = createLogger("state-store.write-queue");
 

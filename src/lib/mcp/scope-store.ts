@@ -1,6 +1,6 @@
 import { createLogger } from "@/lib/logging";
-import type { McpOverrideOperation, McpOverrides } from "@/lib/schemas";
-import { createStateManager } from "@/lib/state";
+import type { McpOverrideOperation, McpOverrides } from "@/lib/mcp/schemas";
+import { createStateManager } from "@/lib/state-store";
 
 import { applyOperations } from "./overrides-patch";
 

@@ -18,15 +18,15 @@
  */
 
 import { createLogger } from "@/lib/logging";
+import type { ConversationState } from "@/lib/conversations/schemas";
 import type {
   AgentCapabilityCascadeKind,
   AgentCapabilityOverrideOperation,
   AgentCapabilityOverrides,
-  ConversationState,
-  ProjectState,
-  SessionState,
-} from "@/lib/schemas";
-import { createStateManager } from "@/lib/state";
+} from "./schemas";
+import type { ProjectState } from "@/lib/projects/schemas";
+import type { SessionState } from "@/lib/sessions/schemas";
+import { createStateManager } from "@/lib/state-store";
 
 import { applyCapabilityOperations } from "./patch";
 

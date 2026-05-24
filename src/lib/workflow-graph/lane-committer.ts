@@ -1,14 +1,13 @@
-import { getErrorMessage } from "@/lib/errors";
+import { getErrorMessage } from "@/lib/shared/errors";
 import {
   commitChanges as defaultCommitChanges,
   hasUncommittedChanges as defaultHasUncommittedChanges,
-} from "@/lib/git-operations";
+} from "@/lib/git/commits";
 import { createLogger } from "@/lib/logging";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionLaneCommitSnapshot,
-} from "@/types";
-
+} from "@/lib/workflows/schemas";
 const logger = createLogger("graph-workflow-lane-commit");
 
 interface LaneCommitterInput {

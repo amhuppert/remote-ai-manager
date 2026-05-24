@@ -10,9 +10,9 @@ import type {
 } from "@/lib/agent-backends/conversation";
 import type { ConversationBackendCapabilities } from "@/lib/agent-backends/types";
 import type { McpApplyResult } from "@/lib/agent-backends/portable-mcp";
-import { createConfigReader } from "@/lib/config";
-import type { ManagerState } from "@/lib/schemas";
-import { createStateManager } from "@/lib/state";
+import { createConfigReader } from "@/lib/config/loader";
+import type { ManagerState } from "@/lib/projects/schemas";
+import { createStateManager } from "@/lib/state-store";
 import {
   _createTestDb,
   _installTestDb,

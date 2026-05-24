@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import type { ImagePayload, MessageContentBlock } from "@/types";
+import type { MessageContentBlock } from "@/lib/conversations/schemas";
+import type { ImagePayload } from "@/lib/images/schemas";
 import { assembleUserContentBlocks } from "./assemble-user-blocks";
 
 function img(

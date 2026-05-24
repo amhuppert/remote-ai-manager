@@ -1,12 +1,11 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import type {
-  LayoutMode,
   TranscriptMessage,
   MessageContentBlock,
   AskQuestionItem,
-} from "@/types";
-
+} from "@/lib/conversations/schemas";
+import type { LayoutMode } from "@/lib/sessions/schemas";
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------

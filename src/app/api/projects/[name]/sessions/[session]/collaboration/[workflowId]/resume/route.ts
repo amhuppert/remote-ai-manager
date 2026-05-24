@@ -1,10 +1,3 @@
-import { withTracing } from "@/lib/logging";
-import { createCollaborationRouteHandlers } from "@/lib/workflows/collaboration/route-handlers";
+export { resumeCollaboration as POST } from "@/lib/workflows/collaboration/route-handlers";
 
 export const dynamic = "force-dynamic";
-
-const handlers = createCollaborationRouteHandlers();
-
-export const POST = withTracing(async (request, context) =>
-  handlers.RESUME(request, context),
-);

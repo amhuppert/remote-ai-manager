@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { mcpGlobalStateSchema } from "@/lib/schemas";
+import { mcpGlobalStateSchema } from "@/lib/mcp/schemas";
 import { createGlobalOverrideStore } from "./global-store";
 
 describe("mcp/global-store", () => {

@@ -16,9 +16,8 @@ import {
   createSessionsRepo,
   type SessionsRepo,
 } from "./sessions-repo";
-import { sessionStateSchema } from "../schemas";
-import type { SessionState } from "@/types";
-
+import { sessionStateSchema } from "@/lib/sessions/schemas";
+import type { SessionState } from "@/lib/sessions/schemas";
 type Db = InstanceType<typeof Database>;
 
 let db: Db;

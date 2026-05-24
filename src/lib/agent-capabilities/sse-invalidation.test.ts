@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { agentCapabilityKeys } from "@/lib/query-keys";
+import { agentCapabilityKeys } from "./query-keys";
 
 import { computeAgentCapabilityInvalidations } from "./sse-invalidation";
 

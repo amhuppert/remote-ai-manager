@@ -50,9 +50,8 @@ import type {
   ArtifactWriteOutcome,
 } from "./artifact-registry";
 import { ArtifactRequiredFailure } from "./artifact-registry";
-import type { SSEEvent } from "@/types";
-
-import { queueMessage, type QueueMessageDeps } from "@/lib/queue-message";
+import type { SSEEvent } from "@/lib/api/sse-events";
+import { queueMessage, type QueueMessageDeps } from "@/lib/prompt/queue";
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import { createScriptValidatorRunner } from "@/lib/workflow-graph/script-validator-runner";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";

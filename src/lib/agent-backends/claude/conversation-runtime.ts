@@ -10,7 +10,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import type { MessageContentBlock } from "@/types";
+import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import type {
   AgentBackendId,
   AgentSessionRef,
@@ -41,13 +41,13 @@ import {
 } from "./query-session-errors";
 import { buildClaudePromptBlocks } from "./build-prompt-blocks";
 import { createCanUseTool } from "./native-tooling";
-import { buildChildEnv } from "@/lib/child-env";
+import { buildChildEnv } from "@/lib/shared/child-env";
 import { createLogger } from "@/lib/logging";
 import {
   claudeModelSchema,
   claudeEffortLevelSchema,
-  type McpDiscoveredTool,
-} from "@/lib/schemas";
+} from "@/lib/agent-backends/schemas";
+import { type McpDiscoveredTool } from "@/lib/mcp/schemas";
 import { translatePortableMcpToClaude } from "../mcp-translation";
 import { createPortableMcpFilterLookup } from "@/lib/mcp/portable-mcp-filter";
 import {

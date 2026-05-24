@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { GraphWorkflowExecution, SessionState } from "@/types";
+import type { SessionState } from "@/lib/sessions/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 import { createWorkflowExecution } from "./test-fixtures";
 import {
   createExecutionTargetResolver,

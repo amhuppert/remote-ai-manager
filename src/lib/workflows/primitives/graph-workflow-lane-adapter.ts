@@ -28,7 +28,7 @@ import {
   graphWorkflowAgentSessionStateSchema,
   type GraphWorkflowLaneKind,
   type GraphWorkflowAgentSessionState,
-} from "@/lib/schemas";
+} from "@/lib/workflows/schemas";
 import {
   laneStateSchema,
   type LanePolicy,

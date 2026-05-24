@@ -4,8 +4,7 @@ import {
   GraphWorkflowRuntimeEditValidationError,
   createGraphWorkflowRuntimeEditService,
 } from "./runtime-edits";
-import type { GraphWorkflowExecution } from "@/types";
-
+import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 describe("graph workflow runtime edit service", () => {
   it("appends agent-created tasks to the active execution context", () => {
     const service = createGraphWorkflowRuntimeEditService({

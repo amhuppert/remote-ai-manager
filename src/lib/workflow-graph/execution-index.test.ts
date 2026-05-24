@@ -4,7 +4,7 @@ import type {
   GraphWorkflowTaskDefinition,
   GraphWorkflowTaskState,
   ResolvedWorkflowSemanticDefinition,
-} from "@/types";
+} from "@/lib/workflows/schemas";
 import { createWorkflowExecution } from "./test-fixtures";
 import { createExecutionIndex } from "./execution-index";
 

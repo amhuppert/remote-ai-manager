@@ -18,26 +18,28 @@ import type {
   VerifyCleanupOutput,
 } from "./types";
 import type {
-  MessageContentBlock,
-  ConversationState,
-  SessionState,
-  AgentBackendId,
-  AgentSessionRef,
   ConversationBackendRuntime,
   ConversationBackendFactory,
   ConversationBackendTurnInput,
   ConversationBackendTurnResult,
   ConversationBackendEvent,
   ConversationImageRef,
-  ImagePayload,
-  AgentCapabilityRuntimeApplicationState,
-} from "@/types";
+} from "@/lib/agent-backends/conversation";
+import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import type { AgentCapabilityRuntimeApplicationState } from "@/lib/agent-capabilities/schemas";
+import type {
+  MessageContentBlock,
+  ConversationState,
+} from "@/lib/conversations/schemas";
+import type { ImagePayload } from "@/lib/images/schemas";
+import type { SessionState } from "@/lib/sessions/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import { assembleUserContentBlocks } from "./assemble-user-blocks";
 import { buildUserTranscriptBlocks } from "./build-user-transcript-blocks";
 import type {
   TranscriptEntry,
   TranscriptBroadcastMeta,
-} from "@/lib/transcript";
+} from "@/lib/prompt/transcript";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { ConversationApplyResult } from "@/lib/mcp/runtime-apply";
 import { computeEffectiveConfigHash } from "@/lib/mcp/runtime-apply";
@@ -58,9 +60,9 @@ import {
   DEBUG_PHASE_CONTEXT,
   CC_CONTEXT,
   TDD_INSTRUCTIONS,
-} from "@/lib/prompt";
+} from "@/lib/prompt/sdk-driver";
 import { isUndeliveredQuerySessionError } from "@/lib/agent-backends/claude/query-session-errors";
-import { buildSyntheticForkSeed } from "@/lib/synthetic-fork-seed";
+import { buildSyntheticForkSeed } from "@/lib/sessions/synthetic-fork-seed";
 import { createExternalTurnHandler } from "./external-turn-handler";
 import { createArtifactRegistry } from "@/lib/workflows/primitives/artifact-registry";
 import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
@@ -73,7 +75,7 @@ import type {
   ConversationRuntimeResolution,
 } from "@/lib/workflows/primitives/agent-call-facade";
 import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
-import { getDebugManifestPath } from "@/lib/debug-log";
+import { getDebugManifestPath } from "@/lib/debug-log/service";
 import fs from "node:fs/promises";
 
 const logger = createLogger("conversation-actor");
@@ -391,20 +393,20 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     defaultDepsMod,
     capabilitiesDepsMod,
   ] = await Promise.all([
-    import("@/lib/lock"),
-    import("@/lib/query-semaphore"),
-    import("@/lib/transcript"),
-    import("@/lib/config"),
-    import("@/lib/transcript-images"),
+    import("@/lib/prompt/single-flight"),
+    import("@/lib/shared/query-semaphore"),
+    import("@/lib/prompt/transcript"),
+    import("@/lib/config/loader"),
+    import("@/lib/images/transcript-images"),
     import("@/lib/agent-backends/registry"),
     import("@/lib/agent-backends/runtime-registry"),
-    import("@/lib/child-env"),
-    import("@/lib/commands"),
-    import("@/lib/codex-tool"),
-    import("@/lib/project-resolver"),
-    import("@/lib/debug-log"),
-    import("@/lib/state"),
-    import("@/lib/abort-registry"),
+    import("@/lib/shared/child-env"),
+    import("@/lib/commands/service"),
+    import("@/lib/agent-backends/codex/codex-tool"),
+    import("@/lib/projects/resolver"),
+    import("@/lib/debug-log/service"),
+    import("@/lib/state-store"),
+    import("@/lib/conversations/abort-registry"),
     import("@/lib/mcp/compose-for-conversation"),
     import("@/lib/mcp/global-store"),
     import("@/lib/mcp/discovery"),
@@ -1823,7 +1825,7 @@ export async function verifyCleanupForMachine(
   input: VerifyCleanupInput,
 ): Promise<VerifyCleanupOutput> {
   const [{ verifyCleanupAgainstManifest, deleteManifest }] = await Promise.all([
-    import("@/lib/debug-log"),
+    import("@/lib/debug-log/service"),
   ]);
 
   const verification = verifyCleanupAgainstManifest(

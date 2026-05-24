@@ -45,7 +45,8 @@ import {
   writeFeatureSnapshotAsArtifact,
 } from "./workflow-envelope-store";
 import { createWorkflowEnvelopeRepository } from "./workflow-envelope-repository";
-import type { AgentTaskRunner, ConversationBackendRuntime } from "@/types";
+import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
+import type { AgentTaskRunner } from "@/lib/agent-backends/task";
 import type { WorkflowEnvelope } from "./workflow-envelope-vocabulary";
 
 interface CapturedLog {

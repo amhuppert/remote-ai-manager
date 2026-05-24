@@ -1,9 +1,9 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { apiFetch, imageCountResponseSchema } from "@/lib/api-client";
-import { imageIndexKeys } from "@/lib/query-keys";
-
+import { apiFetch } from "@/lib/api/fetcher";
+import { imageCountResponseSchema } from "@/lib/images/schemas";
+import { imageIndexKeys } from "@/lib/images/query-keys";
 /**
  * Cumulative count of images persisted across all turns of a single
  * conversation. Used by the prompt editor to render the next inline

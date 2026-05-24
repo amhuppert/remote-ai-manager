@@ -36,14 +36,14 @@
 import { randomUUID } from "node:crypto";
 
 import { createLogger } from "@/lib/logging";
-import { getErrorMessage } from "@/lib/errors";
+import { getErrorMessage } from "@/lib/shared/errors";
 import {
   agentCapabilityPatchRequestSchema,
   AGENT_CAPABILITY_CASCADE_BACKEND_OWNERSHIP,
   type AgentCapabilityCascadeKind,
   type AgentCapabilityPatchRequest,
   type AgentCapabilityViewResponse,
-} from "@/lib/schemas";
+} from "./schemas";
 
 import type { GlobalCapabilityOverrideStore } from "./global-store";
 import { redactAgentCapabilityText } from "./redaction";

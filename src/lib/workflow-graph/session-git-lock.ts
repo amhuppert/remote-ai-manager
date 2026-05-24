@@ -2,7 +2,7 @@ import { createLogger } from "@/lib/logging";
 import {
   acquireSessionLock as defaultAcquireSessionLock,
   type LockManager,
-} from "@/lib/lock";
+} from "@/lib/prompt/single-flight";
 
 const logger = createLogger("graph-workflow-session-git-lock");
 

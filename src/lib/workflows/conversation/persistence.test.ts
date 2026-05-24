@@ -7,8 +7,7 @@ import {
   setPersistenceDeps,
   _resetForTesting,
 } from "./persistence";
-import type { ConversationState } from "@/types";
-
+import type { ConversationState } from "@/lib/conversations/schemas";
 function makeConversation(
   overrides: Partial<ConversationState> = {},
 ): ConversationState {

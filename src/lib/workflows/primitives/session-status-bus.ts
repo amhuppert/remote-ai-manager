@@ -16,7 +16,7 @@
  * fine-grained event schemas while the primitive layer assigns a coherent
  * scope envelope around each one.
  */
-import type { SSEEvent } from "@/types";
+import type { SSEEvent } from "@/lib/api/sse-events";
 import {
   createStatusBus,
   type StatusBus,

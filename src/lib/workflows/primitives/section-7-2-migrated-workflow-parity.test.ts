@@ -53,16 +53,16 @@ import {
   CLAUDE_CAPABILITY_VIEW,
   CODEX_CAPABILITY_VIEW,
 } from "./backend-capabilities";
+import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
 import type {
   AgentTaskRequest,
   AgentTaskResult,
   AgentTaskRunner,
-  ConversationBackendRuntime,
-  ConversationStatusEvent,
-  GraphWorkflowExecution,
-  JobStatusEvent,
-  SSEEvent,
-} from "@/types";
+} from "@/lib/agent-backends/task";
+import type { SSEEvent } from "@/lib/api/sse-events";
+import type { ConversationStatusEvent } from "@/lib/conversations/schemas";
+import type { JobStatusEvent } from "@/lib/jobs/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 

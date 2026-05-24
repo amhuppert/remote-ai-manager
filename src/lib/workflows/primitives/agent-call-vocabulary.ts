@@ -13,7 +13,8 @@
  */
 
 import { z } from "zod";
-import { agentBackendSchema, agentSessionRefSchema } from "@/lib/schemas";
+import { agentSessionRefSchema } from "@/lib/agent-backends/schemas";
+import { agentBackendSchema, type AgentBackendId } from "@/lib/shared/schemas";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 
 export const laneRefSchema = z.object({
@@ -160,7 +161,7 @@ export type AgentCallResult = z.infer<typeof agentCallResultSchema>;
 
 export interface AgentCallLogFieldsInput {
   requestKind: AgentCallRequestKind;
-  backend: import("@/types").AgentBackendId;
+  backend: AgentBackendId;
   workflowId?: string;
   laneId?: string;
   artifactKinds?: readonly string[];

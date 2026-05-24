@@ -5,7 +5,7 @@ import type {
   AgentCapabilityOverrideOperation,
   AgentCapabilityOverrides,
   AgentCapabilityViewResponse,
-} from "@/lib/schemas";
+} from "./schemas";
 
 import type {
   GlobalCapabilityOverrideStore,

@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { GlobalConfig } from "@/types";
-
+import type { GlobalConfig } from "@/lib/config/schemas";
 function makeConfig(overrides: Partial<GlobalConfig> = {}): GlobalConfig {
   return {
     baseDir: "/projects",

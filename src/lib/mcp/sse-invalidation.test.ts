@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { mcpConfigKeys, mcpToolsKeys } from "@/lib/query-keys";
-
+import { mcpConfigKeys, mcpToolsKeys } from "@/lib/mcp/query-keys";
 import { computeMcpConfigInvalidations } from "./sse-invalidation";
 
 describe("computeMcpConfigInvalidations", () => {

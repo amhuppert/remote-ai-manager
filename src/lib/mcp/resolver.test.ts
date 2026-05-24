@@ -4,8 +4,7 @@ import type {
   McpConfigLevel,
   McpOverrides,
   McpToolInventoryResult,
-} from "@/lib/schemas";
-
+} from "@/lib/mcp/schemas";
 import {
   mergeOverrideChain,
   resolveView,

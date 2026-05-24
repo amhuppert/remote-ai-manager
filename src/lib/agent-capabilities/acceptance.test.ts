@@ -7,7 +7,7 @@ import type {
   AgentCapabilityInventory,
   AgentCapabilityOverrides,
   AgentCapabilityViewResponse,
-} from "@/lib/schemas";
+} from "./schemas";
 
 import { applyCapabilityOperations } from "./patch";
 import {
@@ -20,7 +20,7 @@ import {
   type AffectedConversation,
   type ClaudeApplyPortInput,
   type ClaudeApplyPortResult,
-} from "./apply-service";
+} from "./apply";
 import { composeConversationStartRuntime } from "./runtime-composer";
 import { defaultAgentCapabilityMetadataRegistry } from "./metadata";
 import { resolveCascadeView, resolvePluginEnablement } from "./resolver";

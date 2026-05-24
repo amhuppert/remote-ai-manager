@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { McpDiscoveredTool } from "@/lib/schemas";
-
+import type { McpDiscoveredTool } from "@/lib/mcp/schemas";
 import {
   createDirectToolProbe,
   type DirectToolProbeClient,

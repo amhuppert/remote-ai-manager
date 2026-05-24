@@ -2,8 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import MessageContent from "./MessageContent";
-import type { MessageContentBlock } from "@/types";
-
+import type { MessageContentBlock } from "@/lib/conversations/schemas";
 const TINY_PNG =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
 

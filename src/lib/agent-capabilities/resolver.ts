@@ -51,7 +51,7 @@ import {
   type AgentCapabilitySourceRef,
   type AgentCapabilityViewResponse,
   type AgentCapabilityViewRow,
-} from "@/lib/schemas";
+} from "./schemas";
 
 export interface ResolveCascadeViewInput {
   cascadeKind: AgentCapabilityCascadeKind;

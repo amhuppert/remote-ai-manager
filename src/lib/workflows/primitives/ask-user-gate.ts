@@ -17,7 +17,7 @@
  *    workflow callers can opt into the gate translation explicitly.
  */
 
-import type { AskQuestionItem } from "@/lib/schemas";
+import type { AskQuestionItem } from "@/lib/conversations/schemas";
 import type { AgentCallResult } from "./agent-call-vocabulary";
 import { gatePauseMidTurn, type GatePauseResult } from "./gate-vocabulary";
 

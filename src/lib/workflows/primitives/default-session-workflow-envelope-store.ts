@@ -3,7 +3,7 @@
  *
  * Production wiring layer between the primitive `createSessionStateWorkflow
  * EnvelopeStore` (which expects an injected `mutateSession` / `getSession`
- * pair) and the singleton state manager exported from `@/lib/state`. Long-
+ * pair) and the singleton state manager exported from `@/lib/state-store`. Long-
  * running primitive-native workflows (Collaboration Mode is the first) call
  * `createSessionWorkflowEnvelopeStoreForProduction({ projectPath, sessionName
  * })` to obtain a store backed by the session-state store, inheriting the
@@ -15,7 +15,7 @@
  * state manager during module initialization and keeps test paths free to
  * inject their own implementations.
  */
-import type { SessionState } from "@/types";
+import type { SessionState } from "@/lib/sessions/schemas";
 import {
   createSessionStateWorkflowEnvelopeStore,
   type SessionStateLike,
@@ -70,7 +70,7 @@ interface StateModuleAccessors {
 function loadStateAccessors(): StateModuleAccessors {
   const stateModule: StateModuleAccessors =
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    require("@/lib/state");
+    require("@/lib/state-store");
   return {
     mutateSession: stateModule.mutateSession,
     getSession: stateModule.getSession,

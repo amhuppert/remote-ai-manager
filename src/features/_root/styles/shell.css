@@ -1,0 +1,25 @@
+/* ============================================================
+   App Shell
+   ============================================================ */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: clip;
+}
+
+.main {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--space-lg) var(--space-lg);
+}
+
+/* Detail page has tighter padding and no scroll — inner panels handle their own scroll */
+.app[data-page="detail"] .main {
+  padding: var(--space-md) var(--space-lg);
+  overflow: clip;
+}

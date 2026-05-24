@@ -2,8 +2,7 @@ import type {
   GraphWorkflowExecution,
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
-} from "@/types";
-
+} from "@/lib/workflows/schemas";
 type WaitStateDefinition =
   | WorkflowSemanticDefinition
   | ResolvedWorkflowSemanticDefinition;

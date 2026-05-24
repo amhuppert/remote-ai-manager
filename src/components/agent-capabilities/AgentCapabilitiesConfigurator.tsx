@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import type { AgentCapabilityCascadeKind } from "@/lib/schemas";
+import type { AgentCapabilityCascadeKind } from "@/lib/agent-capabilities/schemas";
 import type { AgentCapabilityScope } from "@/hooks/use-agent-capabilities";
 
 import { AgentCapabilityPanelContainer } from "./AgentCapabilityPanelContainer";

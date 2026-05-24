@@ -1,6 +1,6 @@
 import { Node, mergeAttributes } from "@tiptap/core";
 import { ReactNodeViewRenderer } from "@tiptap/react";
-import ImageMarkerChip from "@/app/projects/[name]/[session]/ImageMarkerChip";
+import ImageMarkerChip from "@/features/session/prompt/ImageMarkerChip";
 
 export interface ImageMarkerAttrs {
   index: number;

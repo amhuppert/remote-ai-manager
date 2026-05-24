@@ -1,15 +1,7 @@
-import { withTracing } from "@/lib/logging";
-import { broadcast } from "@/lib/sse-broadcaster";
-import { defaultCapabilityRouteDeps } from "@/lib/agent-capabilities/route-defaults";
-import { createProjectCapabilityHandlers } from "@/lib/agent-capabilities/route-handlers";
-
 export const dynamic = "force-dynamic";
 
-const handlers = createProjectCapabilityHandlers({
-  ...defaultCapabilityRouteDeps,
-  broadcast,
-});
-
-export const GET = withTracing(handlers.GET);
-export const PATCH = withTracing(handlers.PATCH);
-export const POST = withTracing(handlers.POST);
+export {
+  projectGET as GET,
+  projectPATCH as PATCH,
+  projectPOST as POST,
+} from "@/lib/agent-capabilities/route-bindings";

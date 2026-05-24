@@ -23,7 +23,7 @@
 
 import path from "node:path";
 import { createLogger } from "@/lib/logging";
-import { getErrorMessage } from "@/lib/errors";
+import { getErrorMessage } from "@/lib/shared/errors";
 import {
   createLaneScheduler,
   type LaneScheduler,
@@ -40,10 +40,10 @@ import {
   type StatusBus,
 } from "@/lib/workflows/primitives/status-bus";
 import { publishScopedStatusEvent } from "@/lib/workflows/primitives/default-session-status-bus";
-import { safeAppendTranscriptEntry } from "@/lib/transcript";
-import { dispatchPushForCollaborationEvent } from "@/lib/push-dispatcher";
-import type { AsymmetricCollaborationSliceDeps } from "./asymmetric-slice";
-import { mutateConversation as defaultMutateConversation } from "@/lib/state";
+import { safeAppendTranscriptEntry } from "@/lib/prompt/transcript";
+import { dispatchPushForCollaborationEvent } from "@/lib/push-notification/dispatcher";
+import type { AsymmetricCollaborationSliceDeps } from "./envelope";
+import { mutateConversation as defaultMutateConversation } from "@/lib/state-store";
 
 export interface CreateCollaborationDepsInput {
   projectPath: string;

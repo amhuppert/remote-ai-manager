@@ -177,9 +177,9 @@ describe("graphContextSquashMergeActor (XState fromPromise actor)", () => {
 
 describe("graphContextSquashMergeActor — session-finalization side effects", () => {
   it("never calls setSessionFinished, stopAllForSession, or retargetOrphanedChildren (runtime spies)", async () => {
-    const stateModule = await import("@/lib/state");
-    const devServerModule = await import("@/lib/dev-server-registry");
-    const sessionsModule = await import("@/lib/sessions");
+    const stateModule = await import("@/lib/state-store");
+    const devServerModule = await import("@/lib/dev-server/registry");
+    const sessionsModule = await import("@/lib/sessions/service");
 
     const setFinishedSpy = vi.spyOn(stateModule, "setSessionFinished");
     const stopAllSpy = vi.spyOn(devServerModule, "stopAllForSession");
@@ -202,9 +202,9 @@ describe("graphContextSquashMergeActor — session-finalization side effects", (
   });
 
   it("does not invoke session-finalization helpers when squashMerge throws", async () => {
-    const stateModule = await import("@/lib/state");
-    const devServerModule = await import("@/lib/dev-server-registry");
-    const sessionsModule = await import("@/lib/sessions");
+    const stateModule = await import("@/lib/state-store");
+    const devServerModule = await import("@/lib/dev-server/registry");
+    const sessionsModule = await import("@/lib/sessions/service");
 
     const setFinishedSpy = vi.spyOn(stateModule, "setSessionFinished");
     const stopAllSpy = vi.spyOn(devServerModule, "stopAllForSession");

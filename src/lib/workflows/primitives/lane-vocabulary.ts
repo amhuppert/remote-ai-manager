@@ -13,7 +13,7 @@
  */
 
 import { z } from "zod";
-import { agentBackendSchema } from "@/lib/schemas";
+import { agentBackendSchema } from "@/lib/shared/schemas";
 import {
   laneWriteCapabilitySchema,
   type LaneRef,

@@ -1,0 +1,374 @@
+import { randomUUID } from "node:crypto";
+import { z } from "zod";
+import { getStateDb } from "../state-store/store";
+import { createLogger } from "../logging";
+import { timedSync } from "../logging/timed";
+import { PersistenceError } from "../shared/errors";
+import { notificationSchema } from "../notifications/schemas";
+import { backgroundJobSchema, jobStatusSchema } from "./schemas";
+import type { BackgroundJob, JobType, JobStatus } from "./schemas";
+import type {
+  Notification,
+  NotificationType,
+} from "@/lib/notifications/schemas";
+const jobRecordLogger = createLogger("state-store.job-records");
+
+const jobRecordRowSchema = z.object({
+  job_id: z.string(),
+  job_type: z.string(),
+  status: z.string(),
+  project_name: z.string(),
+  session_name: z.string(),
+  branch_name: z.string(),
+  started_at: z.string(),
+  completed_at: z.string().nullable(),
+  merge_hash: z.string().nullable(),
+  commit_hash: z.string().nullable(),
+  conflict_count: z.number().int().nullable(),
+  conflict_files: z.string().nullable(),
+  error_message: z.string().nullable(),
+});
+type JobRecordRow = z.infer<typeof jobRecordRowSchema>;
+
+const jobRecordUpdateSchema = z.object({
+  status: jobStatusSchema,
+  mergeHash: z.string().optional(),
+  commitHash: z.string().optional(),
+  conflictCount: z.number().optional(),
+  conflictFiles: z.array(z.string()).optional(),
+  errorMessage: z.string().optional(),
+});
+
+function logAndThrowJobRecordValidationFailure(
+  identifier: string | undefined,
+  issues: unknown,
+): never {
+  const payload: Record<string, unknown> = { issues };
+  if (identifier !== undefined) payload.identifier = identifier;
+  jobRecordLogger.error(
+    "state-store.job-records.schema_validation_failure",
+    payload,
+  );
+  throw new PersistenceError({
+    kind: "validation",
+    entity: "job_record",
+    ...(identifier !== undefined ? { identifier } : {}),
+    issues,
+  });
+}
+
+function parseBackgroundJobOrFail(
+  candidate: unknown,
+  identifier: string | undefined,
+): BackgroundJob {
+  const result = backgroundJobSchema.safeParse(candidate);
+  if (!result.success) {
+    return logAndThrowJobRecordValidationFailure(
+      identifier,
+      result.error.issues,
+    );
+  }
+  return result.data;
+}
+
+function parseJobRecordUpdateOrFail(
+  candidate: unknown,
+  identifier: string,
+): z.infer<typeof jobRecordUpdateSchema> {
+  const result = jobRecordUpdateSchema.safeParse(candidate);
+  if (!result.success) {
+    return logAndThrowJobRecordValidationFailure(
+      identifier,
+      result.error.issues,
+    );
+  }
+  return result.data;
+}
+
+function parseConflictFilesColumn(
+  identifier: string,
+  raw: string | null,
+): { ok: true; value: string[] | undefined } | { ok: false; issues: unknown } {
+  if (raw === null) return { ok: true, value: undefined };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    return {
+      ok: false,
+      issues: [
+        {
+          code: "invalid_json",
+          path: ["conflictFiles"],
+          message: err instanceof Error ? err.message : String(err),
+          identifier,
+        },
+      ],
+    };
+  }
+  const result = z.array(z.string()).safeParse(parsed);
+  if (!result.success) return { ok: false, issues: result.error.issues };
+  return { ok: true, value: result.data };
+}
+
+/**
+ * Render a UTC timestamp string in the same format as SQLite's `datetime('now')`
+ * — `YYYY-MM-DD HH:MM:SS` — so notifications inserted from JS validate through
+ * notificationSchema BEFORE the INSERT commits, while remaining lexicographically
+ * comparable against retention queries that still use `datetime('now', ?)`.
+ */
+function sqliteUtcNow(): string {
+  const iso = new Date().toISOString();
+  return iso.slice(0, 10) + " " + iso.slice(11, 19);
+}
+
+function rowToBackgroundJob(rawRow: unknown): BackgroundJob {
+  const candidateId =
+    typeof rawRow === "object" &&
+    rawRow !== null &&
+    typeof (rawRow as { job_id?: unknown }).job_id === "string"
+      ? (rawRow as { job_id: string }).job_id
+      : undefined;
+
+  const rowResult = jobRecordRowSchema.safeParse(rawRow);
+  if (!rowResult.success) {
+    return logAndThrowJobRecordValidationFailure(
+      candidateId,
+      rowResult.error.issues,
+    );
+  }
+  const row: JobRecordRow = rowResult.data;
+
+  const conflictFilesResult = parseConflictFilesColumn(
+    row.job_id,
+    row.conflict_files,
+  );
+  if (!conflictFilesResult.ok) {
+    return logAndThrowJobRecordValidationFailure(
+      row.job_id,
+      conflictFilesResult.issues,
+    );
+  }
+
+  const candidate: Record<string, unknown> = {
+    jobId: row.job_id,
+    jobType: row.job_type,
+    status: row.status,
+    projectName: row.project_name,
+    sessionName: row.session_name,
+    branchName: row.branch_name,
+    startedAt: row.started_at,
+  };
+  if (row.completed_at !== null) candidate.completedAt = row.completed_at;
+  if (row.merge_hash !== null) candidate.mergeHash = row.merge_hash;
+  if (row.commit_hash !== null) candidate.commitHash = row.commit_hash;
+  if (row.conflict_count !== null) candidate.conflictCount = row.conflict_count;
+  if (conflictFilesResult.value !== undefined)
+    candidate.conflictFiles = conflictFilesResult.value;
+  if (row.error_message !== null) candidate.errorMessage = row.error_message;
+
+  return parseBackgroundJobOrFail(candidate, row.job_id);
+}
+
+export interface JobRecordUpdate {
+  status: JobStatus;
+  mergeHash?: string;
+  commitHash?: string;
+  conflictCount?: number;
+  conflictFiles?: string[];
+  errorMessage?: string;
+}
+
+export function createJobRecord(job: BackgroundJob): void {
+  timedSync(
+    jobRecordLogger,
+    "state-db.createJobRecord",
+    { jobId: job.jobId, jobType: job.jobType },
+    () => {
+      const validated = parseBackgroundJobOrFail(job, job.jobId);
+      const db = getStateDb();
+      db.prepare(
+        `INSERT OR REPLACE INTO job_records (job_id, job_type, status, project_name, session_name, branch_name, started_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        validated.jobId,
+        validated.jobType,
+        validated.status,
+        validated.projectName,
+        validated.sessionName,
+        validated.branchName,
+        validated.startedAt,
+      );
+    },
+  );
+}
+
+export function updateJobRecord(jobId: string, update: JobRecordUpdate): void {
+  timedSync(
+    jobRecordLogger,
+    "state-db.updateJobRecord",
+    { jobId, status: update.status },
+    () => {
+      const validated = parseJobRecordUpdateOrFail(update, jobId);
+      const db = getStateDb();
+      db.prepare(
+        `UPDATE job_records SET
+       status = ?,
+       completed_at = datetime('now'),
+       merge_hash = ?,
+       commit_hash = ?,
+       conflict_count = ?,
+       conflict_files = ?,
+       error_message = ?
+     WHERE job_id = ?`,
+      ).run(
+        validated.status,
+        validated.mergeHash ?? null,
+        validated.commitHash ?? null,
+        validated.conflictCount ?? null,
+        validated.conflictFiles
+          ? JSON.stringify(validated.conflictFiles)
+          : null,
+        validated.errorMessage ?? null,
+        jobId,
+      );
+    },
+  );
+}
+
+export function deleteJobRecordsForSession(
+  projectName: string,
+  sessionName: string,
+): number {
+  const db = getStateDb();
+  const result = db
+    .prepare(
+      "DELETE FROM job_records WHERE project_name = ? AND session_name = ?",
+    )
+    .run(projectName, sessionName);
+  return result.changes;
+}
+
+export function deleteJobRecordsForProject(projectName: string): number {
+  const db = getStateDb();
+  const result = db
+    .prepare("DELETE FROM job_records WHERE project_name = ?")
+    .run(projectName);
+  return result.changes;
+}
+
+/**
+ * Derive the notification type from a job type and terminal status.
+ */
+export function deriveNotificationType(
+  jobType: JobType,
+  status: JobStatus,
+): NotificationType {
+  switch (jobType) {
+    case "merge":
+      if (status === "completed") return "merge-completed";
+      if (status === "conflicts") return "merge-conflicts";
+      return "merge-failed";
+    case "commit":
+      if (status === "completed") return "commit-completed";
+      return "commit-failed";
+    case "resolve-conflicts":
+      if (status === "completed") return "resolve-completed";
+      return "resolve-failed";
+  }
+}
+
+/**
+ * Derive human-readable title from notification type.
+ */
+export function deriveNotificationTitle(type: NotificationType): string {
+  switch (type) {
+    case "merge-completed":
+      return "Merge completed";
+    case "merge-failed":
+      return "Merge failed";
+    case "merge-conflicts":
+      return "Merge conflicts";
+    case "commit-completed":
+      return "Commit completed";
+    case "commit-failed":
+      return "Commit failed";
+    case "resolve-completed":
+      return "Conflicts resolved";
+    case "resolve-failed":
+      return "Conflict resolution failed";
+  }
+}
+
+export function recoverStaleJobs(): number {
+  return timedSync(
+    jobRecordLogger,
+    "state-db.recoverStaleJobs",
+    {},
+    () => recoverStaleJobsImpl(),
+    (count) => ({ recoveredCount: count }),
+  );
+}
+
+function recoverStaleJobsImpl(): number {
+  const db = getStateDb();
+
+  const rawStaleRows = db
+    .prepare("SELECT * FROM job_records WHERE status = 'running'")
+    .all() as unknown[];
+
+  if (rawStaleRows.length === 0) return 0;
+
+  const staleJobs = rawStaleRows.map(rowToBackgroundJob);
+
+  const updateStmt = db.prepare(
+    `UPDATE job_records SET status = 'failed', completed_at = datetime('now'), error_message = ? WHERE job_id = ?`,
+  );
+  const errorMsg = "Job interrupted by server restart";
+
+  const insertNotification = db.prepare(`
+    INSERT INTO notifications (id, type, title, message, project_name, session_name, branch_name, job_id, job_type, error_message)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const recoverAll = db.transaction(() => {
+    for (const job of staleJobs) {
+      updateStmt.run(errorMsg, job.jobId);
+      const notifType = deriveNotificationType(job.jobType, "failed");
+      const candidateId = randomUUID();
+      const candidate: Notification = notificationSchema.parse({
+        id: candidateId,
+        type: notifType,
+        title: deriveNotificationTitle(notifType),
+        message: `${job.jobType} job on ${job.branchName} was interrupted by server restart`,
+        read: false,
+        projectName: job.projectName,
+        sessionName: job.sessionName,
+        branchName: job.branchName,
+        jobId: job.jobId,
+        jobType: job.jobType,
+        errorMessage: errorMsg,
+        createdAt: sqliteUtcNow(),
+      });
+      insertNotification.run(
+        candidate.id,
+        candidate.type,
+        candidate.title,
+        candidate.message,
+        candidate.projectName,
+        candidate.sessionName,
+        candidate.branchName,
+        candidate.jobId,
+        candidate.jobType,
+        candidate.errorMessage ?? null,
+      );
+    }
+  });
+
+  recoverAll();
+
+  jobRecordLogger.info("notification-db.stale_jobs_recovered", {
+    count: staleJobs.length,
+  });
+  return staleJobs.length;
+}

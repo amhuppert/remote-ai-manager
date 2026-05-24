@@ -1,0 +1,251 @@
+/**
+ * Happy-path pinning test for the cross-review phase. Verifies that:
+ *   - Agent Two is dispatched to its backend exactly once with the user
+ *     prompt and both drafts.
+ *   - The structured output is parsed and tracked.
+ *   - Agent backend errors propagate as a failed outcome attributed to
+ *     agent_two.
+ *
+ * No `vi.mock`: deps are wired through in-memory primitives.
+ */
+import { beforeEach, describe, expect, it } from "vitest";
+import path from "node:path";
+import os from "node:os";
+import fs from "node:fs/promises";
+
+import { runCrossReviewPhase } from "./cross-review";
+import {
+  type AsymmetricCollaborationSliceDeps,
+  type AsymmetricCollaborationSliceInput,
+} from "./envelope";
+import type { ArtifactTracker } from "./helpers";
+import type {
+  CollaborationAgent,
+  CollaborationCrossReviewOutput,
+  CollaborationFlowAgent,
+} from "./types";
+import {
+  makeAgentOneInitialDraft,
+  makeAgentTwoCrossReview,
+  makeAgentTwoInitialDraft,
+} from "./test-fixtures";
+import type {
+  AgentCallRequest,
+  AgentCallResult,
+} from "@/lib/workflows/primitives/agent-call-vocabulary";
+import { createInMemoryLaneStore } from "@/lib/workflows/primitives/lane-store";
+import { createLaneService } from "@/lib/workflows/primitives/lane-service";
+import type { LaneState } from "@/lib/workflows/primitives/lane-vocabulary";
+import { createInMemoryWorkflowEnvelopeStore } from "@/lib/workflows/primitives/workflow-envelope-store";
+import {
+  createStatusBus,
+  type StatusBusEnvelope,
+} from "@/lib/workflows/primitives/status-bus";
+import { createLaneScheduler } from "@/lib/workflows/primitives/lane-scheduler";
+
+type Backend = "claude" | "codex";
+
+function makeCompletedResult(
+  backend: Backend,
+  structuredOutput: CollaborationCrossReviewOutput,
+): AgentCallResult {
+  return {
+    backend,
+    backendRef:
+      backend === "claude"
+        ? { backend: "claude", sessionId: `sess-${backend}` }
+        : { backend: "codex", threadId: `th-${backend}` },
+    capabilities: {
+      backend,
+      continuationStrength:
+        backend === "claude" ? "precise_session" : "synthetic_thread",
+      structuredOutputEnforcement:
+        backend === "claude" ? "post_validation" : "backend_native",
+      mcpApplicationBoundary:
+        backend === "claude" ? "between_turns" : "per_request",
+      contextMetricsAvailable: backend === "claude",
+      nativeMidTurnAskUser: backend === "claude",
+    },
+    usage: { durationMs: 1 },
+    artifacts: [],
+    outcome: { kind: "completed", text: "synthetic", structuredOutput },
+  };
+}
+
+function makeFailedResult(backend: Backend, message: string): AgentCallResult {
+  return {
+    backend,
+    backendRef: null,
+    capabilities: {
+      backend,
+      continuationStrength:
+        backend === "claude" ? "precise_session" : "synthetic_thread",
+      structuredOutputEnforcement:
+        backend === "claude" ? "post_validation" : "backend_native",
+      mcpApplicationBoundary:
+        backend === "claude" ? "between_turns" : "per_request",
+      contextMetricsAvailable: backend === "claude",
+      nativeMidTurnAskUser: backend === "claude",
+    },
+    usage: { durationMs: 1 },
+    artifacts: [],
+    outcome: {
+      kind: "failed",
+      error: { failureKind: "backend_error", backend, message },
+    },
+  };
+}
+
+function backendOfRequest(request: AgentCallRequest): Backend {
+  return request.kind === "conversation_turn"
+    ? (request.backend ?? "claude")
+    : (request.backend as Backend);
+}
+
+async function buildTestHarness(
+  responses: AgentCallResult[],
+  workingDir: string,
+): Promise<{
+  input: AsymmetricCollaborationSliceInput;
+  deps: AsymmetricCollaborationSliceDeps;
+  tracker: ArtifactTracker;
+  receivedRequests: AgentCallRequest[];
+  backendForAgent: (agent: CollaborationFlowAgent) => CollaborationAgent;
+}> {
+  const queue = [...responses];
+  const receivedRequests: AgentCallRequest[] = [];
+
+  const laneStore = createInMemoryLaneStore();
+  const laneService = createLaneService({ store: laneStore });
+  const envelopeStore = createInMemoryWorkflowEnvelopeStore();
+  const capturedEnvelopes: StatusBusEnvelope[] = [];
+  const statusBus = createStatusBus({
+    broadcast: (e) => capturedEnvelopes.push(e),
+  });
+  const laneScheduler = createLaneScheduler();
+
+  const input: AsymmetricCollaborationSliceInput = {
+    workflowId: "wf-cross-review-test",
+    brief: "Design Z.",
+    worktreePath: workingDir,
+    sessionKey: "tests/cross-review",
+    primaryAgentBackend: "claude",
+    negotiationRounds: 1,
+    autonomousResolutionThreshold: "major",
+  };
+
+  const deps: AsymmetricCollaborationSliceDeps = {
+    callAgent: async (request) => {
+      receivedRequests.push(request);
+      const next = queue.shift();
+      if (!next) throw new Error("no scripted response remaining");
+      return next;
+    },
+    laneService,
+    laneScheduler,
+    envelopeStore,
+    statusBus,
+    now: () => "2026-05-01T00:00:00.000Z",
+  };
+
+  const lanes: LaneState[] = [
+    {
+      workflowId: input.workflowId,
+      laneId: "claude",
+      backend: "claude",
+      writeCapability: "write_capable",
+      policy: { continuityEnabled: true },
+      backendState: { backend: "claude" },
+      metrics: { backend: "claude", rotateBeforeNextTurn: false },
+      lastUsedAt: "2026-05-01T00:00:00.000Z",
+    },
+    {
+      workflowId: input.workflowId,
+      laneId: "codex",
+      backend: "codex",
+      writeCapability: "write_capable",
+      policy: { continuityEnabled: true },
+      backendState: { backend: "codex" },
+      metrics: { backend: "codex", rotateBeforeNextTurn: false },
+      lastUsedAt: "2026-05-01T00:00:00.000Z",
+    },
+  ];
+  for (const lane of lanes) await laneService.initialize(lane);
+
+  await envelopeStore.upsert(input.workflowId, () => ({
+    workflowId: input.workflowId,
+    workflowType: "collaboration",
+    status: "running",
+    phase: "asymmetric_cross_review",
+    createdAt: "2026-05-01T00:00:00.000Z",
+    updatedAt: "2026-05-01T00:00:00.000Z",
+    featureSnapshot: {},
+  }));
+
+  const tracker: ArtifactTracker = {
+    artifacts: [],
+    negotiationRoundsCompleted: 0,
+  };
+  const backendForAgent = (
+    agent: CollaborationFlowAgent,
+  ): CollaborationAgent => (agent === "agent_one" ? "claude" : "codex");
+
+  return { input, deps, tracker, receivedRequests, backendForAgent };
+}
+
+let workingDir: string;
+
+beforeEach(async () => {
+  workingDir = await fs.mkdtemp(path.join(os.tmpdir(), "collab-cross-"));
+});
+
+describe("runCrossReviewPhase", () => {
+  it("dispatches Agent Two to its backend once, returns the parsed cross-review, and tracks the artifact", async () => {
+    const crossReviewFixture = makeAgentTwoCrossReview();
+    const harness = await buildTestHarness(
+      [makeCompletedResult("codex", crossReviewFixture)],
+      workingDir,
+    );
+
+    const outcome = await runCrossReviewPhase({
+      input: harness.input,
+      deps: harness.deps,
+      now: harness.deps.now!,
+      tracker: harness.tracker,
+      backendForAgent: harness.backendForAgent,
+      agentOneDraft: makeAgentOneInitialDraft(),
+      agentTwoDraft: makeAgentTwoInitialDraft(),
+    });
+
+    expect(outcome.kind).toBe("ok");
+    if (outcome.kind !== "ok") return;
+    expect(outcome.crossReview).toEqual(crossReviewFixture);
+    expect(harness.tracker.artifacts).toEqual([crossReviewFixture]);
+
+    expect(harness.receivedRequests).toHaveLength(1);
+    expect(backendOfRequest(harness.receivedRequests[0]!)).toBe("codex");
+  });
+
+  it("returns a failed outcome attributed to agent_two when the backend call fails", async () => {
+    const harness = await buildTestHarness(
+      [makeFailedResult("codex", "transport lost")],
+      workingDir,
+    );
+
+    const outcome = await runCrossReviewPhase({
+      input: harness.input,
+      deps: harness.deps,
+      now: harness.deps.now!,
+      tracker: harness.tracker,
+      backendForAgent: harness.backendForAgent,
+      agentOneDraft: makeAgentOneInitialDraft(),
+      agentTwoDraft: makeAgentTwoInitialDraft(),
+    });
+
+    expect(outcome.kind).toBe("failed");
+    if (outcome.kind !== "failed") return;
+    expect(outcome.result.agent).toBe("agent_two");
+    expect(outcome.result.errorSummary).toContain("transport lost");
+    expect(harness.tracker.artifacts).toEqual([]);
+  });
+});

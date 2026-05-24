@@ -15,7 +15,7 @@
 
 import { parseArgs } from "node:util";
 import type Database from "better-sqlite3";
-import { getStateDb } from "../src/lib/state-store/state-store";
+import { getStateDb } from "../src/lib/state-store/store";
 
 type Db = InstanceType<typeof Database>;
 

@@ -6,7 +6,7 @@ import {
 } from "./graph-workflow-lane-adapter";
 import { createInMemoryLaneStore } from "./lane-store";
 import { createLaneService } from "./lane-service";
-import type { GraphWorkflowAgentSessionState } from "@/lib/schemas";
+import type { GraphWorkflowAgentSessionState } from "@/lib/workflows/schemas";
 
 const T0 = "2026-04-28T10:00:00.000Z";
 const T1 = "2026-04-28T10:05:00.000Z";

@@ -1,12 +1,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
+import type { GlobalConfig } from "@/lib/config/schemas";
 import type {
-  GlobalConfig,
   GraphWorkflowExecution,
   WorkflowDefinitionRecord,
   WorkflowSemanticDefinition,
-} from "@/types";
+} from "@/lib/workflows/schemas";
 import {
   contextValidatorOverrideSchema,
   graphWorkflowAgentConfigSchema,
@@ -14,9 +14,9 @@ import {
   graphWorkflowIterationPolicySchema,
   graphWorkflowMutabilityPolicySchema,
   graphWorkflowScriptValidatorConfigSchema,
-  workflowConfigOverrideSchema,
-} from "@/lib/schemas";
-import { getErrorMessage } from "@/lib/errors";
+} from "@/lib/workflows/schemas";
+import { workflowConfigOverrideSchema } from "@/lib/workflows/schemas";
+import { getErrorMessage } from "@/lib/shared/errors";
 import { generateWorkflowLayout } from "./layout";
 import type {
   WorkflowDefinitionDraft,

@@ -5,7 +5,7 @@ import {
   type AgentCapabilityDiscoveredItem,
   type AgentCapabilityOverrides,
   type AgentCapabilityViewResponse,
-} from "@/lib/schemas";
+} from "./schemas";
 
 import { defaultAgentCapabilityMetadataRegistry } from "./metadata";
 import { resolveCascadeView, resolvePluginEnablement } from "./resolver";

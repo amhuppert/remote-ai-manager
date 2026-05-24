@@ -6,16 +6,15 @@
  * directly into each factory.
  */
 
-import { createStateManager } from "@/lib/state";
+import { createStateManager } from "@/lib/state-store";
 import { getRuntime } from "@/lib/agent-backends/runtime-registry";
 import { createLogger } from "@/lib/logging";
 import {
   buildSessionToolsGatewayServers,
   buildSessionToolsReservedIds,
 } from "@/lib/mcp-gateway/portable-config";
-import { getProjectDisplayName } from "@/lib/project-resolver";
-import type { McpOverrides, McpToolInventoryResult } from "@/lib/schemas";
-
+import { getProjectDisplayName } from "@/lib/projects/resolver";
+import type { McpOverrides, McpToolInventoryResult } from "@/lib/mcp/schemas";
 import { createComposePortableMcpForConversation } from "./compose-for-conversation";
 import { discoverAllSources } from "./discovery";
 import {
@@ -34,7 +33,7 @@ import {
 import {
   createMcpConfigMutationService,
   type McpConfigMutationService,
-} from "@/lib/mcp-config-mutation-service";
+} from "@/lib/mcp/config-mutation-service";
 import { defaultScopeOverrideStore } from "./scope-store";
 import {
   createToolInventoryCache,

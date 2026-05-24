@@ -46,7 +46,7 @@ import type { StatusBusEnvelope } from "./status-bus";
 import {
   dispatchMergeJob,
   _resetForTesting as _resetBackgroundJobsForTesting,
-} from "@/lib/background-jobs";
+} from "@/lib/jobs/queue";
 import { mergeMachine } from "@/lib/workflows/merge/machine";
 import type {
   CheckUncommittedInput,
@@ -72,18 +72,15 @@ import type { MergePhase } from "@/lib/workflows/merge/types";
 import {
   defaultOptimisticDeps,
   executeOptimisticWorkflow,
-} from "@/lib/optimistic";
-import type {
-  JobStatus,
-  JobStatusEvent,
-  SSEEvent,
-  SessionState,
-} from "@/types";
-
-// notification-db is a real SQLite dependency — the existing
-// background-jobs.test.ts mocks it the same way, and CLAUDE.md permits
+} from "@/lib/shared/optimistic";
+import type { SSEEvent } from "@/lib/api/sse-events";
+import type { JobStatus, JobStatusEvent } from "@/lib/jobs/schemas";
+import type { SessionState } from "@/lib/sessions/schemas";
+// notifications/repo and jobs/repo are real SQLite dependencies — the existing
+// jobs/queue.test.ts mocks them the same way, and CLAUDE.md permits
 // vi.mock for infrastructure modules with module-level side effects.
-vi.mock("@/lib/notification-db");
+vi.mock("@/lib/notifications/repo");
+vi.mock("@/lib/jobs/repo");
 
 function captureWire() {
   const wire = vi.fn<(event: SSEEvent) => void>();
@@ -331,7 +328,7 @@ describe("section 6.3 — merge + optimistic workflow parity (Task 6.3)", () => 
 
     it("conflict-resolution.resolveConflicts builds a write_capable task_run request through deps.executeAgentCall", async () => {
       const { createConflictResolver } =
-        await import("@/lib/conflict-resolution");
+        await import("@/lib/sessions/conflict-resolution");
       const { executeAgentCall: defaultExecuteAgentCall } =
         await import("./agent-call-facade");
       const conflictEntries = [
@@ -368,7 +365,7 @@ describe("section 6.3 — merge + optimistic workflow parity (Task 6.3)", () => 
 
     it("conflict-resolution.analyzeConflicts builds a read_only task_run request through deps.executeAgentCall", async () => {
       const { createConflictResolver } =
-        await import("@/lib/conflict-resolution");
+        await import("@/lib/sessions/conflict-resolution");
       const { executeAgentCall: defaultExecuteAgentCall } =
         await import("./agent-call-facade");
       const conflictEntries = [
@@ -404,7 +401,8 @@ describe("section 6.3 — merge + optimistic workflow parity (Task 6.3)", () => 
     });
 
     it("validation-fix.fixValidationErrors builds a write_capable task_run request through deps.executeAgentCall", async () => {
-      const { createValidationFixer } = await import("@/lib/validation-fix");
+      const { createValidationFixer } =
+        await import("@/lib/workflows/validation-fix");
       const { executeAgentCall: defaultExecuteAgentCall } =
         await import("./agent-call-facade");
       const runner = createTestRunner({ text: "fixed" });

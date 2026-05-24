@@ -1,4 +1,4 @@
-import type { MessageContentBlock } from "@/types";
+import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import type {
   AgentBackendId,
   AgentSessionRef,
@@ -6,7 +6,7 @@ import type {
   ConversationToolingOverrides,
 } from "./types";
 import type { PortableMcpConfig, McpApplyResult } from "./portable-mcp";
-import type { McpDiscoveredTool } from "@/lib/schemas";
+import type { McpDiscoveredTool } from "@/lib/mcp/schemas";
 import type { ClaudeRuntimeCapabilityConfig } from "@/lib/agent-capabilities/claude-runtime-translator";
 import type { CodexRuntimeCapabilityConfig } from "@/lib/agent-capabilities/codex-runtime-translator";
 

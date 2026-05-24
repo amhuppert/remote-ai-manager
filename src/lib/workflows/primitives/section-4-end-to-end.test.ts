@@ -32,8 +32,7 @@ import {
 } from "./default-session-status-bus";
 import { createDefaultSessionArtifactRegistry } from "./default-session-artifact-registry";
 import { ArtifactRequiredFailure } from "./artifact-registry";
-import type { SSEEvent } from "@/types";
-
+import type { SSEEvent } from "@/lib/api/sse-events";
 interface DocStoreEntry {
   projectPath: string;
   sessionName: string;

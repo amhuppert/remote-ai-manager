@@ -7,7 +7,7 @@ import {
   type AgentCapabilityDiscoveredItem,
   type AgentCapabilityOverrides,
   type AgentCapabilityRuntimeApplicationState,
-} from "@/lib/schemas";
+} from "./schemas";
 
 import { defaultAgentCapabilityMetadataRegistry } from "./metadata";
 import {

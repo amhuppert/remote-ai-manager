@@ -4,7 +4,7 @@ import type {
   GraphWorkflowTaskDefinition,
   WorkflowConfigOverride,
   WorkflowSemanticDefinition,
-} from "@/types";
+} from "@/lib/workflows/schemas";
 import {
   validateWorkflowDefinition,
   type WorkflowGraphValidationError,

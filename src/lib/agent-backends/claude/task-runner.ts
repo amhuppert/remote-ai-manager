@@ -7,7 +7,7 @@ import type {
   SDKAssistantMessage,
   SDKSystemMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { buildChildEnv } from "@/lib/child-env";
+import { buildChildEnv } from "@/lib/shared/child-env";
 import { createLogger } from "@/lib/logging";
 import { registerTaskRunner } from "../registry-core";
 import type {
@@ -17,10 +17,12 @@ import type {
 } from "../task";
 import type { AgentBackendId } from "../types";
 import { translatePortableMcpToClaude } from "../mcp-translation";
-import { claudeEffortLevelSchema, type ClaudeEffortLevel } from "@/lib/schemas";
-
+import {
+  claudeEffortLevelSchema,
+  type ClaudeEffortLevel,
+} from "@/lib/agent-backends/schemas";
 // Prevent nested session detection when CC runs inside Claude Code
-import "@/lib/sdk-env";
+import "@/lib/shared/sdk-env";
 
 const logger = createLogger("claude:task-runner");
 

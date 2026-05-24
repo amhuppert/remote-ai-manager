@@ -24,9 +24,8 @@ vi.mock("@/lib/logging", () => ({
 import type Database from "better-sqlite3";
 import { _createTestDb } from "./state-db";
 import { createSessionsRepo, type SessionsRepo } from "./sessions-repo";
-import { PersistenceError } from "../errors";
-import type { GraphWorkflowExecution } from "@/types";
-
+import { PersistenceError } from "../shared/errors";
+import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 type Db = InstanceType<typeof Database>;
 
 let db: Db;

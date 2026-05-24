@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useCallback, useMemo } from "react";
-import type { AskQuestionItem } from "@/types";
-
+import type { AskQuestionItem } from "@/lib/conversations/schemas";
 interface AskQuestionPanelProps {
   questions: AskQuestionItem[];
   questionId: string;

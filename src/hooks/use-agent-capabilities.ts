@@ -10,9 +10,9 @@ import {
 } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { apiFetch, mutationFetch } from "@/lib/api-client";
+import { apiFetch, mutationFetch } from "@/lib/api/fetcher";
 import { computeAgentCapabilityInvalidations } from "@/lib/agent-capabilities/sse-invalidation";
-import { agentCapabilityKeys } from "@/lib/query-keys";
+import { agentCapabilityKeys } from "@/lib/agent-capabilities/query-keys";
 import {
   agentCapabilityInventorySchema,
   agentCapabilityInvalidationHintsSchema,
@@ -24,7 +24,7 @@ import {
   type AgentCapabilityOverrideOperation,
   type AgentCapabilityPatchRequest,
   type AgentCapabilityViewResponse,
-} from "@/lib/schemas";
+} from "@/lib/agent-capabilities/schemas";
 
 export type AgentCapabilityScope =
   | { level: "global" }

@@ -3,7 +3,7 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionJoinState,
   GraphWorkflowExecutionLaneState,
-} from "@/types";
+} from "@/lib/workflows/schemas";
 import {
   appendPendingJoin,
   applyJoinProgress,

@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { SessionState } from "@/types";
+import type { SessionState } from "@/lib/sessions/schemas";
 import { createWorkflowExecution } from "./test-fixtures";
 import {
   createGraphWorkflowExecutionRouteHandlers,
@@ -1122,10 +1122,9 @@ import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
 import {
   createGraphWorkflowIterationOrchestrator,
   type GraphWorkflowRunAgentIterationInput,
-} from "@/lib/workflows/graph-workflow/iteration-orchestrator";
+} from "@/lib/workflow-graph/iteration-orchestrator";
 import { createResolvedWorkflowDefinition } from "./test-fixtures";
-import type { GraphWorkflowExecution } from "@/types";
-
+import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 function createCodexWorkflowExecution(): GraphWorkflowExecution {
   const definition = createResolvedWorkflowDefinition({
     executionContexts: [

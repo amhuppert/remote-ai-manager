@@ -2,14 +2,14 @@ import Database from "better-sqlite3";
 import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { getConfigDirPath } from "../config";
+import { getConfigDirPath } from "../config/loader";
 import { createLogger } from "@/lib/logging";
 import {
   deleteGlobalValue,
   getGlobalSingleton,
   getGlobalValue,
   setGlobalValue,
-} from "../global-singleton";
+} from "../shared/global-singleton";
 
 const logger = createLogger("state-store/state-db");
 
@@ -318,7 +318,7 @@ export function _createTestDbAtPath(dbPath: string): Db {
  * Test helper: install a `Database` instance into the singleton slot so that
  * subsequent calls to `getDb()` return it. Closes any previously-installed
  * test connection first. Used by test suites whose subject still consumes the
- * shared singleton (e.g. `notification-db.test.ts`).
+ * shared singleton (e.g. `notifications/repo.test.ts`).
  */
 export function _installTestDb(db: Db): void {
   const existing = getGlobalValue<Db>(GLOBAL_KEY);

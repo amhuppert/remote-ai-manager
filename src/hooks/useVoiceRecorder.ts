@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { tracedFetch } from "@/lib/traced-fetch";
+import { tracedFetch } from "@/lib/shared/traced-fetch";
 
 interface UseVoiceRecorderOptions {
   projectName: string;

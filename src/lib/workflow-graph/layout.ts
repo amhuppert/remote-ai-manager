@@ -2,8 +2,7 @@ import type {
   GraphWorkflowVisualLayout,
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
-} from "@/types";
-
+} from "@/lib/workflows/schemas";
 type LayoutInputDefinition =
   | WorkflowSemanticDefinition
   | ResolvedWorkflowSemanticDefinition;

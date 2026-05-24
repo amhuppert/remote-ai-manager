@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { TranscriptEntry } from "@/lib/transcript";
+import type { TranscriptEntry } from "@/lib/prompt/transcript";
 import type { ConversationBackendEvent } from "@/lib/agent-backends/conversation";
 import {
   createExternalTurnHandler,

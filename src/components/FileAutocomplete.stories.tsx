@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useMemo } from "react";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
-import { fuzzyMatch, compareFuzzyResults } from "@/lib/fuzzy";
+import { fuzzyMatch, compareFuzzyResults } from "@/lib/shared/fuzzy";
 import {
   FileAutocomplete,
   type FileAutocompleteHandle,
@@ -27,8 +27,8 @@ const MOCK_FILES = [
   "src/app/projects/ProjectCard.stories.tsx",
   "src/app/projects/[name]/CreateSessionModal.tsx",
   "src/app/projects/[name]/OptimisticDialog.tsx",
-  "src/app/projects/[name]/[session]/ConversationDetailPage.tsx",
-  "src/app/projects/[name]/[session]/LayoutSwitcher.tsx",
+  "src/features/session/SessionPage.tsx",
+  "src/features/session/conversation/LayoutSwitcher.tsx",
   "src/app/api/projects/[name]/sessions/route.ts",
   "src/app/api/projects/[name]/sessions/[session]/prompt/route.ts",
   "src/lib/fuzzy.ts",

@@ -44,8 +44,7 @@ import type {
   VerifyCleanupInput,
   VerifyCleanupOutput,
 } from "./types";
-import type { SSEEvent } from "@/types";
-
+import type { SSEEvent } from "@/lib/api/sse-events";
 const activeActors: AnyActorRef[] = [];
 
 afterEach(() => {

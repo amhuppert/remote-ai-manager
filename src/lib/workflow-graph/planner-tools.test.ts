@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { GlobalConfig, WorkflowDefinitionRecord } from "@/types";
+import type { GlobalConfig } from "@/lib/config/schemas";
+import type { WorkflowDefinitionRecord } from "@/lib/workflows/schemas";
 import { registerPlannerTools, type PlannerToolDeps } from "./planner-tools";
 
 const TOOLS_KEY = "__test_planner_tools";

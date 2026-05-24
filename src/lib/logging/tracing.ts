@@ -17,7 +17,7 @@
 
 import { randomUUID } from "node:crypto";
 import { runWithTrace, type TraceContext } from "./context";
-import { getErrorMessage } from "@/lib/errors";
+import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger } from "./logger";
 
 const logger = createLogger("tracing");

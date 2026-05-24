@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback } from "react";
-import { assertNever } from "@/lib/assert-never";
+import { assertNever } from "@/lib/shared/assert-never";
 import { getItemLabel } from "./notification-helpers";
 import { CloseIcon } from "@/components/icons";
 

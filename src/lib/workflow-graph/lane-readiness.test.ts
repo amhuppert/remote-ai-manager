@@ -3,7 +3,7 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionLaneState,
   GraphWorkflowExecutionJoinState,
-} from "@/types";
+} from "@/lib/workflows/schemas";
 import {
   classifyContextSchedulability,
   isContextOutputCommittedToLane,

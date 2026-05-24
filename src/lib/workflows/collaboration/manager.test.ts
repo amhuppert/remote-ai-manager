@@ -25,13 +25,13 @@ import {
   type CollaborationManagerDeps,
   type CollaborationStopRegistry,
 } from "./manager";
-import type { AgentBackendId } from "@/types";
-import type { AgentSessionRef } from "@/lib/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
 import type {
   AsymmetricCollaborationSliceDeps,
   AsymmetricCollaborationSliceInput,
   AsymmetricCollaborationSliceResult,
-} from "./asymmetric-slice";
+} from "./envelope";
 import { createInMemoryWorkflowEnvelopeStore } from "@/lib/workflows/primitives/workflow-envelope-store";
 import { createWorkflowEnvelopeRepository } from "@/lib/workflows/primitives/workflow-envelope-repository";
 import type { WorkflowEnvelope } from "@/lib/workflows/primitives/workflow-envelope-vocabulary";

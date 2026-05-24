@@ -34,15 +34,12 @@ import {
   unregisterRuntime,
 } from "@/lib/agent-backends/runtime-registry";
 import { createLogger } from "@/lib/logging";
-import type {
-  AgentBackendId,
-  AgentSessionRef,
-  ConversationState,
-  DebugModeState,
-} from "@/types";
+import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import type { ConversationState } from "@/lib/conversations/schemas";
+import type { DebugModeState } from "@/lib/debug-log/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
-import type { ForkedFrom, ConversationRole } from "@/types";
-
+import type { ForkedFrom, ConversationRole } from "@/lib/conversations/schemas";
 const logger = createLogger("conversation-manager");
 
 export interface EnsureActorInputData {
@@ -85,8 +82,8 @@ async function defaultLoadActorInput(
   sessionName: string,
   conversationId: string,
 ): Promise<EnsureActorInputData> {
-  const { getSession } = await import("@/lib/state");
-  const { getProjectDisplayName } = await import("@/lib/project-resolver");
+  const { getSession } = await import("@/lib/state-store");
+  const { getProjectDisplayName } = await import("@/lib/projects/resolver");
 
   const session = await getSession(projectPath, sessionName);
   if (!session) {
@@ -229,7 +226,7 @@ function createProvidedMachine() {
 
       syncDerivedFields: ({ context }) => {
         void (async () => {
-          const { mutateConversation } = await import("@/lib/state");
+          const { mutateConversation } = await import("@/lib/state-store");
           try {
             await mutateConversation(
               context.projectPath,
@@ -343,7 +340,7 @@ function createProvidedMachine() {
       dispatchPushNotification: ({ context }) => {
         void (async () => {
           const { dispatchPushForConversationStatus } =
-            await import("@/lib/push-dispatcher");
+            await import("@/lib/push-notification/dispatcher");
           dispatchPushForConversationStatus({
             projectName: context.projectName,
             sessionName: context.sessionName,
@@ -654,8 +651,8 @@ export function shouldRehydrateSnapshot(snapshot: Snapshot<unknown>): boolean {
  * Returns the number of actors rehydrated.
  */
 export async function rehydrateConversationActors(): Promise<number> {
-  const { readState } = await import("@/lib/state");
-  const { getProjectDisplayName } = await import("@/lib/project-resolver");
+  const { readState } = await import("@/lib/state-store");
+  const { getProjectDisplayName } = await import("@/lib/projects/resolver");
   const { validateRestoredSnapshot } = await import("./persistence");
 
   const state = await readState();

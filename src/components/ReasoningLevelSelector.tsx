@@ -8,8 +8,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import type { EffortLevel } from "@/lib/schemas";
-
+import type { EffortLevel } from "@/lib/agent-backends/schemas";
 export interface EffortOption {
   id: EffortLevel;
   label: string;

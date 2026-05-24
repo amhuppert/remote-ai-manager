@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 
 import { createLogger } from "@/lib/logging";
-import { getErrorMessage } from "@/lib/errors";
+import { getErrorMessage } from "@/lib/shared/errors";
 import {
   AGENT_CAPABILITY_CASCADE_BACKEND_OWNERSHIP,
   agentCapabilityCascadeKindSchema,
@@ -14,7 +14,7 @@ import {
   type AgentCapabilityInventory,
   type AgentCapabilityInvalidationHints,
   type AgentCapabilityViewResponse,
-} from "@/lib/schemas";
+} from "./schemas";
 
 import type {
   MutationRequest,

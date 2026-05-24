@@ -14,10 +14,11 @@ import { _createTestDb } from "./state-db";
 import { createProjectsRepo } from "./projects-repo";
 import { createSessionsRepo } from "./sessions-repo";
 import { createConversationsRepo } from "./conversations-repo";
-import { createStateStore } from "./state-store";
+import { createStateStore } from "./store";
 import type { StateAggregate } from "./state-aggregate";
-import { createConversationService } from "../conversations";
-import { conversationStateSchema, sessionStateSchema } from "../schemas";
+import { createConversationService } from "../conversations/service";
+import { conversationStateSchema } from "@/lib/conversations/schemas";
+import { sessionStateSchema } from "@/lib/sessions/schemas";
 
 type Db = InstanceType<typeof Database>;
 

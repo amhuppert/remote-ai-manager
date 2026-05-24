@@ -1,5 +1,5 @@
-import type { ImagePayload, MessageContentBlock } from "@/types";
-
+import type { MessageContentBlock } from "@/lib/conversations/schemas";
+import type { ImagePayload } from "@/lib/images/schemas";
 export interface AssembleUserContentBlocksArgs {
   promptText: string;
   images: readonly ImagePayload[];

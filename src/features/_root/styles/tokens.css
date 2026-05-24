@@ -1,0 +1,118 @@
+/* ============================================================
+   CC Design System — Global Tokens & Base Styles
+   ============================================================ */
+
+:root {
+  /* ---- Base palette — 6 elevation levels ---- */
+  --bg-void: #06090f;
+  --bg-base: #0b1019;
+  --bg-surface: #111825;
+  --bg-raised: #172033;
+  --bg-elevated: #1a2740;
+  --bg-hover: #1c2841;
+
+  /* ---- Borders — 4 intensity levels ---- */
+  --border-dim: #141d2e;
+  --border-subtle: #1a2338;
+  --border-default: #243048;
+  --border-strong: #2e3d5c;
+
+  /* ---- Accent: Electric Cyan ---- */
+  --cyan: #00e5ff;
+  --cyan-dim: #00b8cc;
+  --cyan-glow: rgba(0, 229, 255, 0.15);
+  --cyan-glow-strong: rgba(0, 229, 255, 0.3);
+  --cyan-glow-text: rgba(0, 229, 255, 0.6);
+
+  /* ---- Accent: Amber ---- */
+  --amber: #ffb300;
+  --amber-dim: #cc8f00;
+  --amber-glow: rgba(255, 179, 0, 0.15);
+
+  /* ---- Accent: Green ---- */
+  --green: #00e676;
+  --green-dim: #00b85c;
+  --green-glow: rgba(0, 230, 118, 0.15);
+
+  /* ---- Accent: Blue ---- */
+  --blue: #448aff;
+  --blue-dim: #2979ff;
+  --blue-glow: rgba(68, 138, 255, 0.15);
+
+  /* ---- Accent: Red ---- */
+  --red: #ff3d5a;
+  --red-dim: #cc3148;
+  --red-glow: rgba(255, 61, 90, 0.12);
+  --red-text: #e8506c;
+
+  /* ---- Accent: Violet (Codex agent identity) ---- */
+  --violet: #c77dff;
+  --violet-dim: #9d56d6;
+  --violet-glow: rgba(199, 125, 255, 0.15);
+  --violet-glow-strong: rgba(199, 125, 255, 0.3);
+
+  /* ---- Rainbow gradient (max-class reasoning effort only) ---- */
+  --rainbow-gradient: linear-gradient(
+    90deg,
+    #ff6b6b,
+    #ffa500,
+    #ffd93d,
+    #6bcb77,
+    #4d96ff,
+    #9b59b6,
+    #ff6b6b
+  );
+  --rainbow-tint: linear-gradient(
+    90deg,
+    rgba(255, 107, 107, 0.14),
+    rgba(255, 165, 0, 0.12),
+    rgba(255, 217, 61, 0.1),
+    rgba(107, 203, 119, 0.12),
+    rgba(77, 150, 255, 0.14),
+    rgba(155, 89, 182, 0.13),
+    rgba(255, 107, 107, 0.14)
+  );
+  --rainbow-glow: rgba(155, 89, 182, 0.15);
+  --rainbow-glow-strong: rgba(155, 89, 182, 0.25);
+  --rainbow-glow-blue: rgba(77, 150, 255, 0.08);
+
+  /* ---- Text — 4 levels ---- */
+  --text-primary: #dce2f0;
+  --text-secondary: #7b899f;
+  --text-tertiary: #738699;
+  --text-inverse: #06090f;
+
+  /* ---- Typography (set by next/font, fallbacks here) ---- */
+  --font-display: var(--font-anybody), "Anybody", sans-serif;
+  --font-body: var(--font-manrope), "Manrope", sans-serif;
+  --font-mono: var(--font-geist-mono), "Geist Mono", monospace;
+
+  /* ---- Spacing scale ---- */
+  --space-2xs: 2px;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --space-2xl: 32px;
+  --space-3xl: 48px;
+
+  /* ---- Sizing floors ---- */
+  --font-size-floor: 0.7rem;
+  --icon-size-min: 20px;
+  --icon-btn-min: 24px;
+  --touch-target-min: 44px;
+
+  /* ---- Semantic spacing ---- */
+  --space-section: var(--space-xl);
+  --space-header-content: var(--space-sm);
+  --space-item: var(--space-xs);
+
+  /* ---- Border radii ---- */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  /* ---- Topbar ---- */
+  --topbar-height: 48px;
+}

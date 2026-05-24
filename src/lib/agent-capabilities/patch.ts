@@ -24,7 +24,7 @@ import {
   type AgentCapabilityCascadesOverride,
   type AgentCapabilityOverrideOperation,
   type AgentCapabilityOverrides,
-} from "@/lib/schemas";
+} from "./schemas";
 
 export interface ApplyCapabilityOperationsInput {
   current: AgentCapabilityOverrides;

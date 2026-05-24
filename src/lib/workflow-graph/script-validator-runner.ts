@@ -7,7 +7,7 @@ import { createLogger } from "@/lib/logging";
 import {
   executeRepoValidationCommand as defaultExecuteRepoValidationCommand,
   type RepoValidationCommandResult,
-} from "@/lib/repo-config";
+} from "@/lib/projects/repo-config";
 import {
   createArtifactRegistry,
   ArtifactRequiredFailure,

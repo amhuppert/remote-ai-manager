@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { GraphWorkflowExecution } from "@/types";
+import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import { resolveBoundConversationId } from "./workflow-execution-server";
 

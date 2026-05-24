@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
+import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type {
   AgentTaskRunner,
   AgentTaskRequest,
   AgentTaskResult,
-  PortableMcpConfig,
-} from "@/types";
+} from "@/lib/agent-backends/task";
 import { dispatchTaskRun } from "./agent-call-task";
 import type { BackendCapabilityView } from "./agent-call-vocabulary";
 

@@ -1,6 +1,6 @@
 import { access } from "node:fs/promises";
 import path from "node:path";
-import { getConfigDirPath } from "@/lib/config";
+import { getConfigDirPath } from "@/lib/config/loader";
 
 export interface ResolvedServerLogPath {
   path: string;

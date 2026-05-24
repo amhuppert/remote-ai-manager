@@ -68,16 +68,15 @@ import {
 } from "@/lib/workflow-graph/test-fixtures";
 import { runCircuitBreakerGate } from "./circuit-breaker-gate";
 import { runStructuredOutputGate } from "./structured-output-gate";
-import { workflowAgentValidatorResultSchema } from "@/lib/schemas";
+import { workflowAgentValidatorResultSchema } from "@/lib/workflows/schemas";
+import type { SSEEvent } from "@/lib/api/sse-events";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
   GraphWorkflowSSEEvent,
   GraphWorkflowStatus,
   GraphWorkflowTaskStatus,
-  SSEEvent,
-} from "@/types";
-
+} from "@/lib/workflows/schemas";
 function captureWire() {
   const wire = vi.fn<(event: SSEEvent) => void>();
   setDefaultSessionStatusBusBroadcastForTesting(wire);
@@ -674,7 +673,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
 
   it("graph workflow execution loop routes its consecutive-failure halt through the runCircuitBreakerGate dep", async () => {
     const { createGraphWorkflowExecutionLoop } =
-      await import("@/lib/workflows/graph-workflow/execution-loop");
+      await import("@/lib/workflow-graph/execution-loop");
 
     const definition = createResolvedWorkflowDefinition();
     const contextId = definition.executionContexts[0]!.id;

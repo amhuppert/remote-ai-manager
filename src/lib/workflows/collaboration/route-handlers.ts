@@ -16,25 +16,26 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createLogger } from "@/lib/logging";
-import { getErrorMessage } from "@/lib/errors";
+import { createLogger, withTracing } from "@/lib/logging";
+import { getErrorMessage } from "@/lib/shared/errors";
 import {
   resolveProjectPath as defaultResolveProjectPath,
   type ProjectResolver,
-} from "@/lib/project-resolver";
+} from "@/lib/projects/resolver";
 import {
   getSession as defaultGetSession,
   mutateConversation as defaultMutateConversation,
-} from "@/lib/state";
-import { setConversationBackend as defaultSetConversationBackend } from "@/lib/conversations";
-import type { AgentBackendId } from "@/lib/schemas";
+} from "@/lib/state-store";
+import { setConversationBackend as defaultSetConversationBackend } from "@/lib/conversations/service";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
   getTranscriptPath as defaultGetTranscriptPath,
   safeAppendTranscriptEntry as defaultSafeAppendTranscriptEntry,
   type TranscriptBroadcastMeta,
   type TranscriptEntry,
-} from "@/lib/transcript";
-import type { ApiError, ConversationState } from "@/types";
+} from "@/lib/prompt/transcript";
+import type { ApiError } from "@/lib/api/errors";
+import type { ConversationState } from "@/lib/conversations/schemas";
 import {
   collaborationResumeRequestSchema,
   collaborationStartRequestSchema,
@@ -66,7 +67,7 @@ export interface CollaborationRouteDeps {
    * before the manager begins the run. This is what lets the conversation
    * timeline (and the inline `CollabPassage` anchor logic) render the start
    * passage in the position the user submitted it from. Defaults to
-   * `safeAppendTranscriptEntry` from `@/lib/transcript`; tests override.
+   * `safeAppendTranscriptEntry` from `@/lib/prompt/transcript`; tests override.
    */
   appendTranscriptEntry: (
     conversationId: string,
@@ -78,14 +79,14 @@ export interface CollaborationRouteDeps {
    * stamp `transcriptPath` on conversations that were /collab-started before
    * any normal prompt has run, so the conversation no longer appears with a
    * `null` transcriptPath in lists/active surfaces. Defaults to
-   * `getTranscriptPath` from `@/lib/transcript`; tests override.
+   * `getTranscriptPath` from `@/lib/prompt/transcript`; tests override.
    */
   getTranscriptPath: (conversationId: string) => Promise<string>;
   /**
    * Mutates a conversation entry in session state under the durable lock.
    * Called from START to flip a `new` conversation to a started state with a
    * stamped transcriptPath, incremented promptCount, and refreshed
-   * lastActivityAt. Defaults to `mutateConversation` from `@/lib/state`; tests
+   * lastActivityAt. Defaults to `mutateConversation` from `@/lib/state-store`; tests
    * override.
    */
   mutateConversation: <T = void>(
@@ -681,3 +682,20 @@ export function createCollaborationRouteHandlers(
     },
   };
 }
+
+const defaultCollaborationHandlers = createCollaborationRouteHandlers();
+
+export const startCollaboration = withTracing(
+  defaultCollaborationHandlers.START,
+);
+export const listCollaboration = withTracing(defaultCollaborationHandlers.LIST);
+export const getCollaborationDetail = withTracing(
+  defaultCollaborationHandlers.GET_DETAIL,
+);
+export const getCollaborationArtifact = withTracing(
+  defaultCollaborationHandlers.GET_ARTIFACT,
+);
+export const resumeCollaboration = withTracing(
+  defaultCollaborationHandlers.RESUME,
+);
+export const stopCollaboration = withTracing(defaultCollaborationHandlers.STOP);

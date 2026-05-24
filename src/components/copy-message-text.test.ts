@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { MessageContentBlock } from "@/types";
+import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import { extractCopyText } from "./copy-message-text";
 
 describe("extractCopyText", () => {

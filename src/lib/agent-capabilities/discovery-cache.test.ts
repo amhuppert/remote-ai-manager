@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   AgentCapabilityCascadeKind,
   AgentCapabilityScopeContext,
-} from "@/lib/schemas";
+} from "./schemas";
 import { _resetLoggerForTesting } from "@/lib/logging/logger";
 
 import {

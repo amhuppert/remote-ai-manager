@@ -41,7 +41,7 @@ import type {
   AgentCapabilityDiagnostic,
   AgentCapabilitySourceRef,
   AgentCapabilityViewResponse,
-} from "@/lib/schemas";
+} from "./schemas";
 
 export interface CodexRuntimeTranslationInput {
   skillsView: AgentCapabilityViewResponse | undefined;

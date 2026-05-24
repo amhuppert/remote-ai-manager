@@ -1,7 +1,6 @@
 "use client";
 
-import type { AgentBackendId } from "@/lib/schemas";
-
+import type { AgentBackendId } from "@/lib/shared/schemas";
 interface BackendToggleProps {
   value: AgentBackendId;
   onChange(backend: AgentBackendId): void;

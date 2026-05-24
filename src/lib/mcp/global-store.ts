@@ -2,15 +2,14 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 
-import { resolveConfigDir } from "@/lib/config";
-import { getErrorMessage } from "@/lib/errors";
+import { resolveConfigDir } from "@/lib/config/loader";
+import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger } from "@/lib/logging";
 import {
   mcpGlobalStateSchema,
   type McpOverrideOperation,
   type McpOverrides,
-} from "@/lib/schemas";
-
+} from "@/lib/mcp/schemas";
 import { applyOperations } from "./overrides-patch";
 
 const MCP_GLOBAL_STATE_FILENAME = "mcp-global.json";

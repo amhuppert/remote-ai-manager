@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import type { GraphWorkflowHaltReason } from "@/types";
-
+import type { GraphWorkflowHaltReason } from "@/lib/workflows/schemas";
 interface FormattedHaltReason {
   headline: string;
   detail: ReactNode | null;

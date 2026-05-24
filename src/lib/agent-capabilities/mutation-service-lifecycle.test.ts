@@ -14,7 +14,7 @@ vi.mock("@/lib/logging", () => ({
 import type {
   AgentCapabilityOverrides,
   AgentCapabilityViewResponse,
-} from "@/lib/schemas";
+} from "./schemas";
 
 import type { GlobalCapabilityOverrideStore } from "./global-store";
 import type { ScopeCapabilityOverrideStore } from "./scope-store";

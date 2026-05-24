@@ -23,9 +23,9 @@ import path from "node:path";
 import { parse as parseToml } from "smol-toml";
 
 import { createLogger } from "@/lib/logging";
-import { getErrorMessage } from "@/lib/errors";
+import { getErrorMessage } from "@/lib/shared/errors";
 
-import { parseFrontmatter } from "@/lib/commands";
+import { parseFrontmatter } from "@/lib/commands/service";
 
 import { redactAgentCapabilityText } from "./redaction";
 
@@ -34,7 +34,7 @@ import type {
   AgentCapabilityDiscoveredItem,
   AgentCapabilityDiscoverySupport,
   AgentCapabilitySourceRef,
-} from "@/lib/schemas";
+} from "./schemas";
 
 const logger = createLogger("agent-capabilities.codex-discovery");
 

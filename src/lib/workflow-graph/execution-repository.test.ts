@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { GlobalConfig, SessionState } from "@/types";
+import type { GlobalConfig } from "@/lib/config/schemas";
+import type { SessionState } from "@/lib/sessions/schemas";
 import {
   GraphWorkflowValidationError,
   createGraphWorkflowExecutionRepository,

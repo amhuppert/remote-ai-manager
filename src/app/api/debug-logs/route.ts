@@ -1,8 +1,6 @@
-import { createDebugLogsIngestHandlers } from "@/lib/debug-logs-ingest-route-handlers";
+export {
+  debugLogsIngestOptions as OPTIONS,
+  ingestDebugLogs as POST,
+} from "@/lib/debug-log/ingest-route-handlers";
 
 export const dynamic = "force-dynamic";
-
-const handlers = createDebugLogsIngestHandlers();
-
-export const OPTIONS = handlers.OPTIONS;
-export const POST = handlers.POST;

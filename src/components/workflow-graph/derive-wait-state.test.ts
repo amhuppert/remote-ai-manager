@@ -6,7 +6,7 @@ import type {
   GraphWorkflowExecutionLaneState,
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
-} from "@/types";
+} from "@/lib/workflows/schemas";
 import { deriveContextWaitState } from "./derive-wait-state";
 
 function makeDefinition(

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   agentCapabilityDiagnosticSchema,
   agentCapabilityDiscoveredItemSchema,
-} from "@/lib/schemas";
+} from "./schemas";
 
 import {
   discoverCodexPluginsCanonical,

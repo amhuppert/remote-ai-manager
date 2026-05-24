@@ -17,7 +17,7 @@
  * Recovery decisions are logged through the project's structured logger so
  * an operator can audit which envelopes were transitioned at startup.
  */
-import type { ManagerState } from "@/types";
+import type { ManagerState } from "@/lib/projects/schemas";
 import { createLogger } from "@/lib/logging";
 import type { GateKind } from "./gate-vocabulary";
 import type { WorkflowEnvelope } from "./workflow-envelope-vocabulary";

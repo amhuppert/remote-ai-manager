@@ -1,9 +1,8 @@
 "use client";
 
 import { useMemo } from "react";
-import { useFullConfigQuery } from "@/lib/queries";
-import type { WorkflowDefaults } from "@/types";
-
+import { useFullConfigQuery } from "@/lib/config/queries";
+import type { WorkflowDefaults } from "@/lib/config/schemas";
 const SEEDED_DEFAULTS: WorkflowDefaults = {
   implementer: {
     backend: "claude",

@@ -1,5 +1,1 @@
-import { redirect } from "next/navigation";
-
-export default function Home(): never {
-  redirect("/projects");
-}
+export { default } from "@/features/home/HomePage";

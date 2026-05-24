@@ -1,12 +1,12 @@
 # Agent Capabilities — Shared Schema & Metadata Contract
 
-Status: Tasks 2.1, 2.2, 2.3 complete. Schemas live in `src/lib/schemas.ts`, metadata in `src/lib/agent-capabilities/metadata.ts`. All downstream tasks (3.x–10.x) MUST import from these modules — do not redeclare any type, enum, or constant covered here.
+Status: Tasks 2.1, 2.2, 2.3 complete. Schemas live in `src/lib/agent-capabilities/schemas.ts`, metadata in `src/lib/agent-capabilities/metadata.ts`. All downstream tasks (3.x–10.x) MUST import from these modules — do not redeclare any type, enum, or constant covered here.
 
 ## Cascade kind enumeration
 
-- `AGENT_CAPABILITY_CASCADE_KINDS` (const tuple) and `agentCapabilityCascadeKindSchema` (z.enum) live in `src/lib/schemas.ts`.
+- `AGENT_CAPABILITY_CASCADE_KINDS` (const tuple) and `agentCapabilityCascadeKindSchema` (z.enum) live in `src/lib/agent-capabilities/schemas.ts`.
 - Five values, fixed order: `claude-skills`, `claude-plugins`, `claude-agents`, `codex-skills`, `codex-plugins`.
-- `src/lib/agent-capabilities/metadata.ts` re-exports the constant for legacy callers; new code should import from `@/lib/schemas`.
+- `src/lib/agent-capabilities/metadata.ts` re-exports the constant for legacy callers; new code should import from `@/lib/agent-capabilities/schemas`.
 
 ## Sparse override storage
 

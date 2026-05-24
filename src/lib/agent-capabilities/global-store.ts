@@ -30,15 +30,15 @@ import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 
-import { resolveConfigDir } from "@/lib/config";
-import { getErrorMessage } from "@/lib/errors";
+import { resolveConfigDir } from "@/lib/config/loader";
+import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger } from "@/lib/logging";
 import {
   agentCapabilityGlobalStateSchema,
   type AgentCapabilityCascadeKind,
   type AgentCapabilityOverrideOperation,
   type AgentCapabilityOverrides,
-} from "@/lib/schemas";
+} from "./schemas";
 
 import { applyCapabilityOperations } from "./patch";
 import { redactAgentCapabilityText } from "./redaction";

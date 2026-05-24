@@ -5,9 +5,9 @@ import type {
   ConversationBackendRuntime,
   ConversationBackendTurnInput,
   ConversationBackendTurnResult,
-  ConversationState,
-  AgentCapabilityRuntimeApplicationState,
-} from "@/types";
+} from "@/lib/agent-backends/conversation";
+import type { AgentCapabilityRuntimeApplicationState } from "@/lib/agent-capabilities/schemas";
+import type { ConversationState } from "@/lib/conversations/schemas";
 import type { ClaudeRuntimeCapabilityConfig } from "@/lib/agent-capabilities/claude-runtime-translator";
 import type { CodexRuntimeCapabilityConfig } from "@/lib/agent-capabilities/codex-runtime-translator";
 import {
@@ -21,7 +21,7 @@ import {
 // Infrastructure mocks (module-level side effects only)
 // ---------------------------------------------------------------------------
 
-vi.mock("@/lib/sdk-env", () => ({}));
+vi.mock("@/lib/shared/sdk-env", () => ({}));
 
 vi.mock("@/lib/logging", () => ({
   createLogger: () => ({

@@ -1,5 +1,5 @@
 import type { NotificationItem } from "./NotificationsPanel";
-import { assertNever } from "@/lib/assert-never";
+import { assertNever } from "@/lib/shared/assert-never";
 
 export function getItemLabel(item: NotificationItem): string {
   switch (item.type) {

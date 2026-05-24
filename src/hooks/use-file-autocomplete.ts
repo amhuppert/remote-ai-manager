@@ -1,12 +1,12 @@
 "use client";
 
 import { useMemo, useRef, useCallback, useState } from "react";
-import { useProjectFilesQuery } from "@/lib/queries";
-import { detectFileAutocompleteTrigger } from "@/lib/file-autocomplete-trigger";
+import { useProjectFilesQuery } from "@/lib/files/queries";
+import { detectFileAutocompleteTrigger } from "@/lib/files/file-autocomplete-trigger";
 import {
   filterAndScoreFiles,
   type ScoredFileItem,
-} from "@/lib/file-autocomplete-filter";
+} from "@/lib/files/file-autocomplete-filter";
 import type { FileAutocompleteHandle } from "@/components/FileAutocomplete";
 
 interface UseFileAutocompleteOptions {

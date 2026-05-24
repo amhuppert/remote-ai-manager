@@ -1,0 +1,73 @@
+/* ============================================================
+   Keyboard Shortcuts Modal (.hotkey-help-*)
+   ============================================================ */
+
+.hotkey-help-modal {
+  max-width: 520px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.hotkey-help-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.hotkey-help-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.hotkey-help-category {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+  margin: 0;
+}
+
+.hotkey-help-list {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hotkey-help-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+}
+
+.hotkey-help-item:hover {
+  background: var(--bg-raised);
+}
+
+.hotkey-help-label {
+  font-size: 0.82rem;
+  color: var(--text-primary);
+}
+
+.hotkey-help-key {
+  margin: 0;
+}
+
+.hotkey-help-key kbd {
+  display: inline-block;
+  min-width: 24px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  background: var(--bg-raised);
+  text-align: center;
+}

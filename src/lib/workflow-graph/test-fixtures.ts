@@ -4,8 +4,7 @@ import type {
   ResolvedWorkflowSemanticDefinition,
   WorkflowDefinitionRecord,
   WorkflowSemanticDefinition,
-} from "@/types";
-
+} from "@/lib/workflows/schemas";
 const timestamp = "2026-03-27T12:00:00.000Z";
 
 export function createWorkflowDefinition(

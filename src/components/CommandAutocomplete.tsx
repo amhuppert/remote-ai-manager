@@ -9,20 +9,20 @@ import {
   useImperativeHandle,
   forwardRef,
 } from "react";
-import { fuzzyMatch, compareFuzzyResults } from "@/lib/fuzzy";
-import type { MatchTier } from "@/lib/fuzzy";
+import { fuzzyMatch, compareFuzzyResults } from "@/lib/shared/fuzzy";
+import type { MatchTier } from "@/lib/shared/fuzzy";
 import {
   useCommandsQuery,
   useProjectCommandsQuery,
-  useKiroDocTreeQuery,
-} from "@/lib/queries";
+} from "@/lib/commands/queries";
+import { useKiroDocTreeQuery } from "@/lib/kiro/queries";
 import {
   useAgentCapabilityViewQuery,
   type AgentCapabilityScope,
 } from "@/hooks/use-agent-capabilities";
-import { filterDisabledCommandItems } from "@/lib/commands-capability-filter";
-import type { AgentBackendId, CommandItem } from "@/types";
-
+import { filterDisabledCommandItems } from "@/lib/commands/capability-filter";
+import type { CommandItem } from "@/lib/commands/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 const BUILT_IN_CLAUDE_COMMANDS: readonly CommandItem[] = [
   {
     name: "/collab",

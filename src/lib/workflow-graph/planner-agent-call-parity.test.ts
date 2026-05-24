@@ -3,7 +3,7 @@ import type {
   AgentTaskRunner,
   AgentTaskResult,
 } from "@/lib/agent-backends/task";
-import type { WorkflowSemanticDefinition } from "@/types";
+import type { WorkflowSemanticDefinition } from "@/lib/workflows/schemas";
 import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import { createDefaultPlannerRunner } from "./planner";

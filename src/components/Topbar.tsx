@@ -6,7 +6,7 @@ import {
   useUnifiedPanelOpen,
   useToggleUnifiedPanel,
 } from "@/stores/unified-panel.store";
-import { useNotificationsQuery } from "@/lib/queries";
+import { useNotificationsQuery } from "@/lib/notifications/queries";
 import { useActiveJobs } from "@/stores/notification.store";
 
 interface BreadcrumbSegment {

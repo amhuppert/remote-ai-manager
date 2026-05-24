@@ -1,7 +1,6 @@
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import type { ImageAttachment } from "@/hooks/use-image-attachments";
-import type { ImagePayload, ImageMediaType } from "@/types";
-
+import type { ImagePayload, ImageMediaType } from "@/lib/images/schemas";
 export interface SerializePromptDocArgs {
   doc: ProseMirrorNode;
   attachments: ImageAttachment[];

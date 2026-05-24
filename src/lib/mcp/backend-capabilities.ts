@@ -21,11 +21,10 @@
 import { createLogger } from "@/lib/logging";
 import type { McpServerDefinition } from "@/lib/mcp/types";
 import type {
-  AgentBackendId,
   McpServerCompatibilityView,
   McpTransport,
-} from "@/lib/schemas";
-
+} from "@/lib/mcp/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 const logger = createLogger("mcp.backend-capabilities");
 
 // ---------------------------------------------------------------------------

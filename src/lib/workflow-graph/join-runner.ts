@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { getErrorMessage } from "@/lib/errors";
+import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger } from "@/lib/logging";
 import type { GraphMergeRunner } from "./graph-merge-runner";
 import type { PerSessionMergeMutex } from "./per-session-merge-mutex";
@@ -8,8 +8,7 @@ import { applyJoinProgress, remainingSourceLanes } from "./lane-join";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionJoinState,
-} from "@/types";
-
+} from "@/lib/workflows/schemas";
 const logger = createLogger("graph-workflow-join-runner");
 
 export type JoinRunnerMutateActive = (

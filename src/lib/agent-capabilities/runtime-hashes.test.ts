@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { agentCapabilityRuntimeApplicationStateSchema } from "@/lib/schemas";
+import { agentCapabilityRuntimeApplicationStateSchema } from "./schemas";
 
 import {
   computeCascadeRuntimeHash,

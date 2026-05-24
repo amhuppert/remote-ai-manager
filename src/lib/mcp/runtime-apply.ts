@@ -32,13 +32,13 @@ import type {
 } from "@/lib/agent-backends/portable-mcp";
 import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
 import { createLogger } from "@/lib/logging";
+import type { ConversationState } from "@/lib/conversations/schemas";
 import type {
-  AgentBackendId,
-  ConversationState,
   McpApplyDisposition,
   McpRuntimeApplicationState,
-} from "@/lib/schemas";
-import { createStateManager } from "@/lib/state";
+} from "@/lib/mcp/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
+import { createStateManager } from "@/lib/state-store";
 
 const logger = createLogger("mcp.runtime-apply");
 

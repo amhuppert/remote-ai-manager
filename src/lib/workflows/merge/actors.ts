@@ -6,7 +6,7 @@
  */
 
 import { fromPromise } from "xstate";
-import type { ConflictEntry, ConflictDecisionInput } from "@/lib/schemas";
+import type { ConflictEntry, ConflictDecisionInput } from "@/lib/jobs/schemas";
 import type { AgentSessionRef } from "@/lib/agent-backends/types";
 
 // ============================================================
@@ -107,7 +107,7 @@ export const checkUncommitted = fromPromise<
   CheckUncommittedOutput,
   CheckUncommittedInput
 >(async ({ input }) => {
-  const { hasUncommittedChanges } = await import("@/lib/git-operations");
+  const { hasUncommittedChanges } = await import("@/lib/git/commits");
   const hasChanges = await hasUncommittedChanges(input.worktreePath);
   return { hasChanges };
 });
@@ -117,7 +117,7 @@ export const getCurrentBranchActor = fromPromise<
   GetCurrentBranchOutput,
   GetCurrentBranchInput
 >(async ({ input }) => {
-  const { getCurrentBranch } = await import("@/lib/git-operations");
+  const { getCurrentBranch } = await import("@/lib/git/commits");
   const branch = await getCurrentBranch(input.worktreePath);
   return { branch };
 });
@@ -127,7 +127,7 @@ export const commitChangesActor = fromPromise<
   CommitChangesOutput,
   CommitChangesInput
 >(async ({ input }) => {
-  const { commitChanges } = await import("@/lib/git-operations");
+  const { commitChanges } = await import("@/lib/git/commits");
   const { hash } = await commitChanges(input.worktreePath, input.message, {
     skipHooks: input.skipHooks,
   });
@@ -137,7 +137,7 @@ export const commitChangesActor = fromPromise<
 /** Merge target branch into the feature branch. */
 export const mergeMain = fromPromise<MergeMainOutput, MergeMainInput>(
   async ({ input }) => {
-    const { mergeTargetIntoFeature } = await import("@/lib/git-operations");
+    const { mergeTargetIntoFeature } = await import("@/lib/git/worktree");
     const result = await mergeTargetIntoFeature(
       input.worktreePath,
       input.targetBranch,
@@ -154,7 +154,8 @@ export const resolveConflictsActor = fromPromise<
   ResolveConflictsOutput,
   ResolveConflictsInput
 >(async ({ input }) => {
-  const { resolveConflicts } = await import("@/lib/conflict-resolution");
+  const { resolveConflicts } =
+    await import("@/lib/sessions/conflict-resolution");
   const result = await resolveConflicts({
     worktreePath: input.worktreePath,
     decisions: input.decisions,
@@ -172,7 +173,8 @@ export const analyzeConflictsActor = fromPromise<
   AnalyzeConflictsOutput,
   AnalyzeConflictsInput
 >(async ({ input }) => {
-  const { analyzeConflicts } = await import("@/lib/conflict-resolution");
+  const { analyzeConflicts } =
+    await import("@/lib/sessions/conflict-resolution");
   const result = await analyzeConflicts({
     worktreePath: input.worktreePath,
   });
@@ -188,7 +190,7 @@ export const runValidation = fromPromise<
   RunValidationInput
 >(async ({ input }) => {
   const { runPreMergeValidation, readRepoConfig } =
-    await import("@/lib/repo-config");
+    await import("@/lib/projects/repo-config");
 
   // Per-repo timeout takes precedence over the machine's default
   let timeoutMs = input.timeoutMs;
@@ -215,8 +217,9 @@ export const fixValidation = fromPromise<
   FixValidationOutput,
   FixValidationInput
 >(async ({ input }) => {
-  const { fixValidationErrors } = await import("@/lib/validation-fix");
-  const { readRepoConfig } = await import("@/lib/repo-config");
+  const { fixValidationErrors } =
+    await import("@/lib/workflows/validation-fix");
+  const { readRepoConfig } = await import("@/lib/projects/repo-config");
   const path = await import("node:path");
 
   // Resolve the validation command so the agent can verify its own fixes
@@ -254,11 +257,11 @@ export const squashMergeActor = fromPromise<
   SquashMergeOutput,
   SquashMergeInput
 >(async ({ input }) => {
-  const { squashMerge } = await import("@/lib/git-operations");
-  const { acquireProjectLock } = await import("@/lib/lock");
-  const { setSessionFinished } = await import("@/lib/state");
-  const { stopAllForSession } = await import("@/lib/dev-server-registry");
-  const { retargetOrphanedChildren } = await import("@/lib/sessions");
+  const { squashMerge } = await import("@/lib/git/worktree");
+  const { acquireProjectLock } = await import("@/lib/prompt/single-flight");
+  const { setSessionFinished } = await import("@/lib/state-store");
+  const { stopAllForSession } = await import("@/lib/dev-server/registry");
+  const { retargetOrphanedChildren } = await import("@/lib/sessions/service");
 
   // Acquire project lock with retry
   const MAX_WAIT_MS = 30_000;

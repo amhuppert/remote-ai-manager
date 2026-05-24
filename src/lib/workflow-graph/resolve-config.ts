@@ -1,13 +1,11 @@
+import type { GlobalConfig, WorkflowDefaults } from "@/lib/config/schemas";
 import type {
-  GlobalConfig,
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowResolvedContext,
   ResolvedWorkflowSemanticDefinition,
   WorkflowConfigOverride,
-  WorkflowDefaults,
   WorkflowSemanticDefinition,
-} from "@/types";
-
+} from "@/lib/workflows/schemas";
 export type ResolvedWorkflowConfig = WorkflowDefaults;
 
 const SEEDED_DEFAULTS: WorkflowDefaults = {

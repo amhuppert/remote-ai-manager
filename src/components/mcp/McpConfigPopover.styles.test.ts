@@ -2,7 +2,22 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const css = readFileSync(resolve(__dirname, "../../app/globals.css"), "utf8");
+const ROOT_STYLES_DIR = resolve(__dirname, "../../features/_root/styles");
+const ROOT_PARTIALS = [
+  "tokens.css",
+  "reset.css",
+  "typography.css",
+  "shell.css",
+  "topbar.css",
+  "sidebar-nav.css",
+  "keyboard-shortcuts-modal.css",
+];
+const css = [
+  ...ROOT_PARTIALS.map((p) =>
+    readFileSync(resolve(ROOT_STYLES_DIR, p), "utf8"),
+  ),
+  readFileSync(resolve(__dirname, "../../app/globals.css"), "utf8"),
+].join("\n");
 
 function extractDefinedRootVars(source: string): Set<string> {
   const defined = new Set<string>();

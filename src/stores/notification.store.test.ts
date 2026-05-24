@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { enableMapSet } from "immer";
 import { useNotificationStore } from "./notification.store";
-import type { JobStatusEvent } from "@/types";
-
+import type { JobStatusEvent } from "@/lib/jobs/schemas";
 enableMapSet();
 
 // ============================================================

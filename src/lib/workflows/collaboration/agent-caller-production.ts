@@ -51,7 +51,7 @@ import type {
 } from "@/lib/workflows/primitives/agent-call-vocabulary";
 import type { LaneScheduler } from "@/lib/workflows/primitives/lane-scheduler";
 import type { LaneService } from "@/lib/workflows/primitives/lane-service";
-import type { AsymmetricCollaborationSliceDeps } from "./asymmetric-slice";
+import type { AsymmetricCollaborationSliceDeps } from "./envelope";
 
 const logger = createLogger("workflows.collaboration.agent-caller-production");
 

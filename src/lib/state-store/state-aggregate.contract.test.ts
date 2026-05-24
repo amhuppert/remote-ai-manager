@@ -26,24 +26,20 @@ import {
   type AllRepos,
   type StateAggregate,
 } from "./state-aggregate";
-import { createStateStore } from "./state-store";
+import { createStateStore } from "./store";
+import { conversationStateSchema } from "@/lib/conversations/schemas";
+import { referenceDocumentSchema } from "@/lib/reference-documents/schemas";
+import { managerStateSchema, projectRowSchema } from "@/lib/projects/schemas";
 import {
-  conversationStateSchema,
-  managerStateSchema,
-  projectRowSchema,
-  referenceDocumentSchema,
   sessionListItemSchema,
   sessionStateSchema,
-} from "../schemas";
+} from "@/lib/sessions/schemas";
 import { z } from "zod";
-import type {
-  ConversationState,
-  ManagerState,
-  ProjectRow,
-  ReferenceDocument,
-  SessionState,
-} from "@/types";
-import { PersistenceError } from "../errors";
+import type { ConversationState } from "@/lib/conversations/schemas";
+import type { ManagerState, ProjectRow } from "@/lib/projects/schemas";
+import type { ReferenceDocument } from "@/lib/reference-documents/schemas";
+import type { SessionState } from "@/lib/sessions/schemas";
+import { PersistenceError } from "../shared/errors";
 
 type Db = InstanceType<typeof Database>;
 

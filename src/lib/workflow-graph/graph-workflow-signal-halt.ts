@@ -1,9 +1,12 @@
 import { createLogger } from "@/lib/logging";
-import type { GraphWorkflowExecution, GraphWorkflowHaltReason } from "@/types";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowHaltReason,
+} from "@/lib/workflows/schemas";
 import type {
   RecordPendingHaltReasonInput,
   RecordPendingHaltReasonResult,
-} from "@/lib/workflows/graph-workflow/workflow-manager";
+} from "@/lib/workflow-graph/workflow-manager";
 
 interface GraphWorkflowSignalHaltManager {
   recordPendingHaltReason(

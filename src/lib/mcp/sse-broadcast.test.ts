@@ -10,13 +10,12 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { McpConfigRouteBroadcastPayload } from "@/lib/mcp-config-route-handlers";
+import type { McpConfigRouteBroadcastPayload } from "@/lib/mcp/config-route-handlers";
 import {
   mcpConfigUpdatedEventSchema,
   mcpToolsUpdatedEventSchema,
-} from "@/lib/schemas";
-import type { SSEEvent } from "@/types";
-
+} from "@/lib/mcp/schemas";
+import type { SSEEvent } from "@/lib/api/sse-events";
 import { createMcpRouteBroadcast } from "./sse-broadcast";
 
 describe("createMcpRouteBroadcast", () => {

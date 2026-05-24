@@ -9,7 +9,7 @@ import {
   useToggleAgentCapabilityItemMutation,
   type AgentCapabilityScope,
 } from "@/hooks/use-agent-capabilities";
-import type { AgentCapabilityCascadeKind } from "@/lib/schemas";
+import type { AgentCapabilityCascadeKind } from "@/lib/agent-capabilities/schemas";
 
 import {
   AgentCapabilityPanel,

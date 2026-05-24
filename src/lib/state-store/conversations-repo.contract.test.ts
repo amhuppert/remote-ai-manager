@@ -16,9 +16,8 @@ import {
   createConversationsRepo,
   type ConversationsRepo,
 } from "./conversations-repo";
-import { conversationStateSchema } from "../schemas";
-import type { ConversationState } from "@/types";
-
+import { conversationStateSchema } from "@/lib/conversations/schemas";
+import type { ConversationState } from "@/lib/conversations/schemas";
 type Db = InstanceType<typeof Database>;
 
 let db: Db;

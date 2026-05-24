@@ -1,8 +1,7 @@
 import type {
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
-} from "@/types";
-
+} from "@/lib/workflows/schemas";
 type PlanInputDefinition =
   | WorkflowSemanticDefinition
   | ResolvedWorkflowSemanticDefinition;

@@ -1,21 +1,21 @@
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
+import { mcpOverridesSchema } from "@/lib/mcp/schemas";
+import { agentCapabilityOverridesSchema } from "@/lib/agent-capabilities/schemas";
+import { graphWorkflowExecutionSchema } from "@/lib/workflows/schemas";
 import {
-  agentCapabilityOverridesSchema,
-  graphWorkflowExecutionSchema,
-  mcpOverridesSchema,
   sessionCreationModeSchema,
   sessionSourceSchema,
   sessionStateSchema,
-} from "../schemas";
-import { PersistenceError, getErrorMessage } from "../errors";
+} from "@/lib/sessions/schemas";
+import { PersistenceError, getErrorMessage } from "../shared/errors";
 import {
   migrateLegacyExecution,
   needsLegacyMigration,
 } from "@/lib/workflow-graph/migrate-legacy-execution";
-import type { GraphWorkflowExecution, SessionState } from "@/types";
-
+import type { SessionState } from "@/lib/sessions/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 type Db = InstanceType<typeof Database>;
 
 const logger = createLogger("state-store.sessions");

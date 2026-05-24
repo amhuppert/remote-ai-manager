@@ -3,7 +3,7 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionJoinState,
   GraphWorkflowExecutionLaneState,
-} from "@/types";
+} from "@/lib/workflows/schemas";
 import { createSessionGitLock } from "./session-git-lock";
 import { createPerSessionMergeMutex } from "./per-session-merge-mutex";
 import { createJoinRunner, type JoinRunnerMutateActive } from "./join-runner";

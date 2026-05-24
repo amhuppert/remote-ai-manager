@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { createSessionGitLock } from "./session-git-lock";
-import { createLockManager } from "@/lib/lock";
+import { createLockManager } from "@/lib/prompt/single-flight";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

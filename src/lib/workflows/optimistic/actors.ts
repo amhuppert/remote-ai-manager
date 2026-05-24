@@ -6,8 +6,8 @@
  */
 
 import { fromPromise } from "xstate";
-import type { ImagePayload, SessionState } from "@/types";
-
+import type { ImagePayload } from "@/lib/images/schemas";
+import type { SessionState } from "@/lib/sessions/schemas";
 // ============================================================
 // Actor Input/Output Types
 // ============================================================
@@ -51,7 +51,7 @@ export const executePrompt = fromPromise<
   ExecutePromptInput
 >(async ({ input }) => {
   // Lazy import to avoid circular dependencies
-  const { executePromptStream } = await import("@/lib/prompt");
+  const { executePromptStream } = await import("@/lib/prompt/sdk-driver");
 
   const autonomousSession: SessionState = {
     ...input.session,
@@ -77,13 +77,13 @@ export const executePrompt = fromPromise<
 
 /**
  * Dispatch a merge job with auto-resolve.
- * Wraps dispatchMergeJob from src/lib/background-jobs.ts.
+ * Wraps dispatchMergeJob from src/lib/jobs/queue.ts.
  */
 export const dispatchMerge = fromPromise<
   DispatchMergeOutput,
   DispatchMergeInput
 >(async ({ input }) => {
-  const { dispatchMergeJob } = await import("@/lib/background-jobs");
+  const { dispatchMergeJob } = await import("@/lib/jobs/queue");
 
   // Brief delay to allow state persistence to settle (matches existing behavior)
   await new Promise((resolve) => setTimeout(resolve, 500));

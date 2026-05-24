@@ -1,16 +1,14 @@
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
+import { mcpOverridesSchema, type McpOverrides } from "@/lib/mcp/schemas";
 import {
   agentCapabilityOverridesSchema,
-  mcpOverridesSchema,
-  projectRowSchema,
   type AgentCapabilityOverrides,
-  type McpOverrides,
-} from "../schemas";
-import { PersistenceError, getErrorMessage } from "../errors";
-import type { ProjectRow } from "@/types";
-
+} from "@/lib/agent-capabilities/schemas";
+import { projectRowSchema } from "@/lib/projects/schemas";
+import { PersistenceError, getErrorMessage } from "../shared/errors";
+import type { ProjectRow } from "@/lib/projects/schemas";
 type Db = InstanceType<typeof Database>;
 
 const logger = createLogger("state-store.projects");

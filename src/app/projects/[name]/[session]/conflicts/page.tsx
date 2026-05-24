@@ -2,9 +2,10 @@
 
 import { useState, useCallback, useMemo } from "react";
 import { useRouter, useParams } from "next/navigation";
-import MergeConflictsPage from "../MergeConflictsPage";
-import { useResolveConflictsMutation } from "@/lib/mutations";
-import { useConflictsQuery, useSessionQuery } from "@/lib/queries";
+import MergeConflictsPage from "@/features/session/dialogs/MergeConflictsPage";
+import { useResolveConflictsMutation } from "@/lib/git/mutations";
+import { useConflictsQuery } from "@/lib/git/queries";
+import { useSessionQuery } from "@/lib/sessions/queries";
 
 export default function ConflictsPage() {
   const params = useParams<{ name: string; session: string }>();

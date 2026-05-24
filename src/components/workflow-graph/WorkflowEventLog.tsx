@@ -15,8 +15,7 @@ import type {
   GraphWorkflowLaneKind,
   GraphWorkflowMergeStatusValue,
   GraphWorkflowContextStatus,
-} from "@/types";
-
+} from "@/lib/workflows/schemas";
 type EventDotKind =
   | "pass"
   | "fail"

@@ -20,8 +20,8 @@ import type {
   PortableMcpConfig,
   PortableMcpServerConfig,
 } from "@/lib/agent-backends/portable-mcp";
-import type { AgentBackendId, McpOverrides } from "@/lib/schemas";
-
+import type { McpOverrides } from "@/lib/mcp/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import { composeRuntimeMcpConfig } from "./composer";
 import { mergeOverrideChain, type McpOverrideChain } from "./resolver";
 import type { McpServerDefinition, McpSourceDiscoveryResult } from "./types";

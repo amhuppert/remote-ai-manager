@@ -1,5 +1,4 @@
-import type { MessageContentBlock } from "@/types";
-
+import type { MessageContentBlock } from "@/lib/conversations/schemas";
 /**
  * Extracts a plain-text/Markdown representation of a message's content
  * blocks for copying to the clipboard. Skips non-textual blocks (tool calls,

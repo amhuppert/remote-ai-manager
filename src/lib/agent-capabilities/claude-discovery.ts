@@ -31,8 +31,8 @@ import {
 import path from "node:path";
 
 import { createLogger } from "@/lib/logging";
-import { getErrorMessage } from "@/lib/errors";
-import { parseFrontmatter } from "@/lib/commands";
+import { getErrorMessage } from "@/lib/shared/errors";
+import { parseFrontmatter } from "@/lib/commands/service";
 
 import { redactAgentCapabilityText } from "./redaction";
 
@@ -41,7 +41,7 @@ import type {
   AgentCapabilityDiscoveredItem,
   AgentCapabilityNativeDefault,
   AgentCapabilitySourceRef,
-} from "@/lib/schemas";
+} from "./schemas";
 
 const logger = createLogger("agent-capabilities.claude-discovery");
 

@@ -6,7 +6,7 @@ import type {
   AgentCapabilityCascadeKind,
   AgentCapabilityInventory,
   AgentCapabilityViewResponse,
-} from "@/lib/schemas";
+} from "./schemas";
 
 import {
   CapabilityRoutePersistenceError,

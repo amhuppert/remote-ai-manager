@@ -26,8 +26,7 @@ import type {
   McpToolListView,
   McpToolView,
   ToolDiscoveryState,
-} from "@/lib/schemas";
-
+} from "@/lib/mcp/schemas";
 import type { McpServerDefinition } from "./types";
 
 // ---------------------------------------------------------------------------

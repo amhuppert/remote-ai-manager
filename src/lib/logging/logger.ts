@@ -29,7 +29,7 @@ import { appendFileSync, mkdirSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { getTraceContext, type TraceContext } from "./context";
-import { resolveConfigDir } from "../config";
+import { resolveConfigDir } from "../config/loader";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 

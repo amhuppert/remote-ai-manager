@@ -13,8 +13,8 @@ import type {
   GraphWorkflowVisualLayout,
   WorkflowDefinitionRecord,
   WorkflowSemanticDefinition,
-} from "@/types";
-import { getConfigDirPath } from "../config";
+} from "@/lib/workflows/schemas";
+import { getConfigDirPath } from "../config/loader";
 import { createLogger } from "../logging";
 import { timed } from "../logging/timed";
 import { validateWorkflowDefinition } from "./validation";

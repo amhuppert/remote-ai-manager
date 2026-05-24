@@ -42,7 +42,7 @@ export {
   collaborationResolutionDecisionOutputSchema,
   type CollaborationResolutionDecisionOutput,
   type CollaborationUserQuestion,
-} from "@/lib/schemas";
+} from "@/lib/workflows/schemas";
 
 const collaborationAgentSchema = z.enum(["claude", "codex"]);
 export type CollaborationAgent = z.infer<typeof collaborationAgentSchema>;

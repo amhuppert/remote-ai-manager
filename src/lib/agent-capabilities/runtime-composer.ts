@@ -55,8 +55,8 @@ import {
 } from "./runtime-hashes";
 import type { ClaudePluginNativeRecord } from "./claude-plugin-translator";
 
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
-  AgentBackendId,
   AgentCapabilityApplyStatus,
   AgentCapabilityCascadeKind,
   AgentCapabilityCascadeLayer,
@@ -66,7 +66,7 @@ import type {
   AgentCapabilityRuntimeApplicationState,
   AgentCapabilityScopeContext,
   AgentCapabilityViewResponse,
-} from "@/lib/schemas";
+} from "./schemas";
 
 export interface ComposeConversationStartCascadeInput {
   items: readonly AgentCapabilityDiscoveredItem[];

@@ -1,6 +1,6 @@
 import { Node, mergeAttributes } from "@tiptap/core";
 import { ReactNodeViewRenderer } from "@tiptap/react";
-import FileMentionChip from "@/app/projects/[name]/[session]/FileMentionChip";
+import FileMentionChip from "@/features/session/conversation/FileMentionChip";
 
 export interface FileMentionAttrs {
   path: string;

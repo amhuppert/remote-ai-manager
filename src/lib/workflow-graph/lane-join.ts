@@ -5,7 +5,7 @@ import type {
   GraphWorkflowExecutionLaneState,
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
-} from "@/types";
+} from "@/lib/workflows/schemas";
 import { reachableLanesFrom } from "./lane-readiness";
 
 /**

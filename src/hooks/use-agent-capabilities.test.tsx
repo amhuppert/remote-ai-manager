@@ -4,7 +4,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PropsWithChildren } from "react";
 
-import type { AgentCapabilityViewResponse } from "@/lib/schemas";
+import type { AgentCapabilityViewResponse } from "@/lib/agent-capabilities/schemas";
 
 import {
   agentCapabilityScopeQueryKey,

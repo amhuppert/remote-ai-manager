@@ -10,10 +10,9 @@ import type { Snapshot } from "xstate";
 import {
   getConversation as defaultGetConversation,
   mutateConversation as defaultMutateConversation,
-} from "@/lib/state";
+} from "@/lib/state-store";
 import { createLogger } from "@/lib/logging";
-import type { ConversationState } from "@/types";
-
+import type { ConversationState } from "@/lib/conversations/schemas";
 const logger = createLogger("conversation-persistence");
 
 // ============================================================

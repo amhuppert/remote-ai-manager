@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { McpDiscoveredTool, McpToolInventoryResult } from "@/lib/schemas";
-
+import type {
+  McpDiscoveredTool,
+  McpToolInventoryResult,
+} from "@/lib/mcp/schemas";
 import {
   createToolInventoryCache,
   type ToolInventoryCacheFetcher,

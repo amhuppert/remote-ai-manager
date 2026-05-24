@@ -10,7 +10,7 @@ import type {
   WorkflowGraphValidationError,
   GraphWorkflowTaskDefinition,
   WorkflowRuntimeEditRequest,
-} from "@/types";
+} from "@/lib/workflows/schemas";
 import {
   GraphWorkflowValidationError,
   validateWorkflowDefinition,

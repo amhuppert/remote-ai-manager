@@ -2,7 +2,7 @@ import type {
   PortableMcpConfig,
   PortableMcpServerConfig,
 } from "@/lib/agent-backends/portable-mcp";
-import type { AgentBackendId } from "@/lib/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import { buildGatewayAuthHeaders } from "./auth";
 import { getCommandCenterOrigin } from "./origin";
 

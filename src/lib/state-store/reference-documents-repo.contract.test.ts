@@ -17,9 +17,10 @@ import {
   type ReferenceDocumentsRepo,
 } from "./reference-documents-repo";
 import { createSessionsRepo } from "./sessions-repo";
-import { referenceDocumentSchema, sessionStateSchema } from "../schemas";
-import type { ReferenceDocument, SessionState } from "@/types";
-
+import { referenceDocumentSchema } from "@/lib/reference-documents/schemas";
+import { sessionStateSchema } from "@/lib/sessions/schemas";
+import type { ReferenceDocument } from "@/lib/reference-documents/schemas";
+import type { SessionState } from "@/lib/sessions/schemas";
 type Db = InstanceType<typeof Database>;
 
 let db: Db;
