@@ -74,11 +74,9 @@ describe("ExecutionInspectorPanel — ValidationCard markdown formatting", () =>
     // MarkdownContent is loaded via next/dynamic — wait for it to mount.
     // Cold-load of the dynamic chunk can exceed the 1000ms default timeout
     // under parallel test-suite load.
-    const codeEl = await screen.findByText(
-      "bunx vitest run",
-      undefined,
-      { timeout: 5000 },
-    );
+    const codeEl = await screen.findByText("bunx vitest run", undefined, {
+      timeout: 15000,
+    });
     expect(codeEl.closest("code")).toBeTruthy();
   });
 

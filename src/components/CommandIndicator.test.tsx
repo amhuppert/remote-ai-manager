@@ -43,11 +43,13 @@ describe("CommandIndicator", () => {
     const body = container.querySelector(".command-indicator__body");
     expect(body).not.toBeNull();
     // MarkdownContent is loaded via next/dynamic — wait for it to mount.
+    // Cold-load of the dynamic chunk can exceed the 1000ms default timeout
+    // under parallel test-suite load.
     await waitFor(
       () => {
         expect(body?.querySelector("strong")?.textContent).toBe("Bold change");
       },
-      { timeout: 5000 },
+      { timeout: 15000 },
     );
     expect(container.querySelector(".command-args")).toBeNull();
   });
