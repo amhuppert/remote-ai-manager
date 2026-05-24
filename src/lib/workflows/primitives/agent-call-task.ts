@@ -33,8 +33,6 @@ import {
 
 const defaultLogger = createLogger("workflows.primitives.agent-call.task");
 
-const FALLBACK_DEFAULT_TIMEOUT_MS = 600_000;
-
 export interface DispatchTaskRunDeps {
   runner: AgentTaskRunner;
   capabilityView: BackendCapabilityView;
@@ -82,12 +80,18 @@ export async function dispatchTaskRun(
 
   log.debug("agent_call.task.dispatch_start", baseLogFields);
 
+  const timeoutMs = request.timeoutMs ?? deps.defaultTimeoutMs ?? 0;
+  log.debug("agent_call.task.timeout_resolved", {
+    ...baseLogFields,
+    timeoutMs,
+    timeoutEnabled: timeoutMs > 0,
+  });
+
   const taskRequest: AgentTaskRequest = {
     workingDirectory: deps.workingDirectory,
     prompt: request.prompt,
     autonomous: deps.autonomous ?? true,
-    timeoutMs:
-      request.timeoutMs ?? deps.defaultTimeoutMs ?? FALLBACK_DEFAULT_TIMEOUT_MS,
+    timeoutMs,
     ...(request.systemInstructions
       ? { systemInstructions: [request.systemInstructions] }
       : {}),

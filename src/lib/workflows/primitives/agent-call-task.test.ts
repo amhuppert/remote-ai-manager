@@ -138,6 +138,19 @@ describe("dispatchTaskRun", () => {
     expect(capturedInput.value?.timeoutMs).toBe(90_000);
   });
 
+  it("uses no timeout when request and caller defaults omit it", async () => {
+    const { runner, capturedInput } = makeStubRunner("codex");
+    await dispatchTaskRun(
+      { kind: "task_run", backend: "codex", prompt: "go" },
+      {
+        runner,
+        capabilityView: CODEX_VIEW,
+        workingDirectory: "/tmp/wt",
+      },
+    );
+    expect(capturedInput.value?.timeoutMs).toBe(0);
+  });
+
   it("applies workflow tooling onto the task request as portable MCP tooling", async () => {
     const tooling: PortableMcpConfig = {
       servers: [{ id: "s1", transport: "stdio", command: "echo" }],

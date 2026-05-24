@@ -68,6 +68,7 @@ import { buildSyntheticForkSeed } from "@/lib/sessions/synthetic-fork-seed";
 import { createExternalTurnHandler } from "./external-turn-handler";
 import { createArtifactRegistry } from "@/lib/workflows/primitives/artifact-registry";
 import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
+import { resolveConfiguredTimeoutMs } from "@/lib/agent-backends/timeout";
 import type {
   AgentCallRequest,
   AgentCallResult,
@@ -647,8 +648,6 @@ export function shouldBuildRuntimeSyntheticSeed(input: {
 // Backend-aware settings resolution
 // ============================================================
 
-const CODEX_DEFAULT_TIMEOUT_S = 600;
-
 /**
  * Resolve the effective model and effort for a turn based on the backend.
  * Claude falls back to config.defaultModel; Codex falls back to config.codex.
@@ -673,17 +672,14 @@ export function resolveBackendTurnSettings(
 
 /**
  * Resolve the safety-net timeout for a turn based on the backend.
- * Returns 0 when the backend has no timeout (codex timeout: null).
+ * Returns 0 when the backend has no timeout.
  */
 export function resolveBackendTimeoutMs(
   backend: AgentBackendId,
   config: ActorConfig,
 ): number {
   if (backend === "codex") {
-    const timeout = config.codex?.timeout;
-    if (timeout === null) return 0;
-    if (timeout !== undefined) return timeout * 1000;
-    return CODEX_DEFAULT_TIMEOUT_S * 1000;
+    return resolveConfiguredTimeoutMs(config.codex?.timeout);
   }
   return config.claudeTimeoutMs;
 }
@@ -1457,6 +1453,12 @@ export async function executePromptForMachine(
   deps.registerAbortController(input.conversationId, abortController);
 
   const timeoutMs = resolveBackendTimeoutMs(input.agentBackend, config);
+  logger.debug("prompt.timeout.resolved", {
+    sessionName: input.sessionName,
+    backend: input.agentBackend,
+    timeoutMs,
+    timeoutEnabled: timeoutMs > 0,
+  });
   if (timeoutMs > 0) {
     runtimeState.timeoutHandle = setTimeout(() => {
       logger.warn("prompt.timeout", {

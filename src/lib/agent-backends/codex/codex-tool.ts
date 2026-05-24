@@ -19,8 +19,6 @@ import type { ArtifactRegistry } from "../../workflows/primitives/artifact-regis
 
 const logger = createLogger("codex-tool");
 
-const CODEX_TIMEOUT_MS = 600_000;
-
 // ============================================================
 // Public Types
 // ============================================================
@@ -30,7 +28,7 @@ export interface CodexToolContext {
   sessionName: string;
   defaultModel?: string;
   defaultReasoningEffort?: CodexReasoningEffort;
-  /** Timeout in ms. 0 means no timeout. Undefined falls back to CODEX_TIMEOUT_MS. */
+  /** Timeout in ms. 0 or undefined means no timeout. */
   timeoutMs?: number;
 }
 
@@ -252,7 +250,12 @@ function createRunCodexHandler(context: CodexToolContext, deps: CodexToolDeps) {
       reasoningEffort: effectiveReasoningEffort ?? "default",
     });
 
-    const effectiveTimeoutMs = context.timeoutMs ?? CODEX_TIMEOUT_MS;
+    const effectiveTimeoutMs = context.timeoutMs ?? 0;
+    logger.debug("codex.exec.timeout_resolved", {
+      sessionName: context.sessionName,
+      timeoutMs: effectiveTimeoutMs,
+      timeoutEnabled: effectiveTimeoutMs > 0,
+    });
 
     const result = await deps.runCodex({
       prompt: wrapCodexPrompt(args.prompt),

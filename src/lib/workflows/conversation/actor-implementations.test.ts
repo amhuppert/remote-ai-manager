@@ -679,9 +679,9 @@ describe("resolveBackendTimeoutMs", () => {
     expect(resolveBackendTimeoutMs("codex", config)).toBe(120_000);
   });
 
-  it("returns 600s default for codex when no timeout configured", () => {
+  it("returns 0 (no timeout) for codex when timeout is empty", () => {
     const config = { ...baseConfig, codex: {} };
-    expect(resolveBackendTimeoutMs("codex", config)).toBe(600_000);
+    expect(resolveBackendTimeoutMs("codex", config)).toBe(0);
   });
 
   it("returns 0 (no timeout) when codex timeout is null", () => {
@@ -689,8 +689,8 @@ describe("resolveBackendTimeoutMs", () => {
     expect(resolveBackendTimeoutMs("codex", config)).toBe(0);
   });
 
-  it("returns 600s default when codex config is undefined", () => {
-    expect(resolveBackendTimeoutMs("codex", baseConfig)).toBe(600_000);
+  it("returns 0 (no timeout) when codex config is undefined", () => {
+    expect(resolveBackendTimeoutMs("codex", baseConfig)).toBe(0);
   });
 });
 

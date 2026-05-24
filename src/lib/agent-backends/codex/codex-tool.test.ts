@@ -183,7 +183,7 @@ describe("codex-tool", () => {
       expect(callArgs.workingDirectory).toBe("/wt");
     });
 
-    it("uses default timeout when context timeout is undefined", async () => {
+    it("uses no timeout when context timeout is undefined", async () => {
       const mockDeps = createMockDeps();
       registerTool(mockDeps);
 
@@ -193,7 +193,7 @@ describe("codex-tool", () => {
       const callArgs = mockDeps.mockRunCodex.mock.calls[0]![0] as {
         timeoutMs: number;
       };
-      expect(callArgs.timeoutMs).toBe(600_000);
+      expect(callArgs.timeoutMs).toBe(0);
     });
 
     it("passes context timeoutMs through to runCodex", async () => {

@@ -12,6 +12,7 @@ import {
 import { registerReferenceDocumentTools } from "@/lib/reference-documents/tools";
 import { registerDevServerTools } from "@/lib/dev-server/mcp-tools";
 import { createSessionArtifactRegistryForProduction } from "@/lib/workflows/primitives/default-session-artifact-registry";
+import { resolveConfiguredTimeoutMs } from "@/lib/agent-backends/timeout";
 import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
 import { registerPlannerTools } from "@/lib/workflow-graph/planner-tools";
 import { getConversationRuntime } from "@/lib/workflows/conversation/runtime-state";
@@ -119,12 +120,7 @@ const defaultSessionMcpServerDeps: SessionMcpServerDeps = {
     });
   },
   registerCodexTool(server, context, config) {
-    let timeoutMs: number | undefined;
-    if (config.timeout === null) {
-      timeoutMs = 0;
-    } else if (config.timeout !== undefined) {
-      timeoutMs = config.timeout * 1000;
-    }
+    const timeoutMs = resolveConfiguredTimeoutMs(config.timeout);
 
     const artifactRegistry = createSessionArtifactRegistryForProduction({
       projectPath: context.projectPath,

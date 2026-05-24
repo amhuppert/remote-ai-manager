@@ -12,6 +12,7 @@ import {
   getSession as defaultGetSession,
   mutateSession,
 } from "@/lib/state-store";
+import { resolveConfiguredTimeoutMs } from "@/lib/agent-backends/timeout";
 import type { ApiError } from "@/lib/api/errors";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type {
@@ -95,7 +96,6 @@ const workflowManager = createGraphWorkflowManager({
   parallelWorktrees,
   getSession: defaultGetSession,
 });
-const CODEX_VALIDATOR_TIMEOUT_MS = 300_000;
 
 const continuityService = createWorkflowContinuityService({
   createConversation,
@@ -119,9 +119,7 @@ const validatorRunner = createValidatorRunner({
           "Codex validator is configured for this workflow, but Codex is disabled in global config",
         );
       }
-      if (codexConfig.timeout === null) return 0;
-      if (codexConfig.timeout !== undefined) return codexConfig.timeout * 1000;
-      return CODEX_VALIDATOR_TIMEOUT_MS;
+      return resolveConfiguredTimeoutMs(codexConfig.timeout);
     }
     return config.claudeTimeoutMs;
   },
