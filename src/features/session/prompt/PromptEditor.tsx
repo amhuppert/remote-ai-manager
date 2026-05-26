@@ -13,6 +13,8 @@ import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import {
   ArgumentHint,
+  ConversationMention,
+  ConversationMentionNode,
   FileMention,
   FileMentionNode,
   ImageMarker,
@@ -36,6 +38,11 @@ import {
   type FileMentionPopupHandle,
   type FileMentionSelection,
 } from "@/features/session/prompt/PromptEditorFileMentionPopup";
+import {
+  PromptEditorConversationMentionPopup,
+  type ConversationMentionPopupHandle,
+  type ConversationMentionSelection,
+} from "@/features/session/prompt/PromptEditorConversationMentionPopup";
 
 export interface PromptEditorHandle {
   /** Serialize the current document to `{ prompt, images }`. */
@@ -92,6 +99,11 @@ interface SlashSuggestionState {
 interface FileSuggestionState {
   query: string;
   command: (item: FileMentionSelection) => void;
+}
+
+interface ConversationSuggestionState {
+  query: string;
+  command: (item: ConversationMentionSelection) => void;
 }
 
 function buildSlashTriggers(args: {
@@ -227,8 +239,11 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
     const [fileState, setFileState] = useState<FileSuggestionState | null>(
       null,
     );
+    const [conversationState, setConversationState] =
+      useState<ConversationSuggestionState | null>(null);
     const slashPopupRef = useRef<SlashCommandPopupHandle>(null);
     const filePopupRef = useRef<FileMentionPopupHandle>(null);
+    const conversationPopupRef = useRef<ConversationMentionPopupHandle>(null);
 
     const editor = useEditor({
       immediatelyRender: true,
@@ -253,6 +268,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
         ImageMarker,
         SlashCommandMarker,
         FileMentionNode,
+        ConversationMentionNode,
         ArgumentHint,
         ImagePasteHandler.configure({
           onAddImage: (file) =>
@@ -294,6 +310,32 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
             },
             onKeyDown: ({ event }) =>
               filePopupRef.current?.handleKeyDown(event) ?? false,
+          }),
+        }),
+        ConversationMention.configure({
+          items: () => [],
+          render: () => ({
+            onStart: (props) => {
+              setConversationState({
+                query: props.query,
+                command: props.command as (
+                  item: ConversationMentionSelection,
+                ) => void,
+              });
+            },
+            onUpdate: (props) => {
+              setConversationState({
+                query: props.query,
+                command: props.command as (
+                  item: ConversationMentionSelection,
+                ) => void,
+              });
+            },
+            onExit: () => {
+              setConversationState(null);
+            },
+            onKeyDown: ({ event }) =>
+              conversationPopupRef.current?.handleKeyDown(event) ?? false,
           }),
         }),
         TerminalHotkeys.configure({
@@ -388,6 +430,15 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
             projectName={projectName}
             sessionName={sessionName}
             onSelect={(selection) => fileState.command(selection)}
+          />
+        ) : null}
+        {conversationState && projectName ? (
+          <PromptEditorConversationMentionPopup
+            ref={conversationPopupRef}
+            query={conversationState.query}
+            currentProjectName={projectName}
+            currentConversationId={conversationId}
+            onSelect={(selection) => conversationState.command(selection)}
           />
         ) : null}
         <EditorContent editor={editor} className="prompt-editor__content" />

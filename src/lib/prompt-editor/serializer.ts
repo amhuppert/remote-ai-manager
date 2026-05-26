@@ -99,6 +99,10 @@ function serializeInline(
       if (typeof path === "string" && path.length > 0) out += `@${path}`;
       return;
     }
+    if (child.type.name === "conversationMention") {
+      out += renderConversationRefXml(child.attrs);
+      return;
+    }
     out += serializeInline(child, markerByAttachmentId);
   });
   return out;
@@ -108,4 +112,39 @@ function serializeCodeBlock(node: ProseMirrorNode): string {
   const rawLang = node.attrs["language"];
   const language = typeof rawLang === "string" ? rawLang : "";
   return `\`\`\`${language}\n${node.textContent}\n\`\`\``;
+}
+
+const CONVERSATION_REF_ATTR_ORDER: ReadonlyArray<[string, string]> = [
+  ["projectName", "project-name"],
+  ["projectPath", "project-path"],
+  ["sessionName", "session-name"],
+  ["worktreePath", "worktree-path"],
+  ["conversationId", "conversation-id"],
+  ["conversationName", "conversation-name"],
+  ["backend", "backend"],
+  ["backendRef", "backend-ref"],
+  ["transcriptPath", "transcript-path"],
+  ["debugLogPath", "debug-log-path"],
+  ["status", "status"],
+  ["lastActivityAt", "last-activity-at"],
+];
+
+function escapeXmlAttr(value: string): string {
+  const flattened = value.replace(/[\r\n\t]+/g, " ").replace(/  +/g, " ");
+  return flattened
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function renderConversationRefXml(attrs: Record<string, unknown>): string {
+  const parts: string[] = ["<conversation-ref"];
+  for (const [camel, kebab] of CONVERSATION_REF_ATTR_ORDER) {
+    const raw = attrs[camel];
+    const value = typeof raw === "string" ? raw : "";
+    parts.push(`${kebab}="${escapeXmlAttr(value)}"`);
+  }
+  return `${parts.join(" ")} />`;
 }

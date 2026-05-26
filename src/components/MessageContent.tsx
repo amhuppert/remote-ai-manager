@@ -1,36 +1,15 @@
 "use client";
 
-import { memo, useEffect, useMemo, useState } from "react";
-import dynamic from "next/dynamic";
+import { memo, useMemo } from "react";
 import type {
   MessageContentBlock,
   ToolResultMetrics,
 } from "@/lib/conversations/schemas";
 import { formatToolUse } from "@/lib/conversations/format-tool-use";
-
-const LazyMarkdownContent = dynamic(() => import("./MarkdownContent"), {
-  ssr: false,
-});
-
-function MarkdownContent({ content }: { content: string }): React.JSX.Element {
-  const [loaded, setLoaded] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    void import("./MarkdownContent").then(() => {
-      if (!cancelled) setLoaded(true);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  if (!loaded) {
-    return <pre className="markdown-loading">{content}</pre>;
-  }
-  return <LazyMarkdownContent content={content} />;
-}
 import ToolUseGroup from "./ToolUseGroup";
 import DebugStructuredCard from "./DebugStructuredCard";
 import CommandIndicator from "./CommandIndicator";
+import { MessageTextWithRefs } from "@/features/session/conversation/MessageTextWithRefs";
 
 /** Minimum consecutive tool_use blocks required to form a collapsed group */
 const GROUP_THRESHOLD = 2;
@@ -138,7 +117,7 @@ export default memo(function MessageContent({
         const { block, index: i } = item;
 
         if (block.type === "text") {
-          return <MarkdownContent key={i} content={block.text} />;
+          return <MessageTextWithRefs key={i} text={block.text} />;
         }
         if (block.type === "command") {
           return (

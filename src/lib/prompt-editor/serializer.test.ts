@@ -53,6 +53,26 @@ const schema = new Schema({
         ext: { default: "" },
       },
     },
+    conversationMention: {
+      group: "inline",
+      inline: true,
+      atom: true,
+      selectable: true,
+      attrs: {
+        projectName: { default: "" },
+        projectPath: { default: "" },
+        sessionName: { default: "" },
+        worktreePath: { default: "" },
+        conversationId: { default: "" },
+        conversationName: { default: "" },
+        backend: { default: "claude" },
+        backendRef: { default: "" },
+        transcriptPath: { default: "" },
+        debugLogPath: { default: "" },
+        status: { default: "new" },
+        lastActivityAt: { default: "" },
+      },
+    },
     codeBlock: {
       group: "block",
       content: "text*",
@@ -117,6 +137,38 @@ function fileChip(path: string): ProseMirrorNode {
   const dot = basename.lastIndexOf(".");
   const ext = dot > 0 ? basename.slice(dot + 1) : "";
   return schema.nodes["fileMention"]!.create({ path, basename, ext });
+}
+
+function convMention(
+  overrides: Partial<{
+    projectName: string;
+    projectPath: string;
+    sessionName: string;
+    worktreePath: string;
+    conversationId: string;
+    conversationName: string;
+    backend: "claude" | "codex";
+    backendRef: string;
+    transcriptPath: string;
+    debugLogPath: string;
+    status: string;
+    lastActivityAt: string;
+  }> = {},
+): ProseMirrorNode {
+  return schema.nodes["conversationMention"]!.create({
+    projectName: overrides.projectName ?? "my-app",
+    projectPath: overrides.projectPath ?? "/repos/my-app",
+    sessionName: overrides.sessionName ?? "main",
+    worktreePath: overrides.worktreePath ?? "/repos/my-app/.worktrees/main",
+    conversationId: overrides.conversationId ?? "conv-123",
+    conversationName: overrides.conversationName ?? "Refactor parser",
+    backend: overrides.backend ?? "claude",
+    backendRef: overrides.backendRef ?? "claude-sess-abc",
+    transcriptPath: overrides.transcriptPath ?? "/t/conv-123.jsonl",
+    debugLogPath: overrides.debugLogPath ?? "",
+    status: overrides.status ?? "running",
+    lastActivityAt: overrides.lastActivityAt ?? "2024-06-01T12:00:00Z",
+  });
 }
 
 function code(text: string): ProseMirrorNode {
@@ -397,6 +449,50 @@ describe("serializePromptDoc", () => {
     });
 
     expect(result.prompt).toBe("```\n\n```");
+  });
+
+  it("emits canonical <conversation-ref ... /> XML for a conversationMention node", () => {
+    const result = serializePromptDoc({
+      doc: doc(p(convMention())),
+      attachments: [],
+    });
+
+    expect(result.prompt).toBe(
+      '<conversation-ref project-name="my-app" project-path="/repos/my-app" session-name="main" worktree-path="/repos/my-app/.worktrees/main" conversation-id="conv-123" conversation-name="Refactor parser" backend="claude" backend-ref="claude-sess-abc" transcript-path="/t/conv-123.jsonl" debug-log-path="" status="running" last-activity-at="2024-06-01T12:00:00Z" />',
+    );
+  });
+
+  it("XML-escapes special characters and flattens whitespace in attribute values", () => {
+    const result = serializePromptDoc({
+      doc: doc(
+        p(
+          convMention({
+            conversationName: 'A & B "quote" <tag>\nline two\tafter',
+            backendRef: "codex-thread'apos",
+            backend: "codex",
+          }),
+        ),
+      ),
+      attachments: [],
+    });
+
+    expect(result.prompt).toContain(
+      'conversation-name="A &amp; B &quot;quote&quot; &lt;tag&gt; line two after"',
+    );
+    expect(result.prompt).toContain('backend-ref="codex-thread&apos;apos"');
+    expect(result.prompt).toContain('backend="codex"');
+    expect(result.prompt).not.toContain("\n");
+    expect(result.prompt).not.toContain("\t");
+  });
+
+  it("embeds a conversation-ref between surrounding text in a paragraph", () => {
+    const result = serializePromptDoc({
+      doc: doc(p(t("before "), convMention(), t(" after"))),
+      attachments: [],
+    });
+
+    expect(result.prompt.startsWith("before <conversation-ref ")).toBe(true);
+    expect(result.prompt.endsWith("/> after")).toBe(true);
   });
 
   it("supports mixed chips, code, and plain text in one document", () => {

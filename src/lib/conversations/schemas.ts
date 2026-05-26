@@ -199,6 +199,56 @@ export const conversationStateSchema = z.object({
 export type ConversationState = z.infer<typeof conversationStateSchema>;
 
 // ============================================================
+// Cross-Project Conversation List (addressable conversations)
+// ============================================================
+
+export const conversationListItemSchema = z.object({
+  projectName: z.string(),
+  projectPath: z.string(),
+  sessionName: z.string(),
+  worktreePath: z.string(),
+  conversationId: z.string(),
+  conversationName: z.string().nullable(),
+  summary: z.string().nullable(),
+  firstPromptSnippet: z.string().nullable(),
+  backend: agentBackendSchema,
+  backendRef: agentSessionRefSchema.nullable(),
+  transcriptPath: z.string().nullable(),
+  debugLogPath: z.string().nullable(),
+  status: conversationStatusSchema,
+  lastActivityAt: z.string(),
+  archived: z.boolean(),
+});
+export type ConversationListItem = z.infer<typeof conversationListItemSchema>;
+
+export const allConversationsResponseSchema = z.object({
+  items: z.array(conversationListItemSchema),
+  totalCount: z.number().int().nonnegative(),
+});
+export type AllConversationsResponse = z.infer<
+  typeof allConversationsResponseSchema
+>;
+
+// Attributes of an inline `<conversation-ref ... />` XML tag emitted by the
+// prompt-editor serializer and parsed by the message renderer. Hyphenated
+// keys match the wire-format attribute names exactly.
+export const conversationRefAttrsSchema = z.object({
+  "project-name": z.string().min(1),
+  "project-path": z.string().min(1),
+  "session-name": z.string().min(1),
+  "worktree-path": z.string().min(1),
+  "conversation-id": z.string().min(1),
+  "conversation-name": z.string(),
+  backend: agentBackendSchema,
+  "backend-ref": z.string(),
+  "transcript-path": z.string(),
+  "debug-log-path": z.string(),
+  status: conversationStatusSchema,
+  "last-activity-at": z.string(),
+});
+export type ConversationRefAttrs = z.infer<typeof conversationRefAttrsSchema>;
+
+// ============================================================
 // API Request Schemas
 // ============================================================
 

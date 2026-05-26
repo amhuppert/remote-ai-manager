@@ -8,6 +8,8 @@ export type {
 } from "./slash-command-marker-node";
 export { FileMentionNode } from "./file-mention-node";
 export type { FileMentionAttrs } from "./file-mention-node";
+export { ConversationMentionNode } from "./conversation-mention-node";
+export type { ConversationMentionAttrs } from "./conversation-mention-node";
 export { ArgumentHint } from "./argument-hint-extension";
 export { serializePromptDoc } from "./serializer";
 export type { SerializedPromptDoc } from "./serializer";
@@ -15,4 +17,9 @@ export { ImagePasteHandler } from "./paste-handler-extension";
 export { SlashCommand } from "./slash-command-extension";
 export type { SlashCommandTrigger } from "./slash-command-extension";
 export { FileMention } from "./file-mention-extension";
+export { ConversationMention } from "./conversation-mention-extension";
+export type {
+  ConversationMentionExtensionOptions,
+  ConversationMentionItem,
+} from "./conversation-mention-extension";
 export { TerminalHotkeys } from "./terminal-hotkeys-extension";
