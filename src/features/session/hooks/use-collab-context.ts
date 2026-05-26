@@ -18,9 +18,9 @@ import { isCollabPassageTerminal } from "@/features/session/conversation/collab/
 import { envelopeToCollabPassageProps } from "@/features/session/conversation/collab/envelope-adapter";
 import { resolveRefToDocumentId } from "@/features/session/conversation/collab/ref-resolver";
 import {
-  dedupeCollabFinalTranscriptMessage,
   findActiveCollab,
   findCollabEnvelopeForConversation,
+  findCollabFinalDuplicateIndex,
   latestFinalAnswerText,
 } from "@/features/session/conversation/collab/page-helpers";
 import type { CollaborationReference } from "@/lib/workflows/collaboration/types";
@@ -111,9 +111,8 @@ export function useCollabContext({
       ? latestFinalAnswerText(collabPassageProps.artifacts)
       : null;
 
-  const messages = useMemo(
-    () =>
-      dedupeCollabFinalTranscriptMessage(rawMessages, collabFinalAnswerText),
+  const hiddenMessageIndex = useMemo(
+    () => findCollabFinalDuplicateIndex(rawMessages, collabFinalAnswerText),
     [rawMessages, collabFinalAnswerText],
   );
 
@@ -168,7 +167,7 @@ export function useCollabContext({
     clearCollabUserAnswerDrafts,
     collabPassageProps,
     isCollabRunning,
-    messages,
+    hiddenMessageIndex,
     handleCollabRefClick,
     originatingCollabAgent,
     effectiveCollabConfig,

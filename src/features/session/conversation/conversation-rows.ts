@@ -37,19 +37,25 @@ export function findCollabAnchorIndex(
 export function buildConversationRows(
   messages: readonly TranscriptMessage[],
   collab: CollabEnvelope | undefined,
+  hiddenMessageIndex: number | null = null,
 ): ConversationRow[] {
+  const isHidden = (i: number) => i === hiddenMessageIndex;
+
   if (!collab) {
-    return messages.map((msg, messageIndex) => ({
-      kind: "message",
-      messageIndex,
-      msg,
-    }));
+    const rows: ConversationRow[] = [];
+    for (let i = 0; i < messages.length; i++) {
+      if (isHidden(i)) continue;
+      rows.push({ kind: "message", messageIndex: i, msg: messages[i]! });
+    }
+    return rows;
   }
 
   const anchor = findCollabAnchorIndex(messages);
   const rows: ConversationRow[] = [];
   for (let i = 0; i < messages.length; i++) {
-    rows.push({ kind: "message", messageIndex: i, msg: messages[i]! });
+    if (!isHidden(i)) {
+      rows.push({ kind: "message", messageIndex: i, msg: messages[i]! });
+    }
     if (i === anchor) {
       rows.push({ kind: "collab", workflowId: collab.workflowId });
     }

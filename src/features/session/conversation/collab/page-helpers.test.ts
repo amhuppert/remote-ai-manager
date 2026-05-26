@@ -3,7 +3,7 @@ import {
   findActiveCollab,
   findCollabEnvelopeForConversation,
   latestFinalAnswerText,
-  dedupeCollabFinalTranscriptMessage,
+  findCollabFinalDuplicateIndex,
   type CollabEnvelopeLike,
 } from "./page-helpers";
 import type { CollaborationArtifact } from "@/lib/workflows/collaboration/types";
@@ -78,18 +78,60 @@ describe("latestFinalAnswerText", () => {
   });
 });
 
-describe("dedupeCollabFinalTranscriptMessage", () => {
-  it("returns messages unchanged when finalAnswerText is null", () => {
+describe("findCollabFinalDuplicateIndex", () => {
+  it("returns null when finalAnswerText is null", () => {
     const messages: TranscriptMessage[] = [
       {
         role: "user",
         content: [{ type: "text", text: "/collab hi" }],
       } as TranscriptMessage,
     ];
-    expect(dedupeCollabFinalTranscriptMessage(messages, null)).toBe(messages);
+    expect(findCollabFinalDuplicateIndex(messages, null)).toBeNull();
   });
 
-  it("strips duplicate assistant message matching final answer", () => {
+  it("returns null when finalAnswerText is empty/whitespace", () => {
+    const messages: TranscriptMessage[] = [
+      {
+        role: "user",
+        content: [{ type: "text", text: "/collab hi" }],
+      } as TranscriptMessage,
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "answer" }],
+      } as TranscriptMessage,
+    ];
+    expect(findCollabFinalDuplicateIndex(messages, "   ")).toBeNull();
+  });
+
+  it("returns null when no /collab user message is found", () => {
+    const messages: TranscriptMessage[] = [
+      {
+        role: "user",
+        content: [{ type: "text", text: "hi" }],
+      } as TranscriptMessage,
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "answer text" }],
+      } as TranscriptMessage,
+    ];
+    expect(findCollabFinalDuplicateIndex(messages, "answer text")).toBeNull();
+  });
+
+  it("returns null when no assistant message matches the final answer", () => {
+    const messages: TranscriptMessage[] = [
+      {
+        role: "user",
+        content: [{ type: "text", text: "/collab brief" }],
+      } as TranscriptMessage,
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "different reply" }],
+      } as TranscriptMessage,
+    ];
+    expect(findCollabFinalDuplicateIndex(messages, "answer text")).toBeNull();
+  });
+
+  it("returns the index of the duplicate assistant message", () => {
     const messages: TranscriptMessage[] = [
       {
         role: "user",
@@ -100,8 +142,24 @@ describe("dedupeCollabFinalTranscriptMessage", () => {
         content: [{ type: "text", text: "answer text" }],
       } as TranscriptMessage,
     ];
-    const result = dedupeCollabFinalTranscriptMessage(messages, "answer text");
-    expect(result).toHaveLength(1);
-    expect(result[0]!.role).toBe("user");
+    expect(findCollabFinalDuplicateIndex(messages, "answer text")).toBe(1);
+  });
+
+  it("only considers assistant messages AFTER the latest /collab user message", () => {
+    const messages: TranscriptMessage[] = [
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "answer text" }],
+      } as TranscriptMessage,
+      {
+        role: "user",
+        content: [{ type: "text", text: "/collab brief" }],
+      } as TranscriptMessage,
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "answer text" }],
+      } as TranscriptMessage,
+    ];
+    expect(findCollabFinalDuplicateIndex(messages, "answer text")).toBe(2);
   });
 });

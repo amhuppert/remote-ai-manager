@@ -18,6 +18,16 @@ type CollabContext = ReturnType<typeof useCollabContext>;
 type LocalState = ReturnType<typeof useSessionPageLocalState>;
 type MessageRowArgs = Parameters<typeof useMessageRowRenderer>[0];
 
+function computeLastVisibleMessageIndex(
+  displayMessageCount: number,
+  hiddenMessageIndex: number | null,
+): number {
+  for (let i = displayMessageCount - 1; i >= 0; i--) {
+    if (i !== hiddenMessageIndex) return i;
+  }
+  return -1;
+}
+
 export interface UseSessionPageConversationArgs {
   projectName: string;
   sessionName: string;
@@ -52,14 +62,21 @@ export function useSessionPageConversation(
   } = args;
 
   const displayMessages = useDisplayMessages(messages);
+  const { hiddenMessageIndex } = collab;
 
   const rows = useMemo(
     () =>
       buildConversationRows(
         displayMessages,
         collab.collabEnvelopeForConversation,
+        hiddenMessageIndex,
       ),
-    [displayMessages, collab.collabEnvelopeForConversation],
+    [displayMessages, collab.collabEnvelopeForConversation, hiddenMessageIndex],
+  );
+
+  const lastMessageIndex = computeLastVisibleMessageIndex(
+    displayMessages.length,
+    hiddenMessageIndex,
   );
 
   const nav = useConversationNav({
@@ -74,7 +91,7 @@ export function useSessionPageConversation(
   );
 
   const renderMessageRow = useMessageRowRenderer({
-    lastMessageIndex: displayMessages.length - 1,
+    lastMessageIndex,
     activeConversation,
     selectedBackend,
     worktreePath,

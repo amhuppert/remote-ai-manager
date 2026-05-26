@@ -105,4 +105,44 @@ describe("conversation rows", () => {
 
     expect(computeRowKey(row)).toBe(computeRowKey({ ...row }));
   });
+
+  it("skips the row at hiddenMessageIndex but preserves original indices for the rest", () => {
+    const messages = [
+      message("user", "/collab brief"),
+      message("assistant", "interim"),
+      message("assistant", "answer text"),
+      message("user", "follow-up"),
+    ];
+
+    expect(buildConversationRows(messages, undefined, 2)).toEqual([
+      { kind: "message", messageIndex: 0, msg: messages[0] },
+      { kind: "message", messageIndex: 1, msg: messages[1] },
+      { kind: "message", messageIndex: 3, msg: messages[3] },
+    ]);
+  });
+
+  it("skips the hidden row while still emitting the collab row at the anchor", () => {
+    const messages = [
+      message("user", "/collab brief"),
+      message("assistant", "answer text"),
+      message("user", "next"),
+    ];
+
+    expect(
+      buildConversationRows(messages, { workflowId: "wf-hide" }, 1),
+    ).toEqual([
+      { kind: "message", messageIndex: 0, msg: messages[0] },
+      { kind: "collab", workflowId: "wf-hide" },
+      { kind: "message", messageIndex: 2, msg: messages[2] },
+    ]);
+  });
+
+  it("ignores hiddenMessageIndex when null", () => {
+    const messages = [message("user", "hi"), message("assistant", "hey")];
+
+    expect(buildConversationRows(messages, undefined, null)).toEqual([
+      { kind: "message", messageIndex: 0, msg: messages[0] },
+      { kind: "message", messageIndex: 1, msg: messages[1] },
+    ]);
+  });
 });

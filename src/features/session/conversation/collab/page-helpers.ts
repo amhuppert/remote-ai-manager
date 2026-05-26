@@ -68,13 +68,13 @@ export function latestFinalAnswerText(
   return null;
 }
 
-export function dedupeCollabFinalTranscriptMessage(
+export function findCollabFinalDuplicateIndex(
   messages: readonly TranscriptMessage[],
   finalAnswerText: string | null,
-): readonly TranscriptMessage[] {
-  if (!finalAnswerText) return messages;
+): number | null {
+  if (!finalAnswerText) return null;
   const normalizedFinal = finalAnswerText.trim();
-  if (normalizedFinal.length === 0) return messages;
+  if (normalizedFinal.length === 0) return null;
 
   let latestCollabUserIndex = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -85,7 +85,7 @@ export function dedupeCollabFinalTranscriptMessage(
       break;
     }
   }
-  if (latestCollabUserIndex === -1) return messages;
+  if (latestCollabUserIndex === -1) return null;
 
   const duplicateIndex = messages.findIndex((message, index) => {
     if (index <= latestCollabUserIndex || message.role !== "assistant") {
@@ -93,6 +93,5 @@ export function dedupeCollabFinalTranscriptMessage(
     }
     return transcriptText(message)?.trim() === normalizedFinal;
   });
-  if (duplicateIndex === -1) return messages;
-  return messages.filter((_, index) => index !== duplicateIndex);
+  return duplicateIndex === -1 ? null : duplicateIndex;
 }
