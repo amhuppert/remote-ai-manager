@@ -18,7 +18,7 @@ import { type EffortLevel } from "@/lib/agent-backends/schemas";
 import { useBackendModelEffort } from "@/features/session/hooks/use-backend-model-effort";
 import { useImageIndexCountQuery } from "@/hooks/use-image-index-count";
 import { useDevServers } from "@/hooks/use-dev-servers";
-import { useAbortOrClearHotkey } from "@/features/session/hooks/use-abort-or-clear-hotkey";
+import { useClearInputHotkey } from "@/features/session/hooks/use-clear-input-hotkey";
 import { useCollabContext } from "@/features/session/hooks/use-collab-context";
 import { useSessionPageStoreBundle } from "@/features/session/hooks/use-session-page-store-bundle";
 import { useSessionPageDisplay } from "@/features/session/hooks/use-session-page-display";
@@ -197,15 +197,20 @@ export default function ConversationDetailPage({
   const conversationRunning =
     activeConversation?.status === "running" ||
     activeConversation?.status === "waiting_for_input";
-  useAbortOrClearHotkey({
-    sending: store.sending,
-    conversationRunning,
-    abortClient,
-    abortPrompt,
+  const canStop = store.sending || conversationRunning;
+  const handleStopPrompt = useCallback(() => {
+    if (store.sending) abortClient();
+    void abortPrompt();
+  }, [store.sending, abortClient, abortPrompt]);
+  useClearInputHotkey({
     editorRef: local.editorRef,
     setPromptText: local.setPromptText,
     clearPlaceholder: store.clearPlaceholder,
     clearImages: local.clearImages,
+    isPromptFocused: useCallback(
+      () => local.editorRef.current?.editor?.isFocused ?? false,
+      [local.editorRef],
+    ),
   });
 
   const handleLayoutChange = useCallback(
@@ -374,6 +379,8 @@ export default function ConversationDetailPage({
         toggleRecording,
         handleSendPrompt,
         handlePromptTextChange,
+        canStop,
+        handleStopPrompt,
         handleAnswerSubmit,
         handleDelete,
         handleConcurrentConfirm,

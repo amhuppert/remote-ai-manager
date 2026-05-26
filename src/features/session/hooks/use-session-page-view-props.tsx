@@ -114,6 +114,8 @@ export interface UseSessionPageViewPropsArgs {
   // handlers
   handleSendPrompt: PromptComposerArgs["handleSendPrompt"];
   handlePromptTextChange: PromptComposerArgs["handlePromptTextChange"];
+  canStop: boolean;
+  handleStopPrompt: () => void;
   handleAnswerSubmit: SessionPageViewProps["promptInputSlotProps"]["handleAnswerSubmit"];
   handleDelete: () => void;
   handleConcurrentConfirm: () => void;
@@ -225,6 +227,8 @@ export function useSessionPageViewProps(
     setCollabConfigDraft: args.setCollabConfigDraft,
     clearCollabConfigDraft: args.clearCollabConfigDraft,
     debugToggleMutation: args.debugToggleMutation,
+    canStop: args.canStop,
+    handleStopPrompt: args.handleStopPrompt,
   });
 
   return {

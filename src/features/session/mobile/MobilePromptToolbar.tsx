@@ -47,6 +47,7 @@ export interface MobilePromptToolbarProps {
   mcpRow?: React.ReactNode;
 
   voiceButton: React.ReactNode;
+  stopButton?: React.ReactNode;
   sendButton: React.ReactNode;
 
   isReadOnly?: boolean;
@@ -78,6 +79,7 @@ export default function MobilePromptToolbar({
   debugDisabled,
   mcpRow,
   voiceButton,
+  stopButton,
   sendButton,
   isReadOnly,
   isBusy,
@@ -146,6 +148,7 @@ export default function MobilePromptToolbar({
 
         <div className="mobile-prompt-toolbar-end">
           {voiceButton}
+          {stopButton}
           {sendButton}
         </div>
       </div>

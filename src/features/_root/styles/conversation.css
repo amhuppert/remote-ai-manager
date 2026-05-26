@@ -1043,6 +1043,27 @@
   cursor: not-allowed;
 }
 
+.stop-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--red);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--red);
+  font-size: 0.9rem;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.stop-btn:hover {
+  background: var(--red);
+  color: var(--text-inverse);
+}
+
 .voice-btn {
   position: relative;
   display: flex;

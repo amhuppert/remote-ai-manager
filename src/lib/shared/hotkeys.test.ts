@@ -8,7 +8,7 @@ describe("HOTKEY_REGISTRY", () => {
       "helpModal",
       "voiceToggle",
       "voiceFireAndForget",
-      "abortPrompt",
+      "clearInput",
       "nextMessage",
       "prevMessage",
       "firstMessage",
@@ -52,9 +52,9 @@ describe("HOTKEY_REGISTRY", () => {
     expect(HOTKEY_REGISTRY.voiceFireAndForget.enableOnFormTags).toBe(true);
   });
 
-  it("abortPrompt has enableOnFormTags set", async () => {
+  it("clearInput has enableOnFormTags set", async () => {
     const { HOTKEY_REGISTRY } = await import("./hotkeys");
-    expect(HOTKEY_REGISTRY.abortPrompt.enableOnFormTags).toBe(true);
+    expect(HOTKEY_REGISTRY.clearInput.enableOnFormTags).toBe(true);
   });
 
   it("voiceToggle has enableOnContentEditable so it fires inside the Tiptap prompt editor", async () => {
@@ -69,9 +69,9 @@ describe("HOTKEY_REGISTRY", () => {
     );
   });
 
-  it("abortPrompt has enableOnContentEditable so Escape clears the Tiptap prompt editor", async () => {
+  it("clearInput has enableOnContentEditable so Escape clears the Tiptap prompt editor", async () => {
     const { HOTKEY_REGISTRY } = await import("./hotkeys");
-    expect(HOTKEY_REGISTRY.abortPrompt.enableOnContentEditable).toBe(true);
+    expect(HOTKEY_REGISTRY.clearInput.enableOnContentEditable).toBe(true);
   });
 
   it("non-modifier hotkeys do not have enableOnFormTags", async () => {

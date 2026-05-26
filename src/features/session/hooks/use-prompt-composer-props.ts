@@ -82,6 +82,8 @@ export interface UsePromptComposerPropsArgs {
     isPending: boolean;
     mutate: (action: "enter" | "exit") => void;
   };
+  canStop: boolean;
+  handleStopPrompt: () => void;
 }
 
 export function usePromptComposerProps(
@@ -132,6 +134,8 @@ export function usePromptComposerProps(
     setCollabConfigDraft,
     clearCollabConfigDraft,
     debugToggleMutation,
+    canStop,
+    handleStopPrompt,
   } = args;
   return useMemo<PromptComposerProps>(
     () => ({
@@ -186,6 +190,8 @@ export function usePromptComposerProps(
           activeConversation?.debugMode?.active ? "exit" : "enter",
         ),
       debugTogglePending: debugToggleMutation.isPending,
+      canStop,
+      onStopPrompt: handleStopPrompt,
     }),
     [
       projectName,
@@ -232,6 +238,8 @@ export function usePromptComposerProps(
       setPromptText,
       clearCollabConfigDraft,
       debugToggleMutation,
+      canStop,
+      handleStopPrompt,
     ],
   );
 }

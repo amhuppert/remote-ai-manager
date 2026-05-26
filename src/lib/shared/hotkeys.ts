@@ -15,7 +15,7 @@ export type HotkeyId =
   | "helpModal"
   | "voiceToggle"
   | "voiceFireAndForget"
-  | "abortPrompt"
+  | "clearInput"
   | "nextMessage"
   | "prevMessage"
   | "firstMessage"
@@ -60,11 +60,11 @@ export const HOTKEY_REGISTRY: HotkeyRegistry = {
     enableOnFormTags: true,
     enableOnContentEditable: true,
   },
-  abortPrompt: {
-    id: "abortPrompt",
+  clearInput: {
+    id: "clearInput",
     keys: "Escape",
-    label: "Abort prompt / clear input",
-    description: "Cancel a running prompt, or clear the input field when idle",
+    label: "Clear prompt input",
+    description: "Clear the prompt input field when it has focus",
     category: "general",
     enableOnFormTags: true,
     enableOnContentEditable: true,

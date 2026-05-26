@@ -62,6 +62,8 @@ describe("usePromptComposerProps", () => {
         setCollabConfigDraft: () => {},
         clearCollabConfigDraft,
         debugToggleMutation: { isPending: false, mutate: debugToggleMutate },
+        canStop: false,
+        handleStopPrompt: () => {},
       });
     });
 
