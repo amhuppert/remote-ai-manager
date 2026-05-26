@@ -1,10 +1,14 @@
 /**
- * Fix pre-merge validation errors in a session worktree via the task runner.
+ * Fix pre-merge validation errors in a session worktree via the conversation
+ * actor.
  *
- * - Saves validation output to a temp file for the agent to read
- * - Tells the agent what validation command is being run (for context)
- * - Supports session resume for retry attempts (same conversation)
- * - The merge machine re-runs validation after this completes and retries if needed
+ * - Saves validation output to a temp file for the agent to read.
+ * - Tells the agent what validation command is being run (for context).
+ * - Routes the turn through `executeWorkflowTaskRun` so the conversation lock,
+ *   transcript append, and SSE broadcast all fire — and so the conversation
+ *   actor's backend runtime is reused across retries automatically.
+ * - The merge machine re-runs validation after this completes and retries with
+ *   `isRetry: true` on subsequent attempts to pick the retry prompt variant.
  */
 
 import { writeFile, mkdir } from "node:fs/promises";
@@ -12,16 +16,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { readConfig as defaultReadConfig } from "../config/loader";
 import { createLogger } from "../logging";
-import { getTaskRunner as defaultGetTaskRunner } from "../agent-backends/registry";
-import type { AgentTaskRunner, AgentTaskResult } from "../agent-backends/task";
-import type { AgentSessionRef } from "../agent-backends/types";
-import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
-import type { AgentCallFacadeDeps } from "@/lib/workflows/primitives/agent-call-facade";
+import { executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun } from "@/lib/workflows/conversation/execute-workflow-task-run";
 import type {
-  AgentCallRequest,
-  AgentCallResult,
-} from "@/lib/workflows/primitives/agent-call-vocabulary";
-import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
+  ExecuteWorkflowTaskRunInput,
+  TaskRunResult,
+} from "@/lib/workflows/conversation/execute-workflow-task-run";
 
 const logger = createLogger("validation-fix");
 
@@ -30,77 +29,28 @@ const logger = createLogger("validation-fix");
 // ============================================================
 
 export interface ValidationFixDeps {
-  getTaskRunner(backend: "claude"): AgentTaskRunner;
   readConfig: typeof defaultReadConfig;
   /**
-   * Optional override for the AgentCall primitive entry point. The validation
-   * fixer routes its task-style turn through `executeAgentCall` so the facade
-   * applies the structured-output gate and uniform failure normalization.
+   * Named entrypoint that routes a single `task_run` turn through the
+   * conversation actor for the conversation identified by
+   * `(projectPath, sessionName, conversationId)`.
    */
-  executeAgentCall?: (
-    request: AgentCallRequest,
-    facadeDeps: AgentCallFacadeDeps,
-  ) => Promise<AgentCallResult>;
+  executeWorkflowTaskRun?(
+    input: ExecuteWorkflowTaskRunInput,
+  ): Promise<TaskRunResult>;
 }
 
 const defaultDeps: ValidationFixDeps = {
-  getTaskRunner: defaultGetTaskRunner,
   readConfig: defaultReadConfig,
 };
-
-function agentCallResultToTaskResult(result: AgentCallResult): AgentTaskResult {
-  if (result.outcome.kind === "completed") {
-    const completed: AgentTaskResult = {
-      text: result.outcome.text,
-      usage: result.usage
-        ? {
-            inputTokens: result.usage.inputTokens ?? null,
-            outputTokens: result.usage.outputTokens ?? null,
-            cachedInputTokens: result.usage.cachedInputTokens ?? null,
-          }
-        : null,
-      error: null,
-      timedOut: false,
-      backendRef: result.backendRef ?? null,
-    };
-    if (result.outcome.structuredOutput !== undefined) {
-      completed.structuredOutput = result.outcome.structuredOutput;
-    }
-    return completed;
-  }
-
-  if (result.outcome.kind === "failed") {
-    return {
-      text: null,
-      usage: result.usage
-        ? {
-            inputTokens: result.usage.inputTokens ?? null,
-            outputTokens: result.usage.outputTokens ?? null,
-            cachedInputTokens: result.usage.cachedInputTokens ?? null,
-          }
-        : null,
-      error: result.outcome.error.message,
-      timedOut: result.outcome.error.failureKind === "timeout",
-      backendRef: result.backendRef ?? null,
-    };
-  }
-
-  return {
-    text: null,
-    usage: null,
-    error: `validation fixer paused unexpectedly (pauseKind=${result.outcome.pauseKind})`,
-    timedOut: false,
-    backendRef: result.backendRef ?? null,
-  };
-}
 
 // ============================================================
 // Public Types
 // ============================================================
 
 export type ValidationFixResult =
-  | { status: "fixed"; sessionRef?: AgentSessionRef | null }
-  | { status: "failed"; error: string; sessionRef?: AgentSessionRef | null };
+  | { status: "fixed" }
+  | { status: "failed"; error: string };
 
 // ============================================================
 // System Prompt
@@ -207,11 +157,18 @@ function buildRetryPrompt(params: {
 export interface FixValidationErrorsParams {
   worktreePath: string;
   validationOutput: string;
+  projectPath: string;
+  sessionName: string;
+  conversationId: string;
+  branchName: string;
   validationCommand?: string;
-  projectPath?: string;
-  sessionName?: string;
-  branchName?: string;
-  sessionRef?: AgentSessionRef | null;
+  /**
+   * True after the first attempt failed and the merge machine is retrying.
+   * The conversation actor itself preserves the backend runtime across calls,
+   * so no session-ref plumbing is needed here — this flag only selects which
+   * prompt variant is built.
+   */
+  isRetry?: boolean;
 }
 
 /**
@@ -227,12 +184,12 @@ export function createValidationFixer(deps: ValidationFixDeps = defaultDeps) {
 }
 
 /**
- * Fix validation errors in a session worktree via the task runner.
+ * Fix validation errors via the conversation actor.
  *
- * - Saves validation output to a temp file for the agent to reference
- * - On first attempt: creates a new persisted session
- * - On retry: resumes the previous session for accumulated context
- * - Returns the session ref so the caller can resume on retry
+ * - Saves validation output to a temp file for the agent to reference.
+ * - On first attempt: uses the first-attempt prompt.
+ * - On retry: uses the retry prompt; the conversation actor reuses the same
+ *   backend runtime so the agent retains context from the previous turn.
  */
 export async function fixValidationErrors(
   params: FixValidationErrorsParams,
@@ -244,16 +201,25 @@ async function fixValidationErrorsImpl(
   params: FixValidationErrorsParams,
   deps: ValidationFixDeps,
 ): Promise<ValidationFixResult> {
-  const { worktreePath, validationOutput, validationCommand, sessionRef } =
-    params;
-  const { readConfig, getTaskRunner } = deps;
-  const executeAgentCall = deps.executeAgentCall ?? defaultExecuteAgentCall;
-  const isRetry = sessionRef != null;
+  const {
+    worktreePath,
+    validationOutput,
+    validationCommand,
+    projectPath,
+    sessionName,
+    conversationId,
+    isRetry,
+  } = params;
+  const { readConfig } = deps;
+  const executeWorkflowTaskRun =
+    deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
 
   logger.info("validation-fix.start", {
     worktreePath,
-    isRetry,
-    sessionRef,
+    projectPath,
+    sessionName,
+    conversationId,
+    isRetry: isRetry === true,
   });
 
   let config;
@@ -266,8 +232,8 @@ async function fixValidationErrorsImpl(
     return { status: "failed", error: errorMsg };
   }
 
-  const jobId = `${params.sessionName ?? "unknown"}-${Date.now()}`;
-  const attempt = isRetry ? 2 : 1;
+  const jobId = `${sessionName}-${Date.now()}`;
+  const attempt = isRetry === true ? 2 : 1;
   let validationOutputPath: string;
   try {
     validationOutputPath = await writeValidationOutputFile(
@@ -282,60 +248,42 @@ async function fixValidationErrorsImpl(
     return { status: "failed", error: errorMsg };
   }
 
-  const prompt = isRetry
-    ? buildRetryPrompt({
-        validationOutput,
-        validationOutputPath,
-        validationCommand,
-      })
-    : buildFirstAttemptPrompt({
-        validationOutput,
-        validationOutputPath,
-        validationCommand,
-      });
+  const prompt =
+    isRetry === true
+      ? buildRetryPrompt({
+          validationOutput,
+          validationOutputPath,
+          validationCommand,
+        })
+      : buildFirstAttemptPrompt({
+          validationOutput,
+          validationOutputPath,
+          validationCommand,
+        });
 
   try {
-    const runner = getTaskRunner("claude");
-    const request: AgentCallRequest = {
+    const result = await executeWorkflowTaskRun({
+      projectPath,
+      sessionName,
+      conversationId,
       kind: "task_run",
-      backend: "claude",
       prompt,
       systemInstructions: VALIDATION_FIX_INSTRUCTIONS,
-      writeCapability: "write_capable",
       timeoutMs: config.claudeTimeoutMs,
-    };
-
-    const callResult = await executeAgentCall(request, {
-      resolveTaskRunner: () => ({
-        runner,
-        capabilityView: capabilityViewForBackend("claude"),
-        workingDirectory: worktreePath,
-        autonomous: true,
-        defaultTimeoutMs: config.claudeTimeoutMs,
-        ...(sessionRef !== undefined ? { resumeRef: sessionRef } : {}),
-      }),
+      origin: { source: "workflow" },
     });
 
-    const result = agentCallResultToTaskResult(callResult);
-
-    if (result.error) {
+    if (result.kind === "error") {
       logger.error("validation-fix.task_error", {
         worktreePath,
         error: result.error,
-        timedOut: result.timedOut,
+        aborted: result.aborted,
       });
-      return {
-        status: "failed",
-        error: result.error,
-        sessionRef: result.backendRef,
-      };
+      return { status: "failed", error: result.error };
     }
 
-    logger.info("validation-fix.complete", {
-      worktreePath,
-      sessionRef: result.backendRef,
-    });
-    return { status: "fixed", sessionRef: result.backendRef };
+    logger.info("validation-fix.complete", { worktreePath });
+    return { status: "fixed" };
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : "Unknown error";
     logger.error("validation-fix.runner_error", {

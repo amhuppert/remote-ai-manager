@@ -6,18 +6,17 @@ import {
   parseValidatorResponse,
   VALIDATOR_OUTPUT_SCHEMA,
 } from "./validator-runner";
-import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
+import type {
+  ExecuteWorkflowTaskRunInput,
+  TaskRunResult,
+} from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { AgentSessionRef } from "@/lib/agent-backends/types";
 import type {
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowExecution,
   GraphWorkflowResolvedContext,
   GraphWorkflowTaskDefinition,
 } from "@/lib/workflows/schemas";
-import type { AgentBackendId } from "@/lib/agent-backends/types";
-import type {
-  AgentTaskRunner,
-  AgentTaskResult,
-} from "@/lib/agent-backends/task";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
@@ -25,31 +24,48 @@ import {
 import { createWorkflowContinuityService } from "@/lib/workflow-graph/workflow-continuity-service";
 import { graphWorkflowExecutionSchema } from "@/lib/workflows/schemas";
 
-function mockGetTaskRunner(
-  claudeRun: ReturnType<typeof vi.fn> = vi.fn(),
-  codexRun: ReturnType<typeof vi.fn> = vi.fn(),
-): (backend: AgentBackendId) => AgentTaskRunner {
-  return (backend: AgentBackendId) => ({
-    backend,
-    run: backend === "claude" ? claudeRun : codexRun,
-  });
+const emptyUsage = {
+  costUsd: null,
+  durationMs: null,
+  contextTokens: null,
+  contextWindowMax: null,
+  inputTokens: null,
+  outputTokens: null,
+  cachedInputTokens: null,
+};
+
+interface TaskRunResultOverrides {
+  backendRef?: AgentSessionRef | null;
 }
 
-function taskResult(
-  text: string | null,
-  overrides: Partial<AgentTaskResult> = {},
-): AgentTaskResult {
+function textTaskRun(
+  text: string,
+  overrides: TaskRunResultOverrides = {},
+): TaskRunResult {
   return {
+    kind: "text",
     text,
-    usage: null,
-    error: null,
-    timedOut: false,
-    ...overrides,
+    usage: emptyUsage,
+    backendRef: overrides.backendRef ?? null,
+  };
+}
+
+function errorTaskRun(
+  error: string,
+  overrides: TaskRunResultOverrides = {},
+): TaskRunResult {
+  return {
+    kind: "error",
+    error,
+    aborted: false,
+    usage: emptyUsage,
+    backendRef: overrides.backendRef ?? null,
   };
 }
 
 const stubWorktreePath = async () => "/worktree";
 const stubTimeoutMs = async () => 300_000;
+const stubProjectDisplayName = () => "test-project";
 
 const validatorConfig: GraphWorkflowAgentValidatorConfig = {
   type: "claude",
@@ -377,9 +393,7 @@ describe("buildContextValidationPrompt", () => {
 
     const lowered = prompt.toLowerCase();
     expect(lowered).toContain("intent");
-    // Mentions that criteria may be imprecise and judgment is required
     expect(lowered).toMatch(/imprecise|judgment|close enough|closely enough/);
-    // Should NOT tell the validator to take criteria literally / exactly
     expect(prompt).not.toContain("exact acceptance criteria");
     expect(lowered).not.toContain("literal");
   });
@@ -393,11 +407,9 @@ describe("buildContextValidationPrompt", () => {
     });
 
     const lowered = prompt.toLowerCase();
-    // Must explicitly call out that deterministic concerns are out of scope
     expect(lowered).toMatch(/do not|don't|must not/);
     expect(lowered).toContain("tests");
     expect(lowered).toMatch(/type (errors|checks|checking)/);
-    // One of lint/build/compile should be mentioned as a deterministic concern
     expect(lowered).toMatch(/lint|build|compile/);
   });
 
@@ -411,7 +423,6 @@ describe("buildContextValidationPrompt", () => {
 
     const lowered = prompt.toLowerCase();
     expect(lowered).toContain("scope");
-    // Should reference that downstream/other contexts may complete related work
     expect(lowered).toMatch(
       /downstream|other context|another context|later context/,
     );
@@ -457,17 +468,20 @@ describe("parseValidatorResponse", () => {
 });
 
 describe("createValidatorRunner", () => {
-  it("runContextValidator passes the prompt to the task runner and returns the parsed result", async () => {
+  it("runContextValidator forwards the prompt and schema to executeWorkflowTaskRun and returns the parsed result", async () => {
     const agentResponse = JSON.stringify({
       summary: "Context completed correctly",
       issues: [],
     });
 
-    const claudeRun = vi.fn(async () => taskResult(agentResponse));
+    const executeWorkflowTaskRun = vi.fn(
+      async (_input: ExecuteWorkflowTaskRunInput) => textTaskRun(agentResponse),
+    );
     const runner = createValidatorRunner({
-      getTaskRunner: mockGetTaskRunner(claudeRun),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
     });
 
     const execution = buildExecutionWithContextValidation();
@@ -483,29 +497,33 @@ describe("createValidatorRunner", () => {
       validator: contextDef.contextValidator!,
     });
 
-    expect(claudeRun).toHaveBeenCalledWith(
-      expect.objectContaining({
-        workingDirectory: "/worktree",
-        modelId: "sonnet",
-        reasoningEffort: "medium",
-        autonomous: true,
-        outputSchema: VALIDATOR_OUTPUT_SCHEMA,
-        prompt: expect.stringContaining(
-          "Every task summary is complete and the final plan document is updated.",
-        ),
-      }),
+    expect(executeWorkflowTaskRun).toHaveBeenCalledTimes(1);
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input).toMatchObject({
+      kind: "task_run",
+      modelId: "sonnet",
+      effort: "medium",
+      skipStructuredOutputGate: true,
+      outputFormat: {
+        type: "json_schema",
+        schema: VALIDATOR_OUTPUT_SCHEMA,
+      },
+    });
+    expect(input.prompt).toContain(
+      "Every task summary is complete and the final plan document is updated.",
     );
     expect(result.result.kind).toBe("pass");
   });
 
   it("runContextValidator returns infra_error unparseable when the agent produces no JSON", async () => {
-    const claudeRun = vi.fn(async () =>
-      taskResult("I could not find anything to review."),
+    const executeWorkflowTaskRun = vi.fn(async () =>
+      textTaskRun("I could not find anything to review."),
     );
     const runner = createValidatorRunner({
-      getTaskRunner: mockGetTaskRunner(claudeRun),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
     });
 
     const execution = buildExecutionWithContextValidation();
@@ -528,14 +546,15 @@ describe("createValidatorRunner", () => {
     }
   });
 
-  it("runContextValidator returns infra_error exception with engine=codex when codex runner throws", async () => {
-    const codexRun = vi.fn(async () => {
+  it("runContextValidator returns infra_error exception with engine=codex when executeWorkflowTaskRun throws", async () => {
+    const executeWorkflowTaskRun = vi.fn(async () => {
       throw new Error("Codex rate limit exceeded");
     });
     const runner = createValidatorRunner({
-      getTaskRunner: mockGetTaskRunner(vi.fn(), codexRun),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
     });
 
     const codexValidator: GraphWorkflowAgentValidatorConfig = {
@@ -564,17 +583,17 @@ describe("createValidatorRunner", () => {
     }
   });
 
-  it("runContextValidator returns infra_error exception when codex returns a non-null error without throwing", async () => {
-    const codexRun = vi.fn(async () =>
-      taskResult(null, {
-        error:
-          "thread/resume failed: no rollout found for thread id phantom-123",
-      }),
+  it("runContextValidator returns infra_error exception when codex returns an error result", async () => {
+    const executeWorkflowTaskRun = vi.fn(async () =>
+      errorTaskRun(
+        "thread/resume failed: no rollout found for thread id phantom-123",
+      ),
     );
     const runner = createValidatorRunner({
-      getTaskRunner: mockGetTaskRunner(vi.fn(), codexRun),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
     });
 
     const codexValidator: GraphWorkflowAgentValidatorConfig = {
@@ -604,7 +623,7 @@ describe("createValidatorRunner", () => {
     }
   });
 
-  it("runContextValidator calls the codex task runner with hardened execution settings", async () => {
+  it("runContextValidator forwards codex model and reasoningEffort overrides to executeWorkflowTaskRun", async () => {
     const codexResponse = JSON.stringify({
       summary: "Reopen one task.",
       issues: [
@@ -616,11 +635,14 @@ describe("createValidatorRunner", () => {
       ],
     });
 
-    const codexRun = vi.fn(async () => taskResult(codexResponse));
+    const executeWorkflowTaskRun = vi.fn(async () =>
+      textTaskRun(codexResponse),
+    );
     const runner = createValidatorRunner({
-      getTaskRunner: mockGetTaskRunner(vi.fn(), codexRun),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
     });
 
     const codexValidator: GraphWorkflowAgentValidatorConfig = {
@@ -642,12 +664,10 @@ describe("createValidatorRunner", () => {
       validator: codexValidator,
     });
 
-    expect(codexRun).toHaveBeenCalledWith(
+    expect(executeWorkflowTaskRun).toHaveBeenCalledWith(
       expect.objectContaining({
         modelId: "gpt-5.4",
-        reasoningEffort: "high",
-        sandboxMode: "danger-full-access",
-        approvalPolicy: "never",
+        effort: "high",
       }),
     );
     expect(result.result.kind).toBe("fail");
@@ -710,18 +730,20 @@ describe("context validator continuity runtime integration", () => {
       now: () => NOW,
     });
 
-    const claudeRun = vi.fn().mockResolvedValue(
-      taskResult(passResponseJson, {
-        backendRef: { backend: "claude", sessionId: "sdk-session-1" },
-      }),
+    const executeWorkflowTaskRun = vi.fn(
+      async (_input: ExecuteWorkflowTaskRunInput) =>
+        textTaskRun(passResponseJson, {
+          backendRef: { backend: "claude", sessionId: "sdk-session-1" },
+        }),
     );
 
     const runner = createValidatorRunner({
-      getTaskRunner: mockGetTaskRunner(claudeRun),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       continuityService,
       executionRepository: repo,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
     });
 
     const result1 = await runner.runContextValidator({
@@ -750,15 +772,18 @@ describe("context validator continuity runtime integration", () => {
     });
 
     expect(createConversation).toHaveBeenCalledOnce();
-    expect(claudeRun).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        resumeRef: { backend: "claude", sessionId: "sdk-session-1" },
-      }),
-    );
     expect(result2.metadata.sessionRef).toMatchObject({
       backend: "claude",
       sessionId: "sdk-session-1",
     });
+    // Conversation actor handles resumeRef threading internally; the validator
+    // routes through executeWorkflowTaskRun with the same conversationId across
+    // calls so the actor can persist backendRef and resume the session.
+    const conversationIds = executeWorkflowTaskRun.mock.calls.map(
+      ([input]) => input.conversationId,
+    );
+    expect(conversationIds[0]).toBeDefined();
+    expect(conversationIds[0]).toBe(conversationIds[1]);
   });
 
   it("resumes the Codex context-validator thread after a schema round-trip", async () => {
@@ -787,19 +812,19 @@ describe("context validator continuity runtime integration", () => {
       now: () => NOW,
     });
 
-    const codexRun = vi.fn().mockResolvedValue(
-      taskResult(passResponseJson, {
+    const executeWorkflowTaskRun = vi.fn(async () =>
+      textTaskRun(passResponseJson, {
         backendRef: { backend: "codex", threadId: "thread-real-1" },
-        usage: null,
       }),
     );
 
     const runner = createValidatorRunner({
-      getTaskRunner: mockGetTaskRunner(vi.fn(), codexRun),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       continuityService,
       executionRepository: repo,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
     });
 
     const result1 = await runner.runContextValidator({
@@ -862,18 +887,17 @@ describe("context validator continuity runtime integration", () => {
       now: () => NOW,
     });
 
-    const codexRun = vi.fn().mockResolvedValue(
-      taskResult(null, {
-        error: "Codex Exec exited with code 1: schema invalid",
-      }),
+    const executeWorkflowTaskRun = vi.fn(async () =>
+      errorTaskRun("Codex Exec exited with code 1: schema invalid"),
     );
 
     const runner = createValidatorRunner({
-      getTaskRunner: mockGetTaskRunner(vi.fn(), codexRun),
       resolveWorktreePath: stubWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
       continuityService,
       executionRepository: repo,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
     });
 
     const result = await runner.runContextValidator({
@@ -903,12 +927,15 @@ describe("validator-runner executionTarget override", () => {
       issues: [],
     });
 
-    const claudeRun = vi.fn(async () => taskResult(agentResponse));
+    const executeWorkflowTaskRun = vi.fn(async () =>
+      textTaskRun(agentResponse),
+    );
     const resolveWorktreePath = vi.fn(async () => "/session-worktree");
     const runner = createValidatorRunner({
-      getTaskRunner: mockGetTaskRunner(claudeRun),
       resolveWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
     });
 
     const execution = buildExecutionWithContextValidation();
@@ -930,9 +957,12 @@ describe("validator-runner executionTarget override", () => {
       },
     });
 
-    expect(claudeRun).toHaveBeenCalledWith(
+    // worktreePath flows through to the actor input that drives the runner.
+    expect(executeWorkflowTaskRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        workingDirectory: "/repo/.worktrees/session-1.context-plan",
+        actorInput: expect.objectContaining({
+          sessionWorktreePath: "/repo/.worktrees/session-1.context-plan",
+        }),
       }),
     );
     expect(resolveWorktreePath).not.toHaveBeenCalled();
@@ -945,12 +975,15 @@ describe("validator-runner executionTarget override", () => {
       issues: [],
     });
 
-    const claudeRun = vi.fn(async () => taskResult(agentResponse));
+    const executeWorkflowTaskRun = vi.fn(async () =>
+      textTaskRun(agentResponse),
+    );
     const resolveWorktreePath = vi.fn(async () => "/session-worktree");
     const runner = createValidatorRunner({
-      getTaskRunner: mockGetTaskRunner(claudeRun),
       resolveWorktreePath,
       resolveTimeoutMs: stubTimeoutMs,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
     });
 
     const execution = buildExecutionWithContextValidation();
@@ -967,52 +1000,12 @@ describe("validator-runner executionTarget override", () => {
     });
 
     expect(resolveWorktreePath).toHaveBeenCalledWith("/repo", "session-1");
-    expect(claudeRun).toHaveBeenCalledWith(
-      expect.objectContaining({ workingDirectory: "/session-worktree" }),
+    expect(executeWorkflowTaskRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorInput: expect.objectContaining({
+          sessionWorktreePath: "/session-worktree",
+        }),
+      }),
     );
-  });
-});
-
-describe("validator-runner Task 6.2 parity (executeAgentCall route)", () => {
-  it("routes the validator turn through deps.executeAgentCall as kind=task_run with the expected request shape", async () => {
-    const agentResponse = JSON.stringify({
-      summary: "All good",
-      issues: [],
-    });
-
-    const claudeRun = vi.fn(async () => taskResult(agentResponse));
-    const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
-
-    const runner = createValidatorRunner({
-      getTaskRunner: mockGetTaskRunner(claudeRun),
-      resolveWorktreePath: stubWorktreePath,
-      resolveTimeoutMs: stubTimeoutMs,
-      executeAgentCall: executeAgentCallSpy,
-    });
-
-    const execution = buildExecutionWithContextValidation();
-    const contextDef = execution.workingDefinition.executionContexts.find(
-      (c) => c.id === "context-plan",
-    )!;
-
-    const result = await runner.runContextValidator({
-      projectPath: "/repo",
-      sessionName: "session-1",
-      execution,
-      context: contextDef,
-      validator: contextDef.contextValidator!,
-    });
-
-    expect(executeAgentCallSpy).toHaveBeenCalledTimes(1);
-    const [request] = executeAgentCallSpy.mock.calls[0]!;
-    expect(request).toMatchObject({
-      kind: "task_run",
-      backend: "claude",
-      writeCapability: "write_capable",
-      outputSchema: VALIDATOR_OUTPUT_SCHEMA,
-    });
-    expect(typeof request.prompt).toBe("string");
-    expect(request.prompt.length).toBeGreaterThan(0);
-    expect(result.result.kind).toBe("pass");
   });
 });

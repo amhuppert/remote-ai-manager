@@ -1383,6 +1383,13 @@
   color: var(--text-secondary);
 }
 
+.message-iteration-badge {
+  margin-left: var(--space-sm);
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-weight: 500;
+}
+
 /* ============================================================
    Right Pane (diff + markdown viewer wrapper)
    ============================================================ */

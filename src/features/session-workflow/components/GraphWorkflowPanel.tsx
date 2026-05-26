@@ -13,7 +13,7 @@ import type { ExecutionMobilePanel } from "../SessionWorkflowPage";
 import ExecutionStatusBar from "./ExecutionStatusBar";
 import WorkflowExecutionCanvas from "./WorkflowExecutionCanvas";
 import ExecutionInspectorPanel from "./ExecutionInspectorPanel";
-import IterationTranscriptViewer from "./IterationTranscriptViewer";
+import WorkflowConversationViewer from "./WorkflowConversationViewer";
 import { resolveViewingTask } from "./view-task-resolver";
 
 interface GraphWorkflowPanelProps {
@@ -180,7 +180,7 @@ export default function GraphWorkflowPanel({
               {mobilePanel === "log" && (
                 <div className="wb-transcript-viewer">
                   {viewingTask ? (
-                    <IterationTranscriptViewer
+                    <WorkflowConversationViewer
                       projectName={projectName}
                       sessionName={sessionName}
                       conversationId={viewingTask.conversationId}
@@ -190,7 +190,7 @@ export default function GraphWorkflowPanel({
                       onClose={handleCloseTranscript}
                     />
                   ) : viewingConversation ? (
-                    <IterationTranscriptViewer
+                    <WorkflowConversationViewer
                       projectName={projectName}
                       sessionName={sessionName}
                       conversationId={viewingConversation.conversationId}
@@ -210,7 +210,7 @@ export default function GraphWorkflowPanel({
           ) : (
             <>
               {viewingTask ? (
-                <IterationTranscriptViewer
+                <WorkflowConversationViewer
                   projectName={projectName}
                   sessionName={sessionName}
                   conversationId={viewingTask.conversationId}
@@ -220,7 +220,7 @@ export default function GraphWorkflowPanel({
                   onClose={handleCloseTranscript}
                 />
               ) : viewingConversation ? (
-                <IterationTranscriptViewer
+                <WorkflowConversationViewer
                   projectName={projectName}
                   sessionName={sessionName}
                   conversationId={viewingConversation.conversationId}

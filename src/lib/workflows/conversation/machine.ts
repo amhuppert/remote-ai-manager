@@ -35,11 +35,13 @@ import type {
   PrepareTurnInput,
   ExecutePromptInput,
   PromptActorResult,
+  RunTaskRunInput,
   VerifyCleanupInput,
 } from "./types";
 import {
   prepareTurnActor,
   executePromptActor,
+  runTaskRunActor,
   verifyCleanupActor,
 } from "./actors";
 import {
@@ -86,10 +88,13 @@ export const conversationMachine = setup({
   actors: {
     prepareTurn: prepareTurnActor,
     executePrompt: executePromptActor,
+    runTaskRun: runTaskRunActor,
     verifyCleanup: verifyCleanupActor,
   },
 
   guards: {
+    isActiveTurnTaskRun: ({ context }) =>
+      context.activeTurn?.kind === "task_run",
     isDebugModeActive: ({ context }) => context.debugMode?.active === true,
     isDebugHypothesizing: ({ context }) =>
       context.debugMode?.phase === "hypothesizing",
@@ -222,6 +227,7 @@ export const conversationMachine = setup({
           target: "acquiringResources",
           actions: assign({
             activeTurn: ({ context, event }) => ({
+              kind: "conversation_turn" as const,
               promptText: event.promptText,
               images: event.images ?? [],
               backend: event.backend ?? context.agentBackend,
@@ -231,6 +237,36 @@ export const conversationMachine = setup({
               startedAt: new Date().toISOString(),
               streamId: event.streamId,
               outputFormat: event.outputFormat,
+            }),
+            lastError: null,
+          }),
+        },
+        SUBMIT_TASK_RUN: {
+          target: "acquiringResources",
+          actions: assign({
+            activeTurn: ({ context, event }) => ({
+              kind: "task_run" as const,
+              promptText: event.promptText,
+              backend: event.backend ?? context.agentBackend,
+              modelId: event.modelId ?? null,
+              effort: event.effort ?? null,
+              startedAt: new Date().toISOString(),
+              ...(event.outputFormat !== undefined
+                ? { outputFormat: event.outputFormat }
+                : {}),
+              ...(event.systemInstructions !== undefined
+                ? { systemInstructions: event.systemInstructions }
+                : {}),
+              ...(event.tooling !== undefined
+                ? { tooling: event.tooling }
+                : {}),
+              ...(event.timeoutMs !== undefined
+                ? { timeoutMs: event.timeoutMs }
+                : {}),
+              ...(event.skipStructuredOutputGate !== undefined
+                ? { skipStructuredOutputGate: event.skipStructuredOutputGate }
+                : {}),
+              ...(event.origin !== undefined ? { origin: event.origin } : {}),
             }),
             lastError: null,
           }),
@@ -331,71 +367,21 @@ export const conversationMachine = setup({
     },
 
     // ========================================================
-    // EXECUTING — compound state: invoke stays alive across
-    // running ↔ waitingForInput transitions
+    // EXECUTING — compound state that branches on activeTurn.kind:
+    //   - conversation_turn → invokes the streaming `executePrompt` actor;
+    //     keeps the running ↔ waitingForInput compound so ASK_QUESTION/ANSWER
+    //     transitions don't tear down the long-lived stream.
+    //   - task_run → invokes the single-shot `runTaskRun` actor; no
+    //     mid-turn ask-user, so there are no nested substates.
+    // The discriminator is `kind` only — `outputFormat` is consumed by both
+    // branches (Debug Mode uses it on the streaming path) and must not gate
+    // dispatch selection.
     // ========================================================
     executing: {
-      initial: "running",
+      initial: "dispatching",
 
-      invoke: {
-        src: "executePrompt",
-        input: ({ context }): ExecutePromptInput => {
-          // Explicit outputFormat (e.g. from validator) takes priority over
-          // debug-phase-derived format.
-          const outputFormat =
-            context.activeTurn?.outputFormat ??
-            getDefaultDebugAdapter().resolveOutputFormat(
-              context.debugMode?.phase,
-            );
-
-          return {
-            projectPath: context.projectPath,
-            projectName: context.projectName,
-            sessionName: context.sessionName,
-            worktreePath: context.worktreePath,
-            conversationId: context.conversationId,
-            transcriptPath: context.transcriptPath!,
-            agentBackend: context.agentBackend,
-            backendRef: context.backendRef,
-            forkedFrom: context.forkedFrom,
-            role: context.role,
-            promptText: context.activeTurn!.promptText,
-            images: context.activeTurn!.images,
-            modelId: context.activeTurn!.modelId,
-            effort: context.activeTurn!.effort,
-            autonomous: context.activeTurn!.autonomous,
-            debugMode: context.debugMode,
-            outputFormat,
-          };
-        },
-        onDone: {
-          target: "#conversation.finalizingTurn",
-          actions: assign({
-            lastResult: ({ event }) => event.output,
-            // On error: Codex's threadId is unrecoverable when `codex exec`
-            // exits non-zero, so clear it to force a fresh thread next turn.
-            // Claude session IDs are server-side at Anthropic and a transient
-            // QuerySession failure (subprocess crash, idle TTL) does not
-            // invalidate them — preserve the last-known ref so the next turn
-            // can attempt `resume:`. Wiping it strands the conversation with
-            // a rendered transcript but no agent memory of it.
-            backendRef: ({ context, event }) => {
-              if (event.output.error && context.agentBackend === "codex") {
-                return event.output.backendRef ?? null;
-              }
-              return event.output.backendRef ?? context.backendRef;
-            },
-          }),
-        },
-        onError: {
-          target: "#conversation.finalizingTurn",
-          actions: assign({
-            lastError: ({ event }) => extractError(event.error),
-          }),
-        },
-      },
-
-      // Parent-level events — handled in both running and waitingForInput
+      // Parent-level events apply across both branches so the existing
+      // streaming control flow is byte-for-byte unchanged.
       on: {
         BACKEND_INIT: {
           actions: assign({
@@ -426,41 +412,188 @@ export const conversationMachine = setup({
       },
 
       states: {
-        running: {
-          on: {
-            ASK_QUESTION: {
-              target: "waitingForInput",
-              actions: [
-                assign({
-                  status: "waiting_for_input" as const,
-                  pendingQuestion: ({ event }) => ({
-                    questionId: event.questionId,
-                    questions: event.questions,
-                  }),
-                }),
-                "syncDerivedFields",
-                "broadcastConversationStatus",
-                "broadcastAskQuestion",
-                "dispatchPushNotification",
-                "persistSnapshot",
-              ],
+        // Eager dispatcher: routes to the correct actor branch based on
+        // `activeTurn.kind`. XState v5 cannot dynamically select `invoke.src`,
+        // so the branch is expressed structurally as sibling substates.
+        dispatching: {
+          always: [
+            {
+              guard: "isActiveTurnTaskRun",
+              target: "taskRun",
+            },
+            { target: "conversationTurn" },
+          ],
+        },
+
+        conversationTurn: {
+          initial: "running",
+
+          invoke: {
+            src: "executePrompt",
+            input: ({ context }): ExecutePromptInput => {
+              const activeTurn = context.activeTurn;
+              if (activeTurn?.kind !== "conversation_turn") {
+                throw new Error(
+                  "executePrompt requires an active conversation_turn",
+                );
+              }
+
+              // Explicit outputFormat (e.g. from validator) takes priority over
+              // debug-phase-derived format.
+              const outputFormat =
+                activeTurn.outputFormat ??
+                getDefaultDebugAdapter().resolveOutputFormat(
+                  context.debugMode?.phase,
+                );
+
+              return {
+                projectPath: context.projectPath,
+                projectName: context.projectName,
+                sessionName: context.sessionName,
+                worktreePath: context.worktreePath,
+                conversationId: context.conversationId,
+                transcriptPath: context.transcriptPath!,
+                agentBackend: context.agentBackend,
+                backendRef: context.backendRef,
+                forkedFrom: context.forkedFrom,
+                role: context.role,
+                promptText: activeTurn.promptText,
+                images: activeTurn.images,
+                modelId: activeTurn.modelId,
+                effort: activeTurn.effort,
+                autonomous: activeTurn.autonomous,
+                debugMode: context.debugMode,
+                outputFormat,
+              };
+            },
+            onDone: {
+              target: "#conversation.finalizingTurn",
+              actions: assign({
+                lastResult: ({ event }) => event.output,
+                // On error: Codex's threadId is unrecoverable when `codex exec`
+                // exits non-zero, so clear it to force a fresh thread next turn.
+                // Claude session IDs are server-side at Anthropic and a transient
+                // QuerySession failure (subprocess crash, idle TTL) does not
+                // invalidate them — preserve the last-known ref so the next turn
+                // can attempt `resume:`. Wiping it strands the conversation with
+                // a rendered transcript but no agent memory of it.
+                backendRef: ({ context, event }) => {
+                  if (event.output.error && context.agentBackend === "codex") {
+                    return event.output.backendRef ?? null;
+                  }
+                  return event.output.backendRef ?? context.backendRef;
+                },
+              }),
+            },
+            onError: {
+              target: "#conversation.finalizingTurn",
+              actions: assign({
+                lastError: ({ event }) => extractError(event.error),
+              }),
+            },
+          },
+
+          states: {
+            running: {
+              on: {
+                ASK_QUESTION: {
+                  target: "waitingForInput",
+                  actions: [
+                    assign({
+                      status: "waiting_for_input" as const,
+                      pendingQuestion: ({ event }) => ({
+                        questionId: event.questionId,
+                        questions: event.questions,
+                      }),
+                    }),
+                    "syncDerivedFields",
+                    "broadcastConversationStatus",
+                    "broadcastAskQuestion",
+                    "dispatchPushNotification",
+                    "persistSnapshot",
+                  ],
+                },
+              },
+            },
+
+            waitingForInput: {
+              on: {
+                ANSWER: {
+                  target: "running",
+                  actions: [
+                    assign({
+                      status: "running" as const,
+                      pendingQuestion: null,
+                    }),
+                    "syncDerivedFields",
+                    "broadcastConversationStatus",
+                    "persistSnapshot",
+                  ],
+                },
+              },
             },
           },
         },
 
-        waitingForInput: {
-          on: {
-            ANSWER: {
-              target: "running",
-              actions: [
-                assign({
-                  status: "running" as const,
-                  pendingQuestion: null,
-                }),
-                "syncDerivedFields",
-                "broadcastConversationStatus",
-                "persistSnapshot",
-              ],
+        taskRun: {
+          invoke: {
+            src: "runTaskRun",
+            input: ({ context }): RunTaskRunInput => {
+              const activeTurn = context.activeTurn;
+              if (activeTurn?.kind !== "task_run") {
+                throw new Error("runTaskRun requires an active task_run");
+              }
+              return {
+                projectPath: context.projectPath,
+                projectName: context.projectName,
+                sessionName: context.sessionName,
+                worktreePath: context.worktreePath,
+                conversationId: context.conversationId,
+                agentBackend: activeTurn.backend,
+                backendRef: context.backendRef,
+                promptText: activeTurn.promptText,
+                modelId: activeTurn.modelId,
+                effort: activeTurn.effort,
+                ...(activeTurn.outputFormat !== undefined
+                  ? { outputFormat: activeTurn.outputFormat }
+                  : {}),
+                ...(activeTurn.systemInstructions !== undefined
+                  ? { systemInstructions: activeTurn.systemInstructions }
+                  : {}),
+                ...(activeTurn.tooling !== undefined
+                  ? { tooling: activeTurn.tooling }
+                  : {}),
+                ...(activeTurn.timeoutMs !== undefined
+                  ? { timeoutMs: activeTurn.timeoutMs }
+                  : {}),
+                ...(activeTurn.skipStructuredOutputGate !== undefined
+                  ? {
+                      skipStructuredOutputGate:
+                        activeTurn.skipStructuredOutputGate,
+                    }
+                  : {}),
+                ...(activeTurn.origin !== undefined
+                  ? { origin: activeTurn.origin }
+                  : {}),
+              };
+            },
+            onDone: {
+              target: "#conversation.finalizingTurn",
+              actions: assign({
+                lastResult: ({ event }) => event.output,
+                backendRef: ({ context, event }) => {
+                  if (event.output.error && context.agentBackend === "codex") {
+                    return event.output.backendRef ?? null;
+                  }
+                  return event.output.backendRef ?? context.backendRef;
+                },
+              }),
+            },
+            onError: {
+              target: "#conversation.finalizingTurn",
+              actions: assign({
+                lastError: ({ event }) => extractError(event.error),
+              }),
             },
           },
         },
@@ -800,6 +933,7 @@ export const conversationMachine = setup({
           target: "#conversation.acquiringResources",
           actions: assign({
             activeTurn: ({ event, context }) => ({
+              kind: "conversation_turn" as const,
               promptText: event.promptText,
               images: event.images ?? [],
               backend: event.backend ?? context.agentBackend,

@@ -94,12 +94,27 @@ export const messageContentBlockSchema = z.discriminatedUnion("type", [
 ]);
 export type MessageContentBlock = z.infer<typeof messageContentBlockSchema>;
 
+export const transcriptMessageOriginSchema = z.object({
+  source: z.enum(["user", "workflow"]),
+  workflow: z
+    .object({
+      executionId: z.string(),
+      nodeId: z.string(),
+      iterationIndex: z.number().int().nonnegative(),
+    })
+    .optional(),
+});
+export type TranscriptMessageOrigin = z.infer<
+  typeof transcriptMessageOriginSchema
+>;
+
 export const transcriptMessageSchema = z.object({
   role: z.enum(["user", "assistant"]),
   content: z.array(messageContentBlockSchema),
   timestamp: z.string().nullable(),
   model: z.string().optional(),
   effort: z.string().optional(),
+  origin: transcriptMessageOriginSchema.optional(),
 });
 
 /** Parsed transcript message */
@@ -114,6 +129,8 @@ export interface TranscriptMessage {
   model?: string;
   /** Reasoning effort level used for this turn */
   effort?: string;
+  /** Where this message originated. Absent on legacy transcripts. */
+  origin?: TranscriptMessageOrigin;
 }
 
 // AskUserQuestion schemas (defined before conversationStateSchema which references them)
@@ -146,7 +163,7 @@ export const forkedFromSchema = z
 export type ForkedFrom = z.infer<typeof forkedFromSchema>;
 
 export const conversationRoleSchema = z
-  .enum(["initialization", "iteration", "validator"])
+  .enum(["initialization", "iteration", "validator", "planner"])
   .nullable()
   .default(null);
 export type ConversationRole = z.infer<typeof conversationRoleSchema>;

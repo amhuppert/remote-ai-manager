@@ -4,7 +4,7 @@ import { describe, it, expect } from "vitest";
 import { useRef } from "react";
 import { useConversationNav } from "./use-conversation-nav";
 import type { ConversationRow } from "@/features/session/conversation/conversation-rows";
-import type { VirtuosoHandle } from "@/features/session/conversation/ConversationVirtuosoList";
+import type { VirtuosoHandle } from "@/components/conversation/ConversationVirtuosoList";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 
 function messageRow(messageIndex: number): ConversationRow {

@@ -2,7 +2,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { screen } from "@testing-library/react";
 import { renderWithQuery } from "@/test/component-mocks";
-import MessageRow from "@/features/session/conversation/MessageRow";
+import MessageRow from "@/components/conversation/MessageRow";
 import type {
   ConversationState,
   TranscriptMessage,
@@ -167,6 +167,84 @@ describe("MessageRow", () => {
       />,
     );
     expect(container.querySelector(".debug-action-card")).toBeNull();
+  });
+
+  describe("workflow iteration badge", () => {
+    it("renders the iteration index when origin.source === 'workflow'", () => {
+      renderWithQuery(
+        <MessageRow
+          msg={makeMessage({
+            role: "assistant",
+            origin: {
+              source: "workflow",
+              workflow: {
+                executionId: "exec-1",
+                nodeId: "ctx-impl",
+                iterationIndex: 3,
+              },
+            },
+          })}
+          messageIndex={5}
+          isLast={false}
+          selectedBackend="claude"
+          worktreePath="/tmp/proj"
+          onFork={vi.fn()}
+          lastMessageExtras={null}
+        />,
+      );
+      expect(screen.getByText("iter 3")).toBeInTheDocument();
+    });
+
+    it("does not render the badge when origin is absent (legacy turn)", () => {
+      renderWithQuery(
+        <MessageRow
+          msg={makeMessage({ role: "assistant" })}
+          messageIndex={1}
+          isLast={false}
+          selectedBackend="claude"
+          worktreePath="/tmp/proj"
+          onFork={vi.fn()}
+          lastMessageExtras={null}
+        />,
+      );
+      expect(screen.queryByText(/^iter /)).toBeNull();
+    });
+
+    it("does not render the badge when origin.source === 'user'", () => {
+      renderWithQuery(
+        <MessageRow
+          msg={makeMessage({
+            role: "user",
+            origin: { source: "user" },
+          })}
+          messageIndex={2}
+          isLast={false}
+          selectedBackend="claude"
+          worktreePath="/tmp/proj"
+          onFork={vi.fn()}
+          lastMessageExtras={null}
+        />,
+      );
+      expect(screen.queryByText(/^iter /)).toBeNull();
+    });
+
+    it("does not render the badge when origin.source === 'workflow' but iterationIndex is missing", () => {
+      renderWithQuery(
+        <MessageRow
+          msg={makeMessage({
+            role: "assistant",
+            origin: { source: "workflow" },
+          })}
+          messageIndex={2}
+          isLast={false}
+          selectedBackend="claude"
+          worktreePath="/tmp/proj"
+          onFork={vi.fn()}
+          lastMessageExtras={null}
+        />,
+      );
+      expect(screen.queryByText(/^iter /)).toBeNull();
+    });
   });
 
   it("does not render DebugActionCard for the last user message", () => {

@@ -204,6 +204,103 @@ describe("conversation persistence", () => {
       const result = validateRestoredSnapshot({ value: "idle" }, "conv-1", 1);
       expect(result).toBeNull();
     });
+
+    it("coerces legacy persisted activeTurn (no kind) to conversation_turn variant and preserves all fields", () => {
+      // Shaped like a pre-discriminator activeTurn — no `kind` field. The
+      // restorer must add kind='conversation_turn' so the new machine code
+      // matches the variant.
+      const legacyActiveTurn = {
+        promptText: "do the thing",
+        images: [],
+        backend: "claude",
+        modelId: null,
+        effort: null,
+        autonomous: false,
+        startedAt: "2024-01-01T00:00:00Z",
+        streamId: "stream-legacy",
+      };
+      const snapshot = {
+        context: {
+          _schemaVersion: 1,
+          conversationId: "conv-1",
+          activeTurn: { ...legacyActiveTurn },
+        },
+        value: "executing",
+      };
+
+      const result = validateRestoredSnapshot(snapshot, "conv-1", 1);
+
+      expect(result).not.toBeNull();
+      const restoredActiveTurn = (
+        result as unknown as {
+          context: { activeTurn: Record<string, unknown> };
+        }
+      ).context.activeTurn;
+      expect(restoredActiveTurn).toEqual({
+        kind: "conversation_turn",
+        ...legacyActiveTurn,
+      });
+
+      // Re-serializing the in-memory shape into the persisted JSON form
+      // round-trips the legacy fields verbatim — only `kind` is added.
+      const reSerialized = JSON.parse(JSON.stringify(restoredActiveTurn));
+      const { kind, ...withoutKind } = reSerialized as {
+        kind: string;
+      } & typeof legacyActiveTurn;
+      expect(kind).toBe("conversation_turn");
+      expect(withoutKind).toEqual(legacyActiveTurn);
+    });
+
+    it("round-trips a task_run activeTurn variant unchanged", () => {
+      const taskRunActiveTurn = {
+        kind: "task_run",
+        startedAt: "2024-02-02T00:00:00Z",
+        outputFormat: {
+          type: "json_schema",
+          schema: { type: "object" },
+        },
+      };
+      const snapshot = {
+        context: {
+          _schemaVersion: 1,
+          conversationId: "conv-2",
+          activeTurn: { ...taskRunActiveTurn },
+        },
+        value: "executing",
+      };
+
+      const result = validateRestoredSnapshot(snapshot, "conv-2", 1);
+
+      expect(result).not.toBeNull();
+      const restoredActiveTurn = (
+        result as unknown as {
+          context: { activeTurn: Record<string, unknown> };
+        }
+      ).context.activeTurn;
+      expect(restoredActiveTurn).toEqual(taskRunActiveTurn);
+
+      const reSerialized = JSON.parse(JSON.stringify(restoredActiveTurn));
+      expect(reSerialized).toEqual(taskRunActiveTurn);
+    });
+
+    it("leaves a null activeTurn untouched", () => {
+      const snapshot = {
+        context: {
+          _schemaVersion: 1,
+          conversationId: "conv-3",
+          activeTurn: null,
+        },
+        value: "idle",
+      };
+
+      const result = validateRestoredSnapshot(snapshot, "conv-3", 1);
+
+      expect(result).not.toBeNull();
+      const restored = result as unknown as {
+        context: { activeTurn: unknown };
+      };
+      expect(restored.context.activeTurn).toBeNull();
+    });
   });
 
   describe("clearConversationSnapshot", () => {

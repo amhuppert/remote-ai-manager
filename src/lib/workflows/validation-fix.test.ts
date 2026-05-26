@@ -3,21 +3,48 @@ import {
   createValidationFixer,
   type ValidationFixDeps,
 } from "./validation-fix";
-import type { AgentTaskRunner, AgentTaskResult } from "../agent-backends/task";
-import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
+import type {
+  ExecuteWorkflowTaskRunInput,
+  TaskRunResult,
+} from "@/lib/workflows/conversation/execute-workflow-task-run";
 
-function createMockRunner(result: Partial<AgentTaskResult>): AgentTaskRunner {
+const PROJECT_PATH = "/projects/repo";
+const SESSION_NAME = "feature-branch";
+const CONVERSATION_ID = "conv-validation-1";
+const BRANCH_NAME = "csm/feature";
+
+function textOk(text: string): TaskRunResult {
   return {
-    backend: "claude",
-    run: vi.fn().mockResolvedValue({
-      backendRef: null,
-      text: null,
-      structuredOutput: undefined,
-      usage: null,
-      error: null,
-      timedOut: false,
-      ...result,
-    }),
+    kind: "text",
+    text,
+    usage: {
+      costUsd: null,
+      durationMs: null,
+      contextTokens: null,
+      contextWindowMax: null,
+      inputTokens: null,
+      outputTokens: null,
+      cachedInputTokens: null,
+    },
+    backendRef: null,
+  };
+}
+
+function errResult(error: string): TaskRunResult {
+  return {
+    kind: "error",
+    error,
+    aborted: false,
+    usage: {
+      costUsd: null,
+      durationMs: null,
+      contextTokens: null,
+      contextWindowMax: null,
+      inputTokens: null,
+      outputTokens: null,
+      cachedInputTokens: null,
+    },
+    backendRef: null,
   };
 }
 
@@ -25,56 +52,122 @@ function createTestDeps(
   overrides?: Partial<ValidationFixDeps>,
 ): ValidationFixDeps {
   return {
-    getTaskRunner: vi
-      .fn()
-      .mockReturnValue(
-        createMockRunner({ text: "fixed" }),
-      ) as ValidationFixDeps["getTaskRunner"],
     readConfig: vi.fn().mockResolvedValue({
       baseDir: "/home/user/projects",
       ignorePatterns: [],
       claudeTimeoutMs: 60_000,
       defaultModel: "opus",
     }) as unknown as ValidationFixDeps["readConfig"],
+    executeWorkflowTaskRun: vi.fn().mockResolvedValue(textOk("fixes applied")),
     ...overrides,
   };
 }
 
-describe("validation-fix", () => {
-  it("returns fixed status when runner succeeds on first attempt", async () => {
-    const runner = createMockRunner({
-      text: "fixes applied",
-      backendRef: { backend: "claude", sessionId: "sess-1" },
-    });
-    const deps = createTestDeps({
-      getTaskRunner: vi.fn().mockReturnValue(runner),
-    });
+describe("validation-fix (executeWorkflowTaskRun)", () => {
+  it("routes via executeWorkflowTaskRun with projectPath/sessionName/conversationId and kind=task_run", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(textOk("fixes applied"));
+    const deps = createTestDeps({ executeWorkflowTaskRun });
 
     const { fixValidationErrors } = createValidationFixer(deps);
     const result = await fixValidationErrors({
       worktreePath: "/tmp/worktree",
       validationOutput: "lint: 1 error",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      branchName: BRANCH_NAME,
     });
 
     expect(result.status).toBe("fixed");
-    if (result.status === "fixed") {
-      expect(result.sessionRef).toEqual({
-        backend: "claude",
-        sessionId: "sess-1",
-      });
-    }
+    expect(executeWorkflowTaskRun).toHaveBeenCalledTimes(1);
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input.projectPath).toBe(PROJECT_PATH);
+    expect(input.sessionName).toBe(SESSION_NAME);
+    expect(input.conversationId).toBe(CONVERSATION_ID);
+    expect(input.kind).toBe("task_run");
+    expect(input.outputFormat).toBeUndefined();
+    expect(typeof input.systemInstructions).toBe("string");
+    expect(input.timeoutMs).toBe(60_000);
+    expect(input.prompt).toContain("lint: 1 error");
   });
 
-  it("returns failed status when runner errors", async () => {
-    const runner = createMockRunner({ error: "SDK fail" });
-    const deps = createTestDeps({
-      getTaskRunner: vi.fn().mockReturnValue(runner),
+  it("uses the first-attempt prompt when isRetry is false", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(textOk("fixes applied"));
+    const deps = createTestDeps({ executeWorkflowTaskRun });
+
+    const { fixValidationErrors } = createValidationFixer(deps);
+    await fixValidationErrors({
+      worktreePath: "/tmp/worktree",
+      validationOutput: "fail",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      branchName: BRANCH_NAME,
     });
+
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input.prompt).toContain("Fix the following validation errors");
+    expect(input.prompt).not.toContain("Your previous fix attempt");
+  });
+
+  it("uses the retry prompt when isRetry is true", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(textOk("fixes applied"));
+    const deps = createTestDeps({ executeWorkflowTaskRun });
+
+    const { fixValidationErrors } = createValidationFixer(deps);
+    await fixValidationErrors({
+      worktreePath: "/tmp/worktree",
+      validationOutput: "still failing",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      branchName: BRANCH_NAME,
+      isRetry: true,
+    });
+
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input.prompt).toContain("Your previous fix attempt");
+  });
+
+  it("returns fixed status when executeWorkflowTaskRun resolves with kind=text", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn()
+      .mockResolvedValue(textOk("fixes applied"));
+    const deps = createTestDeps({ executeWorkflowTaskRun });
 
     const { fixValidationErrors } = createValidationFixer(deps);
     const result = await fixValidationErrors({
       worktreePath: "/tmp/worktree",
       validationOutput: "lint: 1 error",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      branchName: BRANCH_NAME,
+    });
+
+    expect(result.status).toBe("fixed");
+  });
+
+  it("returns failed status when executeWorkflowTaskRun resolves with kind=error", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn()
+      .mockResolvedValue(errResult("SDK fail"));
+    const deps = createTestDeps({ executeWorkflowTaskRun });
+
+    const { fixValidationErrors } = createValidationFixer(deps);
+    const result = await fixValidationErrors({
+      worktreePath: "/tmp/worktree",
+      validationOutput: "lint: 1 error",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      branchName: BRANCH_NAME,
     });
 
     expect(result.status).toBe("failed");
@@ -82,53 +175,25 @@ describe("validation-fix", () => {
       expect(result.error).toContain("SDK fail");
     }
   });
-});
 
-describe("validation-fix Task 6.3 parity (executeAgentCall route)", () => {
-  it("routes fixValidationErrors through deps.executeAgentCall as kind=task_run with write_capable", async () => {
-    const runner = createMockRunner({ text: "fixes applied" });
-    const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
-    const deps = createTestDeps({
-      getTaskRunner: vi.fn().mockReturnValue(runner),
-      executeAgentCall: executeAgentCallSpy,
-    });
-
-    const { fixValidationErrors } = createValidationFixer(deps);
-    const result = await fixValidationErrors({
-      worktreePath: "/tmp/worktree",
-      validationOutput: "lint: 1 error",
-    });
-
-    expect(result.status).toBe("fixed");
-    expect(executeAgentCallSpy).toHaveBeenCalledTimes(1);
-    const [request] = executeAgentCallSpy.mock.calls[0]!;
-    expect(request).toMatchObject({
-      kind: "task_run",
-      backend: "claude",
-      writeCapability: "write_capable",
-    });
-  });
-
-  it("forwards sessionRef as resumeRef on retry", async () => {
-    const runner = createMockRunner({ text: "fixes applied" });
-    const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
-    const deps = createTestDeps({
-      getTaskRunner: vi.fn().mockReturnValue(runner),
-      executeAgentCall: executeAgentCallSpy,
-    });
+  it("threads validationCommand into the prompt when provided", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(textOk("fixes applied"));
+    const deps = createTestDeps({ executeWorkflowTaskRun });
 
     const { fixValidationErrors } = createValidationFixer(deps);
     await fixValidationErrors({
       worktreePath: "/tmp/worktree",
-      validationOutput: "still failing",
-      sessionRef: { backend: "claude", sessionId: "sess-1" },
+      validationOutput: "fail",
+      validationCommand: "/scripts/check.sh",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      branchName: BRANCH_NAME,
     });
 
-    const taskRequest = (runner.run as ReturnType<typeof vi.fn>).mock
-      .calls[0]![0];
-    expect(taskRequest.resumeRef).toEqual({
-      backend: "claude",
-      sessionId: "sess-1",
-    });
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input.prompt).toContain("/scripts/check.sh");
   });
 });

@@ -4,8 +4,8 @@ import { createRef } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import ConversationPanel, {
   type ConversationPanelProps,
-} from "@/features/session/conversation/ConversationPanel";
-import type { VirtuosoHandle } from "@/features/session/conversation/ConversationVirtuosoList";
+} from "@/components/conversation/ConversationPanel";
+import type { VirtuosoHandle } from "@/components/conversation/ConversationVirtuosoList";
 
 function makeProps(
   overrides: Partial<ConversationPanelProps> = {},

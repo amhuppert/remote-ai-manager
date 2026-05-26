@@ -5,7 +5,6 @@ import {
   createExecutionIndex,
   type ExecutionIndex,
 } from "@/lib/workflow-graph/execution-index";
-import type { AgentTaskResult } from "@/lib/agent-backends/task";
 import type {
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowExecution,
@@ -19,7 +18,6 @@ import type {
   AgentBackendId,
   AgentSessionRef,
 } from "@/lib/agent-backends/types";
-import type { AgentTaskRunner } from "@/lib/agent-backends/task";
 import type { GraphWorkflowContextValidatorInput } from "./execution-validation";
 import type {
   ResolveValidatorCallInput,
@@ -27,13 +25,13 @@ import type {
   RecordClaudeLaneTurnInput,
   RecordCodexLaneTurnInput,
 } from "@/lib/workflow-graph/workflow-continuity-service";
-import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
-import type { AgentCallFacadeDeps } from "@/lib/workflows/primitives/agent-call-facade";
-import type {
-  AgentCallRequest,
-  AgentCallResult,
-} from "@/lib/workflows/primitives/agent-call-vocabulary";
-import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
+import {
+  executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun,
+  type ExecuteWorkflowTaskRunInput,
+  type TaskRunResult,
+} from "@/lib/workflows/conversation/execute-workflow-task-run";
+import type { EnsureActorInputData } from "@/lib/workflows/conversation/manager";
+import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
 
 export const VALIDATOR_OUTPUT_SCHEMA = {
   type: "object",
@@ -342,7 +340,6 @@ interface ValidatorContinuityRepository {
 }
 
 export interface ValidatorRunnerDeps {
-  getTaskRunner(backend: AgentBackendId): AgentTaskRunner;
   resolveWorktreePath(
     projectPath: string,
     sessionName: string,
@@ -351,14 +348,22 @@ export interface ValidatorRunnerDeps {
   continuityService?: ValidatorContinuityService;
   executionRepository?: ValidatorContinuityRepository;
   /**
-   * Optional override for the AgentCall primitive entry point. The validator
-   * routes every task-style turn through `executeAgentCall` so the facade
-   * applies the structured-output gate and uniform failure normalization.
+   * Optional override for the conversation entrypoint that the validator
+   * uses to drive each `task_run` turn. Every validator turn flows through
+   * the conversation actor — there is no direct AgentCall facade call in
+   * this module — so the actor handles transcript persistence, codex
+   * thread continuity (via context.backendRef), and structured-output
+   * dispatch in one place.
    */
-  executeAgentCall?: (
-    request: AgentCallRequest,
-    facadeDeps: AgentCallFacadeDeps,
-  ) => Promise<AgentCallResult>;
+  executeWorkflowTaskRun?: (
+    input: ExecuteWorkflowTaskRunInput,
+  ) => Promise<TaskRunResult>;
+  /**
+   * Optional override for project-display-name resolution. Used only to
+   * populate the synthetic actor input for transient validator
+   * conversations — no state-store side effects depend on it.
+   */
+  getProjectDisplayName?: (projectPath: string) => string;
 }
 
 const backendRefCache = new Map<string, AgentSessionRef>();
@@ -393,6 +398,25 @@ function getContextTaskIds(index: ExecutionIndex, contextId: string): string[] {
   return (index.tasksByContext.get(contextId) ?? []).map((task) => task.id);
 }
 
+/**
+ * Internal validator task result. Mirrors the legacy `AgentTaskResult` shape
+ * that `parseValidatorResponse` consumes — kept here so the parser remains
+ * backend-agnostic and is the single place that maps raw text plus optional
+ * structured output into a `ValidatorOutcome`.
+ */
+interface ValidatorTaskResult {
+  text: string | null;
+  structuredOutput?: unknown;
+  error: string | null;
+  timedOut: boolean;
+  backendRef: AgentSessionRef | null;
+  usage: {
+    inputTokens: number | null;
+    outputTokens: number | null;
+    cachedInputTokens: number | null;
+  } | null;
+}
+
 interface ValidatorTaskInvocation {
   prompt: string;
   backend: "claude" | "codex";
@@ -402,119 +426,132 @@ interface ValidatorTaskInvocation {
   timeoutMs: number;
   resumeRef: AgentSessionRef | null | undefined;
   laneRef: { workflowId: string; laneId: GraphWorkflowLaneKind };
+  projectPath: string;
+  sessionName: string;
+  conversationId: string;
 }
 
-function isCodexHardenedSettingsBackend(
-  backend: "claude" | "codex",
-): backend is "codex" {
-  return backend === "codex";
+function syntheticValidatorConversationId(
+  executionId: string,
+  contextId: string,
+  lane: GraphWorkflowLaneKind,
+  backend: AgentBackendId,
+): string {
+  return `__validator__:${executionId}:${contextId}:${lane}:${backend}`;
 }
 
-function agentCallResultToTaskResult(result: AgentCallResult): AgentTaskResult {
-  if (result.outcome.kind === "completed") {
-    const completed: AgentTaskResult = {
-      text: result.outcome.text,
-      usage: result.usage
-        ? {
-            inputTokens: result.usage.inputTokens ?? null,
-            outputTokens: result.usage.outputTokens ?? null,
-            cachedInputTokens: result.usage.cachedInputTokens ?? null,
-          }
-        : null,
+function buildValidatorActorInput(
+  invocation: ValidatorTaskInvocation,
+  projectName: string,
+): EnsureActorInputData {
+  return {
+    projectName,
+    sessionWorktreePath: invocation.workingDirectory,
+    conversation: {
+      createdAt: new Date().toISOString(),
+      forkedFrom: null,
+      role: null,
+      transcriptPath: null,
+      agentBackend: invocation.backend,
+      backendRef: invocation.resumeRef ?? null,
+      promptCount: 0,
+      debugMode: null,
+    },
+  };
+}
+
+function extractValidatorUsage(
+  result: TaskRunResult,
+): ValidatorTaskResult["usage"] {
+  const { inputTokens, outputTokens, cachedInputTokens } = result.usage;
+  if (
+    inputTokens === null &&
+    outputTokens === null &&
+    cachedInputTokens === null
+  ) {
+    return null;
+  }
+  return { inputTokens, outputTokens, cachedInputTokens };
+}
+
+function taskRunResultToValidatorTaskResult(
+  result: TaskRunResult,
+): ValidatorTaskResult {
+  const usage = extractValidatorUsage(result);
+  if (result.kind === "error") {
+    return {
+      text: null,
+      error: result.error,
+      timedOut: /timed out after/i.test(result.error),
+      backendRef: result.backendRef ?? null,
+      usage,
+    };
+  }
+  if (result.kind === "structured") {
+    return {
+      text: result.text.length > 0 ? result.text : null,
+      structuredOutput: result.structuredOutput,
       error: null,
       timedOut: false,
       backendRef: result.backendRef ?? null,
-    };
-    if (result.outcome.structuredOutput !== undefined) {
-      completed.structuredOutput = result.outcome.structuredOutput;
-    }
-    return completed;
-  }
-
-  if (result.outcome.kind === "failed") {
-    return {
-      text: null,
-      usage: result.usage
-        ? {
-            inputTokens: result.usage.inputTokens ?? null,
-            outputTokens: result.usage.outputTokens ?? null,
-            cachedInputTokens: result.usage.cachedInputTokens ?? null,
-          }
-        : null,
-      error: result.outcome.error.message,
-      timedOut: result.outcome.error.failureKind === "timeout",
-      backendRef: result.backendRef ?? null,
+      usage,
     };
   }
-
   return {
-    text: null,
-    usage: null,
-    error: `validator paused unexpectedly (pauseKind=${result.outcome.pauseKind})`,
+    text: result.text,
+    error: null,
     timedOut: false,
     backendRef: result.backendRef ?? null,
+    usage,
   };
 }
 
 export function createValidatorRunner(deps: ValidatorRunnerDeps) {
-  const executeAgentCall = deps.executeAgentCall ?? defaultExecuteAgentCall;
+  const executeWorkflowTaskRun =
+    deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
+  const getProjectDisplayName =
+    deps.getProjectDisplayName ?? defaultGetProjectDisplayName;
 
   async function dispatchValidatorTurn(
     invocation: ValidatorTaskInvocation,
-  ): Promise<AgentTaskResult> {
-    const runner = deps.getTaskRunner(invocation.backend);
-    const codexSettings = isCodexHardenedSettingsBackend(invocation.backend)
-      ? {
-          sandboxMode: "danger-full-access" as const,
-          approvalPolicy: "never" as const,
-          webSearchMode: "disabled" as const,
-          skipGitRepoCheck: true,
-          networkAccessEnabled: true,
-        }
-      : {};
+  ): Promise<ValidatorTaskResult> {
+    const projectName = getProjectDisplayName(invocation.projectPath);
+    const actorInput = buildValidatorActorInput(invocation, projectName);
 
-    const request: AgentCallRequest = {
+    const result = await executeWorkflowTaskRun({
+      projectPath: invocation.projectPath,
+      sessionName: invocation.sessionName,
+      conversationId: invocation.conversationId,
       kind: "task_run",
-      backend: invocation.backend,
       prompt: invocation.prompt,
-      writeCapability: "write_capable",
-      outputSchema: VALIDATOR_OUTPUT_SCHEMA as unknown as Record<
-        string,
-        unknown
-      >,
-      timeoutMs: invocation.timeoutMs,
-      laneRef: {
-        workflowId: invocation.laneRef.workflowId,
-        laneId: invocation.laneRef.laneId,
+      outputFormat: {
+        type: "json_schema",
+        schema: VALIDATOR_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
       },
-    };
-
-    const result = await executeAgentCall(request, {
-      resolveTaskRunner: () => ({
-        runner,
-        capabilityView: capabilityViewForBackend(invocation.backend),
-        workingDirectory: invocation.workingDirectory,
-        autonomous: true,
-        defaultTimeoutMs: invocation.timeoutMs,
-        ...(invocation.modelId !== undefined
-          ? { modelId: invocation.modelId }
-          : {}),
-        ...(invocation.reasoningEffort !== undefined
-          ? { reasoningEffort: invocation.reasoningEffort }
-          : {}),
-        ...(invocation.resumeRef !== undefined
-          ? { resumeRef: invocation.resumeRef }
-          : {}),
-        ...codexSettings,
-      }),
-      // The validator runner parses fenced JSON, raw JSON, and structured
-      // output via `parseValidatorResponse`, so the post-dispatch gate is
-      // intentionally bypassed here — schema enforcement still happens at
-      // the runner level via the forwarded `outputSchema` request field.
-      validateStructuredOutput: () => ({ valid: true }),
+      timeoutMs: invocation.timeoutMs,
+      ...(invocation.modelId !== undefined
+        ? { modelId: invocation.modelId }
+        : {}),
+      ...(invocation.reasoningEffort !== undefined
+        ? { effort: invocation.reasoningEffort }
+        : {}),
+      // The validator parses fenced JSON, raw JSON, and structured output
+      // via `parseValidatorResponse`, so the post-dispatch structured-output
+      // gate is intentionally bypassed — schema enforcement still happens
+      // at the runner level via the forwarded `outputFormat` schema.
+      skipStructuredOutputGate: true,
+      actorInput,
+      origin: {
+        source: "workflow",
+        workflow: {
+          executionId: invocation.laneRef.workflowId,
+          nodeId: invocation.laneRef.laneId,
+          iterationIndex: 0,
+        },
+      },
     });
 
-    return agentCallResultToTaskResult(result);
+    return taskRunResultToValidatorTaskResult(result);
   }
 
   async function applyLaneStateUpdate(
@@ -605,6 +642,14 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         timeoutMs,
         resumeRef: undefined,
         laneRef: { workflowId: execution.id, laneId: lane },
+        projectPath,
+        sessionName,
+        conversationId: syntheticValidatorConversationId(
+          execution.id,
+          contextId,
+          lane,
+          validatorType,
+        ),
       });
 
       if (taskResult.error) {
@@ -681,6 +726,15 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     }
 
     const resumeRef = resolvedCallToResumeRef(resolved, execution.id, lane);
+    const dispatchConversationId =
+      resolved.engine === "claude"
+        ? resolved.conversationId
+        : syntheticValidatorConversationId(
+            execution.id,
+            contextId,
+            lane,
+            validatorType,
+          );
     const taskResult = await dispatchValidatorTurn({
       prompt,
       backend: validatorType,
@@ -690,6 +744,9 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       timeoutMs,
       resumeRef,
       laneRef: { workflowId: execution.id, laneId: lane },
+      projectPath,
+      sessionName,
+      conversationId: dispatchConversationId,
     });
 
     if (taskResult.backendRef) {

@@ -13,7 +13,7 @@ export interface ResolvedViewingTask {
  *
  * Backend-agnostic: takes the task's `lastConversationId` as-is (a normal CC
  * conversation ID, whether the context ran on Claude or Codex) and pairs it
- * with the context/task metadata needed by `IterationTranscriptViewer`.
+ * with the context/task metadata needed by `WorkflowConversationViewer`.
  *
  * Returns `null` when the task has no conversation yet or the task is unknown.
  */

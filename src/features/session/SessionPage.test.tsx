@@ -256,9 +256,11 @@ vi.mock("@/lib/workflows/queries", () => ({
 }));
 
 vi.mock("@/lib/conversations/queries", () => ({
+  useConversationsQuery: () => ({ data: undefined, isPending: false }),
+}));
+vi.mock("@/hooks/conversation/use-conversation-messages-query", () => ({
   useConversationMessagesQuery: (...args: unknown[]) =>
     useConversationMessagesQueryMock(...args),
-  useConversationsQuery: () => ({ data: undefined, isPending: false }),
 }));
 vi.mock("@/lib/commands/queries", () => ({
   useCommandsQuery: () => ({

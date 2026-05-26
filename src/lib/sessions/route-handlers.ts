@@ -12,6 +12,7 @@ import {
   createSessionOptimistic,
   deleteSession,
 } from "@/lib/sessions/service";
+import { isReservedSessionName } from "@/lib/sessions/derived";
 import {
   createSessionRequestSchema,
   sessionArchiveRequestSchema,
@@ -43,7 +44,10 @@ export const listSessions = withTracing(
     }
 
     const sessions = await getProjectSessionListItems(projectPath);
-    return NextResponse.json({ sessions });
+    const visible = sessions.filter(
+      (s) => !isReservedSessionName(s.sessionName),
+    );
+    return NextResponse.json({ sessions: visible });
   },
 );
 

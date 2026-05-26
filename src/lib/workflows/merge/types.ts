@@ -7,7 +7,6 @@
 
 import type { BaseWorkflowContext } from "../types";
 import type { ConflictEntry, ConflictDecisionInput } from "@/lib/jobs/schemas";
-import type { AgentSessionRef } from "@/lib/agent-backends/types";
 
 /** Phase tracking for SSE broadcast. */
 export type MergePhase =
@@ -72,9 +71,6 @@ export interface MergeContext extends BaseWorkflowContext {
 
   /** Maximum number of fix attempts before giving up (default 2). */
   maxFixAttempts: number;
-
-  /** Session ref from the fix agent, used to resume the conversation on retry. */
-  fixSessionRef: AgentSessionRef | null;
 
   /** Explicit terminal status set by final state entry actions. */
   finalStatus: "completed" | "failed" | "conflicts" | null;

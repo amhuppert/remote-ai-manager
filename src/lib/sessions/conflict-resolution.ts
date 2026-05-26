@@ -4,15 +4,11 @@ import type { ConflictEntry, ConflictDecisionInput } from "@/lib/jobs/schemas";
 import { readConfig as defaultReadConfig } from "../config/loader";
 import { assertNever } from "../shared/assert-never";
 import { createLogger } from "../logging";
-import { getTaskRunner as defaultGetTaskRunner } from "../agent-backends/registry";
-import type { AgentTaskRunner, AgentTaskResult } from "../agent-backends/task";
-import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
-import type { AgentCallFacadeDeps } from "@/lib/workflows/primitives/agent-call-facade";
+import { executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun } from "@/lib/workflows/conversation/execute-workflow-task-run";
 import type {
-  AgentCallRequest,
-  AgentCallResult,
-} from "@/lib/workflows/primitives/agent-call-vocabulary";
-import { capabilityViewForBackend } from "@/lib/workflows/primitives/backend-capabilities";
+  ExecuteWorkflowTaskRunInput,
+  TaskRunResult,
+} from "@/lib/workflows/conversation/execute-workflow-task-run";
 
 const logger = createLogger("conflict-resolution");
 
@@ -45,111 +41,23 @@ const CONFLICT_ENTRIES_OUTPUT_SCHEMA = {
 // ============================================================
 
 export interface ConflictResolutionDeps {
-  getTaskRunner(backend: "claude"): AgentTaskRunner;
   readConfig: typeof defaultReadConfig;
   /**
-   * Optional override for the AgentCall primitive entry point. The smart-merge
-   * resolver and analyzer route their task-style turns through
-   * `executeAgentCall` so the facade applies the structured-output gate and
-   * uniform failure normalization across the primitive layer.
+   * Named entrypoint that routes a single `task_run` turn through the
+   * conversation actor for the conversation identified by
+   * `(projectPath, sessionName, conversationId)`. The conflict resolver passes
+   * the conflict JSON schema as `outputFormat` so the conversation actor's
+   * structured-output gate validates the result against the schema before
+   * surfacing it to the caller.
    */
-  executeAgentCall?: (
-    request: AgentCallRequest,
-    facadeDeps: AgentCallFacadeDeps,
-  ) => Promise<AgentCallResult>;
+  executeWorkflowTaskRun?(
+    input: ExecuteWorkflowTaskRunInput,
+  ): Promise<TaskRunResult>;
 }
 
 const defaultDeps: ConflictResolutionDeps = {
-  getTaskRunner: defaultGetTaskRunner,
   readConfig: defaultReadConfig,
 };
-
-function agentCallResultToTaskResult(result: AgentCallResult): AgentTaskResult {
-  if (result.outcome.kind === "completed") {
-    const completed: AgentTaskResult = {
-      text: result.outcome.text,
-      usage: result.usage
-        ? {
-            inputTokens: result.usage.inputTokens ?? null,
-            outputTokens: result.usage.outputTokens ?? null,
-            cachedInputTokens: result.usage.cachedInputTokens ?? null,
-          }
-        : null,
-      error: null,
-      timedOut: false,
-      backendRef: result.backendRef ?? null,
-    };
-    if (result.outcome.structuredOutput !== undefined) {
-      completed.structuredOutput = result.outcome.structuredOutput;
-    }
-    return completed;
-  }
-
-  if (result.outcome.kind === "failed") {
-    return {
-      text: null,
-      usage: result.usage
-        ? {
-            inputTokens: result.usage.inputTokens ?? null,
-            outputTokens: result.usage.outputTokens ?? null,
-            cachedInputTokens: result.usage.cachedInputTokens ?? null,
-          }
-        : null,
-      error: result.outcome.error.message,
-      timedOut: result.outcome.error.failureKind === "timeout",
-      backendRef: result.backendRef ?? null,
-    };
-  }
-
-  return {
-    text: null,
-    usage: null,
-    error: `conflict resolver paused unexpectedly (pauseKind=${result.outcome.pauseKind})`,
-    timedOut: false,
-    backendRef: result.backendRef ?? null,
-  };
-}
-
-interface ConflictAgentCallInvocation {
-  prompt: string;
-  systemInstructions: string;
-  workingDirectory: string;
-  timeoutMs: number;
-  writeCapability: "write_capable" | "read_only";
-}
-
-async function dispatchConflictAgentCall(
-  invocation: ConflictAgentCallInvocation,
-  deps: ConflictResolutionDeps,
-): Promise<AgentTaskResult> {
-  const executeAgentCall = deps.executeAgentCall ?? defaultExecuteAgentCall;
-  const runner = deps.getTaskRunner("claude");
-
-  const request: AgentCallRequest = {
-    kind: "task_run",
-    backend: "claude",
-    prompt: invocation.prompt,
-    systemInstructions: invocation.systemInstructions,
-    writeCapability: invocation.writeCapability,
-    timeoutMs: invocation.timeoutMs,
-    outputSchema: CONFLICT_ENTRIES_OUTPUT_SCHEMA as unknown as Record<
-      string,
-      unknown
-    >,
-  };
-
-  const result = await executeAgentCall(request, {
-    resolveTaskRunner: () => ({
-      runner,
-      capabilityView: capabilityViewForBackend("claude"),
-      workingDirectory: invocation.workingDirectory,
-      autonomous: true,
-      defaultTimeoutMs: invocation.timeoutMs,
-    }),
-  });
-
-  return agentCallResultToTaskResult(result);
-}
 
 // ============================================================
 // Public Types
@@ -162,6 +70,21 @@ export type ConflictResolutionResult =
 export type ConflictAnalysisResult =
   | { status: "analyzed"; conflicts: ConflictEntry[] }
   | { status: "failed"; error: string };
+
+export interface ResolveConflictsParams {
+  worktreePath: string;
+  projectPath: string;
+  sessionName: string;
+  conversationId: string;
+  decisions?: ConflictDecisionInput[];
+}
+
+export interface AnalyzeConflictsParams {
+  worktreePath: string;
+  projectPath: string;
+  sessionName: string;
+  conversationId: string;
+}
 
 // ============================================================
 // System Prompt
@@ -269,8 +192,8 @@ function unwrapEntries(
 }
 
 /**
- * Parse conflict entries from task runner output using a resilience chain:
- * 1. Structured output (if the runner returned it via outputSchema)
+ * Parse conflict entries from a task-run result using a resilience chain:
+ * 1. Structured output (preferred — the JSON-schema gate already validated it)
  * 2. Raw JSON parse of the full text
  * 3. Fenced ```json block extraction
  */
@@ -289,6 +212,9 @@ function parseConflictEntries(
     logger.debug("conflict-resolution.structured_output_invalid", {
       error: parseResult.error.message,
     });
+    return {
+      error: `Failed to parse structured conflict entries: ${parseResult.error.message}`,
+    };
   }
 
   if (!text) {
@@ -344,42 +270,45 @@ export function createConflictResolver(
   deps: ConflictResolutionDeps = defaultDeps,
 ) {
   return {
-    resolveConflicts: (params: {
-      worktreePath: string;
-      decisions?: ConflictDecisionInput[];
-    }): Promise<ConflictResolutionResult> => resolveConflictsImpl(params, deps),
-    analyzeConflicts: (params: {
-      worktreePath: string;
-    }): Promise<ConflictAnalysisResult> => analyzeConflictsImpl(params, deps),
+    resolveConflicts: (
+      params: ResolveConflictsParams,
+    ): Promise<ConflictResolutionResult> => resolveConflictsImpl(params, deps),
+    analyzeConflicts: (
+      params: AnalyzeConflictsParams,
+    ): Promise<ConflictAnalysisResult> => analyzeConflictsImpl(params, deps),
   };
 }
 
 /**
- * Resolve merge conflicts via the task runner.
+ * Resolve merge conflicts via the conversation actor.
  *
- * - Constructs the conflict resolution prompt
- * - Runs via the Claude task runner with full tool access
- * - Extracts structured ConflictEntry[] using resilience chain
- * - Returns resolved status with entries on success, or failed status with error
+ * Routes a single `task_run` turn through `executeWorkflowTaskRun` so the call
+ * participates in the conversation lifecycle (lock, transcript, broadcast) and
+ * the structured-output gate validates the response against
+ * `CONFLICT_ENTRIES_OUTPUT_SCHEMA`.
  */
-export async function resolveConflicts(params: {
-  worktreePath: string;
-  decisions?: ConflictDecisionInput[];
-}): Promise<ConflictResolutionResult> {
+export async function resolveConflicts(
+  params: ResolveConflictsParams,
+): Promise<ConflictResolutionResult> {
   return resolveConflictsImpl(params, defaultDeps);
 }
 
 async function resolveConflictsImpl(
-  params: {
-    worktreePath: string;
-    decisions?: ConflictDecisionInput[];
-  },
+  params: ResolveConflictsParams,
   deps: ConflictResolutionDeps,
 ): Promise<ConflictResolutionResult> {
-  const { worktreePath, decisions } = params;
+  const { worktreePath, decisions, projectPath, sessionName, conversationId } =
+    params;
   const { readConfig } = deps;
+  const executeWorkflowTaskRun =
+    deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
 
-  logger.info("conflict-resolution.start", { worktreePath });
+  logger.info("conflict-resolution.start", {
+    worktreePath,
+    projectPath,
+    sessionName,
+    conversationId,
+  });
 
   let config;
   try {
@@ -399,43 +328,25 @@ async function resolveConflictsImpl(
   }
 
   try {
-    const result = await dispatchConflictAgentCall(
-      {
-        prompt,
-        systemInstructions: CONFLICT_RESOLUTION_INSTRUCTIONS,
-        workingDirectory: worktreePath,
-        timeoutMs: config.claudeTimeoutMs,
-        writeCapability: "write_capable",
+    const result = await executeWorkflowTaskRun({
+      projectPath,
+      sessionName,
+      conversationId,
+      kind: "task_run",
+      prompt,
+      systemInstructions: CONFLICT_RESOLUTION_INSTRUCTIONS,
+      outputFormat: {
+        type: "json_schema",
+        schema: CONFLICT_ENTRIES_OUTPUT_SCHEMA as unknown as Record<
+          string,
+          unknown
+        >,
       },
-      deps,
-    );
-
-    if (result.error) {
-      logger.error("conflict-resolution.task_error", {
-        worktreePath,
-        error: result.error,
-        timedOut: result.timedOut,
-      });
-      return { status: "failed", error: result.error };
-    }
-
-    const parseResult = parseConflictEntries(
-      result.text,
-      result.structuredOutput,
-    );
-    if ("error" in parseResult) {
-      logger.warn("conflict-resolution.parse_error", {
-        worktreePath,
-        error: parseResult.error,
-      });
-      return { status: "failed", error: parseResult.error };
-    }
-
-    logger.info("conflict-resolution.resolved", {
-      worktreePath,
-      conflictCount: parseResult.conflicts.length,
+      timeoutMs: config.claudeTimeoutMs,
+      origin: { source: "workflow" },
     });
-    return { status: "resolved", conflicts: parseResult.conflicts };
+
+    return mapTaskRunResultToResolution(result, worktreePath);
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : "Unknown error";
     logger.error("conflict-resolution.runner_error", {
@@ -446,29 +357,109 @@ async function resolveConflictsImpl(
   }
 }
 
+function mapTaskRunResultToResolution(
+  result: TaskRunResult,
+  worktreePath: string,
+): ConflictResolutionResult {
+  if (result.kind === "error") {
+    logger.error("conflict-resolution.task_error", {
+      worktreePath,
+      error: result.error,
+      aborted: result.aborted,
+    });
+    return { status: "failed", error: result.error };
+  }
+
+  const { text, structuredOutput } = extractTextAndStructured(result);
+  const parseResult = parseConflictEntries(text, structuredOutput);
+  if ("error" in parseResult) {
+    logger.warn("conflict-resolution.parse_error", {
+      worktreePath,
+      error: parseResult.error,
+    });
+    return { status: "failed", error: parseResult.error };
+  }
+
+  logger.info("conflict-resolution.resolved", {
+    worktreePath,
+    conflictCount: parseResult.conflicts.length,
+  });
+  return { status: "resolved", conflicts: parseResult.conflicts };
+}
+
+function mapTaskRunResultToAnalysis(
+  result: TaskRunResult,
+  worktreePath: string,
+): ConflictAnalysisResult {
+  if (result.kind === "error") {
+    logger.error("conflict-analysis.task_error", {
+      worktreePath,
+      error: result.error,
+      aborted: result.aborted,
+    });
+    return { status: "failed", error: result.error };
+  }
+
+  const { text, structuredOutput } = extractTextAndStructured(result);
+  const parseResult = parseConflictEntries(text, structuredOutput);
+  if ("error" in parseResult) {
+    logger.warn("conflict-analysis.parse_error", {
+      worktreePath,
+      error: parseResult.error,
+    });
+    return { status: "failed", error: parseResult.error };
+  }
+
+  logger.info("conflict-analysis.analyzed", {
+    worktreePath,
+    conflictCount: parseResult.conflicts.length,
+  });
+  return { status: "analyzed", conflicts: parseResult.conflicts };
+}
+
+function extractTextAndStructured(result: TaskRunResult): {
+  text: string | null;
+  structuredOutput: unknown;
+} {
+  if (result.kind === "structured") {
+    return { text: null, structuredOutput: result.structuredOutput };
+  }
+  if (result.kind === "text") {
+    return { text: result.text, structuredOutput: undefined };
+  }
+  return { text: null, structuredOutput: undefined };
+}
+
 // ============================================================
 // Analyze Conflicts (analysis-only, no file edits)
 // ============================================================
 
 /**
- * Analyze merge conflicts without resolving them via the task runner.
- * Produces structured ConflictEntry[] describing each conflict and a proposed resolution,
- * but does NOT edit files or remove conflict markers.
+ * Analyze merge conflicts without resolving them via the conversation actor.
+ * Produces structured ConflictEntry[] describing each conflict and a proposed
+ * resolution, but does NOT edit files or remove conflict markers.
  */
-export async function analyzeConflicts(params: {
-  worktreePath: string;
-}): Promise<ConflictAnalysisResult> {
+export async function analyzeConflicts(
+  params: AnalyzeConflictsParams,
+): Promise<ConflictAnalysisResult> {
   return analyzeConflictsImpl(params, defaultDeps);
 }
 
 async function analyzeConflictsImpl(
-  params: { worktreePath: string },
+  params: AnalyzeConflictsParams,
   deps: ConflictResolutionDeps,
 ): Promise<ConflictAnalysisResult> {
-  const { worktreePath } = params;
+  const { worktreePath, projectPath, sessionName, conversationId } = params;
   const { readConfig } = deps;
+  const executeWorkflowTaskRun =
+    deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
 
-  logger.info("conflict-analysis.start", { worktreePath });
+  logger.info("conflict-analysis.start", {
+    worktreePath,
+    projectPath,
+    sessionName,
+    conversationId,
+  });
 
   let config;
   try {
@@ -484,43 +475,25 @@ async function analyzeConflictsImpl(
     "Analyze all merge conflicts in this worktree. Follow the instructions in your system prompt precisely. Do NOT edit any files.";
 
   try {
-    const result = await dispatchConflictAgentCall(
-      {
-        prompt,
-        systemInstructions: CONFLICT_ANALYSIS_INSTRUCTIONS,
-        workingDirectory: worktreePath,
-        timeoutMs: config.claudeTimeoutMs,
-        writeCapability: "read_only",
+    const result = await executeWorkflowTaskRun({
+      projectPath,
+      sessionName,
+      conversationId,
+      kind: "task_run",
+      prompt,
+      systemInstructions: CONFLICT_ANALYSIS_INSTRUCTIONS,
+      outputFormat: {
+        type: "json_schema",
+        schema: CONFLICT_ENTRIES_OUTPUT_SCHEMA as unknown as Record<
+          string,
+          unknown
+        >,
       },
-      deps,
-    );
-
-    if (result.error) {
-      logger.error("conflict-analysis.task_error", {
-        worktreePath,
-        error: result.error,
-        timedOut: result.timedOut,
-      });
-      return { status: "failed", error: result.error };
-    }
-
-    const parseResult = parseConflictEntries(
-      result.text,
-      result.structuredOutput,
-    );
-    if ("error" in parseResult) {
-      logger.warn("conflict-analysis.parse_error", {
-        worktreePath,
-        error: parseResult.error,
-      });
-      return { status: "failed", error: parseResult.error };
-    }
-
-    logger.info("conflict-analysis.analyzed", {
-      worktreePath,
-      conflictCount: parseResult.conflicts.length,
+      timeoutMs: config.claudeTimeoutMs,
+      origin: { source: "workflow" },
     });
-    return { status: "analyzed", conflicts: parseResult.conflicts };
+
+    return mapTaskRunResultToAnalysis(result, worktreePath);
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : "Unknown error";
     logger.error("conflict-analysis.runner_error", {

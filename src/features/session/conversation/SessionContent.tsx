@@ -1,9 +1,9 @@
 "use client";
 
 import { type ComponentProps, type ReactNode } from "react";
-import ConversationPanel from "@/features/session/conversation/ConversationPanel";
+import ConversationPanel from "@/components/conversation/ConversationPanel";
 import ConversationSidebar from "@/features/session/sidebar/ConversationSidebar";
-import { FinishedBanner } from "@/features/session/conversation/ConversationBanners";
+import { FinishedBanner } from "@/components/conversation/ConversationBanners";
 import SessionInfoStrip from "@/features/session/conversation/SessionInfoStrip";
 import MobileInfoPanel from "@/features/session/mobile/MobileInfoPanel";
 import RightPane from "@/features/session/conversation/RightPane";

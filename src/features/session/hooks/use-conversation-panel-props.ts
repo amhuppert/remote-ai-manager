@@ -1,11 +1,11 @@
 "use client";
 
 import { useMemo, type RefObject } from "react";
-import type ConversationPanel from "@/features/session/conversation/ConversationPanel";
+import type ConversationPanel from "@/components/conversation/ConversationPanel";
 import type {
   ConversationVirtuosoListProps,
   VirtuosoHandle,
-} from "@/features/session/conversation/ConversationVirtuosoList";
+} from "@/components/conversation/ConversationVirtuosoList";
 import type { ConversationRow } from "@/features/session/conversation/conversation-rows";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";

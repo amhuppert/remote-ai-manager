@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
-import TypingIndicator from "@/features/session/conversation/TypingIndicator";
+import TypingIndicator from "@/components/conversation/TypingIndicator";
 import { useConversationPanelProps } from "@/features/session/hooks/use-conversation-panel-props";
 import { usePromptComposerProps } from "@/features/session/hooks/use-prompt-composer-props";
 import type { SessionPageViewProps } from "@/features/session/SessionPageView";

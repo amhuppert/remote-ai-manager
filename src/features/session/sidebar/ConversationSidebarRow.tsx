@@ -21,6 +21,7 @@ const ROLE_LABEL: Record<NonNullable<ActiveConversation["role"]>, string> = {
   initialization: "init",
   iteration: "iter",
   validator: "validator",
+  planner: "planner",
 };
 
 function formatSidebarTime(isoDate: string): string {

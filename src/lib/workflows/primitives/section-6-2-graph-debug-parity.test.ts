@@ -973,27 +973,32 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
     ]);
   });
 
-  describe("graph implementer + validator route through executeAgentCall (Task 6.2)", () => {
-    it("validator-runner builds task_run requests through deps.executeAgentCall", async () => {
+  describe("graph implementer + validator route through the conversation entrypoint (Task 6.2)", () => {
+    it("validator-runner builds task_run requests through deps.executeWorkflowTaskRun", async () => {
       const { createValidatorRunner, VALIDATOR_OUTPUT_SCHEMA } =
         await import("@/lib/workflow-graph/validator-runner");
-      const { executeAgentCall: defaultExecuteAgentCall } =
-        await import("./agent-call-facade");
       const fixtures = await import("@/lib/workflow-graph/test-fixtures");
 
-      const claudeRun = vi.fn().mockResolvedValue({
+      const executeWorkflowTaskRunSpy = vi.fn().mockResolvedValue({
+        kind: "text",
         text: JSON.stringify({ summary: "All good", issues: [] }),
-        usage: null,
-        error: null,
-        timedOut: false,
+        usage: {
+          costUsd: null,
+          durationMs: null,
+          contextTokens: null,
+          contextWindowMax: null,
+          inputTokens: null,
+          outputTokens: null,
+          cachedInputTokens: null,
+        },
+        backendRef: null,
       });
-      const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
 
       const runner = createValidatorRunner({
-        getTaskRunner: () => ({ backend: "claude", run: claudeRun }),
         resolveWorktreePath: async () => workingDir,
         resolveTimeoutMs: async () => 60_000,
-        executeAgentCall: executeAgentCallSpy,
+        executeWorkflowTaskRun: executeWorkflowTaskRunSpy,
+        getProjectDisplayName: () => "test-project",
       });
 
       const definition = fixtures.createResolvedWorkflowDefinition({
@@ -1035,14 +1040,15 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
         validator: contextDef.contextValidator!,
       });
 
-      expect(executeAgentCallSpy).toHaveBeenCalledTimes(1);
-      const [request] = executeAgentCallSpy.mock.calls[0]!;
-      expect(request).toMatchObject({
+      expect(executeWorkflowTaskRunSpy).toHaveBeenCalledTimes(1);
+      const [input] = executeWorkflowTaskRunSpy.mock.calls[0]!;
+      expect(input).toMatchObject({
         kind: "task_run",
-        backend: "claude",
-        writeCapability: "write_capable",
-        outputSchema: VALIDATOR_OUTPUT_SCHEMA,
-        laneRef: { laneId: "context_validator" },
+        outputFormat: {
+          type: "json_schema",
+          schema: VALIDATOR_OUTPUT_SCHEMA,
+        },
+        skipStructuredOutputGate: true,
       });
     });
   });

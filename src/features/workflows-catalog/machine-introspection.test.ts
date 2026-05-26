@@ -37,8 +37,11 @@ describe("introspectMachine", () => {
       "externalExecuting",
       "acquiringResources",
       "executing",
-      "executing.running",
-      "executing.waitingForInput",
+      "executing.dispatching",
+      "executing.conversationTurn",
+      "executing.conversationTurn.running",
+      "executing.conversationTurn.waitingForInput",
+      "executing.taskRun",
       "finalizingTurn",
       "debug",
       "debug.hypothesizing",
@@ -52,6 +55,7 @@ describe("introspectMachine", () => {
     expect(result.actors).toEqual([
       "executePrompt",
       "prepareTurn",
+      "runTaskRun",
       "verifyCleanup",
     ]);
   });
@@ -70,8 +74,10 @@ describe("introspectMachine", () => {
 
   it("conversation: parentId is set on nested states", () => {
     const result = introspectMachine(conversationMachine);
-    const running = result.states.find((s) => s.id === "executing.running");
-    expect(running?.parentId).toBe("executing");
+    const running = result.states.find(
+      (s) => s.id === "executing.conversationTurn.running",
+    );
+    expect(running?.parentId).toBe("executing.conversationTurn");
     const hypothesizing = result.states.find(
       (s) => s.id === "debug.hypothesizing",
     );
@@ -80,11 +86,13 @@ describe("introspectMachine", () => {
 
   it("conversation: absolute target '#conversation.x' resolves to 'x'", () => {
     const result = introspectMachine(conversationMachine);
-    const running = result.states.find((s) => s.id === "executing.running");
+    const running = result.states.find(
+      (s) => s.id === "executing.conversationTurn.running",
+    );
     // Inherits parent on/SUBMIT_PROMPT? No — running only has ASK_QUESTION.
     expect(
       running?.events.find((e) => e.event === "ASK_QUESTION")?.target,
-    ).toBe("executing.waitingForInput");
+    ).toBe("executing.conversationTurn.waitingForInput");
   });
 
   it("smart-merge: kind classification (transient vs atomic vs final)", () => {

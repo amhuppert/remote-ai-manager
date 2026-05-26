@@ -11,6 +11,7 @@ import path from "node:path";
 import type {
   TranscriptMessage,
   MessageContentBlock,
+  TranscriptMessageOrigin,
 } from "@/lib/conversations/schemas";
 import { getConfigDirPath } from "@/lib/config/loader";
 import { resolveImageRefs } from "@/lib/images/transcript-images";
@@ -50,6 +51,9 @@ export interface TranscriptEntry {
   effort?: string;
   /** SDK message UUID (stored on assistant entries for fork resumeSessionAt) */
   uuid?: string;
+  /** Where this entry originated. Absent on legacy entries and any caller that
+   *  doesn't yet thread it through. Persisted verbatim to JSONL. */
+  origin?: TranscriptMessageOrigin;
 }
 
 // ============================================================
@@ -217,6 +221,7 @@ export async function appendTranscriptEntry(
         timestamp: entry.timestamp ?? null,
         ...(entry.model !== undefined ? { model: entry.model } : {}),
         ...(entry.effort !== undefined ? { effort: entry.effort } : {}),
+        ...(entry.origin !== undefined ? { origin: entry.origin } : {}),
       },
     });
     activeDeps.broadcast(event);

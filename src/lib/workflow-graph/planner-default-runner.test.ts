@@ -1,5 +1,19 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { WorkflowSemanticDefinition } from "@/lib/workflows/schemas";
+import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
+import { createDefaultPlannerRunner } from "./planner";
+import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+
+const STUB_PORTABLE_MCP: PortableMcpConfig = {
+  servers: [
+    {
+      id: "cc-workflow-draft",
+      transport: "streamable-http",
+      url: "http://stub.invalid/mcp",
+    },
+  ],
+};
+
 const submittedDefinition: WorkflowSemanticDefinition = {
   schemaVersion: 1,
   workflowConfig: {},
@@ -35,71 +49,191 @@ const submittedDefinition: WorkflowSemanticDefinition = {
   edges: [],
 };
 
-const runMock = vi.fn();
-const createPlannerDraftSubmissionMock = vi.fn(() => ({
-  draftId: "draft-123",
-}));
-const consumePlannerDraftMock = vi.fn(() => submittedDefinition);
-const deletePlannerDraftMock = vi.fn();
-const buildWorkflowDraftPortableMcpMock = vi.fn(() => ({
-  servers: [{ id: "cc-workflow-draft" }],
-}));
+describe("default planner runner — executeWorkflowTaskRun routing", () => {
+  it("routes via executeWorkflowTaskRun with kind='task_run', __planner__ session, no outputFormat", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<
+        (input: ExecuteWorkflowTaskRunInput) => Promise<{
+          kind: "text";
+          text: string;
+          usage: {
+            costUsd: null;
+            durationMs: null;
+            contextTokens: null;
+            contextWindowMax: null;
+            inputTokens: null;
+            outputTokens: null;
+            cachedInputTokens: null;
+          };
+          backendRef: null;
+        }>
+      >()
+      .mockResolvedValue({
+        kind: "text",
+        text: "ok",
+        usage: {
+          costUsd: null,
+          durationMs: null,
+          contextTokens: null,
+          contextWindowMax: null,
+          inputTokens: null,
+          outputTokens: null,
+          cachedInputTokens: null,
+        },
+        backendRef: null,
+      });
 
-vi.mock("@/lib/agent-backends/registry", () => ({
-  getTaskRunner: vi.fn(() => ({
-    backend: "claude",
-    run: runMock,
-  })),
-}));
+    const consumePlannerDraft = vi.fn(() => submittedDefinition);
+    const deletePlannerDraft = vi.fn();
 
-vi.mock("@/lib/mcp-gateway/planner-draft-registry", () => ({
-  createPlannerDraftSubmission: createPlannerDraftSubmissionMock,
-  consumePlannerDraft: consumePlannerDraftMock,
-  deletePlannerDraft: deletePlannerDraftMock,
-}));
+    const runPlannerQuery = createDefaultPlannerRunner({
+      executeWorkflowTaskRun,
+      createPlannerDraftSubmission: () => ({ draftId: "draft-123" }),
+      consumePlannerDraft,
+      deletePlannerDraft,
+      buildWorkflowDraftPortableMcp: () => STUB_PORTABLE_MCP,
+    });
 
-vi.mock("@/lib/mcp-gateway/portable-config", () => ({
-  buildWorkflowDraftPortableMcp: buildWorkflowDraftPortableMcpMock,
-}));
+    const result = await runPlannerQuery(
+      {
+        objective: "Plan the migration",
+        references: [],
+        projectPath: "/projects/remote-ai-manager",
+        sessionName: "__planner__",
+        conversationId: "planner-conv-1",
+      },
+      null,
+    );
 
-describe("workflow graph planner default runner", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    runMock.mockResolvedValue({
-      text: null,
-      usage: null,
-      error: null,
-      timedOut: false,
+    expect(result).toEqual(submittedDefinition);
+    expect(executeWorkflowTaskRun).toHaveBeenCalledTimes(1);
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input).toMatchObject({
+      projectPath: "/projects/remote-ai-manager",
+      sessionName: "__planner__",
+      conversationId: "planner-conv-1",
+      kind: "task_run",
+    });
+    expect(input.outputFormat).toBeUndefined();
+    expect(input.tooling).toEqual(STUB_PORTABLE_MCP);
+    expect(input.prompt).toContain("Objective:\nPlan the migration");
+    expect(typeof input.systemInstructions).toBe("string");
+
+    expect(consumePlannerDraft).toHaveBeenCalledWith("draft-123");
+    expect(deletePlannerDraft).toHaveBeenCalledWith("draft-123");
+  });
+
+  it("uses the planner draft from the side-channel registry as the contract — not the agent's text", async () => {
+    const executeWorkflowTaskRun = vi.fn().mockResolvedValue({
+      kind: "text",
+      text: "free-form planner narration that is NOT the contract",
+      usage: {
+        costUsd: null,
+        durationMs: null,
+        contextTokens: null,
+        contextWindowMax: null,
+      },
+    });
+
+    const runPlannerQuery = createDefaultPlannerRunner({
+      executeWorkflowTaskRun,
+      createPlannerDraftSubmission: () => ({ draftId: "draft-456" }),
+      consumePlannerDraft: () => submittedDefinition,
+      deletePlannerDraft: () => undefined,
+      buildWorkflowDraftPortableMcp: () => STUB_PORTABLE_MCP,
+    });
+
+    const result = await runPlannerQuery(
+      {
+        objective: "Plan",
+        references: [],
+        projectPath: "/projects/repo",
+        sessionName: "__planner__",
+        conversationId: "planner-conv-2",
+      },
+      null,
+    );
+
+    expect(result).toEqual(submittedDefinition);
+  });
+
+  it("returns an empty definition when the planner submits no draft", async () => {
+    const executeWorkflowTaskRun = vi.fn().mockResolvedValue({
+      kind: "text",
+      text: "",
+      usage: {
+        costUsd: null,
+        durationMs: null,
+        contextTokens: null,
+        contextWindowMax: null,
+      },
+    });
+
+    const runPlannerQuery = createDefaultPlannerRunner({
+      executeWorkflowTaskRun,
+      createPlannerDraftSubmission: () => ({ draftId: "draft-789" }),
+      consumePlannerDraft: () => null,
+      deletePlannerDraft: () => undefined,
+      buildWorkflowDraftPortableMcp: () => STUB_PORTABLE_MCP,
+    });
+
+    const result = await runPlannerQuery(
+      {
+        objective: "Plan",
+        references: [],
+        projectPath: "/projects/repo",
+        sessionName: "__planner__",
+        conversationId: "planner-conv-3",
+      },
+      null,
+    );
+
+    expect(result).toEqual({
+      schemaVersion: 1,
+      workflowConfig: {},
+      executionContexts: [],
+      tasks: [],
+      edges: [],
     });
   });
 
-  it("uses workflow draft portable MCP and consumes the submitted draft", async () => {
-    const { createWorkflowPlannerService } = await import("./planner");
-    const service = createWorkflowPlannerService({
-      loadSeedDefinition: vi.fn(async () => null),
+  it("still consumes/deletes the draft when executeWorkflowTaskRun returns an error result", async () => {
+    const executeWorkflowTaskRun = vi.fn().mockResolvedValue({
+      kind: "error",
+      error: "boom",
+      aborted: false,
+      usage: {
+        costUsd: null,
+        durationMs: null,
+        contextTokens: null,
+        contextWindowMax: null,
+      },
     });
 
-    const result = await service.generateDraft({
-      objective: "Plan the migration",
-      references: [],
-      projectPath: "/projects/remote-ai-manager",
+    const consumePlannerDraft = vi.fn(() => submittedDefinition);
+    const deletePlannerDraft = vi.fn();
+
+    const runPlannerQuery = createDefaultPlannerRunner({
+      executeWorkflowTaskRun,
+      createPlannerDraftSubmission: () => ({ draftId: "draft-err" }),
+      consumePlannerDraft,
+      deletePlannerDraft,
+      buildWorkflowDraftPortableMcp: () => STUB_PORTABLE_MCP,
     });
 
-    expect(buildWorkflowDraftPortableMcpMock).toHaveBeenCalledWith(
-      "remote-ai-manager",
-      "draft-123",
+    const result = await runPlannerQuery(
+      {
+        objective: "Plan",
+        references: [],
+        projectPath: "/projects/repo",
+        sessionName: "__planner__",
+        conversationId: "planner-conv-4",
+      },
+      null,
     );
-    expect(runMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        tooling: {
-          portableMcp: {
-            servers: [{ id: "cc-workflow-draft" }],
-          },
-        },
-      }),
-    );
-    expect(consumePlannerDraftMock).toHaveBeenCalledWith("draft-123");
-    expect(deletePlannerDraftMock).toHaveBeenCalledWith("draft-123");
-    expect(result.definition).toEqual(submittedDefinition);
+
+    expect(consumePlannerDraft).toHaveBeenCalledWith("draft-err");
+    expect(deletePlannerDraft).toHaveBeenCalledWith("draft-err");
+    expect(result).toEqual(submittedDefinition);
   });
 });

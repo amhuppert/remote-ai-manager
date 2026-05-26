@@ -2,7 +2,7 @@
 
 import { type ComponentProps, type RefObject } from "react";
 import AskQuestionPanel from "@/components/AskQuestionPanel";
-import { IterationReadonlyBanner } from "@/features/session/conversation/ConversationBanners";
+import { IterationReadonlyBanner } from "@/components/conversation/ConversationBanners";
 import PromptComposer from "@/features/session/prompt/PromptComposer";
 
 type PromptComposerProps = ComponentProps<typeof PromptComposer>;

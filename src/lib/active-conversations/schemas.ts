@@ -30,7 +30,9 @@ export const activeConversationSchema = z.object({
   pendingQuestion: z.string().nullable(),
   forkedFrom: activeConversationForkedFromSchema.nullable(),
   debugActive: z.boolean(),
-  role: z.enum(["initialization", "iteration", "validator"]).nullable(),
+  role: z
+    .enum(["initialization", "iteration", "validator", "planner"])
+    .nullable(),
   branchName: z.string().nullable(),
   lastActivitySummary: z.string().nullable(),
 });

@@ -12,7 +12,6 @@ import {
   getSession as defaultGetSession,
   mutateSession,
 } from "@/lib/state-store";
-import { getTaskRunner } from "@/lib/agent-backends/registry";
 import type { ApiError } from "@/lib/api/errors";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type {
@@ -106,7 +105,6 @@ const continuityService = createWorkflowContinuityService({
 });
 
 const validatorRunner = createValidatorRunner({
-  getTaskRunner,
   async resolveWorktreePath(projectPath, sessionName) {
     const session = await defaultGetSession(projectPath, sessionName);
     if (!session) throw new Error("Session not found");

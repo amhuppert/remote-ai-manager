@@ -5,7 +5,7 @@ import CollabPassage, {
   isCollabPassageTerminal,
 } from "@/features/session/conversation/collab/CollabPassage";
 import type { CollaborationReference } from "@/lib/workflows/collaboration/types";
-import type { ConversationVirtuosoListProps } from "@/features/session/conversation/ConversationVirtuosoList";
+import type { ConversationVirtuosoListProps } from "@/components/conversation/ConversationVirtuosoList";
 
 type CollabPassageProps = Parameters<typeof CollabPassage>[0];
 

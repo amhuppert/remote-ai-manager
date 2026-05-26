@@ -22,7 +22,7 @@ import {
 import type {
   ConversationVirtuosoListProps,
   VirtuosoHandle,
-} from "@/features/session/conversation/ConversationVirtuosoList";
+} from "@/components/conversation/ConversationVirtuosoList";
 
 export interface UseConversationNavArgs {
   rows: ConversationRow[];

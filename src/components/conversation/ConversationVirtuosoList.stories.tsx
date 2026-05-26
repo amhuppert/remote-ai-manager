@@ -3,7 +3,7 @@ import { useRef, type ReactNode } from "react";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import ConversationVirtuosoList, {
   type VirtuosoHandle,
-} from "@/features/session/conversation/ConversationVirtuosoList";
+} from "@/components/conversation/ConversationVirtuosoList";
 import {
   buildConversationRows,
   type ConversationRow,

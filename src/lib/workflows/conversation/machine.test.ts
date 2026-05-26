@@ -58,6 +58,9 @@ function successResult(
     numTurns: 1,
     contextTokens: 1000,
     contextWindow: 200000,
+    inputTokens: null,
+    outputTokens: null,
+    cachedInputTokens: null,
     contentBlocks: [{ type: "text", text: "Hello" }],
     aborted: false,
     error: null,
@@ -1223,9 +1226,11 @@ describe("conversationMachine", () => {
       });
 
       await waitForState(actor, "error");
-      expect(actor.getSnapshot().context.activeTurn?.promptText).toBe(
-        "Cleanup",
-      );
+      const errorActiveTurn = actor.getSnapshot().context.activeTurn;
+      expect(errorActiveTurn?.kind).toBe("conversation_turn");
+      if (errorActiveTurn?.kind === "conversation_turn") {
+        expect(errorActiveTurn.promptText).toBe("Cleanup");
+      }
 
       actor.send({ type: "RETRY_DEBUG_TURN" });
       await waitForState(actor, "idle");
@@ -2080,9 +2085,11 @@ describe("conversationMachine", () => {
       await waitForState(actor, "error");
 
       // The activeTurn must have been preserved so RETRY can re-run it.
-      expect(actor.getSnapshot().context.activeTurn?.promptText).toBe(
-        "Hypothesize",
-      );
+      const retryActiveTurn = actor.getSnapshot().context.activeTurn;
+      expect(retryActiveTurn?.kind).toBe("conversation_turn");
+      if (retryActiveTurn?.kind === "conversation_turn") {
+        expect(retryActiveTurn.promptText).toBe("Hypothesize");
+      }
 
       actor.send({ type: "RETRY_DEBUG_TURN" });
       await waitForState(actor, "awaitingReproduction");

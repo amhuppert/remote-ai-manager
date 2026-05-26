@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 import type { PromptEditorHandle } from "@/features/session/prompt/PromptEditor";
-import type { VirtuosoHandle } from "@/features/session/conversation/ConversationVirtuosoList";
+import type { VirtuosoHandle } from "@/components/conversation/ConversationVirtuosoList";
 
 export function useSessionPageLocalState(initialPromptText = "") {
   const [promptText, setPromptText] = useState(initialPromptText);

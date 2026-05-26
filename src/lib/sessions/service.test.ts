@@ -5,6 +5,7 @@ import {
   sanitizeBranchName,
   generateRandomSuffix,
   createSessionService,
+  PLANNER_SESSION_NAME,
   type SessionDeps,
 } from "./service";
 import type {
@@ -2031,5 +2032,82 @@ describe("provisionSession — focus.md routes through ArtifactRegistry primitiv
       .map((call) => call[0])
       .filter((label) => label === "rollbackSession");
     expect(rollbackLabels.length).toBeGreaterThan(0);
+  });
+});
+
+// ===========================================================================
+// Reserved planner session — lazily created per project
+// ===========================================================================
+
+describe("ensurePlannerSession", () => {
+  it("creates a __planner__ session with a deterministic worktree on first call", async () => {
+    mockGitSuccess();
+
+    const session = await service.ensurePlannerSession("/projects/repo");
+
+    expect(session.sessionName).toBe(PLANNER_SESSION_NAME);
+    expect(session.worktreePath).toBe(
+      `/projects/repo/.worktrees/${PLANNER_SESSION_NAME}`,
+    );
+    expect(session.branchName).toBe(`csm/${PLANNER_SESSION_NAME}`);
+    expect(session.conversations).toHaveLength(1);
+    expect(session.conversations[0]!.id).toBeTruthy();
+
+    // The worktree was provisioned via git (deterministic path, no random suffix).
+    expect(gitMock).toHaveBeenCalledWith(
+      [
+        "worktree",
+        "add",
+        "-b",
+        `csm/${PLANNER_SESSION_NAME}`,
+        `/projects/repo/.worktrees/${PLANNER_SESSION_NAME}`,
+        "main",
+      ],
+      "/projects/repo",
+    );
+  });
+
+  it("returns the existing __planner__ session without provisioning again", async () => {
+    readStateMock.mockResolvedValue(
+      stateWithSession("/projects/repo", PLANNER_SESSION_NAME, {
+        worktreePath: `/projects/repo/.worktrees/${PLANNER_SESSION_NAME}`,
+        branchName: `csm/${PLANNER_SESSION_NAME}`,
+        conversations: [
+          {
+            id: "planner-conv-1",
+            name: `${PLANNER_SESSION_NAME} 1`,
+            status: "idle",
+            promptCount: 0,
+            createdAt: "2024-01-01T00:00:00Z",
+            lastActivityAt: "2024-01-01T00:00:00Z",
+            source: "cc",
+            summary: null,
+            archived: false,
+            totalCostUsd: null,
+            totalDurationMs: null,
+            totalTurns: null,
+            transcriptPath: null,
+            pendingQuestionId: null,
+            pendingQuestions: null,
+            pendingPromptText: null,
+            forkedFrom: null,
+            role: null,
+            contextTokens: null,
+            contextWindowMax: null,
+            debugMode: null,
+            machineSnapshot: null,
+            agentBackend: "claude",
+            backendRef: null,
+          },
+        ],
+      }),
+    );
+
+    const session = await service.ensurePlannerSession("/projects/repo");
+
+    expect(session.sessionName).toBe(PLANNER_SESSION_NAME);
+    expect(session.conversations[0]?.id).toBe("planner-conv-1");
+    expect(gitMock).not.toHaveBeenCalled();
+    expect(writeStateMock).not.toHaveBeenCalled();
   });
 });

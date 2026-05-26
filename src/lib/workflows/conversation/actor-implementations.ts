@@ -14,9 +14,11 @@ import type {
   ExecutePromptInput,
   PromptActorResult,
   ConversationContext,
+  RunTaskRunInput,
   VerifyCleanupInput,
   VerifyCleanupOutput,
 } from "./types";
+import type { AgentTaskRunner } from "@/lib/agent-backends/task";
 import type {
   ConversationBackendRuntime,
   ConversationBackendFactory,
@@ -356,6 +358,12 @@ export interface ActorImplementationDeps {
     request: AgentCallRequest,
     facadeDeps: AgentCallFacadeDeps,
   ): Promise<AgentCallResult>;
+
+  /**
+   * Resolve the registered `AgentTaskRunner` for a backend. Wired to the
+   * agent-backends registry in production; tests inject a stub runner.
+   */
+  getTaskRunner(backend: AgentBackendId): AgentTaskRunner;
 }
 
 let _deps: ActorImplementationDeps | null = null;
@@ -492,6 +500,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     composeCodexCapabilityConfigForConversation:
       capabilitiesDepsMod.composeCodexCapabilityConfigForConversation,
     executeAgentCall: defaultExecuteAgentCall,
+    getTaskRunner: registryMod.getTaskRunner,
   } as unknown as ActorImplementationDeps;
 }
 
@@ -893,6 +902,7 @@ interface DispatchTurnViaAgentCallInput {
 
 interface DispatchTurnViaAgentCallOutput {
   turnResult: ConversationBackendTurnResult | undefined;
+  agentCallResult: AgentCallResult | undefined;
   thrown?: unknown;
 }
 
@@ -997,14 +1007,16 @@ async function dispatchTurnViaAgentCall(
     },
   };
 
+  let agentCallResult: AgentCallResult | undefined;
   try {
-    await input.executeAgentCall(request, facadeDeps);
+    agentCallResult = await input.executeAgentCall(request, facadeDeps);
   } catch (err) {
     pendingRetry = err as Error;
   }
 
   return {
     turnResult: captured,
+    agentCallResult,
     ...(pendingRetry ? { thrown: pendingRetry } : {}),
   };
 }
@@ -1131,6 +1143,9 @@ export async function executePromptForMachine(
         numTurns: null,
         contextTokens: null,
         contextWindow: null,
+        inputTokens: null,
+        outputTokens: null,
+        cachedInputTokens: null,
         contentBlocks: [],
         aborted: false,
         error: errorMessage,
@@ -1565,6 +1580,7 @@ export async function executePromptForMachine(
   }
 
   let turnResult: ConversationBackendTurnResult | undefined;
+  let agentCallResult: AgentCallResult | undefined;
 
   async function drainClaudeCapabilityWhenIdle(): Promise<void> {
     if (input.agentBackend !== "claude") return;
@@ -1625,6 +1641,9 @@ export async function executePromptForMachine(
           numTurns: null,
           contextTokens: null,
           contextWindow: null,
+          inputTokens: null,
+          outputTokens: null,
+          cachedInputTokens: null,
           contentBlocks: [],
           aborted: false,
           error: errorMessage,
@@ -1685,6 +1704,7 @@ export async function executePromptForMachine(
       syntheticForkSeed,
     });
     turnResult = turnDispatch.turnResult;
+    agentCallResult = turnDispatch.agentCallResult;
     if (turnDispatch.thrown) {
       throw turnDispatch.thrown;
     }
@@ -1703,6 +1723,9 @@ export async function executePromptForMachine(
         numTurns: null,
         contextTokens: null,
         contextWindow: null,
+        inputTokens: null,
+        outputTokens: null,
+        cachedInputTokens: null,
         contentBlocks,
         aborted: true,
         error: null,
@@ -1723,6 +1746,9 @@ export async function executePromptForMachine(
       numTurns: null,
       contextTokens: null,
       contextWindow: null,
+      inputTokens: null,
+      outputTokens: null,
+      cachedInputTokens: null,
       contentBlocks,
       aborted: false,
       error: errorMsg,
@@ -1739,13 +1765,36 @@ export async function executePromptForMachine(
 
   await Promise.all(pendingTranscriptWrites);
 
-  if (turnResult?.error && !turnResult.aborted && !sawErrorEvent) {
+  // Funnel structured-output extraction through the shared AgentCall gate.
+  // `applyStructuredOutputGate` runs inside `executeAgentCall` whenever
+  // `outputSchema` is present — it may parse `text` into a structuredOutput
+  // value or downgrade a completed outcome to `failed` with
+  // `failureKind: "schema_validation"`. The actor consumes that result so the
+  // conversation_turn and task_run paths share one validation outcome.
+  const gateCompletedOutcome =
+    agentCallResult?.outcome.kind === "completed"
+      ? agentCallResult.outcome
+      : undefined;
+  const gateSchemaValidationFailure =
+    agentCallResult?.outcome.kind === "failed" &&
+    agentCallResult.outcome.error.failureKind === "schema_validation"
+      ? agentCallResult.outcome.error
+      : undefined;
+  const effectiveStructuredOutput =
+    gateCompletedOutcome?.structuredOutput ?? turnResult?.structuredOutput;
+  const effectiveError =
+    gateSchemaValidationFailure?.message ?? turnResult?.error ?? null;
+
+  if (effectiveError && !turnResult?.aborted && !sawErrorEvent) {
     logger.warn("prompt.turn_error_fallback_emitted", {
       sessionName: input.sessionName,
       backend: input.agentBackend,
-      message: turnResult.error,
+      message: effectiveError,
+      ...(gateSchemaValidationFailure
+        ? { failureKind: "schema_validation" as const }
+        : {}),
     });
-    runtimeState.streamEmit?.("error", { message: turnResult.error });
+    runtimeState.streamEmit?.("error", { message: effectiveError });
   }
 
   // Post-turn transcript for non-Claude backends.
@@ -1769,11 +1818,13 @@ export async function executePromptForMachine(
   // a structured output. Backend-agnostic — both Claude (SDK-validated) and
   // Codex (parsed JSON) reach here with structuredOutput populated. The block
   // merges with the preceding assistant text via readConversationMessages,
-  // letting the renderer dispatch on `phase`.
+  // letting the renderer dispatch on `phase`. The value comes from the shared
+  // gate when the gate ran (extraction may have parsed it from `text`), else
+  // from the backend's natively-populated turnResult.
   if (
     input.debugMode?.active === true &&
-    turnResult?.structuredOutput != null &&
-    !turnResult.error
+    effectiveStructuredOutput != null &&
+    !effectiveError
   ) {
     await safeAppendWithMeta(input.conversationId, {
       timestamp: new Date().toISOString(),
@@ -1783,13 +1834,15 @@ export async function executePromptForMachine(
         {
           type: "debug_structured",
           phase: input.debugMode.phase,
-          payload: turnResult.structuredOutput,
+          payload: effectiveStructuredOutput,
         },
       ],
     });
   }
 
-  // Build result
+  // Build result. structuredOutput and error come from the shared gate when
+  // it ran; this ensures both streaming and task_run paths surface the same
+  // validation outcome.
   const result: PromptActorResult = {
     backendRef: turnResult?.backendRef ?? null,
     costUsd: turnResult?.costUsd ?? null,
@@ -1797,10 +1850,13 @@ export async function executePromptForMachine(
     numTurns: turnResult?.numTurns ?? null,
     contextTokens: turnResult?.contextTokens ?? null,
     contextWindow: turnResult?.contextWindowMax ?? null,
+    inputTokens: agentCallResult?.usage.inputTokens ?? null,
+    outputTokens: agentCallResult?.usage.outputTokens ?? null,
+    cachedInputTokens: agentCallResult?.usage.cachedInputTokens ?? null,
     contentBlocks: turnResult?.contentBlocks ?? contentBlocks,
-    structuredOutput: turnResult?.structuredOutput,
+    structuredOutput: effectiveStructuredOutput,
     aborted: turnResult?.aborted ?? false,
-    error: turnResult?.error ?? null,
+    error: effectiveError,
   };
 
   // Emit done on the SSE stream
@@ -1813,6 +1869,217 @@ export async function executePromptForMachine(
   });
 
   return result;
+}
+
+/**
+ * Execute a single-shot `task_run` turn via the shared AgentCall primitive.
+ *
+ * Non-streaming counterpart to `executePromptForMachine`. Builds one
+ * `task_run` AgentCallRequest from the active turn, awaits the full
+ * `AgentCallResult` (the facade's structured-output gate runs inside
+ * `executeAgentCall` when `outputSchema` is present — the actor never
+ * extracts structured payloads itself), persists exactly ONE final assistant
+ * TranscriptMessage via the existing append path, and lets the broadcast
+ * meta trigger `message-appended` SSE once.
+ */
+export async function runTaskRunTurnForMachine(
+  input: RunTaskRunInput,
+): Promise<PromptActorResult> {
+  const deps = await getDeps();
+
+  const projectName =
+    input.projectName || deps.getProjectDisplayName(input.projectPath);
+
+  const broadcastMeta: TranscriptBroadcastMeta = {
+    projectName,
+    sessionName: input.sessionName,
+  };
+
+  const request: AgentCallRequest = {
+    kind: "task_run",
+    prompt: input.promptText,
+    backend: input.agentBackend,
+    writeCapability: "write_capable",
+    ...(input.outputFormat?.type === "json_schema"
+      ? { outputSchema: input.outputFormat.schema }
+      : {}),
+    ...(input.systemInstructions !== undefined
+      ? { systemInstructions: input.systemInstructions }
+      : {}),
+    ...(input.tooling !== undefined ? { tooling: input.tooling } : {}),
+    ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+  };
+
+  const codexHardenedSettings =
+    input.agentBackend === "codex"
+      ? {
+          sandboxMode: "danger-full-access" as const,
+          approvalPolicy: "never" as const,
+          webSearchMode: "disabled" as const,
+          skipGitRepoCheck: true,
+          networkAccessEnabled: true,
+        }
+      : {};
+
+  const facadeDeps: AgentCallFacadeDeps = {
+    resolveTaskRunner: () => ({
+      runner: deps.getTaskRunner(input.agentBackend),
+      capabilityView: capabilityViewForBackend(input.agentBackend),
+      workingDirectory: input.worktreePath,
+      autonomous: true,
+      ...(input.modelId != null ? { modelId: input.modelId } : {}),
+      ...(input.effort != null ? { reasoningEffort: input.effort } : {}),
+      ...(input.backendRef !== null ? { resumeRef: input.backendRef } : {}),
+      ...(input.timeoutMs !== undefined
+        ? { defaultTimeoutMs: input.timeoutMs }
+        : {}),
+      ...codexHardenedSettings,
+    }),
+    ...(input.skipStructuredOutputGate
+      ? { validateStructuredOutput: () => ({ valid: true }) }
+      : {}),
+  };
+
+  logger.info("task_run.dispatch", {
+    sessionName: input.sessionName,
+    backend: input.agentBackend,
+    conversationId: input.conversationId,
+    hasOutputSchema: request.outputSchema !== undefined,
+  });
+
+  let result: AgentCallResult;
+  try {
+    result = await deps.executeAgentCall(request, facadeDeps);
+  } catch (err) {
+    const errorMsg = getErrorMessage(err);
+    logger.error("task_run.execute_threw", {
+      sessionName: input.sessionName,
+      backend: input.agentBackend,
+      conversationId: input.conversationId,
+      error: errorMsg,
+    });
+    return {
+      backendRef: null,
+      costUsd: null,
+      durationMs: null,
+      numTurns: null,
+      contextTokens: null,
+      contextWindow: null,
+      inputTokens: null,
+      outputTokens: null,
+      cachedInputTokens: null,
+      contentBlocks: [],
+      aborted: false,
+      error: errorMsg,
+    };
+  }
+
+  const usage = result.usage;
+  const backendRef = result.backendRef ?? null;
+
+  if (result.outcome.kind === "completed") {
+    const text = result.outcome.text;
+    const contentBlocks: MessageContentBlock[] = text
+      ? [{ type: "text", text }]
+      : [];
+
+    if (contentBlocks.length > 0) {
+      // For Codex, attach the threadId returned by the backend as turn
+      // metadata on the assistant TranscriptMessage so downstream readers can
+      // discover thread continuity from the transcript itself rather than
+      // from a separate side artifact. Storing it here keeps `conversationId`
+      // as the primary identity and treats the threadId as resumption hint.
+      const rawMetadata =
+        backendRef?.backend === "codex"
+          ? { backend: "codex" as const, threadId: backendRef.threadId }
+          : undefined;
+      await deps.safeAppendTranscriptEntry(
+        input.conversationId,
+        {
+          timestamp: new Date().toISOString(),
+          type: "assistant",
+          role: "assistant",
+          content: contentBlocks,
+          ...(rawMetadata !== undefined ? { raw: rawMetadata } : {}),
+          ...(input.origin !== undefined ? { origin: input.origin } : {}),
+        },
+        broadcastMeta,
+      );
+    }
+
+    logger.info("task_run.complete", {
+      sessionName: input.sessionName,
+      backend: input.agentBackend,
+      conversationId: input.conversationId,
+      hasStructuredOutput: result.outcome.structuredOutput !== undefined,
+    });
+
+    return {
+      backendRef,
+      costUsd: usage.costUsd ?? null,
+      durationMs: usage.durationMs ?? null,
+      numTurns: null,
+      contextTokens: usage.contextTokens ?? null,
+      contextWindow: usage.contextWindowMax ?? null,
+      inputTokens: usage.inputTokens ?? null,
+      outputTokens: usage.outputTokens ?? null,
+      cachedInputTokens: usage.cachedInputTokens ?? null,
+      contentBlocks,
+      ...(result.outcome.structuredOutput !== undefined
+        ? { structuredOutput: result.outcome.structuredOutput }
+        : {}),
+      aborted: false,
+      error: null,
+    };
+  }
+
+  if (result.outcome.kind === "failed") {
+    const failureKind = result.outcome.error.failureKind;
+    const errorMsg = result.outcome.error.message;
+    logger.warn("task_run.failed", {
+      sessionName: input.sessionName,
+      backend: input.agentBackend,
+      conversationId: input.conversationId,
+      failureKind,
+      message: errorMsg,
+    });
+    return {
+      backendRef,
+      costUsd: usage.costUsd ?? null,
+      durationMs: usage.durationMs ?? null,
+      numTurns: null,
+      contextTokens: usage.contextTokens ?? null,
+      contextWindow: usage.contextWindowMax ?? null,
+      inputTokens: usage.inputTokens ?? null,
+      outputTokens: usage.outputTokens ?? null,
+      cachedInputTokens: usage.cachedInputTokens ?? null,
+      contentBlocks: [],
+      aborted: failureKind === "aborted",
+      error: errorMsg,
+    };
+  }
+
+  // outcome.kind === "paused": task_run path produces no pauses today.
+  // Surface as an error so callers see a deterministic outcome.
+  logger.warn("task_run.unexpected_paused_outcome", {
+    sessionName: input.sessionName,
+    backend: input.agentBackend,
+    conversationId: input.conversationId,
+  });
+  return {
+    backendRef,
+    costUsd: usage.costUsd ?? null,
+    durationMs: usage.durationMs ?? null,
+    numTurns: null,
+    contextTokens: usage.contextTokens ?? null,
+    contextWindow: usage.contextWindowMax ?? null,
+    inputTokens: usage.inputTokens ?? null,
+    outputTokens: usage.outputTokens ?? null,
+    cachedInputTokens: usage.cachedInputTokens ?? null,
+    contentBlocks: [],
+    aborted: false,
+    error: "task_run produced unexpected paused outcome",
+  };
 }
 
 /**

@@ -11,6 +11,7 @@ import type {
   PrepareTurnOutput,
   ExecutePromptInput,
   PromptActorResult,
+  RunTaskRunInput,
   VerifyCleanupInput,
   VerifyCleanupOutput,
 } from "./types";
@@ -38,6 +39,19 @@ export const executePromptActor = fromPromise<
   const { executePromptForMachine } = await import("./actor-implementations");
   return executePromptForMachine(input);
 });
+
+/**
+ * Execute a single-shot task run via the shared AgentCall primitive.
+ * Non-streaming variant: invokes `executeAgentCall` once, persists one final
+ * TranscriptMessage, broadcasts `message-appended` exactly once.
+ */
+export const runTaskRunActor = fromPromise<PromptActorResult, RunTaskRunInput>(
+  async ({ input }) => {
+    const { runTaskRunTurnForMachine } =
+      await import("./actor-implementations");
+    return runTaskRunTurnForMachine(input);
+  },
+);
 
 /**
  * Cross-check the agent's debug cleanup result against the persisted

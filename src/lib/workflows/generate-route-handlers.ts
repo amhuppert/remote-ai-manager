@@ -10,6 +10,11 @@ import type {
   WorkflowPlanRequest,
 } from "@/lib/workflows/schemas";
 import { createWorkflowPlannerService } from "@/lib/workflow-graph/planner";
+import {
+  ensurePlannerSession as defaultEnsurePlannerSession,
+  PLANNER_SESSION_NAME,
+} from "@/lib/sessions/service";
+import type { SessionState } from "@/lib/sessions/schemas";
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -17,8 +22,13 @@ type RouteContext = {
 
 export interface WorkflowGenerateRouteDeps {
   resolveProjectPath(name: string): Promise<string | null>;
+  ensurePlannerSession(projectPath: string): Promise<SessionState>;
   generateDraft(
-    input: WorkflowPlanRequest & { projectPath?: string },
+    input: WorkflowPlanRequest & {
+      projectPath: string;
+      sessionName: string;
+      conversationId: string;
+    },
   ): Promise<WorkflowGeneratedDraft>;
 }
 
@@ -26,6 +36,7 @@ const defaultPlanner = createWorkflowPlannerService();
 
 const defaultDeps: WorkflowGenerateRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,
+  ensurePlannerSession: defaultEnsurePlannerSession,
   generateDraft: (input) => defaultPlanner.generateDraft(input),
 };
 
@@ -56,9 +67,22 @@ export function createWorkflowGenerateRouteHandlers(
     }
 
     try {
+      const plannerSession = await deps.ensurePlannerSession(projectPath);
+      const conversationId = plannerSession.conversations[0]?.id;
+      if (!conversationId) {
+        return NextResponse.json(
+          {
+            error: "Planner session has no initial conversation",
+          } satisfies ApiError,
+          { status: 500 },
+        );
+      }
+
       const draft = await deps.generateDraft({
         ...body,
         projectPath,
+        sessionName: PLANNER_SESSION_NAME,
+        conversationId,
       });
       return NextResponse.json(workflowGeneratedDraftSchema.parse(draft));
     } catch (error) {

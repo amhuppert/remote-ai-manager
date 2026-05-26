@@ -7,6 +7,7 @@
  */
 
 import type { Snapshot } from "xstate";
+import { z } from "zod";
 import {
   getConversation as defaultGetConversation,
   mutateConversation as defaultMutateConversation,
@@ -14,6 +15,47 @@ import {
 import { createLogger } from "@/lib/logging";
 import type { ConversationState } from "@/lib/conversations/schemas";
 const logger = createLogger("conversation-persistence");
+
+// ============================================================
+// Legacy ActiveTurn coercion
+// ============================================================
+
+/**
+ * Persisted snapshots written before the ActiveTurn discriminated union landed
+ * stored activeTurn as a bare object without a `kind` field. The preprocessor
+ * below stamps the legacy shape with `kind: "conversation_turn"` so the
+ * in-memory ConversationContext sees the variant the machine expects, while
+ * the rest of the object passes through untouched (passthrough preserves any
+ * extra fields a future schema iteration may have added).
+ *
+ * Applied during snapshot restoration; production code never persists the
+ * legacy shape again because every SUBMIT_PROMPT path now stamps `kind`.
+ */
+const persistedActiveTurnSchema = z
+  .preprocess(
+    (val) => {
+      if (val == null || typeof val !== "object") return val;
+      const obj = val as Record<string, unknown>;
+      if ("kind" in obj) return obj;
+      return { kind: "conversation_turn", ...obj };
+    },
+    z.union([
+      z.looseObject({ kind: z.literal("conversation_turn") }),
+      z.looseObject({ kind: z.literal("task_run") }),
+    ]),
+  )
+  .nullable();
+
+function coerceLegacyActiveTurn(snapshot: unknown): void {
+  if (!snapshot || typeof snapshot !== "object") return;
+  const context = (snapshot as { context?: Record<string, unknown> }).context;
+  if (!context || typeof context !== "object") return;
+  if (!("activeTurn" in context)) return;
+  const parsed = persistedActiveTurnSchema.safeParse(context.activeTurn);
+  if (parsed.success) {
+    context.activeTurn = parsed.data;
+  }
+}
 
 // ============================================================
 // Dependency Injection
@@ -142,6 +184,8 @@ export function validateRestoredSnapshot(
     });
     return null;
   }
+
+  coerceLegacyActiveTurn(snapshot);
 
   logger.info("conversation-persistence.snapshot_restored", {
     conversationId,

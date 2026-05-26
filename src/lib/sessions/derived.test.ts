@@ -4,6 +4,7 @@ import {
   deriveSessionStatusFromParts,
   deriveSessionPromptCountFromConvs,
   deriveSessionLastActivityFromConvs,
+  isReservedSessionName,
 } from "./derived";
 import type { ConversationState } from "@/lib/conversations/schemas";
 function makeConversation(
@@ -230,5 +231,21 @@ describe("deriveSessionLastActivityFromConvs", () => {
         { lastActivityAt: "2024-03-05T00:00:00.000Z" },
       ]),
     ).toBe("2024-04-10T00:00:00.000Z");
+  });
+});
+
+describe("isReservedSessionName", () => {
+  it("flags single-underscore-prefixed names as reserved", () => {
+    expect(isReservedSessionName("_internal")).toBe(true);
+  });
+
+  it("flags the planner session as reserved", () => {
+    expect(isReservedSessionName("__planner__")).toBe(true);
+  });
+
+  it("does not flag normal user-created session names", () => {
+    expect(isReservedSessionName("feature-x")).toBe(false);
+    expect(isReservedSessionName("planner")).toBe(false);
+    expect(isReservedSessionName("a_b")).toBe(false);
   });
 });

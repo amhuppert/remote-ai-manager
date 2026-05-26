@@ -167,7 +167,6 @@ export const mergeMachine = setup({
     validationTimeoutMs: input.validationTimeoutMs ?? 300_000,
     fixAttempt: 0,
     maxFixAttempts: input.maxFixAttempts ?? 2,
-    fixSessionRef: null,
     finalStatus: null,
     targetBranch: input.targetBranch ?? "main",
     targetWorktreePath: input.targetWorktreePath ?? null,
@@ -295,7 +294,11 @@ export const mergeMachine = setup({
       entry: assign({ phase: "analyzing-conflicts" as const }),
       invoke: {
         src: "analyzeConflicts",
-        input: ({ context }) => ({ worktreePath: context.worktreePath }),
+        input: ({ context }) => ({
+          worktreePath: context.worktreePath,
+          projectPath: context.projectPath,
+          sessionName: context.sessionName,
+        }),
         onDone: [
           {
             guard: "analysisSucceeded",
@@ -322,6 +325,8 @@ export const mergeMachine = setup({
         src: "resolveConflicts",
         input: ({ context }) => ({
           worktreePath: context.worktreePath,
+          projectPath: context.projectPath,
+          sessionName: context.sessionName,
           decisions: context.decisions ?? undefined,
         }),
         onDone: [
@@ -405,19 +410,11 @@ export const mergeMachine = setup({
           projectPath: context.projectPath,
           sessionName: context.sessionName,
           branchName: context.branchName,
-          sessionRef: context.fixSessionRef ?? undefined,
+          isRetry: context.fixAttempt > 1,
         }),
         onDone: [
           {
             guard: "fixSucceeded",
-            actions: assign({
-              fixSessionRef: ({ event }) => {
-                const e = event as unknown as {
-                  output: FixValidationOutput;
-                };
-                return e.output.sessionRef ?? null;
-              },
-            }),
             target: "checkingFixChanges",
           },
           {

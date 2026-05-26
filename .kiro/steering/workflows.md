@@ -285,6 +285,27 @@ sharing, defaults, and parallelization.
 
 This steering section is runtime/config reference only.
 
+## Planner reserved session
+
+Every workflow-generation turn (`POST /api/projects/:name/workflows/generate`)
+runs through a project-level reserved session named `__planner__`, provisioned
+lazily on first use by `ensurePlannerSession` in `src/lib/sessions/service.ts`.
+The worktree lives at `<projectPath>/.worktrees/__planner__` on branch
+`csm/__planner__` and is dedicated to the planner's transcript.
+
+Conventions:
+- Session names beginning with `_` are reserved (see `isReservedSessionName` in
+  `src/lib/sessions/derived.ts`). The session list route filters them out so
+  the planner session does not appear in the Sessions UI.
+- The planner runs via `executeWorkflowTaskRun` with `kind: "task_run"` and NO
+  `outputFormat`. The agent's free-form response text is not the contract —
+  the canonical `WorkflowSemanticDefinition` is registered out-of-band via the
+  `planner-draft-registry` MCP side channel and consumed by the runner after
+  the call settles.
+- Because the planner is bound to a stable session/conversation, every
+  generation turn appends to the same audit-able transcript and the
+  conversation actor's per-conversation single-flight lock applies normally.
+
 ## Validation runtime reference
 
 `acceptanceCriteria` is required on every execution context and is consumed by

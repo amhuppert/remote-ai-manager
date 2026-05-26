@@ -5,6 +5,7 @@
  * for the conversation XState machine.
  */
 
+import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
 import type {
   ConversationStatus,
@@ -12,6 +13,7 @@ import type {
   ForkedFrom,
   AskQuestionItem,
   MessageContentBlock,
+  TranscriptMessageOrigin,
 } from "@/lib/conversations/schemas";
 import type {
   DebugHypothesis,
@@ -25,6 +27,62 @@ import type { DebugCleanupResultOutput } from "./debug-schemas";
 // ============================================================
 // Context
 // ============================================================
+
+/** Structured-output contract attached to a turn (JSON Schema enforced by the
+ *  agent SDK). Shared by both ActiveTurn variants so callers don't have to
+ *  branch on `kind` when only the output format matters. */
+export interface StructuredOutputFormat {
+  type: "json_schema";
+  schema: Record<string, unknown>;
+}
+
+/** Streaming conversation turn: a user-initiated SUBMIT_PROMPT that flows
+ *  through the SDK and emits assistant messages live. `outputFormat` is set
+ *  on this variant during Debug Mode phases that require a JSON response. */
+export interface ConversationTurnActive {
+  kind: "conversation_turn";
+  promptText: string;
+  images: ImagePayload[];
+  backend: AgentBackendId;
+  modelId: string | null;
+  effort: string | null;
+  autonomous: boolean;
+  startedAt: string | null;
+  streamId: string | null;
+  outputFormat?: StructuredOutputFormat;
+}
+
+/** Single-shot task run: a non-streaming, structured-output execution invoked
+ *  by a downstream workflow context. */
+export interface TaskRunActive {
+  kind: "task_run";
+  promptText: string;
+  backend: AgentBackendId;
+  modelId: string | null;
+  effort: string | null;
+  startedAt: string | null;
+  outputFormat?: StructuredOutputFormat;
+  systemInstructions?: string;
+  tooling?: PortableMcpConfig;
+  timeoutMs?: number;
+  /**
+   * When true the AgentCall facade's post-dispatch structured-output gate is
+   * skipped for this turn. Callers that maintain their own response parser
+   * (e.g. the graph-workflow validator's text/raw-JSON/fenced-JSON fallback
+   * chain) opt in so a malformed structured payload does not erase the raw
+   * text the caller still needs.
+   */
+  skipStructuredOutputGate?: boolean;
+  /**
+   * Provenance stamp forwarded onto the persisted assistant TranscriptMessage.
+   * Workflow callers set `source: "workflow"` so a single JSONL transcript can
+   * distinguish workflow-driven turns from user-driven turns without forking
+   * the file. Omit on user-driven turns.
+   */
+  origin?: TranscriptMessageOrigin;
+}
+
+export type ActiveTurn = ConversationTurnActive | TaskRunActive;
 
 export interface ConversationContext {
   _schemaVersion: 1;
@@ -48,17 +106,7 @@ export interface ConversationContext {
   role: ConversationRole;
 
   // Active turn (set when SUBMIT_PROMPT, cleared on finalize)
-  activeTurn: {
-    promptText: string;
-    images: ImagePayload[];
-    backend: AgentBackendId;
-    modelId: string | null;
-    effort: string | null;
-    autonomous: boolean;
-    startedAt: string | null;
-    streamId: string | null;
-    outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
-  } | null;
+  activeTurn: ActiveTurn | null;
 
   // Pending question (AskUserQuestion)
   pendingQuestion: {
@@ -109,7 +157,20 @@ export type ConversationEvent =
       effort?: string;
       autonomous?: boolean;
       streamId: string;
-      outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
+      outputFormat?: StructuredOutputFormat;
+    }
+  | {
+      type: "SUBMIT_TASK_RUN";
+      promptText: string;
+      backend?: AgentBackendId;
+      modelId?: string;
+      effort?: string;
+      outputFormat?: StructuredOutputFormat;
+      systemInstructions?: string;
+      tooling?: PortableMcpConfig;
+      timeoutMs?: number;
+      skipStructuredOutputGate?: boolean;
+      origin?: TranscriptMessageOrigin;
     }
   | { type: "RESOURCES_ACQUIRED"; transcriptPath: string }
   | { type: "RESOURCES_FAILED"; error: string }
@@ -181,6 +242,12 @@ export interface PromptActorResult {
   numTurns: number | null;
   contextTokens: number | null;
   contextWindow: number | null;
+  /** Backend-reported per-turn token usage (forwarded from AgentCallUsageMetrics).
+   *  Used by the codex continuity service to track lastTurnUsage on validator
+   *  lanes. Null when the backend does not report token counts. */
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cachedInputTokens: number | null;
   contentBlocks: MessageContentBlock[];
   structuredOutput?: unknown;
   aborted: boolean;
@@ -205,10 +272,7 @@ export interface ExecutePromptInput {
   effort: string | null;
   autonomous: boolean;
   debugMode: ConversationContext["debugMode"];
-  outputFormat?: {
-    type: "json_schema";
-    schema: Record<string, unknown>;
-  };
+  outputFormat?: StructuredOutputFormat;
 }
 
 /** Input for the prepareTurn actor (resource acquisition). */
@@ -218,6 +282,36 @@ export interface PrepareTurnInput {
   conversationId: string;
   worktreePath: string;
   transcriptPath: string | null;
+}
+
+/** Input for the runTaskRunTurn actor. Single-shot, non-streaming variant of
+ *  the prompt execution path used when a downstream workflow context drives a
+ *  `task_run` ActiveTurn. Carries only the fields required by the AgentCall
+ *  primitive's `task_run` request; field set is intentionally narrower than
+ *  ExecutePromptInput because there is no SDK streaming, no image flow, and
+ *  no debug-mode context. */
+export interface RunTaskRunInput {
+  projectPath: string;
+  projectName: string;
+  sessionName: string;
+  worktreePath: string;
+  conversationId: string;
+  agentBackend: AgentBackendId;
+  /** Persisted backend session ref captured by prior turns on this actor.
+   *  Forwarded to the runner as `resumeRef` to preserve Codex thread
+   *  continuity / Claude session continuity across calls. */
+  backendRef: AgentSessionRef | null;
+  promptText: string;
+  modelId: string | null;
+  effort: string | null;
+  outputFormat?: StructuredOutputFormat;
+  systemInstructions?: string;
+  tooling?: PortableMcpConfig;
+  timeoutMs?: number;
+  skipStructuredOutputGate?: boolean;
+  /** Forwarded onto the appended assistant TranscriptMessage so workflow-driven
+   *  turns are distinguishable from user-driven turns in the shared JSONL. */
+  origin?: TranscriptMessageOrigin;
 }
 
 /** Input for the verifyCleanup actor. */

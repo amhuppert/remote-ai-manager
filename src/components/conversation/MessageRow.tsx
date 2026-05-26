@@ -42,10 +42,22 @@ const MessageRow = memo(function MessageRow({
   lastMessageExtras,
 }: MessageRowProps): React.JSX.Element {
   const isUserMsg = msg.role === "user";
+  const iterationIndex =
+    msg.origin?.source === "workflow"
+      ? msg.origin.workflow?.iterationIndex
+      : undefined;
   return (
     <div className={`message ${msg.role}`} data-msg-index={messageIndex}>
       <div className="message-role">
         {isUserMsg ? "You" : selectedBackend === "codex" ? "Codex" : "Claude"}
+        {iterationIndex !== undefined && (
+          <span
+            className="cc-badge cc-badge--count message-iteration-badge"
+            data-iteration={iterationIndex}
+          >
+            iter {iterationIndex}
+          </span>
+        )}
         {!isUserMsg && (msg.model || msg.effort) && (
           <span className="message-meta">
             <span className="message-meta-sep">&middot;</span>

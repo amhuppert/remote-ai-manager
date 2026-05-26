@@ -7,7 +7,32 @@
 
 import { fromPromise } from "xstate";
 import type { ConflictEntry, ConflictDecisionInput } from "@/lib/jobs/schemas";
-import type { AgentSessionRef } from "@/lib/agent-backends/types";
+
+// ============================================================
+// Helpers
+// ============================================================
+
+/**
+ * Resolve the conversation that conflict-resolution and validation-fix turns
+ * should bind to for a given feature session. Picks the session's
+ * most-recently-active conversation; throws when the session has no
+ * conversation so the merge fails loudly rather than dispatching against an
+ * undefined identifier.
+ */
+async function resolveSessionConversationId(
+  projectPath: string,
+  sessionName: string,
+): Promise<string> {
+  const { getSessionConversations } = await import("@/lib/state-store");
+  const conversations = await getSessionConversations(projectPath, sessionName);
+  const id = conversations[0]?.id;
+  if (!id) {
+    throw new Error(
+      `No conversation found for session ${projectPath}::${sessionName}; cannot dispatch conflict-resolution / validation-fix turn`,
+    );
+  }
+  return id;
+}
 
 // ============================================================
 // Actor Input/Output Types
@@ -47,6 +72,8 @@ export interface MergeMainOutput {
 
 export interface ResolveConflictsInput {
   worktreePath: string;
+  projectPath: string;
+  sessionName: string;
   decisions?: ConflictDecisionInput[];
 }
 export interface ResolveConflictsOutput {
@@ -57,6 +84,8 @@ export interface ResolveConflictsOutput {
 
 export interface AnalyzeConflictsInput {
   worktreePath: string;
+  projectPath: string;
+  sessionName: string;
 }
 export interface AnalyzeConflictsOutput {
   status: "analyzed" | "failed";
@@ -78,12 +107,11 @@ export interface FixValidationInput {
   projectPath: string;
   sessionName: string;
   branchName: string;
-  sessionRef?: AgentSessionRef | null;
+  isRetry: boolean;
 }
 export interface FixValidationOutput {
   status: "fixed" | "failed";
   error?: string;
-  sessionRef?: AgentSessionRef | null;
 }
 
 export interface SquashMergeInput {
@@ -149,15 +177,22 @@ export const mergeMain = fromPromise<MergeMainOutput, MergeMainInput>(
   },
 );
 
-/** Resolve merge conflicts via Claude. */
+/** Resolve merge conflicts via the conversation actor. */
 export const resolveConflictsActor = fromPromise<
   ResolveConflictsOutput,
   ResolveConflictsInput
 >(async ({ input }) => {
   const { resolveConflicts } =
     await import("@/lib/sessions/conflict-resolution");
+  const conversationId = await resolveSessionConversationId(
+    input.projectPath,
+    input.sessionName,
+  );
   const result = await resolveConflicts({
     worktreePath: input.worktreePath,
+    projectPath: input.projectPath,
+    sessionName: input.sessionName,
+    conversationId,
     decisions: input.decisions,
   });
   return {
@@ -175,8 +210,15 @@ export const analyzeConflictsActor = fromPromise<
 >(async ({ input }) => {
   const { analyzeConflicts } =
     await import("@/lib/sessions/conflict-resolution");
+  const conversationId = await resolveSessionConversationId(
+    input.projectPath,
+    input.sessionName,
+  );
   const result = await analyzeConflicts({
     worktreePath: input.worktreePath,
+    projectPath: input.projectPath,
+    sessionName: input.sessionName,
+    conversationId,
   });
   return {
     status: result.status,
@@ -212,7 +254,7 @@ export const runValidation = fromPromise<
   });
 });
 
-/** Fix validation errors via Claude. */
+/** Fix validation errors via the conversation actor. */
 export const fixValidation = fromPromise<
   FixValidationOutput,
   FixValidationInput
@@ -236,19 +278,24 @@ export const fixValidation = fromPromise<
     // Best-effort: if we can't read the config, the agent just won't verify
   }
 
+  const conversationId = await resolveSessionConversationId(
+    input.projectPath,
+    input.sessionName,
+  );
+
   const result = await fixValidationErrors({
     worktreePath: input.worktreePath,
     validationOutput: input.validationOutput,
     validationCommand,
     projectPath: input.projectPath,
     sessionName: input.sessionName,
+    conversationId,
     branchName: input.branchName,
-    sessionRef: input.sessionRef,
+    isRetry: input.isRetry,
   });
   return {
     status: result.status === "fixed" ? "fixed" : "failed",
     error: result.status === "failed" ? result.error : undefined,
-    sessionRef: result.sessionRef,
   };
 });
 

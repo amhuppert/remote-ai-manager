@@ -1,10 +1,8 @@
 "use client";
 
 import { useMemo } from "react";
-import {
-  useConversationMessagesQuery,
-  useConversationsQuery,
-} from "@/lib/conversations/queries";
+import { useConversationsQuery } from "@/lib/conversations/queries";
+import { useConversationMessagesQuery } from "@/hooks/conversation/use-conversation-messages-query";
 import { useCollaborationListQuery } from "@/lib/workflows/queries";
 import { useSessionQuery } from "@/lib/sessions/queries";
 import { useSessionDiffQuery, useCommitsQuery } from "@/lib/git/queries";

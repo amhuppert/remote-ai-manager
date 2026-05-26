@@ -129,7 +129,7 @@ const conversationMetadata: MachineMetadata = {
     },
     executing: {
       description:
-        "Compound state: the executePrompt invoke stays alive across running ↔ waitingForInput transitions, so the SDK can pause for AskUserQuestion answers without restarting the stream.",
+        "Compound state: branches on activeTurn.kind. Streaming conversation_turn invokes executePrompt and stays alive across ASK_QUESTION/ANSWER pauses; single-shot task_run invokes runTaskRun once and returns one final TranscriptMessage.",
       events: [
         {
           event: "PROMPT_COMPLETED",
@@ -146,7 +146,16 @@ const conversationMetadata: MachineMetadata = {
         },
       ],
     },
-    "executing.running": {
+    "executing.dispatching": {
+      status: "initial",
+      description:
+        "Transient routing state: always-guard picks between the streaming conversationTurn branch and the single-shot taskRun branch based on activeTurn.kind.",
+    },
+    "executing.conversationTurn": {
+      description:
+        "Streaming conversation branch: the executePrompt invoke stays alive across running ↔ waitingForInput transitions so the SDK can pause for AskUserQuestion answers without restarting the stream.",
+    },
+    "executing.conversationTurn.running": {
       status: "initial",
       description: "SDK is producing output.",
       events: [
@@ -156,7 +165,7 @@ const conversationMetadata: MachineMetadata = {
         },
       ],
     },
-    "executing.waitingForInput": {
+    "executing.conversationTurn.waitingForInput": {
       status: "warning",
       description:
         "Holding the SDK in a paused state until the user answers the pending question.",
@@ -166,6 +175,10 @@ const conversationMetadata: MachineMetadata = {
           description: "User submitted an answer; resume.",
         },
       ],
+    },
+    "executing.taskRun": {
+      description:
+        "Single-shot task branch: invokes runTaskRun once via the shared AgentCall task-runner path, awaits the full AgentCallResult, persists exactly one final TranscriptMessage, and transitions to finalizingTurn. No streaming, no AskUserQuestion.",
     },
     finalizingTurn: {
       description:
@@ -320,11 +333,15 @@ const conversationMetadata: MachineMetadata = {
     prepareTurn:
       "Acquires the session lock and a query-semaphore slot, ensures the transcript file exists, and returns the resolved transcript path.",
     executePrompt:
-      "Streams a turn through the agent backend (Claude Agent SDK or Codex). Stays alive across ASK_QUESTION/ANSWER pauses by virtue of being invoked on the executing compound state.",
+      "Streams a turn through the agent backend (Claude Agent SDK or Codex). Stays alive across ASK_QUESTION/ANSWER pauses by virtue of being invoked on the executing.conversationTurn compound state.",
+    runTaskRun:
+      "Executes a single-shot task_run turn via the shared AgentCall task-runner path. Non-streaming counterpart to executePrompt: awaits the full AgentCallResult, persists exactly one final assistant TranscriptMessage, broadcasts message-appended once, and surfaces a parsed structuredOutput when outputSchema is present.",
     verifyCleanup:
       "Cross-checks the agent's cleanup result against the persisted .debug/<conversationId>/instrumentation.json manifest. On a passing verification the manifest is deleted and the conversation exits debug mode; on failure the machine routes to debug.error with a remediation prompt so the agent can be re-run.",
   },
   guards: {
+    isActiveTurnTaskRun:
+      'True when activeTurn.kind === "task_run". Routes the executing compound state into the single-shot taskRun branch; otherwise the streaming conversationTurn branch is selected.',
     isDebugModeActive: "True if debugMode is non-null and active.",
     isDebugHypothesizing: 'True when debugMode.phase === "hypothesizing".',
     isDebugAnalyzing: 'True when debugMode.phase === "analyzing_evidence".',

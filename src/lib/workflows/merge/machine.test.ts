@@ -509,7 +509,7 @@ describe("mergeMachine", () => {
       expect(fixCallCount).toBe(2); // Default maxFixAttempts is 2
     });
 
-    it("passes sessionRef from first attempt to retry", async () => {
+    it("isRetry is false on first attempt and true on subsequent attempts", async () => {
       let validationCallCount = 0;
       const fixInputs: FixValidationInput[] = [];
 
@@ -522,10 +522,7 @@ describe("mergeMachine", () => {
         }),
         fixValidation: mockFixValidation(async (input) => {
           fixInputs.push({ ...input });
-          return {
-            status: "fixed",
-            sessionRef: { backend: "claude", sessionId: "sdk-session-42" },
-          };
+          return { status: "fixed" };
         }),
       });
       const actor = createActor(machine, { input: defaultInput });
@@ -534,11 +531,8 @@ describe("mergeMachine", () => {
       await toPromise(actor);
 
       expect(fixInputs).toHaveLength(2);
-      expect(fixInputs[0]!.sessionRef).toBeUndefined();
-      expect(fixInputs[1]!.sessionRef).toEqual({
-        backend: "claude",
-        sessionId: "sdk-session-42",
-      });
+      expect(fixInputs[0]!.isRetry).toBe(false);
+      expect(fixInputs[1]!.isRetry).toBe(true);
     });
 
     it("respects custom maxFixAttempts", async () => {
@@ -686,7 +680,6 @@ describe("mergeMachine", () => {
       expect(ctx.conflictFiles).toEqual([]);
       expect(ctx.fixAttempt).toBe(0);
       expect(ctx.maxFixAttempts).toBe(2);
-      expect(ctx.fixSessionRef).toBeNull();
     });
   });
 

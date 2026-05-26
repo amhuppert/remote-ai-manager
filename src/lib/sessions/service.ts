@@ -48,6 +48,14 @@ export {
   validateSessionName,
 } from "./repo";
 
+/**
+ * Reserved project-level session name used by the workflow planner. The
+ * leading-and-trailing underscores make it match the reserved-name convention
+ * (`isReservedSessionName`), keeping it out of the UI session list. The same
+ * literal is used as the on-disk worktree directory.
+ */
+export const PLANNER_SESSION_NAME = "__planner__";
+
 // ============================================================
 // Types
 // ============================================================
@@ -195,6 +203,10 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
   /**
    * Provision the worktree, run init script, and persist session state.
    * Shared by fast, focus, and optimistic creation flows.
+   *
+   * When `opts.reservedDirName` is supplied, the worktree directory and branch
+   * suffix use that literal name (no random hex suffix) — used to produce a
+   * stable, lazily-created worktree for reserved sessions like the planner.
    */
   async function provisionSession(
     projectPath: string,
@@ -206,11 +218,12 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       baseBranch?: string;
       targetBranch?: string;
       parentSessionName?: string;
+      reservedDirName?: string;
     },
   ): Promise<SessionState> {
-    const sanitized = sanitizeBranchName(sessionName);
-    const suffix = generateRandomSuffix();
-    const dirName = `${sanitized}-${suffix}`;
+    const dirName =
+      opts.reservedDirName ??
+      `${sanitizeBranchName(sessionName)}-${generateRandomSuffix()}`;
 
     const globalConfig = await readConfig();
     const repoConfig = await readRepoConfig(projectPath);
@@ -524,6 +537,33 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
   }
 
   /**
+   * Lazily create the project-level reserved planner session.
+   *
+   * Returns the existing `__planner__` session if one is already persisted for
+   * the project; otherwise provisions a fresh worktree at
+   * `.worktrees/__planner__` (deterministic, no random suffix) plus the
+   * initial conversation row. The planner runs every workflow-generation turn
+   * against this session so its conversation actor has a stable transcript
+   * the user can audit/replay.
+   */
+  async function ensurePlannerSession(
+    projectPath: string,
+  ): Promise<SessionState> {
+    const state = await readState();
+    const existing =
+      state.projects[projectPath]?.sessions[PLANNER_SESSION_NAME];
+    if (existing) {
+      return existing;
+    }
+
+    return provisionSession(projectPath, PLANNER_SESSION_NAME, {
+      mode: "fast",
+      objective: null,
+      reservedDirName: PLANNER_SESSION_NAME,
+    });
+  }
+
+  /**
    * Retarget all direct child sessions to main when their parent is
    * merged or deleted. Only affects direct children — no cascading.
    */
@@ -721,6 +761,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     createSessionFast,
     createSessionFocus,
     createSessionOptimistic,
+    ensurePlannerSession,
     retargetOrphanedChildren,
     deleteSession,
     deleteProject,
@@ -736,6 +777,7 @@ const defaultService = createSessionService();
 export const createSessionFast = defaultService.createSessionFast;
 export const createSessionFocus = defaultService.createSessionFocus;
 export const createSessionOptimistic = defaultService.createSessionOptimistic;
+export const ensurePlannerSession = defaultService.ensurePlannerSession;
 export const retargetOrphanedChildren = defaultService.retargetOrphanedChildren;
 export const deleteSession = defaultService.deleteSession;
 export const deleteProject = defaultService.deleteProject;

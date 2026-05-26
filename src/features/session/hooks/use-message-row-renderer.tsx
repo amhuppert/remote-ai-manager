@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback } from "react";
-import MessageRow from "@/features/session/conversation/MessageRow";
-import type { ConversationVirtuosoListProps } from "@/features/session/conversation/ConversationVirtuosoList";
+import MessageRow from "@/components/conversation/MessageRow";
+import type { ConversationVirtuosoListProps } from "@/components/conversation/ConversationVirtuosoList";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 

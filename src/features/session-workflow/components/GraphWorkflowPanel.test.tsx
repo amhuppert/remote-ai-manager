@@ -14,7 +14,7 @@ import {
 import { renderWithQuery } from "@/test/component-mocks";
 import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 import GraphWorkflowPanel from "./GraphWorkflowPanel";
-import IterationTranscriptViewer from "./IterationTranscriptViewer";
+import WorkflowConversationViewer from "./WorkflowConversationViewer";
 import { resolveViewingTask } from "./view-task-resolver";
 
 const noopCallbacks = {
@@ -218,14 +218,14 @@ describe("GraphWorkflowPanel", () => {
 
 // ---------------------------------------------------------------------------
 // Codex implementer parity — proves the panel routes Codex-backed tasks
-// through the same CC conversation + shared IterationTranscriptViewer path
+// through the same CC conversation + shared WorkflowConversationViewer path
 // used by Claude tasks:
 //
 //   1. resolveViewingTask (pure function extracted from the panel) returns
 //      the task's lastConversationId (a normal CC conversation ID, not a
 //      Codex thread handle) and the context/task metadata the viewer needs,
 //      regardless of backend.
-//   2. IterationTranscriptViewer mounts with those props and issues a GET
+//   2. WorkflowConversationViewer mounts with those props and issues a GET
 //      against the standard CC conversation-messages endpoint — proving
 //      Codex workflow implementers share the existing transcript viewer.
 //   3. The live-state signal (isLive) correctly flows from the running
@@ -378,9 +378,9 @@ describe("GraphWorkflowPanel — codex transcript viewing path (mount)", () => {
     vi.unstubAllGlobals();
   });
 
-  it("mounts IterationTranscriptViewer with codex task metadata and hits the CC conversation-messages endpoint", async () => {
+  it("mounts WorkflowConversationViewer with codex task metadata and hits the CC conversation-messages endpoint", async () => {
     // Drive the mount path directly: GraphWorkflowPanel's `resolveViewingTask`
-    // produces these props from a codex-backed task, and IterationTranscriptViewer
+    // produces these props from a codex-backed task, and WorkflowConversationViewer
     // is the exact component the panel mounts when a user clicks View on a task.
     // This proves Codex workflow implementers use normal CC conversations AND
     // the existing transcript viewing component — end-to-end at the mount layer.
@@ -389,7 +389,7 @@ describe("GraphWorkflowPanel — codex transcript viewing path (mount)", () => {
     expect(resolved).not.toBeNull();
 
     renderWithQuery(
-      <IterationTranscriptViewer
+      <WorkflowConversationViewer
         projectName="test-project"
         sessionName="test-session"
         conversationId={resolved!.conversationId}
@@ -428,7 +428,7 @@ describe("GraphWorkflowPanel — codex transcript viewing path (mount)", () => {
     expect(resolved).not.toBeNull();
 
     renderWithQuery(
-      <IterationTranscriptViewer
+      <WorkflowConversationViewer
         projectName="test-project"
         sessionName="test-session"
         conversationId={resolved!.conversationId}

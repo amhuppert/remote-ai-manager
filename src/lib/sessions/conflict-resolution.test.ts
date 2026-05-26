@@ -3,25 +3,69 @@ import {
   createConflictResolver,
   type ConflictResolutionDeps,
 } from "./conflict-resolution";
-import type { AgentTaskRunner, AgentTaskResult } from "../agent-backends/task";
-import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
+import type {
+  ExecuteWorkflowTaskRunInput,
+  TaskRunResult,
+} from "@/lib/workflows/conversation/execute-workflow-task-run";
 
 // ============================================================
-// Test Helpers
+// Test helpers
 // ============================================================
 
-function createMockRunner(result: Partial<AgentTaskResult>): AgentTaskRunner {
+const PROJECT_PATH = "/projects/repo";
+const SESSION_NAME = "feature-branch";
+const CONVERSATION_ID = "conv-conflicts-1";
+
+function structuredOk(structured: unknown): TaskRunResult {
   return {
-    backend: "claude",
-    run: vi.fn().mockResolvedValue({
-      backendRef: null,
-      text: null,
-      structuredOutput: undefined,
-      usage: null,
-      error: null,
-      timedOut: false,
-      ...result,
-    }),
+    kind: "structured",
+    structuredOutput: structured,
+    text: "",
+    usage: {
+      costUsd: null,
+      durationMs: null,
+      contextTokens: null,
+      contextWindowMax: null,
+      inputTokens: null,
+      outputTokens: null,
+      cachedInputTokens: null,
+    },
+    backendRef: null,
+  };
+}
+
+function textOk(text: string): TaskRunResult {
+  return {
+    kind: "text",
+    text,
+    usage: {
+      costUsd: null,
+      durationMs: null,
+      contextTokens: null,
+      contextWindowMax: null,
+      inputTokens: null,
+      outputTokens: null,
+      cachedInputTokens: null,
+    },
+    backendRef: null,
+  };
+}
+
+function errResult(error: string, aborted = false): TaskRunResult {
+  return {
+    kind: "error",
+    error,
+    aborted,
+    usage: {
+      costUsd: null,
+      durationMs: null,
+      contextTokens: null,
+      contextWindowMax: null,
+      inputTokens: null,
+      outputTokens: null,
+      cachedInputTokens: null,
+    },
+    backendRef: null,
   };
 }
 
@@ -29,143 +73,65 @@ function createTestDeps(
   overrides?: Partial<ConflictResolutionDeps>,
 ): ConflictResolutionDeps {
   return {
-    getTaskRunner: vi
-      .fn()
-      .mockReturnValue(
-        createMockRunner({ text: null }),
-      ) as ConflictResolutionDeps["getTaskRunner"],
     readConfig: vi.fn().mockResolvedValue({
       baseDir: "/home/user/projects",
       ignorePatterns: [],
       claudeTimeoutMs: 60_000,
       defaultModel: "opus",
     }) as unknown as ConflictResolutionDeps["readConfig"],
+    executeWorkflowTaskRun: vi.fn().mockResolvedValue(textOk("")),
     ...overrides,
   };
 }
 
-describe("conflict-resolution", () => {
-  it("successfully extracts ConflictEntry[] from a fenced JSON code block in text", async () => {
-    const conflictEntries = [
-      {
-        file: "src/index.ts",
-        description: "Conflicting import statements",
-        resolution: "Kept both imports in correct order",
-        rationale:
-          "Both imports are needed: one from main and one from the feature branch",
-      },
-      {
-        file: "src/utils.ts",
-        description: "Different function implementations",
-        resolution: "Merged both implementations, keeping feature branch logic",
-        rationale:
-          "Feature branch had the more complete implementation with error handling",
-      },
-    ];
+const SAMPLE_ENTRIES = [
+  {
+    file: "src/index.ts",
+    description: "Conflicting import statements",
+    resolution: "Kept both imports in correct order",
+    rationale: "Both imports are needed",
+  },
+  {
+    file: "src/utils.ts",
+    description: "Different function implementations",
+    resolution: "Merged both implementations",
+    rationale: "Feature branch had more complete impl",
+  },
+];
 
-    const text = `I've analyzed and resolved all merge conflicts. Here's the structured analysis:
+// ============================================================
+// resolveConflicts
+// ============================================================
 
-\`\`\`json
-${JSON.stringify({ conflicts: conflictEntries }, null, 2)}
-\`\`\`
+describe("resolveConflicts (executeWorkflowTaskRun)", () => {
+  it("routes via executeWorkflowTaskRun with projectPath/sessionName/conversationId, kind=task_run, and the conflict JSON schema as outputFormat", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
 
-All conflicts have been resolved and staged.`;
-
-    const runner = createMockRunner({ text });
-    const deps = createTestDeps({
-      getTaskRunner: vi.fn().mockReturnValue(runner),
-    });
-
+    const deps = createTestDeps({ executeWorkflowTaskRun });
     const { resolveConflicts } = createConflictResolver(deps);
 
     const result = await resolveConflicts({
       worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
     });
 
     expect(result.status).toBe("resolved");
-    if (result.status === "resolved") {
-      expect(result.conflicts).toHaveLength(2);
-      expect(result.conflicts[0]!.file).toBe("src/index.ts");
-      expect(result.conflicts[0]!.description).toBe(
-        "Conflicting import statements",
-      );
-      expect(result.conflicts[0]!.resolution).toBe(
-        "Kept both imports in correct order",
-      );
-      expect(result.conflicts[0]!.rationale).toBe(
-        "Both imports are needed: one from main and one from the feature branch",
-      );
-      expect(result.conflicts[1]!.file).toBe("src/utils.ts");
-    }
-
-    // Verify getTaskRunner was called with "claude"
-    expect(deps.getTaskRunner).toHaveBeenCalledWith("claude");
-    // Verify runner.run was called with correct options
-    expect(runner.run).toHaveBeenCalledOnce();
-    const callArgs = (runner.run as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    expect(callArgs.workingDirectory).toBe("/tmp/worktree");
-    expect(callArgs.autonomous).toBe(true);
-  });
-
-  it("prefers structured output over text parsing", async () => {
-    const conflictEntries = [
-      {
-        file: "src/index.ts",
-        description: "Import conflict",
-        resolution: "Merged imports",
-        rationale: "Both needed",
-      },
-    ];
-
-    const runner = createMockRunner({
-      text: "some text without json",
-      structuredOutput: { conflicts: conflictEntries },
-    });
-    const deps = createTestDeps({
-      getTaskRunner: vi.fn().mockReturnValue(runner),
-    });
-
-    const { resolveConflicts } = createConflictResolver(deps);
-
-    const result = await resolveConflicts({
-      worktreePath: "/tmp/worktree",
-    });
-
-    expect(result.status).toBe("resolved");
-    if (result.status === "resolved") {
-      expect(result.conflicts).toHaveLength(1);
-      expect(result.conflicts[0]!.file).toBe("src/index.ts");
-    }
-  });
-
-  it("passes a JSON schema with type:object to the SDK task runner (Anthropic tool input_schema requirement)", async () => {
-    const conflictEntries = [
-      {
-        file: "src/index.ts",
-        description: "Import conflict",
-        resolution: "Merged imports",
-        rationale: "Both imports are required",
-      },
-    ];
-
-    const runner = createMockRunner({
-      text: "not json",
-      structuredOutput: { conflicts: conflictEntries },
-    });
-    const deps = createTestDeps({
-      getTaskRunner: vi.fn().mockReturnValue(runner),
-    });
-
-    const { resolveConflicts } = createConflictResolver(deps);
-
-    const result = await resolveConflicts({
-      worktreePath: "/tmp/worktree",
-    });
-
-    expect(result.status).toBe("resolved");
-    const callArgs = (runner.run as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    // Anthropic tool input_schema must be type:"object" — array at root is rejected with HTTP 400.
-    expect(callArgs.outputSchema).toMatchObject({
+    expect(executeWorkflowTaskRun).toHaveBeenCalledTimes(1);
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input.projectPath).toBe(PROJECT_PATH);
+    expect(input.sessionName).toBe(SESSION_NAME);
+    expect(input.conversationId).toBe(CONVERSATION_ID);
+    expect(input.kind).toBe("task_run");
+    expect(typeof input.prompt).toBe("string");
+    expect(input.prompt).toContain("Resolve all merge conflicts");
+    expect(typeof input.systemInstructions).toBe("string");
+    expect(input.outputFormat).toBeDefined();
+    expect(input.outputFormat?.type).toBe("json_schema");
+    expect(input.outputFormat?.schema).toMatchObject({
       type: "object",
       properties: {
         conflicts: {
@@ -178,107 +144,96 @@ All conflicts have been resolved and staged.`;
       },
       required: ["conflicts"],
     });
+    expect(input.timeoutMs).toBe(60_000);
   });
 
-  it("falls back to raw JSON parse when text is valid JSON", async () => {
-    const conflictEntries = [
-      {
-        file: "src/index.ts",
-        description: "Conflict",
-        resolution: "Resolved",
-        rationale: "Reason",
-      },
-    ];
-
-    const runner = createMockRunner({
-      text: JSON.stringify({ conflicts: conflictEntries }),
-    });
-    const deps = createTestDeps({
-      getTaskRunner: vi.fn().mockReturnValue(runner),
-    });
-
+  it("returns resolved status with conflicts when executeWorkflowTaskRun returns structured output", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn()
+      .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
+    const deps = createTestDeps({ executeWorkflowTaskRun });
     const { resolveConflicts } = createConflictResolver(deps);
 
     const result = await resolveConflicts({
       worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
     });
 
     expect(result.status).toBe("resolved");
     if (result.status === "resolved") {
-      expect(result.conflicts).toHaveLength(1);
+      expect(result.conflicts).toHaveLength(2);
+      expect(result.conflicts[0]!.file).toBe("src/index.ts");
+      expect(result.conflicts[1]!.file).toBe("src/utils.ts");
     }
   });
 
-  it("returns failed status when no JSON code fence is found and text is not JSON", async () => {
-    const runner = createMockRunner({
-      text: "I resolved all conflicts but forgot to include the JSON output.",
-    });
-    const deps = createTestDeps({
-      getTaskRunner: vi.fn().mockReturnValue(runner),
-    });
-
-    const { resolveConflicts } = createConflictResolver(deps);
-
-    const result = await resolveConflicts({
-      worktreePath: "/tmp/worktree",
-    });
-
-    expect(result.status).toBe("failed");
-    if (result.status === "failed") {
-      expect(result.error).toContain("structured output failed validation");
-    }
-  });
-
-  it("returns failed status when Zod parse fails (malformed JSON)", async () => {
-    const malformedEntries = [
-      {
-        file: "src/index.ts",
-        // missing description, resolution, rationale
-      },
-    ];
-
-    const text = `Here's the analysis:
+  it("falls back to fenced-JSON text parse when structuredOutput is absent (text kind)", async () => {
+    const text = `Here is the analysis:
 
 \`\`\`json
-${JSON.stringify(malformedEntries, null, 2)}
+${JSON.stringify({ conflicts: SAMPLE_ENTRIES }, null, 2)}
 \`\`\``;
-
-    const runner = createMockRunner({ text });
-    const deps = createTestDeps({
-      getTaskRunner: vi.fn().mockReturnValue(runner),
-    });
-
+    const executeWorkflowTaskRun = vi.fn().mockResolvedValue(textOk(text));
+    const deps = createTestDeps({ executeWorkflowTaskRun });
     const { resolveConflicts } = createConflictResolver(deps);
 
     const result = await resolveConflicts({
       worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+    });
+
+    expect(result.status).toBe("resolved");
+    if (result.status === "resolved") {
+      expect(result.conflicts).toHaveLength(2);
+    }
+  });
+
+  it("returns failed status when executeWorkflowTaskRun returns kind=error", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn()
+      .mockResolvedValue(errResult("backend exploded"));
+    const deps = createTestDeps({ executeWorkflowTaskRun });
+    const { resolveConflicts } = createConflictResolver(deps);
+
+    const result = await resolveConflicts({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
     });
 
     expect(result.status).toBe("failed");
     if (result.status === "failed") {
-      expect(result.error).toContain("structured output failed validation");
+      expect(result.error).toContain("backend exploded");
     }
   });
 
-  it("handles decisions parameter by including them in the prompt", async () => {
-    const conflictEntries = [
-      {
-        file: "src/index.ts",
-        description: "Import conflict",
-        resolution: "Kept user-preferred imports",
-        rationale: "User approved this resolution",
-      },
-    ];
+  it("returns failed status when structured output does not match the schema", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn()
+      .mockResolvedValue(structuredOk({ conflicts: [{ file: "x" }] }));
+    const deps = createTestDeps({ executeWorkflowTaskRun });
+    const { resolveConflicts } = createConflictResolver(deps);
 
-    const text = `\`\`\`json
-${JSON.stringify({ conflicts: conflictEntries }, null, 2)}
-\`\`\``;
-
-    const runner = createMockRunner({ text });
-    const deps = createTestDeps({
-      getTaskRunner: vi.fn().mockReturnValue(runner),
+    const result = await resolveConflicts({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
     });
 
+    expect(result.status).toBe("failed");
+  });
+
+  it("includes per-file decisions in the prompt when provided", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
+    const deps = createTestDeps({ executeWorkflowTaskRun });
     const { resolveConflicts } = createConflictResolver(deps);
 
     const decisions = [
@@ -286,320 +241,133 @@ ${JSON.stringify({ conflicts: conflictEntries }, null, 2)}
       {
         file: "src/utils.ts",
         decision: "rejected" as const,
-        feedback: "Use the feature branch version instead",
+        feedback: "Use the feature branch version",
       },
       { file: "src/config.ts", decision: "pending" as const },
     ];
 
-    const result = await resolveConflicts({
+    await resolveConflicts({
       worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
       decisions,
     });
 
-    expect(result.status).toBe("resolved");
-
-    // Verify the prompt includes decision information
-    const callArgs = (runner.run as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    const prompt = callArgs.prompt as string;
-
-    expect(prompt).toContain("src/index.ts");
-    expect(prompt).toContain("APPROVED");
-    expect(prompt).toContain("src/utils.ts");
-    expect(prompt).toContain("REJECTED");
-    expect(prompt).toContain("Use the feature branch version instead");
-    expect(prompt).toContain("src/config.ts");
-    expect(prompt).toContain("PENDING");
-  });
-
-  it("returns failed status on task runner error", async () => {
-    const runner = createMockRunner({
-      error: "SDK connection failed",
-    });
-    const deps = createTestDeps({
-      getTaskRunner: vi.fn().mockReturnValue(runner),
-    });
-
-    const { resolveConflicts } = createConflictResolver(deps);
-
-    const result = await resolveConflicts({
-      worktreePath: "/tmp/worktree",
-    });
-
-    expect(result.status).toBe("failed");
-    if (result.status === "failed") {
-      expect(result.error).toContain("SDK connection failed");
-    }
-  });
-
-  it("returns failed status when getTaskRunner throws", async () => {
-    const deps = createTestDeps({
-      getTaskRunner: vi.fn().mockImplementation(() => {
-        throw new Error("No task runner registered");
-      }),
-    });
-
-    const { resolveConflicts } = createConflictResolver(deps);
-
-    const result = await resolveConflicts({
-      worktreePath: "/tmp/worktree",
-    });
-
-    expect(result.status).toBe("failed");
-    if (result.status === "failed") {
-      expect(result.error).toContain("No task runner registered");
-    }
-  });
-
-  it("uses the last JSON code fence when multiple are present", async () => {
-    const firstEntries = [
-      {
-        file: "src/old.ts",
-        description: "Old analysis",
-        resolution: "Old resolution",
-        rationale: "Old rationale",
-      },
-    ];
-
-    const lastEntries = [
-      {
-        file: "src/final.ts",
-        description: "Final analysis",
-        resolution: "Final resolution",
-        rationale: "Final rationale",
-      },
-    ];
-
-    const text = `First attempt:
-
-\`\`\`json
-${JSON.stringify({ conflicts: firstEntries }, null, 2)}
-\`\`\`
-
-Wait, let me update that:
-
-\`\`\`json
-${JSON.stringify({ conflicts: lastEntries }, null, 2)}
-\`\`\``;
-
-    const runner = createMockRunner({ text });
-    const deps = createTestDeps({
-      getTaskRunner: vi.fn().mockReturnValue(runner),
-    });
-
-    const { resolveConflicts } = createConflictResolver(deps);
-
-    const result = await resolveConflicts({
-      worktreePath: "/tmp/worktree",
-    });
-
-    expect(result.status).toBe("resolved");
-    if (result.status === "resolved") {
-      expect(result.conflicts).toHaveLength(1);
-      expect(result.conflicts[0]!.file).toBe("src/final.ts");
-    }
-  });
-
-  it("returns failed status when JSON code fence contains invalid JSON", async () => {
-    const text = `Here's the analysis:
-
-\`\`\`json
-{ this is not valid JSON }
-\`\`\``;
-
-    const runner = createMockRunner({ text });
-    const deps = createTestDeps({
-      getTaskRunner: vi.fn().mockReturnValue(runner),
-    });
-
-    const { resolveConflicts } = createConflictResolver(deps);
-
-    const result = await resolveConflicts({
-      worktreePath: "/tmp/worktree",
-    });
-
-    expect(result.status).toBe("failed");
-    if (result.status === "failed") {
-      expect(result.error).toContain("structured output failed validation");
-    }
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input.prompt).toContain("APPROVED");
+    expect(input.prompt).toContain("REJECTED");
+    expect(input.prompt).toContain("PENDING");
+    expect(input.prompt).toContain("Use the feature branch version");
   });
 });
 
 // ============================================================
-// analyzeConflicts tests
+// analyzeConflicts
 // ============================================================
 
-describe("analyzeConflicts", () => {
-  it("successfully extracts ConflictEntry[] from analysis-only response", async () => {
-    const conflictEntries = [
-      {
-        file: "src/index.ts",
-        description: "Conflicting import statements",
-        resolution: "Keep both imports in correct order",
-        rationale:
-          "Both imports are needed: one from main and one from the feature branch",
-      },
-    ];
+describe("analyzeConflicts (executeWorkflowTaskRun)", () => {
+  it("uses analysis-only system instructions (no edit/stage directives)", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
+    const deps = createTestDeps({ executeWorkflowTaskRun });
+    const { analyzeConflicts } = createConflictResolver(deps);
 
-    const text = `I've analyzed the merge conflicts. Here's the structured analysis:
-
-\`\`\`json
-${JSON.stringify({ conflicts: conflictEntries }, null, 2)}
-\`\`\``;
-
-    const runner = createMockRunner({ text });
-    const deps = createTestDeps({
-      getTaskRunner: vi.fn().mockReturnValue(runner),
+    await analyzeConflicts({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
     });
 
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    const instructions = input.systemInstructions ?? "";
+    expect(instructions).toContain("DO NOT");
+    expect(instructions).not.toContain("Edit each file");
+    expect(instructions).not.toContain("Stage each resolved file");
+  });
+
+  it("returns analyzed status with conflicts on success", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn()
+      .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
+    const deps = createTestDeps({ executeWorkflowTaskRun });
     const { analyzeConflicts } = createConflictResolver(deps);
 
     const result = await analyzeConflicts({
       worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
     });
 
     expect(result.status).toBe("analyzed");
     if (result.status === "analyzed") {
-      expect(result.conflicts).toHaveLength(1);
-      expect(result.conflicts[0]!.file).toBe("src/index.ts");
-      expect(result.conflicts[0]!.description).toBe(
-        "Conflicting import statements",
-      );
-      expect(result.conflicts[0]!.resolution).toBe(
-        "Keep both imports in correct order",
-      );
+      expect(result.conflicts).toHaveLength(2);
     }
   });
 
-  it("uses analysis-only system instructions", async () => {
-    const conflictEntries = [
-      {
-        file: "src/index.ts",
-        description: "Conflict",
-        resolution: "Proposed fix",
-        rationale: "Reason",
-      },
-    ];
-
-    const text = `\`\`\`json
-${JSON.stringify({ conflicts: conflictEntries }, null, 2)}
-\`\`\``;
-
-    const runner = createMockRunner({ text });
-    const deps = createTestDeps({
-      getTaskRunner: vi.fn().mockReturnValue(runner),
-    });
-
+  it("returns failed status on backend error", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn()
+      .mockResolvedValue(errResult("SDK down"));
+    const deps = createTestDeps({ executeWorkflowTaskRun });
     const { analyzeConflicts } = createConflictResolver(deps);
 
-    await analyzeConflicts({ worktreePath: "/tmp/worktree" });
-
-    // Verify system instructions contain analysis-only directives
-    const callArgs = (runner.run as ReturnType<typeof vi.fn>).mock.calls[0]![0];
-    const instructions = callArgs.systemInstructions as string[];
-    const combined = instructions.join("\n");
-
-    expect(combined).toContain("DO NOT");
-    expect(combined).not.toContain("Edit each file");
-    expect(combined).not.toContain("Stage each resolved file");
-  });
-
-  it("returns failed status when no JSON code fence is found", async () => {
-    const runner = createMockRunner({
-      text: "I analyzed but forgot the JSON output.",
+    const result = await analyzeConflicts({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
     });
-    const deps = createTestDeps({
-      getTaskRunner: vi.fn().mockReturnValue(runner),
-    });
-
-    const { analyzeConflicts } = createConflictResolver(deps);
-
-    const result = await analyzeConflicts({ worktreePath: "/tmp/worktree" });
 
     expect(result.status).toBe("failed");
     if (result.status === "failed") {
-      expect(result.error).toContain("structured output failed validation");
-    }
-  });
-
-  it("returns failed status on task runner error", async () => {
-    const runner = createMockRunner({
-      error: "SDK connection failed",
-    });
-    const deps = createTestDeps({
-      getTaskRunner: vi.fn().mockReturnValue(runner),
-    });
-
-    const { analyzeConflicts } = createConflictResolver(deps);
-
-    const result = await analyzeConflicts({ worktreePath: "/tmp/worktree" });
-
-    expect(result.status).toBe("failed");
-    if (result.status === "failed") {
-      expect(result.error).toContain("SDK connection failed");
+      expect(result.error).toContain("SDK down");
     }
   });
 });
 
-describe("conflict-resolution Task 6.3 parity (executeAgentCall route)", () => {
-  it("routes resolveConflicts through deps.executeAgentCall as kind=task_run with write_capable", async () => {
-    const conflictEntries = [
-      {
-        file: "src/index.ts",
-        description: "Conflict",
-        resolution: "Resolved",
-        rationale: "Reason",
-      },
-    ];
-    const text = `\`\`\`json\n${JSON.stringify({ conflicts: conflictEntries })}\n\`\`\``;
-    const runner = createMockRunner({ text });
-    const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
+// ============================================================
+// Parity: same structured input produces the same parsed conflicts
+// regardless of whether the runner returned them via structuredOutput
+// or as fenced JSON in text. The structured-output contract must survive
+// the migration to executeWorkflowTaskRun.
+// ============================================================
 
-    const deps = createTestDeps({
-      getTaskRunner: vi.fn().mockReturnValue(runner),
-      executeAgentCall: executeAgentCallSpy,
+describe("conflict-resolution structured-output parity", () => {
+  it("produces identical resolved conflicts whether routed via structuredOutput or fenced-JSON text", async () => {
+    const fixture = { conflicts: SAMPLE_ENTRIES };
+
+    const structuredRunner = vi.fn().mockResolvedValue(structuredOk(fixture));
+    const structuredDeps = createTestDeps({
+      executeWorkflowTaskRun: structuredRunner,
+    });
+    const { resolveConflicts: resolveStructured } =
+      createConflictResolver(structuredDeps);
+    const structuredResult = await resolveStructured({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
     });
 
-    const { resolveConflicts } = createConflictResolver(deps);
-    const result = await resolveConflicts({ worktreePath: "/tmp/worktree" });
-
-    expect(result.status).toBe("resolved");
-    expect(executeAgentCallSpy).toHaveBeenCalledTimes(1);
-    const [request] = executeAgentCallSpy.mock.calls[0]!;
-    expect(request).toMatchObject({
-      kind: "task_run",
-      backend: "claude",
-      writeCapability: "write_capable",
-    });
-  });
-
-  it("routes analyzeConflicts through deps.executeAgentCall as kind=task_run with read_only", async () => {
-    const conflictEntries = [
-      {
-        file: "src/index.ts",
-        description: "Conflict",
-        resolution: "Proposed",
-        rationale: "Reason",
-      },
-    ];
-    const text = `\`\`\`json\n${JSON.stringify({ conflicts: conflictEntries })}\n\`\`\``;
-    const runner = createMockRunner({ text });
-    const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
-
-    const deps = createTestDeps({
-      getTaskRunner: vi.fn().mockReturnValue(runner),
-      executeAgentCall: executeAgentCallSpy,
+    const text = `\`\`\`json\n${JSON.stringify(fixture, null, 2)}\n\`\`\``;
+    const textRunner = vi.fn().mockResolvedValue(textOk(text));
+    const textDeps = createTestDeps({ executeWorkflowTaskRun: textRunner });
+    const { resolveConflicts: resolveText } = createConflictResolver(textDeps);
+    const textResult = await resolveText({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
     });
 
-    const { analyzeConflicts } = createConflictResolver(deps);
-    const result = await analyzeConflicts({ worktreePath: "/tmp/worktree" });
-
-    expect(result.status).toBe("analyzed");
-    expect(executeAgentCallSpy).toHaveBeenCalledTimes(1);
-    const [request] = executeAgentCallSpy.mock.calls[0]!;
-    expect(request).toMatchObject({
-      kind: "task_run",
-      backend: "claude",
-      writeCapability: "read_only",
-    });
+    expect(structuredResult).toEqual(textResult);
+    expect(structuredResult.status).toBe("resolved");
+    if (structuredResult.status === "resolved") {
+      expect(structuredResult.conflicts).toEqual(SAMPLE_ENTRIES);
+    }
   });
 });

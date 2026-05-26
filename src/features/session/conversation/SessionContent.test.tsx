@@ -6,7 +6,7 @@ import SessionContent from "@/features/session/conversation/SessionContent";
 import type { ComponentProps } from "react";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
-import type { VirtuosoHandle } from "@/features/session/conversation/ConversationVirtuosoList";
+import type { VirtuosoHandle } from "@/components/conversation/ConversationVirtuosoList";
 
 // Stub heavy child components — they have their own tests and their internals
 // are not part of SessionContent's behavior. We assert only on SessionContent's
@@ -17,7 +17,7 @@ vi.mock("@/features/session/conversation/SessionInfoStrip", () => ({
 vi.mock("@/features/session/conversation/RightPane", () => ({
   default: () => <div data-testid="stub-right-pane" />,
 }));
-vi.mock("@/features/session/conversation/ConversationPanel", () => ({
+vi.mock("@/components/conversation/ConversationPanel", () => ({
   default: () => <div data-testid="stub-conversation-panel" />,
 }));
 vi.mock("@/features/session/sidebar/ConversationSidebar", () => ({

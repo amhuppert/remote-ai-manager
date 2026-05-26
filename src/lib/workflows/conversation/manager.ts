@@ -469,7 +469,16 @@ export async function ensureConversationActor(
   projectPath: string,
   sessionName: string,
   conversationId: string,
-  options?: { executionTarget?: ExecutionTarget },
+  options?: {
+    executionTarget?: ExecutionTarget;
+    /**
+     * Explicit actor input override for callers that drive transient
+     * conversations not backed by a persisted CC conversation record
+     * (e.g. graph-workflow validator lanes). When provided, the state-store
+     * loader is bypassed and this data is used directly.
+     */
+    actorInput?: EnsureActorInputData;
+  },
 ): Promise<ConversationActorRef> {
   const existing = getConversationActor(
     projectPath,
@@ -512,9 +521,13 @@ export async function ensureConversationActor(
     );
   }
 
-  const loadActorInput =
-    _ensureActorDeps?.loadActorInput ?? defaultLoadActorInput;
-  const data = await loadActorInput(projectPath, sessionName, conversationId);
+  const data =
+    options?.actorInput ??
+    (await (_ensureActorDeps?.loadActorInput ?? defaultLoadActorInput)(
+      projectPath,
+      sessionName,
+      conversationId,
+    ));
 
   const worktreePath = requestedWorktreePath ?? data.sessionWorktreePath;
 

@@ -12,6 +12,16 @@ import type {
 } from "@/lib/sessions/schemas";
 type CollabEnvelopeContribution = "running" | "paused" | null;
 
+/**
+ * Sessions whose name starts with an underscore are reserved for internal use
+ * (e.g. the project-level `__planner__` session that hosts the planner agent's
+ * conversation transcript). They are hidden from the regular session list to
+ * keep UI surfaces focused on user-created sessions.
+ */
+export function isReservedSessionName(sessionName: string): boolean {
+  return sessionName.startsWith("_");
+}
+
 // Inspect opaque workflowEnvelopes for an active collaboration so a session
 // with no live conversations but a running/paused inline /collab still surfaces
 // in active-status views (sidebar, project cards). Validation lives at the

@@ -8,7 +8,7 @@ import SyntheticForkBadge from "@/features/session/conversation/SyntheticForkBad
 import ConversationVirtuosoList, {
   type ConversationVirtuosoListProps,
   type VirtuosoHandle,
-} from "@/features/session/conversation/ConversationVirtuosoList";
+} from "@/components/conversation/ConversationVirtuosoList";
 import type { ConversationRow } from "@/features/session/conversation/conversation-rows";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";

@@ -39,6 +39,7 @@ vi.mock("@/lib/logging", () => ({
 import {
   prepareTurnForMachine,
   executePromptForMachine,
+  runTaskRunTurnForMachine,
   setActorDeps,
   _resetActorDepsForTesting,
   shouldRecreateRuntime,
@@ -51,6 +52,12 @@ import {
 } from "./actor-implementations";
 import type { ActorConfig } from "./actor-implementations";
 import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
+import type { RunTaskRunInput } from "./types";
+import type {
+  AgentTaskRequest,
+  AgentTaskResult,
+  AgentTaskRunner,
+} from "@/lib/agent-backends/task";
 import { QUERY_SESSION_ERROR_CODES } from "@/lib/agent-backends/claude/query-session-errors";
 import { computeEffectiveConfigHash } from "@/lib/mcp/runtime-apply";
 
@@ -1269,6 +1276,14 @@ describe("executePromptForMachine", () => {
   });
 
   it("passes outputFormat to factory.createRuntime for debug phases", async () => {
+    // The Claude backend natively validates the schema and returns a
+    // populated structuredOutput; mirror that here so the shared
+    // structured-output gate pass-through path runs cleanly.
+    mockSendTurn.mockResolvedValueOnce({
+      ...defaultTurnResult,
+      structuredOutput: {},
+    });
+
     const input = makeExecutePromptInput({
       debugMode: {
         active: true,
@@ -2413,6 +2428,82 @@ describe("executePromptForMachine", () => {
   });
 
   // ---------------------------------------------------------------
+  // Shared structured-output gate — both streaming conversation_turn
+  // and single-shot task_run paths must funnel structured-output
+  // extraction and validation through applyStructuredOutputGate so
+  // workflows see one normalized outcome.
+  // ---------------------------------------------------------------
+  it("consumes the shared gate's parsed structuredOutput when the backend leaves it unset and the gate parses it from text", async () => {
+    mockSendTurn.mockResolvedValueOnce({
+      ...defaultTurnResult,
+      contentBlocks: [{ type: "text", text: '{"answer":42}' }],
+      structuredOutput: undefined,
+    });
+
+    const input = makeExecutePromptInput({
+      outputFormat: {
+        type: "json_schema",
+        schema: {
+          type: "object",
+          properties: { answer: { type: "number" } },
+          required: ["answer"],
+        },
+      },
+    });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    const result = await executePromptForMachine(input);
+
+    expect(result.structuredOutput).toEqual({ answer: 42 });
+    expect(result.error).toBeNull();
+  });
+
+  it("surfaces a schema_validation failure from the shared gate as PromptActorResult.error when the backend's structuredOutput violates the schema", async () => {
+    const streamEmit = vi.fn();
+    mockSendTurn.mockResolvedValueOnce({
+      ...defaultTurnResult,
+      contentBlocks: [{ type: "text", text: "shape mismatch" }],
+      structuredOutput: { answer: "forty-two" },
+    });
+
+    const input = makeExecutePromptInput({
+      outputFormat: {
+        type: "json_schema",
+        schema: {
+          type: "object",
+          properties: { answer: { type: "number" } },
+          required: ["answer"],
+        },
+      },
+    });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+      streamEmit,
+    });
+
+    const result = await executePromptForMachine(input);
+
+    expect(result.error).toMatch(/structured output failed validation/i);
+    expect(result.aborted).toBe(false);
+    const errorEvents = streamEmit.mock.calls.filter(
+      ([event]) => event === "error",
+    );
+    expect(errorEvents).toHaveLength(1);
+  });
+
+  // ---------------------------------------------------------------
   // Task 6.1 parity — the conversation actor must route every turn
   // through the shared AgentCall primitive instead of calling
   // backendRuntime.sendTurn() directly. The injected dep stays on
@@ -2626,5 +2717,255 @@ describe("executePromptForMachine", () => {
       const turnInput = sendTurnCall[0] as ConversationBackendTurnInput;
       expect(turnInput.imageRefs).toEqual([]);
     });
+  });
+});
+
+// ===========================================================================
+// Integration tests: runTaskRunTurnForMachine (task_run branch)
+// ===========================================================================
+
+describe("runTaskRunTurnForMachine", () => {
+  function makeRunTaskRunInput(
+    overrides: Partial<RunTaskRunInput> = {},
+  ): RunTaskRunInput {
+    return {
+      projectPath: "/projects/repo",
+      projectName: "repo",
+      sessionName: "test-session",
+      worktreePath: "/projects/repo/.worktrees/test-session",
+      conversationId: "conv-1",
+      agentBackend: "claude",
+      backendRef: null,
+      promptText: "do the task",
+      modelId: null,
+      effort: null,
+      ...overrides,
+    };
+  }
+
+  function makeMockTaskRunner(
+    runImpl: (req: AgentTaskRequest) => Promise<AgentTaskResult>,
+  ): AgentTaskRunner {
+    return {
+      backend: "claude" as const,
+      run: vi.fn(runImpl),
+    };
+  }
+
+  let mockDeps: ActorImplementationDeps;
+
+  beforeEach(() => {
+    _resetForTesting();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    _resetActorDepsForTesting();
+    _resetForTesting();
+  });
+
+  it("task_run WITHOUT outputFormat: persists exactly one assistant TranscriptMessage and forwards content blocks", async () => {
+    const runner = makeMockTaskRunner(async () => ({
+      backendRef: null,
+      text: "task complete",
+      usage: { inputTokens: 100, outputTokens: 20 },
+      error: null,
+      timedOut: false,
+    }));
+
+    mockDeps = createMockDeps({
+      getTaskRunner: vi.fn(() => runner),
+      executeAgentCall: defaultExecuteAgentCall,
+    });
+    setActorDeps(mockDeps);
+
+    const input = makeRunTaskRunInput();
+    const result = await runTaskRunTurnForMachine(input);
+
+    const appendCalls = vi.mocked(mockDeps.safeAppendTranscriptEntry).mock
+      .calls;
+    expect(appendCalls).toHaveLength(1);
+
+    const [conversationId, entry, broadcastMeta] = appendCalls[0]!;
+    expect(conversationId).toBe("conv-1");
+    expect((entry as { role?: string }).role).toBe("assistant");
+    expect((entry as { type?: string }).type).toBe("assistant");
+    expect((entry as { content?: unknown }).content).toEqual([
+      { type: "text", text: "task complete" },
+    ]);
+    expect(broadcastMeta).toEqual({
+      projectName: "repo",
+      sessionName: "test-session",
+    });
+
+    expect(result.contentBlocks).toEqual([
+      { type: "text", text: "task complete" },
+    ]);
+    expect(result.error).toBeNull();
+    expect(result.aborted).toBe(false);
+    expect(result.structuredOutput).toBeUndefined();
+    expect(runner.run).toHaveBeenCalledTimes(1);
+  });
+
+  it("task_run WITH outputFormat: routes outputSchema through applyStructuredOutputGate, persists one assistant entry, and exposes the parsed structuredOutput", async () => {
+    const runner = makeMockTaskRunner(async (req) => {
+      expect(req.outputSchema).toEqual({
+        type: "object",
+        properties: { result: { type: "string" } },
+        required: ["result"],
+      });
+      return {
+        backendRef: null,
+        text: '{"result":"ok"}',
+        usage: null,
+        error: null,
+        timedOut: false,
+      };
+    });
+
+    mockDeps = createMockDeps({
+      getTaskRunner: vi.fn(() => runner),
+      executeAgentCall: defaultExecuteAgentCall,
+    });
+    setActorDeps(mockDeps);
+
+    const input = makeRunTaskRunInput({
+      outputFormat: {
+        type: "json_schema",
+        schema: {
+          type: "object",
+          properties: { result: { type: "string" } },
+          required: ["result"],
+        },
+      },
+    });
+
+    const result = await runTaskRunTurnForMachine(input);
+
+    const appendCalls = vi.mocked(mockDeps.safeAppendTranscriptEntry).mock
+      .calls;
+    expect(appendCalls).toHaveLength(1);
+    expect((appendCalls[0]![1] as { role?: string }).role).toBe("assistant");
+
+    expect(result.structuredOutput).toEqual({ result: "ok" });
+    expect(result.contentBlocks).toEqual([
+      { type: "text", text: '{"result":"ok"}' },
+    ]);
+    expect(result.error).toBeNull();
+    expect(result.aborted).toBe(false);
+  });
+
+  it("task_run failure surfaces aborted=true when failureKind is aborted and persists no transcript entry", async () => {
+    const runner = makeMockTaskRunner(async () => ({
+      backendRef: null,
+      text: null,
+      usage: null,
+      error: "user aborted",
+      timedOut: false,
+    }));
+
+    const executeAgentCallSpy = vi.fn(async () => ({
+      backend: "claude" as const,
+      backendRef: null,
+      capabilities: {
+        backend: "claude" as const,
+        nativeStructuredOutput: false,
+        nativeAskUserQuestion: false,
+        nativeSessionResumption: false,
+        portableMcpScope: "between_turns" as const,
+        forkSemantics: "synthetic_seed" as const,
+      },
+      usage: {},
+      artifacts: [],
+      outcome: {
+        kind: "failed" as const,
+        error: {
+          failureKind: "aborted" as const,
+          backend: "claude" as const,
+          message: "user aborted",
+        },
+      },
+    }));
+
+    mockDeps = createMockDeps({
+      getTaskRunner: vi.fn(() => runner),
+      executeAgentCall: executeAgentCallSpy as unknown as ReturnType<
+        typeof vi.fn
+      >,
+    } as unknown as Partial<ActorImplementationDeps>);
+    setActorDeps(mockDeps);
+
+    const result = await runTaskRunTurnForMachine(makeRunTaskRunInput());
+
+    expect(result.aborted).toBe(true);
+    expect(result.error).toBe("user aborted");
+    expect(result.contentBlocks).toEqual([]);
+    expect(
+      vi.mocked(mockDeps.safeAppendTranscriptEntry),
+    ).not.toHaveBeenCalled();
+  });
+
+  it("task_run with origin: stamps origin on the appended assistant TranscriptEntry", async () => {
+    const runner = makeMockTaskRunner(async () => ({
+      backendRef: null,
+      text: "workflow done",
+      usage: null,
+      error: null,
+      timedOut: false,
+    }));
+
+    mockDeps = createMockDeps({
+      getTaskRunner: vi.fn(() => runner),
+      executeAgentCall: defaultExecuteAgentCall,
+    });
+    setActorDeps(mockDeps);
+
+    const origin = {
+      source: "workflow" as const,
+      workflow: {
+        executionId: "exec-42",
+        nodeId: "node-validate",
+        iterationIndex: 2,
+      },
+    };
+
+    await runTaskRunTurnForMachine(makeRunTaskRunInput({ origin }));
+
+    const appendCalls = vi.mocked(mockDeps.safeAppendTranscriptEntry).mock
+      .calls;
+    expect(appendCalls).toHaveLength(1);
+    const entry = appendCalls[0]![1] as { origin?: unknown };
+    expect(entry.origin).toEqual(origin);
+  });
+
+  it("routes task_run via deps.executeAgentCall with kind='task_run' and write_capable scheduling", async () => {
+    const runner = makeMockTaskRunner(async () => ({
+      backendRef: null,
+      text: "done",
+      usage: null,
+      error: null,
+      timedOut: false,
+    }));
+    const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
+
+    mockDeps = createMockDeps({
+      getTaskRunner: vi.fn(() => runner),
+      executeAgentCall: executeAgentCallSpy as unknown as ReturnType<
+        typeof vi.fn
+      >,
+    } as unknown as Partial<ActorImplementationDeps>);
+    setActorDeps(mockDeps);
+
+    await runTaskRunTurnForMachine(makeRunTaskRunInput({ promptText: "go" }));
+
+    expect(executeAgentCallSpy).toHaveBeenCalledTimes(1);
+    const [request, facadeDeps] = executeAgentCallSpy.mock.calls[0]!;
+    expect(request).toMatchObject({
+      kind: "task_run",
+      prompt: "go",
+      backend: "claude",
+      writeCapability: "write_capable",
+    });
+    expect(typeof facadeDeps.resolveTaskRunner).toBe("function");
   });
 });
