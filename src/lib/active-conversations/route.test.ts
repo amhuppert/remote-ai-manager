@@ -1166,6 +1166,26 @@ describe("GET /api/conversations/active", () => {
     expect(body.conversations[0].branchName).toBe("csm/my-session");
   });
 
+  it("returns worktreePath from the session for a conversation", async () => {
+    vi.mocked(deps.readState).mockResolvedValue(
+      makeState({
+        sessions: {
+          "my-session": {
+            sessionName: "my-session",
+            conversations: [
+              makeConversation({ id: "plain", status: "running" }),
+            ],
+          },
+        },
+      }),
+    );
+
+    const response = await handlers.GET();
+    const body = await response.json();
+
+    expect(body.conversations[0].worktreePath).toBe("/tmp/my-session");
+  });
+
   it("returns lastActivitySummary=null when no excerpt is derivable (running, empty transcript)", async () => {
     vi.mocked(deps.readState).mockResolvedValue(
       makeState({

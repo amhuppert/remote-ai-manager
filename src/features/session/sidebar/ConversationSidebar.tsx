@@ -404,6 +404,7 @@ function ConversationSidebar({
         debugActive: row.debugActive,
         role: row.role,
         branchName: row.branchName,
+        worktreePath: row.worktreePath,
         lastActivitySummary: row.lastActivitySummary,
       };
       const scope = {
@@ -579,6 +580,13 @@ function ConversationSidebar({
         onSelect: () => {
           if (row.branchName === null) return;
           void navigator.clipboard.writeText(row.branchName);
+        },
+      },
+      {
+        kind: "item",
+        label: "Copy worktree path",
+        onSelect: () => {
+          void navigator.clipboard.writeText(row.worktreePath);
         },
       },
       {

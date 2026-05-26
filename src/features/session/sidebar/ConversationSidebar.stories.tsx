@@ -43,6 +43,9 @@ function makeActive(
     role: overrides.role ?? null,
     branchName:
       overrides.branchName ?? "csm/conversation-ui-overhaul-multi-task",
+    worktreePath:
+      overrides.worktreePath ??
+      `/home/alex/github/${overrides.projectName ?? "remote-ai-manager"}/.worktrees/${overrides.sessionName ?? "conversation-ui-overhaul"}`,
     lastActivitySummary: overrides.lastActivitySummary ?? null,
   };
 }

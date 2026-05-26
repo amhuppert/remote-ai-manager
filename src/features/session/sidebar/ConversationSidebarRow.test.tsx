@@ -19,6 +19,7 @@ const BASE: ActiveConversation = {
   debugActive: false,
   role: null,
   branchName: null,
+  worktreePath: "/home/user/my-project/.worktrees/my-session",
   lastActivitySummary: null,
 };
 

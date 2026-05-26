@@ -416,6 +416,7 @@ export function createActiveConversationsRouteHandlers(
               debugActive: convo.debugMode?.active === true,
               role: convo.role,
               branchName: session.branchName,
+              worktreePath: session.worktreePath,
               lastActivitySummary: deriveLastActivitySummary(
                 convo,
                 lastAssistantBlocks ? { content: lastAssistantBlocks } : null,

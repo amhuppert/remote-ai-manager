@@ -34,6 +34,7 @@ export const activeConversationSchema = z.object({
     .enum(["initialization", "iteration", "validator", "planner"])
     .nullable(),
   branchName: z.string().nullable(),
+  worktreePath: z.string(),
   lastActivitySummary: z.string().nullable(),
 });
 export type ActiveConversation = z.infer<typeof activeConversationSchema>;

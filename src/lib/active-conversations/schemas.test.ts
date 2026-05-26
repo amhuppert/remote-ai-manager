@@ -18,6 +18,7 @@ const BASE_CONVERSATION = {
   debugActive: false,
   role: null,
   branchName: null,
+  worktreePath: "/tmp/my-session",
   lastActivitySummary: null,
 };
 

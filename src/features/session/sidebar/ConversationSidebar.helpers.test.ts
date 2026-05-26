@@ -27,6 +27,7 @@ function makeRow(
     projectPath: "/repos/proj-a",
     sessionName: "session-a",
     branchName: "csm/session-a",
+    worktreePath: "/repos/proj-a/.worktrees/session-a",
     agentBackend: "claude",
     pendingQuestion: null,
     forkedFrom: null,

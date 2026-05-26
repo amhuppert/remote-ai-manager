@@ -18,6 +18,7 @@ const BASE_CONVERSATION: ActiveConversation = {
   debugActive: false,
   role: null,
   branchName: null,
+  worktreePath: "/home/alex/github/command-center/.worktrees/sidebar-row",
   lastActivitySummary: "Refactoring the badge layout to use cc-badge tokens.",
 };
 
