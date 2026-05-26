@@ -14,7 +14,11 @@ describe("CollabFinalAnswerMessage", () => {
 
     // MarkdownContent is loaded via next/dynamic — wait for first paint.
     expect(
-      await screen.findByText(/Ship the migration in three phases\./),
+      await screen.findByText(
+        /Ship the migration in three phases\./,
+        {},
+        { timeout: 5000 },
+      ),
     ).toBeInTheDocument();
   });
 

@@ -172,7 +172,6 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
           ...(validatedReasoningEffort
             ? { effort: validatedReasoningEffort as Options["effort"] }
             : {}),
-          maxTurns: 50,
           resume: resumeSessionId,
           persistSession: true,
           ...(outputFormat ? { outputFormat } : {}),

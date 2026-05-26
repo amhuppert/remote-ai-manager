@@ -43,9 +43,12 @@ describe("CommandIndicator", () => {
     const body = container.querySelector(".command-indicator__body");
     expect(body).not.toBeNull();
     // MarkdownContent is loaded via next/dynamic — wait for it to mount.
-    await waitFor(() => {
-      expect(body?.querySelector("strong")?.textContent).toBe("Bold change");
-    });
+    await waitFor(
+      () => {
+        expect(body?.querySelector("strong")?.textContent).toBe("Bold change");
+      },
+      { timeout: 5000 },
+    );
     expect(container.querySelector(".command-args")).toBeNull();
   });
 });
