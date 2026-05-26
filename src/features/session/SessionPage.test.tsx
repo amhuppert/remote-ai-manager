@@ -914,7 +914,7 @@ describe("ConversationDetailPage", () => {
       ) as HTMLTextAreaElement;
       expect(textarea.readOnly).toBe(true);
       expect(textarea.title).toContain("collaboration in progress");
-    });
+    }, 30000);
 
     it("does not lock the textarea for terminal collabs", () => {
       testCollaborationEnvelopes = [

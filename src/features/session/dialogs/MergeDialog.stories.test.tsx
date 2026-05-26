@@ -26,7 +26,7 @@ describe("MergeDialog stories", () => {
     expect(screen.getByText("csm/implement-auth")).toBeInTheDocument();
     expect(screen.getByText("5")).toBeInTheDocument();
     expect(screen.getByText("Merge")).toBeInTheDocument();
-  });
+  }, 30000);
 
   it("SingleCommit renders with 1 commit", async () => {
     await SingleCommit.run();

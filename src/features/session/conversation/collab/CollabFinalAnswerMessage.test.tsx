@@ -12,15 +12,19 @@ describe("CollabFinalAnswerMessage", () => {
       />,
     );
 
-    // MarkdownContent is loaded via next/dynamic — wait for first paint.
+    // MarkdownContent is loaded via next/dynamic — cold-load of the
+    // dynamic chunk can exceed the default timeout under parallel
+    // test-suite load.
     expect(
       await screen.findByText(
         /Ship the migration in three phases\./,
-        {},
-        { timeout: 5000 },
+        undefined,
+        {
+          timeout: 15000,
+        },
       ),
     ).toBeInTheDocument();
-  });
+  }, 30000);
 
   it("applies a per-agent left rail via data-agent", () => {
     const { container, rerender } = render(

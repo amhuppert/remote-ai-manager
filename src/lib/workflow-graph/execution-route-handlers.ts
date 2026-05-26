@@ -119,7 +119,7 @@ const validatorRunner = createValidatorRunner({
           "Codex validator is configured for this workflow, but Codex is disabled in global config",
         );
       }
-      return resolveConfiguredTimeoutMs(codexConfig.timeout);
+      return resolveConfiguredTimeoutMs(codexConfig.timeoutMs);
     }
     return config.claudeTimeoutMs;
   },

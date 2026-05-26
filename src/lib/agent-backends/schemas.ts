@@ -85,7 +85,7 @@ export const codexConfigSchema = z.object({
   enabled: z.boolean().default(false),
   model: z.string().optional().default("gpt-5.4"),
   reasoningEffort: codexReasoningEffortSchema.optional(),
-  timeout: z.number().positive().nullable().optional(),
+  timeoutMs: z.number().positive().nullable().optional(),
 });
 export type CodexConfig = z.infer<typeof codexConfigSchema>;
 

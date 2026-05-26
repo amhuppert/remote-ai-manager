@@ -129,7 +129,7 @@ export const ALL_FIELD_PATHS: readonly FieldPath[] = [
   "codex.enabled",
   "codex.model",
   "codex.reasoningEffort",
-  "codex.timeout",
+  "codex.timeoutMs",
   "workflowDefaults.implementer",
   "workflowDefaults.contextValidator",
   "workflowDefaults.scriptValidator",

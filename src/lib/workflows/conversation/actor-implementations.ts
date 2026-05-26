@@ -161,7 +161,7 @@ export interface ActorConfig {
     enabled?: boolean;
     model?: string;
     reasoningEffort?: string;
-    timeout?: number | null;
+    timeoutMs?: number | null;
   };
 }
 
@@ -679,7 +679,7 @@ export function resolveBackendTimeoutMs(
   config: ActorConfig,
 ): number {
   if (backend === "codex") {
-    return resolveConfiguredTimeoutMs(config.codex?.timeout);
+    return resolveConfiguredTimeoutMs(config.codex?.timeoutMs);
   }
   return config.claudeTimeoutMs;
 }

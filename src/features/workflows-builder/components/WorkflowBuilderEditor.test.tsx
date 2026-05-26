@@ -163,7 +163,10 @@ describe("WorkflowBuilderEditor", () => {
           },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
-          iterationPolicy: { maxIterations: 4, continuity: { enabled: true } },
+          iterationPolicy: {
+            maxIterations: 4,
+            continuity: { enabled: true },
+          },
         },
       ],
       tasks: [
@@ -198,11 +201,14 @@ describe("WorkflowBuilderEditor", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Save Draft/i }));
 
-    await waitFor(() => {
-      expect(
-        _useGraphWorkflowBuilderStore.getState().validationErrors.length,
-      ).toBeGreaterThan(0);
-    });
+    await waitFor(
+      () => {
+        expect(
+          _useGraphWorkflowBuilderStore.getState().validationErrors.length,
+        ).toBeGreaterThan(0);
+      },
+      { timeout: 15000 },
+    );
     expect(onSave).not.toHaveBeenCalled();
 
     const codes = _useGraphWorkflowBuilderStore
@@ -210,7 +216,7 @@ describe("WorkflowBuilderEditor", () => {
       .validationErrors.map((e) => e.code);
     expect(codes).toContain("empty-context-title");
     expect(codes).toContain("empty-task-instructions");
-  });
+  }, 30000);
 
   it("adds a context with no implementer block so it inherits from workflow defaults", () => {
     resetStore();

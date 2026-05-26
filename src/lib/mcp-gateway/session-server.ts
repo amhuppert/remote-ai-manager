@@ -120,7 +120,7 @@ const defaultSessionMcpServerDeps: SessionMcpServerDeps = {
     });
   },
   registerCodexTool(server, context, config) {
-    const timeoutMs = resolveConfiguredTimeoutMs(config.timeout);
+    const timeoutMs = resolveConfiguredTimeoutMs(config.timeoutMs);
 
     const artifactRegistry = createSessionArtifactRegistryForProduction({
       projectPath: context.projectPath,

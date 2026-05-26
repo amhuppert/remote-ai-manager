@@ -64,14 +64,14 @@ export function BackendsSection({
         </ConfigField>
         <ConfigField
           label="Codex timeout"
-          fieldPath="codex.timeout"
-          isDefault={isDefault("codex.timeout")}
-          isModified={isModified("codex.timeout")}
+          fieldPath="codex.timeoutMs"
+          isDefault={isDefault("codex.timeoutMs")}
+          isModified={isModified("codex.timeoutMs")}
           hint="Minutes. Empty means no timeout."
         >
           <ConfigNumericInput
-            value={formState.codex?.timeout}
-            onChange={(value) => handleChange("codex.timeout", value ?? null)}
+            value={formState.codex?.timeoutMs}
+            onChange={(value) => handleChange("codex.timeoutMs", value ?? null)}
             displayAsMinutes
             positive
           />

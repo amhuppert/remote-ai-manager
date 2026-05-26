@@ -92,7 +92,7 @@ describe("agentCallRequestSchema", () => {
 
   // timeoutMs=0 is the project-wide "no timeout" sentinel — the task runners
   // (claude/codex) explicitly skip their timer when timeoutMs===0, and
-  // resolveBackendTimeoutMs returns 0 when codex.timeout is empty. The
+  // resolveBackendTimeoutMs returns 0 when codex.timeoutMs is empty. The
   // request schema must therefore admit 0 alongside positive values.
   it("accepts timeoutMs: 0 as the no-timeout sentinel", () => {
     const result = agentCallRequestSchema.safeParse({

@@ -674,18 +674,18 @@ describe("resolveBackendTimeoutMs", () => {
     expect(resolveBackendTimeoutMs("claude", baseConfig)).toBe(300_000);
   });
 
-  it("returns codex timeout converted to ms when configured", () => {
-    const config = { ...baseConfig, codex: { timeout: 120 } };
+  it("returns codex timeoutMs unchanged when configured", () => {
+    const config = { ...baseConfig, codex: { timeoutMs: 120_000 } };
     expect(resolveBackendTimeoutMs("codex", config)).toBe(120_000);
   });
 
-  it("returns 0 (no timeout) for codex when timeout is empty", () => {
+  it("returns 0 (no timeout) for codex when timeoutMs is empty", () => {
     const config = { ...baseConfig, codex: {} };
     expect(resolveBackendTimeoutMs("codex", config)).toBe(0);
   });
 
-  it("returns 0 (no timeout) when codex timeout is null", () => {
-    const config = { ...baseConfig, codex: { timeout: null } };
+  it("returns 0 (no timeout) when codex timeoutMs is null", () => {
+    const config = { ...baseConfig, codex: { timeoutMs: null } };
     expect(resolveBackendTimeoutMs("codex", config)).toBe(0);
   });
 
