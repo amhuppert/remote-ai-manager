@@ -6,8 +6,8 @@
   display: grid;
   grid-template-columns: 1fr;
   grid-template-rows: auto 1fr;
-  gap: var(--space-sm);
-  height: calc(100dvh - var(--topbar-height) - var(--space-md) * 2);
+  gap: 0;
+  height: calc(100dvh - var(--topbar-height));
   min-height: 500px;
 }
 
@@ -17,9 +17,10 @@
 
 /* Session info strip — mission readout */
 .session-info-strip {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  border: none;
+  border-bottom: 1px solid var(--border-default);
+  border-radius: 0;
   font-family: var(--font-mono);
   font-size: 0.72rem;
   position: relative;
@@ -289,7 +290,7 @@
 /* Content area for panels */
 .session-content-area {
   display: grid;
-  gap: var(--space-md);
+  gap: 0;
   min-height: 0;
   transition: grid-template-columns 0.25s ease;
 }
@@ -364,13 +365,20 @@
    ============================================================ */
 
 .sidebar-diff-panel {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
+  background: var(--bg-base);
+  border: none;
+  border-left: 1px solid var(--border-default);
+  border-radius: 0;
   overflow: clip;
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+/* When the prompt panel is hidden, the diff sits alone on the grid —
+   drop the left border to avoid a floating hairline against the sidebar rail. */
+.session-content-area[data-layout="diff"] > .sidebar-diff-panel {
+  border-left: none;
 }
 
 /* Diff tab bar */

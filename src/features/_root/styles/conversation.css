@@ -6,8 +6,8 @@
   display: flex;
   flex-direction: column;
   background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
+  border: none;
+  border-radius: 0;
   overflow: clip;
   min-height: 0;
 }
@@ -18,7 +18,7 @@
   justify-content: space-between;
   padding: var(--space-md) var(--space-lg);
   border-bottom: 1px solid var(--border-subtle);
-  background: rgba(17, 24, 37, 0.5);
+  background: transparent;
 }
 
 .panel-title {

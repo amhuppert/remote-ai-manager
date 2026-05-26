@@ -651,11 +651,6 @@
   gap: 0;
 }
 
-/* Spacing between prompt and diff panels (sidebar border-right separates sidebar from content) */
-.session-content-area.with-sidebar > .sidebar-diff-panel {
-  margin-left: var(--space-md);
-}
-
 /* Default: prompt panel fills remaining space, diff panel fixed width */
 .session-content-area.with-sidebar[data-layout="default"] > .prompt-panel {
   flex: 1;

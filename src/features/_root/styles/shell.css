@@ -18,8 +18,8 @@
   padding: var(--space-lg) var(--space-lg);
 }
 
-/* Detail page has tighter padding and no scroll — inner panels handle their own scroll */
+/* Detail page renders panels flush to the shell — inner panels handle their own scroll */
 .app[data-page="detail"] .main {
-  padding: var(--space-md) var(--space-lg);
+  padding: 0;
   overflow: clip;
 }
