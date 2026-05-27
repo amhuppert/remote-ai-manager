@@ -114,6 +114,17 @@ export interface ConversationBackendRuntime {
   queueUserInput?(input: ConversationQueuedUserInput): Promise<void>;
   applyPortableMcpConfig?(config: PortableMcpConfig): Promise<McpApplyResult>;
   /**
+   * Recreate the in-process session-tools MCP server instance and re-bind it
+   * via `setMcpServers`. Workaround for the SDK in-memory transport going
+   * stale across turns for `type: "sdk"` servers — the parent-side
+   * `McpServer` stays alive but the agent-side of the transport pair can
+   * silently break between turns, surfacing as "Stream closed" tool errors.
+   * Called proactively at every turn start so the next turn always sees a
+   * fresh transport. No-op for backends without an in-process session-tools
+   * server, when the runtime is dead, or when a turn is currently active.
+   */
+  rebuildSessionToolsInstance?(): Promise<void>;
+  /**
    * Live-apply a Claude capability configuration (skills/plugins/agents
    * deltas) to the active runtime. Implemented by the Claude runtime to
    * support idle-drain and after-mutation fanout from the capability apply

@@ -97,7 +97,9 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
   private readonly onPortableMcpApplied: (
     config: PortableMcpConfig | null,
   ) => void;
-  private readonly sessionToolsInstance: McpServer;
+  private sessionToolsInstance: McpServer;
+  private readonly recreateSessionToolsServer: () => Promise<McpServer>;
+  private lastAppliedTranslatedServers: Record<string, McpServerConfig> = {};
   private readonly onCapabilityConfigApplied: (
     config: ClaudeRuntimeCapabilityConfig,
   ) => Promise<void>;
@@ -120,6 +122,13 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
         config: ClaudeRuntimeCapabilityConfig,
       ) => Promise<void>;
       sessionToolsInstance: McpServer;
+      /**
+       * Factory closure that builds a fresh `cc-session-tools` `McpServer`
+       * instance with the same project/session/conversation scoping the
+       * runtime was created with. Used by `rebuildSessionToolsInstance` to
+       * recover from stale in-memory transports between turns.
+       */
+      recreateSessionToolsServer: () => Promise<McpServer>;
     },
   ) {
     this.querySession = querySession;
@@ -130,6 +139,7 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
     this.onCapabilityConfigApplied =
       opts.onCapabilityConfigApplied ?? (async () => {});
     this.sessionToolsInstance = opts.sessionToolsInstance;
+    this.recreateSessionToolsServer = opts.recreateSessionToolsServer;
 
     logger.info("claude-runtime.created", {
       conversationId: querySession.conversationId,
@@ -157,6 +167,7 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
   async init(translated: Record<string, McpServerConfig>): Promise<void> {
     const merged = this.mergeSessionToolsServer(translated);
     await this.querySession.query.setMcpServers(merged);
+    this.lastAppliedTranslatedServers = translated;
   }
 
   get status(): "alive" | "dead" {
@@ -336,6 +347,7 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
         this.mergeSessionToolsServer(servers),
       );
 
+      this.lastAppliedTranslatedServers = servers;
       this.onPortableMcpApplied(config);
 
       logger.info("claude-runtime.mcp_applied", {
@@ -365,6 +377,85 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
         errors: { _setMcpServers: errorMsg },
       };
     }
+  }
+
+  /**
+   * Build a fresh `cc-session-tools` MCP server instance and re-bind it via
+   * `setMcpServers`. The user-server portion of the payload is replayed from
+   * `lastAppliedTranslatedServers` so the SDK's diffing logic sees no churn
+   * for stdio/HTTP servers — only the in-process `sdk` entry's `instance`
+   * field changes, forcing a fresh in-memory transport pair on the SDK side.
+   *
+   * No-ops when the runtime is dead or a turn is currently active. On
+   * setMcpServers failure the new instance is closed and the field is left
+   * pointing at the old one so the next caller doesn't try to use a
+   * half-bound server. All failures are swallowed at this layer — the apply
+   * service wires this in for resilience and must not propagate errors that
+   * would block the turn that triggered the rebuild.
+   */
+  async rebuildSessionToolsInstance(): Promise<void> {
+    const conversationId = this.querySession.conversationId;
+
+    if (this._status === "dead" || this.querySession.status === "dead") {
+      return;
+    }
+    if (this.querySession.isTurnActive) {
+      logger.info("claude-runtime.session_tools_rebuild_skipped_turn_active", {
+        conversationId,
+      });
+      return;
+    }
+
+    let newInstance: McpServer;
+    try {
+      newInstance = await this.recreateSessionToolsServer();
+    } catch (err) {
+      logger.warn("claude-runtime.session_tools_rebuild_create_failed", {
+        conversationId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+
+    const merged: Record<string, McpServerConfig> = {
+      ...this.lastAppliedTranslatedServers,
+      [CC_SESSION_TOOLS_SERVER_NAME]: {
+        type: "sdk",
+        name: CC_SESSION_TOOLS_SERVER_NAME,
+        instance: newInstance,
+      },
+    };
+
+    try {
+      await this.querySession.query.setMcpServers(merged);
+    } catch (err) {
+      logger.warn("claude-runtime.session_tools_rebuild_bind_failed", {
+        conversationId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      void newInstance.close().catch((closeErr: unknown) => {
+        logger.warn(
+          "claude-runtime.session_tools_rebuild_orphan_close_failed",
+          {
+            conversationId,
+            error:
+              closeErr instanceof Error ? closeErr.message : String(closeErr),
+          },
+        );
+      });
+      return;
+    }
+
+    const previous = this.sessionToolsInstance;
+    this.sessionToolsInstance = newInstance;
+    void previous.close().catch((err: unknown) => {
+      logger.warn("claude-runtime.session_tools_rebuild_old_close_failed", {
+        conversationId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+
+    logger.info("claude-runtime.session_tools_rebuilt", { conversationId });
   }
 
   /**
@@ -561,11 +652,14 @@ const claudeConversationBackendFactory = {
       modelId: input.modelId,
     });
 
-    const sessionToolsInstance = await deps.createSessionMcpServer({
-      name: input.projectName,
-      session: input.sessionName,
-      conversationId: mcpScopeConversationId,
-    });
+    const recreateSessionToolsServer = (): Promise<McpServer> =>
+      deps.createSessionMcpServer({
+        name: input.projectName,
+        session: input.sessionName,
+        conversationId: mcpScopeConversationId,
+      });
+
+    const sessionToolsInstance = await recreateSessionToolsServer();
 
     // Mutable portable-config holder — reflects the resolver's current
     // effective output. Updated by applyPortableMcpConfig on successful apply.
@@ -698,6 +792,7 @@ const claudeConversationBackendFactory = {
         });
       },
       sessionToolsInstance,
+      recreateSessionToolsServer,
     });
 
     if (input.tooling.claudeCapabilityConfig) {

@@ -354,6 +354,23 @@ export function createMcpRuntimeApplyService(
     const previouslyApplied = phase1.previous?.lastAppliedConfigHash;
     const storedPending = phase1.previous?.pendingConfigHash;
 
+    const runtime = deps.getRuntime(input.conversationId);
+
+    // Proactively rebuild the session-tools in-process MCP instance every
+    // turn start. The SDK in-memory transport for `type: "sdk"` servers can
+    // silently go stale across turns, surfacing as "Stream closed" tool
+    // errors. Best-effort: a rebuild failure must not block turn start.
+    if (runtime?.rebuildSessionToolsInstance) {
+      try {
+        await runtime.rebuildSessionToolsInstance();
+      } catch (err) {
+        logger.warn("turn-start.session_tools_rebuild_failed", {
+          conversationId: input.conversationId,
+          error: sanitizeErrorMessage(err),
+        });
+      }
+    }
+
     if (previouslyApplied === phase1.hash) {
       // Nothing to apply. Do NOT mutate state — we already match the applied
       // hash. Tests assert this path does not touch the runtime.
@@ -368,7 +385,6 @@ export function createMcpRuntimeApplyService(
       };
     }
 
-    const runtime = deps.getRuntime(input.conversationId);
     if (!runtime?.applyPortableMcpConfig) {
       // No active runtime. Record pending and bail. lastAppliedConfigHash
       // untouched.

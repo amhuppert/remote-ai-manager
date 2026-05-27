@@ -1235,3 +1235,266 @@ describe("ClaudeConversationRuntime — retryable error propagation", () => {
     expect(result.error).toBeNull();
   });
 });
+
+describe("ClaudeConversationRuntime — rebuildSessionToolsInstance", () => {
+  function depsWithSequence(...instances: McpServer[]): {
+    deps: ClaudeFactoryDeps;
+    createSpy: ReturnType<typeof vi.fn>;
+  } {
+    const createSpy = vi.fn();
+    for (const inst of instances) {
+      createSpy.mockResolvedValueOnce(inst);
+    }
+    return { deps: { createSessionMcpServer: createSpy }, createSpy };
+  }
+
+  it("creates a new session-tools instance, re-binds it via setMcpServers, and closes the old one", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const first = createFakeMcpServer();
+    const second = createFakeMcpServer();
+    const { deps, createSpy } = depsWithSequence(
+      first.instance,
+      second.instance,
+    );
+
+    const runtime = await claudeConversationBackendFactory.createRuntime(
+      {
+        conversationId: "conv-rebuild",
+        projectPath: "/project",
+        projectName: "proj",
+        sessionName: "sess",
+        worktreePath: "/project/.worktrees/sess",
+        persistedRef: null,
+        sessionInstructions: [],
+        tooling: {},
+      },
+      deps,
+    );
+
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(1);
+
+    await runtime.rebuildSessionToolsInstance!();
+
+    expect(createSpy).toHaveBeenCalledTimes(2);
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(2);
+    const payload = (mock.query.setMcpServers as ReturnType<typeof vi.fn>).mock
+      .calls[1]![0] as Record<string, { instance?: McpServer }>;
+    expect(payload["cc-session-tools"]?.instance).toBe(second.instance);
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(first.closeSpy).toHaveBeenCalledTimes(1);
+    expect(second.closeSpy).not.toHaveBeenCalled();
+
+    runtime.close();
+    await Promise.resolve();
+    expect(second.closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-merges the initial-tooling user servers on rebuild", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const first = createFakeMcpServer();
+    const second = createFakeMcpServer();
+    const { deps } = depsWithSequence(first.instance, second.instance);
+
+    const runtime = await claudeConversationBackendFactory.createRuntime(
+      {
+        conversationId: "conv-rebuild-merge",
+        projectPath: "/project",
+        projectName: "proj",
+        sessionName: "sess",
+        worktreePath: "/project/.worktrees/sess",
+        persistedRef: null,
+        sessionInstructions: [],
+        tooling: {
+          portableMcp: {
+            servers: [{ id: "user-srv", transport: "stdio", command: "node" }],
+          },
+        },
+      },
+      deps,
+    );
+
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(1);
+
+    await runtime.rebuildSessionToolsInstance!();
+
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(2);
+    const payload = (mock.query.setMcpServers as ReturnType<typeof vi.fn>).mock
+      .calls[1]![0] as Record<string, unknown>;
+    expect(Object.keys(payload).sort()).toEqual([
+      "cc-session-tools",
+      "user-srv",
+    ]);
+
+    runtime.close();
+  });
+
+  it("re-merges the latest-applied portable config (not initial tooling) when rebuild follows applyPortableMcpConfig", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const first = createFakeMcpServer();
+    const second = createFakeMcpServer();
+    const { deps } = depsWithSequence(first.instance, second.instance);
+
+    const runtime = await claudeConversationBackendFactory.createRuntime(
+      {
+        conversationId: "conv-rebuild-applied",
+        projectPath: "/project",
+        projectName: "proj",
+        sessionName: "sess",
+        worktreePath: "/project/.worktrees/sess",
+        persistedRef: null,
+        sessionInstructions: [],
+        tooling: {},
+      },
+      deps,
+    );
+
+    await runtime.applyPortableMcpConfig!({
+      servers: [{ id: "applied-srv", transport: "stdio", command: "node" }],
+    });
+
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(2);
+
+    await runtime.rebuildSessionToolsInstance!();
+
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(3);
+    const payload = (mock.query.setMcpServers as ReturnType<typeof vi.fn>).mock
+      .calls[2]![0] as Record<string, unknown>;
+    expect(Object.keys(payload).sort()).toEqual([
+      "applied-srv",
+      "cc-session-tools",
+    ]);
+
+    runtime.close();
+  });
+
+  it("is a no-op when a turn is currently active", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const first = createFakeMcpServer();
+    const { deps, createSpy } = depsWithSequence(first.instance);
+
+    const runtime = await claudeConversationBackendFactory.createRuntime(
+      {
+        conversationId: "conv-rebuild-busy",
+        projectPath: "/project",
+        projectName: "proj",
+        sessionName: "sess",
+        worktreePath: "/project/.worktrees/sess",
+        persistedRef: null,
+        sessionInstructions: [],
+        tooling: {},
+      },
+      deps,
+    );
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "hi",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    await Promise.resolve();
+
+    await runtime.rebuildSessionToolsInstance!();
+
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(1);
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turnPromise;
+
+    runtime.close();
+  });
+
+  it("is a no-op when the runtime is dead", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const first = createFakeMcpServer();
+    const { deps, createSpy } = depsWithSequence(first.instance);
+
+    const runtime = await claudeConversationBackendFactory.createRuntime(
+      {
+        conversationId: "conv-rebuild-dead",
+        projectPath: "/project",
+        projectName: "proj",
+        sessionName: "sess",
+        worktreePath: "/project/.worktrees/sess",
+        persistedRef: null,
+        sessionInstructions: [],
+        tooling: {},
+      },
+      deps,
+    );
+
+    runtime.close();
+    await Promise.resolve();
+
+    await runtime.rebuildSessionToolsInstance!();
+
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(1);
+  });
+
+  it("rolls back by closing the new instance and preserving the old one when setMcpServers rejects", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const first = createFakeMcpServer();
+    const second = createFakeMcpServer();
+    const { deps, createSpy } = depsWithSequence(
+      first.instance,
+      second.instance,
+    );
+
+    const runtime = await claudeConversationBackendFactory.createRuntime(
+      {
+        conversationId: "conv-rebuild-fail",
+        projectPath: "/project",
+        projectName: "proj",
+        sessionName: "sess",
+        worktreePath: "/project/.worktrees/sess",
+        persistedRef: null,
+        sessionInstructions: [],
+        tooling: {},
+      },
+      deps,
+    );
+
+    (
+      mock.query.setMcpServers as ReturnType<typeof vi.fn>
+    ).mockRejectedValueOnce(new Error("setMcpServers boom"));
+
+    await runtime.rebuildSessionToolsInstance!();
+
+    expect(createSpy).toHaveBeenCalledTimes(2);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(second.closeSpy).toHaveBeenCalledTimes(1);
+    expect(first.closeSpy).not.toHaveBeenCalled();
+
+    runtime.close();
+    await Promise.resolve();
+    expect(first.closeSpy).toHaveBeenCalledTimes(1);
+  });
+});
