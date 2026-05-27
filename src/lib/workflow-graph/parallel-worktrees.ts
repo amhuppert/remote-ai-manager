@@ -6,6 +6,7 @@ import {
   type ExecFileOptions,
 } from "@/lib/shared/exec";
 import { defaultGitClient, type GitClient } from "@/lib/git/client";
+import { fastRemoveWorktree as defaultFastRemoveWorktree } from "@/lib/git/worktree-fast-remove";
 import { createLogger, type Logger } from "@/lib/logging";
 import { timed } from "@/lib/logging/timed";
 import { getErrorMessage } from "@/lib/shared/errors";
@@ -77,6 +78,7 @@ export interface ParallelWorktreesDeps {
   execFileAsync?: ExecFileAsync;
   buildChildEnv?(): NodeJS.ProcessEnv;
   logger?: Logger;
+  fastRemoveWorktree?: typeof defaultFastRemoveWorktree;
 }
 
 /**
@@ -156,6 +158,8 @@ export function createParallelWorktrees(
   const execFileAsync = deps.execFileAsync ?? defaultExecFileAsync;
   const buildChildEnv = deps.buildChildEnv ?? defaultBuildChildEnv;
   const logger = deps.logger ?? defaultLogger;
+  const fastRemoveWorktree =
+    deps.fastRemoveWorktree ?? defaultFastRemoveWorktree;
 
   async function getBranchForWorktree(
     projectPath: string,
@@ -459,56 +463,20 @@ export function createParallelWorktrees(
   }
 
   async function disposeImpl(input: DisposeInput): Promise<DisposeResult> {
-    let removeError: unknown = null;
     try {
-      await gitClient.git(
-        ["worktree", "remove", "--force", input.worktreePath],
-        input.projectPath,
-      );
+      await fastRemoveWorktree({
+        projectPath: input.projectPath,
+        worktreePath: input.worktreePath,
+        branchName: input.branchName,
+      });
     } catch (err) {
-      removeError = err;
-      try {
-        await gitClient.git(["worktree", "prune"], input.projectPath);
-      } catch (pruneErr) {
-        logger.warn("dispose_prune_failed", {
-          worktreePath: input.worktreePath,
-          reason: getErrorMessage(pruneErr),
-        });
-      }
-    }
-
-    if (removeError) {
-      const reason = getErrorMessage(removeError);
+      const reason = getErrorMessage(err);
       logger.warn("dispose_failed", {
         worktreePath: input.worktreePath,
         branchName: input.branchName,
         phase: "worktree_remove",
         reason,
       });
-      return { status: "failed", reason };
-    }
-
-    try {
-      await gitClient.git(
-        ["branch", "-D", input.branchName],
-        input.projectPath,
-      );
-    } catch (err) {
-      const reason = getErrorMessage(err);
-      logger.warn("dispose_failed", {
-        worktreePath: input.worktreePath,
-        branchName: input.branchName,
-        phase: "branch_delete",
-        reason,
-      });
-      try {
-        await gitClient.git(["worktree", "prune"], input.projectPath);
-      } catch (pruneErr) {
-        logger.warn("dispose_prune_failed", {
-          branchName: input.branchName,
-          reason: getErrorMessage(pruneErr),
-        });
-      }
       return { status: "failed", reason };
     }
 

@@ -73,6 +73,9 @@ function createTestDeps() {
     .fn()
     .mockResolvedValue({ stdout: "", stderr: "" });
   const queryMock = vi.fn();
+  const fastRemoveWorktreeMock = vi
+    .fn()
+    .mockResolvedValue({ status: "moved", trashPath: "/trash/x" });
 
   const recording = makeRecordingArtifactRegistry();
   const factoryArgs: Array<{ projectPath: string; sessionName: string }> = [];
@@ -90,6 +93,8 @@ function createTestDeps() {
     rm: vi.fn().mockResolvedValue(undefined),
     execFileAsync: execFileAsyncMock as unknown as SessionDeps["execFileAsync"],
     gitClient: { git: gitMock } as unknown as GitClient,
+    fastRemoveWorktree:
+      fastRemoveWorktreeMock as unknown as SessionDeps["fastRemoveWorktree"],
     readState: readStateMock,
     mutateState: vi
       .fn()
@@ -126,6 +131,7 @@ function createTestDeps() {
     writeStateMock,
     existsSyncMock,
     execFileAsyncMock,
+    fastRemoveWorktreeMock,
     queryMock,
     artifactRegistryCalls: recording.calls,
     artifactRegistryFactoryArgs: factoryArgs,
@@ -220,6 +226,7 @@ let readStateMock: Mock;
 let writeStateMock: Mock;
 let existsSyncMock: Mock;
 let execFileAsyncMock: Mock;
+let fastRemoveWorktreeMock: Mock;
 let queryMock: Mock;
 let artifactRegistryCalls: CapturedRegistryCall[];
 let artifactRegistryFactoryArgs: Array<{
@@ -264,6 +271,7 @@ beforeEach(() => {
   writeStateMock = testSetup.writeStateMock;
   existsSyncMock = testSetup.existsSyncMock;
   execFileAsyncMock = testSetup.execFileAsyncMock;
+  fastRemoveWorktreeMock = testSetup.fastRemoveWorktreeMock;
   queryMock = testSetup.queryMock;
   artifactRegistryCalls = testSetup.artifactRegistryCalls;
   artifactRegistryFactoryArgs = testSetup.artifactRegistryFactoryArgs;
@@ -1002,20 +1010,18 @@ describe("provisionSession — configurable branch prefix", () => {
 // ===========================================================================
 
 describe("deleteSession", () => {
-  it("removes worktree via git and removes session from state", async () => {
+  it("removes the worktree and removes session from state", async () => {
     readStateMock.mockResolvedValue(
       stateWithSession("/projects/repo", "to-delete"),
     );
     existsSyncMock.mockReturnValue(true); // worktree exists
-    mockGitSuccess();
 
     await service.deleteSession("/projects/repo", "to-delete");
 
-    // Verify git worktree remove --force was called
-    expect(gitMock).toHaveBeenCalledWith(
-      ["worktree", "remove", "--force", "/projects/repo/.worktrees/to-delete"],
-      "/projects/repo",
-    );
+    expect(fastRemoveWorktreeMock).toHaveBeenCalledWith({
+      projectPath: "/projects/repo",
+      worktreePath: "/projects/repo/.worktrees/to-delete",
+    });
 
     expect(writeStateMock).toHaveBeenCalledTimes(1);
     const savedState = writeStateMock.mock.calls[0]![0];
@@ -1032,8 +1038,8 @@ describe("deleteSession", () => {
 
     await service.deleteSession("/projects/repo", "no-worktree");
 
-    // Git should NOT be called since worktree doesn't exist
-    expect(gitMock).not.toHaveBeenCalled();
+    // Helper should NOT be called since worktree doesn't exist
+    expect(fastRemoveWorktreeMock).not.toHaveBeenCalled();
 
     expect(writeStateMock).toHaveBeenCalledTimes(1);
     const savedState = writeStateMock.mock.calls[0]![0];
@@ -1042,22 +1048,24 @@ describe("deleteSession", () => {
     ).toBeUndefined();
   });
 
-  it("falls back to filesystem rm when git worktree remove fails", async () => {
+  it("still removes session from state when worktree removal fails", async () => {
     readStateMock.mockResolvedValue(
       stateWithSession("/projects/repo", "rm-fallback"),
     );
     existsSyncMock.mockReturnValue(true);
-    mockGitFailure(new Error("worktree remove failed"));
+    fastRemoveWorktreeMock.mockRejectedValueOnce(
+      new Error("worktree remove failed"),
+    );
 
     await service.deleteSession("/projects/repo", "rm-fallback");
 
-    // Verify rm was called as fallback
-    expect(deps.rm).toHaveBeenCalledWith(
-      "/projects/repo/.worktrees/rm-fallback",
-      { recursive: true, force: true },
-    );
-
+    // A failed disk cleanup must not block the fused retarget+delete
+    // mutation, so the session is still removed from state.
     expect(writeStateMock).toHaveBeenCalledTimes(1);
+    const savedState = writeStateMock.mock.calls[0]![0];
+    expect(
+      savedState.projects["/projects/repo"].sessions["rm-fallback"],
+    ).toBeUndefined();
   });
 
   it("throws error for non-existent project", async () => {
@@ -1072,12 +1080,14 @@ describe("deleteSession", () => {
       stateWithSession("/projects/repo", "cc-session", { source: "cc" }),
     );
     existsSyncMock.mockReturnValue(true);
-    mockGitSuccess();
 
     const result = await service.deleteSession("/projects/repo", "cc-session");
 
     expect(result.worktreeRemoved).toBe(true);
-    expect(gitMock).toHaveBeenCalled();
+    expect(fastRemoveWorktreeMock).toHaveBeenCalledWith({
+      projectPath: "/projects/repo",
+      worktreePath: "/projects/repo/.worktrees/cc-session",
+    });
   });
 
   it("removes worktree for imported sessions the same as CC-created ones", async () => {
@@ -1088,7 +1098,6 @@ describe("deleteSession", () => {
       }),
     );
     existsSyncMock.mockReturnValue(true);
-    mockGitSuccess();
 
     const result = await service.deleteSession(
       "/projects/repo",
@@ -1096,7 +1105,10 @@ describe("deleteSession", () => {
     );
 
     expect(result.worktreeRemoved).toBe(true);
-    expect(gitMock).toHaveBeenCalled();
+    expect(fastRemoveWorktreeMock).toHaveBeenCalledWith({
+      projectPath: "/projects/repo",
+      worktreePath: "/external/path/imported-session",
+    });
     expect(writeStateMock).toHaveBeenCalledTimes(1);
     const savedState = writeStateMock.mock.calls[0]![0];
     expect(
@@ -1129,7 +1141,6 @@ describe("deleteSession", () => {
     };
     readStateMock.mockResolvedValue(stateWithoutSource);
     existsSyncMock.mockReturnValue(true);
-    mockGitSuccess();
 
     const result = await service.deleteSession(
       "/projects/repo",
@@ -1137,7 +1148,7 @@ describe("deleteSession", () => {
     );
 
     expect(result.worktreeRemoved).toBe(true);
-    expect(gitMock).toHaveBeenCalled();
+    expect(fastRemoveWorktreeMock).toHaveBeenCalled();
   });
 
   it("throws error for non-existent session in existing project", async () => {
@@ -1272,21 +1283,20 @@ describe("deleteProject", () => {
       }),
     );
     existsSyncMock.mockReturnValue(true);
-    mockGitSuccess();
 
     const result = await service.deleteProject("/projects/repo");
 
     expect(result.sessionsRemoved).toBe(2);
 
-    // Each session's worktree should have been removed via git
-    expect(gitMock).toHaveBeenCalledWith(
-      ["worktree", "remove", "--force", "/projects/repo/.worktrees/alpha"],
-      "/projects/repo",
-    );
-    expect(gitMock).toHaveBeenCalledWith(
-      ["worktree", "remove", "--force", "/projects/repo/.worktrees/beta"],
-      "/projects/repo",
-    );
+    // Each session's worktree should have been routed through the fast helper
+    expect(fastRemoveWorktreeMock).toHaveBeenCalledWith({
+      projectPath: "/projects/repo",
+      worktreePath: "/projects/repo/.worktrees/alpha",
+    });
+    expect(fastRemoveWorktreeMock).toHaveBeenCalledWith({
+      projectPath: "/projects/repo",
+      worktreePath: "/projects/repo/.worktrees/beta",
+    });
 
     // Transcript for alpha's conversation should be removed
     expect(deps.rm).toHaveBeenCalledWith("/cfg/transcripts/conv-a.jsonl", {
@@ -1326,7 +1336,7 @@ describe("deleteProject", () => {
     expect(deps.deleteJobRecordsForProject).not.toHaveBeenCalled();
   });
 
-  it("continues purging when one session's removal fails", async () => {
+  it("continues purging when one session's worktree removal fails", async () => {
     readStateMock.mockResolvedValue(
       stateWithProject("/projects/repo", {
         alpha: { conversations: [] },
@@ -1334,12 +1344,11 @@ describe("deleteProject", () => {
       }),
     );
     existsSyncMock.mockReturnValue(true);
-    // First git call (alpha worktree remove) fails; subsequent succeed.
-    mockGitSequence([
-      { error: new Error("worktree remove failed") },
-      // Fallback path uses rm, then beta's worktree remove succeeds.
-      { stdout: "", stderr: "" },
-    ]);
+    // First removal fails; subsequent succeed. deleteProject must still
+    // purge both sessions from state.
+    fastRemoveWorktreeMock
+      .mockRejectedValueOnce(new Error("worktree remove failed"))
+      .mockResolvedValue({ status: "moved", trashPath: "/trash/x" });
 
     const result = await service.deleteProject("/projects/repo");
 
@@ -2061,25 +2070,19 @@ describe("bulkDeleteSessions", () => {
     expect(child.parentSessionName).toBeNull();
   });
 
-  it("captures per-session failures without aborting the batch", async () => {
+  it("a worktree-cleanup failure is non-fatal and does not abort the batch", async () => {
     readStateMock.mockResolvedValue(stateWithThreeSiblingsAndChild());
     existsSyncMock.mockReturnValue(true);
-    // git fails for B's worktree path; A and C succeed
-    gitMock.mockImplementation(async (args: string[]) => {
-      if (
-        args[0] === "worktree" &&
-        args.includes("/projects/repo/.worktrees/B")
-      ) {
-        throw new Error("worktree busy");
-      }
-      return { stdout: "", stderr: "" };
-    });
-    // rm fallback also fails for B
-    (deps.rm as Mock).mockImplementation(async (path: string) => {
-      if (path === "/projects/repo/.worktrees/B") {
-        throw new Error("rm failed");
-      }
-    });
+    // Worktree cleanup throws for B; A and C clean up fine. A failed disk
+    // cleanup must not block deletion, so B is still removed from state.
+    fastRemoveWorktreeMock.mockImplementation(
+      async ({ worktreePath }: { worktreePath: string }) => {
+        if (worktreePath === "/projects/repo/.worktrees/B") {
+          throw new Error("worktree busy");
+        }
+        return { status: "moved", trashPath: "/trash/x" };
+      },
+    );
 
     const results = await service.bulkDeleteSessions("/projects/repo", [
       "A",
@@ -2089,14 +2092,15 @@ describe("bulkDeleteSessions", () => {
 
     expect(results).toEqual([
       { sessionName: "A", success: true },
-      { sessionName: "B", success: false, error: "rm failed" },
+      { sessionName: "B", success: true },
       { sessionName: "C", success: true },
     ]);
 
+    expect(writeStateMock).toHaveBeenCalledTimes(1);
     const savedState = writeStateMock.mock.calls[0]![0];
     const project = savedState.projects["/projects/repo"];
     expect(project.sessions["A"]).toBeUndefined();
-    expect(project.sessions["B"]).toBeDefined();
+    expect(project.sessions["B"]).toBeUndefined();
     expect(project.sessions["C"]).toBeUndefined();
   });
 
@@ -2128,12 +2132,10 @@ describe("bulkDeleteSessions", () => {
   it("skips the state mutation entirely when no sessions were successfully prepared", async () => {
     readStateMock.mockResolvedValue(stateWithThreeSiblingsAndChild());
     existsSyncMock.mockReturnValue(true);
-    gitMock.mockRejectedValue(new Error("worktree busy"));
-    (deps.rm as Mock).mockRejectedValue(new Error("rm failed"));
 
     const results = await service.bulkDeleteSessions("/projects/repo", [
-      "A",
-      "B",
+      "Ghost1",
+      "Ghost2",
     ]);
 
     expect(results.every((r) => !r.success)).toBe(true);

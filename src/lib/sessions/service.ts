@@ -14,11 +14,12 @@ import {
 } from "./repo";
 import { buildChildEnv } from "../shared/child-env";
 import { defaultGitClient, type GitClient } from "../git/client";
+import { fastRemoveWorktree as defaultFastRemoveWorktree } from "../git/worktree-fast-remove";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionCreationMode, SessionState } from "@/lib/sessions/schemas";
 import { readState, mutateState } from "../state-store";
-import { createLogger, timed } from "../logging";
+import { createLogger } from "../logging";
 import type { BulkSessionResult } from "@/lib/sessions/schemas";
 import { readRepoConfig } from "../projects/repo-config";
 import { readConfig } from "../config/loader";
@@ -66,6 +67,7 @@ export interface SessionDeps {
   rm: typeof rm;
   execFileAsync: typeof execFileAsync;
   gitClient: GitClient;
+  fastRemoveWorktree: typeof defaultFastRemoveWorktree;
   readState: typeof readState;
   mutateState: typeof mutateState;
   readConfig: typeof readConfig;
@@ -93,6 +95,7 @@ const defaultSessionDeps: SessionDeps = {
   rm,
   execFileAsync,
   gitClient: defaultGitClient,
+  fastRemoveWorktree: defaultFastRemoveWorktree,
   readState,
   mutateState,
   readConfig,
@@ -123,6 +126,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     rm,
     execFileAsync,
     gitClient,
+    fastRemoveWorktree,
     readState,
     mutateState,
     readConfig,
@@ -617,19 +621,11 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
 
     if (existsSync(session.worktreePath)) {
       try {
-        await timed(
-          logger,
-          "session.worktree_remove",
-          { sessionName, worktreePath: session.worktreePath, cleanup: "git" },
-          () =>
-            git(projectPath, [
-              "worktree",
-              "remove",
-              "--force",
-              session.worktreePath,
-            ]),
-        );
-        worktreeCleanup = "success";
+        const result = await fastRemoveWorktree({
+          projectPath,
+          worktreePath: session.worktreePath,
+        });
+        worktreeCleanup = result.status === "moved" ? "success" : result.status;
         worktreeRemoved = true;
       } catch (err) {
         logger.error("session.worktree_remove_failure", {
@@ -637,18 +633,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
           worktreePath: session.worktreePath,
           error: getErrorMessage(err),
         });
-        await timed(
-          logger,
-          "session.worktree_remove",
-          {
-            sessionName,
-            worktreePath: session.worktreePath,
-            cleanup: "fallback",
-          },
-          () => rm(session.worktreePath, { recursive: true, force: true }),
-        );
-        worktreeCleanup = "fallback";
-        worktreeRemoved = true;
+        worktreeCleanup = "failed";
       }
     }
 
