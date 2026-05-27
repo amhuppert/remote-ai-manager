@@ -310,18 +310,7 @@ export default function ProjectDetailView({
                     <PlusIcon size={12} />
                   </span>
                   New session
-                  <span
-                    style={{
-                      marginLeft: 6,
-                      fontSize: ".62rem",
-                      opacity: 0.8,
-                      padding: "1px 5px",
-                      borderRadius: 3,
-                      background: "rgba(0,0,0,.18)",
-                    }}
-                  >
-                    ⌘N
-                  </span>
+                  <span className="cc-primary-kbd">⌘N</span>
                 </button>
               </div>
 

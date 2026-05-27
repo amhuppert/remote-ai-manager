@@ -87,6 +87,14 @@
   font-weight: 700;
   line-height: 1;
 }
+.cc-primary-kbd {
+  margin-left: 6px;
+  padding: 1px 5px;
+  font-size: 0.62rem;
+  opacity: 0.8;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.18);
+}
 .cc-ibtn {
   display: inline-flex;
   align-items: center;
@@ -538,6 +546,11 @@
   color: var(--text-secondary);
   text-align: right;
 }
+.v3-row .v3-actions {
+  display: flex;
+  gap: var(--space-xs);
+  align-items: center;
+}
 
 /* Sortable column header button */
 .v3-sort-header {
@@ -968,6 +981,115 @@
 [data-page="sessions"][data-density="comfy"] .v3-row {
   padding-top: 13px;
   padding-bottom: 13px;
+}
+
+/* ============================================================
+   Responsive: Mobile (<=768px) — sessions page
+   ============================================================ */
+
+@media (max-width: 768px) {
+  /* Page header: stack title, subtitle, and primary action */
+  .cc-page-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-md);
+    padding: var(--space-lg) var(--space-md) var(--space-sm);
+  }
+  .cc-page-title {
+    font-size: 1.4rem;
+    overflow-wrap: anywhere;
+  }
+  .cc-page-sub {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .cc-primary {
+    align-self: flex-start;
+    min-height: 44px;
+    height: 44px;
+    padding: 0 var(--space-md);
+  }
+  .cc-primary-kbd {
+    display: none;
+  }
+
+  /* Command console: tighten padding, drop desktop-only kbd hints */
+  .v2-console {
+    padding: var(--space-sm) var(--space-md);
+  }
+  .console-bar .console-hints {
+    display: none;
+  }
+
+  /* Section header: align padding with the rest of the mobile gutter */
+  .v3-section-header {
+    padding: var(--space-md) var(--space-md) var(--space-xs);
+  }
+  .v3-section-header.bulk-mode {
+    margin: 0 var(--space-md);
+  }
+
+  /* Rows: drop multi-column table, reflow each row into a two-line card */
+  .v3-rows {
+    margin: 0 var(--space-md);
+  }
+  .v3-row-header {
+    display: none;
+  }
+  .v3-row {
+    grid-template-columns: 16px minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "mode  name    name    actions"
+      ".     branch  time    actions";
+    column-gap: var(--space-sm);
+    row-gap: 2px;
+    padding: 10px 8px 10px 14px;
+  }
+  .v3-row .s-mode-dot {
+    grid-area: mode;
+    align-self: center;
+  }
+  .v3-row .v3-name {
+    grid-area: name;
+    align-self: center;
+  }
+  .v3-row .v3-name .title {
+    font-size: 0.86rem;
+  }
+  .v3-row .v3-branch {
+    grid-area: branch;
+    align-items: center;
+    overflow: hidden;
+  }
+  .v3-row .v3-branch .s-branch {
+    max-width: 100%;
+    font-size: 0.68rem;
+    padding: 2px 7px 2px 8px;
+  }
+  .v3-row .v3-time {
+    grid-area: time;
+    justify-self: end;
+    align-self: center;
+    font-size: 0.68rem;
+    padding-left: 8px;
+  }
+  .v3-row .v3-actions {
+    grid-area: actions;
+    align-self: center;
+  }
+  /* Status conveyed by the rail color; numeric/secondary fields hide */
+  .v3-row .v3-check,
+  .v3-row .v3-target,
+  .v3-row .v3-prompts,
+  .v3-row .s-status,
+  .v3-row .tdd-toggle {
+    display: none;
+  }
+  /* Touch-target kebab on mobile */
+  .v3-row .kebab-trigger {
+    width: 44px;
+    height: 44px;
+  }
 }
 
 /* Toast */

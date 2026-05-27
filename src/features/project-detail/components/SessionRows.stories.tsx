@@ -1,3 +1,4 @@
+import type { ComponentType, JSX } from "react";
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
 import type { SessionListItem } from "@/lib/sessions/schemas";
@@ -123,4 +124,26 @@ export const NoBranchAction = {
   args: {
     onBranch: undefined,
   },
+} satisfies Story;
+
+/**
+ * Mobile viewport (≤768px). Rows collapse to a two-line card layout: status rail
+ * + mode dot + name on top, branch chip + relative time below, kebab on the right.
+ * Checkbox, target, prompts, status pill text, and TDD toggle move out of the row
+ * (selection/sort behavior hidden — actions live in the kebab).
+ */
+export const Mobile = {
+  args: {},
+  parameters: {
+    viewport: {
+      defaultViewport: "mobile1",
+    },
+  },
+  decorators: [
+    (Story: ComponentType): JSX.Element => (
+      <div style={{ width: 375 }}>
+        <Story />
+      </div>
+    ),
+  ],
 } satisfies Story;

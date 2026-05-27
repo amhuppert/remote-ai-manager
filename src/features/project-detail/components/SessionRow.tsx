@@ -140,13 +140,7 @@ export default function SessionRow({
       <span className="v3-time">
         {formatRelativeTime(session.lastActivityAt)}
       </span>
-      <div
-        style={{
-          display: "flex",
-          gap: "var(--space-xs)",
-          alignItems: "center",
-        }}
-      >
+      <div className="v3-actions">
         <SessionTddToggle projectName={projectName} session={session} />
         <KebabMenu items={rowActions} />
       </div>
