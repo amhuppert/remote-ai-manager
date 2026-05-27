@@ -11,6 +11,7 @@ import {
   createSessionFocus,
   createSessionOptimistic,
   deleteSession,
+  bulkDeleteSessions,
 } from "@/lib/sessions/service";
 import { isReservedSessionName } from "@/lib/sessions/derived";
 import {
@@ -363,16 +364,16 @@ export interface BulkSessionsRouteDeps {
     sessionName: string,
     archived: boolean,
   ): Promise<void>;
-  deleteSession(
+  bulkDeleteSessions(
     projectPath: string,
-    sessionName: string,
-  ): Promise<{ worktreeRemoved: boolean }>;
+    sessionNames: string[],
+  ): Promise<BulkSessionResult[]>;
 }
 
 const defaultBulkDeps: BulkSessionsRouteDeps = {
   resolveProjectPath,
   setSessionArchived,
-  deleteSession,
+  bulkDeleteSessions,
 };
 
 export function createBulkSessionsRouteHandlers(
@@ -411,29 +412,47 @@ export function createBulkSessionsRouteHandlers(
       totalRequested: sessionNames.length,
     });
 
-    const results: BulkSessionResult[] = [];
-    for (const sessionName of sessionNames) {
-      try {
-        if (op === "delete") {
-          await deps.deleteSession(projectPath, sessionName);
+    let results: BulkSessionResult[];
+    if (op === "delete") {
+      results = await deps.bulkDeleteSessions(projectPath, sessionNames);
+      for (const r of results) {
+        if (r.success) {
+          logger.info("bulk.item.ok", {
+            projectName: name,
+            op,
+            sessionName: r.sessionName,
+          });
         } else {
+          logger.warn("bulk.item.error", {
+            projectName: name,
+            op,
+            sessionName: r.sessionName,
+            error: r.error,
+          });
+        }
+      }
+    } else {
+      results = [];
+      for (const sessionName of sessionNames) {
+        try {
           await deps.setSessionArchived(
             projectPath,
             sessionName,
             op === "archive",
           );
+          results.push({ sessionName, success: true });
+          logger.info("bulk.item.ok", { projectName: name, op, sessionName });
+        } catch (err) {
+          const message =
+            err instanceof Error ? err.message : "Operation failed";
+          results.push({ sessionName, success: false, error: message });
+          logger.warn("bulk.item.error", {
+            projectName: name,
+            op,
+            sessionName,
+            error: message,
+          });
         }
-        results.push({ sessionName, success: true });
-        logger.info("bulk.item.ok", { projectName: name, op, sessionName });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Operation failed";
-        results.push({ sessionName, success: false, error: message });
-        logger.warn("bulk.item.error", {
-          projectName: name,
-          op,
-          sessionName,
-          error: message,
-        });
       }
     }
 

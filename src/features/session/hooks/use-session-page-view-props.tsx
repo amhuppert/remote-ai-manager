@@ -1,23 +1,21 @@
 "use client";
 
-import { useCallback } from "react";
-import TypingIndicator from "@/components/conversation/TypingIndicator";
-import { useConversationPanelProps } from "@/features/session/hooks/use-conversation-panel-props";
-import { usePromptComposerProps } from "@/features/session/hooks/use-prompt-composer-props";
 import type { SessionPageViewProps } from "@/features/session/SessionPageView";
 import type { useSessionPageStoreBundle } from "@/features/session/hooks/use-session-page-store-bundle";
 import type { useSessionPageLocalState } from "@/features/session/hooks/use-session-page-local-state";
+import type { useCollabContext } from "@/features/session/hooks/use-collab-context";
+import { usePromptComposerProps } from "@/features/session/hooks/use-prompt-composer-props";
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { ConversationState } from "@/lib/conversations/schemas";
-import type { ConversationRow } from "@/features/session/conversation/conversation-rows";
+import type { ConversationState, TranscriptMessage } from "@/lib/conversations/schemas";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { CollabConfigDraft } from "@/stores/collaboration.store";
 
 type PromptComposerArgs = Parameters<typeof usePromptComposerProps>[0];
-type ConversationPanelArgs = Parameters<typeof useConversationPanelProps>[0];
 type StoreBundle = ReturnType<typeof useSessionPageStoreBundle>;
 type LocalState = ReturnType<typeof useSessionPageLocalState>;
+type CollabContext = ReturnType<typeof useCollabContext>;
 type SessionPageTopbarProps = SessionPageViewProps["topbarProps"];
+type PanelContainerProps = SessionPageViewProps["contentProps"]["panelContainerProps"];
 
 export interface UseSessionPageViewPropsArgs {
   projectName: string;
@@ -44,6 +42,7 @@ export interface UseSessionPageViewPropsArgs {
 
   store: StoreBundle;
   local: LocalState;
+  collab: CollabContext;
 
   // dev servers
   dsServers: SessionPageTopbarProps["dsServers"];
@@ -63,23 +62,12 @@ export interface UseSessionPageViewPropsArgs {
   commits: SessionPageViewProps["contentProps"]["commits"];
   cumulativeImageCount: number;
   messagesPending: boolean;
-  rows: ConversationRow[];
-  totalMessages: number;
-  isCollabPassageInView: boolean;
+  messages: readonly TranscriptMessage[];
 
-  // conversation nav
-  currentMessageIndex: number;
-  handleFirstMessage: () => void;
-  handlePrevMessage: () => void;
-  handleNextMessage: () => void;
-  handleLastMessage: () => void;
-  handleRangeChanged: ConversationPanelArgs["handleRangeChanged"];
-  handleAtBottomStateChange: ConversationPanelArgs["handleAtBottomStateChange"];
-  handleAtTopStateChange: ConversationPanelArgs["handleAtTopStateChange"];
-
-  // renderers
-  renderMessageRow: ConversationPanelArgs["renderMessageRow"];
-  renderCollabRow: ConversationPanelArgs["renderCollabRow"];
+  // panel container inputs
+  worktreePath: string | undefined;
+  handleDebugPrompt: PanelContainerProps["handleDebugPrompt"];
+  handleFork: PanelContainerProps["handleFork"];
 
   // focus init
   focusConfirmLoading: boolean;
@@ -130,57 +118,30 @@ export function useSessionPageViewProps(
   args: UseSessionPageViewPropsArgs,
 ): SessionPageViewProps {
   const { store, local } = args;
-  const typingIndicatorVisible =
-    !args.hasActiveCollab &&
-    (store.sending || args.activeConversation?.status === "running");
-  const renderTypingIndicator = useCallback(
-    () => (
-      <TypingIndicator
-        selectedBackend={args.selectedBackend}
-        visible={typingIndicatorVisible}
-      />
-    ),
-    [args.selectedBackend, typingIndicatorVisible],
-  );
 
-  const conversationPanelProps = useConversationPanelProps({
-    conversations: args.conversations,
-    activeConversation: args.activeConversation,
-    openMobileSidebar: local.openMobileSidebar,
-    currentMessageIndex: args.currentMessageIndex,
-    totalMessages: args.totalMessages,
-    handleFirstMessage: args.handleFirstMessage,
-    handlePrevMessage: args.handlePrevMessage,
-    handleNextMessage: args.handleNextMessage,
-    handleLastMessage: args.handleLastMessage,
-    contextPercent: args.contextPercent,
-    promptError: store.promptError,
-    promptCancelled: store.promptCancelled,
-    dismissError: store.dismissError,
-    dismissCancelled: store.dismissCancelled,
-    panelBodyRef: local.panelBodyRef,
-    selectedBackend: args.selectedBackend,
-    setCollabPinnedTopTarget: local.setCollabPinnedTopTarget,
-    isCollabPassageInView: args.isCollabPassageInView,
-    messagesPending: args.messagesPending,
-    rows: args.rows,
-    virtuosoRef: local.virtuosoRef,
+  const panelContainerProps: PanelContainerProps = {
+    projectName: args.projectName,
+    sessionName: args.sessionName,
     conversationId: args.conversationId,
-    renderMessageRow: args.renderMessageRow,
-    renderCollabRow: args.renderCollabRow,
-    renderTypingIndicator,
-    handleRangeChanged: args.handleRangeChanged,
-    handleAtBottomStateChange: args.handleAtBottomStateChange,
-    handleAtTopStateChange: args.handleAtTopStateChange,
-    showFocusConfirmation:
-      args.isInitConversation &&
-      !store.pendingQuestions &&
-      (!args.isBusy || args.focusConfirmLoading) &&
-      (args.activeConversation?.promptCount ?? 0) > 0,
+    activeConversation: args.activeConversation,
+    conversations: args.conversations,
+    messages: args.messages,
+    isBusy: args.isBusy,
+    isReadOnly: args.isReadOnly,
+    isInitConversation: args.isInitConversation,
+    hasActiveCollab: args.hasActiveCollab,
+    worktreePath: args.worktreePath,
+    selectedBackend: args.selectedBackend,
+    contextPercent: args.contextPercent,
+    messagesPending: args.messagesPending,
     focusConfirmLoading: args.focusConfirmLoading,
     handleConfirmFocus: args.handleConfirmFocus,
-    isReadOnly: args.isReadOnly,
-  });
+    handleDebugPrompt: args.handleDebugPrompt,
+    handleFork: args.handleFork,
+    store,
+    local,
+    collab: args.collab,
+  };
 
   const promptComposerProps = usePromptComposerProps({
     projectName: args.projectName,
@@ -280,7 +241,7 @@ export function useSessionPageViewProps(
       mobilePanel: store.mobilePanel,
       diff: args.diff,
       commits: args.commits,
-      conversationPanelProps,
+      panelContainerProps,
     },
     promptInputSlotProps: {
       isWorkflowManagedConversation: args.isWorkflowManagedConversation,

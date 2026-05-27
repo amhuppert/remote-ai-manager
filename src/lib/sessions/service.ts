@@ -18,7 +18,8 @@ import type { ConversationState } from "@/lib/conversations/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionCreationMode, SessionState } from "@/lib/sessions/schemas";
 import { readState, mutateState } from "../state-store";
-import { createLogger } from "../logging";
+import { createLogger, timed } from "../logging";
+import type { BulkSessionResult } from "@/lib/sessions/schemas";
 import { readRepoConfig } from "../projects/repo-config";
 import { readConfig } from "../config/loader";
 import { resolveBranchPrefix } from "../config/cascade";
@@ -585,29 +586,17 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
   }
 
   /**
-   * Delete a session.
-   * - Removes the worktree directory from disk (for both CC-created and imported sessions)
-   * - Removes transcript files for every conversation in the session
-   * - Removes notification and job-record rows for the (project, session) pair
-   * - Removes the session row from state (which cascades conversations + reference docs)
-   * - Does NOT delete the git branch or the project directory on disk
+   * Run all non-state side effects required to delete a session: close
+   * backend runtimes, stop dev servers, remove the worktree directory (with
+   * a manual-rm fallback if `git worktree remove` errors), purge transcripts,
+   * and delete notification/job-record rows. Does NOT touch the JSON state
+   * tree — callers are responsible for the subsequent mutateState.
    */
-  async function deleteSession(
+  async function performSessionDeletionSideEffects(
     projectPath: string,
     sessionName: string,
+    session: SessionState,
   ): Promise<{ worktreeRemoved: boolean }> {
-    const state = await readState();
-    const project = state.projects[projectPath];
-    if (!project) {
-      throw new Error(`Project not found: ${projectPath}`);
-    }
-
-    const session = project.sessions[sessionName];
-    if (!session) {
-      throw new Error(`Session "${sessionName}" not found in project`);
-    }
-
-    // Close any active backend runtimes before removal
     for (const conv of session.conversations) {
       try {
         getRuntime(conv.id)?.close();
@@ -616,7 +605,6 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       }
     }
 
-    // Stop all running dev servers before worktree removal (best-effort)
     try {
       await stopAllForSession({ projectPath, sessionName });
     } catch {
@@ -629,12 +617,18 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
 
     if (existsSync(session.worktreePath)) {
       try {
-        await git(projectPath, [
-          "worktree",
-          "remove",
-          "--force",
-          session.worktreePath,
-        ]);
+        await timed(
+          logger,
+          "session.worktree_remove",
+          { sessionName, worktreePath: session.worktreePath, cleanup: "git" },
+          () =>
+            git(projectPath, [
+              "worktree",
+              "remove",
+              "--force",
+              session.worktreePath,
+            ]),
+        );
         worktreeCleanup = "success";
         worktreeRemoved = true;
       } catch (err) {
@@ -643,8 +637,16 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
           worktreePath: session.worktreePath,
           error: getErrorMessage(err),
         });
-        // Fallback: manual removal
-        await rm(session.worktreePath, { recursive: true, force: true });
+        await timed(
+          logger,
+          "session.worktree_remove",
+          {
+            sessionName,
+            worktreePath: session.worktreePath,
+            cleanup: "fallback",
+          },
+          () => rm(session.worktreePath, { recursive: true, force: true }),
+        );
         worktreeCleanup = "fallback";
         worktreeRemoved = true;
       }
@@ -684,18 +686,133 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       jobRecordsRemoved,
     });
 
-    // Retarget any child sessions before removing parent from state
-    await retargetOrphanedChildren(projectPath, sessionName);
+    return { worktreeRemoved };
+  }
 
-    // Remove from state (cascades to conversations + reference_documents)
-    await mutateState("deleteSession", (state) => {
+  /**
+   * Apply a single whole-state mutation that retargets orphaned children of
+   * any deleted parent in `deletedSessionNames` and removes those sessions
+   * from the project. Idempotent and safe to call with sessions that no
+   * longer exist.
+   */
+  async function applyFusedDeleteMutation(
+    label: string,
+    projectPath: string,
+    deletedSessionNames: Iterable<string>,
+  ): Promise<void> {
+    const deletedSet = new Set(deletedSessionNames);
+    if (deletedSet.size === 0) return;
+    await mutateState(label, (state) => {
       const proj = state.projects[projectPath];
-      if (proj) {
-        delete proj.sessions[sessionName];
+      if (!proj) return;
+      for (const child of Object.values(proj.sessions)) {
+        if (
+          child.parentSessionName &&
+          deletedSet.has(child.parentSessionName)
+        ) {
+          child.targetBranch = "main";
+          child.parentSessionName = null;
+        }
+      }
+      for (const name of deletedSet) {
+        delete proj.sessions[name];
       }
     });
+  }
 
-    return { worktreeRemoved };
+  /**
+   * Delete a session.
+   * - Removes the worktree directory from disk (for both CC-created and imported sessions)
+   * - Removes transcript files for every conversation in the session
+   * - Removes notification and job-record rows for the (project, session) pair
+   * - Removes the session row from state (which cascades conversations + reference docs)
+   * - Does NOT delete the git branch or the project directory on disk
+   */
+  async function deleteSession(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<{ worktreeRemoved: boolean }> {
+    const state = await readState();
+    const project = state.projects[projectPath];
+    if (!project) {
+      throw new Error(`Project not found: ${projectPath}`);
+    }
+
+    const session = project.sessions[sessionName];
+    if (!session) {
+      throw new Error(`Session "${sessionName}" not found in project`);
+    }
+
+    const result = await performSessionDeletionSideEffects(
+      projectPath,
+      sessionName,
+      session,
+    );
+
+    await applyFusedDeleteMutation("deleteSession", projectPath, [sessionName]);
+
+    return result;
+  }
+
+  /**
+   * Delete multiple sessions in a single batch.
+   * - Per-session side effects (worktree removal, transcript purge,
+   *   notification/job cleanup) run sequentially: concurrent
+   *   `git worktree remove` against the same parent repository races on
+   *   `.git/config.lock` and fails.
+   * - All successful deletions are applied to JSON state via a single
+   *   `mutateState` at the end (see PERFORMANCE.md — bulk routes pay the
+   *   whole-state diff cost once per batch, not once per item).
+   * - A session that was not found is reported as a failure result and
+   *   does not abort the rest of the batch.
+   */
+  async function bulkDeleteSessions(
+    projectPath: string,
+    sessionNames: string[],
+  ): Promise<BulkSessionResult[]> {
+    const state = await readState();
+    const project = state.projects[projectPath];
+    if (!project) {
+      throw new Error(`Project not found: ${projectPath}`);
+    }
+
+    const results: BulkSessionResult[] = [];
+    const succeeded: string[] = [];
+
+    for (const sessionName of sessionNames) {
+      const session = project.sessions[sessionName];
+      if (!session) {
+        results.push({
+          sessionName,
+          success: false,
+          error: `Session "${sessionName}" not found in project`,
+        });
+        continue;
+      }
+      try {
+        await performSessionDeletionSideEffects(
+          projectPath,
+          sessionName,
+          session,
+        );
+        succeeded.push(sessionName);
+        results.push({ sessionName, success: true });
+      } catch (err) {
+        results.push({
+          sessionName,
+          success: false,
+          error: getErrorMessage(err),
+        });
+      }
+    }
+
+    await applyFusedDeleteMutation(
+      "bulkDeleteSessions",
+      projectPath,
+      succeeded,
+    );
+
+    return results;
   }
 
   /**
@@ -764,6 +881,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     ensurePlannerSession,
     retargetOrphanedChildren,
     deleteSession,
+    bulkDeleteSessions,
     deleteProject,
   };
 }
@@ -780,4 +898,5 @@ export const createSessionOptimistic = defaultService.createSessionOptimistic;
 export const ensurePlannerSession = defaultService.ensurePlannerSession;
 export const retargetOrphanedChildren = defaultService.retargetOrphanedChildren;
 export const deleteSession = defaultService.deleteSession;
+export const bulkDeleteSessions = defaultService.bulkDeleteSessions;
 export const deleteProject = defaultService.deleteProject;

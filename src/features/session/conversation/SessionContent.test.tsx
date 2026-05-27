@@ -1,12 +1,10 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from "vitest";
-import { createRef } from "react";
 import { renderWithQuery } from "@/test/component-mocks";
 import SessionContent from "@/features/session/conversation/SessionContent";
 import type { ComponentProps } from "react";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
-import type { VirtuosoHandle } from "@/components/conversation/ConversationVirtuosoList";
 
 // Stub heavy child components — they have their own tests and their internals
 // are not part of SessionContent's behavior. We assert only on SessionContent's
@@ -17,7 +15,7 @@ vi.mock("@/features/session/conversation/SessionInfoStrip", () => ({
 vi.mock("@/features/session/conversation/RightPane", () => ({
   default: () => <div data-testid="stub-right-pane" />,
 }));
-vi.mock("@/components/conversation/ConversationPanel", () => ({
+vi.mock("@/features/session/conversation/ConversationPanelContainer", () => ({
   default: () => <div data-testid="stub-conversation-panel" />,
 }));
 vi.mock("@/features/session/sidebar/ConversationSidebar", () => ({
@@ -85,40 +83,6 @@ function makeConversation(
 type Props = ComponentProps<typeof SessionContent>;
 
 function makeProps(overrides: Partial<Props> = {}): Props {
-  const conversationPanelProps: Props["conversationPanelProps"] = {
-    conversations: false,
-    activeConversation: undefined,
-    openMobileSidebar: vi.fn(),
-    currentMessageIndex: 0,
-    totalMessages: 0,
-    handleFirstMessage: vi.fn(),
-    handlePrevMessage: vi.fn(),
-    handleNextMessage: vi.fn(),
-    handleLastMessage: vi.fn(),
-    contextPercent: null,
-    promptError: null,
-    promptCancelled: false,
-    dismissError: vi.fn(),
-    dismissCancelled: vi.fn(),
-    panelBodyRef: createRef<HTMLDivElement>(),
-    selectedBackend: "claude",
-    setCollabPinnedTopTarget: vi.fn(),
-    isCollabPassageInView: false,
-    messagesPending: false,
-    rows: [],
-    virtuosoRef: createRef<VirtuosoHandle>(),
-    conversationId: "conv-1",
-    renderMessageRow: () => null,
-    renderCollabRow: () => null,
-    renderTypingIndicator: () => null,
-    handleRangeChanged: vi.fn(),
-    handleAtBottomStateChange: vi.fn(),
-    handleAtTopStateChange: vi.fn(),
-    showFocusConfirmation: false,
-    focusConfirmLoading: false,
-    handleConfirmFocus: vi.fn(),
-    isReadOnly: false,
-  };
   return {
     session: makeSession(),
     activeConversation: makeConversation(),
@@ -140,7 +104,7 @@ function makeProps(overrides: Partial<Props> = {}): Props {
     mobilePanel: "chat",
     diff: { files: [], totalAdditions: 0, totalDeletions: 0 },
     commits: [],
-    conversationPanelProps,
+    panelContainerProps: {} as Props["panelContainerProps"],
     promptInputSlot: null,
     ...overrides,
   };

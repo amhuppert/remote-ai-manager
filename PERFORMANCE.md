@@ -73,9 +73,40 @@ Implications:
 
 Per CLAUDE.md's comment rules, do not annotate fixes with comments like "now uses focused accessor" or "avoid full state read". The current state of the code is self-documenting; the historical context belongs here in this log.
 
+### 6. Keep high-frequency React state local to the subtree that consumes it
+
+When a hook owns state that updates at high frequency (scroll position, mouse coords, virtualized range, drag offset, etc.), the component that calls the hook re-renders on every update. Anything that component constructs in its render — inline object literals, freshly-bound callbacks, derived prop bundles — gets new identities and fans the re-render out to every child that takes those props, even if `React.memo` is in play (a fresh object literal defeats `Object.is`).
+
+Place the hook call as low in the tree as possible — ideally inside a "container" component that wraps only the subtree that actually consumes the state. The parent never sees the update, so its sibling subtrees (top bars, dialogs, modal portals, mobile bottom bars) stay still.
+
+Verification: `src/components/ReactScanInstrumentation.tsx` is mounted in dev via `src/app/layout.tsx` and exposes `window.__reactScanReport` / `window.__reactScanReset`. Use it with `?scan=1` and `playwright-cli --raw eval` to capture before/after render counts per component (see the `react-scan` skill).
+
+Heuristic: if a hook returns state that changes on user interaction *within* a panel, put the hook call inside that panel's container — not above it.
+
 ## Resolved issues
 
 Each entry: symptom → root cause → fix → lesson. Add new entries at the top.
+
+### 2026-05-27 — Scrolling the message panel re-rendered top-bar/dialog components
+
+- **Symptom**: react-scan captured 866 render events during a single scroll flow on the conversation page. `TddToggle`, `VoiceRecordButton`, `ConfirmDialog`, `AgentCapabilitiesModal`, and `ConversationAgentCapabilitiesConfig` each re-rendered 18× on scroll despite living in the top bar / dialog layer with no scroll-dependent state of their own. `BackendToggle` re-rendered 9×.
+- **Root cause**: `useSessionPageConversation` (which calls `useConversationNav`, the owner of scroll position via Virtuoso's `rangeChanged`/`atBottom`/`atTop` callbacks) was invoked at the top of `SessionPage`. Every scroll tick → `setNavState` → `SessionPage` re-renders → a fresh inline `args` literal is passed to `SessionPageContent` → `useSessionPageViewProps` rebuilds `topbarProps`, `promptComposerProps`, `dialogsProps`, `mobileBottomBarProps` as new objects → the entire sibling tree (top bar, dialogs, modal portals, mobile bottom bar) re-renders, even though none of them care about scroll.
+- **Fix**: extracted `src/features/session/conversation/ConversationPanelContainer.tsx` — a new container that owns the scroll-derived state locally by calling `useSessionPageConversation` itself. `SessionPage` no longer reads `conversation.*` or threads any scroll-derived field through `useSessionPageViewProps`. `use-session-page-view-props.tsx` now passes a `panelContainerProps` bundle through `contentProps`; `SessionContent` renders `<ConversationPanelContainer {...panelContainerProps} promptInputSlot={promptInputSlot} />` instead of `<ConversationPanel ... />` directly. Scroll-triggered re-renders are now scoped to the panel subtree.
+- **Verification**: same scroll flow with react-scan after the refactor — total render events dropped from 866 to 182 (-79 %). `TddToggle`, `VoiceRecordButton`, `ConfirmDialog`, `AgentCapabilitiesModal`, `ConversationAgentCapabilitiesConfig`, `BackendToggle` all drop to **0** renders on scroll. Components that legitimately re-render on scroll (virtualized `MessageRow`, `MarkdownCodeRenderer`, the panel itself, `ConversationNav`) still do — they're inside the panel subtree.
+- **Lesson**: Pattern 6. A hook owning high-frequency state pulls its calling component into the same update loop. If the calling component sits above the subtree that actually consumes the state, every sibling above the consumer pays the cost — and props rebuilt as inline literals will fan the re-render out even past `React.memo` boundaries. The fix isn't memoization; it's moving the hook call down.
+
+### 2026-05-26 — Bulk session delete: 2N whole-state mutations + serial git worktree removes
+
+- **Symptom**: `POST /api/projects/[name]/sessions/bulk` with `op=delete` for 3 sessions took 27.9 s (trace `b326bd6c`). Breakdown: 3× `exec:git.complete` for `worktree remove --force` totalling ~25.3 s (91 %), plus 6× `state.mutate.complete` totalling ~2.5 s (`aggregate.diff` ~380 ms each).
+- **Root cause**: two compounding issues.
+  1. `deleteSession` ran the orphan-retarget and the row-removal as two separate `mutateState` calls. Each paid the full `readAll` → `structuredClone` → `diffAndCommit` cost (~430 ms with the diff alone ~380 ms), so every per-session delete doubled the whole-state mutate cost.
+  2. The bulk route handler in `src/lib/sessions/route-handlers.ts` looped `for await { await deps.deleteSession(...) }`, so the bookkeeping cost was 2×N for N sessions — there was no batch-aware path.
+- **Fix**:
+  - Fused retarget + remove into a single `mutateState` labeled `deleteSession` (`src/lib/sessions/service.ts`). `retargetOrphanedChildren` stays as a standalone export because the merge actor still uses it independently.
+  - Added `bulkDeleteSessions(projectPath, sessionNames)` that runs per-session side effects (worktree removal, transcript purge, notification/job-record cleanup) and then applies a single `mutateState` labeled `bulkDeleteSessions` that retargets all orphaned children and deletes all successfully-prepared sessions in one pass. The bulk route handler now delegates to it for `op=delete`. State mutations drop from `2N` → `1` per batch.
+  - Wrapped `git worktree remove` and its `rm -rf` fallback in `timed(logger, "session.worktree_remove", { ..., cleanup })`. The pre-existing `exec:git.complete` event lumped every git op under one signature, hiding worktree-remove p95 in aggregate reports — the new labeled span is now discriminable in `bun run logs:analyze -- report`.
+- **Not fixed (intentionally)**: serial `git worktree remove` calls within a bulk batch. Concurrent invocations against the same parent repository race on `.git/config.lock` (same root cause as claude-code #34645). The real bottleneck is the filesystem `rm` of `node_modules`/`.next` inside each worktree, not git's bookkeeping; if this is a hotspot, the right pattern is parallel `fs.rm(worktreePath, { recursive: true, force: true })` first, then a single serial `git worktree prune` — not parallel `git worktree remove`.
+- **Lesson**: Pattern 2. Even when each individual `mutate*` call is justified, callers that loop over them at the route layer multiply the whole-state cost. Bulk routes need a single batched mutation; per-step side effects belong outside of `mutateState`. Pair this with the discipline of giving long-running externals (like `git worktree remove`) a labeled `timed()` span so the report can see them.
 
 ### 2026-05-22 — Callers using `readState` where focused accessors would suffice
 

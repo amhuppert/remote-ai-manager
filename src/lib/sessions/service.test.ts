@@ -1017,9 +1017,8 @@ describe("deleteSession", () => {
       "/projects/repo",
     );
 
-    // Verify session removed from state (2 calls: retarget + delete)
-    expect(writeStateMock).toHaveBeenCalledTimes(2);
-    const savedState = writeStateMock.mock.calls[1]![0];
+    expect(writeStateMock).toHaveBeenCalledTimes(1);
+    const savedState = writeStateMock.mock.calls[0]![0];
     expect(
       savedState.projects["/projects/repo"].sessions["to-delete"],
     ).toBeUndefined();
@@ -1036,9 +1035,8 @@ describe("deleteSession", () => {
     // Git should NOT be called since worktree doesn't exist
     expect(gitMock).not.toHaveBeenCalled();
 
-    // Session should still be removed from state (2 calls: retarget + delete)
-    expect(writeStateMock).toHaveBeenCalledTimes(2);
-    const savedState = writeStateMock.mock.calls[1]![0];
+    expect(writeStateMock).toHaveBeenCalledTimes(1);
+    const savedState = writeStateMock.mock.calls[0]![0];
     expect(
       savedState.projects["/projects/repo"].sessions["no-worktree"],
     ).toBeUndefined();
@@ -1059,8 +1057,7 @@ describe("deleteSession", () => {
       { recursive: true, force: true },
     );
 
-    // Session still removed from state (2 calls: retarget + delete)
-    expect(writeStateMock).toHaveBeenCalledTimes(2);
+    expect(writeStateMock).toHaveBeenCalledTimes(1);
   });
 
   it("throws error for non-existent project", async () => {
@@ -1100,8 +1097,8 @@ describe("deleteSession", () => {
 
     expect(result.worktreeRemoved).toBe(true);
     expect(gitMock).toHaveBeenCalled();
-    expect(writeStateMock).toHaveBeenCalledTimes(2);
-    const savedState = writeStateMock.mock.calls[1]![0];
+    expect(writeStateMock).toHaveBeenCalledTimes(1);
+    const savedState = writeStateMock.mock.calls[0]![0];
     expect(
       savedState.projects["/projects/repo"].sessions["imported-session"],
     ).toBeUndefined();
@@ -1866,12 +1863,12 @@ describe("retargetOrphanedChildren", () => {
 });
 
 // ===========================================================================
-// Task 3.2 – deleteSession calls retargetOrphanedChildren before removal
+// deleteSession – fused retarget + remove (single mutateState)
 // ===========================================================================
 
 describe("deleteSession — orphan retargeting", () => {
-  it("retargets children before removing parent from state", async () => {
-    const state = {
+  function stateWithParentAndChild() {
+    return {
       projects: {
         "/projects/repo": {
           rootPath: "/projects/repo",
@@ -1914,25 +1911,230 @@ describe("deleteSession — orphan retargeting", () => {
       archivedProjects: [] as string[],
       pinnedProjects: [] as string[],
     };
-    readStateMock.mockResolvedValue(state);
+  }
+
+  it("performs retarget + remove in a single mutateState labeled deleteSession", async () => {
+    readStateMock.mockResolvedValue(stateWithParentAndChild());
     existsSyncMock.mockReturnValue(true);
     mockGitSuccess();
 
     await service.deleteSession("/projects/repo", "Parent");
 
-    // mutateState called 3 times: retarget children, then delete session
-    // First call: retarget children (retargetOrphanedChildren)
-    // Second call: delete session
     const mutateLabels = (deps.mutateState as Mock).mock.calls.map(
       (call: unknown[]) => call[0],
     );
-    expect(mutateLabels).toContain("retargetOrphanedChildren");
-    expect(mutateLabels).toContain("deleteSession");
+    expect(mutateLabels).toEqual(["deleteSession"]);
+  });
 
-    // retargetOrphanedChildren must be called BEFORE deleteSession
-    const retargetIdx = mutateLabels.indexOf("retargetOrphanedChildren");
-    const deleteIdx = mutateLabels.indexOf("deleteSession");
-    expect(retargetIdx).toBeLessThan(deleteIdx);
+  it("the single deleteSession mutator retargets children and removes the parent in one pass", async () => {
+    readStateMock.mockResolvedValue(stateWithParentAndChild());
+    existsSyncMock.mockReturnValue(true);
+    mockGitSuccess();
+
+    await service.deleteSession("/projects/repo", "Parent");
+
+    const writeCalls = writeStateMock.mock.calls;
+    expect(writeCalls).toHaveLength(1);
+    const [savedState, label] = writeCalls[0]!;
+    expect(label).toBe("deleteSession");
+
+    const project = savedState.projects["/projects/repo"];
+    expect(project.sessions["Parent"]).toBeUndefined();
+    const child = project.sessions["Child"];
+    expect(child.targetBranch).toBe("main");
+    expect(child.parentSessionName).toBeNull();
+  });
+});
+
+// ===========================================================================
+// bulkDeleteSessions – one mutateState for N sessions
+// ===========================================================================
+
+describe("bulkDeleteSessions", () => {
+  function stateWithThreeSiblingsAndChild() {
+    return {
+      projects: {
+        "/projects/repo": {
+          rootPath: "/projects/repo",
+          sessions: {
+            A: {
+              sessionName: "A",
+              worktreePath: "/projects/repo/.worktrees/A",
+              branchName: "csm/A",
+              createdAt: "2024-01-01T00:00:00Z",
+              lastActivityAt: "2024-01-01T00:00:00Z",
+              archived: false,
+              finished: false,
+              conversations: [],
+              source: "cc",
+              objective: null,
+              creationMode: "fast",
+              tddEnabled: true,
+              targetBranch: "main",
+              parentSessionName: null,
+            },
+            B: {
+              sessionName: "B",
+              worktreePath: "/projects/repo/.worktrees/B",
+              branchName: "csm/B",
+              createdAt: "2024-01-01T00:00:00Z",
+              lastActivityAt: "2024-01-01T00:00:00Z",
+              archived: false,
+              finished: false,
+              conversations: [],
+              source: "cc",
+              objective: null,
+              creationMode: "fast",
+              tddEnabled: true,
+              targetBranch: "main",
+              parentSessionName: null,
+            },
+            C: {
+              sessionName: "C",
+              worktreePath: "/projects/repo/.worktrees/C",
+              branchName: "csm/C",
+              createdAt: "2024-01-01T00:00:00Z",
+              lastActivityAt: "2024-01-01T00:00:00Z",
+              archived: false,
+              finished: false,
+              conversations: [],
+              source: "cc",
+              objective: null,
+              creationMode: "fast",
+              tddEnabled: true,
+              targetBranch: "main",
+              parentSessionName: null,
+            },
+            ChildOfA: {
+              sessionName: "ChildOfA",
+              worktreePath: "/projects/repo/.worktrees/ChildOfA",
+              branchName: "csm/ChildOfA",
+              createdAt: "2024-01-01T00:00:00Z",
+              lastActivityAt: "2024-01-01T00:00:00Z",
+              archived: false,
+              finished: false,
+              conversations: [],
+              source: "cc",
+              objective: null,
+              creationMode: "fast",
+              tddEnabled: true,
+              targetBranch: "csm/A",
+              parentSessionName: "A",
+            },
+          },
+        },
+      },
+      archivedProjects: [] as string[],
+      pinnedProjects: [] as string[],
+    };
+  }
+
+  it("performs the entire batch's state change in a single mutateState labeled bulkDeleteSessions", async () => {
+    readStateMock.mockResolvedValue(stateWithThreeSiblingsAndChild());
+    existsSyncMock.mockReturnValue(true);
+    mockGitSuccess();
+
+    await service.bulkDeleteSessions("/projects/repo", ["A", "B", "C"]);
+
+    const mutateLabels = (deps.mutateState as Mock).mock.calls.map(
+      (call: unknown[]) => call[0],
+    );
+    expect(mutateLabels).toEqual(["bulkDeleteSessions"]);
+  });
+
+  it("removes all sessions and retargets orphaned children in one pass", async () => {
+    readStateMock.mockResolvedValue(stateWithThreeSiblingsAndChild());
+    existsSyncMock.mockReturnValue(true);
+    mockGitSuccess();
+
+    await service.bulkDeleteSessions("/projects/repo", ["A", "B", "C"]);
+
+    expect(writeStateMock).toHaveBeenCalledTimes(1);
+    const savedState = writeStateMock.mock.calls[0]![0];
+    const project = savedState.projects["/projects/repo"];
+    expect(project.sessions["A"]).toBeUndefined();
+    expect(project.sessions["B"]).toBeUndefined();
+    expect(project.sessions["C"]).toBeUndefined();
+
+    const child = project.sessions["ChildOfA"];
+    expect(child.targetBranch).toBe("main");
+    expect(child.parentSessionName).toBeNull();
+  });
+
+  it("captures per-session failures without aborting the batch", async () => {
+    readStateMock.mockResolvedValue(stateWithThreeSiblingsAndChild());
+    existsSyncMock.mockReturnValue(true);
+    // git fails for B's worktree path; A and C succeed
+    gitMock.mockImplementation(async (args: string[]) => {
+      if (args[0] === "worktree" && args.includes("/projects/repo/.worktrees/B")) {
+        throw new Error("worktree busy");
+      }
+      return { stdout: "", stderr: "" };
+    });
+    // rm fallback also fails for B
+    (deps.rm as Mock).mockImplementation(async (path: string) => {
+      if (path === "/projects/repo/.worktrees/B") {
+        throw new Error("rm failed");
+      }
+    });
+
+    const results = await service.bulkDeleteSessions("/projects/repo", [
+      "A",
+      "B",
+      "C",
+    ]);
+
+    expect(results).toEqual([
+      { sessionName: "A", success: true },
+      { sessionName: "B", success: false, error: "rm failed" },
+      { sessionName: "C", success: true },
+    ]);
+
+    const savedState = writeStateMock.mock.calls[0]![0];
+    const project = savedState.projects["/projects/repo"];
+    expect(project.sessions["A"]).toBeUndefined();
+    expect(project.sessions["B"]).toBeDefined();
+    expect(project.sessions["C"]).toBeUndefined();
+  });
+
+  it("reports session-not-found as a failure result and still processes the rest", async () => {
+    readStateMock.mockResolvedValue(stateWithThreeSiblingsAndChild());
+    existsSyncMock.mockReturnValue(true);
+    mockGitSuccess();
+
+    const results = await service.bulkDeleteSessions("/projects/repo", [
+      "A",
+      "GhostSession",
+      "C",
+    ]);
+
+    expect(results[0]).toEqual({ sessionName: "A", success: true });
+    expect(results[1]?.sessionName).toBe("GhostSession");
+    expect(results[1]?.success).toBe(false);
+    expect(results[1]?.error).toMatch(/not found/);
+    expect(results[2]).toEqual({ sessionName: "C", success: true });
+  });
+
+  it("throws when the project does not exist", async () => {
+    readStateMock.mockResolvedValue(emptyState());
+    await expect(
+      service.bulkDeleteSessions("/nonexistent", ["A"]),
+    ).rejects.toThrow("Project not found: /nonexistent");
+  });
+
+  it("skips the state mutation entirely when no sessions were successfully prepared", async () => {
+    readStateMock.mockResolvedValue(stateWithThreeSiblingsAndChild());
+    existsSyncMock.mockReturnValue(true);
+    gitMock.mockRejectedValue(new Error("worktree busy"));
+    (deps.rm as Mock).mockRejectedValue(new Error("rm failed"));
+
+    const results = await service.bulkDeleteSessions("/projects/repo", [
+      "A",
+      "B",
+    ]);
+
+    expect(results.every((r) => !r.success)).toBe(true);
+    expect(writeStateMock).not.toHaveBeenCalled();
   });
 });
 

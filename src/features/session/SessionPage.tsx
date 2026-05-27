@@ -24,7 +24,6 @@ import { useSessionPageStoreBundle } from "@/features/session/hooks/use-session-
 import { useSessionPageDisplay } from "@/features/session/hooks/use-session-page-display";
 import { useSessionPageLocalState } from "@/features/session/hooks/use-session-page-local-state";
 import { useSessionPageQueries } from "@/features/session/hooks/use-session-page-queries";
-import { useSessionPageConversation } from "@/features/session/hooks/use-session-page-conversation";
 import { useSessionPageViewProps } from "@/features/session/hooks/use-session-page-view-props";
 
 interface Props {
@@ -278,21 +277,6 @@ export default function ConversationDetailPage({
     sessionStatus,
   });
 
-  const conversation = useSessionPageConversation({
-    projectName,
-    sessionName,
-    conversationId,
-    messages: rawMessages,
-    activeConversation,
-    worktreePath: session?.worktreePath,
-    isBusy,
-    selectedBackend,
-    handleDebugPrompt,
-    handleFork,
-    local,
-    collab,
-  });
-
   if (sessionQuery.isPending || !session) {
     return (
       <LoadingSessionView
@@ -329,6 +313,7 @@ export default function ConversationDetailPage({
         mergeDisabled,
         store,
         local,
+        collab,
         dsServers,
         dsStartServer,
         dsStopServer,
@@ -342,19 +327,10 @@ export default function ConversationDetailPage({
         commits,
         cumulativeImageCount,
         messagesPending: messagesQuery.isPending,
-        rows: conversation.rows,
-        totalMessages: conversation.displayMessages.length,
-        isCollabPassageInView: conversation.isCollabPassageInView,
-        currentMessageIndex: conversation.nav.currentMessageIndex,
-        handleFirstMessage: conversation.nav.handleFirstMessage,
-        handlePrevMessage: conversation.nav.handlePrevMessage,
-        handleNextMessage: conversation.nav.handleNextMessage,
-        handleLastMessage: conversation.nav.handleLastMessage,
-        handleRangeChanged: conversation.nav.handleRangeChanged,
-        handleAtBottomStateChange: conversation.nav.handleAtBottomStateChange,
-        handleAtTopStateChange: conversation.nav.handleAtTopStateChange,
-        renderMessageRow: conversation.renderMessageRow,
-        renderCollabRow: conversation.renderCollabRow,
+        messages: rawMessages,
+        worktreePath: session.worktreePath,
+        handleDebugPrompt,
+        handleFork,
         focusConfirmLoading,
         handleConfirmFocus,
         hasActiveCollab,

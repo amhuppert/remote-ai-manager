@@ -9,7 +9,11 @@ function createTestDeps(): BulkSessionsRouteDeps {
   return {
     resolveProjectPath: vi.fn().mockResolvedValue("/home/projects/test-proj"),
     setSessionArchived: vi.fn().mockResolvedValue(undefined),
-    deleteSession: vi.fn().mockResolvedValue({ worktreeRemoved: true }),
+    bulkDeleteSessions: vi
+      .fn()
+      .mockImplementation(async (_projectPath: string, names: string[]) =>
+        names.map((sessionName) => ({ sessionName, success: true })),
+      ),
   };
 }
 
@@ -86,7 +90,7 @@ describe("POST /api/projects/[name]/sessions/bulk", () => {
       "b",
       true,
     );
-    expect(deps.deleteSession).not.toHaveBeenCalled();
+    expect(deps.bulkDeleteSessions).not.toHaveBeenCalled();
   });
 
   it("unarchives passes archived=false", async () => {
@@ -101,7 +105,7 @@ describe("POST /api/projects/[name]/sessions/bulk", () => {
     );
   });
 
-  it("deletes every session via deleteSession", async () => {
+  it("deletes every session via a single bulkDeleteSessions call", async () => {
     const res = await handlers.POST(
       makeRequest({ op: "delete", sessionNames: ["a", "b"] }),
       makeParams(),
@@ -111,8 +115,32 @@ describe("POST /api/projects/[name]/sessions/bulk", () => {
     expect(body.results.every((r: { success: boolean }) => r.success)).toBe(
       true,
     );
-    expect(deps.deleteSession).toHaveBeenCalledTimes(2);
+    expect(deps.bulkDeleteSessions).toHaveBeenCalledTimes(1);
+    expect(deps.bulkDeleteSessions).toHaveBeenCalledWith(
+      "/home/projects/test-proj",
+      ["a", "b"],
+    );
     expect(deps.setSessionArchived).not.toHaveBeenCalled();
+  });
+
+  it("surfaces per-session failures from bulkDeleteSessions in the response", async () => {
+    vi.mocked(deps.bulkDeleteSessions).mockResolvedValueOnce([
+      { sessionName: "a", success: true },
+      { sessionName: "b", success: false, error: "rm failed" },
+      { sessionName: "c", success: true },
+    ]);
+    const res = await handlers.POST(
+      makeRequest({ op: "delete", sessionNames: ["a", "b", "c"] }),
+      makeParams(),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      results: [
+        { sessionName: "a", success: true },
+        { sessionName: "b", success: false, error: "rm failed" },
+        { sessionName: "c", success: true },
+      ],
+    });
   });
 
   it("captures per-item errors without aborting the batch", async () => {

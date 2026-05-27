@@ -1,7 +1,7 @@
 "use client";
 
 import { type ComponentProps, type ReactNode } from "react";
-import ConversationPanel from "@/components/conversation/ConversationPanel";
+import ConversationPanelContainer from "@/features/session/conversation/ConversationPanelContainer";
 import ConversationSidebar from "@/features/session/sidebar/ConversationSidebar";
 import { FinishedBanner } from "@/components/conversation/ConversationBanners";
 import SessionInfoStrip from "@/features/session/conversation/SessionInfoStrip";
@@ -12,7 +12,7 @@ import type { ConversationState } from "@/lib/conversations/schemas";
 
 type MobilePanel = "chat" | "diff" | "docs" | "specs" | "info";
 
-type ConversationPanelProps = ComponentProps<typeof ConversationPanel>;
+type PanelContainerProps = ComponentProps<typeof ConversationPanelContainer>;
 type RightPaneProps = ComponentProps<typeof RightPane>;
 
 export interface SessionContentProps {
@@ -36,7 +36,7 @@ export interface SessionContentProps {
   mobilePanel: MobilePanel;
   diff: RightPaneProps["diff"];
   commits: RightPaneProps["commits"];
-  conversationPanelProps: Omit<ConversationPanelProps, "promptInputSlot">;
+  panelContainerProps: Omit<PanelContainerProps, "promptInputSlot">;
   promptInputSlot: ReactNode;
 }
 
@@ -61,7 +61,7 @@ export default function SessionContent({
   mobilePanel,
   diff,
   commits,
-  conversationPanelProps,
+  panelContainerProps,
   promptInputSlot,
 }: SessionContentProps): React.JSX.Element {
   return (
@@ -106,8 +106,8 @@ export default function SessionContent({
             />
           )}
 
-          <ConversationPanel
-            {...conversationPanelProps}
+          <ConversationPanelContainer
+            {...panelContainerProps}
             promptInputSlot={promptInputSlot}
           />
 
