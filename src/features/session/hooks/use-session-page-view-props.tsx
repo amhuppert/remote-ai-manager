@@ -6,7 +6,10 @@ import type { useSessionPageLocalState } from "@/features/session/hooks/use-sess
 import type { useCollabContext } from "@/features/session/hooks/use-collab-context";
 import { usePromptComposerProps } from "@/features/session/hooks/use-prompt-composer-props";
 import type { SessionState } from "@/lib/sessions/schemas";
-import type { ConversationState, TranscriptMessage } from "@/lib/conversations/schemas";
+import type {
+  ConversationState,
+  TranscriptMessage,
+} from "@/lib/conversations/schemas";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { CollabConfigDraft } from "@/stores/collaboration.store";
 
@@ -15,7 +18,8 @@ type StoreBundle = ReturnType<typeof useSessionPageStoreBundle>;
 type LocalState = ReturnType<typeof useSessionPageLocalState>;
 type CollabContext = ReturnType<typeof useCollabContext>;
 type SessionPageTopbarProps = SessionPageViewProps["topbarProps"];
-type PanelContainerProps = SessionPageViewProps["contentProps"]["panelContainerProps"];
+type PanelContainerProps =
+  SessionPageViewProps["contentProps"]["panelContainerProps"];
 
 export interface UseSessionPageViewPropsArgs {
   projectName: string;

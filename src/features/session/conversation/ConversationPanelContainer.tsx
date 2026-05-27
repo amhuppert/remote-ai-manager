@@ -8,7 +8,10 @@ import { useConversationPanelProps } from "@/features/session/hooks/use-conversa
 import type { useSessionPageLocalState } from "@/features/session/hooks/use-session-page-local-state";
 import type { useSessionPageStoreBundle } from "@/features/session/hooks/use-session-page-store-bundle";
 import type { useCollabContext } from "@/features/session/hooks/use-collab-context";
-import type { ConversationState, TranscriptMessage } from "@/lib/conversations/schemas";
+import type {
+  ConversationState,
+  TranscriptMessage,
+} from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 
 type StoreBundle = ReturnType<typeof useSessionPageStoreBundle>;
@@ -138,5 +141,7 @@ export default function ConversationPanelContainer({
     isReadOnly,
   });
 
-  return <ConversationPanel {...panelProps} promptInputSlot={promptInputSlot} />;
+  return (
+    <ConversationPanel {...panelProps} promptInputSlot={promptInputSlot} />
+  );
 }

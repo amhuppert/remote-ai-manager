@@ -2066,7 +2066,10 @@ describe("bulkDeleteSessions", () => {
     existsSyncMock.mockReturnValue(true);
     // git fails for B's worktree path; A and C succeed
     gitMock.mockImplementation(async (args: string[]) => {
-      if (args[0] === "worktree" && args.includes("/projects/repo/.worktrees/B")) {
+      if (
+        args[0] === "worktree" &&
+        args.includes("/projects/repo/.worktrees/B")
+      ) {
         throw new Error("worktree busy");
       }
       return { stdout: "", stderr: "" };
