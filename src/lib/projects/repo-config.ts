@@ -1,7 +1,7 @@
 import { existsSync as defaultExistsSync } from "node:fs";
 import { readFile as defaultReadFile } from "node:fs/promises";
 import path from "node:path";
-import { execFile as timedExecFile } from "../shared/exec";
+import { execFileGroup as timedExecFileGroup } from "../shared/exec";
 import { buildChildEnv as defaultBuildChildEnv } from "../shared/child-env";
 import { perRepoConfigSchema, type PerRepoConfig } from "../config/schemas";
 import {
@@ -22,7 +22,10 @@ const defaultExecFileAsync = (
     maxBuffer?: number;
   },
 ): Promise<{ stdout: string; stderr: string }> =>
-  timedExecFile(cmd, args, {
+  // Group-aware exec: the pre-merge script forks a deep tree (npx → node →
+  // vitest → one worker per core). A plain timeout would SIGTERM only the
+  // shell and orphan the workers; this kills the whole process group.
+  timedExecFileGroup(cmd, args, {
     cwd: opts?.cwd,
     env: opts?.env,
     timeout: opts?.timeout,

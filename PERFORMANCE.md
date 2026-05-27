@@ -87,6 +87,17 @@ Heuristic: if a hook returns state that changes on user interaction *within* a p
 
 Each entry: symptom → root cause → fix → lesson. Add new entries at the top.
 
+### 2026-05-27 — Pre-merge validation exhausted RAM (vitest fork fan-out + orphaned workers)
+
+- **Symptom**: smart-merging a branch ran `scripts/pre-merge-validate.sh`; the machine hit the macOS "out of application memory" dialog (~30 GB shown against WezTerm, the terminal hosting CC) and froze. Reported as "the validation script's memory explodes, I suspect vitest."
+- **Root cause**: two independent infrastructure issues, neither branch-specific (`vitest.config.ts` was identical to main).
+  1. **Uncapped fork fan-out.** Vitest's default `forks` pool spawns one worker per CPU core with no `maxForks` cap and no per-fork heap limit. On a 16-core / 16 GB machine that is ~16 heavyweight Node processes loading the full app module graph + jsdom simultaneously. Measured in isolation each step is modest (eslint 1.3 GB, tsc 1.0 GB, vitest ~4 GB peak summed RSS across 16 forks); the danger is the startup thundering herd landing on top of the already-resident CC dev server + per-session dev servers, tipping a 16 GB box (only 2 GB swap) into swap death. The "30 GB" is the WezTerm process **coalition** (CC + spawned validation + all forks), inflated further by per-process virtual reservation.
+  2. **Orphaned workers on timeout.** CC runs the script through `execFile` (`src/lib/projects/repo-config.ts`), whose timeout signals only the direct child (the bash script). The deep tree `bash → npx → node → vitest → N workers` is not in a killed process group, so on timeout the N workers are **orphaned** and keep running. Each retried merge ("keeps happening") stacked another live worker set, compounding pressure into the spiral.
+- **Fix**:
+  - `vitest.config.ts`: set `pool: "forks"` with `poolOptions.forks.maxForks` scaled to RAM (`floor(totalmem_GB * 0.6 / 2)`, clamped to `[2, cores]` → 4 on a 16 GB box) plus `execArgv: ["--max-old-space-size=2048"]` so a single runaway file OOM-kills its own fork instead of growing unbounded. Verified: peak worker forks dropped from 16–18 to 4; suite still green.
+  - Added `execFileGroup` in `src/lib/shared/exec.ts` — spawns `detached` (own process group) and on timeout signals the whole group via `process.kill(-pid, "SIGTERM")` then escalates to `SIGKILL` after a grace period. Output is buffered to 10 MB and **truncated** (not killed) past that, fixing a latent secondary bug where the default 1 MB `execFile` `maxBuffer` would have silently failed a noisy validation. `repo-config.ts`'s validation runner now uses it.
+- **Lesson**: test-runner parallelism that scales to core count rather than memory is a latent OOM on high-core/low-RAM machines, and it compounds when the run shares the box with the app under test. Cap worker count by *memory budget*, not cores, and cap per-worker heap. Separately: any timeout that kills a process which fans out into a tree must kill the **process group** (`detached` + `kill(-pid)`), or the descendants orphan and accumulate across retries.
+
 ### 2026-05-27 — Scrolling the message panel re-rendered top-bar/dialog components
 
 - **Symptom**: react-scan captured 866 render events during a single scroll flow on the conversation page. `TddToggle`, `VoiceRecordButton`, `ConfirmDialog`, `AgentCapabilitiesModal`, and `ConversationAgentCapabilitiesConfig` each re-rendered 18× on scroll despite living in the top bar / dialog layer with no scroll-dependent state of their own. `BackendToggle` re-rendered 9×.

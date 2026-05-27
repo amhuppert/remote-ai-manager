@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { readFileSync, existsSync, unlinkSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { execFile, spawn } from "./exec";
+import { execFile, execFileGroup, spawn } from "./exec";
 import { _resetLoggerForTesting } from "../logging/logger";
 import { _resetTimedForTesting } from "../logging/timed";
 
@@ -196,5 +196,111 @@ describe("spawn", () => {
     const exit = lines.find((l) => l["message"] === "spawn.exit");
     expect(exit?.["signal"]).toBe("SIGTERM");
     expect(exit?.["level"]).toBe("debug");
+  });
+});
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+describe("execFileGroup", () => {
+  beforeEach(() => {
+    cleanupLog();
+    _resetLoggerForTesting();
+    _resetTimedForTesting();
+    if (!existsSync(tmpDir)) {
+      mkdirSync(tmpDir, { recursive: true });
+    }
+    delete process.env["CC_LOG_SILENT"];
+    process.env["CC_LOG_FILE"] = testLogFile;
+    process.env["CC_LOG_LEVEL"] = "debug";
+    process.env["CC_TIMING_INFO_MS"] = "0";
+    process.env["CC_TIMING_WARN_MS"] = "999999";
+  });
+
+  afterEach(() => {
+    cleanupLog();
+    _resetLoggerForTesting();
+    _resetTimedForTesting();
+    process.env["CC_LOG_SILENT"] = "1";
+    delete process.env["CC_LOG_FILE"];
+    delete process.env["CC_LOG_LEVEL"];
+    delete process.env["CC_TIMING_INFO_MS"];
+    delete process.env["CC_TIMING_WARN_MS"];
+  });
+
+  it("runs the command and returns stdout/stderr", async () => {
+    const result = await execFileGroup("/bin/sh", [
+      "-c",
+      "echo out; echo err >&2",
+    ]);
+    expect(result.stdout).toBe("out\n");
+    expect(result.stderr).toBe("err\n");
+  });
+
+  it("rejects on non-zero exit and preserves stdout/stderr (not flagged as killed)", async () => {
+    let caught:
+      | (Error & { stdout?: string; stderr?: string; killed?: boolean })
+      | undefined;
+    try {
+      await execFileGroup("/bin/sh", [
+        "-c",
+        "echo partial; echo boom >&2; exit 5",
+      ]);
+    } catch (err) {
+      caught = err as Error & {
+        stdout?: string;
+        stderr?: string;
+        killed?: boolean;
+      };
+    }
+    expect(caught).toBeDefined();
+    expect(caught?.stdout).toContain("partial");
+    expect(caught?.stderr).toContain("boom");
+    expect(caught?.killed).toBe(false);
+  });
+
+  it("kills the whole process group on timeout, leaving no orphaned grandchildren", async () => {
+    const pidFile = path.join(tmpDir, `grandchild-${Date.now()}.pid`);
+    // Parent shell backgrounds a long-lived grandchild, records its PID, then
+    // blocks. Without process-group kill the grandchild would survive the
+    // timeout; with it, the SIGTERM to -pid reaps the entire tree.
+    const script = `sleep 30 & echo $! > "${pidFile}"; sleep 30`;
+
+    let caught: (Error & { killed?: boolean }) | undefined;
+    try {
+      await execFileGroup("/bin/sh", ["-c", script], {
+        timeout: 250,
+        killGraceMs: 150,
+      });
+    } catch (err) {
+      caught = err as Error & { killed?: boolean };
+    }
+    expect(caught?.killed).toBe(true);
+
+    // Let SIGTERM/SIGKILL propagate to the group.
+    await new Promise((r) => setTimeout(r, 400));
+
+    const grandPid = Number(readFileSync(pidFile, "utf-8").trim());
+    expect(grandPid).toBeGreaterThan(0);
+    expect(isAlive(grandPid)).toBe(false);
+  });
+
+  it("truncates output beyond maxBuffer instead of failing the command", async () => {
+    // Emit ~200 KB but cap the buffer at 1 KB.
+    const result = await execFileGroup(
+      "/bin/sh",
+      [
+        "-c",
+        "for i in $(seq 1 2000); do echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; done",
+      ],
+      { maxBuffer: 1024 },
+    );
+    expect(Buffer.byteLength(result.stdout)).toBeLessThanOrEqual(1024);
   });
 });

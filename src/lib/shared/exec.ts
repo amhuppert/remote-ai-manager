@@ -117,6 +117,197 @@ export async function execFile(
   });
 }
 
+export interface ExecFileGroupOptions extends ExecFileOptions {
+  /** Time (ms) to wait after SIGTERM before escalating to SIGKILL. Default 2000. */
+  killGraceMs?: number;
+}
+
+const DEFAULT_GROUP_MAX_BUFFER = 10 * 1024 * 1024;
+const DEFAULT_KILL_GRACE_MS = 2000;
+
+function spawnCollectGroup(
+  command: string,
+  args: string[],
+  opts: {
+    cwd?: string;
+    env?: NodeJS.ProcessEnv;
+    timeout?: number;
+    maxBuffer: number;
+    killGraceMs: number;
+  },
+): Promise<ExecFileResult> {
+  return new Promise<ExecFileResult>((resolve, reject) => {
+    const child = nodeSpawn(command, args, {
+      cwd: opts.cwd,
+      env: opts.env,
+      // New process group: lets us signal the whole tree via process.kill(-pid).
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let truncated = false;
+    let timedOut = false;
+    let settled = false;
+    let sigkillTimer: NodeJS.Timeout | undefined;
+
+    function killGroup(signal: NodeJS.Signals): void {
+      if (child.pid === undefined) return;
+      try {
+        process.kill(-child.pid, signal);
+      } catch {
+        try {
+          child.kill(signal);
+        } catch {
+          // Already exited.
+        }
+      }
+    }
+
+    const timeoutTimer =
+      opts.timeout && opts.timeout > 0
+        ? setTimeout(() => {
+            timedOut = true;
+            killGroup("SIGTERM");
+            sigkillTimer = setTimeout(
+              () => killGroup("SIGKILL"),
+              opts.killGraceMs,
+            );
+          }, opts.timeout)
+        : undefined;
+
+    function append(chunk: Buffer, which: "out" | "err"): void {
+      if (truncated) return;
+      const remaining = opts.maxBuffer - stdoutBytes - stderrBytes;
+      if (chunk.length > remaining) {
+        const slice = chunk
+          .subarray(0, Math.max(0, remaining))
+          .toString("utf-8");
+        if (which === "out") stdout += slice;
+        else stderr += slice;
+        truncated = true;
+        return;
+      }
+      if (which === "out") {
+        stdout += chunk.toString("utf-8");
+        stdoutBytes += chunk.length;
+      } else {
+        stderr += chunk.toString("utf-8");
+        stderrBytes += chunk.length;
+      }
+    }
+
+    child.stdout?.on("data", (c: Buffer) => append(c, "out"));
+    child.stderr?.on("data", (c: Buffer) => append(c, "err"));
+
+    function cleanup(): void {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      if (sigkillTimer) clearTimeout(sigkillTimer);
+    }
+
+    child.once("error", (err) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    });
+
+    child.once("close", (code, signal) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (code === 0 && !timedOut) {
+        resolve({ stdout, stderr });
+        return;
+      }
+      const message = timedOut
+        ? "Command timed out"
+        : `Command failed with exit code ${code ?? "null"}`;
+      const err: ExecError = Object.assign(new Error(message), {
+        code: code ?? undefined,
+        signal: signal ?? null,
+        killed: timedOut,
+        stdout,
+        stderr,
+      });
+      reject(err);
+    });
+  });
+}
+
+/**
+ * Like {@link execFile}, but runs the command as the leader of its own process
+ * group (`detached: true`) so a timeout signals the *entire* tree via
+ * `process.kill(-pid, ...)`, not just the leader.
+ *
+ * Required for commands that fan out into deep process trees — e.g. a shell
+ * script that runs `vitest`, which forks one worker per CPU core. Node's
+ * built-in `execFile`/`spawn` timeout only signals the direct child, so
+ * killing the shell orphans the workers; they keep running and accumulate
+ * across retries until the machine runs out of memory.
+ *
+ * Output is buffered up to `maxBuffer` bytes (default 10 MB) and truncated
+ * beyond that rather than killing the child, so a noisy command degrades to
+ * truncated logs instead of a spurious failure. The timeout is the backstop
+ * for a runaway that never stops emitting.
+ */
+export async function execFileGroup(
+  command: string,
+  args: string[],
+  options: ExecFileGroupOptions = {},
+): Promise<ExecFileResult> {
+  const eventPrefix = options.eventPrefix ?? "exec";
+  const argsPreview = previewArgs(args);
+  const maxBuffer = options.maxBuffer ?? DEFAULT_GROUP_MAX_BUFFER;
+  const killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
+  const baseFields: Record<string, unknown> = {
+    command,
+    argsPreview,
+    cwd: options.cwd,
+    timeoutMs: options.timeout,
+  };
+
+  return timed(logger, eventPrefix, baseFields, async () => {
+    try {
+      const { stdout, stderr } = await spawnCollectGroup(command, args, {
+        cwd: options.cwd,
+        env: options.env,
+        timeout: options.timeout,
+        maxBuffer,
+        killGraceMs,
+      });
+      logger.debug(`${eventPrefix}.result`, {
+        ...baseFields,
+        stdoutBytes: Buffer.byteLength(stdout),
+        stderrBytes: Buffer.byteLength(stderr),
+        exitCode: 0,
+      });
+      return { stdout, stderr };
+    } catch (err) {
+      const execErr = err as ExecError;
+      logger.warn(`${eventPrefix}.exit_error`, {
+        ...baseFields,
+        exitCode: typeof execErr.code === "number" ? execErr.code : null,
+        signal: execErr.signal ?? null,
+        killed: execErr.killed === true,
+        timedOut: execErr.killed === true && (options.timeout ?? 0) > 0,
+        stdoutBytes:
+          typeof execErr.stdout === "string"
+            ? Buffer.byteLength(execErr.stdout)
+            : 0,
+        stderrBytes:
+          typeof execErr.stderr === "string"
+            ? Buffer.byteLength(execErr.stderr)
+            : 0,
+      });
+      throw err;
+    }
+  });
+}
+
 export interface SpawnTimedOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
