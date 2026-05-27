@@ -121,6 +121,7 @@ export default function ConversationPanelContainer({
     rows: conversation.rows,
     virtuosoRef: local.virtuosoRef,
     conversationId,
+    followBottom: conversation.nav.followBottom,
     renderMessageRow: conversation.renderMessageRow,
     renderCollabRow: conversation.renderCollabRow,
     renderTypingIndicator,

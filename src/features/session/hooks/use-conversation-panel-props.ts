@@ -36,6 +36,7 @@ export interface UseConversationPanelPropsArgs {
   rows: ConversationRow[];
   virtuosoRef: RefObject<VirtuosoHandle | null>;
   conversationId: string;
+  followBottom: boolean;
   renderMessageRow: ConversationVirtuosoListProps["renderMessage"];
   renderCollabRow: ConversationVirtuosoListProps["renderCollab"];
   renderTypingIndicator: ConversationVirtuosoListProps["renderFooter"];
@@ -74,6 +75,7 @@ export function useConversationPanelProps(
     rows,
     virtuosoRef,
     conversationId,
+    followBottom,
     renderMessageRow,
     renderCollabRow,
     renderTypingIndicator,
@@ -109,6 +111,7 @@ export function useConversationPanelProps(
       rows,
       virtuosoRef,
       conversationId,
+      followBottom,
       renderMessageRow,
       renderCollabRow,
       renderTypingIndicator,
@@ -143,6 +146,7 @@ export function useConversationPanelProps(
       rows,
       virtuosoRef,
       conversationId,
+      followBottom,
       renderMessageRow,
       renderCollabRow,
       renderTypingIndicator,

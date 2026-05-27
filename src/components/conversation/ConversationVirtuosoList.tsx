@@ -31,6 +31,7 @@ export interface ConversationVirtuosoListProps {
   rows: readonly ConversationRow[];
   virtuosoRef: Ref<VirtuosoHandle>;
   conversationId: string;
+  followBottom: boolean;
   renderMessage(args: {
     row: Extract<ConversationRow, { kind: "message" }>;
     isLast: boolean;
@@ -48,6 +49,7 @@ export default function ConversationVirtuosoList({
   rows,
   virtuosoRef,
   conversationId,
+  followBottom,
   renderMessage,
   renderCollab,
   renderFooter,
@@ -70,7 +72,7 @@ export default function ConversationVirtuosoList({
           ? renderMessage({ row, isLast: index === rows.length - 1 })
           : renderCollab({ row })
       }
-      followOutput={(isAtBottom) => (isAtBottom ? "smooth" : false)}
+      followOutput={() => (followBottom ? "smooth" : false)}
       atBottomThreshold={4}
       components={{ Footer: renderFooter, Item: ConversationVirtuosoItem }}
       rangeChanged={onRangeChanged}

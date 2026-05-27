@@ -138,6 +138,7 @@ function StoryFrame({
               rows={rows}
               virtuosoRef={virtuosoRef}
               conversationId="storybook-conversation"
+              followBottom={true}
               renderMessage={renderMessage}
               renderCollab={renderCollab}
               renderFooter={footer}
