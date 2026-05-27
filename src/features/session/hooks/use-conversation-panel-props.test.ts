@@ -19,6 +19,7 @@ describe("useConversationPanelProps", () => {
       return useConversationPanelProps({
         conversations: [{}],
         activeConversation: undefined,
+        sessionName: "sess-1",
         openMobileSidebar: () => {},
         currentMessageIndex: 2,
         totalMessages: 5,
@@ -50,6 +51,8 @@ describe("useConversationPanelProps", () => {
         focusConfirmLoading: false,
         handleConfirmFocus: () => {},
         isReadOnly: false,
+        canStop: false,
+        onStop: () => {},
       });
     });
 

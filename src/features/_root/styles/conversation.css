@@ -12,13 +12,29 @@
   min-height: 0;
 }
 
+/* Mobile-only context fill bar — hidden by default; revealed at <=768px */
+.mobile-context-fill {
+  display: none;
+}
+
 .panel-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: var(--space-sm);
   padding: var(--space-md) var(--space-lg);
   border-bottom: 1px solid var(--border-subtle);
   background: transparent;
+}
+
+/* Conversation panel header — per-backend tint that fades out across the bar */
+.prompt-panel[data-agent="claude"] > .panel-header {
+  background: linear-gradient(90deg, var(--cyan-glow), var(--bg-base) 55%);
+  border-bottom-color: rgba(0, 229, 255, 0.18);
+}
+
+.prompt-panel[data-agent="codex"] > .panel-header {
+  background: linear-gradient(90deg, var(--violet-glow), var(--bg-base) 55%);
+  border-bottom-color: rgba(199, 125, 255, 0.18);
 }
 
 .panel-title {
@@ -28,6 +44,148 @@
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-secondary);
+}
+
+/* Conversation title — readable, not all-caps, can ellipsis truncate */
+.panel-title--conversation {
+  font-family: var(--font-sans, inherit);
+  font-size: 0.92rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+/* Message count chip sits next to the title in the panel header */
+.panel-header__message-count {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Right-aligned cluster in the conversation panel header */
+.panel-header-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* Icon-only button used in panel header (e.g. copy-as-markdown) */
+.btn-icon-only {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.btn-icon-only:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+/* Codex variant — violet accents on the icon-only button */
+.prompt-panel[data-agent="codex"] .btn-icon-only:hover {
+  background: var(--violet-glow);
+  color: var(--violet);
+  border-color: rgba(199, 125, 255, 0.3);
+}
+
+/* Stop button — red, conditional on canStop */
+.conv-stop-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  border-radius: 999px;
+  background: rgba(248, 113, 113, 0.08);
+  color: var(--red, #f87171);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.conv-stop-btn:hover {
+  border-color: var(--red, #f87171);
+  background: rgba(248, 113, 113, 0.14);
+  box-shadow: 0 0 12px rgba(248, 113, 113, 0.25);
+}
+
+.conv-stop-btn-label {
+  line-height: 1;
+}
+
+/* Agent pill — used in conversation panel header + info strip */
+.agent-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.agent-pill--sm {
+  font-size: 0.62rem;
+  padding: 1px 6px;
+  gap: 4px;
+}
+
+.agent-pill-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 6px currentColor;
+}
+
+.agent-pill--sm .agent-pill-dot {
+  width: 5px;
+  height: 5px;
+}
+
+.agent-pill[data-agent="claude"] {
+  background: var(--cyan-glow);
+  color: var(--cyan);
+  border: 1px solid rgba(0, 229, 255, 0.3);
+}
+
+.agent-pill[data-agent="codex"] {
+  background: var(--violet-glow);
+  color: var(--violet);
+  border: 1px solid rgba(199, 125, 255, 0.3);
 }
 
 .synthetic-fork-badge {

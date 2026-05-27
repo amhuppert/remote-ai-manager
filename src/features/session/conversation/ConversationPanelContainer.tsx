@@ -46,6 +46,9 @@ export interface ConversationPanelContainerProps {
   local: LocalState;
   collab: CollabContext;
 
+  canStop: boolean;
+  onStop: () => void;
+
   promptInputSlot: ReactNode;
 }
 
@@ -71,6 +74,8 @@ export default function ConversationPanelContainer({
   store,
   local,
   collab,
+  canStop,
+  onStop,
   promptInputSlot,
 }: ConversationPanelContainerProps): React.JSX.Element {
   const conversation = useSessionPageConversation({
@@ -104,6 +109,7 @@ export default function ConversationPanelContainer({
   const panelProps = useConversationPanelProps({
     conversations,
     activeConversation,
+    sessionName,
     openMobileSidebar: local.openMobileSidebar,
     currentMessageIndex: conversation.nav.currentMessageIndex,
     totalMessages: conversation.displayMessages.length,
@@ -139,6 +145,8 @@ export default function ConversationPanelContainer({
     focusConfirmLoading,
     handleConfirmFocus,
     isReadOnly,
+    canStop,
+    onStop,
   });
 
   return (

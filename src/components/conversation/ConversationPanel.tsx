@@ -1,10 +1,12 @@
 "use client";
 
-import type { ReactNode, RefObject } from "react";
+import { useCallback, useState, type ReactNode, type RefObject } from "react";
 import { ContextFillIndicator } from "@/components/ContextFillIndicator";
 import ConversationNav from "@/components/ConversationNav";
 import FocusConfirmationBar from "@/components/FocusConfirmationBar";
 import SyntheticForkBadge from "@/features/session/conversation/SyntheticForkBadge";
+import AgentPill from "@/components/AgentPill";
+import { CopyIcon, CheckIcon, StopIcon } from "@/components/icons";
 import ConversationVirtuosoList, {
   type ConversationVirtuosoListProps,
   type VirtuosoHandle,
@@ -16,6 +18,7 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 export interface ConversationPanelProps {
   conversations: boolean;
   activeConversation: ConversationState | undefined;
+  sessionName: string;
 
   openMobileSidebar: () => void;
 
@@ -54,12 +57,17 @@ export interface ConversationPanelProps {
   handleConfirmFocus: () => void;
   isReadOnly: boolean;
 
+  canStop: boolean;
+  onStop: () => void;
+  buildMarkdown?: () => string | null;
+
   promptInputSlot: ReactNode;
 }
 
 export default function ConversationPanel({
   conversations,
   activeConversation,
+  sessionName,
   openMobileSidebar,
   currentMessageIndex,
   totalMessages,
@@ -91,10 +99,26 @@ export default function ConversationPanel({
   focusConfirmLoading,
   handleConfirmFocus,
   isReadOnly,
+  canStop,
+  onStop,
+  buildMarkdown,
   promptInputSlot,
 }: ConversationPanelProps): React.JSX.Element {
+  const panelBackend = selectedBackend;
+  const conversationTitle = activeConversation?.name ?? sessionName;
+  const [copied, setCopied] = useState(false);
+  const handleCopyMarkdown = useCallback(() => {
+    if (!buildMarkdown) return;
+    const text = buildMarkdown();
+    if (!text) return;
+    void navigator.clipboard?.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    });
+  }, [buildMarkdown]);
+
   return (
-    <div className="prompt-panel">
+    <div className="prompt-panel" data-agent={panelBackend}>
       <div className="panel-header">
         {conversations && (
           <button
@@ -105,18 +129,52 @@ export default function ConversationPanel({
             &#9776; Conversations
           </button>
         )}
-        <span className="panel-title">Conversation</span>
+        <AgentPill backend={panelBackend} />
+        <span
+          className="panel-title panel-title--conversation"
+          title={conversationTitle}
+        >
+          {conversationTitle}
+        </span>
+        <span className="panel-header__message-count">
+          {totalMessages} message{totalMessages === 1 ? "" : "s"}
+        </span>
         {activeConversation?.forkedFrom?.forkMode === "synthetic" && (
           <SyntheticForkBadge />
         )}
-        <ConversationNav
-          currentIndex={currentMessageIndex}
-          totalCount={totalMessages}
-          onFirst={handleFirstMessage}
-          onPrevious={handlePrevMessage}
-          onNext={handleNextMessage}
-          onLast={handleLastMessage}
-        />
+        <div className="panel-header-end">
+          <ConversationNav
+            currentIndex={currentMessageIndex}
+            totalCount={totalMessages}
+            onFirst={handleFirstMessage}
+            onPrevious={handlePrevMessage}
+            onNext={handleNextMessage}
+            onLast={handleLastMessage}
+          />
+          {canStop && (
+            <button
+              type="button"
+              className="conv-stop-btn"
+              onClick={onStop}
+              title="Stop agent"
+              aria-label="Stop agent"
+            >
+              <StopIcon size={11} />
+              <span className="conv-stop-btn-label">Stop</span>
+            </button>
+          )}
+          {buildMarkdown && (
+            <button
+              type="button"
+              className="btn-icon-only"
+              onClick={handleCopyMarkdown}
+              title="Copy as markdown"
+              aria-label="Copy as markdown"
+            >
+              {copied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
+            </button>
+          )}
+        </div>
       </div>
       {contextPercent != null && (
         <div className="mobile-context-fill">

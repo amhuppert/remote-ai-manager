@@ -3,89 +3,90 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import InfoDetailsPopover from "@/features/session/conversation/InfoDetailsPopover";
 
-// Mock clipboard API
 beforeEach(() => {
   Object.assign(navigator, {
     clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
   });
 });
 
+const baseProps = {
+  conversationId: "c3e2c1cc-abcd-1234-5678-abcdef012345",
+  backendRef: {
+    backend: "claude" as const,
+    sessionId: "sess_abc123xyz",
+  },
+  createdAt: "2026-04-15T16:15:00Z",
+  worktreePath: "/home/alex/github/remote-ai-manager/.worktrees/my-branch",
+  promptCount: 3,
+};
+
 describe("InfoDetailsPopover", () => {
-  const baseProps = {
-    conversationId: "c3e2c1cc-abcd-1234-5678-abcdef012345",
-    backendRef: {
-      backend: "claude" as const,
-      sessionId: "sess_abc123xyz",
-    },
-    createdAt: "2026-04-15T16:15:00Z",
-    worktreePath: "/home/alex/github/remote-ai-manager/.worktrees/my-branch",
-  };
-
-  it("renders the info button", () => {
-    render(<InfoDetailsPopover {...baseProps} />);
-    expect(screen.getByRole("button", { name: /details/i })).toBeTruthy();
-  });
-
-  it("does not show popover content by default", () => {
+  it("hides popover content until the trigger is activated", () => {
     render(<InfoDetailsPopover {...baseProps} />);
     expect(screen.queryByText("Conversation ID")).toBeNull();
-  });
-
-  it("shows popover content when button is clicked", () => {
-    render(<InfoDetailsPopover {...baseProps} />);
-    fireEvent.click(screen.getByRole("button", { name: /details/i }));
+    fireEvent.click(screen.getByRole("button", { name: /session details/i }));
     expect(screen.getByText("Conversation ID")).toBeTruthy();
-    expect(screen.getByText("Session Ref")).toBeTruthy();
-    expect(screen.getByText("Created")).toBeTruthy();
-    expect(screen.getByText("Worktree")).toBeTruthy();
   });
 
-  it("formats Claude backend ref correctly", () => {
+  it("renders the Claude session ref value", () => {
     render(<InfoDetailsPopover {...baseProps} />);
-    fireEvent.click(screen.getByRole("button", { name: /details/i }));
+    fireEvent.click(screen.getByRole("button", { name: /session details/i }));
     expect(screen.getByText("sess_abc123xyz")).toBeTruthy();
   });
 
-  it("formats Codex backend ref correctly", () => {
+  it("renders the Codex thread id value", () => {
     render(
       <InfoDetailsPopover
         {...baseProps}
         backendRef={{ backend: "codex", threadId: "thread_xyz789" }}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: /details/i }));
+    fireEvent.click(screen.getByRole("button", { name: /session details/i }));
     expect(screen.getByText("thread_xyz789")).toBeTruthy();
   });
 
-  it("shows em-dash when backendRef is null", () => {
+  it("renders an em-dash when backendRef is null", () => {
     render(<InfoDetailsPopover {...baseProps} backendRef={null} />);
-    fireEvent.click(screen.getByRole("button", { name: /details/i }));
-    // The session ref value should show em-dash
-    const refRow = screen.getByText("Session Ref").closest(".info-popover-row");
-    expect(refRow?.querySelector(".info-popover-val")?.textContent).toBe("—");
+    fireEvent.click(screen.getByRole("button", { name: /session details/i }));
+    expect(screen.getByText("\u2014")).toBeTruthy();
   });
 
-  it("copies value to clipboard when copy button is clicked", () => {
+  it("writes the conversation id to the clipboard when its copy button is activated", () => {
     render(<InfoDetailsPopover {...baseProps} />);
-    fireEvent.click(screen.getByRole("button", { name: /details/i }));
-    // Click the copy button next to Conversation ID
-    const rows = document.querySelectorAll(".info-popover-row");
-    const copyBtn = rows[0]?.querySelector(".info-popover-copy");
-    expect(copyBtn).toBeTruthy();
-    fireEvent.click(copyBtn!);
+    fireEvent.click(screen.getByRole("button", { name: /session details/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /copy conversation id/i }),
+    );
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
       "c3e2c1cc-abcd-1234-5678-abcdef012345",
     );
   });
 
-  it("closes popover when clicking outside", () => {
+  it("writes the full worktree path (not the shortened display) to the clipboard", () => {
+    render(<InfoDetailsPopover {...baseProps} />);
+    fireEvent.click(screen.getByRole("button", { name: /session details/i }));
+    fireEvent.click(screen.getByRole("button", { name: /copy worktree/i }));
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      baseProps.worktreePath,
+    );
+  });
+
+  it("invokes onCopyContext and renders the Copy context button when provided", () => {
+    const onCopyContext = vi.fn().mockReturnValue(true);
+    render(<InfoDetailsPopover {...baseProps} onCopyContext={onCopyContext} />);
+    fireEvent.click(screen.getByRole("button", { name: /session details/i }));
+    fireEvent.click(screen.getByRole("button", { name: /copy context/i }));
+    expect(onCopyContext).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes when an outside click occurs after pinning", () => {
     render(
       <div>
         <InfoDetailsPopover {...baseProps} />
         <div data-testid="outside">outside</div>
       </div>,
     );
-    fireEvent.click(screen.getByRole("button", { name: /details/i }));
+    fireEvent.click(screen.getByRole("button", { name: /session details/i }));
     expect(screen.getByText("Conversation ID")).toBeTruthy();
     fireEvent.mouseDown(screen.getByTestId("outside"));
     expect(screen.queryByText("Conversation ID")).toBeNull();

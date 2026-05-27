@@ -9,28 +9,36 @@ beforeAll(storybookAnnotations.beforeAll);
 
 const { Conversation, Default, Split, Diff } = composeStories(stories);
 
+function activeButton(): HTMLElement | null {
+  return (
+    screen
+      .getAllByRole("button")
+      .find((b) => b.className.split(/\s+/).includes("active")) ?? null
+  );
+}
+
 describe("LayoutSwitcher stories", () => {
   it("Conversation highlights the conversation-only button", async () => {
     await Conversation.run();
-    const buttons = screen.getAllByRole("button");
-    expect(buttons[0]!.className).toContain("active");
+    expect(activeButton()?.getAttribute("data-tooltip")).toBe(
+      "Conversation only",
+    );
   });
 
   it("Default highlights the default-split button", async () => {
     await Default.run();
-    const buttons = screen.getAllByRole("button");
-    expect(buttons[1]!.className).toContain("active");
+    expect(activeButton()?.getAttribute("data-tooltip")).toBe(
+      "Conversation + Diff sidebar",
+    );
   });
 
   it("Split highlights the 50/50 button", async () => {
     await Split.run();
-    const buttons = screen.getAllByRole("button");
-    expect(buttons[2]!.className).toContain("active");
+    expect(activeButton()?.getAttribute("data-tooltip")).toBe("Split 50/50");
   });
 
   it("Diff highlights the diff-only button", async () => {
     await Diff.run();
-    const buttons = screen.getAllByRole("button");
-    expect(buttons[3]!.className).toContain("active");
+    expect(activeButton()?.getAttribute("data-tooltip")).toBe("Diff only");
   });
 });

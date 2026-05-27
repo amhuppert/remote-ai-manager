@@ -39,7 +39,6 @@ interface SessionDetailState {
   showDeleteConfirm: boolean;
   showCommitDialog: boolean;
   showMergeDialog: boolean;
-  infoExpanded: boolean;
   sidebarCollapsed: boolean;
   sidebarFilter: string;
   sidebarSessionFilter: SidebarSessionFilter | null;
@@ -80,7 +79,6 @@ interface SessionDetailActions {
   cancelMerge: () => void;
   requestDeleteSession: () => void;
   cancelDeleteSession: () => void;
-  toggleInfoStrip: () => void;
   toggleSidebar: () => void;
   hydrateSidebar: () => void;
   setSidebarFilter: (value: string) => void;
@@ -122,7 +120,6 @@ const initialState: SessionDetailState = {
   showDeleteConfirm: false,
   showCommitDialog: false,
   showMergeDialog: false,
-  infoExpanded: false,
   sidebarCollapsed: false,
   sidebarFilter: "",
   sidebarSessionFilter: null,
@@ -324,11 +321,6 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
 
     // -- UI toggles --
 
-    toggleInfoStrip: () =>
-      set((state) => {
-        state.infoExpanded = !state.infoExpanded;
-      }),
-
     toggleSidebar: () =>
       set((state) => {
         state.sidebarCollapsed = !state.sidebarCollapsed;
@@ -451,8 +443,6 @@ export const useShowCommitDialog = () =>
   useSessionDetailStore((s) => s.showCommitDialog);
 export const useShowMergeDialog = () =>
   useSessionDetailStore((s) => s.showMergeDialog);
-export const useInfoExpanded = () =>
-  useSessionDetailStore((s) => s.infoExpanded);
 export const useSidebarCollapsed = () =>
   useSessionDetailStore((s) => s.sidebarCollapsed);
 export const useSidebarFilter = () =>
@@ -514,8 +504,6 @@ export const useRequestDeleteSession = () =>
   useSessionDetailStore((s) => s.requestDeleteSession);
 export const useCancelDeleteSessionDetail = () =>
   useSessionDetailStore((s) => s.cancelDeleteSession);
-export const useToggleInfoStrip = () =>
-  useSessionDetailStore((s) => s.toggleInfoStrip);
 export const useToggleSidebar = () =>
   useSessionDetailStore((s) => s.toggleSidebar);
 export const useHydrateSidebar = () =>

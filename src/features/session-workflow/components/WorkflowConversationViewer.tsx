@@ -112,6 +112,9 @@ export default function WorkflowConversationViewer({
       <ConversationPanel
         conversations={false}
         activeConversation={undefined}
+        sessionName={sessionName}
+        canStop={false}
+        onStop={noop}
         openMobileSidebar={noop}
         currentMessageIndex={nav.currentMessageIndex}
         totalMessages={messages.length}

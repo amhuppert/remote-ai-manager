@@ -550,14 +550,11 @@ describe("ConversationDetailPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("displays session info with branch name and prompt count", () => {
+  it("displays session info with branch name", () => {
     renderPage();
-    // Branch name visible in info strip (summary + details)
     expect(
       screen.getAllByText("csm/test-session").length,
     ).toBeGreaterThanOrEqual(1);
-    // Prompt count rendered as text (info strip + mobile action menu)
-    expect(screen.getAllByText("5").length).toBeGreaterThanOrEqual(1);
   });
 
   it("shows message counter with position / total", () => {

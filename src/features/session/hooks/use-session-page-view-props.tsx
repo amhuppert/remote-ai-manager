@@ -1,5 +1,7 @@
 "use client";
 
+import type { ComponentProps } from "react";
+import type SessionContent from "@/features/session/conversation/SessionContent";
 import type { SessionPageViewProps } from "@/features/session/SessionPageView";
 import type { useSessionPageStoreBundle } from "@/features/session/hooks/use-session-page-store-bundle";
 import type { useSessionPageLocalState } from "@/features/session/hooks/use-session-page-local-state";
@@ -17,9 +19,9 @@ type PromptComposerArgs = Parameters<typeof usePromptComposerProps>[0];
 type StoreBundle = ReturnType<typeof useSessionPageStoreBundle>;
 type LocalState = ReturnType<typeof useSessionPageLocalState>;
 type CollabContext = ReturnType<typeof useCollabContext>;
-type SessionPageTopbarProps = SessionPageViewProps["topbarProps"];
 type PanelContainerProps =
   SessionPageViewProps["contentProps"]["panelContainerProps"];
+type SessionContentProps = ComponentProps<typeof SessionContent>;
 
 export interface UseSessionPageViewPropsArgs {
   projectName: string;
@@ -49,21 +51,21 @@ export interface UseSessionPageViewPropsArgs {
   collab: CollabContext;
 
   // dev servers
-  dsServers: SessionPageTopbarProps["dsServers"];
-  dsStartServer: SessionPageTopbarProps["dsStartServer"];
-  dsStopServer: SessionPageTopbarProps["dsStopServer"];
-  dsStartAll: SessionPageTopbarProps["dsStartAll"];
-  dsStopAll: SessionPageTopbarProps["dsStopAll"];
+  dsServers: SessionContentProps["dsServers"];
+  dsStartServer: SessionContentProps["dsStartServer"];
+  dsStopServer: SessionContentProps["dsStopServer"];
+  dsStartAll: () => void;
+  dsStopAll: () => void;
 
   // tdd / layout
   tddEnabled: boolean;
   onTddChange: (val: boolean) => void;
   tddDisabled: boolean;
-  onLayoutChange: SessionPageTopbarProps["onLayoutChange"];
+  onLayoutChange: SessionContentProps["onLayoutChange"];
 
   // diff/commits/queries
-  diff: SessionPageViewProps["contentProps"]["diff"];
-  commits: SessionPageViewProps["contentProps"]["commits"];
+  diff: SessionContentProps["diff"];
+  commits: SessionContentProps["commits"];
   cumulativeImageCount: number;
   messagesPending: boolean;
   messages: readonly TranscriptMessage[];
@@ -143,6 +145,8 @@ export function useSessionPageViewProps(
     handleConfirmFocus: args.handleConfirmFocus,
     handleDebugPrompt: args.handleDebugPrompt,
     handleFork: args.handleFork,
+    canStop: args.canStop,
+    onStop: args.handleStopPrompt,
     store,
     local,
     collab: args.collab,
@@ -194,37 +198,23 @@ export function useSessionPageViewProps(
     setCollabConfigDraft: args.setCollabConfigDraft,
     clearCollabConfigDraft: args.clearCollabConfigDraft,
     debugToggleMutation: args.debugToggleMutation,
-    canStop: args.canStop,
-    handleStopPrompt: args.handleStopPrompt,
   });
 
   return {
     mobilePanel: store.mobilePanel,
     topbarProps: {
-      projectName: args.projectName,
-      sessionName: args.session.sessionName,
-      decodedProjectName: args.decodedProjectName,
-      statusDotClass: args.statusDotClass,
-      displayStatus: args.displayStatus,
-      tddEnabled: args.tddEnabled,
-      onTddChange: args.onTddChange,
-      tddDisabled: args.tddDisabled,
-      layout: store.layout,
-      onLayoutChange: args.onLayoutChange,
-      dsOpen: store.dsOpen,
-      dsServers: args.dsServers,
-      dsClose: store.dsClose,
-      dsToggle: store.dsToggle,
-      dsStartServer: args.dsStartServer,
-      dsStopServer: args.dsStopServer,
-      dsStartAll: args.dsStartAll,
-      dsStopAll: args.dsStopAll,
-      commitDisabled: args.commitDisabled,
-      mergeDisabled: args.mergeDisabled,
-      targetBranch: args.targetBranch,
-      onCommit: store.requestCommit,
-      onMerge: store.requestMerge,
-      onDelete: store.requestDelete,
+      breadcrumbs: [
+        { label: "projects", href: "/projects" },
+        {
+          label: args.decodedProjectName,
+          href: `/projects/${encodeURIComponent(args.projectName)}`,
+        },
+        {
+          label: args.session.sessionName,
+          href: `/projects/${encodeURIComponent(args.projectName)}/${encodeURIComponent(args.session.sessionName)}`,
+          isSession: true,
+        },
+      ],
     },
     contentProps: {
       session: args.session,
@@ -248,6 +238,22 @@ export function useSessionPageViewProps(
       diff: args.diff,
       commits: args.commits,
       panelContainerProps,
+      tddEnabled: args.tddEnabled,
+      onTddChange: args.onTddChange,
+      tddDisabled: args.tddDisabled,
+      onLayoutChange: args.onLayoutChange,
+      dsOpen: store.dsOpen,
+      dsServers: args.dsServers,
+      dsClose: store.dsClose,
+      dsToggle: store.dsToggle,
+      dsStartServer: args.dsStartServer,
+      dsStopServer: args.dsStopServer,
+      dsStartAll: args.dsStartAll,
+      dsStopAll: args.dsStopAll,
+      commitDisabled: args.commitDisabled,
+      onCommit: store.requestCommit,
+      onMerge: store.requestMerge,
+      onDelete: store.requestDelete,
     },
     promptInputSlotProps: {
       isWorkflowManagedConversation: args.isWorkflowManagedConversation,

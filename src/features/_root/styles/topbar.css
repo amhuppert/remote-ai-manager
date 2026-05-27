@@ -85,29 +85,45 @@
 }
 
 .topbar-nav-link {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--text-secondary);
-  transition: all 0.15s ease;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   text-decoration: none;
+  transition: all 0.15s ease;
 }
 
 .topbar-nav-link:hover {
   color: var(--text-primary);
+  border-color: var(--cyan);
   background: var(--bg-hover);
 }
 
 .topbar-nav-link.active {
-  color: var(--cyan);
+  color: var(--text-primary);
+  border-color: var(--cyan);
+}
+
+.topbar-nav-link-label {
+  line-height: 1;
 }
 
 @media (max-width: 768px) {
   .topbar-nav-link {
-    width: 44px;
     height: 44px;
+    padding: 0 var(--space-sm);
+  }
+  .topbar-nav-link-label {
+    display: none;
   }
 }

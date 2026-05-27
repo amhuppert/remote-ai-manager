@@ -37,8 +37,6 @@ function makeProps(
     sendTitle: "Send prompt",
     sendButtonInner: <span>Send</span>,
     onSendPrompt: vi.fn(),
-    canStop: false,
-    onStopPrompt: vi.fn(),
     ...overrides,
   };
 }
@@ -118,26 +116,5 @@ describe("PromptDesktopToolbar", () => {
     ) as HTMLButtonElement;
     expect(trigger).not.toBeNull();
     expect(trigger.disabled).toBe(true);
-  });
-
-  it("does not render the Stop button when canStop=false", () => {
-    renderWithQuery(
-      <PromptDesktopToolbar {...makeProps({ canStop: false })} />,
-    );
-    expect(screen.queryByTitle("Stop agent")).toBeNull();
-  });
-
-  it("renders the Stop button when canStop=true", () => {
-    renderWithQuery(<PromptDesktopToolbar {...makeProps({ canStop: true })} />);
-    expect(screen.getByTitle("Stop agent")).toBeInTheDocument();
-  });
-
-  it("invokes onStopPrompt when the Stop button is clicked", () => {
-    const onStopPrompt = vi.fn();
-    renderWithQuery(
-      <PromptDesktopToolbar {...makeProps({ canStop: true, onStopPrompt })} />,
-    );
-    fireEvent.click(screen.getByTitle("Stop agent"));
-    expect(onStopPrompt).toHaveBeenCalledTimes(1);
   });
 });

@@ -106,6 +106,22 @@ function makeProps(overrides: Partial<Props> = {}): Props {
     commits: [],
     panelContainerProps: {} as Props["panelContainerProps"],
     promptInputSlot: null,
+    tddEnabled: false,
+    onTddChange: vi.fn(),
+    tddDisabled: false,
+    onLayoutChange: vi.fn(),
+    dsOpen: false,
+    dsServers: [],
+    dsClose: vi.fn(),
+    dsToggle: vi.fn(),
+    dsStartServer: vi.fn(),
+    dsStopServer: vi.fn(),
+    dsStartAll: vi.fn(),
+    dsStopAll: vi.fn(),
+    commitDisabled: false,
+    onCommit: vi.fn(),
+    onMerge: vi.fn(),
+    onDelete: vi.fn(),
     ...overrides,
   };
 }
@@ -134,19 +150,21 @@ describe("SessionContent", () => {
       <SessionContent {...makeProps({ conversations: undefined })} />,
     );
     expect(queryByTestId("stub-conversation-sidebar")).toBeNull();
-    // Also: the layout should NOT have the with-sidebar modifier.
-    const contentArea = container.querySelector(".session-content-area");
-    expect(contentArea?.classList.contains("with-sidebar")).toBe(false);
+    const main = container.querySelector("main.main");
+    expect(main?.getAttribute("data-with-sidebar")).toBe("off");
   });
 
-  it("renders the ConversationSidebar and the with-sidebar modifier when conversations are supplied", () => {
+  it("renders the ConversationSidebar as a sibling of the detail layout when conversations are supplied", () => {
     const { getByTestId, container } = renderWithQuery(
       <SessionContent
         {...makeProps({ conversations: [makeConversation()] })}
       />,
     );
-    expect(getByTestId("stub-conversation-sidebar")).toBeInTheDocument();
-    const contentArea = container.querySelector(".session-content-area");
-    expect(contentArea?.classList.contains("with-sidebar")).toBe(true);
+    const sidebar = getByTestId("stub-conversation-sidebar");
+    expect(sidebar).toBeInTheDocument();
+    const main = container.querySelector("main.main");
+    expect(main?.getAttribute("data-with-sidebar")).toBe("on");
+    // Sidebar lives at the top level of .main, not inside the content area.
+    expect(sidebar.parentElement).toBe(main);
   });
 });

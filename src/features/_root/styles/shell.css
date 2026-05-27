@@ -23,3 +23,35 @@
   padding: 0;
   overflow: clip;
 }
+
+/* Conversation sidebar lives as the first column of .main on desktop.
+   When the sidebar is collapsed, its column shrinks to 0 so the messages
+   pane (and the info strip atop it) span only the remaining space — never
+   the full viewport. */
+.app[data-page="detail"] .main[data-with-sidebar="on"] {
+  display: grid;
+  grid-template-columns: 308px minmax(0, 1fr);
+  min-height: 0;
+}
+
+.app[data-page="detail"]
+  .main[data-with-sidebar="on"][data-sidebar-collapsed="true"] {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+@media (max-width: 1180px) {
+  .app[data-page="detail"] .main[data-with-sidebar="on"] {
+    grid-template-columns: 280px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  /* Sidebar becomes a fixed-position drawer on mobile — drop the grid so the
+     content column reclaims full width. */
+  .app[data-page="detail"] .main[data-with-sidebar="on"],
+  .app[data-page="detail"]
+    .main[data-with-sidebar="on"][data-sidebar-collapsed="true"] {
+    display: block;
+    grid-template-columns: none;
+  }
+}

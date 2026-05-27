@@ -16,6 +16,7 @@ type Bundle = Omit<ConversationPanelProps, "promptInputSlot">;
 export interface UseConversationPanelPropsArgs {
   conversations: unknown;
   activeConversation: ConversationState | undefined;
+  sessionName: string;
   openMobileSidebar: () => void;
   currentMessageIndex: number;
   totalMessages: number;
@@ -47,6 +48,9 @@ export interface UseConversationPanelPropsArgs {
   focusConfirmLoading: boolean;
   handleConfirmFocus: () => void;
   isReadOnly: boolean;
+  canStop: boolean;
+  onStop: () => void;
+  buildMarkdown?: () => string | null;
 }
 
 export function useConversationPanelProps(
@@ -55,6 +59,7 @@ export function useConversationPanelProps(
   const {
     conversations,
     activeConversation,
+    sessionName,
     openMobileSidebar,
     currentMessageIndex,
     totalMessages,
@@ -86,11 +91,15 @@ export function useConversationPanelProps(
     focusConfirmLoading,
     handleConfirmFocus,
     isReadOnly,
+    canStop,
+    onStop,
+    buildMarkdown,
   } = args;
   return useMemo<Bundle>(
     () => ({
       conversations: Boolean(conversations),
       activeConversation,
+      sessionName,
       openMobileSidebar,
       currentMessageIndex,
       totalMessages,
@@ -122,10 +131,14 @@ export function useConversationPanelProps(
       focusConfirmLoading,
       handleConfirmFocus,
       isReadOnly,
+      canStop,
+      onStop,
+      buildMarkdown,
     }),
     [
       conversations,
       activeConversation,
+      sessionName,
       openMobileSidebar,
       currentMessageIndex,
       totalMessages,
@@ -157,6 +170,9 @@ export function useConversationPanelProps(
       focusConfirmLoading,
       handleConfirmFocus,
       isReadOnly,
+      canStop,
+      onStop,
+      buildMarkdown,
     ],
   );
 }

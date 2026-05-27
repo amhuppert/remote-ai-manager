@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { DevServerRuntimeState } from "@/lib/dev-server/schemas";
-// ── Types ──────────────────────────────────────────────────────
 
 export interface DevServerDrawerProps {
   open: boolean;
@@ -15,8 +14,6 @@ export interface DevServerDrawerProps {
   onStartAll: () => void;
   onStopAll: () => void;
 }
-
-// ── Icons ──────────────────────────────────────────────────────
 
 function ServerIcon() {
   return (
@@ -50,8 +47,6 @@ function ServerIcon() {
     </svg>
   );
 }
-
-// ── Sub-components ─────────────────────────────────────────────
 
 function StatusDot({ status }: { status: DevServerRuntimeState["status"] }) {
   return <span className={`ds-dot ds-dot-${status}`} />;
@@ -126,7 +121,115 @@ function ServerRow({
   );
 }
 
-// ── Main Component ─────────────────────────────────────────────
+export interface DevServerPanelProps extends Omit<
+  DevServerDrawerProps,
+  "onToggle"
+> {
+  /** Position the panel below this element. */
+  anchorRef: RefObject<HTMLElement | null>;
+}
+
+export function DevServerPanel({
+  open,
+  servers,
+  onClose,
+  onStart,
+  onStop,
+  onStartAll,
+  onStopAll,
+  anchorRef,
+}: DevServerPanelProps): React.JSX.Element | null {
+  const [panelPos, setPanelPos] = useState<{ top: number; right: number }>({
+    top: 0,
+    right: 0,
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [open, onClose]);
+
+  useEffect(() => {
+    if (!open) return;
+    const el = anchorRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    setPanelPos({
+      top: rect.bottom + 4,
+      right: window.innerWidth - rect.right,
+    });
+  }, [open, anchorRef]);
+
+  if (!open) return null;
+
+  const hasStoppable = servers.some(
+    (s) => s.status === "running" || s.status === "starting",
+  );
+  const hasStopped = servers.some(
+    (s) => s.status === "stopped" || s.status === "error",
+  );
+
+  return createPortal(
+    <>
+      <div className="ds-backdrop" onClick={onClose} />
+      <div
+        className="ds-panel"
+        style={{ top: panelPos.top, right: panelPos.right }}
+        role="dialog"
+        aria-label="Dev servers"
+      >
+        <div className="ds-header">
+          <span className="ds-title">Dev Servers</span>
+          <button
+            className="ds-close"
+            onClick={onClose}
+            type="button"
+            title="Close"
+          >
+            &#10005;
+          </button>
+        </div>
+        <div className="ds-body">
+          {servers.length === 0 ? (
+            <div className="ds-empty">No dev servers configured</div>
+          ) : (
+            servers.map((server) => (
+              <ServerRow
+                key={server.serverName}
+                server={server}
+                onStart={() => onStart(server.serverName)}
+                onStop={() => onStop(server.serverName)}
+              />
+            ))
+          )}
+        </div>
+        {(hasStopped || hasStoppable) && (
+          <div className="ds-footer">
+            {hasStopped && (
+              <button
+                className="btn btn-sm btn-primary"
+                onClick={onStartAll}
+                type="button"
+              >
+                Start All
+              </button>
+            )}
+            {hasStoppable && (
+              <button className="btn btn-sm" onClick={onStopAll} type="button">
+                Stop All
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </>,
+    document.body,
+  );
+}
 
 export default function DevServerDrawer({
   open,
@@ -139,40 +242,10 @@ export default function DevServerDrawer({
   onStopAll,
 }: DevServerDrawerProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const [panelPos, setPanelPos] = useState<{ top: number; right: number }>({
-    top: 0,
-    right: 0,
-  });
-
-  // Close on Escape
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [open, onClose]);
-
-  // Position panel below trigger when opening
-  useEffect(() => {
-    if (!open || !triggerRef.current) return;
-    const rect = triggerRef.current.getBoundingClientRect();
-    setPanelPos({
-      top: rect.bottom + 4,
-      right: window.innerWidth - rect.right,
-    });
-  }, [open]);
 
   const runningCount = servers.filter(
     (s) => s.status === "running" || s.status === "starting",
   ).length;
-  const hasStoppable = servers.some(
-    (s) => s.status === "running" || s.status === "starting",
-  );
-  const hasStopped = servers.some(
-    (s) => s.status === "stopped" || s.status === "error",
-  );
   const hasError = servers.some((s) => s.status === "error");
   const hasRunning = runningCount > 0;
 
@@ -195,7 +268,6 @@ export default function DevServerDrawer({
 
   return (
     <div className="ds-wrapper">
-      {/* Inline trigger button */}
       <button
         ref={triggerRef}
         className={triggerClass}
@@ -212,63 +284,16 @@ export default function DevServerDrawer({
         </span>
         <ServerIcon />
       </button>
-
-      {/* Panel + backdrop rendered via portal to escape topbar stacking context */}
-      {open &&
-        createPortal(
-          <>
-            <div className="ds-backdrop" onClick={onClose} />
-            <div
-              className="ds-panel"
-              style={{ top: panelPos.top, right: panelPos.right }}
-            >
-              <div className="ds-header">
-                <span className="ds-title">Dev Servers</span>
-                <button
-                  className="ds-close"
-                  onClick={onClose}
-                  type="button"
-                  title="Close"
-                >
-                  &#10005;
-                </button>
-              </div>
-              <div className="ds-body">
-                {servers.map((server) => (
-                  <ServerRow
-                    key={server.serverName}
-                    server={server}
-                    onStart={() => onStart(server.serverName)}
-                    onStop={() => onStop(server.serverName)}
-                  />
-                ))}
-              </div>
-              {(hasStopped || hasStoppable) && (
-                <div className="ds-footer">
-                  {hasStopped && (
-                    <button
-                      className="btn btn-sm btn-primary"
-                      onClick={onStartAll}
-                      type="button"
-                    >
-                      Start All
-                    </button>
-                  )}
-                  {hasStoppable && (
-                    <button
-                      className="btn btn-sm"
-                      onClick={onStopAll}
-                      type="button"
-                    >
-                      Stop All
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          </>,
-          document.body,
-        )}
+      <DevServerPanel
+        open={open}
+        servers={servers}
+        onClose={onClose}
+        onStart={onStart}
+        onStop={onStop}
+        onStartAll={onStartAll}
+        onStopAll={onStopAll}
+        anchorRef={triggerRef}
+      />
     </div>
   );
 }

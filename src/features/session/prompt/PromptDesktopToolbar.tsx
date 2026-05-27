@@ -38,8 +38,6 @@ export interface PromptDesktopToolbarProps {
   sendTitle: string;
   sendButtonInner: React.ReactNode;
   onSendPrompt: () => void;
-  canStop: boolean;
-  onStopPrompt: () => void;
 }
 
 export default function PromptDesktopToolbar({
@@ -70,8 +68,6 @@ export default function PromptDesktopToolbar({
   sendTitle,
   sendButtonInner,
   onSendPrompt,
-  canStop,
-  onStopPrompt,
 }: PromptDesktopToolbarProps): React.JSX.Element {
   return (
     <div className="prompt-toolbar">
@@ -142,17 +138,6 @@ export default function PromptDesktopToolbar({
           toggleRecording={toggleRecording}
           disabled={sending}
         />
-        {canStop && (
-          <button
-            type="button"
-            className="stop-btn"
-            onClick={onStopPrompt}
-            title="Stop agent"
-            aria-label="Stop agent"
-          >
-            {"\u25A0"}
-          </button>
-        )}
         <button
           className={sendBtnClass}
           disabled={sendDisabled}

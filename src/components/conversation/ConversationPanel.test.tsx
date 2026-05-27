@@ -13,6 +13,7 @@ function makeProps(
   return {
     conversations: false,
     activeConversation: undefined,
+    sessionName: "session-1",
     openMobileSidebar: vi.fn(),
     currentMessageIndex: 0,
     totalMessages: 0,
@@ -44,6 +45,8 @@ function makeProps(
     focusConfirmLoading: false,
     handleConfirmFocus: vi.fn(),
     isReadOnly: false,
+    canStop: false,
+    onStop: vi.fn(),
     promptInputSlot: null,
     ...overrides,
   };

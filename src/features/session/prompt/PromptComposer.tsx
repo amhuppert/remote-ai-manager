@@ -110,8 +110,6 @@ interface PromptComposerProps {
   onCollabDismiss: () => void;
   onDebugToggle: () => void;
   debugTogglePending: boolean;
-  canStop: boolean;
-  onStopPrompt: () => void;
 }
 
 export default function PromptComposer({
@@ -160,8 +158,6 @@ export default function PromptComposer({
   onCollabDismiss,
   onDebugToggle,
   debugTogglePending,
-  canStop,
-  onStopPrompt,
 }: PromptComposerProps): React.JSX.Element {
   const { disabled: sendDisabled, title: sendTitle } = computeSendButtonState({
     promptText,
@@ -295,8 +291,6 @@ export default function PromptComposer({
           sendTitle={sendTitle}
           sendButtonInner={sendButtonInner}
           onSendPrompt={onSendPrompt}
-          canStop={canStop}
-          onStopPrompt={onStopPrompt}
         />
         <MobilePromptToolbar
           modelOptions={getModelsForBackend(selectedBackend)}
@@ -346,19 +340,6 @@ export default function PromptComposer({
               toggleRecording={toggleRecording}
               disabled={sending}
             />
-          }
-          stopButton={
-            canStop ? (
-              <button
-                type="button"
-                className="stop-btn"
-                onClick={onStopPrompt}
-                title="Stop agent"
-                aria-label="Stop agent"
-              >
-                {"\u25A0"}
-              </button>
-            ) : null
           }
           sendButton={
             <button

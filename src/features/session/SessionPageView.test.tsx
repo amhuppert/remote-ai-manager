@@ -20,7 +20,9 @@ function makeProps(
 ): SessionPageViewProps {
   return {
     mobilePanel: "chat",
-    topbarProps: { projectName: "repo" } as SessionPageViewProps["topbarProps"],
+    topbarProps: {
+      breadcrumbs: [],
+    } as SessionPageViewProps["topbarProps"],
     contentProps: {
       projectName: "repo",
     } as SessionPageViewProps["contentProps"],
@@ -64,6 +66,6 @@ describe("SessionPageView shell contract", () => {
   });
 
   it.todo(
-    "renders SessionTopbar, SessionContent, MobileBottomBar, and ConversationDialogs — deeper assertions live in each child's own test",
+    "renders Topbar, SessionContent, MobileBottomBar, and ConversationDialogs — deeper assertions live in each child's own test",
   );
 });

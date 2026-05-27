@@ -74,6 +74,7 @@ function InfoStripDemo({
             backendRef={backendRef}
             createdAt={createdAt}
             worktreePath={worktreeFull}
+            promptCount={0}
           />
         </div>
       </div>

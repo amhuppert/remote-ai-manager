@@ -125,6 +125,7 @@ export default function Topbar({
               strokeLinecap="round"
             />
           </svg>
+          <span className="topbar-nav-link-label">Workflows</span>
         </Link>
         <Link
           href="/config"

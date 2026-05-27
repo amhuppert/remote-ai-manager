@@ -478,15 +478,21 @@
     height: 44px;
   }
 
-  /* Panel header: compact single row on mobile, never shrink */
+  /* Panel header: compact, may wrap to keep Stop + Copy visible on narrow widths */
   .prompt-panel .panel-header {
     padding: var(--space-xs) var(--space-sm);
     gap: var(--space-xs);
     flex-shrink: 0;
+    flex-wrap: wrap;
   }
 
-  /* Hide redundant title on mobile — Chat tab already indicates the panel */
+  /* Hide title on mobile — topbar shows session name; saves header space */
   .prompt-panel .panel-header .panel-title {
+    display: none;
+  }
+
+  /* Hide agent pill on mobile — duplicated by the agent picker in the prompt toolbar */
+  .prompt-panel .panel-header .agent-pill {
     display: none;
   }
 }
