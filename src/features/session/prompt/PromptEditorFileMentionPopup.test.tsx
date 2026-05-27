@@ -140,4 +140,24 @@ describe("PromptEditorFileMentionPopup", () => {
       ),
     ).toBe(false);
   });
+
+  it("Escape calls onClose, stops propagation, and consumes the event", async () => {
+    const onClose = vi.fn();
+    const ref = createRef<FileMentionPopupHandle>();
+    await act(async () => {
+      renderPopup({ onClose }, ref);
+    });
+    const event = new KeyboardEvent("keydown", {
+      key: "Escape",
+      cancelable: true,
+      bubbles: true,
+    });
+    const preventDefault = vi.spyOn(event, "preventDefault");
+    const stopPropagation = vi.spyOn(event, "stopPropagation");
+    const consumed = ref.current?.handleKeyDown(event);
+    expect(consumed).toBe(true);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(preventDefault).toHaveBeenCalled();
+    expect(stopPropagation).toHaveBeenCalled();
+  });
 });

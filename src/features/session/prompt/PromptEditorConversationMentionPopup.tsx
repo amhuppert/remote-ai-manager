@@ -47,6 +47,8 @@ export interface ConversationMentionPopupProps {
   currentProjectName: string;
   currentConversationId: string;
   onSelect: (selection: ConversationMentionSelection) => void;
+  /** Dismiss the popup (Escape). Host should clear its suggestion state. */
+  onClose?: () => void;
 }
 
 interface QueryShape {
@@ -103,7 +105,7 @@ export function createConversationMentionPopup(
     ConversationMentionPopupHandle,
     ConversationMentionPopupProps
   >(function PromptEditorConversationMentionPopup(
-    { query, currentProjectName, currentConversationId, onSelect },
+    { query, currentProjectName, currentConversationId, onSelect, onClose },
     ref,
   ) {
     const [includeArchived, setIncludeArchived] = useState(false);
@@ -204,11 +206,17 @@ export function createConversationMentionPopup(
             selectAt(activeIndexRef.current);
             return true;
           }
+          case "Escape": {
+            event.preventDefault();
+            event.stopPropagation();
+            onClose?.();
+            return true;
+          }
           default:
             return false;
         }
       },
-      [selectAt, toggleArchived],
+      [selectAt, toggleArchived, onClose],
     );
 
     useImperativeHandle(ref, () => ({ handleKeyDown }), [handleKeyDown]);

@@ -265,6 +265,53 @@ describe("PromptEditorConversationMentionPopup", () => {
     expect(state.lastCallParams?.includeArchived).toBe(true);
   });
 
+  it("Escape calls onClose, stops propagation, and consumes the event", () => {
+    const { useFake } = makeFakeHook({
+      data: makeResponse([
+        makeItem({ conversationId: "c1", conversationName: "Item" }),
+      ]),
+      isLoading: false,
+      isError: false,
+      lastCallParams: null,
+    });
+    const Popup = createConversationMentionPopup({
+      useAllConversations: useFake,
+    });
+    const onClose = vi.fn();
+    const handleRef = {
+      current: null as ConversationMentionPopupHandle | null,
+    };
+
+    render(
+      <Popup
+        ref={(handle) => {
+          handleRef.current = handle;
+        }}
+        query=""
+        currentProjectName="my-app"
+        currentConversationId="conv-self"
+        onSelect={() => {}}
+        onClose={onClose}
+      />,
+    );
+
+    const event = new KeyboardEvent("keydown", {
+      key: "Escape",
+      cancelable: true,
+      bubbles: true,
+    });
+    const preventDefault = vi.spyOn(event, "preventDefault");
+    const stopPropagation = vi.spyOn(event, "stopPropagation");
+    let consumed: boolean | undefined;
+    act(() => {
+      consumed = handleRef.current?.handleKeyDown(event);
+    });
+    expect(consumed).toBe(true);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(preventDefault).toHaveBeenCalled();
+    expect(stopPropagation).toHaveBeenCalled();
+  });
+
   it("surfaces query error message in the list", () => {
     const { useFake } = makeFakeHook({
       data: undefined,

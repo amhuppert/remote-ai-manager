@@ -421,6 +421,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
             backend={backend}
             onSelect={(selection) => slashState.command(selection)}
             onShowPlaceholder={onShowPlaceholder}
+            onClose={() => setSlashState(null)}
           />
         ) : null}
         {fileState && projectName && sessionName ? (
@@ -430,6 +431,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
             projectName={projectName}
             sessionName={sessionName}
             onSelect={(selection) => fileState.command(selection)}
+            onClose={() => setFileState(null)}
           />
         ) : null}
         {conversationState && projectName ? (
@@ -439,6 +441,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
             currentProjectName={projectName}
             currentConversationId={conversationId}
             onSelect={(selection) => conversationState.command(selection)}
+            onClose={() => setConversationState(null)}
           />
         ) : null}
         <EditorContent editor={editor} className="prompt-editor__content" />

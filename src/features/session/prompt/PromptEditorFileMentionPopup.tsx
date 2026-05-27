@@ -34,6 +34,8 @@ export interface FileMentionPopupProps {
   sessionName: string;
   /** Insert the chosen file into the editor at the trigger range. */
   onSelect: (selection: FileMentionSelection) => void;
+  /** Dismiss the popup (Escape). Host should clear its suggestion state. */
+  onClose?: () => void;
 }
 
 function deriveBasenameAndExt(path: string): { basename: string; ext: string } {
@@ -48,7 +50,7 @@ export const PromptEditorFileMentionPopup = forwardRef<
   FileMentionPopupHandle,
   FileMentionPopupProps
 >(function PromptEditorFileMentionPopup(
-  { query, projectName, sessionName, onSelect },
+  { query, projectName, sessionName, onSelect, onClose },
   ref,
 ) {
   const filesQuery = useProjectFilesQuery({ projectName, sessionName });
@@ -121,11 +123,17 @@ export const PromptEditorFileMentionPopup = forwardRef<
           selectAt(activeIndexRef.current);
           return true;
         }
+        case "Escape": {
+          event.preventDefault();
+          event.stopPropagation();
+          onClose?.();
+          return true;
+        }
         default:
           return false;
       }
     },
-    [selectAt],
+    [selectAt, onClose],
   );
 
   useImperativeHandle(ref, () => ({ handleKeyDown }), [handleKeyDown]);

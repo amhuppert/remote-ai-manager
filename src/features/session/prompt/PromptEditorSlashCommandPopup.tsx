@@ -65,6 +65,8 @@ export interface SlashCommandPopupProps {
   onSelect: (selection: SlashCommandSelection) => void;
   /** Notify the host when an item with `argumentHint` is selected. */
   onShowPlaceholder?: (text: string) => void;
+  /** Dismiss the popup (Escape). Host should clear its suggestion state. */
+  onClose?: () => void;
 }
 
 interface ScoredItem {
@@ -87,6 +89,7 @@ export const PromptEditorSlashCommandPopup = forwardRef<
     backend = "claude",
     onSelect,
     onShowPlaceholder,
+    onClose,
   },
   ref,
 ) {
@@ -260,11 +263,17 @@ export const PromptEditorSlashCommandPopup = forwardRef<
           selectAt(activeIndexRef.current);
           return true;
         }
+        case "Escape": {
+          event.preventDefault();
+          event.stopPropagation();
+          onClose?.();
+          return true;
+        }
         default:
           return false;
       }
     },
-    [selectAt],
+    [selectAt, onClose],
   );
 
   useImperativeHandle(ref, () => ({ handleKeyDown }), [handleKeyDown]);
