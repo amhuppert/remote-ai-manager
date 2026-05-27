@@ -39,6 +39,7 @@ describe("useConversationPanelProps", () => {
         rows: [],
         virtuosoRef,
         conversationId: "c",
+        followBottom: true,
         renderMessageRow,
         renderCollabRow,
         renderTypingIndicator,

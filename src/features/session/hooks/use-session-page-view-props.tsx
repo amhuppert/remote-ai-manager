@@ -69,6 +69,7 @@ export interface UseSessionPageViewPropsArgs {
 
   // conversation nav
   currentMessageIndex: number;
+  followBottom: boolean;
   handleFirstMessage: () => void;
   handlePrevMessage: () => void;
   handleNextMessage: () => void;
@@ -166,6 +167,7 @@ export function useSessionPageViewProps(
     rows: args.rows,
     virtuosoRef: local.virtuosoRef,
     conversationId: args.conversationId,
+    followBottom: args.followBottom,
     renderMessageRow: args.renderMessageRow,
     renderCollabRow: args.renderCollabRow,
     renderTypingIndicator,

@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { renderHook, act } from "@testing-library/react";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useRef } from "react";
 import { useConversationNav } from "./use-conversation-nav";
+import { useSessionDetailStore } from "@/stores/session-detail.store";
 import type { ConversationRow } from "@/features/session/conversation/conversation-rows";
 import type { VirtuosoHandle } from "@/components/conversation/ConversationVirtuosoList";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
@@ -27,7 +28,26 @@ function setup(args: { rows: ConversationRow[]; totalMessages: number }) {
   });
 }
 
+function setupWithRef(args: {
+  rows: ConversationRow[];
+  totalMessages: number;
+  virtuosoHandle: VirtuosoHandle;
+}) {
+  return renderHook(() => {
+    const virtuosoRef = useRef<VirtuosoHandle>(args.virtuosoHandle);
+    return useConversationNav({
+      rows: args.rows,
+      totalMessages: args.totalMessages,
+      virtuosoRef,
+    });
+  });
+}
+
 describe("useConversationNav", () => {
+  beforeEach(() => {
+    useSessionDetailStore.getState().resetStore();
+  });
+
   it("currentMessageIndex starts at 0 with empty rows and zero total", () => {
     const { result } = setup({ rows: [], totalMessages: 0 });
     expect(result.current.currentMessageIndex).toBe(0);
@@ -98,5 +118,63 @@ describe("useConversationNav", () => {
     expect(typeof result.current.handlePrevMessage).toBe("function");
     expect(typeof result.current.handleNextMessage).toBe("function");
     expect(typeof result.current.handleLastMessage).toBe("function");
+  });
+
+  it("followBottom defaults to true so initial content auto-scrolls", () => {
+    const { result } = setup({ rows: [], totalMessages: 0 });
+    expect(result.current.followBottom).toBe(true);
+  });
+
+  it("followBottom turns off when the user scrolls away from the bottom and re-engages when they return", () => {
+    const rows = [messageRow(0), messageRow(1), messageRow(2)];
+    const { result } = setup({ rows, totalMessages: 3 });
+
+    act(() => {
+      result.current.handleAtBottomStateChange(false);
+    });
+    expect(result.current.followBottom).toBe(false);
+
+    act(() => {
+      result.current.handleAtBottomStateChange(true);
+    });
+    expect(result.current.followBottom).toBe(true);
+  });
+
+  it("re-engages followBottom and scrolls to the bottom when a new prompt enters sending state", () => {
+    const rows = [messageRow(0), messageRow(1), messageRow(2)];
+    const scrollToIndex = vi.fn();
+    const virtuosoHandle = {
+      scrollToIndex,
+      scrollTo: vi.fn(),
+      scrollIntoView: vi.fn(),
+      scrollBy: vi.fn(),
+      getState: vi.fn(),
+      autoscrollToBottom: vi.fn(),
+    } as unknown as VirtuosoHandle;
+    const { result } = setupWithRef({
+      rows,
+      totalMessages: 3,
+      virtuosoHandle,
+    });
+
+    act(() => {
+      result.current.handleAtBottomStateChange(false);
+    });
+    expect(result.current.followBottom).toBe(false);
+
+    act(() => {
+      useSessionDetailStore
+        .getState()
+        .submitPrompt([{ type: "text", text: "hello" }], 3);
+    });
+
+    expect(result.current.followBottom).toBe(true);
+    expect(scrollToIndex).toHaveBeenCalledWith(
+      expect.objectContaining({
+        index: "LAST",
+        align: "end",
+        behavior: "smooth",
+      }),
+    );
   });
 });

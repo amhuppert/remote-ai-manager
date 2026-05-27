@@ -108,6 +108,7 @@ function makeProps(overrides: Partial<Props> = {}): Props {
     rows: [],
     virtuosoRef: createRef<VirtuosoHandle>(),
     conversationId: "conv-1",
+    followBottom: true,
     renderMessageRow: () => null,
     renderCollabRow: () => null,
     renderTypingIndicator: () => null,

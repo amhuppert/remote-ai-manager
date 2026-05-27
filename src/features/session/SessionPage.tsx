@@ -346,6 +346,7 @@ export default function ConversationDetailPage({
         totalMessages: conversation.displayMessages.length,
         isCollabPassageInView: conversation.isCollabPassageInView,
         currentMessageIndex: conversation.nav.currentMessageIndex,
+        followBottom: conversation.nav.followBottom,
         handleFirstMessage: conversation.nav.handleFirstMessage,
         handlePrevMessage: conversation.nav.handlePrevMessage,
         handleNextMessage: conversation.nav.handleNextMessage,

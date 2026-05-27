@@ -132,6 +132,7 @@ export default function WorkflowConversationViewer({
         rows={rows}
         virtuosoRef={virtuosoRef}
         conversationId={conversationId}
+        followBottom={nav.followBottom}
         renderMessageRow={renderMessageRow}
         renderCollabRow={renderCollabRow}
         renderTypingIndicator={renderTypingIndicator}

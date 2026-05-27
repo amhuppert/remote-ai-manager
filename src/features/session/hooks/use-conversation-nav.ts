@@ -23,6 +23,7 @@ import type {
   ConversationVirtuosoListProps,
   VirtuosoHandle,
 } from "@/components/conversation/ConversationVirtuosoList";
+import { useSending } from "@/stores/session-detail.store";
 
 export interface UseConversationNavArgs {
   rows: ConversationRow[];
@@ -32,6 +33,7 @@ export interface UseConversationNavArgs {
 
 export interface UseConversationNavResult {
   currentMessageIndex: number;
+  followBottom: boolean;
   handleRangeChanged: ConversationVirtuosoListProps["onRangeChanged"];
   handleAtBottomStateChange: ConversationVirtuosoListProps["onAtBottomStateChange"];
   handleAtTopStateChange: ConversationVirtuosoListProps["onAtTopStateChange"];
@@ -88,6 +90,12 @@ export function useConversationNav({
     atTop: true,
   });
 
+  // `followBottom` controls whether new content auto-scrolls the list:
+  // true while the user is at (or being pinned to) the bottom, false once
+  // they scroll up. Submitting a new prompt re-engages it so the user sees
+  // the loading indicator and incoming response without manual scrolling.
+  const [followBottom, setFollowBottom] = useState(true);
+
   const handleRangeChanged = useCallback(
     ({ startIndex }: { startIndex: number; endIndex: number }) => {
       const topmostMessageIndex =
@@ -103,6 +111,7 @@ export function useConversationNav({
   );
 
   const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
+    setFollowBottom(atBottom);
     setNavState((prev) =>
       prev.atBottom === atBottom
         ? prev
@@ -181,6 +190,31 @@ export function useConversationNav({
     [totalMessages, holdProgrammaticNavTarget, virtuosoRef],
   );
 
+  // Re-engage follow mode whenever a new prompt enters the sending phase so
+  // the user is taken back to the bottom even if they had scrolled up. The
+  // state update happens at render time (React's "info from previous renders"
+  // pattern) so we don't trip `react-hooks/set-state-in-effect`.
+  const sending = useSending();
+  const [prevSending, setPrevSending] = useState(sending);
+  if (sending !== prevSending) {
+    setPrevSending(sending);
+    if (sending) {
+      setFollowBottom(true);
+    }
+  }
+
+  // Scroll side effect runs separately so the effect body stays free of
+  // setState. A ref tracks the previous committed `sending` value so the
+  // scroll fires exactly once per rising edge.
+  const lastScrollSendingRef = useRef(sending);
+  useEffect(() => {
+    const prev = lastScrollSendingRef.current;
+    lastScrollSendingRef.current = sending;
+    if (sending && !prev) {
+      scrollToBottom("smooth");
+    }
+  }, [sending, scrollToBottom]);
+
   const handleFirstMessage = useCallback(() => {
     if (totalMessages === 0) return;
     scrollToTop();
@@ -221,6 +255,7 @@ export function useConversationNav({
 
   return {
     currentMessageIndex,
+    followBottom,
     handleRangeChanged,
     handleAtBottomStateChange,
     handleAtTopStateChange,

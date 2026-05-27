@@ -33,6 +33,7 @@ function makeProps(
     rows: [],
     virtuosoRef: createRef<VirtuosoHandle>(),
     conversationId: "conv-1",
+    followBottom: true,
     renderMessageRow: () => null,
     renderCollabRow: () => null,
     renderTypingIndicator: () => null,
