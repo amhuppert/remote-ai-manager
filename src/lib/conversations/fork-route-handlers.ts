@@ -58,13 +58,6 @@ export const forkConversation = withTracing(async (request, { params }) => {
     );
   }
 
-  if (conversation.status === "running") {
-    return NextResponse.json(
-      { error: "Cannot fork while conversation is running" } satisfies ApiError,
-      { status: 409 },
-    );
-  }
-
   let body: { messageIndex: number };
   try {
     body = forkRequestSchema.parse(await bodyPromise);
