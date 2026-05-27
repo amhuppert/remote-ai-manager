@@ -23,6 +23,11 @@ export interface UseVoiceWiringResult {
   elapsedTime: number;
   voiceAvailable: boolean;
   toggleRecording: () => void | Promise<void>;
+  /**
+   * Stops an in-progress recording and arranges for the transcribed text to be
+   * auto-submitted once it arrives. No-op when not currently recording.
+   */
+  stopAndSubmit: () => void;
 }
 
 export function useVoiceWiring({
@@ -90,18 +95,11 @@ export function useVoiceWiring({
     },
   );
 
-  useAppHotkey(
-    "voiceFireAndForget",
-    () => {
-      if (!isRecording && !isProcessing) {
-        fireAndForgetRef.current = true;
-      }
-      void toggleRecording();
-    },
-    {
-      enabled: voiceAvailable && !isProcessing,
-    },
-  );
+  const stopAndSubmit = useCallback(() => {
+    if (!isRecording) return;
+    fireAndForgetRef.current = true;
+    void toggleRecording();
+  }, [isRecording, toggleRecording, fireAndForgetRef]);
 
   return {
     isRecording,
@@ -109,5 +107,6 @@ export function useVoiceWiring({
     elapsedTime,
     voiceAvailable,
     toggleRecording,
+    stopAndSubmit,
   };
 }

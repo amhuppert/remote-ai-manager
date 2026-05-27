@@ -14,7 +14,6 @@ export interface HotkeyDefinition {
 export type HotkeyId =
   | "helpModal"
   | "voiceToggle"
-  | "voiceFireAndForget"
   | "clearInput"
   | "nextMessage"
   | "prevMessage"
@@ -47,15 +46,6 @@ export const HOTKEY_REGISTRY: HotkeyRegistry = {
     keys: "alt+v",
     label: "Toggle voice recording",
     description: "Start or stop voice recording for prompt input",
-    category: "general",
-    enableOnFormTags: true,
-    enableOnContentEditable: true,
-  },
-  voiceFireAndForget: {
-    id: "voiceFireAndForget",
-    keys: "mod+alt+v",
-    label: "Voice fire-and-forget",
-    description: "Record voice and auto-submit when transcription completes",
     category: "general",
     enableOnFormTags: true,
     enableOnContentEditable: true,

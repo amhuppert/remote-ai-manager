@@ -6,8 +6,6 @@ import ConversationDetailPage from "@/features/session/SessionPage";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { SessionDiff } from "@/lib/git/schemas";
-import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
-import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { makeFinalAnswer } from "@/lib/workflows/collaboration/test-fixtures";
 
 // ---------------------------------------------------------------------------
@@ -711,67 +709,6 @@ describe("ConversationDetailPage", () => {
       expect(abortPromptMock).toHaveBeenCalled();
       // No SSE stream is active in this scenario (sending=false).
       expect(abortClientMock).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("fire-and-forget voice mode", () => {
-    it("auto-submits prompt when fire-and-forget voice result arrives", () => {
-      let capturedOnResult: ((text: string) => void) | undefined;
-      vi.mocked(useVoiceRecorder).mockImplementation(((opts: {
-        onResult: (text: string) => void;
-      }) => {
-        capturedOnResult = opts.onResult;
-        return {
-          isRecording: false,
-          isProcessing: false,
-          elapsedTime: 0,
-          isAvailable: true,
-          toggleRecording: vi.fn(),
-          stopRecording: vi.fn(),
-        };
-      }) as typeof useVoiceRecorder);
-
-      vi.mocked(useAppHotkey).mockClear();
-      renderPage();
-
-      const ffCall = vi
-        .mocked(useAppHotkey)
-        .mock.calls.find(([id]) => id === "voiceFireAndForget");
-      expect(ffCall).toBeDefined();
-      ffCall![1]({} as KeyboardEvent);
-
-      expect(capturedOnResult).toBeDefined();
-      capturedOnResult!("Hello from voice");
-      expect(sendPromptMock).toHaveBeenCalled();
-    });
-
-    it("does NOT auto-submit in normal voice mode (control)", () => {
-      let capturedOnResult: ((text: string) => void) | undefined;
-      vi.mocked(useVoiceRecorder).mockImplementation(((opts: {
-        onResult: (text: string) => void;
-      }) => {
-        capturedOnResult = opts.onResult;
-        return {
-          isRecording: false,
-          isProcessing: false,
-          elapsedTime: 0,
-          isAvailable: true,
-          toggleRecording: vi.fn(),
-          stopRecording: vi.fn(),
-        };
-      }) as typeof useVoiceRecorder);
-
-      vi.mocked(useAppHotkey).mockClear();
-      renderPage();
-
-      const vtCall = vi
-        .mocked(useAppHotkey)
-        .mock.calls.find(([id]) => id === "voiceToggle");
-      expect(vtCall).toBeDefined();
-      vtCall![1]({} as KeyboardEvent);
-
-      capturedOnResult!("Hello from voice");
-      expect(sendPromptMock).not.toHaveBeenCalled();
     });
   });
 

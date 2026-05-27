@@ -55,6 +55,7 @@ export interface UsePromptComposerPropsArgs {
   voiceAvailable: boolean;
   elapsedTime: number;
   toggleRecording: () => void;
+  stopAndSubmit: () => void;
   backendLocked: boolean;
   selectedBackend: AgentBackendId;
   handleBackendChange: (backend: AgentBackendId) => void;
@@ -119,6 +120,7 @@ export function usePromptComposerProps(
     voiceAvailable,
     elapsedTime,
     toggleRecording,
+    stopAndSubmit,
     backendLocked,
     selectedBackend,
     handleBackendChange,
@@ -167,6 +169,7 @@ export function usePromptComposerProps(
       voiceAvailable,
       elapsedTime,
       toggleRecording,
+      stopAndSubmit,
       backendLocked,
       selectedBackend,
       onBackendChange: handleBackendChange,
@@ -222,6 +225,7 @@ export function usePromptComposerProps(
       voiceAvailable,
       elapsedTime,
       toggleRecording,
+      stopAndSubmit,
       backendLocked,
       selectedBackend,
       handleBackendChange,

@@ -93,6 +93,7 @@ interface PromptComposerProps {
   voiceAvailable: boolean;
   elapsedTime: number;
   toggleRecording: () => void;
+  stopAndSubmit: () => void;
   backendLocked: boolean;
   selectedBackend: AgentBackendId;
   onBackendChange: (backend: AgentBackendId) => void;
@@ -142,6 +143,7 @@ export default function PromptComposer({
   voiceAvailable,
   elapsedTime,
   toggleRecording,
+  stopAndSubmit,
   backendLocked,
   selectedBackend,
   onBackendChange,
@@ -203,7 +205,7 @@ export default function PromptComposer({
             onChange={onPromptTextChange}
             onSubmit={() => {
               if (isRecording) {
-                toggleRecording();
+                stopAndSubmit();
                 return;
               }
               onSendPrompt();

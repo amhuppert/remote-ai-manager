@@ -140,6 +140,7 @@ export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
     elapsedTime,
     voiceAvailable,
     toggleRecording,
+    stopAndSubmit,
   } = useVoiceWiring({
     projectName,
     promptTextRef: local.promptTextRef,
@@ -165,5 +166,6 @@ export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
     elapsedTime,
     voiceAvailable,
     toggleRecording,
+    stopAndSubmit,
   };
 }

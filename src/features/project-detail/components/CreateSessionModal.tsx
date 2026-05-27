@@ -160,20 +160,6 @@ export default function CreateSessionModal({
     },
   );
 
-  // Ctrl+Alt+V hotkey for fire-and-forget voice (auto-submit on completion)
-  useAppHotkey(
-    "voiceFireAndForget",
-    () => {
-      if (!isRecording && !isProcessing) {
-        fireAndForgetRef.current = true;
-      }
-      void toggleRecording();
-    },
-    {
-      enabled: open && voiceEnabled && voiceAvailable && !isProcessing,
-    },
-  );
-
   // Reset state when modal opens (state-during-render pattern)
   const [prevOpen, setPrevOpen] = useState(false);
   if (open !== prevOpen) {
@@ -471,10 +457,11 @@ export default function CreateSessionModal({
                       return;
                     }
                     if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
                       if (isRecording) {
+                        fireAndForgetRef.current = true;
                         toggleRecording();
                       } else {
-                        e.preventDefault();
                         handleSubmit();
                       }
                     }

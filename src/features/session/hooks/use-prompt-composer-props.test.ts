@@ -43,6 +43,7 @@ describe("usePromptComposerProps", () => {
         voiceAvailable: true,
         elapsedTime: 0,
         toggleRecording: () => {},
+        stopAndSubmit: () => {},
         backendLocked: false,
         selectedBackend: "claude",
         handleBackendChange: () => {},

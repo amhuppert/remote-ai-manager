@@ -7,7 +7,6 @@ describe("HOTKEY_REGISTRY", () => {
     const expectedIds: HotkeyId[] = [
       "helpModal",
       "voiceToggle",
-      "voiceFireAndForget",
       "clearInput",
       "nextMessage",
       "prevMessage",
@@ -22,6 +21,13 @@ describe("HOTKEY_REGISTRY", () => {
     for (const id of expectedIds) {
       expect(HOTKEY_REGISTRY[id]).toBeDefined();
     }
+  });
+
+  it("does not register a separate voiceFireAndForget hotkey (auto-submit is gestured via Ctrl+Enter while recording)", async () => {
+    const { HOTKEY_REGISTRY } = await import("./hotkeys");
+    expect(
+      (HOTKEY_REGISTRY as Record<string, unknown>)["voiceFireAndForget"],
+    ).toBeUndefined();
   });
 
   it("has consistent id fields matching registry keys", async () => {
@@ -47,11 +53,6 @@ describe("HOTKEY_REGISTRY", () => {
     expect(HOTKEY_REGISTRY.voiceToggle.enableOnFormTags).toBe(true);
   });
 
-  it("voiceFireAndForget has enableOnFormTags set", async () => {
-    const { HOTKEY_REGISTRY } = await import("./hotkeys");
-    expect(HOTKEY_REGISTRY.voiceFireAndForget.enableOnFormTags).toBe(true);
-  });
-
   it("clearInput has enableOnFormTags set", async () => {
     const { HOTKEY_REGISTRY } = await import("./hotkeys");
     expect(HOTKEY_REGISTRY.clearInput.enableOnFormTags).toBe(true);
@@ -60,13 +61,6 @@ describe("HOTKEY_REGISTRY", () => {
   it("voiceToggle has enableOnContentEditable so it fires inside the Tiptap prompt editor", async () => {
     const { HOTKEY_REGISTRY } = await import("./hotkeys");
     expect(HOTKEY_REGISTRY.voiceToggle.enableOnContentEditable).toBe(true);
-  });
-
-  it("voiceFireAndForget has enableOnContentEditable so it fires inside the Tiptap prompt editor", async () => {
-    const { HOTKEY_REGISTRY } = await import("./hotkeys");
-    expect(HOTKEY_REGISTRY.voiceFireAndForget.enableOnContentEditable).toBe(
-      true,
-    );
   });
 
   it("clearInput has enableOnContentEditable so Escape clears the Tiptap prompt editor", async () => {

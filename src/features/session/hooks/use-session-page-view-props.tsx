@@ -102,6 +102,7 @@ export interface UseSessionPageViewPropsArgs {
   voiceAvailable: boolean;
   elapsedTime: number;
   toggleRecording: () => void;
+  stopAndSubmit: () => void;
 
   // handlers
   handleSendPrompt: PromptComposerArgs["handleSendPrompt"];
@@ -177,6 +178,7 @@ export function useSessionPageViewProps(
     voiceAvailable: args.voiceAvailable,
     elapsedTime: args.elapsedTime,
     toggleRecording: args.toggleRecording,
+    stopAndSubmit: args.stopAndSubmit,
     backendLocked: args.backendLocked,
     selectedBackend: args.selectedBackend,
     handleBackendChange: args.handleBackendChange,

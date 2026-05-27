@@ -221,44 +221,69 @@ describe("CreateSessionModal", () => {
     expect(defaultProps.onClose).not.toHaveBeenCalled();
   });
 
-  describe("fire-and-forget voice mode", () => {
-    it("auto-creates session when fire-and-forget voice result arrives in focus mode", () => {
-      let capturedOnResult: ((text: string) => void) | undefined;
+  describe("stop-and-submit gesture (Enter while recording)", () => {
+    /**
+     * Helper: build a useVoiceRecorder mock whose `isRecording` flips to false
+     * when `toggleRecording` is invoked, mirroring real recorder behavior so
+     * that downstream re-renders see the updated state.
+     */
+    function installRecordingMock(): {
+      capturedOnResult: () => ((text: string) => void) | undefined;
+      toggleRecording: ReturnType<typeof vi.fn>;
+    } {
+      let onResult: ((text: string) => void) | undefined;
+      let recording = true;
+      const toggleRecording = vi.fn(() => {
+        recording = false;
+      });
       vi.mocked(useVoiceRecorder).mockImplementation(((opts: {
         onResult: (text: string) => void;
       }) => {
-        capturedOnResult = opts.onResult;
+        onResult = opts.onResult;
         return {
-          isRecording: false,
+          isRecording: recording,
           isProcessing: false,
           elapsedTime: 0,
           isAvailable: true,
-          toggleRecording: vi.fn(),
+          toggleRecording,
           stopRecording: vi.fn(),
         };
       }) as typeof useVoiceRecorder);
+      return { capturedOnResult: () => onResult, toggleRecording };
+    }
 
-      vi.mocked(useAppHotkey).mockClear();
+    afterEach(() => {
+      // Restore the default mock so subsequent tests don't inherit isRecording: true
+      vi.mocked(useVoiceRecorder).mockImplementation(() => ({
+        isRecording: false,
+        isProcessing: false,
+        elapsedTime: 0,
+        isAvailable: false,
+        toggleRecording: vi.fn(),
+        stopRecording: vi.fn(),
+      }));
+    });
+
+    it("auto-creates session when Enter is pressed while recording in focus mode", () => {
+      const { capturedOnResult, toggleRecording } = installRecordingMock();
 
       renderWithQuery(<CreateSessionModal {...defaultProps} />);
       switchToFocusMode();
 
-      // Find fire-and-forget hotkey callback
-      const ffCall = vi
-        .mocked(useAppHotkey)
-        .mock.calls.find(([id]) => id === "voiceFireAndForget");
-      expect(ffCall).toBeDefined();
-      const fireAndForgetCallback = ffCall![1];
-
-      // Trigger fire-and-forget (sets internal ref)
+      const textarea = screen.getByPlaceholderText(
+        "e.g. Add user authentication with JWT tokens",
+      );
       act(() => {
-        fireAndForgetCallback({} as KeyboardEvent);
+        fireEvent.keyDown(textarea, { key: "Enter" });
       });
 
-      // Simulate voice result — must be in act() to flush state updates and effects
-      expect(capturedOnResult).toBeDefined();
+      expect(toggleRecording).toHaveBeenCalledTimes(1);
+      expect(mutateMock).not.toHaveBeenCalled();
+
+      const onResult = capturedOnResult();
+      expect(onResult).toBeDefined();
       act(() => {
-        capturedOnResult!("Add user authentication");
+        onResult!("Add user authentication");
       });
 
       expect(mutateMock).toHaveBeenCalledWith(
@@ -271,28 +296,14 @@ describe("CreateSessionModal", () => {
       );
     });
 
-    it("does NOT auto-create session in normal voice mode", () => {
-      let capturedOnResult: ((text: string) => void) | undefined;
-      vi.mocked(useVoiceRecorder).mockImplementation(((opts: {
-        onResult: (text: string) => void;
-      }) => {
-        capturedOnResult = opts.onResult;
-        return {
-          isRecording: false,
-          isProcessing: false,
-          elapsedTime: 0,
-          isAvailable: true,
-          toggleRecording: vi.fn(),
-          stopRecording: vi.fn(),
-        };
-      }) as typeof useVoiceRecorder);
+    it("Alt+V to stop recording does NOT auto-create the session (only Enter does)", () => {
+      const { capturedOnResult } = installRecordingMock();
 
       vi.mocked(useAppHotkey).mockClear();
 
       renderWithQuery(<CreateSessionModal {...defaultProps} />);
       switchToFocusMode();
 
-      // Find normal voice toggle callback
       const vtCall = vi
         .mocked(useAppHotkey)
         .mock.calls.find(([id]) => id === "voiceToggle");
@@ -301,9 +312,8 @@ describe("CreateSessionModal", () => {
         vtCall![1]({} as KeyboardEvent);
       });
 
-      // Simulate voice result
       act(() => {
-        capturedOnResult!("Add user authentication");
+        capturedOnResult()!("Add user authentication");
       });
 
       expect(mutateMock).not.toHaveBeenCalled();

@@ -236,6 +236,7 @@ export default function ConversationDetailPage({
     elapsedTime,
     voiceAvailable,
     toggleRecording,
+    stopAndSubmit,
   } = useSessionPageHandlers({
     projectName,
     sessionName,
@@ -353,6 +354,7 @@ export default function ConversationDetailPage({
         voiceAvailable,
         elapsedTime,
         toggleRecording,
+        stopAndSubmit,
         handleSendPrompt,
         handlePromptTextChange,
         canStop,
