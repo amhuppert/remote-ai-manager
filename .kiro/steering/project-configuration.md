@@ -55,8 +55,11 @@ Shared:
 | `SESSION_NAME` | Session name | Parent session name | Session name |
 | `BRANCH_NAME` | `csm/<name>` | `csm/<sessionDir>-<contextId>` | `csm/<name>` |
 | `CONTEXT_ID` | — | Parallel context id | — |
+| `TARGET_BRANCH` | — | — | Branch the work merges into (optional) |
 
 `PROJECT_ROOT` differs intentionally for pre-merge: it validates merged code in the worktree.
+
+`TARGET_BRANCH` lets the validation script scope checks (prettier/eslint/tests) to the diff against the merge target via `git merge-base`. All three validation paths pass it: the merge and commit workflows pass `session.targetBranch` (precise for stacked sessions); the graph script validator passes the session branch for worktree-isolated contexts (their fan-in target) and the session's own target for solo contexts. When absent, the script falls back to `main`.
 
 ## Navigation
 

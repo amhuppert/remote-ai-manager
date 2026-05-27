@@ -94,6 +94,7 @@ export const commitMachine = setup({
     completedAt: null,
     message: input.message,
     branchName: input.branchName,
+    targetBranch: input.targetBranch ?? "main",
     worktreePath: input.worktreePath,
     phase: null,
     error: null,
@@ -136,6 +137,7 @@ export const commitMachine = setup({
           worktreePath: context.worktreePath,
           sessionName: context.sessionName,
           branchName: context.branchName,
+          targetBranch: context.targetBranch,
           timeoutMs: context.validationTimeoutMs,
         }),
         onDone: {
@@ -238,6 +240,7 @@ export const commitMachine = setup({
           worktreePath: context.worktreePath,
           sessionName: context.sessionName,
           branchName: context.branchName,
+          targetBranch: context.targetBranch,
           timeoutMs: context.validationTimeoutMs,
         }),
         onDone: {

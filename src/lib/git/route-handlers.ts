@@ -213,6 +213,7 @@ export const commitSession = withTracing(
       worktreePath: session.worktreePath,
       branchName: session.branchName,
       message: body.message,
+      targetBranch: session.targetBranch,
     });
 
     if (!result.ok) {

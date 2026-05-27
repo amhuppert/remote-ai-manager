@@ -616,6 +616,22 @@ describe("background-jobs", () => {
       expect(releaseSession).toHaveBeenCalled();
     });
 
+    it("threads targetBranch into pre-merge validation", async () => {
+      mockCommitChangesActor.mockResolvedValue({ hash: "commit789" });
+
+      const result = dispatchCommitJob({
+        ...BASE_COMMIT_PARAMS,
+        targetBranch: "csm/parent",
+      });
+      expect(result.ok).toBe(true);
+
+      await settle();
+
+      expect(mockRunValidation).toHaveBeenCalledWith(
+        expect.objectContaining({ targetBranch: "csm/parent" }),
+      );
+    });
+
     it("failed commit → failed broadcast", async () => {
       const err = new Error("No uncommitted changes to commit");
       mockCommitChangesActor.mockRejectedValue(err);

@@ -34,6 +34,7 @@ const BASE_INPUT = {
   branchName: "csm/ctx-abc",
   executionId: "exec-1",
   contextId: "ctx-plan",
+  targetBranch: "csm/ctx-abc",
   timeoutMs: 60_000,
 };
 
@@ -50,6 +51,7 @@ describe("createScriptValidatorRunner", () => {
       worktreePath: BASE_INPUT.worktreePath,
       sessionName: BASE_INPUT.sessionName,
       branchName: BASE_INPUT.branchName,
+      targetBranch: BASE_INPUT.targetBranch,
       timeoutMs: BASE_INPUT.timeoutMs,
     });
     expect(deps.writeFile).not.toHaveBeenCalled();
@@ -230,6 +232,7 @@ describe("createScriptValidatorRunner", () => {
       worktreePath: executionTarget.worktreePath,
       sessionName: BASE_INPUT.sessionName,
       branchName: executionTarget.branchName,
+      targetBranch: BASE_INPUT.targetBranch,
       timeoutMs: BASE_INPUT.timeoutMs,
     });
   });
@@ -287,6 +290,7 @@ describe("createScriptValidatorRunner", () => {
       worktreePath: BASE_INPUT.worktreePath,
       sessionName: BASE_INPUT.sessionName,
       branchName: BASE_INPUT.branchName,
+      targetBranch: BASE_INPUT.targetBranch,
       timeoutMs: BASE_INPUT.timeoutMs,
     });
   });

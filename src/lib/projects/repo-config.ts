@@ -93,10 +93,23 @@ export function createRepoConfig(deps: RepoConfigDeps = defaultDeps) {
     worktreePath: string;
     sessionName: string;
     branchName: string;
+    /**
+     * Branch this session will merge into. Forwarded as `TARGET_BRANCH` so the
+     * validation script can scope checks to the diff against the real merge
+     * target (precise for stacked sessions). Omitted callers let the script
+     * fall back to its own default (main).
+     */
+    targetBranch?: string;
     timeoutMs?: number;
   }): Promise<RepoValidationCommandResult> {
-    const { projectPath, worktreePath, sessionName, branchName, timeoutMs } =
-      params;
+    const {
+      projectPath,
+      worktreePath,
+      sessionName,
+      branchName,
+      targetBranch,
+      timeoutMs,
+    } = params;
 
     const repoConfig = await readRepoConfig(projectPath);
     if (!repoConfig?.preMergeCommand) {
@@ -136,6 +149,7 @@ export function createRepoConfig(deps: RepoConfigDeps = defaultDeps) {
           WORKTREE_PATH: worktreePath,
           SESSION_NAME: sessionName,
           BRANCH_NAME: branchName,
+          ...(targetBranch ? { TARGET_BRANCH: targetBranch } : {}),
         },
         timeout: timeoutMs,
       });
@@ -201,6 +215,7 @@ export function createRepoConfig(deps: RepoConfigDeps = defaultDeps) {
     worktreePath: string;
     sessionName: string;
     branchName: string;
+    targetBranch?: string;
     timeoutMs: number;
   }): Promise<void> {
     const result = await executeRepoValidationCommand(params);

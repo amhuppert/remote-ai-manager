@@ -586,6 +586,7 @@ export function dispatchCommitJob(params: {
   worktreePath: string;
   branchName: string;
   message: string;
+  targetBranch?: string;
   broadcast?: BroadcastFn;
   acquireSessionLock?: AcquireSessionLockFn;
   machine?: CommitMachineType;
@@ -604,6 +605,7 @@ function dispatchCommitJobImpl(params: {
   worktreePath: string;
   branchName: string;
   message: string;
+  targetBranch?: string;
   broadcast?: BroadcastFn;
   acquireSessionLock?: AcquireSessionLockFn;
   machine?: CommitMachineType;
@@ -615,6 +617,7 @@ function dispatchCommitJobImpl(params: {
     worktreePath,
     branchName,
     message,
+    targetBranch,
     broadcast = defaultJobBroadcast,
     acquireSessionLock,
     machine = commitMachine,
@@ -648,6 +651,7 @@ function dispatchCommitJobImpl(params: {
     worktreePath,
     branchName,
     message,
+    targetBranch,
   };
 
   const actor = createActor(

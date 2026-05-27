@@ -436,6 +436,44 @@ describe("commitMachine", () => {
       expect(ctx.validationTimeoutMs).toBe(300_000);
       expect(ctx.finalStatus).toBeNull();
     });
+
+    it("defaults targetBranch to main when input omits it", () => {
+      const machine = createTestMachine();
+      const actor = createActor(machine, { input: defaultInput });
+      actor.start();
+
+      expect(actor.getSnapshot().context.targetBranch).toBe("main");
+    });
+
+    it("uses a non-main targetBranch from input", () => {
+      const machine = createTestMachine();
+      const actor = createActor(machine, {
+        input: { ...defaultInput, targetBranch: "csm/parent" },
+      });
+      actor.start();
+
+      expect(actor.getSnapshot().context.targetBranch).toBe("csm/parent");
+    });
+  });
+
+  describe("validation input", () => {
+    it("forwards targetBranch to the validation actor", async () => {
+      let received: RunValidationInput | undefined;
+      const machine = createTestMachine({
+        runValidation: mockRunValidation(async (input) => {
+          received = input;
+          return undefined;
+        }),
+      });
+      const actor = createActor(machine, {
+        input: { ...defaultInput, targetBranch: "csm/parent" },
+      });
+      actor.start();
+
+      await toPromise(actor);
+
+      expect(received?.targetBranch).toBe("csm/parent");
+    });
   });
 
   describe("onTerminal action", () => {

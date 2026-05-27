@@ -24,6 +24,13 @@ export interface ScriptValidatorInput {
   branchName: string;
   executionId: string;
   contextId: string;
+  /**
+   * Branch this context's work will merge into, forwarded to the validation
+   * script as `TARGET_BRANCH` so it scopes checks to the diff against that
+   * base. Worktree-isolated contexts pass the session branch (their fan-in
+   * target); solo contexts pass the session's own merge target.
+   */
+  targetBranch?: string;
   timeoutMs?: number;
   /**
    * When supplied, the script validator runs against this resolved target's
@@ -56,6 +63,7 @@ export interface ScriptValidatorDeps {
     worktreePath: string;
     sessionName: string;
     branchName: string;
+    targetBranch?: string;
     timeoutMs?: number;
   }): Promise<RepoValidationCommandResult>;
   writeFile(filePath: string, contents: string): Promise<void>;
@@ -124,6 +132,7 @@ export function createScriptValidatorRunner(
         worktreePath: targetWorktreePath,
         sessionName: input.sessionName,
         branchName: targetBranchName,
+        targetBranch: input.targetBranch,
         timeoutMs: input.timeoutMs,
       });
     } catch (err) {

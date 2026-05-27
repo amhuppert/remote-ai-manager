@@ -1107,8 +1107,51 @@ describe("graph workflow route script validator service", () => {
       branchName: "csm/session-1",
       executionId: "execution-script-1",
       contextId: "context-plan",
+      // Solo context (no executionTarget): scope against the session's own
+      // merge target, since it runs on the session branch itself.
+      targetBranch: "main",
       timeoutMs: 123_000,
     });
+  });
+
+  it("scopes a worktree-isolated context against the session branch (its fan-in target)", async () => {
+    const getSession = vi.fn(async () =>
+      makeSession({
+        worktreePath: "/repo/.worktrees/session-1",
+        branchName: "csm/session-1",
+        targetBranch: "main",
+      }),
+    );
+    const readConfig = vi.fn(async () => ({ preMergeTimeoutMs: 123_000 }));
+    const runScriptValidator = vi.fn(async () => ({ kind: "pass" as const }));
+
+    const service = createGraphWorkflowRouteScriptValidatorService({
+      getSession,
+      readConfig,
+      runScriptValidator,
+    });
+
+    const execution = createWorkflowExecution({
+      id: "execution-script-1",
+      status: "running",
+    });
+
+    await service.runScriptValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      contextId: "context-plan",
+      executionTarget: {
+        worktreePath: "/repo/.worktrees/session-1.context-plan",
+        branchName: "csm/session-1-context-plan",
+        isolation: "worktree",
+        laneId: null,
+      },
+    });
+
+    expect(runScriptValidator).toHaveBeenCalledWith(
+      expect.objectContaining({ targetBranch: "csm/session-1" }),
+    );
   });
 });
 

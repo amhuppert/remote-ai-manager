@@ -378,6 +378,7 @@ export const mergeMachine = setup({
           worktreePath: context.worktreePath,
           sessionName: context.sessionName,
           branchName: context.branchName,
+          targetBranch: context.targetBranch,
           timeoutMs: context.validationTimeoutMs,
         }),
         onDone: "squashMerging",
@@ -481,6 +482,7 @@ export const mergeMachine = setup({
           worktreePath: context.worktreePath,
           sessionName: context.sessionName,
           branchName: context.branchName,
+          targetBranch: context.targetBranch,
           timeoutMs: context.validationTimeoutMs,
         }),
         onDone: {

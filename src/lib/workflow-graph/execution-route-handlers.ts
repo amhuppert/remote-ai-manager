@@ -161,6 +161,15 @@ export function createGraphWorkflowRouteScriptValidatorService(
       const config = await deps.readConfig();
       const timeoutMs = config.preMergeTimeoutMs ?? 300_000;
 
+      // Scope validation to the diff against where this context's work lands.
+      // A worktree-isolated context branch fans into the session branch; a solo
+      // context runs on the session branch itself, so its base is the session's
+      // own merge target (using the session branch would yield an empty diff and
+      // skip checks).
+      const scopingTargetBranch = input.executionTarget
+        ? session.branchName
+        : session.targetBranch;
+
       return deps.runScriptValidator({
         projectPath: input.projectPath,
         worktreePath: session.worktreePath,
@@ -168,6 +177,7 @@ export function createGraphWorkflowRouteScriptValidatorService(
         branchName: session.branchName,
         executionId: input.execution.id,
         contextId: input.contextId,
+        targetBranch: scopingTargetBranch,
         timeoutMs,
         executionTarget: input.executionTarget,
       });

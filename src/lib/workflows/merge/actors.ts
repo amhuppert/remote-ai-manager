@@ -97,6 +97,13 @@ export interface RunValidationInput {
   worktreePath: string;
   sessionName: string;
   branchName: string;
+  /**
+   * Branch the work merges into, forwarded to the validation script as
+   * `TARGET_BRANCH` so it scopes checks to the diff against that base. Omitted
+   * by callers that have no distinct target (e.g. Smart Commit), letting the
+   * script default to main.
+   */
+  targetBranch?: string;
   timeoutMs: number;
 }
 export type RunValidationOutput = void;
@@ -250,6 +257,7 @@ export const runValidation = fromPromise<
     worktreePath: input.worktreePath,
     sessionName: input.sessionName,
     branchName: input.branchName,
+    targetBranch: input.targetBranch,
     timeoutMs,
   });
 });

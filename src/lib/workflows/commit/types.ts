@@ -25,6 +25,12 @@ export interface CommitContext extends BaseWorkflowContext {
   /** Branch being committed to. */
   branchName: string;
 
+  /**
+   * Branch this session merges into. Forwarded to the validation script as
+   * `TARGET_BRANCH` so checks scope to the diff against that base.
+   */
+  targetBranch: string;
+
   /** Path to the worktree. */
   worktreePath: string;
 
@@ -59,6 +65,8 @@ export interface CommitInput {
   worktreePath: string;
   branchName: string;
   message: string;
+  /** Branch this session merges into; defaults to main when omitted. */
+  targetBranch?: string;
   validationTimeoutMs?: number;
   maxFixAttempts?: number;
 }

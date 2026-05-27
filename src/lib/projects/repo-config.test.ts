@@ -23,6 +23,7 @@ const BASE_PARAMS = {
   worktreePath: "/projects/foo/.worktrees/my-session",
   sessionName: "my-session",
   branchName: "csm/my-session",
+  targetBranch: "main",
   timeoutMs: 300_000,
 };
 
@@ -166,7 +167,36 @@ describe("runPreMergeValidation", () => {
           WORKTREE_PATH: BASE_PARAMS.worktreePath,
           SESSION_NAME: BASE_PARAMS.sessionName,
           BRANCH_NAME: BASE_PARAMS.branchName,
+          TARGET_BRANCH: BASE_PARAMS.targetBranch,
         }),
+      }),
+    );
+  });
+
+  it("forwards a non-main targetBranch as TARGET_BRANCH for stacked sessions", async () => {
+    const deps = createTestDeps();
+    (deps.existsSync as ReturnType<typeof vi.fn>).mockImplementation(
+      (p: string) => {
+        if (String(p).includes("CommandCenter.json")) return true;
+        if (String(p).includes("validate.sh")) return true;
+        return false;
+      },
+    );
+    (deps.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
+      JSON.stringify({
+        initScriptPath: null,
+        preMergeCommand: "./validate.sh",
+      }),
+    );
+    const { runPreMergeValidation } = createRepoConfig(deps);
+
+    await runPreMergeValidation({ ...BASE_PARAMS, targetBranch: "csm/parent" });
+
+    expect(deps.execFileAsync).toHaveBeenCalledWith(
+      "/projects/foo/validate.sh",
+      [],
+      expect.objectContaining({
+        env: expect.objectContaining({ TARGET_BRANCH: "csm/parent" }),
       }),
     );
   });
@@ -353,5 +383,40 @@ describe("executeRepoValidationCommand", () => {
       message: null,
     });
     expect(deps.commitChanges).not.toHaveBeenCalled();
+  });
+
+  it("omits TARGET_BRANCH from the env when no targetBranch is given", async () => {
+    const deps = createTestDeps();
+    (deps.existsSync as ReturnType<typeof vi.fn>).mockImplementation(
+      (p: string) => {
+        if (String(p).includes("CommandCenter.json")) return true;
+        if (String(p).includes("validate.sh")) return true;
+        return false;
+      },
+    );
+    (deps.readFile as ReturnType<typeof vi.fn>).mockResolvedValue(
+      JSON.stringify({
+        initScriptPath: null,
+        preMergeCommand: "./validate.sh",
+      }),
+    );
+    let capturedEnv: NodeJS.ProcessEnv | undefined;
+    (deps.execFileAsync as ReturnType<typeof vi.fn>).mockImplementation(
+      async (
+        _cmd: string,
+        _args: string[],
+        opts?: { env?: NodeJS.ProcessEnv },
+      ) => {
+        capturedEnv = opts?.env;
+        return { stdout: "", stderr: "" };
+      },
+    );
+    const { executeRepoValidationCommand } = createRepoConfig(deps);
+
+    const { targetBranch: _omitted, ...paramsWithoutTarget } = BASE_PARAMS;
+    await executeRepoValidationCommand(paramsWithoutTarget);
+
+    expect(capturedEnv).toHaveProperty("BRANCH_NAME", BASE_PARAMS.branchName);
+    expect(capturedEnv).not.toHaveProperty("TARGET_BRANCH");
   });
 });
