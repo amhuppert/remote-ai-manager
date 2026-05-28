@@ -201,4 +201,39 @@ describe("CommandConsole", () => {
     fireEvent.keyDown(input, { key: "Escape" });
     expect(props.onBlur).toHaveBeenCalled();
   });
+
+  it("closes via onBlur on mousedown outside the console while focused", () => {
+    const props = defaults();
+    render(
+      <div>
+        <CommandConsole {...props} focused={true} />
+        <div data-testid="outside">elsewhere</div>
+      </div>,
+    );
+    fireEvent.mouseDown(screen.getByTestId("outside"));
+    expect(props.onBlur).toHaveBeenCalled();
+  });
+
+  it("does NOT call onBlur on mousedown inside the console", () => {
+    const props = defaults();
+    const { container } = render(<CommandConsole {...props} focused={true} />);
+    const bar = container.querySelector(".console-bar");
+    expect(bar).not.toBeNull();
+    if (bar) fireEvent.mouseDown(bar);
+    expect(props.onBlur).not.toHaveBeenCalled();
+  });
+
+  it("closes on document-level Escape even when input is not the event target", () => {
+    const props = defaults();
+    render(<CommandConsole {...props} focused={true} />);
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(props.onBlur).toHaveBeenCalled();
+  });
+
+  it("ignores document-level Escape when not focused", () => {
+    const props = defaults();
+    render(<CommandConsole {...props} focused={false} />);
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(props.onBlur).not.toHaveBeenCalled();
+  });
 });

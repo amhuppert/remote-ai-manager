@@ -177,7 +177,7 @@ describe("computeSuggestions — filter mode", () => {
     expect(targets.map((s) => s.value)).toEqual(["feature-foo"]);
   });
 
-  it("caps results at 12 items", () => {
+  it("caps filter suggestions at 12 items (actions kept unconditionally)", () => {
     const sessions = Array.from({ length: 30 }, (_, i) =>
       make({ sessionName: `s-${i}`, targetBranch: `branch-${i}` }),
     );
@@ -187,6 +187,99 @@ describe("computeSuggestions — filter mode", () => {
       sessions,
       archivedCount: 0,
     });
-    expect(result.length).toBeLessThanOrEqual(12);
+    const filters = result.filter((s) => s.kind === "filter");
+    expect(filters.length).toBeLessThanOrEqual(12);
+  });
+});
+
+describe("computeSuggestions — free-text mode (no slash)", () => {
+  it("includes all actions on empty draft", () => {
+    const result = computeSuggestions({
+      draft: "",
+      tokens: [],
+      sessions: [],
+      archivedCount: 0,
+    });
+    const actionIds = result
+      .filter((s): s is ActionSuggestion => s.kind === "action")
+      .map((s) => s.id);
+    expect(actionIds).toEqual([
+      "new",
+      "install-preset",
+      "capabilities",
+      "workflow-builder",
+    ]);
+  });
+
+  it("orders actions before filters on empty draft", () => {
+    const result = computeSuggestions({
+      draft: "",
+      tokens: [],
+      sessions: [make({})],
+      archivedCount: 1,
+    });
+    const firstFilterIdx = result.findIndex((s) => s.kind === "filter");
+    const lastActionIdx = result.reduce(
+      (acc, s, i) => (s.kind === "action" ? i : acc),
+      -1,
+    );
+    expect(lastActionIdx).toBeGreaterThanOrEqual(0);
+    expect(firstFilterIdx).toBeGreaterThan(lastActionIdx);
+  });
+
+  it("matches actions by free-text substring without slash", () => {
+    const result = computeSuggestions({
+      draft: "workflow",
+      tokens: [],
+      sessions: [],
+      archivedCount: 0,
+    });
+    const actions = result.filter(
+      (s): s is ActionSuggestion => s.kind === "action",
+    );
+    expect(actions.map((a) => a.id)).toEqual(["workflow-builder"]);
+  });
+
+  it("matches actions by label substring", () => {
+    const result = computeSuggestions({
+      draft: "builder",
+      tokens: [],
+      sessions: [],
+      archivedCount: 0,
+    });
+    const actions = result.filter(
+      (s): s is ActionSuggestion => s.kind === "action",
+    );
+    expect(actions.map((a) => a.id)).toEqual(["workflow-builder"]);
+  });
+
+  it("excludes non-matching actions when free text is given", () => {
+    const result = computeSuggestions({
+      draft: "workflow",
+      tokens: [],
+      sessions: [make({ targetBranch: "main" })],
+      archivedCount: 0,
+    });
+    const actionIds = result
+      .filter((s): s is ActionSuggestion => s.kind === "action")
+      .map((s) => s.id);
+    expect(actionIds).not.toContain("new");
+    expect(actionIds).not.toContain("install-preset");
+    expect(actionIds).not.toContain("capabilities");
+  });
+
+  it("still surfaces filters alongside matching actions", () => {
+    const result = computeSuggestions({
+      draft: "",
+      tokens: [],
+      sessions: [make({ derivedStatus: "running" })],
+      archivedCount: 2,
+    });
+    expect(
+      result.some((s) => s.kind === "filter" && s.cat === "archived"),
+    ).toBe(true);
+    expect(result.some((s) => s.kind === "filter" && s.cat === "status")).toBe(
+      true,
+    );
   });
 });

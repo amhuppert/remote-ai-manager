@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { CloseIcon } from "@/components/icons";
 import type { Suggestion } from "./command-suggestions";
 import type { FilterCategory, FilterToken } from "./filter-tokens";
@@ -39,6 +39,32 @@ export default function CommandConsole({
     setResetKey({ draft, tokens });
     setActiveIdx(0);
   }
+
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!focused) return;
+
+    const handleMouseDown = (e: MouseEvent) => {
+      const wrapper = wrapperRef.current;
+      if (!wrapper) return;
+      if (e.target instanceof Node && wrapper.contains(e.target)) return;
+      onBlur();
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      inputRef.current?.blur();
+      onBlur();
+    };
+
+    document.addEventListener("mousedown", handleMouseDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleMouseDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [focused, onBlur, inputRef]);
 
   const applyAndClose = (s: Suggestion) => {
     onApply(s);
@@ -85,7 +111,7 @@ export default function CommandConsole({
   const suggestListId = "command-console-suggestions";
 
   return (
-    <div className="v2-console">
+    <div className="v2-console" ref={wrapperRef}>
       <div
         className={"console-bar" + (focused ? " focused" : "")}
         onClick={() => inputRef.current?.focus()}

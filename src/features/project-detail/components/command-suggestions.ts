@@ -82,7 +82,18 @@ export function computeSuggestions(
   }
 
   const lower = trimmed.toLowerCase();
-  const out: Suggestion[] = [];
+  const actions: Suggestion[] = [];
+  const filters: Suggestion[] = [];
+
+  for (const a of ACTIONS) {
+    if (
+      lower === "" ||
+      a.id.includes(lower) ||
+      a.label.toLowerCase().includes(lower)
+    ) {
+      actions.push(a);
+    }
+  }
 
   const hasArchived = tokens.some((t) => t.cat === "archived");
   if (!hasArchived) {
@@ -91,7 +102,7 @@ export function computeSuggestions(
       "archived".includes(lower) ||
       "include".includes(lower)
     ) {
-      out.push({
+      filters.push({
         kind: "filter",
         cat: "archived",
         key: "include",
@@ -99,7 +110,7 @@ export function computeSuggestions(
         label: "Include archived",
         grp: "Filter",
       });
-      out.push({
+      filters.push({
         kind: "filter",
         cat: "archived",
         key: "only",
@@ -121,7 +132,7 @@ export function computeSuggestions(
         "is".includes(lower)
       ) {
         const c = countSessionsForStatus(sessions, st);
-        out.push({
+        filters.push({
           kind: "filter",
           cat: "status",
           key: "is",
@@ -142,7 +153,7 @@ export function computeSuggestions(
         t.toLowerCase().includes(lower) ||
         "target".includes(lower)
       ) {
-        out.push({
+        filters.push({
           kind: "filter",
           cat: "target",
           key: "target",
@@ -154,5 +165,5 @@ export function computeSuggestions(
     }
   }
 
-  return out.slice(0, 12);
+  return [...actions, ...filters.slice(0, 12)];
 }
