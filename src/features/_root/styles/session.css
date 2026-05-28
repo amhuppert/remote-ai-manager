@@ -145,6 +145,31 @@
   flex-shrink: 0;
 }
 
+/* Compact action button shared by Context / Capabilities triggers in the
+   session info strip and conversation-list header. */
+.si-copy-context-btn {
+  background: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 1px 6px;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+  position: relative;
+}
+
+.si-copy-context-btn:hover {
+  color: var(--text-secondary);
+  border-color: var(--border-default);
+}
+
 /* Info details — hover-peek / click-pin popover with extended session info */
 .info-details {
   position: relative;
