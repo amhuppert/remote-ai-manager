@@ -119,3 +119,6 @@ export const activeConversationsResponseSchema = z.object({
     .array(activeCollaborationExecutionSchema)
     .default([]),
 });
+export type ActiveConversationsResponse = z.infer<
+  typeof activeConversationsResponseSchema
+>;

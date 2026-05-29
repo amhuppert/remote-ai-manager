@@ -8,10 +8,51 @@ import {
   useRenameConversationMutation,
   useArchiveConversationMutation,
   useAnswerQuestionMutation,
+  useGenericRenameConversationMutation,
+  useGenericArchiveConversationMutation,
 } from "@/lib/conversations/mutations";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import type {
+  ActiveConversation,
+  ActiveConversationsResponse,
+} from "@/lib/active-conversations/schemas";
+
+function activeConvo(
+  overrides: Partial<ActiveConversation> & { id: string },
+): ActiveConversation {
+  return {
+    id: overrides.id,
+    name: overrides.name ?? null,
+    status: overrides.status ?? "new",
+    lastActivityAt: overrides.lastActivityAt ?? "2025-01-01T00:00:00.000Z",
+    projectName: overrides.projectName ?? "p",
+    projectPath: overrides.projectPath ?? "/p",
+    sessionName: overrides.sessionName ?? "s",
+    agentBackend: overrides.agentBackend ?? "claude",
+    summary: overrides.summary ?? null,
+    pendingQuestion: overrides.pendingQuestion ?? null,
+    pendingQuestionId: overrides.pendingQuestionId ?? null,
+    pendingQuestions: overrides.pendingQuestions ?? null,
+    forkedFrom: overrides.forkedFrom ?? null,
+    debugActive: overrides.debugActive ?? false,
+    role: overrides.role ?? null,
+    branchName: overrides.branchName ?? null,
+    worktreePath: overrides.worktreePath ?? "/w",
+    lastActivitySummary: overrides.lastActivitySummary ?? null,
+  };
+}
+
+function activeResponse(
+  conversations: ActiveConversation[],
+): ActiveConversationsResponse {
+  return {
+    conversations,
+    graphWorkflowExecutions: [],
+    activeCollaborationExecutions: [],
+  };
+}
 function makeClient() {
   return new QueryClient({
     defaultOptions: {
@@ -150,6 +191,58 @@ describe("useRenameConversationMutation", () => {
       expect(client.getQueryState(listKey)?.isInvalidated).toBe(true);
     });
   });
+
+  it("optimistically renames the conversation in the active conversations cache", async () => {
+    const client = makeClient();
+    const activeKey = conversationKeys.active();
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([activeConvo({ id: "c1", name: "old" })]),
+    );
+
+    let resolveFetch: (res: Response) => void = () => {};
+    fetchSpy.mockImplementation(
+      () => new Promise<Response>((r) => (resolveFetch = r)),
+    );
+
+    const { result } = renderHook(
+      () => useRenameConversationMutation("p", "s"),
+      { wrapper: wrapperFor(client) },
+    );
+
+    result.current.mutate({ conversationId: "c1", name: "new" });
+
+    await waitFor(() => {
+      const data = client.getQueryData<ActiveConversationsResponse>(activeKey);
+      expect(data?.conversations[0]?.name).toBe("new");
+    });
+
+    resolveFetch(jsonResponse({ ok: true }));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+
+  it("rolls back the active conversations cache when the server rejects", async () => {
+    const client = makeClient();
+    const activeKey = conversationKeys.active();
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([activeConvo({ id: "c1", name: "old" })]),
+    );
+
+    fetchSpy.mockResolvedValue(jsonResponse({ error: "boom" }, 500));
+
+    const { result } = renderHook(
+      () => useRenameConversationMutation("p", "s"),
+      { wrapper: wrapperFor(client) },
+    );
+
+    result.current.mutate({ conversationId: "c1", name: "new" });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const data = client.getQueryData<ActiveConversationsResponse>(activeKey);
+    expect(data?.conversations[0]?.name).toBe("old");
+  });
 });
 
 describe("useArchiveConversationMutation", () => {
@@ -212,6 +305,236 @@ describe("useArchiveConversationMutation", () => {
 
     const data = client.getQueryData<ConversationState[]>(listKey);
     expect(data?.[0]?.archived).toBe(false);
+  });
+
+  it("optimistically removes the conversation from the active conversations cache when archiving", async () => {
+    const client = makeClient();
+    const activeKey = conversationKeys.active();
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([activeConvo({ id: "c1" }), activeConvo({ id: "c2" })]),
+    );
+
+    let resolveFetch: (res: Response) => void = () => {};
+    fetchSpy.mockImplementation(
+      () => new Promise<Response>((r) => (resolveFetch = r)),
+    );
+
+    const { result } = renderHook(
+      () => useArchiveConversationMutation("p", "s"),
+      { wrapper: wrapperFor(client) },
+    );
+
+    result.current.mutate({ conversationId: "c1", archived: true });
+
+    await waitFor(() => {
+      const data = client.getQueryData<ActiveConversationsResponse>(activeKey);
+      expect(data?.conversations.map((c) => c.id)).toEqual(["c2"]);
+    });
+
+    resolveFetch(jsonResponse({ ok: true }));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+
+  it("restores the conversation to the active conversations cache when the server rejects archive", async () => {
+    const client = makeClient();
+    const activeKey = conversationKeys.active();
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([activeConvo({ id: "c1" }), activeConvo({ id: "c2" })]),
+    );
+
+    fetchSpy.mockResolvedValue(jsonResponse({ error: "boom" }, 500));
+
+    const { result } = renderHook(
+      () => useArchiveConversationMutation("p", "s"),
+      { wrapper: wrapperFor(client) },
+    );
+
+    result.current.mutate({ conversationId: "c1", archived: true });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const data = client.getQueryData<ActiveConversationsResponse>(activeKey);
+    expect(data?.conversations.map((c) => c.id)).toEqual(["c1", "c2"]);
+  });
+});
+
+describe("useGenericRenameConversationMutation", () => {
+  const fetchSpy = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("optimistically renames in both the per-session list and the active conversations cache", async () => {
+    const client = makeClient();
+    const listKey = conversationKeys.list("p", "s");
+    const activeKey = conversationKeys.active();
+    client.setQueryData<ConversationState[]>(listKey, [
+      conversation({ id: "c1", name: "old" }),
+    ]);
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([activeConvo({ id: "c1", name: "old" })]),
+    );
+
+    let resolveFetch: (res: Response) => void = () => {};
+    fetchSpy.mockImplementation(
+      () => new Promise<Response>((r) => (resolveFetch = r)),
+    );
+
+    const { result } = renderHook(
+      () => useGenericRenameConversationMutation(),
+      { wrapper: wrapperFor(client) },
+    );
+
+    result.current.mutate({
+      projectName: "p",
+      sessionName: "s",
+      conversationId: "c1",
+      name: "new",
+    });
+
+    await waitFor(() => {
+      const listData = client.getQueryData<ConversationState[]>(listKey);
+      const activeData =
+        client.getQueryData<ActiveConversationsResponse>(activeKey);
+      expect(listData?.[0]?.name).toBe("new");
+      expect(activeData?.conversations[0]?.name).toBe("new");
+    });
+
+    resolveFetch(jsonResponse({ ok: true }));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+
+  it("rolls back both caches when the server rejects", async () => {
+    const client = makeClient();
+    const listKey = conversationKeys.list("p", "s");
+    const activeKey = conversationKeys.active();
+    client.setQueryData<ConversationState[]>(listKey, [
+      conversation({ id: "c1", name: "old" }),
+    ]);
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([activeConvo({ id: "c1", name: "old" })]),
+    );
+
+    fetchSpy.mockResolvedValue(jsonResponse({ error: "boom" }, 500));
+
+    const { result } = renderHook(
+      () => useGenericRenameConversationMutation(),
+      { wrapper: wrapperFor(client) },
+    );
+
+    result.current.mutate({
+      projectName: "p",
+      sessionName: "s",
+      conversationId: "c1",
+      name: "new",
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const listData = client.getQueryData<ConversationState[]>(listKey);
+    const activeData =
+      client.getQueryData<ActiveConversationsResponse>(activeKey);
+    expect(listData?.[0]?.name).toBe("old");
+    expect(activeData?.conversations[0]?.name).toBe("old");
+  });
+});
+
+describe("useGenericArchiveConversationMutation", () => {
+  const fetchSpy = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("optimistically flips archived in per-session list and removes from active cache when archiving", async () => {
+    const client = makeClient();
+    const listKey = conversationKeys.list("p", "s");
+    const activeKey = conversationKeys.active();
+    client.setQueryData<ConversationState[]>(listKey, [
+      conversation({ id: "c1", archived: false }),
+    ]);
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([activeConvo({ id: "c1" }), activeConvo({ id: "c2" })]),
+    );
+
+    let resolveFetch: (res: Response) => void = () => {};
+    fetchSpy.mockImplementation(
+      () => new Promise<Response>((r) => (resolveFetch = r)),
+    );
+
+    const { result } = renderHook(
+      () => useGenericArchiveConversationMutation(),
+      { wrapper: wrapperFor(client) },
+    );
+
+    result.current.mutate({
+      projectName: "p",
+      sessionName: "s",
+      conversationId: "c1",
+      archived: true,
+    });
+
+    await waitFor(() => {
+      const listData = client.getQueryData<ConversationState[]>(listKey);
+      const activeData =
+        client.getQueryData<ActiveConversationsResponse>(activeKey);
+      expect(listData?.[0]?.archived).toBe(true);
+      expect(activeData?.conversations.map((c) => c.id)).toEqual(["c2"]);
+    });
+
+    resolveFetch(jsonResponse({ ok: true }));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+
+  it("rolls back both caches when the server rejects archive", async () => {
+    const client = makeClient();
+    const listKey = conversationKeys.list("p", "s");
+    const activeKey = conversationKeys.active();
+    client.setQueryData<ConversationState[]>(listKey, [
+      conversation({ id: "c1", archived: false }),
+    ]);
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([activeConvo({ id: "c1" }), activeConvo({ id: "c2" })]),
+    );
+
+    fetchSpy.mockResolvedValue(jsonResponse({ error: "boom" }, 500));
+
+    const { result } = renderHook(
+      () => useGenericArchiveConversationMutation(),
+      { wrapper: wrapperFor(client) },
+    );
+
+    result.current.mutate({
+      projectName: "p",
+      sessionName: "s",
+      conversationId: "c1",
+      archived: true,
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const listData = client.getQueryData<ConversationState[]>(listKey);
+    const activeData =
+      client.getQueryData<ActiveConversationsResponse>(activeKey);
+    expect(listData?.[0]?.archived).toBe(false);
+    expect(activeData?.conversations.map((c) => c.id)).toEqual(["c1", "c2"]);
   });
 });
 
