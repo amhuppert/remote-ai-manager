@@ -26,6 +26,7 @@ function makeConversation(overrides: Record<string, unknown> = {}) {
     pendingPromptText: null,
     forkedFrom: null,
     role: null,
+    activeTurnSource: null,
     contextTokens: 80000,
     contextWindowMax: 200000,
     debugMode: null,

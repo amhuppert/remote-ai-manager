@@ -97,6 +97,7 @@ function conversation(
     pendingPromptText: overrides.pendingPromptText ?? null,
     forkedFrom: overrides.forkedFrom ?? null,
     role: overrides.role ?? null,
+    activeTurnSource: overrides.activeTurnSource ?? null,
     contextTokens: overrides.contextTokens ?? null,
     contextWindowMax: overrides.contextWindowMax ?? null,
     debugMode: overrides.debugMode ?? null,

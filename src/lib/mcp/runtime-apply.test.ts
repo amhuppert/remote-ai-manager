@@ -57,6 +57,7 @@ function baseConversation(overrides: Record<string, unknown> = {}) {
     pendingPromptText: null,
     forkedFrom: null,
     role: "iteration" as const,
+    activeTurnSource: null,
     contextTokens: null,
     contextWindowMax: null,
     debugMode: null,

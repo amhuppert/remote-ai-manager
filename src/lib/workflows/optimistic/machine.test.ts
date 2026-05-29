@@ -41,6 +41,7 @@ const testSession: SessionState = {
       pendingPromptText: null,
       forkedFrom: null,
       role: null,
+      activeTurnSource: null,
       contextTokens: null,
       contextWindowMax: null,
       debugMode: null,

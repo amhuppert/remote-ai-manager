@@ -26,6 +26,7 @@ function makeConversation(
     pendingPromptText: null,
     forkedFrom: null,
     role: overrides.role ?? null,
+    activeTurnSource: overrides.activeTurnSource ?? null,
     contextTokens: null,
     contextWindowMax: null,
     debugMode: overrides.debugMode ?? null,

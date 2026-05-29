@@ -196,7 +196,13 @@ export default function ConversationDetailPage({
   const conversationRunning =
     activeConversation?.status === "running" ||
     activeConversation?.status === "waiting_for_input";
-  const canStop = store.sending || conversationRunning;
+  // Suppress Stop when the active turn is workflow-driven (e.g. smart-merge's
+  // validation-fix task_run) so users can't abort background work from the
+  // conversation header — that button only stops the panel's user turn.
+  const conversationDrivenByWorkflow =
+    activeConversation?.activeTurnSource === "workflow";
+  const canStop =
+    (store.sending || conversationRunning) && !conversationDrivenByWorkflow;
   const handleStopPrompt = useCallback(() => {
     if (store.sending) abortClient();
     void abortPrompt();

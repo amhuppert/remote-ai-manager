@@ -39,7 +39,12 @@ import type { ConversationState } from "@/lib/conversations/schemas";
 import type { DebugModeState } from "@/lib/debug-log/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
-import type { ForkedFrom, ConversationRole } from "@/lib/conversations/schemas";
+import type {
+  ForkedFrom,
+  ConversationRole,
+  ActiveTurnSource,
+} from "@/lib/conversations/schemas";
+import type { ActiveTurn } from "./types";
 const logger = createLogger("conversation-manager");
 
 export interface EnsureActorInputData {
@@ -152,6 +157,21 @@ function getActorRegistry(): Map<string, ConversationActorRef> {
 // ============================================================
 
 /**
+ * Classify the active turn as user- or workflow-driven, or null when no turn
+ * is active. `task_run` turns are only dispatched by workflow callers, and
+ * conversation_turn turns flagged `autonomous` come from graph-workflow's
+ * implementer-runner — both should suppress UI affordances meant for the
+ * conversation-panel user (e.g. the Stop button).
+ */
+export function deriveActiveTurnSource(
+  activeTurn: ActiveTurn | null,
+): ActiveTurnSource {
+  if (!activeTurn) return null;
+  if (activeTurn.kind === "task_run") return "workflow";
+  return activeTurn.autonomous ? "workflow" : "user";
+}
+
+/**
  * Apply machine context fields to a mutable ConversationState.
  * Extracted as a pure function for testability.
  */
@@ -160,6 +180,7 @@ export function applySyncDerivedFields(
   c: ConversationState,
 ): void {
   c.status = context.status;
+  c.activeTurnSource = deriveActiveTurnSource(context.activeTurn);
   c.pendingQuestionId = context.pendingQuestion?.questionId ?? null;
   c.pendingQuestions = context.pendingQuestion?.questions ?? null;
   c.agentBackend = context.agentBackend;

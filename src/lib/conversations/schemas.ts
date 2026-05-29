@@ -168,6 +168,17 @@ export const conversationRoleSchema = z
   .default(null);
 export type ConversationRole = z.infer<typeof conversationRoleSchema>;
 
+// Distinguishes user-initiated turns from workflow-driven background turns
+// (e.g. smart-merge's validation-fix task_run, graph-workflow's autonomous
+// implementer). Null when no turn is active. The conversation panel uses this
+// to suppress the Stop button when the agent is busy on behalf of a workflow,
+// since stopping would abort that workflow rather than a user prompt.
+export const activeTurnSourceSchema = z
+  .enum(["user", "workflow"])
+  .nullable()
+  .default(null);
+export type ActiveTurnSource = z.infer<typeof activeTurnSourceSchema>;
+
 // ============================================================
 // Conversation State
 // ============================================================
@@ -201,6 +212,7 @@ export const conversationStateSchema = z.object({
   pendingPromptText: z.string().nullable().default(null),
   forkedFrom: forkedFromSchema,
   role: conversationRoleSchema,
+  activeTurnSource: activeTurnSourceSchema,
   contextTokens: z.number().nullable().default(null),
   contextWindowMax: z.number().nullable().default(null),
   debugMode: debugModeStateSchema.nullable().default(null),

@@ -413,6 +413,7 @@ const baseSession: SessionState = {
       pendingPromptText: null,
       forkedFrom: null,
       role: null,
+      activeTurnSource: null,
       contextTokens: null,
       contextWindowMax: null,
       debugMode: null,
@@ -687,6 +688,21 @@ describe("ConversationDetailPage", () => {
       testSession = {
         ...baseSession,
         conversations: [{ ...baseSession.conversations[0]!, status: "new" }],
+      };
+      renderPage();
+      expect(getStopButtons()).toHaveLength(0);
+    });
+
+    it("does not render the Stop button when conversation is running but a background workflow drives the active turn", () => {
+      testSession = {
+        ...baseSession,
+        conversations: [
+          {
+            ...baseSession.conversations[0]!,
+            status: "running",
+            activeTurnSource: "workflow",
+          },
+        ],
       };
       renderPage();
       expect(getStopButtons()).toHaveLength(0);

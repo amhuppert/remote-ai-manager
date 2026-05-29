@@ -32,6 +32,7 @@ function makeConversation(
     pendingPromptText: null,
     forkedFrom: null,
     role: null,
+    activeTurnSource: null,
     contextTokens: null,
     contextWindowMax: null,
     debugMode: null,

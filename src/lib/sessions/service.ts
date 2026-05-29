@@ -265,6 +265,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       pendingPromptText: null,
       forkedFrom: null,
       role: opts.mode === "focus" ? "initialization" : null,
+      activeTurnSource: null,
       contextTokens: null,
       contextWindowMax: null,
       debugMode: null,

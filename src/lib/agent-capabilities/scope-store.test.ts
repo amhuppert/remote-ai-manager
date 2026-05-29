@@ -58,6 +58,7 @@ function stateWithAllScopes(): ManagerState {
                 pendingPromptText: null,
                 forkedFrom: null,
                 role: "iteration",
+                activeTurnSource: null,
                 contextTokens: null,
                 contextWindowMax: null,
                 debugMode: null,

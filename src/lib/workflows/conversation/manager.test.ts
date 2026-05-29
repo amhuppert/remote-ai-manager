@@ -20,6 +20,7 @@ import {
   _resetMachineFactoryForTesting,
   _resetForTesting,
   applySyncDerivedFields,
+  deriveActiveTurnSource,
   shouldRehydrateSnapshot,
   ensureConversationActor,
   setEnsureConversationActorDeps,
@@ -417,6 +418,7 @@ describe("conversation manager", () => {
         pendingPromptText: null,
         forkedFrom: null,
         role: null,
+        activeTurnSource: null as "user" | "workflow" | null,
         contextTokens: null as number | null,
         contextWindowMax: null as number | null,
         debugMode: null,
@@ -435,6 +437,58 @@ describe("conversation manager", () => {
       expect(conv.totalTurns).toBe(5);
       expect(conv.status).toBe("awaiting");
       expect(conv.promptCount).toBe(3);
+      expect(conv.activeTurnSource).toBeNull();
+    });
+  });
+
+  describe("deriveActiveTurnSource", () => {
+    it("returns null when no turn is active", () => {
+      expect(deriveActiveTurnSource(null)).toBeNull();
+    });
+
+    it("classifies non-autonomous conversation_turn as user", () => {
+      expect(
+        deriveActiveTurnSource({
+          kind: "conversation_turn",
+          promptText: "hi",
+          images: [],
+          backend: "claude",
+          modelId: null,
+          effort: null,
+          autonomous: false,
+          startedAt: null,
+          streamId: null,
+        }),
+      ).toBe("user");
+    });
+
+    it("classifies autonomous conversation_turn as workflow (graph-workflow implementer)", () => {
+      expect(
+        deriveActiveTurnSource({
+          kind: "conversation_turn",
+          promptText: "auto",
+          images: [],
+          backend: "claude",
+          modelId: null,
+          effort: null,
+          autonomous: true,
+          startedAt: null,
+          streamId: null,
+        }),
+      ).toBe("workflow");
+    });
+
+    it("classifies task_run as workflow (smart-merge validation-fix, etc.)", () => {
+      expect(
+        deriveActiveTurnSource({
+          kind: "task_run",
+          promptText: "fix validation",
+          backend: "claude",
+          modelId: null,
+          effort: null,
+          startedAt: null,
+        }),
+      ).toBe("workflow");
     });
   });
 
