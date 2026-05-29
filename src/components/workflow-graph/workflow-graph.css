@@ -2182,6 +2182,16 @@
   background: var(--bg-void);
 }
 
+/* ConversationPanel renders <div class="prompt-panel"> as its root. In the
+   session view that root is a grid item (auto-stretched), but here it is a
+   flex column child of .wb-transcript-viewer, so it needs flex:1 to fill the
+   remaining height below the transcript header. Without this the panel
+   collapses to its header height and the message list has no room to render. */
+.wb-transcript-viewer > .prompt-panel {
+  flex: 1;
+  min-height: 0;
+}
+
 .wb-transcript-header {
   display: flex;
   align-items: center;
