@@ -166,7 +166,7 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
 
   async init(translated: Record<string, McpServerConfig>): Promise<void> {
     const merged = this.mergeSessionToolsServer(translated);
-    await this.querySession.query.setMcpServers(merged);
+    await this.querySession.setMcpServers(merged);
     this.lastAppliedTranslatedServers = translated;
   }
 
@@ -343,7 +343,7 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
     }
 
     try {
-      const result = await this.querySession.query.setMcpServers(
+      const result = await this.querySession.setMcpServers(
         this.mergeSessionToolsServer(servers),
       );
 
@@ -427,7 +427,7 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
     };
 
     try {
-      await this.querySession.query.setMcpServers(merged);
+      await this.querySession.setMcpServers(merged);
     } catch (err) {
       logger.warn("claude-runtime.session_tools_rebuild_bind_failed", {
         conversationId,

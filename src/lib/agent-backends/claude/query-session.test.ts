@@ -1069,7 +1069,11 @@ describe("MCP keepalive pings", () => {
     queryMock.mockReturnValue(mock.query);
 
     const session = createQuerySession(
-      makeDefaultOptions({ mcpKeepaliveIntervalMs: 100, idleTtlMs: 5000 }),
+      makeDefaultOptions({
+        mcpKeepaliveIntervalMs: 100,
+        idleTtlMs: 5000,
+        mcpServers: { s: {} },
+      }),
     );
     const emit = vi.fn();
 
@@ -1259,7 +1263,11 @@ describe("MCP keepalive pings", () => {
     queryMock.mockReturnValue(mock.query);
 
     const session = createQuerySession(
-      makeDefaultOptions({ mcpKeepaliveIntervalMs: 100, idleTtlMs: 5000 }),
+      makeDefaultOptions({
+        mcpKeepaliveIntervalMs: 100,
+        idleTtlMs: 5000,
+        mcpServers: { s: {} },
+      }),
     );
     const emit = vi.fn();
 
@@ -1294,7 +1302,11 @@ describe("MCP keepalive pings", () => {
     queryMock.mockReturnValue(mock.query);
 
     const session = createQuerySession(
-      makeDefaultOptions({ mcpKeepaliveIntervalMs: 100, idleTtlMs: 5000 }),
+      makeDefaultOptions({
+        mcpKeepaliveIntervalMs: 100,
+        idleTtlMs: 5000,
+        mcpServers: { s: {} },
+      }),
     );
     const emit = vi.fn();
 
@@ -1737,13 +1749,268 @@ describe("MCP keepalive pings", () => {
     vi.useRealTimers();
   });
 
+  it("starts keepalive after MCP servers are applied dynamically", async () => {
+    vi.useFakeTimers();
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(
+      makeDefaultOptions({
+        mcpServers: {},
+        mcpKeepaliveIntervalMs: 100,
+        idleTtlMs: 5000,
+      }),
+    );
+    const emit = vi.fn();
+
+    const turn = session.sendPrompt("Hello", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn;
+
+    await vi.advanceTimersByTimeAsync(150);
+    expect(mock.query.mcpServerStatus).not.toHaveBeenCalled();
+
+    const dynamicServers = {
+      "cc-session-tools": {
+        type: "sdk",
+        name: "cc-session-tools",
+        instance: {},
+      },
+    };
+    await session.setMcpServers(dynamicServers);
+
+    await vi.advanceTimersByTimeAsync(150);
+    expect(mock.query.mcpServerStatus).toHaveBeenCalledTimes(1);
+
+    session.close();
+    vi.useRealTimers();
+  });
+
+  it("uses dynamically applied MCP servers for pre-turn recovery", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(
+      makeDefaultOptions({
+        mcpServers: {},
+        idleTtlMs: 0,
+        mcpKeepaliveIntervalMs: 0,
+      }),
+    );
+    const emit = vi.fn();
+
+    const turn1 = session.sendPrompt("First", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn1;
+
+    const dynamicServers = {
+      "cc-session-tools": {
+        type: "sdk",
+        name: "cc-session-tools",
+        instance: {},
+      },
+    };
+    await session.setMcpServers(dynamicServers);
+
+    mock.query.mcpServerStatus.mockRejectedValueOnce(
+      new Error("Stream closed"),
+    );
+
+    const turn2 = session.sendPrompt("Second", emit);
+    await new Promise((r) => setImmediate(r));
+
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(2);
+    expect(mock.query.setMcpServers).toHaveBeenNthCalledWith(2, dynamicServers);
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u2",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn2;
+
+    session.close();
+  });
+
+  it("uses the latest dynamically applied MCP servers for recovery", async () => {
+    vi.useFakeTimers();
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(
+      makeDefaultOptions({
+        mcpServers: {},
+        mcpKeepaliveIntervalMs: 100,
+        idleTtlMs: 5000,
+      }),
+    );
+    const emit = vi.fn();
+
+    const turn = session.sendPrompt("Hello", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn;
+
+    const serversA = { a: { command: "node", args: ["a.js"] } };
+    const serversB = { b: { command: "node", args: ["b.js"] } };
+    await session.setMcpServers(serversA);
+    await session.setMcpServers(serversB);
+
+    mock.query.mcpServerStatus.mockRejectedValue(new Error("Stream closed"));
+
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(3);
+    expect(mock.query.setMcpServers).toHaveBeenNthCalledWith(3, serversB);
+
+    session.close();
+    vi.useRealTimers();
+  });
+
+  it("stops keepalive when dynamic MCP config is cleared", async () => {
+    vi.useFakeTimers();
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(
+      makeDefaultOptions({
+        mcpServers: {},
+        mcpKeepaliveIntervalMs: 100,
+        idleTtlMs: 5000,
+      }),
+    );
+    const emit = vi.fn();
+
+    const turn = session.sendPrompt("Hello", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn;
+
+    await session.setMcpServers({ s: { command: "node" } });
+    await vi.advanceTimersByTimeAsync(150);
+    expect(mock.query.mcpServerStatus).toHaveBeenCalledTimes(1);
+
+    await session.setMcpServers({});
+    await vi.advanceTimersByTimeAsync(300);
+    expect(mock.query.mcpServerStatus).toHaveBeenCalledTimes(1);
+
+    session.close();
+    vi.useRealTimers();
+  });
+
+  it("serializes dynamic MCP apply and recovery", async () => {
+    vi.useFakeTimers();
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(
+      makeDefaultOptions({
+        mcpServers: {},
+        mcpKeepaliveIntervalMs: 100,
+        idleTtlMs: 5000,
+      }),
+    );
+    const emit = vi.fn();
+
+    const turn = session.sendPrompt("Hello", emit);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn;
+
+    const serversA = { a: { command: "node", args: ["a.js"] } };
+    const serversB = { b: { command: "node", args: ["b.js"] } };
+    await session.setMcpServers(serversA);
+
+    mock.query.mcpServerStatus.mockRejectedValue(new Error("Stream closed"));
+    let resolveRecovery: ((value: unknown) => void) | undefined;
+    mock.query.setMcpServers.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRecovery = resolve;
+        }),
+    );
+
+    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(2);
+
+    const applyPromise = session.setMcpServers(serversB);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(2);
+
+    resolveRecovery?.({ added: [], removed: [], errors: {} });
+    await vi.advanceTimersByTimeAsync(0);
+    await applyPromise;
+
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(3);
+    expect(mock.query.setMcpServers).toHaveBeenNthCalledWith(3, serversB);
+    expect(session.status).toBe("alive");
+
+    session.close();
+    vi.useRealTimers();
+  });
+
   it("defaults to 30s keepalive interval when not specified", async () => {
     vi.useFakeTimers();
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
     const session = createQuerySession(
-      makeDefaultOptions({ idleTtlMs: 600_000 }),
+      makeDefaultOptions({ idleTtlMs: 600_000, mcpServers: { s: {} } }),
     );
     const emit = vi.fn();
 

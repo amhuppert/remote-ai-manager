@@ -428,6 +428,7 @@ describe("ClaudeConversationRuntime — applyPortableMcpConfig live updates", ()
     const passed = (mock.query.setMcpServers as ReturnType<typeof vi.fn>).mock
       .calls[1]![0] as Record<string, unknown>;
     expect(passed).toHaveProperty("idle-stdio");
+    expect(passed).toHaveProperty("cc-session-tools");
 
     runtime.close();
   });

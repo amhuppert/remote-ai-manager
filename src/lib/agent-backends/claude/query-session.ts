@@ -67,6 +67,8 @@ export interface TurnResult {
 }
 
 type TurnEmit = (event: string, data: unknown) => void;
+type SetMcpServersResult = Awaited<ReturnType<Query["setMcpServers"]>>;
+type McpMutationSource = "runtime" | "recovery";
 
 export interface QuerySession {
   /** Current health status */
@@ -101,6 +103,11 @@ export interface QuerySession {
     emit: TurnEmit,
     options?: TurnOptions,
   ): Promise<TurnResult>;
+
+  /** Apply MCP servers and update the session-owned active MCP config. */
+  setMcpServers(
+    mcpServers: Record<string, unknown>,
+  ): Promise<SetMcpServersResult>;
 
   /**
    * Cancel the idle TTL timer because the caller is about to send a new turn.
@@ -219,7 +226,8 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   let mcpKeepaliveTimer: ReturnType<typeof setInterval> | null = null;
   const stderrChunks: string[] = [];
   let awaitingSubsequentPromptDelivery = false;
-  const hasMcpServers = Object.keys(options.mcpServers).length > 0;
+  let activeMcpServers: Record<string, unknown> = options.mcpServers;
+  let mcpMutationQueue: Promise<unknown> = Promise.resolve();
   // Re-entrancy guards on the MCP health/recovery codepaths. Without these, a
   // stalled mcpServerStatus or setMcpServers call lets the keepalive interval
   // queue dozens of concurrent ticks/reconnects, which all reject in a
@@ -299,6 +307,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       return options.outputFormat;
     },
     sendPrompt,
+    setMcpServers,
     notifyTurnStarting,
     close,
   };
@@ -312,10 +321,41 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   // Start the background message pump
   void runPump();
 
-  // Start MCP keepalive immediately. The ping itself counts as transport
-  // activity, so it prevents the SDK's idle timeout from closing the stream
-  // even during long-running turns (e.g. while the agent is busy with Bash).
-  if (mcpKeepaliveMs > 0) {
+  syncMcpKeepaliveTimer();
+
+  return session;
+
+  // ------------------------------------------------------------------
+  // MCP config ownership
+  // ------------------------------------------------------------------
+
+  function mcpServerCount(mcpServers: Record<string, unknown>): number {
+    return Object.keys(mcpServers).length;
+  }
+
+  function hasActiveMcpServers(): boolean {
+    return mcpServerCount(activeMcpServers) > 0;
+  }
+
+  function clearMcpKeepaliveTimer(): void {
+    if (!mcpKeepaliveTimer) return;
+    clearInterval(mcpKeepaliveTimer);
+    mcpKeepaliveTimer = null;
+  }
+
+  function syncMcpKeepaliveTimer(): void {
+    const shouldRun =
+      status === "alive" && mcpKeepaliveMs > 0 && hasActiveMcpServers();
+
+    if (!shouldRun) {
+      clearMcpKeepaliveTimer();
+      return;
+    }
+
+    if (mcpKeepaliveTimer) return;
+
+    // The ping itself counts as transport activity, so it prevents the SDK's
+    // idle timeout from closing the stream even during long-running turns.
     mcpKeepaliveTimer = setInterval(() => {
       if (status !== "alive") return;
       if (keepaliveInFlight) return;
@@ -326,7 +366,58 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     }, mcpKeepaliveMs);
   }
 
-  return session;
+  function enqueueMcpMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const run = mcpMutationQueue.then(operation, operation);
+    mcpMutationQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  async function applyMcpServers(
+    mcpServers: Record<string, unknown>,
+    source: McpMutationSource,
+  ): Promise<SetMcpServersResult> {
+    return enqueueMcpMutation(async () => {
+      if (status === "dead") {
+        throw new Error("QuerySession closed");
+      }
+
+      const serverCount = mcpServerCount(mcpServers);
+      try {
+        const result = await q.setMcpServers(
+          mcpServers as Record<string, never>,
+        );
+        activeMcpServers = mcpServers;
+        recoveryFailureCount = 0;
+        syncMcpKeepaliveTimer();
+
+        if (source !== "recovery") {
+          logger.info("query-session.mcp_servers_updated", {
+            conversationId: options.conversationId,
+            source,
+            serverCount,
+          });
+        }
+
+        return result;
+      } catch (err) {
+        if (source !== "recovery") {
+          logger.error("query-session.mcp_servers_update_failed", {
+            conversationId: options.conversationId,
+            source,
+            serverCount,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        throw err;
+      }
+    });
+  }
+
+  async function setMcpServers(
+    mcpServers: Record<string, unknown>,
+  ): Promise<SetMcpServersResult> {
+    return applyMcpServers(mcpServers, "runtime");
+  }
 
   // ------------------------------------------------------------------
   // sendPrompt
@@ -408,10 +499,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       clearTimeout(idleTimer);
       idleTimer = null;
     }
-    if (mcpKeepaliveTimer) {
-      clearInterval(mcpKeepaliveTimer);
-      mcpKeepaliveTimer = null;
-    }
+    clearMcpKeepaliveTimer();
 
     // Reject any pending turn
     if (pendingTurn) {
@@ -617,7 +705,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   }
 
   async function ensureMcpHealthy(trigger: string): Promise<void> {
-    if (!hasMcpServers) return;
+    if (!hasActiveMcpServers()) return;
     try {
       const statuses = await q.mcpServerStatus();
       if (status !== "alive") return;
@@ -642,11 +730,17 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
 
   async function attemptMcpRecovery(trigger: string): Promise<void> {
     if (recoveryInFlight) return;
+    if (!hasActiveMcpServers()) return;
     recoveryInFlight = true;
     try {
-      await q.setMcpServers(options.mcpServers as Record<string, never>);
+      await enqueueMcpMutation(async () => {
+        if (status !== "alive") return;
+        if (!hasActiveMcpServers()) return;
+        await q.setMcpServers(activeMcpServers as Record<string, never>);
+      });
       if (status !== "alive") return;
       recoveryFailureCount = 0;
+      syncMcpKeepaliveTimer();
       logger.info("query-session.mcp_reconnected", {
         conversationId: options.conversationId,
         trigger,
@@ -775,6 +869,13 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
               turn.contentBlocks.push(resultBlock);
               if (isStreamClosedToolResult(resultBlock)) {
                 consecutiveStreamClosedCount += 1;
+                logger.warn("query-session.stream_closed_tool_result", {
+                  conversationId: options.conversationId,
+                  toolUseId: resultBlock.tool_use_id,
+                  toolName: turn.toolNamesById.get(resultBlock.tool_use_id),
+                  consecutiveCount: consecutiveStreamClosedCount,
+                  contentPreview: previewLogContent(resultBlock.content),
+                });
                 if (
                   consecutiveStreamClosedCount >=
                   TOOL_RESULT_STREAM_CLOSED_THRESHOLD
@@ -898,6 +999,11 @@ interface SdkToolResultBlock {
     | Array<{ type: string; text?: string; [k: string]: unknown }>;
 }
 
+type ToolResultContentBlock = Extract<
+  MessageContentBlock,
+  { type: "tool_result" }
+>;
+
 function extractToolResultText(
   content: SdkToolResultBlock["content"],
 ): string | undefined {
@@ -917,13 +1023,20 @@ function extractToolResultText(
   return textParts.length > 0 ? textParts.join("\n") : undefined;
 }
 
-function isStreamClosedToolResult(block: MessageContentBlock): boolean {
+function isStreamClosedToolResult(
+  block: MessageContentBlock,
+): block is ToolResultContentBlock & { isError: true; content: string } {
   return (
     block.type === "tool_result" &&
     block.isError === true &&
     typeof block.content === "string" &&
     block.content.includes("Stream closed")
   );
+}
+
+function previewLogContent(content: unknown): string | undefined {
+  if (typeof content !== "string") return undefined;
+  return content.length > 500 ? content.slice(0, 500) : content;
 }
 
 function buildToolResultBlock(
