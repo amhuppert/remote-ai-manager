@@ -87,6 +87,26 @@ Heuristic: if a hook returns state that changes on user interaction *within* a p
 
 Each entry: symptom → root cause → fix → lesson. Add new entries at the top.
 
+### 2026-05-28 — Scrolling the workflow event log was paint-bound, not React-bound
+
+- **Symptom**: scrolling `.wb-inspector-body` on `/projects/[name]/[session]/workflow` felt sluggish. Under 4× CPU throttling, 90 programmatic 80px scroll steps measured median 40.8 ms/frame, p95 49.7 ms, max 53.1 ms — **88/90 frames dropped below 30 fps**. Unthrottled was already at the 16.4 ms limit with no headroom.
+- **Root cause**: not React. react-scan captured **0 render events** across 7 200 px of scroll — the scroll handler architecture is fine. The cost was pure browser layout/paint: `WorkflowEventLog` (`src/components/workflow-graph/WorkflowEventLog.tsx`) flat-renders the entire `execution.history` (138 `wb-exec-event` rows × ~7 DOM nodes each), producing a 1 013-element, 8 045 px-tall scroll container with no virtualization or layout containment. Every composited frame had to consider all 138 rows.
+- **Fix**: applied CSS containment to the row primitive in `src/components/workflow-graph/workflow-graph.css`:
+  ```css
+  .wb-exec-event {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 32px;
+  }
+  ```
+  `content-visibility: auto` lets the browser skip layout/paint for rows outside the viewport; `contain-intrinsic-size: auto 32px` provides a placeholder size that gets refined to the row's natural height after first render, preserving scrollbar accuracy. No component refactor, no new dependency.
+- **Verification** (same 90-frame programmatic scroll over `.wb-inspector-body`):
+  | | Median | p95 | Max | Frames > 33 ms |
+  |---|---|---|---|---|
+  | Before, 4× CPU | 40.8 ms | 49.7 ms | 53.1 ms | 88 / 90 |
+  | After, 4× CPU | **16.8 ms** | **19.5 ms** | **20.9 ms** | **0 / 90** |
+  | After, 1× CPU | 16.7 ms | 17.2 ms | 17.7 ms | 0 / 90 |
+- **Lesson**: when react-scan shows **0 renders during the interaction**, stop hunting React perf and move to the trace/DOM side — the cost is style/layout/paint over a large undifferentiated tree. For long flat lists of cheap rows, `content-visibility: auto` + `contain-intrinsic-size` is the lowest-cost win: no virtualization library, no component rewrite, and the browser does the windowing. Reach for `react-virtual` only when rows are expensive enough that even off-screen layout work matters, or when DOM-node count itself (memory, accessibility tree, query-selector cost) is the bottleneck.
+
 ### 2026-05-27 — Pre-merge validation exhausted RAM (vitest fork fan-out + orphaned workers)
 
 - **Symptom**: smart-merging a branch ran `scripts/pre-merge-validate.sh`; the machine hit the macOS "out of application memory" dialog (~30 GB shown against WezTerm, the terminal hosting CC) and froze. Reported as "the validation script's memory explodes, I suspect vitest."

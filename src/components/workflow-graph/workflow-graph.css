@@ -1853,6 +1853,8 @@
 .wb-exec-event {
   padding: 8px 0;
   border-bottom: 1px solid var(--border-dim);
+  content-visibility: auto;
+  contain-intrinsic-size: auto 32px;
 }
 
 .wb-exec-event:last-child {
