@@ -1,5 +1,21 @@
+import { createLogger, timed } from "@/lib/logging";
+
 const VOICE_SERVER_URL =
   process.env.VOICE_SERVER_URL ?? "http://localhost:7880";
+
+const logger = createLogger("voice");
+
+type FetchFn = (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+) => Promise<Response>;
+
+let fetchImpl: FetchFn = (input, init) => fetch(input, init);
+
+/** Override the fetch implementation (testing only). Pass `undefined` to reset. */
+export function _setTranscribeFetchForTesting(fn: FetchFn | undefined): void {
+  fetchImpl = fn ?? ((input, init) => fetch(input, init));
+}
 
 export interface TranscribeProxyInput {
   audio: File;
@@ -38,11 +54,22 @@ export async function proxyTranscribe(
   }
 
   try {
-    const response = await fetch(`${VOICE_SERVER_URL}/transcribe`, {
-      method: "POST",
-      body: formData,
-      signal: AbortSignal.timeout(60000),
-    });
+    const response = await timed(
+      logger,
+      "voice.transcribe.upstream",
+      {
+        projectPath: input.projectPath,
+        hasContext: Boolean(input.context && input.context.trim()),
+        audioBytes: input.audio.size,
+      },
+      () =>
+        fetchImpl(`${VOICE_SERVER_URL}/transcribe`, {
+          method: "POST",
+          body: formData,
+          signal: AbortSignal.timeout(60000),
+        }),
+      (result) => ({ ok: result.ok, status: result.status }),
+    );
 
     if (!response.ok) {
       const data = (await response.json().catch(() => null)) as {
@@ -72,7 +99,7 @@ export async function proxyTranscribe(
 /** Check whether the upstream Voice2Text server is reachable. */
 export async function checkVoiceHealth(): Promise<boolean> {
   try {
-    const response = await fetch(`${VOICE_SERVER_URL}/health`, {
+    const response = await fetchImpl(`${VOICE_SERVER_URL}/health`, {
       signal: AbortSignal.timeout(3000),
     });
     return response.ok;

@@ -1,9 +1,12 @@
-import { access } from "node:fs/promises";
+import { access, readdir } from "node:fs/promises";
 import path from "node:path";
 import { getConfigDirPath } from "@/lib/config/loader";
 
 export interface ResolvedServerLogPath {
+  /** Primary log path (used for banner/display). */
   path: string;
+  /** All log paths to read and merge. Includes scoped session+conversation logs. */
+  paths: string[];
   checkedPaths: string[];
 }
 
@@ -14,6 +17,43 @@ async function isReadable(filePath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function safeReaddir(dir: string): Promise<string[]> {
+  try {
+    return await readdir(dir);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Discover all scoped session/conversation logs under `<configDir>/logs/sessions/`.
+ *
+ * Layout:
+ *   <configDir>/logs/sessions/<projectSlug>__<sessionSlug>/session.log
+ *   <configDir>/logs/sessions/<projectSlug>__<sessionSlug>/conversations/<conversationSlug>.log
+ */
+async function discoverScopedLogPaths(configDir: string): Promise<string[]> {
+  const sessionsRoot = path.join(configDir, "logs", "sessions");
+  const sessionDirs = await safeReaddir(sessionsRoot);
+  const results: string[] = [];
+
+  for (const sessionDir of sessionDirs) {
+    const sessionPath = path.join(sessionsRoot, sessionDir);
+    const sessionLog = path.join(sessionPath, "session.log");
+    if (await isReadable(sessionLog)) results.push(sessionLog);
+
+    const conversationsDir = path.join(sessionPath, "conversations");
+    const conversationFiles = await safeReaddir(conversationsDir);
+    for (const conversationFile of conversationFiles) {
+      if (!conversationFile.endsWith(".log")) continue;
+      const conversationLog = path.join(conversationsDir, conversationFile);
+      if (await isReadable(conversationLog)) results.push(conversationLog);
+    }
+  }
+
+  return results;
 }
 
 export async function resolveDefaultServerLogPath(): Promise<ResolvedServerLogPath> {
@@ -29,13 +69,27 @@ export async function resolveDefaultServerLogPath(): Promise<ResolvedServerLogPa
       candidate !== undefined && candidate !== "",
   );
 
+  let primary: string | undefined;
   for (const candidate of checkedPaths) {
     if (await isReadable(candidate)) {
-      return { path: candidate, checkedPaths };
+      primary = candidate;
+      break;
     }
   }
 
-  throw new Error(
-    `no readable server log found; checked: ${checkedPaths.join(", ")}`,
-  );
+  const scopedPaths = await discoverScopedLogPaths(configDir);
+  const allChecked = [...checkedPaths, ...scopedPaths];
+
+  if (primary === undefined && scopedPaths.length === 0) {
+    throw new Error(
+      `no readable server log found; checked: ${checkedPaths.join(", ")}`,
+    );
+  }
+
+  const paths = primary !== undefined ? [primary, ...scopedPaths] : scopedPaths;
+  return {
+    path: paths[0] as string,
+    paths,
+    checkedPaths: allChecked,
+  };
 }

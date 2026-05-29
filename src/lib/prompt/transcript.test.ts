@@ -7,6 +7,7 @@ import {
   readLastAssistantContent,
   _resetLastAssistantCacheForTesting,
   _resetLastSeqCacheForTesting,
+  _resetTranscriptReadCacheForTesting,
   appendTranscriptEntry,
   getTranscriptPath,
   parseCommandContent,
@@ -820,6 +821,111 @@ describe("readConversationMessagesWithSeq", () => {
 
     const result = await readConversationMessagesWithSeq(filePath);
     expect(result.map((m) => m.seq)).toEqual([0, 2]);
+  });
+});
+
+// ==========================================================================
+// readConversationMessagesWithSeq — parsed-row cache
+// ==========================================================================
+
+describe("readConversationMessagesWithSeq caching", () => {
+  beforeEach(() => {
+    _resetTranscriptReadCacheForTesting();
+  });
+
+  it("returns the same array reference when the file is unchanged", async () => {
+    const filePath = path.join(TEST_DIR, "transcripts", "cache-stable.jsonl");
+    const lines = [
+      JSON.stringify({
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      }),
+      JSON.stringify({
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "hi" }],
+      }),
+    ];
+    await writeFile(filePath, lines.join("\n"), "utf-8");
+
+    const first = await readConversationMessagesWithSeq(filePath);
+    const second = await readConversationMessagesWithSeq(filePath);
+    expect(second).toBe(first);
+  });
+
+  it("returns a fresh array after the file is appended to", async () => {
+    const filePath = path.join(
+      TEST_DIR,
+      "transcripts",
+      "cache-invalidate.jsonl",
+    );
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "first" }],
+      }) + "\n",
+      "utf-8",
+    );
+
+    const first = await readConversationMessagesWithSeq(filePath);
+    expect(first).toHaveLength(1);
+
+    // Wait a few ms so mtime changes detectably across filesystems.
+    await new Promise((r) => setTimeout(r, 20));
+
+    await writeFile(
+      filePath,
+      [
+        JSON.stringify({
+          type: "user",
+          role: "user",
+          content: [{ type: "text", text: "first" }],
+        }),
+        JSON.stringify({
+          type: "assistant",
+          role: "assistant",
+          content: [{ type: "text", text: "second" }],
+        }),
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const second = await readConversationMessagesWithSeq(filePath);
+    expect(second).not.toBe(first);
+    expect(second).toHaveLength(2);
+    expect(second[1]!.content[0]).toEqual({ type: "text", text: "second" });
+  });
+
+  it("isolates caches per transcript path", async () => {
+    const pathA = path.join(TEST_DIR, "transcripts", "cache-a.jsonl");
+    const pathB = path.join(TEST_DIR, "transcripts", "cache-b.jsonl");
+    await writeFile(
+      pathA,
+      JSON.stringify({
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "a" }],
+      }) + "\n",
+      "utf-8",
+    );
+    await writeFile(
+      pathB,
+      JSON.stringify({
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "b" }],
+      }) + "\n",
+      "utf-8",
+    );
+
+    const a = await readConversationMessagesWithSeq(pathA);
+    const b = await readConversationMessagesWithSeq(pathB);
+    expect(a).not.toBe(b);
+    expect(a[0]!.content[0]).toEqual({ type: "text", text: "a" });
+    expect(b[0]!.content[0]).toEqual({ type: "text", text: "b" });
   });
 });
 

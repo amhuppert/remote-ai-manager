@@ -232,12 +232,24 @@ async function resolveInputPath(
   explicitPath: string | undefined,
 ): Promise<ResolvedServerLogPath> {
   if (explicitPath !== undefined) {
-    return { path: explicitPath, checkedPaths: [explicitPath] };
+    return {
+      path: explicitPath,
+      paths: [explicitPath],
+      checkedPaths: [explicitPath],
+    };
   }
   if (runtime.resolveDefaultServerLogPath) {
     return await runtime.resolveDefaultServerLogPath();
   }
   return await resolveDefaultServerLogPath();
+}
+
+async function readAllPaths(
+  runtime: LogAnalysisCliRuntime,
+  paths: readonly string[],
+): Promise<string> {
+  const chunks = await Promise.all(paths.map((p) => readText(runtime, p)));
+  return chunks.join("\n");
 }
 
 function formatBytes(size: number): string {
@@ -368,12 +380,11 @@ async function runReport(
   options: ParsedCliOptions,
 ): Promise<number> {
   const resolved = await resolveInputPath(runtime, options.inPath);
-  await emitInputBanner({
-    runtime,
-    filePath: resolved.path,
-    resolution: options.inPath !== undefined ? "explicit" : "default",
-  });
-  const rawLog = await readText(runtime, resolved.path);
+  const resolution = options.inPath !== undefined ? "explicit" : "default";
+  for (const p of resolved.paths) {
+    await emitInputBanner({ runtime, filePath: p, resolution });
+  }
+  const rawLog = await readAllPaths(runtime, resolved.paths);
   const clientLogRaw = options.clientLogPath
     ? await readText(runtime, options.clientLogPath)
     : null;
@@ -408,12 +419,11 @@ async function runTrace(
   }
 
   const resolved = await resolveInputPath(runtime, options.inPath);
-  await emitInputBanner({
-    runtime,
-    filePath: resolved.path,
-    resolution: options.inPath !== undefined ? "explicit" : "default",
-  });
-  const rawLog = await readText(runtime, resolved.path);
+  const resolution = options.inPath !== undefined ? "explicit" : "default";
+  for (const p of resolved.paths) {
+    await emitInputBanner({ runtime, filePath: p, resolution });
+  }
+  const rawLog = await readAllPaths(runtime, resolved.paths);
   const parsed = parseLog(rawLog);
   const filtered = applyServerLogFilters(parsed.records, options.filters);
   if (!filtered.some((record) => record.traceId === options.traceId)) {

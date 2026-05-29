@@ -546,6 +546,29 @@ export async function readLastAssistantContent(
   return blocks;
 }
 
+// Cache the fully-parsed transcript message array per file path, keyed on
+// (mtimeMs, size). Polling clients hit the messages endpoint many times per
+// minute while the transcript is unchanged; re-reading and re-parsing the
+// whole JSONL (which can grow into the MBs) on every poll pegs the event
+// loop. Cache returns the array by reference so React Query can short-circuit
+// re-renders on referential equality.
+//
+// Invariant: production transcripts are append-only. Any code path that
+// truncates or rewrites a transcript MUST clear the cache for that path.
+const TRANSCRIPT_READ_CACHE_MAX = 200;
+
+interface TranscriptReadCacheEntry {
+  mtimeMs: number;
+  size: number;
+  parsed: Array<TranscriptMessage & { seq: number }>;
+}
+
+const transcriptReadCache = new Map<string, TranscriptReadCacheEntry>();
+
+export function _resetTranscriptReadCacheForTesting(): void {
+  transcriptReadCache.clear();
+}
+
 /**
  * Read conversation messages from a transcript file.
  * Handles null paths and missing files gracefully (returns []).
@@ -579,7 +602,36 @@ export async function readConversationMessagesWithSeq(
     transcriptLogger,
     "transcript.read",
     {},
-    () => readConversationMessagesWithSeqImpl(transcriptPath),
+    async () => {
+      let stats;
+      try {
+        stats = await stat(transcriptPath);
+      } catch {
+        return readConversationMessagesWithSeqImpl(transcriptPath);
+      }
+
+      const cached = transcriptReadCache.get(transcriptPath);
+      if (
+        cached &&
+        cached.mtimeMs === stats.mtimeMs &&
+        cached.size === stats.size
+      ) {
+        return cached.parsed;
+      }
+
+      const parsed = await readConversationMessagesWithSeqImpl(transcriptPath);
+
+      if (transcriptReadCache.size >= TRANSCRIPT_READ_CACHE_MAX) {
+        const firstKey = transcriptReadCache.keys().next().value;
+        if (firstKey !== undefined) transcriptReadCache.delete(firstKey);
+      }
+      transcriptReadCache.set(transcriptPath, {
+        mtimeMs: stats.mtimeMs,
+        size: stats.size,
+        parsed,
+      });
+      return parsed;
+    },
     (messages) => ({ messageCount: messages.length }),
   );
 }

@@ -19,7 +19,7 @@ import type { ConversationState } from "@/lib/conversations/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionCreationMode, SessionState } from "@/lib/sessions/schemas";
 import { readState, mutateState } from "../state-store";
-import { createLogger } from "../logging";
+import { createLogger, timed } from "../logging";
 import type { BulkSessionResult } from "@/lib/sessions/schemas";
 import { readRepoConfig } from "../projects/repo-config";
 import { readConfig } from "../config/loader";
@@ -354,17 +354,23 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
           throw new Error(`Init script not found: ${scriptPath}`);
         }
 
-        await execFileAsync(scriptPath, [], {
-          cwd: worktreePath,
-          env: {
-            ...buildChildEnv(),
-            PROJECT_ROOT: projectPath,
-            CLAUDE_PROJECT_DIR: projectPath,
-            WORKTREE_PATH: worktreePath,
-            SESSION_NAME: sessionName,
-            BRANCH_NAME: branchName,
-          },
-        });
+        await timed(
+          logger,
+          "session.init_script",
+          { scriptPath, worktreePath, sessionName },
+          () =>
+            execFileAsync(scriptPath, [], {
+              cwd: worktreePath,
+              env: {
+                ...buildChildEnv(),
+                PROJECT_ROOT: projectPath,
+                CLAUDE_PROJECT_DIR: projectPath,
+                WORKTREE_PATH: worktreePath,
+                SESSION_NAME: sessionName,
+                BRANCH_NAME: branchName,
+              },
+            }),
+        );
       }
     } catch (err) {
       logger.error("session.create_failure", {

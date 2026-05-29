@@ -36,6 +36,7 @@ function runtime(
       : {}),
     resolveDefaultServerLogPath: async () => ({
       path: "/default.log",
+      paths: ["/default.log"],
       checkedPaths: ["/default.log"],
     }),
     stdoutText: () => stdout,
@@ -239,6 +240,62 @@ describe("runLogAnalysisCli", () => {
       expect(rt.stderrText()).toContain("/after.log");
       expect(rt.stderrText()).toContain("age=30m");
       expect(rt.stderrText()).toContain("age=1m");
+    });
+  });
+
+  describe("multi-file default resolution", () => {
+    const traceA = JSON.stringify({
+      timestamp: "2026-05-21T12:00:00.000Z",
+      level: "info",
+      module: "tracing",
+      message: "request.complete",
+      traceId: "trace-multi",
+      durationMs: 600,
+      method: "GET",
+      path: "/api/test",
+      status: 200,
+    });
+
+    const traceAScoped = JSON.stringify({
+      timestamp: "2026-05-21T12:00:00.300Z",
+      level: "info",
+      module: "voice",
+      message: "voice.transcribe.upstream.complete",
+      traceId: "trace-multi",
+      durationMs: 350,
+      ok: true,
+      status: 200,
+    });
+
+    it("reads scoped session log alongside global log when resolver returns multiple paths", async () => {
+      const rt: LogAnalysisCliRuntime & {
+        stdoutText(): string;
+        stderrText(): string;
+      } = {
+        ...runtime({
+          "/global.log": traceA,
+          "/sessions/proj__sess/session.log": traceAScoped,
+        }),
+        resolveDefaultServerLogPath: async () => ({
+          path: "/global.log",
+          paths: ["/global.log", "/sessions/proj__sess/session.log"],
+          checkedPaths: ["/global.log", "/sessions/proj__sess/session.log"],
+        }),
+      };
+
+      const exitCode = await runLogAnalysisCli(
+        ["trace", "trace-multi", "--format", "json"],
+        rt,
+      );
+
+      expect(exitCode).toBe(0);
+      const report = JSON.parse(rt.stdoutText()) as {
+        request: { message: string } | null;
+        timeline: { message: string; module: string }[];
+      };
+      expect(report.request?.message).toBe("request.complete");
+      const timelineMessages = report.timeline.map((row) => row.message);
+      expect(timelineMessages).toContain("voice.transcribe.upstream.complete");
     });
   });
 });

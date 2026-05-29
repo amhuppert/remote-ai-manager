@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from "vitest";
-import { parseDiff, computeDiff } from "./diff";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { parseDiff, computeDiff, _resetDiffCacheForTesting } from "./diff";
 import type { ComputeDiffDeps } from "./diff";
 
 describe("parseDiff", () => {
@@ -225,7 +225,24 @@ function createMockDeps(): {
   };
 }
 
+function mockTokenAndDiff(
+  mockExec: ReturnType<typeof vi.fn>,
+  opts: { headSha: string; porcelain: string; diffStdout: string },
+): void {
+  // Order: rev-parse HEAD, status --porcelain, read-tree, add -A, diff
+  mockExec
+    .mockResolvedValueOnce({ stdout: `${opts.headSha}\n`, stderr: "" })
+    .mockResolvedValueOnce({ stdout: opts.porcelain, stderr: "" })
+    .mockResolvedValueOnce({ stdout: "", stderr: "" })
+    .mockResolvedValueOnce({ stdout: "", stderr: "" })
+    .mockResolvedValueOnce({ stdout: opts.diffStdout, stderr: "" });
+}
+
 describe("computeDiff", () => {
+  beforeEach(() => {
+    _resetDiffCacheForTesting();
+  });
+
   it("uses temp index to diff working tree against HEAD", async () => {
     const { deps, mockExec, mockUnlink } = createMockDeps();
     const diffOutput = `diff --git a/src/app.ts b/src/app.ts
@@ -237,11 +254,11 @@ index abc..def 100644
 +new line
  line2`;
 
-    // 0: git read-tree HEAD, 1: git add -A, 2: git diff
-    mockExec
-      .mockResolvedValueOnce({ stdout: "", stderr: "" })
-      .mockResolvedValueOnce({ stdout: "", stderr: "" })
-      .mockResolvedValueOnce({ stdout: diffOutput, stderr: "" });
+    mockTokenAndDiff(mockExec, {
+      headSha: "deadbeef",
+      porcelain: " M src/app.ts\0",
+      diffStdout: diffOutput,
+    });
 
     const result = await computeDiff("/projects/repo/.worktrees/test", deps);
 
@@ -257,8 +274,10 @@ index abc..def 100644
       ),
     ).toBe(true);
 
-    // Verify temp index env is set for all git calls
-    for (const call of mockExec.mock.calls) {
+    // Verify temp index env is set for the index-mutating git calls
+    // (rev-parse and status do not use the temp index)
+    const indexCalls = mockExec.mock.calls.slice(2);
+    for (const call of indexCalls) {
       const opts = call[2] as { env: Record<string, string> };
       expect(opts.env.GIT_INDEX_FILE).toMatch(/cc-diff-/);
     }
@@ -269,7 +288,11 @@ index abc..def 100644
 
   it("returns empty diff on read-tree failure", async () => {
     const { deps, mockExec, mockUnlink } = createMockDeps();
-    mockExec.mockRejectedValueOnce(new Error("git failed"));
+    // rev-parse + status succeed (token probe), then read-tree fails
+    mockExec
+      .mockResolvedValueOnce({ stdout: "deadbeef\n", stderr: "" })
+      .mockResolvedValueOnce({ stdout: "", stderr: "" })
+      .mockRejectedValueOnce(new Error("git failed"));
 
     const result = await computeDiff("/projects/repo/.worktrees/test", deps);
     expect(result.files).toHaveLength(0);
@@ -282,13 +305,132 @@ index abc..def 100644
 
   it("returns empty diff for empty git diff output", async () => {
     const { deps, mockExec } = createMockDeps();
-    mockExec
-      .mockResolvedValueOnce({ stdout: "", stderr: "" })
-      .mockResolvedValueOnce({ stdout: "", stderr: "" })
-      .mockResolvedValueOnce({ stdout: "", stderr: "" });
+    mockTokenAndDiff(mockExec, {
+      headSha: "deadbeef",
+      porcelain: "",
+      diffStdout: "",
+    });
 
     const result = await computeDiff("/projects/repo/.worktrees/test", deps);
     expect(result.files).toHaveLength(0);
     expect(result.totalAdditions).toBe(0);
+  });
+});
+
+describe("computeDiff caching", () => {
+  beforeEach(() => {
+    _resetDiffCacheForTesting();
+  });
+
+  it("returns the same diff reference when HEAD and porcelain are unchanged", async () => {
+    const { deps, mockExec } = createMockDeps();
+    const diffOutput = `diff --git a/src/app.ts b/src/app.ts
+index abc..def 100644
+--- a/src/app.ts
++++ b/src/app.ts
+@@ -1,2 +1,3 @@
+ line1
++new line
+ line2`;
+    // First call: full 5-mock sequence
+    mockTokenAndDiff(mockExec, {
+      headSha: "deadbeef",
+      porcelain: " M src/app.ts\0",
+      diffStdout: diffOutput,
+    });
+    // Second call: only token probes — cache should serve diff
+    mockExec
+      .mockResolvedValueOnce({ stdout: "deadbeef\n", stderr: "" })
+      .mockResolvedValueOnce({ stdout: " M src/app.ts\0", stderr: "" });
+
+    const first = await computeDiff("/projects/repo/.worktrees/test", deps);
+    const second = await computeDiff("/projects/repo/.worktrees/test", deps);
+
+    expect(second).toBe(first);
+    // Exactly 5 (first compute) + 2 (cached probe) = 7 execFile calls
+    expect(mockExec).toHaveBeenCalledTimes(7);
+  });
+
+  it("recomputes the diff when HEAD changes", async () => {
+    const { deps, mockExec } = createMockDeps();
+    // First compute
+    mockTokenAndDiff(mockExec, {
+      headSha: "old-sha",
+      porcelain: "",
+      diffStdout: "",
+    });
+    // Second compute: HEAD changed → token miss → full diff sequence
+    mockTokenAndDiff(mockExec, {
+      headSha: "new-sha",
+      porcelain: "",
+      diffStdout: `diff --git a/x.ts b/x.ts
+index abc..def 100644
+--- a/x.ts
++++ b/x.ts
+@@ -1 +1,2 @@
+ x
++y`,
+    });
+
+    const first = await computeDiff("/projects/repo/.worktrees/test", deps);
+    const second = await computeDiff("/projects/repo/.worktrees/test", deps);
+
+    expect(second).not.toBe(first);
+    expect(first.files).toHaveLength(0);
+    expect(second.files).toHaveLength(1);
+    expect(second.files[0]!.filePath).toBe("x.ts");
+  });
+
+  it("recomputes the diff when worktree status changes", async () => {
+    const { deps, mockExec } = createMockDeps();
+    mockTokenAndDiff(mockExec, {
+      headSha: "same-sha",
+      porcelain: "",
+      diffStdout: "",
+    });
+    mockTokenAndDiff(mockExec, {
+      headSha: "same-sha",
+      porcelain: " M a.ts\0",
+      diffStdout: `diff --git a/a.ts b/a.ts
+index abc..def 100644
+--- a/a.ts
++++ b/a.ts
+@@ -1 +1,2 @@
+ a
++b`,
+    });
+
+    const first = await computeDiff("/projects/repo/.worktrees/test", deps);
+    const second = await computeDiff("/projects/repo/.worktrees/test", deps);
+
+    expect(second).not.toBe(first);
+    expect(second.files[0]!.filePath).toBe("a.ts");
+  });
+
+  it("isolates caches per worktree path", async () => {
+    const { deps, mockExec } = createMockDeps();
+    mockTokenAndDiff(mockExec, {
+      headSha: "sha-a",
+      porcelain: "",
+      diffStdout: "",
+    });
+    mockTokenAndDiff(mockExec, {
+      headSha: "sha-b",
+      porcelain: "",
+      diffStdout: `diff --git a/b.ts b/b.ts
+index abc..def 100644
+--- a/b.ts
++++ b/b.ts
+@@ -1 +1,2 @@
+ b
++c`,
+    });
+
+    const a = await computeDiff("/projects/repo/.worktrees/a", deps);
+    const b = await computeDiff("/projects/repo/.worktrees/b", deps);
+
+    expect(b).not.toBe(a);
+    expect(a.files).toHaveLength(0);
+    expect(b.files).toHaveLength(1);
   });
 });

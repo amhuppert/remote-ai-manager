@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { unlink as unlinkDefault } from "node:fs/promises";
 import type { SessionDiff, FileDiff, DiffHunk, DiffLine } from "./schemas";
 import { createLogger } from "@/lib/logging";
@@ -31,6 +31,44 @@ const defaultComputeDiffDeps: ComputeDiffDeps = {
   unlink: unlinkDefault,
 };
 
+// Cache the parsed SessionDiff per worktree path, keyed on a cheap token built
+// from `git rev-parse HEAD` + a hash of `git status --porcelain=v1 -z`. Polling
+// clients hit /diff many times per minute; the read-tree/add-A/diff sequence is
+// ~1.5s exclusive per call on large worktrees. When HEAD and the working tree
+// porcelain are unchanged, the diff is by definition identical — return the
+// cached object by reference so React Query short-circuits re-renders.
+const DIFF_CACHE_MAX = 100;
+
+interface DiffCacheEntry {
+  token: string;
+  diff: SessionDiff;
+}
+
+const diffCache = new Map<string, DiffCacheEntry>();
+
+export function _resetDiffCacheForTesting(): void {
+  diffCache.clear();
+}
+
+async function computeCacheToken(
+  worktreePath: string,
+  deps: ComputeDiffDeps,
+): Promise<string | null> {
+  try {
+    const opts = { cwd: worktreePath, maxBuffer: MAX_BUFFER };
+    const head = await deps.execFileAsync("git", ["rev-parse", "HEAD"], opts);
+    const status = await deps.execFileAsync(
+      "git",
+      ["status", "--porcelain=v1", "-z"],
+      opts,
+    );
+    const statusHash = createHash("sha1").update(status.stdout).digest("hex");
+    return `${head.stdout.trim()}:${statusHash}`;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Compute a git diff of uncommitted changes in the session worktree.
  * Uses a temporary index so that untracked files are included in the diff
@@ -45,7 +83,27 @@ export async function computeDiff(
     logger,
     "diff.compute",
     { worktreePath },
-    () => computeDiffImpl(worktreePath, deps),
+    async () => {
+      const token = await computeCacheToken(worktreePath, deps);
+      if (token !== null) {
+        const cached = diffCache.get(worktreePath);
+        if (cached && cached.token === token) {
+          return cached.diff;
+        }
+      }
+
+      const diff = await computeDiffImpl(worktreePath, deps);
+
+      if (token !== null) {
+        if (diffCache.size >= DIFF_CACHE_MAX) {
+          const firstKey = diffCache.keys().next().value;
+          if (firstKey !== undefined) diffCache.delete(firstKey);
+        }
+        diffCache.set(worktreePath, { token, diff });
+      }
+
+      return diff;
+    },
     (result) => ({ fileCount: result.files.length }),
   );
 }
