@@ -280,6 +280,225 @@ describe("graph workflow manager", () => {
     });
   });
 
+  it("aborts the in-flight conversation for every running task when paused, halted, or aborted", async () => {
+    const buildExecutionWithRunningTasks = () =>
+      createWorkflowExecution({
+        status: "running",
+        activeContextIds: ["context-a", "context-b"],
+        contextStates: {
+          "context-a": {
+            contextId: "context-a",
+            status: "running",
+            totalTaskCount: 2,
+            completedTaskCount: 0,
+            iterationCount: 1,
+            consecutiveFailureCount: 0,
+            worktreePath: null,
+            branchName: null,
+            isolation: "session",
+            batchId: null,
+            laneId: null,
+            joinId: null,
+            mergeStatus: "not-applicable",
+            cleanupStatus: "not-applicable",
+            lastMergeError: null,
+          },
+          "context-b": {
+            contextId: "context-b",
+            status: "running",
+            totalTaskCount: 1,
+            completedTaskCount: 0,
+            iterationCount: 1,
+            consecutiveFailureCount: 0,
+            worktreePath: null,
+            branchName: null,
+            isolation: "session",
+            batchId: null,
+            laneId: null,
+            joinId: null,
+            mergeStatus: "not-applicable",
+            cleanupStatus: "not-applicable",
+            lastMergeError: null,
+          },
+          "context-c": {
+            contextId: "context-c",
+            status: "pending",
+            totalTaskCount: 1,
+            completedTaskCount: 0,
+            iterationCount: 0,
+            consecutiveFailureCount: 0,
+            worktreePath: null,
+            branchName: null,
+            isolation: "session",
+            batchId: null,
+            laneId: null,
+            joinId: null,
+            mergeStatus: "not-applicable",
+            cleanupStatus: "not-applicable",
+            lastMergeError: null,
+          },
+        },
+        taskStates: {
+          "task-a-1": {
+            taskId: "task-a-1",
+            contextId: "context-a",
+            order: 1,
+            status: "running",
+            summary: null,
+            startedAt: "2026-03-27T15:00:00.000Z",
+            completedAt: null,
+            lastConversationId: "conv-a",
+            failureMessage: null,
+            failureHistory: [],
+          },
+          "task-a-2": {
+            taskId: "task-a-2",
+            contextId: "context-a",
+            order: 2,
+            status: "running",
+            summary: null,
+            startedAt: "2026-03-27T15:00:00.000Z",
+            completedAt: null,
+            lastConversationId: "conv-a",
+            failureMessage: null,
+            failureHistory: [],
+          },
+          "task-b-1": {
+            taskId: "task-b-1",
+            contextId: "context-b",
+            order: 1,
+            status: "running",
+            summary: null,
+            startedAt: "2026-03-27T15:00:00.000Z",
+            completedAt: null,
+            lastConversationId: "conv-b",
+            failureMessage: null,
+            failureHistory: [],
+          },
+          "task-c-1": {
+            taskId: "task-c-1",
+            contextId: "context-c",
+            order: 1,
+            status: "pending",
+            summary: null,
+            startedAt: null,
+            completedAt: null,
+            lastConversationId: "conv-stale",
+            failureMessage: null,
+            failureHistory: [],
+          },
+        },
+        machineSnapshot: {
+          schemaVersion: 1,
+          lifecycleStatus: "running",
+          activeContextId: "context-a",
+          recoveryMode: "none",
+          hasLiveIteration: true,
+        },
+      });
+
+    const transitions: Array<{
+      transition: "pause" | "abort" | "halt";
+      send: () => Promise<unknown>;
+    }> = [];
+
+    for (const event of [
+      { type: "pause" as const },
+      { type: "abort" as const },
+      {
+        type: "halt" as const,
+        reason: {
+          type: "max_iterations" as const,
+          contextId: "context-a",
+          iterationCount: 1,
+        },
+      },
+    ]) {
+      const repository = createRepository(buildExecutionWithRunningTasks());
+      const abortConversation = vi.fn();
+
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return null;
+        },
+        now() {
+          return "2026-03-27T15:05:00.000Z";
+        },
+        abortConversation,
+      });
+
+      transitions.push({
+        transition: event.type,
+        send: async () => {
+          await manager.send("/repo", "session-1", event);
+          const calls = abortConversation.mock.calls.map(
+            ([input]) => input as { conversationId: string },
+          );
+          const conversationIds = calls
+            .map((c) => c.conversationId)
+            .sort((a, b) => a.localeCompare(b));
+          expect(conversationIds).toEqual(["conv-a", "conv-b"]);
+          for (const call of calls) {
+            expect(call).toMatchObject({
+              projectPath: "/repo",
+              sessionName: "session-1",
+            });
+          }
+        },
+      });
+    }
+
+    for (const { send } of transitions) {
+      await send();
+    }
+  });
+
+  it("does not invoke abortConversation when no tasks are running", async () => {
+    const repository = createRepository(
+      createWorkflowExecution({
+        status: "running",
+        activeContextIds: ["context-plan"],
+        taskStates: {
+          "task-plan-1": {
+            taskId: "task-plan-1",
+            contextId: "context-plan",
+            order: 1,
+            status: "completed",
+            summary: "done",
+            startedAt: "2026-03-27T15:00:00.000Z",
+            completedAt: "2026-03-27T15:01:00.000Z",
+            lastConversationId: "conv-finished",
+            failureMessage: null,
+            failureHistory: [],
+          },
+        },
+        machineSnapshot: {
+          schemaVersion: 1,
+          lifecycleStatus: "running",
+          activeContextId: "context-plan",
+          recoveryMode: "none",
+          hasLiveIteration: false,
+        },
+      }),
+    );
+    const abortConversation = vi.fn();
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+      now() {
+        return "2026-03-27T15:05:00.000Z";
+      },
+      abortConversation,
+    });
+
+    await manager.send("/repo", "session-1", { type: "pause" });
+
+    expect(abortConversation).not.toHaveBeenCalled();
+  });
+
   it("transitions a running context to ready when halted", async () => {
     const repository = createRepository(
       createWorkflowExecution({

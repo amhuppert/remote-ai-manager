@@ -6,6 +6,8 @@ import {
   createConversation,
   getConversation,
 } from "@/lib/conversations/service";
+import { abortConversation as abortConversationRegistry } from "@/lib/conversations/abort-registry";
+import { sendConversationEvent } from "@/lib/workflows/conversation/manager";
 import { createLogger, withTracing } from "@/lib/logging";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import {
@@ -95,6 +97,13 @@ const workflowManager = createGraphWorkflowManager({
   isExecutionLoopActive,
   parallelWorktrees,
   getSession: defaultGetSession,
+  abortConversation: ({ projectPath, sessionName, conversationId }) => {
+    abortConversationRegistry(conversationId);
+    sendConversationEvent(projectPath, sessionName, conversationId, {
+      type: "ABORT_TURN",
+      reason: "user",
+    });
+  },
 });
 
 const continuityService = createWorkflowContinuityService({

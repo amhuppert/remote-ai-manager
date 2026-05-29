@@ -108,6 +108,18 @@ export interface GraphWorkflowManagerDeps {
     sessionName: string,
   ): Promise<SessionState | null>;
   createBatchId?(): string;
+  /**
+   * Signal the in-flight Claude Code SDK query for a running task's
+   * conversation to abort. Invoked once per unique conversationId across
+   * running tasks on pause/abort/halt so the orchestrator does not leave
+   * an orphan query running concurrently with the next iteration after
+   * resume.
+   */
+  abortConversation?(input: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+  }): void;
 }
 
 export interface ScheduleEligibleContextsInput {
@@ -260,6 +272,18 @@ function markActiveContextReady(execution: GraphWorkflowExecution): void {
   }
 }
 
+function collectRunningTaskConversationIds(
+  execution: GraphWorkflowExecution,
+): string[] {
+  const ids = new Set<string>();
+  for (const taskState of Object.values(execution.taskStates)) {
+    if (taskState.status === "running" && taskState.lastConversationId) {
+      ids.add(taskState.lastConversationId);
+    }
+  }
+  return [...ids];
+}
+
 function interruptRunningTasks(execution: GraphWorkflowExecution): boolean {
   let foundRunning = false;
   for (const taskState of Object.values(execution.taskStates)) {
@@ -293,6 +317,32 @@ function transitionToNonRunningState(
 }
 
 export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
+  function abortRunningTaskConversations(
+    projectPath: string,
+    sessionName: string,
+    conversationIds: readonly string[],
+  ): void {
+    if (!deps.abortConversation || conversationIds.length === 0) {
+      return;
+    }
+    for (const conversationId of conversationIds) {
+      try {
+        deps.abortConversation({
+          projectPath,
+          sessionName,
+          conversationId,
+        });
+      } catch (err) {
+        logger.warn("graph-workflow.abort_conversation.failed", {
+          projectPath,
+          sessionName,
+          conversationId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+
   async function start(
     input: GraphWorkflowStartInput,
   ): Promise<GraphWorkflowExecution> {
@@ -372,11 +422,19 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     const now = getNow(deps);
 
     if (event.type === "pause") {
+      let conversationIdsToAbort: string[] = [];
       const nextExecution = await deps.executionRepository.mutateActive(
         projectPath,
         sessionName,
-        (execution) =>
-          transitionToNonRunningState(execution, "paused", null, null),
+        (execution) => {
+          conversationIdsToAbort = collectRunningTaskConversationIds(execution);
+          return transitionToNonRunningState(execution, "paused", null, null);
+        },
+      );
+      abortRunningTaskConversations(
+        projectPath,
+        sessionName,
+        conversationIdsToAbort,
       );
       const execLogger = getExecutionLogger(nextExecution.id);
       execLogger?.lifecycle("execution.paused");
@@ -387,13 +445,21 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     }
 
     if (event.type === "abort") {
+      let conversationIdsToAbort: string[] = [];
       const nextExecution = await deps.executionRepository.mutateActive(
         projectPath,
         sessionName,
-        (execution) =>
-          transitionToNonRunningState(execution, "aborted", now, {
+        (execution) => {
+          conversationIdsToAbort = collectRunningTaskConversationIds(execution);
+          return transitionToNonRunningState(execution, "aborted", now, {
             type: "aborted",
-          }),
+          });
+        },
+      );
+      abortRunningTaskConversations(
+        projectPath,
+        sessionName,
+        conversationIdsToAbort,
       );
       const execLogger = getExecutionLogger(nextExecution.id);
       execLogger?.lifecycle("execution.aborted");
@@ -433,11 +499,24 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     }
 
     const haltReason = event.reason;
+    let conversationIdsToAbort: string[] = [];
     const nextExecution = await deps.executionRepository.mutateActive(
       projectPath,
       sessionName,
-      (execution) =>
-        transitionToNonRunningState(execution, "halted", now, haltReason),
+      (execution) => {
+        conversationIdsToAbort = collectRunningTaskConversationIds(execution);
+        return transitionToNonRunningState(
+          execution,
+          "halted",
+          now,
+          haltReason,
+        );
+      },
+    );
+    abortRunningTaskConversations(
+      projectPath,
+      sessionName,
+      conversationIdsToAbort,
     );
     const execLogger = getExecutionLogger(nextExecution.id);
     execLogger?.lifecycle("execution.halted", {
