@@ -1,3 +1,5 @@
+@import "../../session/sidebar/styles/PeekPopover.css";
+
 /* ============================================================
    Conversation sidebar (task 14.2)
    ============================================================ */
@@ -330,6 +332,7 @@
   border-bottom: 1px solid transparent;
   text-align: left;
   color: inherit;
+  text-decoration: none;
   cursor: pointer;
   transition:
     background 0.12s ease,
@@ -970,6 +973,7 @@
   background: transparent;
   border: 1px solid var(--border-dim);
   border-radius: var(--radius-md);
+  text-decoration: none;
   overflow: hidden;
 }
 

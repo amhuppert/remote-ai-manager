@@ -164,6 +164,9 @@ export function useAnswerQuestionMutation(
       void queryClient.invalidateQueries({
         queryKey: sessionKeys.detail(projectName, sessionName),
       });
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.active(),
+      });
     },
   });
 }

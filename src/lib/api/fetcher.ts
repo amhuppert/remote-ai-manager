@@ -66,3 +66,28 @@ export async function mutationFetch<T>(
   const data: unknown = await res.json();
   return schema ? schema.parse(data) : (data as T);
 }
+
+export async function streamingMutationFetch(
+  url: string,
+  traceLabel: string,
+  options: RequestInit,
+): Promise<{ ok: true }> {
+  const res = await tracedFetch(url, traceLabel, options);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: "Request failed" }));
+    const apiBody = body as { error?: string; code?: string; output?: string };
+    throw new ApiCallError(
+      apiBody.error ?? `API error ${res.status}`,
+      apiBody.code,
+      apiBody.output,
+    );
+  }
+
+  const reader = res.body?.getReader();
+  if (!reader) return { ok: true };
+
+  for (;;) {
+    const { done } = await reader.read();
+    if (done) return { ok: true };
+  }
+}

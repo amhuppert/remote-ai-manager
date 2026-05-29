@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import type { ActiveConversation } from "@/lib/active-conversations/schemas";
 import ConversationSidebarRow from "@/features/session/sidebar/ConversationSidebarRow";
 
@@ -15,6 +15,8 @@ const BASE: ActiveConversation = {
   agentBackend: "claude",
   summary: null,
   pendingQuestion: null,
+  pendingQuestionId: null,
+  pendingQuestions: null,
   forkedFrom: null,
   debugActive: false,
   role: null,
@@ -89,5 +91,85 @@ describe("ConversationSidebarRow", () => {
     );
 
     expect(screen.getByText(/Asks/)).toBeDefined();
+  });
+
+  it("calls onPeek with the row element and conversation id for non-current left-clicks", () => {
+    const onPeek = vi.fn();
+
+    render(
+      <ConversationSidebarRow
+        conversation={BASE}
+        currentConversationId="convo-current"
+        onPeek={onPeek}
+      />,
+    );
+
+    const row = screen.getByLabelText("Some conversation — running");
+    fireEvent.click(row);
+
+    expect(onPeek).toHaveBeenCalledWith(row, "convo-1");
+  });
+
+  it("does not peek or navigate for current-row left-clicks", () => {
+    const onPeek = vi.fn();
+    const onClick = vi.fn();
+
+    render(
+      <ConversationSidebarRow
+        conversation={BASE}
+        currentConversationId="convo-1"
+        onPeek={onPeek}
+        onClick={onClick}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Some conversation — running"));
+
+    expect(onPeek).not.toHaveBeenCalled();
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it("opens the context menu on right-click for non-current rows", () => {
+    const onOpenMenu = vi.fn();
+
+    render(
+      <ConversationSidebarRow
+        conversation={BASE}
+        currentConversationId="convo-current"
+        onOpenMenu={onOpenMenu}
+      />,
+    );
+
+    fireEvent.contextMenu(
+      screen.getByLabelText("Some conversation — running"),
+      {
+        clientX: 14,
+        clientY: 28,
+      },
+    );
+
+    expect(onOpenMenu).toHaveBeenCalledWith({ x: 14, y: 28 });
+  });
+
+  it("opens the context menu on right-click for current rows", () => {
+    const onOpenMenu = vi.fn();
+
+    render(
+      <ConversationSidebarRow
+        conversation={BASE}
+        currentConversationId="convo-1"
+        onOpenMenu={onOpenMenu}
+      />,
+    );
+
+    fireEvent.contextMenu(
+      screen.getByLabelText("Some conversation — running"),
+      {
+        clientX: 40,
+        clientY: 52,
+      },
+    );
+
+    expect(onOpenMenu).toHaveBeenCalledWith({ x: 40, y: 52 });
   });
 });

@@ -6,6 +6,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { createLogger } from "@/lib/logging";
 import { readState as defaultReadState } from "@/lib/state-store";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
 import { readLastAssistantContent as defaultReadLastAssistantContent } from "@/lib/prompt/transcript";
@@ -15,6 +16,7 @@ import type {
   ActiveConversationForkedFrom,
 } from "@/lib/active-conversations/schemas";
 import type {
+  AskQuestionItem,
   ConversationStatus,
   MessageContentBlock,
 } from "@/lib/conversations/schemas";
@@ -28,6 +30,9 @@ import type {
   GraphWorkflowStatus,
 } from "@/lib/workflows/schemas";
 import type { ApiError } from "@/lib/api/errors";
+
+const logger = createLogger("active-conversations.route");
+
 // ---------------------------------------------------------------------------
 // Deps interface
 // ---------------------------------------------------------------------------
@@ -179,13 +184,45 @@ const ACTIVE_GW_STATUSES: ReadonlySet<GraphWorkflowStatus> = new Set([
   "paused",
 ]);
 
-/**
- * Pull the first pending question's text out of the conversation, if any.
- * Returns null when the conversation has no structured pending question.
- */
-function derivePendingQuestion(convo: {
+interface PendingQuestionFields {
+  pendingQuestion: string | null;
+  pendingQuestionId: string | null;
+  pendingQuestions: AskQuestionItem[] | null;
+}
+
+function derivePendingQuestionFields(convo: {
   status: ConversationStatus;
-  pendingQuestions: { question: string }[] | null;
+  pendingQuestionId: string | null;
+  pendingQuestions: AskQuestionItem[] | null;
+}): PendingQuestionFields {
+  const pendingQuestion = derivePendingQuestionText(convo);
+
+  if (convo.status !== "waiting_for_input") {
+    return {
+      pendingQuestion,
+      pendingQuestionId: null,
+      pendingQuestions: null,
+    };
+  }
+
+  if (!convo.pendingQuestionId || !convo.pendingQuestions?.length) {
+    return {
+      pendingQuestion,
+      pendingQuestionId: null,
+      pendingQuestions: null,
+    };
+  }
+
+  return {
+    pendingQuestion,
+    pendingQuestionId: convo.pendingQuestionId,
+    pendingQuestions: convo.pendingQuestions,
+  };
+}
+
+function derivePendingQuestionText(convo: {
+  status: ConversationStatus;
+  pendingQuestions: Pick<AskQuestionItem, "question">[] | null;
 }): string | null {
   if (convo.status !== "awaiting" && convo.status !== "waiting_for_input") {
     return null;
@@ -400,6 +437,23 @@ export function createActiveConversationsRouteHandlers(
               convo.status === "running"
                 ? (lastBlocksByConvId.get(convo.id) ?? null)
                 : null;
+            const pendingQuestionFields = derivePendingQuestionFields(convo);
+
+            if (
+              convo.status === "waiting_for_input" &&
+              (convo.pendingQuestionId !== null ||
+                convo.pendingQuestions !== null) &&
+              (pendingQuestionFields.pendingQuestionId === null ||
+                pendingQuestionFields.pendingQuestions === null)
+            ) {
+              logger.warn("pending_question.incomplete", {
+                projectPath,
+                sessionName: session.sessionName,
+                conversationId: convo.id,
+                hasPendingQuestionId: convo.pendingQuestionId !== null,
+                pendingQuestionCount: convo.pendingQuestions?.length ?? null,
+              });
+            }
 
             conversations.push({
               id: convo.id,
@@ -411,7 +465,9 @@ export function createActiveConversationsRouteHandlers(
               sessionName: session.sessionName,
               agentBackend: convo.agentBackend,
               summary: convo.summary,
-              pendingQuestion: derivePendingQuestion(convo),
+              pendingQuestion: pendingQuestionFields.pendingQuestion,
+              pendingQuestionId: pendingQuestionFields.pendingQuestionId,
+              pendingQuestions: pendingQuestionFields.pendingQuestions,
               forkedFrom: deriveForkedFrom(convo.forkedFrom),
               debugActive: convo.debugMode?.active === true,
               role: convo.role,

@@ -227,12 +227,14 @@ describe("useAnswerQuestionMutation", () => {
     vi.unstubAllGlobals();
   });
 
-  it("submits answers and invalidates messages and session detail", async () => {
+  it("submits answers and invalidates messages, session detail, and active conversations", async () => {
     const client = makeClient();
     const messagesKey = conversationKeys.messages("p", "s", "c1");
     const sessionKey = sessionKeys.detail("p", "s");
+    const activeKey = conversationKeys.active();
     client.setQueryData(messagesKey, []);
     client.setQueryData(sessionKey, { sessionName: "s" });
+    client.setQueryData(activeKey, { conversations: [] });
     fetchSpy.mockResolvedValue(jsonResponse({ ok: true }));
 
     const { result } = renderHook(
@@ -260,6 +262,7 @@ describe("useAnswerQuestionMutation", () => {
     await waitFor(() => {
       expect(client.getQueryState(messagesKey)?.isInvalidated).toBe(true);
       expect(client.getQueryState(sessionKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(activeKey)?.isInvalidated).toBe(true);
     });
   });
 
@@ -267,8 +270,10 @@ describe("useAnswerQuestionMutation", () => {
     const client = makeClient();
     const messagesKey = conversationKeys.messages("p", "s", "c1");
     const sessionKey = sessionKeys.detail("p", "s");
+    const activeKey = conversationKeys.active();
     client.setQueryData(messagesKey, []);
     client.setQueryData(sessionKey, { sessionName: "s" });
+    client.setQueryData(activeKey, { conversations: [] });
     fetchSpy.mockResolvedValue(
       jsonResponse({ error: "Question expired" }, 410),
     );
@@ -288,6 +293,7 @@ describe("useAnswerQuestionMutation", () => {
     await waitFor(() => {
       expect(client.getQueryState(messagesKey)?.isInvalidated).toBe(true);
       expect(client.getQueryState(sessionKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(activeKey)?.isInvalidated).toBe(true);
     });
   });
 });

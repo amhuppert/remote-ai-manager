@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { askQuestionItemSchema } from "@/lib/conversations/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import {
   graphWorkflowCleanupStatusValueSchema,
@@ -28,6 +29,8 @@ export const activeConversationSchema = z.object({
   agentBackend: agentBackendSchema,
   summary: z.string().nullable(),
   pendingQuestion: z.string().nullable(),
+  pendingQuestionId: z.string().nullable(),
+  pendingQuestions: askQuestionItemSchema.array().nullable(),
   forkedFrom: activeConversationForkedFromSchema.nullable(),
   debugActive: z.boolean(),
   role: z

@@ -1,9 +1,21 @@
-import { describe, it, expect } from "vitest";
-import { deriveLastActivitySummary } from "./route-handlers";
+import { describe, it, expect, vi } from "vitest";
+import {
+  createActiveConversationsRouteHandlers,
+  deriveLastActivitySummary,
+  type ActiveConversationsRouteDeps,
+} from "./route-handlers";
+import { activeConversationsResponseSchema } from "./schemas";
+import {
+  conversationStateSchema,
+  type AskQuestionItem,
+  type ConversationState,
+} from "@/lib/conversations/schemas";
 import type {
   TranscriptMessage,
   ConversationStatus,
 } from "@/lib/conversations/schemas";
+import { managerStateSchema, type ManagerState } from "@/lib/projects/schemas";
+
 function convo(
   status: ConversationStatus,
   pendingQuestions: { question: string }[] | null = null,
@@ -19,6 +31,94 @@ function assistantMessage(
     content,
     timestamp: "2026-01-01T00:00:00.000Z",
   };
+}
+
+const STRUCTURED_QUESTIONS: AskQuestionItem[] = [
+  {
+    header: "Deploy",
+    question: "Deploy to production now?",
+    options: [
+      { label: "Deploy", description: "Start the production deploy." },
+      { label: "Wait", description: "Do not deploy yet." },
+    ],
+    multiSelect: false,
+  },
+];
+
+function makeConversation(
+  overrides: Partial<ConversationState> = {},
+): ConversationState {
+  return conversationStateSchema.parse({
+    id: "conv-1",
+    name: null,
+    transcriptPath: null,
+    status: "new",
+    promptCount: 0,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    lastActivityAt: "2026-01-01T00:00:00.000Z",
+    source: "cc",
+    summary: null,
+    archived: false,
+    totalCostUsd: null,
+    totalDurationMs: null,
+    totalTurns: null,
+    pendingQuestionId: null,
+    pendingQuestions: null,
+    pendingPromptText: null,
+    forkedFrom: null,
+    role: null,
+    contextTokens: null,
+    contextWindowMax: null,
+    debugMode: null,
+    agentBackend: "claude",
+    ...overrides,
+  });
+}
+
+function makeState(conversations: ConversationState[]): ManagerState {
+  return managerStateSchema.parse({
+    projects: {
+      "/repo/project": {
+        rootPath: "/repo/project",
+        sessions: {
+          "session-a": {
+            sessionName: "session-a",
+            worktreePath: "/repo/project/.worktrees/session-a",
+            branchName: "cc/session-a",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            lastActivityAt: "2026-01-01T00:00:00.000Z",
+            archived: false,
+            finished: false,
+            conversations,
+            source: "cc",
+            objective: null,
+            creationMode: "fast",
+            tddEnabled: true,
+            targetBranch: "main",
+            parentSessionName: null,
+            graphWorkflowExecution: null,
+            graphWorkflowExecutionHistory: [],
+            referenceDocuments: [],
+          },
+        },
+      },
+    },
+    archivedProjects: [],
+    pinnedProjects: [],
+  });
+}
+
+async function listRows(conversations: ConversationState[]) {
+  const deps: ActiveConversationsRouteDeps = {
+    readState: vi.fn().mockResolvedValue(makeState(conversations)),
+    getProjectDisplayName: vi.fn().mockReturnValue("project"),
+    readLastAssistantContent: vi.fn().mockResolvedValue(null),
+  };
+  const handlers = createActiveConversationsRouteHandlers(deps);
+  const response = await handlers.GET();
+  expect(response.status).toBe(200);
+  const body = activeConversationsResponseSchema.parse(await response.json());
+  return body.conversations;
 }
 
 describe("deriveLastActivitySummary", () => {
@@ -169,4 +269,53 @@ describe("deriveLastActivitySummary", () => {
     expect(result).not.toBeNull();
     expect(result!).not.toMatch(/\n/);
   });
+});
+
+describe("GET /api/conversations/active pending question fields", () => {
+  it("populates pendingQuestionId and pendingQuestions for waiting_for_input with a structured Ask-User-Question payload", async () => {
+    const rows = await listRows([
+      makeConversation({
+        id: "structured",
+        status: "waiting_for_input",
+        pendingQuestionId: "question-123",
+        pendingQuestions: STRUCTURED_QUESTIONS,
+      }),
+    ]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.pendingQuestionId).toBe("question-123");
+    expect(rows[0]?.pendingQuestions).toEqual(STRUCTURED_QUESTIONS);
+  });
+
+  it("returns null pending fields for waiting_for_input with no structured Ask-User-Question payload", async () => {
+    const rows = await listRows([
+      makeConversation({
+        id: "legacy",
+        status: "waiting_for_input",
+        pendingPromptText: "Please answer in free text.",
+      }),
+    ]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.pendingQuestionId).toBeNull();
+    expect(rows[0]?.pendingQuestions).toBeNull();
+  });
+
+  it.each(["running", "awaiting", "new"] as const)(
+    "returns null pending fields for %s conversations",
+    async (status) => {
+      const rows = await listRows([
+        makeConversation({
+          id: status,
+          status,
+          pendingQuestionId: "question-123",
+          pendingQuestions: STRUCTURED_QUESTIONS,
+        }),
+      ]);
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.pendingQuestionId).toBeNull();
+      expect(rows[0]?.pendingQuestions).toBeNull();
+    },
+  );
 });

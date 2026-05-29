@@ -5,7 +5,7 @@
    The rules below will move to feature folders in PR-2..PR-8.
    ============================================================ */
 
-@import "@/features/_root/styles/index.css";
+@import "../features/_root/styles/index.css";
 
 /* migrated in feature PRs (PR-2..PR-8) */
 /* ============================================================

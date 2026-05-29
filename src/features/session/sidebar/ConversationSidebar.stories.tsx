@@ -38,6 +38,8 @@ function makeActive(
     agentBackend: overrides.agentBackend ?? "claude",
     summary: overrides.summary ?? null,
     pendingQuestion: overrides.pendingQuestion ?? null,
+    pendingQuestionId: overrides.pendingQuestionId ?? null,
+    pendingQuestions: overrides.pendingQuestions ?? null,
     forkedFrom: overrides.forkedFrom ?? null,
     debugActive: overrides.debugActive ?? false,
     role: overrides.role ?? null,

@@ -55,8 +55,16 @@ function getComponentName(fiberType: unknown): string {
  */
 export default function ReactScanInstrumentation(): null {
   useEffect(() => {
-    if (process.env.NODE_ENV !== "development") return;
+    if (
+      process.env.NODE_ENV !== "development" &&
+      process.env.NODE_ENV !== "test"
+    ) {
+      return;
+    }
     if (typeof window === "undefined") return;
+    if (new URLSearchParams(window.location.search).get("scan") !== "1") {
+      return;
+    }
     if (window.__reactScanReport !== undefined) return;
 
     window.__reactScanReport = [];

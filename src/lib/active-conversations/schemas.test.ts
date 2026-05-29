@@ -14,6 +14,8 @@ const BASE_CONVERSATION = {
   agentBackend: "claude" as const,
   summary: null,
   pendingQuestion: null,
+  pendingQuestionId: null,
+  pendingQuestions: null,
   forkedFrom: null,
   debugActive: false,
   role: null,

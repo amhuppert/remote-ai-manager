@@ -11,18 +11,27 @@ interface TypingIndicatorProps {
    * decides which visual variant to render based on optimistic-message state.
    */
   visible: boolean;
+  /**
+   * Override the session-detail store's optimistic-message check. The default
+   * reads `useOptimisticMessages()` which is keyed to the currently-mounted
+   * conversation — callers rendering for a *different* conversation (e.g. the
+   * sidebar peek popover) must pass `false` explicitly so the store does not
+   * leak the active conversation's optimistic state into the peek.
+   */
+  hasAssistantOptimistic?: boolean;
 }
 
 function TypingIndicator({
   selectedBackend,
   visible,
+  hasAssistantOptimistic: hasAssistantOptimisticOverride,
 }: TypingIndicatorProps): React.JSX.Element | null {
   const optimisticMessages = useOptimisticMessages();
   if (!visible) return null;
 
-  const hasAssistantOptimistic = optimisticMessages.some(
-    (m) => m.role === "assistant",
-  );
+  const hasAssistantOptimistic =
+    hasAssistantOptimisticOverride ??
+    optimisticMessages.some((m) => m.role === "assistant");
   if (hasAssistantOptimistic) {
     return (
       <div className="streaming-indicator" data-backend={selectedBackend}>

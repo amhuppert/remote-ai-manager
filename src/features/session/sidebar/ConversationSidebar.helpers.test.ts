@@ -30,6 +30,8 @@ function makeRow(
     worktreePath: "/repos/proj-a/.worktrees/session-a",
     agentBackend: "claude",
     pendingQuestion: null,
+    pendingQuestionId: null,
+    pendingQuestions: null,
     forkedFrom: null,
     debugActive: false,
     role: null,

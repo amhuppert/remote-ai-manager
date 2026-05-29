@@ -18,6 +18,8 @@ import {
   useRenameConversationMutation,
   useGenericArchiveConversationMutation,
   useGenericRenameConversationMutation,
+  useAnswerQuestionMutation,
+  useForkConversationMutation,
 } from "@/lib/conversations/mutations";
 import { useGenericArchiveSessionMutation } from "@/lib/sessions/mutations";
 import { apiFetch } from "@/lib/api/fetcher";
@@ -44,6 +46,9 @@ import ConversationSidebarRow from "@/features/session/sidebar/ConversationSideb
 import ConversationSidebarRowContextMenu, {
   type ContextMenuItem,
 } from "@/features/session/sidebar/ConversationSidebarRowContextMenu";
+import PeekPopover from "@/features/session/sidebar/PeekPopover";
+import { usePeekReply } from "@/features/session/sidebar/use-peek-reply";
+import { useConversationMessagesQuery } from "@/hooks/conversation/use-conversation-messages-query";
 import {
   filterConversations,
   splitNeedsYou,
@@ -80,9 +85,11 @@ interface SidebarRowItemProps {
   conversation: ActiveConversation;
   href: string;
   isActive: boolean;
+  activeConversationId: string;
   archived: boolean;
   onOpenMenu: (point: { x: number; y: number }) => void;
   onNavigate: () => void;
+  onPeek: (anchorEl: HTMLElement, conversationId: string) => void;
 }
 
 function SidebarRowItem({
@@ -90,9 +97,11 @@ function SidebarRowItem({
   conversation,
   href,
   isActive,
+  activeConversationId,
   archived,
   onOpenMenu,
   onNavigate,
+  onPeek,
 }: SidebarRowItemProps): React.JSX.Element {
   const { handlers, didLongPressRef } = useLongPress({
     onLongPress: onOpenMenu,
@@ -102,29 +111,22 @@ function SidebarRowItem({
     <div
       className={`conversation-sidebar-row-wrapper${archived ? " is-archived" : ""}`}
       style={{ position: "relative" }}
-      onContextMenu={(event) => {
-        event.preventDefault();
-        onOpenMenu({ x: event.clientX, y: event.clientY });
-      }}
       {...handlers}
     >
-      <Link
+      <ConversationSidebarRow
         href={href}
-        onClick={(event) => {
-          event.preventDefault();
+        conversation={conversation}
+        isActive={isActive}
+        isFirstInSession={row.isFirstInSession}
+        isLastInSession={row.isLastInSession}
+        currentConversationId={activeConversationId}
+        onClick={() => {
           if (didLongPressRef.current) return;
           onNavigate();
         }}
-        style={{ display: "block", textDecoration: "none" }}
-        aria-label={`Open ${conversation.name ?? "conversation"}`}
-      >
-        <ConversationSidebarRow
-          conversation={conversation}
-          isActive={isActive}
-          isFirstInSession={row.isFirstInSession}
-          isLastInSession={row.isLastInSession}
-        />
-      </Link>
+        onPeek={onPeek}
+        onOpenMenu={onOpenMenu}
+      />
     </div>
   );
 }
@@ -206,11 +208,25 @@ function ConversationSidebar({
     projectName: string;
     sessionName: string;
   } | null>(null);
+  const [peek, setPeek] = useState<{
+    anchorEl: HTMLElement;
+    conversationId: string;
+  } | null>(null);
   const editScopeRef = useRef<{
     projectName: string;
     sessionName: string;
   } | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const openPeek = useCallback(
+    (anchorEl: HTMLElement, conversationId: string) => {
+      setCtxMenu(null);
+      setPeek({ anchorEl, conversationId });
+    },
+    [],
+  );
+
+  const closePeek = useCallback(() => setPeek(null), []);
 
   // Restore collapsed state from localStorage on mount
   useEffect(() => {
@@ -345,6 +361,60 @@ function ConversationSidebar({
   );
 
   const activeRows: SidebarConversation[] = activeConvoList;
+  const peekConversation = useMemo(() => {
+    if (peek === null) return null;
+    return (
+      activeConvoList.find(
+        (conversation) => conversation.id === peek.conversationId,
+      ) ?? null
+    );
+  }, [activeConvoList, peek]);
+  const peekProjectName = peekConversation?.projectName ?? projectName;
+  const peekSessionName = peekConversation?.sessionName ?? sessionName;
+  const peekConversationId = peek?.conversationId ?? "";
+  const peekMessagesQuery = useConversationMessagesQuery(
+    peekProjectName,
+    peekSessionName,
+    peekConversationId,
+    { enabled: peek !== null && peekConversation !== null },
+  );
+  const peekReplyMutation = usePeekReply({
+    projectName: peekProjectName,
+    sessionName: peekSessionName,
+    conversationId: peekConversationId,
+  });
+  const peekAnswerMutation = useAnswerQuestionMutation(
+    peekProjectName,
+    peekSessionName,
+    peekConversationId,
+  );
+  const peekForkMutation = useForkConversationMutation(
+    peekProjectName,
+    peekSessionName,
+  );
+
+  const handlePeekFork = useCallback(
+    (messageIndex: number) => {
+      if (peek === null || peekConversation === null) return;
+      void peekForkMutation
+        .mutateAsync({ conversationId: peek.conversationId, messageIndex })
+        .then(({ conversationId }) => {
+          closePeek();
+          if (onMobileClose) onMobileClose();
+          router.push(
+            `/projects/${encodeURIComponent(peekConversation.projectName)}/${encodeURIComponent(peekConversation.sessionName)}/${conversationId}`,
+          );
+        });
+    },
+    [
+      closePeek,
+      onMobileClose,
+      peek,
+      peekConversation,
+      peekForkMutation,
+      router,
+    ],
+  );
 
   const sessionScope = useMemo(
     () => sidebarSessionFilter ?? { projectName, sessionName },
@@ -400,6 +470,8 @@ function ConversationSidebar({
         agentBackend: row.agentBackend,
         summary: row.summary,
         pendingQuestion: row.pendingQuestion,
+        pendingQuestionId: row.pendingQuestionId,
+        pendingQuestions: row.pendingQuestions,
         forkedFrom: row.forkedFrom,
         debugActive: row.debugActive,
         role: row.role,
@@ -455,11 +527,13 @@ function ConversationSidebar({
           conversation={conversation}
           href={href}
           isActive={isActive}
+          activeConversationId={activeConversationId}
           archived={archived}
           onNavigate={() => {
             router.push(href);
             if (onMobileClose) onMobileClose();
           }}
+          onPeek={openPeek}
           onOpenMenu={(point) => {
             setCtxMenu({ row, scope, x: point.x, y: point.y });
           }}
@@ -472,6 +546,7 @@ function ConversationSidebar({
       editingId,
       handleRenameSubmit,
       onMobileClose,
+      openPeek,
       router,
     ],
   );
@@ -796,6 +871,32 @@ function ConversationSidebar({
           y={ctxMenu.y}
           items={ctxMenuItems}
           onClose={() => setCtxMenu(null)}
+        />
+      )}
+      {peek !== null && peekConversation !== null && (
+        <PeekPopover
+          anchorEl={peek.anchorEl}
+          conversation={peekConversation}
+          transcriptMessages={peekMessagesQuery.data ?? []}
+          onClose={closePeek}
+          onOpenFull={() => {
+            router.push(
+              `/projects/${encodeURIComponent(peekConversation.projectName)}/${encodeURIComponent(peekConversation.sessionName)}/${peekConversation.id}`,
+            );
+            if (onMobileClose) onMobileClose();
+            closePeek();
+          }}
+          onReplyText={(text) => {
+            peekReplyMutation.mutate(text);
+          }}
+          onAnswerQuestion={(answers) => {
+            peekAnswerMutation.mutate({
+              questionId:
+                peekConversation.pendingQuestionId ?? peekConversation.id,
+              answers,
+            });
+          }}
+          onFork={handlePeekFork}
         />
       )}
       <ConfirmDialog

@@ -14,6 +14,8 @@ const BASE_CONVERSATION: ActiveConversation = {
   agentBackend: "claude",
   summary: "Working on the sidebar row presentational component.",
   pendingQuestion: null,
+  pendingQuestionId: null,
+  pendingQuestions: null,
   forkedFrom: null,
   debugActive: false,
   role: null,

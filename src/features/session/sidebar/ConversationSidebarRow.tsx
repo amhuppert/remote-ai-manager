@@ -1,12 +1,17 @@
 "use client";
 
+import { useCallback, useRef } from "react";
 import type { ActiveConversation } from "@/lib/active-conversations/schemas";
 
 interface Props {
   conversation: ActiveConversation;
+  href?: string;
   isActive?: boolean;
   isFirstInSession?: boolean;
   isLastInSession?: boolean;
+  currentConversationId?: string | null;
+  onPeek?: (anchorEl: HTMLElement, conversationId: string) => void;
+  onOpenMenu?: (point: { x: number; y: number }) => void;
   onClick?: () => void;
 }
 
@@ -68,11 +73,16 @@ function ForkIcon(): React.JSX.Element {
 
 export default function ConversationSidebarRow({
   conversation,
+  href,
   isActive,
   isFirstInSession,
   isLastInSession,
+  currentConversationId,
+  onPeek,
+  onOpenMenu,
   onClick,
 }: Props): React.JSX.Element {
+  const rowRef = useRef<HTMLAnchorElement>(null);
   const {
     name,
     summary,
@@ -109,15 +119,48 @@ export default function ConversationSidebarRow({
   ]
     .filter(Boolean)
     .join(" ");
+  const isCurrentConversation =
+    currentConversationId !== null &&
+    currentConversationId !== undefined &&
+    conversation.id === currentConversationId;
+
+  const handleClick = useCallback(
+    (event: React.MouseEvent<HTMLAnchorElement>) => {
+      if (isCurrentConversation) {
+        event.preventDefault();
+        return;
+      }
+
+      if (onPeek !== undefined) {
+        event.preventDefault();
+        onPeek(rowRef.current ?? event.currentTarget, conversation.id);
+        return;
+      }
+
+      onClick?.();
+    },
+    [conversation.id, isCurrentConversation, onClick, onPeek],
+  );
+
+  const handleContextMenu = useCallback(
+    (event: React.MouseEvent<HTMLAnchorElement>) => {
+      if (onOpenMenu === undefined) return;
+      event.preventDefault();
+      onOpenMenu({ x: event.clientX, y: event.clientY });
+    },
+    [onOpenMenu],
+  );
 
   return (
-    <button
-      type="button"
+    <a
+      ref={rowRef}
+      href={href ?? "#"}
       className={classNames}
       data-status={status}
-      onClick={onClick}
+      onClick={handleClick}
+      onContextMenu={handleContextMenu}
       aria-label={`${title} — ${STATUS_LABEL[status]}`}
-      aria-current={isActive ? "true" : undefined}
+      aria-current={isActive ? "page" : undefined}
     >
       <span className="conversation-sidebar-row__main">
         <span className="conversation-sidebar-row__title-line">
@@ -198,6 +241,6 @@ export default function ConversationSidebarRow({
           </span>
         )}
       </span>
-    </button>
+    </a>
   );
 }
