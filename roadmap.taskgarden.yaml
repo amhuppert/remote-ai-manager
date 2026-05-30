@@ -516,7 +516,7 @@ work_items:
       current conversation. Gmail mouse-over preview / GitHub PR hovercard
       pattern.
     lane: ui
-    status: planned
+    status: done
     priority: p2
     depends_on: []
     tags:
@@ -567,7 +567,7 @@ work_items:
       unit: days
 
   - id: focus-mode
-    title: Focus Mode
+    title: No Distractions Mode
     summary: >
       One keystroke (e.g., ⌘.) collapses the side panel entirely, dims topbar
       chrome, and suppresses toasts. Pomodoro for Command Center; inverse of
