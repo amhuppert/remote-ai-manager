@@ -420,6 +420,7 @@ const baseSession: SessionState = {
       machineSnapshot: null,
       agentBackend: "claude" as const,
       backendRef: null,
+      unread: false,
     },
   ],
   source: "cc" as const,

@@ -272,6 +272,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       machineSnapshot: null,
       agentBackend: "claude",
       backendRef: null,
+      unread: false,
     };
     const session: SessionState = {
       sessionName,

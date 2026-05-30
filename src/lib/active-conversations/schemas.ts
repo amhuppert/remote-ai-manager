@@ -39,6 +39,7 @@ export const activeConversationSchema = z.object({
   branchName: z.string().nullable(),
   worktreePath: z.string(),
   lastActivitySummary: z.string().nullable(),
+  unread: z.boolean(),
 });
 export type ActiveConversation = z.infer<typeof activeConversationSchema>;
 

@@ -167,6 +167,7 @@ export function createConversationService(
           machineSnapshot: null,
           agentBackend: opts?.agentBackend ?? "claude",
           backendRef: null,
+          unread: false,
         };
 
         session.conversations.push(conv);
@@ -587,6 +588,7 @@ export function createConversationService(
           machineSnapshot: null,
           agentBackend: source.agentBackend ?? "claude",
           backendRef,
+          unread: false,
         };
 
         sess.conversations.push(conversation);
@@ -655,6 +657,7 @@ export function createConversationService(
           machineSnapshot: null,
           agentBackend: "claude",
           backendRef: null,
+          unread: false,
         };
 
         session.conversations.push(newConvo);

@@ -373,6 +373,10 @@ const conversationMetadata: MachineMetadata = {
       "Releases the session lock and query semaphore slot acquired in prepareTurn.",
     dispatchPushNotification:
       "Sends a push notification when input is needed or a turn completes.",
+    markUnreadOnFinish:
+      "Sets unread=true and broadcasts a conversation-unread SSE event when a turn finishes (running → awaiting). Skipped for workflow-managed roles.",
+    markReadOnUserTurnStart:
+      "Clears unread=false and broadcasts a conversation-unread SSE event at the start of a user-initiated turn (prompt submit or question answer). Skipped for workflow-managed roles.",
   },
 };
 

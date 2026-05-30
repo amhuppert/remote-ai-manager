@@ -8,6 +8,7 @@ import {
 } from "@/stores/unified-panel.store";
 import { useNotificationsQuery } from "@/lib/notifications/queries";
 import { useActiveJobs } from "@/stores/notification.store";
+import { useActiveConversationsQuery } from "@/lib/active-conversations/queries";
 
 interface BreadcrumbSegment {
   label: string;
@@ -36,9 +37,19 @@ export default function Topbar({
   const togglePanel = useToggleUnifiedPanel();
   const { data: notificationsData } = useNotificationsQuery();
   const activeJobs = useActiveJobs();
+  const { data: activeConvosData } = useActiveConversationsQuery();
   // Badge shows unread notification count + running jobs
   const unreadCount = notificationsData?.unreadCount ?? 0;
   const badgeCount = unreadCount + activeJobs.length;
+  const pinnedConversations = (activeConvosData?.conversations ?? []).filter(
+    (c) => c.status === "waiting_for_input" || c.unread,
+  );
+  const needsCount = pinnedConversations.length;
+  const firstPinned = pinnedConversations[0] ?? null;
+  const needsHref =
+    firstPinned !== null
+      ? `/projects/${encodeURIComponent(firstPinned.projectName)}/${encodeURIComponent(firstPinned.sessionName)}/${firstPinned.id}`
+      : null;
 
   return (
     <header className="topbar">
@@ -85,6 +96,18 @@ export default function Topbar({
         </nav>
       </div>
       <div className="topbar-status">
+        {needsCount > 0 && needsHref !== null && (
+          <Link
+            href={needsHref}
+            className="topbar-needs"
+            title={`${needsCount} conversation${needsCount === 1 ? "" : "s"} need your attention`}
+            aria-label={`${needsCount} conversations need your attention`}
+          >
+            <span className="topbar-needs__dot" aria-hidden="true" />
+            <span className="topbar-needs__count">{needsCount}</span>
+            <span className="topbar-needs__label">needs you</span>
+          </Link>
+        )}
         <Link
           href="/workflows"
           className={`topbar-nav-link${pathname?.startsWith("/workflows") ? " active" : ""}`}

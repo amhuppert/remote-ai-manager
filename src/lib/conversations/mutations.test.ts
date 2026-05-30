@@ -41,6 +41,7 @@ function activeConvo(
     branchName: overrides.branchName ?? null,
     worktreePath: overrides.worktreePath ?? "/w",
     lastActivitySummary: overrides.lastActivitySummary ?? null,
+    unread: overrides.unread ?? false,
   };
 }
 
@@ -104,6 +105,7 @@ function conversation(
     machineSnapshot: overrides.machineSnapshot ?? null,
     agentBackend: overrides.agentBackend ?? "claude",
     backendRef: overrides.backendRef ?? null,
+    unread: overrides.unread ?? false,
     mcpOverrides: overrides.mcpOverrides,
     mcpRuntime: overrides.mcpRuntime,
   };

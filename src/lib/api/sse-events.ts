@@ -6,6 +6,7 @@ import type {
   ConversationCreatedEvent,
   ConversationRenamedEvent,
   ConversationArchivedEvent,
+  ConversationUnreadEvent,
   AskQuestionEvent,
   MessageQueuedEvent,
 } from "@/lib/conversations/schemas";
@@ -89,6 +90,7 @@ export type SSEEvent =
   | ConversationCreatedEvent
   | ConversationRenamedEvent
   | ConversationArchivedEvent
+  | ConversationUnreadEvent
   | AskQuestionEvent
   | JobStatusEvent
   | NotificationCreatedEvent

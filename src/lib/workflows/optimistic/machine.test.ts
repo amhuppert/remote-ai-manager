@@ -48,6 +48,7 @@ const testSession: SessionState = {
       machineSnapshot: null,
       agentBackend: "claude" as const,
       backendRef: null,
+      unread: false,
     },
   ],
   source: "cc",

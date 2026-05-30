@@ -34,6 +34,7 @@ const BASE_CONVERSATION: ActiveConversation = {
   worktreePath:
     "/Users/alex/github/command-center/.worktrees/peek-replay-02e449.schema-and-deps-foundation",
   lastActivitySummary: "Reading the popover spec.",
+  unread: false,
 };
 
 const TRANSCRIPT_MESSAGES: TranscriptMessage[] = [

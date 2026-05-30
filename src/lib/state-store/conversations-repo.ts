@@ -104,6 +104,7 @@ const conversationsTableRowSchema = z.object({
   mcp_runtime: z.string().nullable(),
   agent_capability_overrides: z.string().nullable(),
   agent_capabilities_runtime: z.string().nullable(),
+  unread: z.union([z.literal(0), z.literal(1)]),
 });
 type ConversationsTableRow = z.infer<typeof conversationsTableRowSchema>;
 
@@ -138,6 +139,7 @@ interface SqlBindRow {
   mcp_runtime: string | null;
   agent_capability_overrides: string | null;
   agent_capabilities_runtime: string | null;
+  unread: number;
 }
 
 function stableStringify(value: unknown): string {
@@ -209,6 +211,7 @@ function conversationToSqlBind(
     agent_capabilities_runtime: jsonOrNull(
       conversation.agentCapabilitiesRuntime,
     ),
+    unread: conversation.unread ? 1 : 0,
   };
 }
 
@@ -449,6 +452,7 @@ function rowToDomain(rawRow: unknown): {
     machineSnapshot: machineSnapshot.value ?? null,
     agentBackend: backendResult.data,
     backendRef: backendRef.value ?? null,
+    unread: row.unread === 1,
   };
   if (mcpOverrides.value !== undefined) {
     candidate.mcpOverrides = mcpOverrides.value;
@@ -527,6 +531,7 @@ const CONVERSATION_COLUMN_KEYS: ReadonlyArray<keyof ConversationsTableRow> = [
   "mcp_runtime",
   "agent_capability_overrides",
   "agent_capabilities_runtime",
+  "unread",
 ];
 
 function rawRowsEqual(
@@ -584,14 +589,16 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        total_cost_usd, total_duration_ms, total_turns, pending_question_id,
        pending_questions, pending_prompt_text, forked_from, role, context_tokens, context_window_max,
        debug_mode, machine_snapshot, agent_backend, backend_ref,
-       mcp_overrides, mcp_runtime, agent_capability_overrides, agent_capabilities_runtime
+       mcp_overrides, mcp_runtime, agent_capability_overrides, agent_capabilities_runtime,
+       unread
      ) VALUES (
        @id, @project_path, @session_name, @name, @transcript_path, @status,
        @prompt_count, @created_at, @last_activity_at, @source, @summary, @archived,
        @total_cost_usd, @total_duration_ms, @total_turns, @pending_question_id,
        @pending_questions, @pending_prompt_text, @forked_from, @role, @context_tokens, @context_window_max,
        @debug_mode, @machine_snapshot, @agent_backend, @backend_ref,
-       @mcp_overrides, @mcp_runtime, @agent_capability_overrides, @agent_capabilities_runtime
+       @mcp_overrides, @mcp_runtime, @agent_capability_overrides, @agent_capabilities_runtime,
+       @unread
      )
      ON CONFLICT(id) DO UPDATE SET
        project_path               = excluded.project_path,
@@ -622,7 +629,8 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        mcp_overrides              = excluded.mcp_overrides,
        mcp_runtime                = excluded.mcp_runtime,
        agent_capability_overrides = excluded.agent_capability_overrides,
-       agent_capabilities_runtime = excluded.agent_capabilities_runtime`,
+       agent_capabilities_runtime = excluded.agent_capabilities_runtime,
+       unread                     = excluded.unread`,
   );
   const deleteStmt = db.prepare(`DELETE FROM conversations WHERE id = ?`);
   const setPendingPromptTextStmt = db.prepare(

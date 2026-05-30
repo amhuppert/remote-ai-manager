@@ -107,6 +107,7 @@ const SCHEMA_DDL = `
     mcp_runtime           TEXT,
     agent_capability_overrides TEXT,
     agent_capabilities_runtime TEXT,
+    unread                INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (project_path, session_name)
       REFERENCES sessions(project_path, session_name) ON DELETE CASCADE
   );
@@ -234,6 +235,11 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
     table: "conversations",
     column: "agent_capabilities_runtime",
     type: "TEXT",
+  },
+  {
+    table: "conversations",
+    column: "unread",
+    type: "INTEGER NOT NULL DEFAULT 0",
   },
 ];
 

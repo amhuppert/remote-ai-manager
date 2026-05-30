@@ -28,6 +28,7 @@ function makeConversation(
     source: "cc",
     agentBackend: "claude",
     backendRef: null,
+    unread: false,
     pendingQuestionId: null,
     pendingQuestions: null,
     pendingPromptText: null,

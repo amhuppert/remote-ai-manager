@@ -371,6 +371,60 @@ function createProvidedMachine() {
           });
         })();
       },
+
+      markUnreadOnFinish: ({ context }) => {
+        void (async () => {
+          try {
+            const { mutateConversation } = await import("@/lib/state-store");
+            const { publishSessionStatus } =
+              await import("@/lib/workflows/primitives/default-session-status-bus");
+            const { markUnreadOnFinish } =
+              await import("@/lib/conversations/mark-unread");
+            await markUnreadOnFinish(
+              {
+                projectPath: context.projectPath,
+                projectName: context.projectName,
+                sessionName: context.sessionName,
+                conversationId: context.conversationId,
+                role: context.role,
+              },
+              { mutateConversation, publishSessionStatus },
+            );
+          } catch (err) {
+            logger.warn("conversation-manager.mark_unread_failed", {
+              conversationId: context.conversationId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        })();
+      },
+
+      markReadOnUserTurnStart: ({ context }) => {
+        void (async () => {
+          try {
+            const { mutateConversation } = await import("@/lib/state-store");
+            const { publishSessionStatus } =
+              await import("@/lib/workflows/primitives/default-session-status-bus");
+            const { markReadOnUserTurnStart } =
+              await import("@/lib/conversations/mark-unread");
+            await markReadOnUserTurnStart(
+              {
+                projectPath: context.projectPath,
+                projectName: context.projectName,
+                sessionName: context.sessionName,
+                conversationId: context.conversationId,
+                role: context.role,
+              },
+              { mutateConversation, publishSessionStatus },
+            );
+          } catch (err) {
+            logger.warn("conversation-manager.mark_read_failed", {
+              conversationId: context.conversationId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        })();
+      },
     },
   });
 }

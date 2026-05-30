@@ -22,6 +22,7 @@ const BASE_CONVERSATION = {
   branchName: null,
   worktreePath: "/tmp/my-session",
   lastActivitySummary: null,
+  unread: false,
 };
 
 describe("activeConversationSchema", () => {

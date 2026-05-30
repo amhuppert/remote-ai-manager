@@ -961,6 +961,15 @@
   color: var(--amber-dim);
 }
 
+.convo-sidebar-section-header--needs.convo-sidebar-section-header--finished {
+  color: var(--green);
+}
+
+.convo-sidebar-section-header--needs.convo-sidebar-section-header--finished
+  .convo-sidebar-section-count {
+  color: var(--green-dim);
+}
+
 .conversation-sidebar-row-wrapper {
   margin: 1px 8px;
 }
@@ -998,7 +1007,8 @@
   box-shadow: 0 0 6px var(--cyan);
 }
 
-.conversation-sidebar-row.has-pending-question::after {
+.conversation-sidebar-row.has-pending-question::after,
+.conversation-sidebar-row.is-unread::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -1006,6 +1016,76 @@
   background: linear-gradient(90deg, var(--amber-glow), transparent 60%);
   opacity: 0.65;
   pointer-events: none;
+}
+
+.conversation-sidebar-row.is-unread {
+  box-shadow: inset 2px 0 0 var(--amber);
+}
+
+.conversation-sidebar-row.is-active.is-unread {
+  box-shadow: none;
+}
+
+.conversation-sidebar-row__unread-dot {
+  width: 6px;
+  height: 6px;
+  margin-left: 2px;
+  border-radius: 50%;
+  background: var(--amber);
+  box-shadow: 0 0 6px var(--amber);
+  flex-shrink: 0;
+}
+
+.conversation-sidebar-row__dot[data-unread="true"] {
+  background: var(--amber);
+  box-shadow: 0 0 6px var(--amber);
+}
+
+.conversation-sidebar-row__activity-prefix[data-tone="question"] {
+  color: var(--amber);
+}
+
+.conversation-sidebar-row__activity-prefix[data-tone="finished"] {
+  color: var(--green);
+}
+
+.conversation-sidebar-row__ack {
+  display: flex;
+  justify-content: flex-end;
+  position: relative;
+  z-index: 1;
+  margin-top: 2px;
+}
+
+.conversation-sidebar-row__ack-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 9px 0 7px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--amber-dim);
+  background: var(--amber-glow);
+  color: var(--amber);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    background 0.14s ease,
+    border-color 0.14s ease,
+    transform 0.06s ease;
+}
+
+.conversation-sidebar-row__ack-btn:hover {
+  background: rgba(255, 179, 0, 0.22);
+  border-color: var(--amber);
+}
+
+.conversation-sidebar-row__ack-btn:active {
+  transform: translateY(1px);
 }
 
 .conversation-sidebar-row.is-first-in-session,
@@ -1109,6 +1189,10 @@
 .conversation-sidebar-row[data-status="waiting_for_input"]
   .conversation-sidebar-row__activity {
   color: var(--amber);
+}
+
+.conversation-sidebar-row.is-unread .conversation-sidebar-row__activity {
+  color: var(--green-dim);
 }
 
 /* Secondary controls row (Needs you + density). Class-based display so the

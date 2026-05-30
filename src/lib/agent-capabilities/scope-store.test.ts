@@ -65,6 +65,7 @@ function stateWithAllScopes(): ManagerState {
                 machineSnapshot: null,
                 agentBackend: "claude",
                 backendRef: null,
+                unread: false,
               },
             ],
             source: "cc",

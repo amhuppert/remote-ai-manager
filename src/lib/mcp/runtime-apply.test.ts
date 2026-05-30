@@ -64,6 +64,7 @@ function baseConversation(overrides: Record<string, unknown> = {}) {
     machineSnapshot: null,
     agentBackend: "claude" as const,
     backendRef: null,
+    unread: false,
     ...overrides,
   };
 }

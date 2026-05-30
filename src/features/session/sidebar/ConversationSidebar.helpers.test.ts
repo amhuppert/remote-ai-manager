@@ -36,6 +36,7 @@ function makeRow(
     debugActive: false,
     role: null,
     lastActivitySummary: null,
+    unread: false,
     ...overrides,
   };
 }
@@ -155,16 +156,29 @@ describe("filterBySession", () => {
 // ---------------------------------------------------------------------------
 
 describe("splitNeedsYou", () => {
-  it("splits only waiting_for_input into needsYou, others into others", () => {
+  it("splits waiting_for_input into questions, unread non-questions into finished, rest into others", () => {
     const rows = [
       makeRow({ id: "a", status: "running" }),
       makeRow({ id: "b", status: "awaiting" }),
       makeRow({ id: "c", status: "waiting_for_input" }),
       makeRow({ id: "d", status: "new" }),
+      makeRow({ id: "e", status: "awaiting", unread: true }),
+      makeRow({ id: "f", status: "running", unread: true }),
     ];
-    const { needsYou, others } = splitNeedsYou(rows);
-    expect(needsYou.map((r) => r.id)).toEqual(["c"]);
+    const { questions, finished, others } = splitNeedsYou(rows);
+    expect(questions.map((r) => r.id)).toEqual(["c"]);
+    expect(finished.map((r) => r.id)).toEqual(["e", "f"]);
     expect(others.map((r) => r.id)).toEqual(["a", "b", "d"]);
+  });
+
+  it("classifies an unread waiting_for_input row as a question, never finished", () => {
+    const rows = [
+      makeRow({ id: "a", status: "waiting_for_input", unread: true }),
+    ];
+    const { questions, finished, others } = splitNeedsYou(rows);
+    expect(questions.map((r) => r.id)).toEqual(["a"]);
+    expect(finished).toEqual([]);
+    expect(others).toEqual([]);
   });
 
   it("preserves input order in each bucket", () => {
@@ -172,15 +186,19 @@ describe("splitNeedsYou", () => {
       makeRow({ id: "c", status: "waiting_for_input" }),
       makeRow({ id: "a", status: "waiting_for_input" }),
       makeRow({ id: "b", status: "running" }),
+      makeRow({ id: "e", status: "awaiting", unread: true }),
+      makeRow({ id: "d", status: "running", unread: true }),
     ];
-    const { needsYou, others } = splitNeedsYou(rows);
-    expect(needsYou.map((r) => r.id)).toEqual(["c", "a"]);
+    const { questions, finished, others } = splitNeedsYou(rows);
+    expect(questions.map((r) => r.id)).toEqual(["c", "a"]);
+    expect(finished.map((r) => r.id)).toEqual(["e", "d"]);
     expect(others.map((r) => r.id)).toEqual(["b"]);
   });
 
   it("returns empty arrays for empty input", () => {
-    const { needsYou, others } = splitNeedsYou([]);
-    expect(needsYou).toEqual([]);
+    const { questions, finished, others } = splitNeedsYou([]);
+    expect(questions).toEqual([]);
+    expect(finished).toEqual([]);
     expect(others).toEqual([]);
   });
 });
@@ -400,7 +418,7 @@ describe("groupByKey", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildConversationSidebarSections", () => {
-  it("pins Needs You above the grouped non-needs conversations", () => {
+  it("pins questions and finished sections above the grouped non-needs conversations", () => {
     const rows = [
       makeRow({
         id: "running",
@@ -408,9 +426,15 @@ describe("buildConversationSidebarSections", () => {
         projectName: "ground-control-ui",
       }),
       makeRow({
-        id: "awaiting",
+        id: "asks",
         status: "waiting_for_input",
         projectName: "ground-control-ui",
+      }),
+      makeRow({
+        id: "finished",
+        status: "awaiting",
+        unread: true,
+        projectName: "creative-ai",
       }),
       makeRow({
         id: "awaiting-ready",
@@ -428,23 +452,53 @@ describe("buildConversationSidebarSections", () => {
 
     expect(sections.map((section) => section.kind)).toEqual([
       "needs",
+      "needs",
       "project",
       "project",
     ]);
-    expect(sections[0]?.label).toBe("Needs You");
-    expect(sections[0]?.items.map((row) => row.id)).toEqual(["awaiting"]);
+    expect(sections[0]?.tone).toBe("question");
+    expect(sections[0]?.label).toBe("Needs you");
+    expect(sections[0]?.items.map((row) => row.id)).toEqual(["asks"]);
+    expect(sections[1]?.tone).toBe("finished");
+    expect(sections[1]?.label).toBe("Finished \u2014 unread");
+    expect(sections[1]?.items.map((row) => row.id)).toEqual(["finished"]);
     expect(
       sections
-        .slice(1)
+        .slice(2)
         .flatMap((section) => section.items.map((row) => row.id)),
     ).toEqual(["running", "awaiting-ready", "new"]);
   });
 
-  it("keeps the pinned Needs You section inside the current-session filter", () => {
+  it("omits each pinned section when its bucket is empty", () => {
+    const onlyQuestions = buildConversationSidebarSections(
+      [makeRow({ id: "q", status: "waiting_for_input" })],
+      { filter: "all", groupBy: "project", sessionScope: null },
+    );
+    expect(
+      onlyQuestions.filter((s) => s.kind === "needs").map((s) => s.tone),
+    ).toEqual(["question"]);
+
+    const onlyFinished = buildConversationSidebarSections(
+      [makeRow({ id: "f", status: "awaiting", unread: true })],
+      { filter: "all", groupBy: "project", sessionScope: null },
+    );
+    expect(
+      onlyFinished.filter((s) => s.kind === "needs").map((s) => s.tone),
+    ).toEqual(["finished"]);
+  });
+
+  it("keeps both pinned sections inside the current-session filter", () => {
     const rows = [
       makeRow({
         id: "current-need",
         status: "waiting_for_input",
+        projectName: "remote-ai-manager",
+        sessionName: "current",
+      }),
+      makeRow({
+        id: "current-finished",
+        status: "awaiting",
+        unread: true,
         projectName: "remote-ai-manager",
         sessionName: "current",
       }),
@@ -471,17 +525,21 @@ describe("buildConversationSidebarSections", () => {
       },
     });
 
-    expect(sections[0]?.kind).toBe("needs");
-    expect(sections[0]?.items.map((row) => row.id)).toEqual(["current-need"]);
+    expect(sections.map((s) => `${s.kind}:${s.tone ?? "_"}`)).toEqual([
+      "needs:question",
+      "needs:finished",
+      "project:_",
+    ]);
     expect(
       sections.flatMap((section) => section.items.map((row) => row.id)),
-    ).toEqual(["current-need", "current-running"]);
+    ).toEqual(["current-need", "current-finished", "current-running"]);
   });
 
-  it("renders only the Needs You section when the needs filter is active", () => {
+  it("renders both pinned sections when the needs filter is active", () => {
     const rows = [
-      makeRow({ id: "need", status: "waiting_for_input" }),
-      makeRow({ id: "running", status: "running" }),
+      makeRow({ id: "q", status: "waiting_for_input" }),
+      makeRow({ id: "f", status: "awaiting", unread: true }),
+      makeRow({ id: "r", status: "running" }),
     ];
 
     const sections = buildConversationSidebarSections(rows, {
@@ -490,8 +548,11 @@ describe("buildConversationSidebarSections", () => {
       sessionScope: null,
     });
 
-    expect(sections).toHaveLength(1);
-    expect(sections[0]?.kind).toBe("needs");
-    expect(sections[0]?.items.map((row) => row.id)).toEqual(["need"]);
+    expect(sections.map((s) => `${s.kind}:${s.tone ?? "_"}`)).toEqual([
+      "needs:question",
+      "needs:finished",
+    ]);
+    expect(sections[0]?.items.map((row) => row.id)).toEqual(["q"]);
+    expect(sections[1]?.items.map((row) => row.id)).toEqual(["f"]);
   });
 });

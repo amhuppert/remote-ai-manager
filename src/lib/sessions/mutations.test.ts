@@ -39,6 +39,7 @@ function activeConvo(
     branchName: overrides.branchName ?? null,
     worktreePath: overrides.worktreePath ?? "/w",
     lastActivitySummary: overrides.lastActivitySummary ?? null,
+    unread: overrides.unread ?? false,
   };
 }
 

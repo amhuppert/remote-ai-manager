@@ -13,6 +13,7 @@ interface Props {
   onPeek?: (anchorEl: HTMLElement, conversationId: string) => void;
   onOpenMenu?: (point: { x: number; y: number }) => void;
   onClick?: () => void;
+  onAcknowledge?: () => void;
 }
 
 const STATUS_LABEL: Record<ActiveConversation["status"], string> = {
@@ -81,6 +82,7 @@ export default function ConversationSidebarRow({
   onPeek,
   onOpenMenu,
   onClick,
+  onAcknowledge,
 }: Props): React.JSX.Element {
   const rowRef = useRef<HTMLAnchorElement>(null);
   const {
@@ -94,6 +96,7 @@ export default function ConversationSidebarRow({
     debugActive,
     role,
     pendingQuestion,
+    unread,
   } = conversation;
 
   const title = name ?? summary ?? "Unnamed conversation";
@@ -103,12 +106,16 @@ export default function ConversationSidebarRow({
     activityText.trim() !== "" &&
     activityText.trim() !== title.trim();
   const timeLabel = formatSidebarTime(conversation.lastActivityAt);
+  const isUnreadFinished = unread && status !== "waiting_for_input";
   const statusPrefix =
     status === "waiting_for_input"
       ? "Asks"
-      : status === "running"
-        ? "Running"
-        : null;
+      : isUnreadFinished
+        ? "Done"
+        : status === "running"
+          ? "Running"
+          : null;
+  const showAck = isUnreadFinished && onAcknowledge !== undefined;
 
   const classNames = [
     "conversation-sidebar-row",
@@ -116,6 +123,7 @@ export default function ConversationSidebarRow({
     isFirstInSession ? "is-first-in-session" : null,
     isLastInSession ? "is-last-in-session" : null,
     pendingQuestion !== null ? "has-pending-question" : null,
+    isUnreadFinished ? "is-unread" : null,
   ]
     .filter(Boolean)
     .join(" ");
@@ -167,9 +175,16 @@ export default function ConversationSidebarRow({
           <span
             className="conversation-sidebar-row__dot"
             data-status={status}
+            data-unread={isUnreadFinished ? "true" : undefined}
             aria-hidden="true"
           />
           <span className="conversation-sidebar-row__title">{title}</span>
+          {isUnreadFinished && (
+            <span
+              className="conversation-sidebar-row__unread-dot"
+              aria-label="unread"
+            />
+          )}
           {timeLabel !== "" && (
             <span
               className="conversation-sidebar-row__time"
@@ -233,11 +248,37 @@ export default function ConversationSidebarRow({
         {showActivity && (
           <span className="conversation-sidebar-row__activity">
             {statusPrefix !== null && (
-              <span className="conversation-sidebar-row__activity-prefix">
+              <span
+                className="conversation-sidebar-row__activity-prefix"
+                data-tone={
+                  statusPrefix === "Asks"
+                    ? "question"
+                    : statusPrefix === "Done"
+                      ? "finished"
+                      : undefined
+                }
+              >
                 {statusPrefix} &rsaquo;
               </span>
             )}
             {activityText}
+          </span>
+        )}
+
+        {showAck && (
+          <span className="conversation-sidebar-row__ack">
+            <button
+              type="button"
+              className="conversation-sidebar-row__ack-btn"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onAcknowledge?.();
+              }}
+              aria-label={`Mark "${title}" as read`}
+            >
+              &#10003; OK
+            </button>
           </span>
         )}
       </span>

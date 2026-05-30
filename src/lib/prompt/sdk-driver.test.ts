@@ -89,6 +89,7 @@ function makeConversation(
     machineSnapshot: null,
     agentBackend: "claude",
     backendRef: null,
+    unread: false,
     ...overrides,
   };
 }

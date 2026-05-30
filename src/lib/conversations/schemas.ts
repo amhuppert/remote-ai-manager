@@ -210,6 +210,12 @@ export const conversationStateSchema = z.object({
   pendingQuestionId: z.string().nullable().default(null),
   pendingQuestions: z.array(askQuestionItemSchema).nullable().default(null),
   pendingPromptText: z.string().nullable().default(null),
+  // True when the agent finished a user-initiated turn and the user has not
+  // yet opened or acknowledged the conversation. Drives the "Finished —
+  // unread" sidebar pin alongside pendingQuestionId. Cleared on open, on the
+  // explicit acknowledge endpoint, on answer, and on the next user-initiated
+  // prompt.
+  unread: z.boolean().default(false),
   forkedFrom: forkedFromSchema,
   role: conversationRoleSchema,
   activeTurnSource: activeTurnSourceSchema,
@@ -366,6 +372,17 @@ export const conversationArchivedEventSchema = z.object({
 });
 export type ConversationArchivedEvent = z.infer<
   typeof conversationArchivedEventSchema
+>;
+
+export const conversationUnreadEventSchema = z.object({
+  type: z.literal("conversation-unread"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  conversationId: z.string(),
+  unread: z.boolean(),
+});
+export type ConversationUnreadEvent = z.infer<
+  typeof conversationUnreadEventSchema
 >;
 
 // ============================================================

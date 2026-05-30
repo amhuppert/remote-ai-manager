@@ -477,6 +477,7 @@ export function createActiveConversationsRouteHandlers(
                 convo,
                 lastAssistantBlocks ? { content: lastAssistantBlocks } : null,
               ),
+              unread: convo.unread === true,
             });
           }
 

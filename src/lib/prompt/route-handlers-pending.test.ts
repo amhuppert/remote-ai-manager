@@ -39,6 +39,7 @@ function makeConvo(
     machineSnapshot: null,
     agentBackend: "claude",
     backendRef: null,
+    unread: false,
     ...overrides,
   };
 }

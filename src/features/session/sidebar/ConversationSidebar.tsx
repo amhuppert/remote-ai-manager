@@ -20,6 +20,7 @@ import {
   useGenericRenameConversationMutation,
   useAnswerQuestionMutation,
   useForkConversationMutation,
+  useMarkConversationReadMutation,
 } from "@/lib/conversations/mutations";
 import { useGenericArchiveSessionMutation } from "@/lib/sessions/mutations";
 import { apiFetch } from "@/lib/api/fetcher";
@@ -90,6 +91,7 @@ interface SidebarRowItemProps {
   onOpenMenu: (point: { x: number; y: number }) => void;
   onNavigate: () => void;
   onPeek: (anchorEl: HTMLElement, conversationId: string) => void;
+  onAcknowledge?: () => void;
 }
 
 function SidebarRowItem({
@@ -102,6 +104,7 @@ function SidebarRowItem({
   onOpenMenu,
   onNavigate,
   onPeek,
+  onAcknowledge,
 }: SidebarRowItemProps): React.JSX.Element {
   const { handlers, didLongPressRef } = useLongPress({
     onLongPress: onOpenMenu,
@@ -126,6 +129,7 @@ function SidebarRowItem({
         }}
         onPeek={onPeek}
         onOpenMenu={onOpenMenu}
+        onAcknowledge={onAcknowledge}
       />
     </div>
   );
@@ -192,6 +196,7 @@ function ConversationSidebar({
   const genericArchiveMutation = useGenericArchiveConversationMutation();
   const genericRenameMutation = useGenericRenameConversationMutation();
   const genericArchiveSessionMutation = useGenericArchiveSessionMutation();
+  const markReadMutation = useMarkConversationReadMutation();
 
   // --- Local UI state ---
   const [activeListFilter, setActiveListFilter] = useSidebarActiveListFilter();
@@ -422,10 +427,10 @@ function ConversationSidebar({
   );
 
   const filterCounts = useMemo(() => {
-    const { needsYou } = splitNeedsYou(activeRows);
+    const { questions, finished } = splitNeedsYou(activeRows);
     return {
       all: activeRows.length,
-      needs: needsYou.length,
+      needs: questions.length + finished.length,
       running: activeRows.filter((row) => row.status === "running").length,
       session: activeRows.filter(
         (row) =>
@@ -478,6 +483,7 @@ function ConversationSidebar({
         branchName: row.branchName,
         worktreePath: row.worktreePath,
         lastActivitySummary: row.lastActivitySummary,
+        unread: row.unread,
       };
       const scope = {
         projectName: row.projectName,
@@ -537,6 +543,13 @@ function ConversationSidebar({
           onOpenMenu={(point) => {
             setCtxMenu({ row, scope, x: point.x, y: point.y });
           }}
+          onAcknowledge={() => {
+            markReadMutation.mutate({
+              projectName: row.projectName,
+              sessionName: row.sessionName,
+              conversationId: row.id,
+            });
+          }}
         />
       );
     },
@@ -545,6 +558,7 @@ function ConversationSidebar({
       editValue,
       editingId,
       handleRenameSubmit,
+      markReadMutation,
       onMobileClose,
       openPeek,
       router,
@@ -557,19 +571,21 @@ function ConversationSidebar({
     ) => {
       return sections.map((section) => {
         if (section.items.length === 0) return null;
+        const headerClasses = ["convo-sidebar-section-header"];
+        if (section.kind === "needs") {
+          headerClasses.push("convo-sidebar-section-header--needs");
+          if (section.tone === "finished") {
+            headerClasses.push("convo-sidebar-section-header--finished");
+          }
+        }
         return (
           <section
             key={section.groupKey}
             className="convo-sidebar-section"
             data-section-kind={section.kind}
+            data-section-tone={section.tone ?? undefined}
           >
-            <div
-              className={`convo-sidebar-section-header${
-                section.kind === "needs"
-                  ? " convo-sidebar-section-header--needs"
-                  : ""
-              }`}
-            >
+            <div className={headerClasses.join(" ")}>
               {section.kind === "session" &&
               section.projectLabel !== undefined &&
               section.sessionLabel !== undefined ? (

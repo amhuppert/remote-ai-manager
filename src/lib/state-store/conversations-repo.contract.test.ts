@@ -249,6 +249,29 @@ describe("conversations-repo round-trip contract", () => {
     expect(repo.findById("a")).toBeNull();
     expect(repo.findById("b")).not.toBeNull();
   });
+
+  it("unread defaults to false on insert and round-trips when set true", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "default" }),
+    );
+    expect(repo.findById("default")?.unread).toBe(false);
+
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "unread", unread: true }),
+    );
+    expect(repo.findById("unread")?.unread).toBe(true);
+
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "unread", unread: false }),
+    );
+    expect(repo.findById("unread")?.unread).toBe(false);
+  });
 });
 
 describe("conversations-repo findListItemsForProject projection", () => {

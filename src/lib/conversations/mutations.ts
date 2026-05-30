@@ -366,6 +366,38 @@ export function useGenericArchiveConversationMutation() {
 }
 
 /**
+ * Mark a conversation as read (clear the "Needs you" pinned slot).
+ *
+ * Optimistically clears the `unread` flag in the active-conversations cache
+ * so the sidebar drops the amber accent before the server round-trip.
+ */
+export function useMarkConversationReadMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      projectName,
+      sessionName,
+      conversationId,
+    }: {
+      projectName: string;
+      sessionName: string;
+      conversationId: string;
+    }) =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/mark-read`,
+        "mark-conversation-read",
+        { method: "POST" },
+      ),
+    onSettled: () => {
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.active(),
+      });
+    },
+  });
+}
+
+/**
  * Rename a conversation from any project/session.
  * Accepts project/session as part of the mutation variables.
  */

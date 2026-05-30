@@ -23,6 +23,7 @@ const BASE: ActiveConversation = {
   branchName: null,
   worktreePath: "/home/user/my-project/.worktrees/my-session",
   lastActivitySummary: null,
+  unread: false,
 };
 
 describe("ConversationSidebarRow", () => {
@@ -171,5 +172,70 @@ describe("ConversationSidebarRow", () => {
     );
 
     expect(onOpenMenu).toHaveBeenCalledWith({ x: 40, y: 52 });
+  });
+
+  it("marks unread finished rows with the unread class and a Done prefix, and shows the acknowledge button", () => {
+    const onAcknowledge = vi.fn();
+    const { container } = render(
+      <ConversationSidebarRow
+        conversation={{
+          ...BASE,
+          status: "awaiting",
+          unread: true,
+          lastActivitySummary: "Built hotkeys help modal",
+        }}
+        onAcknowledge={onAcknowledge}
+      />,
+    );
+
+    const row = container.querySelector(".conversation-sidebar-row");
+    expect(row?.classList.contains("is-unread")).toBe(true);
+    expect(
+      container.querySelector(".conversation-sidebar-row__unread-dot"),
+    ).not.toBeNull();
+    expect(screen.getByText(/Done/)).toBeDefined();
+
+    const ack = screen.getByRole("button", { name: /Mark .* as read/i });
+    fireEvent.click(ack);
+    expect(onAcknowledge).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not render the acknowledge button on rows that aren't unread finishes", () => {
+    render(
+      <ConversationSidebarRow
+        conversation={{
+          ...BASE,
+          status: "waiting_for_input",
+          pendingQuestion: "Approve this?",
+        }}
+        onAcknowledge={vi.fn()}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: /Mark .* as read/i }),
+    ).toBeNull();
+  });
+
+  it("does not call onClick or onPeek when the acknowledge button is clicked", () => {
+    const onAcknowledge = vi.fn();
+    const onClick = vi.fn();
+    const onPeek = vi.fn();
+    render(
+      <ConversationSidebarRow
+        conversation={{
+          ...BASE,
+          status: "awaiting",
+          unread: true,
+        }}
+        onAcknowledge={onAcknowledge}
+        onClick={onClick}
+        onPeek={onPeek}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Mark .* as read/i }));
+    expect(onAcknowledge).toHaveBeenCalledTimes(1);
+    expect(onClick).not.toHaveBeenCalled();
+    expect(onPeek).not.toHaveBeenCalled();
   });
 });

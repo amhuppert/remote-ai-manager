@@ -22,6 +22,7 @@ const BASE_CONVERSATION: ActiveConversation = {
   branchName: null,
   worktreePath: "/home/alex/github/command-center/.worktrees/sidebar-row",
   lastActivitySummary: "Refactoring the badge layout to use cc-badge tokens.",
+  unread: false,
 };
 
 function buildConversation(
@@ -250,5 +251,41 @@ export const KitchenSink = {
       pendingQuestion: null,
     }),
     isActive: true,
+  },
+} satisfies Story;
+
+export const UnreadFinished = {
+  args: {
+    conversation: buildConversation({
+      status: "awaiting",
+      unread: true,
+      lastActivitySummary:
+        "Built hotkeys help modal \u00b7 +88 / \u22124 \u00b7 ready for review",
+    }),
+    onAcknowledge: fn(),
+  },
+} satisfies Story;
+
+export const UnreadFinishedActive = {
+  args: {
+    conversation: buildConversation({
+      status: "awaiting",
+      unread: true,
+      lastActivitySummary:
+        "Refactored validator pipeline \u00b7 ready to merge",
+    }),
+    isActive: true,
+    onAcknowledge: fn(),
+  },
+} satisfies Story;
+
+export const AwaitingAcknowledged = {
+  args: {
+    conversation: buildConversation({
+      status: "awaiting",
+      unread: false,
+      lastActivitySummary:
+        "Last prompt completed; awaiting next instruction (read).",
+    }),
   },
 } satisfies Story;

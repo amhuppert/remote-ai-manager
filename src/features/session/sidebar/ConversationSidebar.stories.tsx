@@ -8,8 +8,14 @@ import {
 } from "@/lib/active-conversations/schemas";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { useSessionDetailStore } from "@/stores/session-detail.store";
-import type { SidebarGroupBy } from "@/features/session/sidebar/ConversationSidebar.helpers";
-import { GROUP_BY_STORAGE_KEY } from "@/features/session/hooks/use-sidebar-persistent-filters";
+import type {
+  SidebarGroupBy,
+  SidebarListFilter,
+} from "@/features/session/sidebar/ConversationSidebar.helpers";
+import {
+  ACTIVE_LIST_FILTER_STORAGE_KEY,
+  GROUP_BY_STORAGE_KEY,
+} from "@/features/session/hooks/use-sidebar-persistent-filters";
 import ConversationSidebar from "@/features/session/sidebar/ConversationSidebar";
 
 type ActiveConversationsResponse = z.infer<
@@ -49,6 +55,7 @@ function makeActive(
       overrides.worktreePath ??
       `/home/alex/github/${overrides.projectName ?? "remote-ai-manager"}/.worktrees/${overrides.sessionName ?? "conversation-ui-overhaul"}`,
     lastActivitySummary: overrides.lastActivitySummary ?? null,
+    unread: overrides.unread ?? false,
   };
 }
 
@@ -119,6 +126,66 @@ const mixedActive: ActiveConversation[] = [
   }),
 ];
 
+const needsYouActive: ActiveConversation[] = [
+  makeActive({
+    id: "conv-wfi-1",
+    name: "Plan refactor",
+    status: "waiting_for_input",
+    lastActivityAt: minutesAgo(2),
+    sessionName: "conversation-ui-overhaul",
+    pendingQuestion: "Should we collapse the prompt panel by default?",
+    lastActivitySummary: "Agent asked a clarifying question.",
+  }),
+  makeActive({
+    id: "conv-wfi-2",
+    name: "Confirm rollout plan",
+    status: "waiting_for_input",
+    lastActivityAt: minutesAgo(4),
+    projectName: "creative-ai",
+    projectPath: "/home/alex/github/creative-ai",
+    sessionName: "diff-explainer",
+    pendingQuestion: "Roll out to all users or behind a flag?",
+    lastActivitySummary: "Asking about rollout strategy.",
+  }),
+  makeActive({
+    id: "conv-finished-1",
+    name: "Built hotkeys help modal",
+    status: "awaiting",
+    unread: true,
+    lastActivityAt: minutesAgo(8),
+    sessionName: "validator-sweep",
+    lastActivitySummary:
+      "Built hotkeys help modal \u00b7 +88 / \u22124 \u00b7 ready for review",
+  }),
+  makeActive({
+    id: "conv-finished-2",
+    name: "Refactored validator pipeline",
+    status: "awaiting",
+    unread: true,
+    lastActivityAt: minutesAgo(11),
+    projectName: "creative-ai",
+    projectPath: "/home/alex/github/creative-ai",
+    sessionName: "graph-init",
+    lastActivitySummary: "Refactored validator pipeline \u00b7 ready to merge.",
+  }),
+  makeActive({
+    id: "conv-running-bg",
+    name: "Background indexing",
+    status: "running",
+    lastActivityAt: minutesAgo(15),
+    sessionName: "conversation-ui-overhaul",
+    lastActivitySummary: "Indexing files in the background.",
+  }),
+];
+
+const needsYouQuestionsOnly: ActiveConversation[] = needsYouActive.filter(
+  (c) => c.status === "waiting_for_input" || !c.unread,
+);
+
+const needsYouFinishedOnly: ActiveConversation[] = needsYouActive.filter(
+  (c) => c.status !== "waiting_for_input",
+);
+
 const emptyResponse: ActiveConversationsResponse = {
   conversations: [],
   graphWorkflowExecutions: [],
@@ -131,6 +198,24 @@ const mixedResponse: ActiveConversationsResponse = {
   activeCollaborationExecutions: [],
 };
 
+const needsYouResponse: ActiveConversationsResponse = {
+  conversations: needsYouActive,
+  graphWorkflowExecutions: [],
+  activeCollaborationExecutions: [],
+};
+
+const needsYouQuestionsResponse: ActiveConversationsResponse = {
+  conversations: needsYouQuestionsOnly,
+  graphWorkflowExecutions: [],
+  activeCollaborationExecutions: [],
+};
+
+const needsYouFinishedResponse: ActiveConversationsResponse = {
+  conversations: needsYouFinishedOnly,
+  graphWorkflowExecutions: [],
+  activeCollaborationExecutions: [],
+};
+
 // ---------------------------------------------------------------------------
 // Story harness
 // ---------------------------------------------------------------------------
@@ -139,6 +224,7 @@ interface HarnessProps {
   active: ActiveConversationsResponse;
   initialFilter?: string;
   initialGroupBy?: SidebarGroupBy;
+  initialActiveListFilter?: SidebarListFilter;
   initialSidebarCollapsed?: boolean;
   mobileOpen?: boolean;
   activeConversationId?: string;
@@ -148,6 +234,7 @@ function SidebarHarness({
   active,
   initialFilter = "",
   initialGroupBy = "project",
+  initialActiveListFilter = "all",
   initialSidebarCollapsed = false,
   mobileOpen = false,
   activeConversationId = "conv-running",
@@ -167,14 +254,24 @@ function SidebarHarness({
       GROUP_BY_STORAGE_KEY,
       JSON.stringify(initialGroupBy),
     );
+    window.sessionStorage.setItem(
+      ACTIVE_LIST_FILTER_STORAGE_KEY,
+      JSON.stringify(initialActiveListFilter),
+    );
     useSessionDetailStore.setState({
       sidebarFilter: initialFilter,
       sidebarCollapsed: initialSidebarCollapsed,
     });
     return () => {
       window.sessionStorage.removeItem(GROUP_BY_STORAGE_KEY);
+      window.sessionStorage.removeItem(ACTIVE_LIST_FILTER_STORAGE_KEY);
     };
-  }, [initialFilter, initialGroupBy, initialSidebarCollapsed]);
+  }, [
+    initialActiveListFilter,
+    initialFilter,
+    initialGroupBy,
+    initialSidebarCollapsed,
+  ]);
 
   useLayoutEffect(() => {
     const originalFetch = window.fetch;
@@ -311,4 +408,36 @@ export const MobileDrawerOpen = {
       </div>
     ),
   ],
+} satisfies Story;
+
+export const NeedsYouTwoSections = {
+  args: {
+    active: needsYouResponse,
+    initialGroupBy: "session",
+    activeConversationId: "conv-running-bg",
+  },
+} satisfies Story;
+
+export const NeedsYouQuestionsOnly = {
+  args: {
+    active: needsYouQuestionsResponse,
+    initialGroupBy: "session",
+    activeConversationId: "conv-running-bg",
+  },
+} satisfies Story;
+
+export const NeedsYouFinishedOnly = {
+  args: {
+    active: needsYouFinishedResponse,
+    initialGroupBy: "session",
+    activeConversationId: "conv-running-bg",
+  },
+} satisfies Story;
+
+export const NeedsYouFilter = {
+  args: {
+    active: needsYouResponse,
+    initialActiveListFilter: "needs",
+    activeConversationId: "conv-running-bg",
+  },
 } satisfies Story;

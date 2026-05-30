@@ -44,6 +44,7 @@ const BASE_CONVERSATION: ConversationState = {
   machineSnapshot: null,
   agentBackend: "claude" as const,
   backendRef: null,
+  unread: false,
 };
 
 const BASE_SESSION: SessionState = {
