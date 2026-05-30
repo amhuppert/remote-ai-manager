@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { fn, userEvent, within } from "storybook/test";
 import type { ActiveConversation } from "@/lib/active-conversations/schemas";
 import type {
@@ -54,6 +54,28 @@ function message(
     content: [{ type: "text", text }],
     timestamp: minutesAgo(minutes),
   };
+}
+
+function fetchUrl(input: RequestInfo | URL): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+}
+
+function useStoryVoiceHealthMock(): void {
+  useEffect(() => {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      if (fetchUrl(input).endsWith("/api/voice/health")) {
+        return Promise.resolve(Response.json({ available: false }));
+      }
+      return originalFetch(input, init);
+    }) as typeof window.fetch;
+
+    return () => {
+      window.fetch = originalFetch;
+    };
+  }, []);
 }
 
 const DEFAULT_TRANSCRIPT: TranscriptMessage[] = [
@@ -142,6 +164,7 @@ function PeekStoryFrame({
 }: PeekStoryProps): React.JSX.Element {
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+  useStoryVoiceHealthMock();
 
   useLayoutEffect(() => {
     setAnchorEl(anchorRef.current);

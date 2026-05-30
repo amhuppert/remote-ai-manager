@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ActiveConversation } from "@/lib/active-conversations/schemas";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import PeekPopover from "@/features/session/sidebar/PeekPopover";
@@ -85,10 +86,43 @@ describe("PeekPopover", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-15T12:42:00.000Z"));
+    if (typeof Range !== "undefined") {
+      if (!Range.prototype.getClientRects) {
+        Range.prototype.getClientRects = () =>
+          ({
+            length: 0,
+            item: () => null,
+            [Symbol.iterator]: function* () {},
+          }) as unknown as DOMRectList;
+      }
+      if (!Range.prototype.getBoundingClientRect) {
+        Range.prototype.getBoundingClientRect = () =>
+          ({
+            x: 0,
+            y: 0,
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            width: 0,
+            height: 0,
+            toJSON: () => ({}),
+          }) as DOMRect;
+      }
+    }
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: () => document.querySelector(".ProseMirror") ?? document.body,
+    });
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: undefined,
+    });
     document.body.innerHTML = "";
   });
 
@@ -109,19 +143,87 @@ describe("PeekPopover", () => {
     expect(screen.getByText("Please build the popover.")).toBeDefined();
   });
 
-  it("sends free-text replies without closing the popover and clears the textarea", async () => {
+  it("sends free-text replies without closing the popover and clears the editor", async () => {
     const onReplyText = vi.fn();
     const onClose = vi.fn();
+    vi.useRealTimers();
+    const user = userEvent.setup();
 
     renderPeek({ onReplyText, onClose });
 
-    const textarea = screen.getByLabelText("Reply text");
-    fireEvent.change(textarea, { target: { value: "Status?" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    const editor = screen.getByLabelText("Reply text");
+    await user.click(editor);
+    await user.keyboard("Status?");
+    await user.click(screen.getByRole("button", { name: "Send" }));
 
     expect(onReplyText).toHaveBeenCalledWith("Status?");
     expect(onClose).not.toHaveBeenCalled();
-    expect(textarea).toHaveValue("");
+    expect(editor).toHaveTextContent("");
+  });
+
+  it("uses the shared Tiptap prompt editor for free-text replies", () => {
+    renderPeek();
+
+    const editor = screen.getByLabelText("Reply text");
+    expect(editor).toHaveAttribute("contenteditable", "true");
+    expect(document.querySelector(".peek__composer textarea")).toBeNull();
+  });
+
+  it("shows the voice tool when voice recording is available", async () => {
+    vi.useRealTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          available: true,
+        }),
+      ),
+    );
+
+    renderPeek();
+
+    expect(await screen.findByTitle("Voice input")).toBeInTheDocument();
+  });
+
+  it("starts voice recording from the Alt+V hotkey inside the popover", async () => {
+    vi.useRealTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          available: true,
+        }),
+      ),
+    );
+    const getUserMedia = vi.fn(async () => ({
+      getTracks: () => [{ stop: vi.fn() }],
+    }));
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    class FakeMediaRecorder {
+      static isTypeSupported() {
+        return true;
+      }
+
+      readonly state = "inactive";
+      readonly mimeType = "audio/webm";
+
+      start() {}
+      stop() {}
+    }
+    vi.stubGlobal("MediaRecorder", FakeMediaRecorder);
+
+    renderPeek();
+
+    const editor = screen.getByLabelText("Reply text");
+    await screen.findByTitle("Voice input");
+    fireEvent.keyDown(editor, { key: "v", altKey: true });
+
+    await waitFor(() => {
+      expect(getUserMedia).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("does not render any pre-filled quick-reply chips", () => {

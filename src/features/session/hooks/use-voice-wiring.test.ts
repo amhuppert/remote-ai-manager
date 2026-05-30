@@ -56,6 +56,38 @@ describe("useVoiceWiring", () => {
     expect(ids).not.toContain("voiceFireAndForget");
   });
 
+  it("can suppress the global voice hotkey for locally scoped prompt surfaces", () => {
+    vi.mocked(useAppHotkey).mockClear();
+    vi.mocked(useVoiceRecorder).mockImplementation((() => ({
+      isRecording: false,
+      isProcessing: false,
+      elapsedTime: 0,
+      isAvailable: true,
+      toggleRecording: vi.fn(),
+      stopRecording: vi.fn(),
+    })) as typeof useVoiceRecorder);
+
+    renderHook(() => {
+      const promptTextRef = useRef("");
+      const editorRef = useRef(null);
+      const fireAndForgetRef = useRef(false);
+      return useVoiceWiring({
+        projectName: "p",
+        promptTextRef,
+        editorRef,
+        fireAndForgetRef,
+        handleSendPrompt: async () => {},
+        hotkeyEnabled: false,
+      });
+    });
+
+    expect(vi.mocked(useAppHotkey)).toHaveBeenCalledWith(
+      "voiceToggle",
+      expect.any(Function),
+      { enabled: false },
+    );
+  });
+
   it("stopAndSubmit stops the recording and causes the voice result to be auto-submitted", async () => {
     let capturedOnResult: ((text: string) => void) | undefined;
     const toggleRecording = vi.fn();

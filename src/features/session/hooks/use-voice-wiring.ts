@@ -15,6 +15,7 @@ export interface UseVoiceWiringArgs {
   editorRef: MutableRefObject<PromptEditorHandle | null>;
   fireAndForgetRef: MutableRefObject<boolean>;
   handleSendPrompt: () => Promise<void>;
+  hotkeyEnabled?: boolean;
 }
 
 export interface UseVoiceWiringResult {
@@ -36,6 +37,7 @@ export function useVoiceWiring({
   editorRef,
   fireAndForgetRef,
   handleSendPrompt,
+  hotkeyEnabled = true,
 }: UseVoiceWiringArgs): UseVoiceWiringResult {
   const startRecording = useStartRecording();
   const stopRecording = useStopRecording();
@@ -91,7 +93,7 @@ export function useVoiceWiring({
       void toggleRecording();
     },
     {
-      enabled: voiceAvailable && !isProcessing,
+      enabled: hotkeyEnabled && voiceAvailable && !isProcessing,
     },
   );
 

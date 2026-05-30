@@ -49,7 +49,7 @@ export interface FileMentionExtensionOptions {
  * provided by the caller via `options.items` and `options.render`.
  */
 export const FileMention = Extension.create<FileMentionExtensionOptions>({
-  name: "fileMention",
+  name: "fileMentionSuggestion",
 
   addOptions() {
     return {

@@ -256,22 +256,52 @@
   box-shadow: 0 0 0 3px var(--cyan-glow);
 }
 
-.peek__composer-textarea {
-  width: 100%;
+.peek__composer-box:focus-within {
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 3px var(--cyan-glow-strong);
+}
+
+.peek__composer-box .prompt-editor {
+  min-width: 0;
+}
+
+.peek__composer-box .prompt-editor__content {
   min-height: 48px;
-  margin: 0;
-  resize: vertical;
+  max-height: 150px;
+  padding: 0;
   border: 0;
-  outline: 0;
+  border-radius: 0;
   background: transparent;
-  color: var(--text-primary);
+  box-shadow: none;
   font-family: var(--font-body);
   font-size: 12.5px;
   line-height: 1.45;
 }
 
-.peek__composer-textarea::placeholder {
-  color: var(--text-tertiary);
+.peek__composer-box .prompt-editor__content:focus-within {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.peek__composer-box .prompt-editor__content .ProseMirror {
+  min-height: 48px;
+}
+
+.peek__composer-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.peek__composer-actions .voice-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+}
+
+.peek__composer-actions .voice-btn svg {
+  width: 16px;
+  height: 16px;
 }
 
 .peek__send {

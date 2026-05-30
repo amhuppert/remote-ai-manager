@@ -39,7 +39,7 @@ export interface ConversationMentionExtensionOptions {
 
 export const ConversationMention =
   Extension.create<ConversationMentionExtensionOptions>({
-    name: "conversationMention",
+    name: "conversationMentionSuggestion",
 
     addOptions() {
       return {

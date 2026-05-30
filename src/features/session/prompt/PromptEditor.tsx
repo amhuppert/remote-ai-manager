@@ -74,6 +74,7 @@ export interface PromptEditorProps {
   disabled?: boolean;
   readOnly?: boolean;
   title?: string;
+  ariaLabel?: string;
   placeholder?: string;
   /**
    * Fires whenever the set of inline-marker `attachmentId`s in the editor doc
@@ -212,6 +213,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
       disabled = false,
       readOnly = false,
       title,
+      ariaLabel,
       placeholder = "Type a message…",
       onInlineMarkersChange,
       projectName,
@@ -346,6 +348,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
       editorProps: {
         attributes: {
           class: "prompt-editor__content-inner",
+          ...(ariaLabel ? { "aria-label": ariaLabel } : {}),
         },
       },
       onUpdate: ({ editor: ed }) => {

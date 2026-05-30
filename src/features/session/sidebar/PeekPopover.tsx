@@ -17,9 +17,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AskQuestionPanel from "@/components/AskQuestionPanel";
 import MessageRow from "@/components/conversation/MessageRow";
 import TypingIndicator from "@/components/conversation/TypingIndicator";
+import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import { BranchIcon, CloseIcon } from "@/components/icons";
+import {
+  PromptEditor,
+  type PromptEditorHandle,
+} from "@/features/session/prompt/PromptEditor";
+import { useVoiceWiring } from "@/features/session/hooks/use-voice-wiring";
 import type { ActiveConversation } from "@/lib/active-conversations/schemas";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
+import type { ImageAttachment } from "@/hooks/use-image-attachments";
 
 type ActiveConversationStatus = ActiveConversation["status"];
 
@@ -40,6 +47,8 @@ const STATUS_LABEL: Record<ActiveConversationStatus, string> = {
   awaiting: "awaiting",
   new: "new",
 };
+const EMPTY_IMAGE_ATTACHMENTS: ImageAttachment[] = [];
+const DEFAULT_REPLY_PLACEHOLDER = "Reply to this conversation...";
 
 function formatPeekTime(isoDate: string): string {
   const timestamp = new Date(isoDate).getTime();
@@ -65,6 +74,148 @@ function logPeekDebug(message: string, fields: Record<string, unknown>): void {
   });
 }
 
+function isVoiceToggleEvent(event: KeyboardEvent): boolean {
+  return (
+    event.altKey &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.shiftKey &&
+    event.key.toLowerCase() === "v"
+  );
+}
+
+async function ignorePeekImagePaste(): Promise<ImageAttachment | null> {
+  return null;
+}
+
+function PeekReplyComposer({
+  conversation,
+  onReplyText,
+}: {
+  conversation: ActiveConversation;
+  onReplyText: (text: string) => void;
+}): React.JSX.Element {
+  const [replyText, setReplyText] = useState("");
+  const [hasReplyContent, setHasReplyContent] = useState(false);
+  const [placeholder, setPlaceholder] = useState(DEFAULT_REPLY_PLACEHOLDER);
+  const editorRef = useRef<PromptEditorHandle | null>(null);
+  const promptTextRef = useRef(replyText);
+  const fireAndForgetRef = useRef(false);
+
+  useEffect(() => {
+    promptTextRef.current = replyText;
+  }, [replyText]);
+
+  const handleReplyTextChange = useCallback((text: string) => {
+    setReplyText(text);
+    const serialized = editorRef.current?.serialize(EMPTY_IMAGE_ATTACHMENTS);
+    setHasReplyContent((serialized?.prompt ?? text).trim() !== "");
+  }, []);
+
+  const submitReply = useCallback(async () => {
+    const serialized = editorRef.current?.serialize(EMPTY_IMAGE_ATTACHMENTS);
+    const trimmed = (serialized?.prompt ?? promptTextRef.current).trim();
+    if (trimmed === "") return;
+    logPeekDebug("peek.reply.submit", {
+      conversationId: conversation.id,
+      status: conversation.status,
+      textLength: trimmed.length,
+    });
+    onReplyText(trimmed);
+    editorRef.current?.clear();
+    setReplyText("");
+    setHasReplyContent(false);
+    setPlaceholder(DEFAULT_REPLY_PLACEHOLDER);
+  }, [conversation.id, conversation.status, onReplyText]);
+
+  const {
+    isRecording,
+    isProcessing,
+    elapsedTime,
+    voiceAvailable,
+    toggleRecording,
+    stopAndSubmit,
+  } = useVoiceWiring({
+    projectName: conversation.projectName,
+    promptTextRef,
+    editorRef,
+    fireAndForgetRef,
+    handleSendPrompt: submitReply,
+    hotkeyEnabled: false,
+  });
+
+  const handleToggleRecording = useCallback(() => {
+    if (!isRecording && !isProcessing) {
+      fireAndForgetRef.current = false;
+    }
+    void toggleRecording();
+  }, [isRecording, isProcessing, toggleRecording]);
+
+  const handleSubmit = useCallback(() => {
+    if (isRecording) {
+      stopAndSubmit();
+      return;
+    }
+    void submitReply();
+  }, [isRecording, stopAndSubmit, submitReply]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!isVoiceToggleEvent(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      if (!voiceAvailable || isProcessing) return;
+      handleToggleRecording();
+    };
+    document.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown, { capture: true });
+    };
+  }, [voiceAvailable, isProcessing, handleToggleRecording]);
+
+  const sendDisabled = !hasReplyContent || isRecording || isProcessing;
+
+  return (
+    <div className="peek__composer-box">
+      <PromptEditor
+        ref={editorRef}
+        conversationId={conversation.id}
+        value={replyText}
+        onChange={handleReplyTextChange}
+        onSubmit={handleSubmit}
+        pendingImages={EMPTY_IMAGE_ATTACHMENTS}
+        onAddImage={ignorePeekImagePaste}
+        onRemoveImage={() => {}}
+        cumulativeImageCount={0}
+        projectName={conversation.projectName}
+        sessionName={conversation.sessionName}
+        backend={conversation.agentBackend}
+        ariaLabel="Reply text"
+        placeholder={placeholder}
+        onShowPlaceholder={setPlaceholder}
+      />
+      <div className="peek__composer-actions">
+        <VoiceRecordButton
+          isRecording={isRecording}
+          isProcessing={isProcessing}
+          elapsedTime={elapsedTime}
+          isAvailable={voiceAvailable}
+          toggleRecording={handleToggleRecording}
+        />
+        <button
+          type="button"
+          className="peek__send"
+          onClick={handleSubmit}
+          disabled={sendDisabled}
+        >
+          Send
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function PeekPopover({
   anchorEl,
   conversation,
@@ -75,7 +226,6 @@ export default function PeekPopover({
   onAnswerQuestion,
   onFork,
 }: PeekPopoverProps): React.JSX.Element | null {
-  const [replyText, setReplyText] = useState("");
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [bodyMounted, setBodyMounted] = useState(false);
   const messageCount = transcriptMessages.length;
@@ -184,21 +334,6 @@ export default function PeekPopover({
       body.removeEventListener("scroll", handleScroll);
     };
   }, [bodyMounted, messageCount]);
-
-  const sendReply = useCallback(
-    (text: string) => {
-      const trimmed = text.trim();
-      if (trimmed === "") return;
-      logPeekDebug("peek.reply.submit", {
-        conversationId: conversation.id,
-        status: conversation.status,
-        textLength: trimmed.length,
-      });
-      onReplyText(trimmed);
-      setReplyText("");
-    },
-    [conversation.id, conversation.status, onReplyText],
-  );
 
   const handleOpenFull = useCallback(() => {
     logPeekDebug("peek.open_full", { conversationId: conversation.id });
@@ -325,32 +460,10 @@ export default function PeekPopover({
                 onSubmit={handleQuestionSubmit}
               />
             ) : (
-              <div className="peek__composer-box">
-                <textarea
-                  className="peek__composer-textarea"
-                  aria-label="Reply text"
-                  value={replyText}
-                  rows={3}
-                  onChange={(event) => setReplyText(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (
-                      event.key === "Enter" &&
-                      (event.metaKey || event.ctrlKey)
-                    ) {
-                      event.preventDefault();
-                      sendReply(replyText);
-                    }
-                  }}
-                />
-                <button
-                  type="button"
-                  className="peek__send"
-                  onClick={() => sendReply(replyText)}
-                  disabled={replyText.trim() === ""}
-                >
-                  Send
-                </button>
-              </div>
+              <PeekReplyComposer
+                conversation={conversation}
+                onReplyText={onReplyText}
+              />
             )}
           </footer>
         </section>
