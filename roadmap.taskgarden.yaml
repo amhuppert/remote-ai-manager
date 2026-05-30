@@ -5,8 +5,8 @@ last_updated: 2026-05-14
 summary: >
   Open-ended high-level roadmap for Command Center capturing platform
   primitives, backend feature work, and UI surfaces. Intentionally
-  underspecified — this is a brainstorming substrate to be rewritten
-  into actionable form later.
+  underspecified — this is a brainstorming substrate to be rewritten into
+  actionable form later.
 references:
   - label: Source Roadmap
     href: ROADMAP.md
@@ -29,7 +29,8 @@ work_items:
     title: Transparent Message Summarization
     summary: >
       Per-message summaries linked to full content, accessible to agents.
-      Unlocks Agent 2 context, autonomous mode efficiency, and history navigation.
+      Unlocks Agent 2 context, autonomous mode efficiency, and history
+      navigation.
     lane: primitives
     status: planned
     priority: p0
@@ -60,8 +61,8 @@ work_items:
   - id: agent-to-agent-messaging
     title: Agent-to-Agent Messaging
     summary: >
-      Allow agents to send messages to other agents or conversations.
-      Underlies orchestration and multi-agent collaboration patterns.
+      Allow agents to send messages to other agents or conversations. Underlies
+      orchestration and multi-agent collaboration patterns.
     lane: primitives
     status: planned
     priority: p1
@@ -76,8 +77,8 @@ work_items:
   - id: configurable-specialized-agents
     title: Configurable Specialized Agents
     summary: >
-      Per-role agent configuration covering conversation, workflow
-      implementors, validators, and collaboration mode.
+      Per-role agent configuration covering conversation, workflow implementors,
+      validators, and collaboration mode.
     lane: primitives
     status: planned
     priority: p1
@@ -92,10 +93,10 @@ work_items:
   - id: configurable-skills
     title: Configurable Skills
     summary: >
-      MCP-style configurable skill registry; user-extensible skill set
-      per project or per agent role.
+      MCP-style configurable skill registry; user-extensible skill set per
+      project or per agent role.
     lane: primitives
-    status: planned
+    status: done
     priority: p2
     depends_on: []
     tags:
@@ -110,8 +111,8 @@ work_items:
   - id: agent2-conversation-context
     title: Agent 2 Conversation Context
     summary: >
-      Provide Agent 2 in collaboration mode with summarized context from
-      the primary conversation.
+      Provide Agent 2 in collaboration mode with summarized context from the
+      primary conversation.
     lane: backend-features
     status: planned
     priority: p0
@@ -126,8 +127,8 @@ work_items:
   - id: agent2-session-continuity
     title: Agent 2 Session Continuity
     summary: >
-      Optionally continue an Agent 2 session across subsequent
-      collaboration invocations rather than starting fresh each time.
+      Optionally continue an Agent 2 session across subsequent collaboration
+      invocations rather than starting fresh each time.
     lane: backend-features
     status: planned
     priority: p1
@@ -142,8 +143,8 @@ work_items:
   - id: collab-understand-objective
     title: Collaborative Understand-Objective Mode
     summary: >
-      Variation of collaboration mode tailored for clarifying and
-      refining a user objective before implementation.
+      Variation of collaboration mode tailored for clarifying and refining a
+      user objective before implementation.
     lane: backend-features
     status: planned
     priority: p2
@@ -159,8 +160,8 @@ work_items:
   - id: collab-research
     title: Collaborative Research Mode
     summary: >
-      Variation of collaboration mode focused on parallel research
-      and information gathering by Agent 2.
+      Variation of collaboration mode focused on parallel research and
+      information gathering by Agent 2.
     lane: backend-features
     status: planned
     priority: p2
@@ -176,8 +177,8 @@ work_items:
   - id: autonomous-debug-mode
     title: Autonomous Debug Mode
     summary: >
-      Workflow mode that autonomously investigates and resolves bugs,
-      escalating to the user via the ask-user halt when stuck.
+      Workflow mode that autonomously investigates and resolves bugs, escalating
+      to the user via the ask-user halt when stuck.
     lane: backend-features
     status: planned
     priority: p1
@@ -193,8 +194,8 @@ work_items:
   - id: autonomous-collab-mode
     title: Autonomous Collaboration Mode
     summary: >
-      Workflow mode that runs collaboration loops autonomously, halting
-      for user input only when necessary.
+      Workflow mode that runs collaboration loops autonomously, halting for user
+      input only when necessary.
     lane: backend-features
     status: planned
     priority: p1
@@ -212,8 +213,8 @@ work_items:
   - id: project-orchestrator
     title: Project-Level Orchestrator
     summary: >
-      Higher-level orchestrator that can create and dispatch sessions
-      from external sources (e.g., a batch of JIRA tickets).
+      Higher-level orchestrator that can create and dispatch sessions from
+      external sources (e.g., a batch of JIRA tickets).
     lane: backend-features
     status: planned
     priority: p1
@@ -229,8 +230,8 @@ work_items:
   - id: templatized-workflows
     title: Templatized Graph Workflow Definitions
     summary: >
-      Reusable workflow templates that can be parameterized and shared
-      across projects.
+      Reusable workflow templates that can be parameterized and shared across
+      projects.
     lane: backend-features
     status: planned
     priority: p2
@@ -245,8 +246,8 @@ work_items:
   - id: composer-mode
     title: Composer Mode
     summary: >
-      Backend feature for drafting long-form documents with an agent,
-      preserving structure and revision context across turns.
+      Backend feature for drafting long-form documents with an agent, preserving
+      structure and revision context across turns.
     lane: backend-features
     status: planned
     priority: p2
@@ -261,8 +262,8 @@ work_items:
   - id: self-learning-workflows
     title: Self-Learning Workflows & Conversations
     summary: >
-      Workflows that adapt over time based on prior iterations, feedback,
-      and outcomes. Scope intentionally vague — will be redefined.
+      Workflows that adapt over time based on prior iterations, feedback, and
+      outcomes. Scope intentionally vague — will be redefined.
     lane: backend-features
     status: future
     priority: p3
@@ -276,16 +277,16 @@ work_items:
       value: 10
       unit: days
     notes: >
-      Large and underspecified. Likely needs to be split into smaller items
-      once the concept is sharpened.
+      Large and underspecified. Likely needs to be split into smaller items once
+      the concept is sharpened.
 
   # ---------------- UI ----------------
 
   - id: view-validator-conversations
     title: View Validator Agent Conversations
     summary: >
-      Surface the internal conversations of validator agents inside the
-      graph workflow UI for inspection and debugging.
+      Surface the internal conversations of validator agents inside the graph
+      workflow UI for inspection and debugging.
     lane: ui
     status: planned
     priority: p1
@@ -300,8 +301,8 @@ work_items:
   - id: multi-session-ux
     title: Multi-Session UX Improvements
     summary: >
-      Make it easier to manage and track multiple sessions in Command
-      Center — overview, filtering, status surfacing.
+      Make it easier to manage and track multiple sessions in Command Center —
+      overview, filtering, status surfacing.
     lane: ui
     status: planned
     priority: p1
@@ -315,8 +316,8 @@ work_items:
   - id: interact-with-graph-agents
     title: Direct Agent Interaction Inside Graph Workflows
     summary: >
-      Allow the user to interject, direct, or correct agents mid-workflow
-      from the graph UI.
+      Allow the user to interject, direct, or correct agents mid-workflow from
+      the graph UI.
     lane: ui
     status: planned
     priority: p2
@@ -331,8 +332,8 @@ work_items:
   - id: edit-previous-message
     title: Edit Previous Message
     summary: >
-      Allow the user to edit an earlier message in a conversation,
-      creating a fork at that point.
+      Allow the user to edit an earlier message in a conversation, creating a
+      fork at that point.
     lane: ui
     status: planned
     priority: p2
@@ -395,10 +396,9 @@ work_items:
     title: Session Row "What It's Doing Now" Line
     summary: >
       Replace time-only metadata in each session row with a one-line
-      natural-language status derived from the last tool call or
-      assistant message (e.g., "Writing tests for queue-route…",
-      "Awaiting input · 3m", "Ran 4 bash commands"). Finder status-bar
-      / Cursor agent strip pattern.
+      natural-language status derived from the last tool call or assistant
+      message (e.g., "Writing tests for queue-route…", "Awaiting input · 3m",
+      "Ran 4 bash commands"). Finder status-bar / Cursor agent strip pattern.
     lane: ui
     status: planned
     priority: p1
@@ -416,9 +416,9 @@ work_items:
   - id: panel-row-diff-stat
     title: Session Row Inline Diff Stat
     summary: >
-      Show +142 −18 next to the session title, color-coded green/red,
-      with a branch-ahead arrow when commits are queued. Cheap to
-      compute, very high signal for "is this worth my attention".
+      Show +142 −18 next to the session title, color-coded green/red, with a
+      branch-ahead arrow when commits are queued. Cheap to compute, very high
+      signal for "is this worth my attention".
     lane: ui
     status: planned
     priority: p1
@@ -434,9 +434,8 @@ work_items:
   - id: panel-row-last-message-preview
     title: Session Row Last-Message Preview
     summary: >
-      Two lines of monospace, truncated, Slack-style preview of the
-      most recent message. Density toggle to switch between compact
-      and preview row modes.
+      Two lines of monospace, truncated, Slack-style preview of the most recent
+      message. Density toggle to switch between compact and preview row modes.
     lane: ui
     status: planned
     priority: p2
@@ -453,9 +452,9 @@ work_items:
   - id: panel-row-activity-sparkline
     title: Session Row Activity Sparkline
     summary: >
-      Tiny 30-minute sparkline of tool-uses-per-minute per session,
-      so at a glance you can tell which agents are actually working
-      vs. stalled. Mission-control aesthetic.
+      Tiny 30-minute sparkline of tool-uses-per-minute per session, so at a
+      glance you can tell which agents are actually working vs. stalled.
+      Mission-control aesthetic.
     lane: ui
     status: planned
     priority: p2
@@ -472,9 +471,9 @@ work_items:
   - id: panel-awaiting-input-section
     title: Awaiting-Input Session Section
     summary: >
-      Promote awaiting-input sessions into their own section at the
-      top of the panel with an amber tab and count badge. Linear-inbox
-      pattern for surfacing sessions that need the user.
+      Promote awaiting-input sessions into their own section at the top of the
+      panel with an amber tab and count badge. Linear-inbox pattern for
+      surfacing sessions that need the user.
     lane: ui
     status: planned
     priority: p1
@@ -493,10 +492,9 @@ work_items:
   - id: quick-reply-inline-row
     title: Quick-Reply Inline Row Expansion
     summary: >
-      A session row expands in place to reveal a prompt input plus the
-      last assistant message. No popover, no navigation. Optimized for
-      "yes, proceed" or single-line nudges without leaving the current
-      conversation.
+      A session row expands in place to reveal a prompt input plus the last
+      assistant message. No popover, no navigation. Optimized for "yes, proceed"
+      or single-line nudges without leaving the current conversation.
     lane: ui
     status: planned
     priority: p1
@@ -513,10 +511,10 @@ work_items:
   - id: conversation-peek-popover
     title: Conversation Peek Hover Popover
     summary: >
-      Hovering a session row opens a 400×500 floating panel showing
-      the last ~6 messages and a quick prompt input. Send a reply,
-      close, and return to the current conversation. Gmail mouse-over
-      preview / GitHub PR hovercard pattern.
+      Hovering a session row opens a 400×500 floating panel showing the last ~6
+      messages and a quick prompt input. Send a reply, close, and return to the
+      current conversation. Gmail mouse-over preview / GitHub PR hovercard
+      pattern.
     lane: ui
     status: planned
     priority: p2
@@ -532,10 +530,10 @@ work_items:
   - id: bridge-view
     title: Bridge View Multi-Conversation Layout
     summary: >
-      New layout mode replacing the single conversation with a 2×2 or
-      3×2 grid of conversation tiles, each tailing its own stream and
-      independently interactive (prompt + scroll). For the "I'm
-      orchestrating 6 agents" moment. Pattern: tmux, ATC, trading desk.
+      New layout mode replacing the single conversation with a 2×2 or 3×2 grid
+      of conversation tiles, each tailing its own stream and independently
+      interactive (prompt + scroll). For the "I'm orchestrating 6 agents"
+      moment. Pattern: tmux, ATC, trading desk.
     lane: ui
     status: planned
     priority: p2
@@ -552,10 +550,9 @@ work_items:
   - id: conversation-tabs
     title: Conversation Tabs Strip
     summary: >
-      Thin strip of currently-open conversations across the top of
-      the conversation pane — browser-tab metaphor with Cmd+1/2/3 to
-      swap. Side panel is "all active"; tabs are "the few I'm
-      actively juggling".
+      Thin strip of currently-open conversations across the top of the
+      conversation pane — browser-tab metaphor with Cmd+1/2/3 to swap. Side
+      panel is "all active"; tabs are "the few I'm actively juggling".
     lane: ui
     status: planned
     priority: p2
@@ -572,9 +569,9 @@ work_items:
   - id: focus-mode
     title: Focus Mode
     summary: >
-      One keystroke (e.g., ⌘.) collapses the side panel entirely,
-      dims topbar chrome, and suppresses toasts. Pomodoro for
-      Command Center; inverse of [[bridge-view]].
+      One keystroke (e.g., ⌘.) collapses the side panel entirely, dims topbar
+      chrome, and suppresses toasts. Pomodoro for Command Center; inverse of
+      [[bridge-view]].
     lane: ui
     status: planned
     priority: p2
