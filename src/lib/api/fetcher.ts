@@ -56,11 +56,17 @@ export async function mutationFetch<T>(
   const res = await tracedFetch(url, traceLabel, options);
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: "Request failed" }));
-    const apiBody = body as { error?: string; code?: string; output?: string };
+    const apiBody = body as {
+      error?: string;
+      code?: string;
+      output?: string;
+      details?: Record<string, unknown>;
+    };
     throw new ApiCallError(
       apiBody.error ?? `API error ${res.status}`,
       apiBody.code,
       apiBody.output,
+      apiBody.details,
     );
   }
   const data: unknown = await res.json();

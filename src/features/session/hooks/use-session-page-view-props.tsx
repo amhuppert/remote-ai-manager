@@ -56,6 +56,10 @@ export interface UseSessionPageViewPropsArgs {
   dsStopServer: SessionContentProps["dsStopServer"];
   dsStartAll: () => void;
   dsStopAll: () => void;
+  dsUnmanagedConflict?: SessionContentProps["dsUnmanagedConflict"];
+  dsDismissUnmanagedConflict?: () => void;
+  dsStopUnmanagedAndRetry?: () => void;
+  dsIsStoppingUnmanaged?: boolean;
 
   // tdd / layout
   tddEnabled: boolean;
@@ -250,6 +254,10 @@ export function useSessionPageViewProps(
       dsStopServer: args.dsStopServer,
       dsStartAll: args.dsStartAll,
       dsStopAll: args.dsStopAll,
+      dsUnmanagedConflict: args.dsUnmanagedConflict,
+      dsDismissUnmanagedConflict: args.dsDismissUnmanagedConflict,
+      dsStopUnmanagedAndRetry: args.dsStopUnmanagedAndRetry,
+      dsIsStoppingUnmanaged: args.dsIsStoppingUnmanaged,
       commitDisabled: args.commitDisabled,
       onCommit: store.requestCommit,
       onMerge: store.requestMerge,

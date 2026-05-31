@@ -5,6 +5,7 @@ import {
   NoDevServersConfiguredError,
   SessionNotFoundError,
   UnknownDevServerError,
+  UnmanagedDevServerDetectedError,
   createDevServerService,
   type DevServerServiceDeps,
 } from "./service";
@@ -24,12 +25,14 @@ function makeEntry(overrides: Partial<DevServerEntry>): DevServerEntry {
     errorMessage: null,
     recentOutput: [],
     worktreePath: "/projects/test/.worktrees/s1",
-    source: null,
     ownedByThisSession: false,
     ownerPid: null,
+    logFilePath: "/projects/test/.worktrees/s1/.cc/dev-server-logs/nextjs.log",
     _process: null,
     _pid: null,
-    _startupTimer: null,
+    _logStream: null,
+    _stdoutRemainder: "",
+    _stderrRemainder: "",
     ...overrides,
   };
 }
@@ -55,7 +58,11 @@ function makeHarness(opts?: {
     registry.set(entry.serverName, entry);
   }
   const configured = opts?.configured ?? [
-    { name: "nextjs", command: "echo CC_PORT=3000" },
+    {
+      name: "nextjs",
+      command: "echo CC_PORT=3000",
+      port: { base: 3000, range: 100 },
+    },
   ];
 
   const reconcile = vi.fn(async () => undefined);
@@ -96,6 +103,10 @@ function makeHarness(opts?: {
     },
     startServer,
     stopServer,
+    killListeningProcessForPort: vi.fn(async () => ({
+      killed: [],
+      skipped: [],
+    })),
     async sleep(_ms) {},
     now: () => Date.now(),
   };
@@ -128,8 +139,16 @@ describe("dev-server-service", () => {
     it("reconciles first and returns merged configured + runtime status", async () => {
       const h = makeHarness({
         configured: [
-          { name: "nextjs", command: "next.sh" },
-          { name: "storybook", command: "sb.sh" },
+          {
+            name: "nextjs",
+            command: "next.sh",
+            port: { base: 3000, range: 100 },
+          },
+          {
+            name: "storybook",
+            command: "sb.sh",
+            port: { base: 6006, range: 100 },
+          },
         ],
         initialEntries: [
           makeEntry({
@@ -137,7 +156,6 @@ describe("dev-server-service", () => {
             status: "running",
             port: 3002,
             ownedByThisSession: true,
-            source: "external-adopted",
             ownerPid: 4242,
             remoteUrl: "https://lan.example/3002",
           }),
@@ -158,7 +176,6 @@ describe("dev-server-service", () => {
       expect(next.localUrl).toBe("http://localhost:3002");
       expect(next.remoteUrl).toBe("https://lan.example/3002");
       expect(next.ownedByThisSession).toBe(true);
-      expect(next.source).toBe("external-adopted");
       expect(next.worktreePath).toBe(h.worktreePath);
       const sb = result.find((r) => r.serverName === "storybook")!;
       expect(sb.status).toBe("stopped");
@@ -188,8 +205,16 @@ describe("dev-server-service", () => {
     it("returns ambiguity error when multiple servers and no name supplied", async () => {
       const h = makeHarness({
         configured: [
-          { name: "nextjs", command: "next.sh" },
-          { name: "storybook", command: "sb.sh" },
+          {
+            name: "nextjs",
+            command: "next.sh",
+            port: { base: 3000, range: 100 },
+          },
+          {
+            name: "storybook",
+            command: "sb.sh",
+            port: { base: 6006, range: 100 },
+          },
         ],
       });
       const service = createDevServerService(h.deps);
@@ -215,33 +240,32 @@ describe("dev-server-service", () => {
       ).rejects.toBeInstanceOf(UnknownDevServerError);
     });
 
-    it("returns the running owned server adopted by reconciliation without restarting", async () => {
+    it("throws UnmanagedDevServerDetectedError when port selection surfaces an owned listener", async () => {
       const h = makeHarness();
-      h.reconcile.mockImplementation(async () => {
-        h.registry.set(
-          "nextjs",
-          makeEntry({
-            serverName: "nextjs",
-            status: "running",
-            port: 3005,
-            source: "external-adopted",
-            ownedByThisSession: true,
-            ownerPid: 9001,
-          }),
-        );
+      h.deps.selectPort = vi.fn().mockResolvedValue({
+        status: "unmanaged-detected",
+        port: 3007,
+        pid: 5001,
+        cwd: h.worktreePath,
       });
+
       const service = createDevServerService(h.deps);
-      const result = await service.ensure({
+      const promise = service.ensure({
         projectPath: "/projects/test",
         sessionName: "s1",
       });
-      expect(h.reconcile).toHaveBeenCalledOnce();
+
+      await expect(promise).rejects.toBeInstanceOf(
+        UnmanagedDevServerDetectedError,
+      );
+      await promise.catch((err: UnmanagedDevServerDetectedError) => {
+        expect(err.serverName).toBe("nextjs");
+        expect(err.port).toBe(3007);
+        expect(err.pid).toBe(5001);
+        expect(err.cwd).toBe(h.worktreePath);
+        expect(err.code).toBe("UNMANAGED_DEV_SERVER_DETECTED");
+      });
       expect(h.startServer).not.toHaveBeenCalled();
-      expect(result.status).toBe("running");
-      expect(result.port).toBe(3005);
-      expect(result.localUrl).toBe("http://localhost:3005");
-      expect(result.ownedByThisSession).toBe(true);
-      expect(result.source).toBe("external-adopted");
     });
 
     it("starts a stopped server and returns once running when wait is true", async () => {
@@ -258,7 +282,6 @@ describe("dev-server-service", () => {
             if (entry) {
               entry.status = "running";
               entry.port = 3001;
-              entry.source = "cc-started";
               entry.ownedByThisSession = true;
               entry.ownerPid = 1234;
             }
@@ -350,7 +373,7 @@ describe("dev-server-service", () => {
               name: "web",
               command: "next dev --port $CC_ASSIGNED_PORT",
               cwd: "apps/web",
-              port: { strategy: "cc-assigned", base: 3000, range: 10 },
+              port: { base: 3000, range: 10 },
             },
           ],
         });
@@ -380,11 +403,6 @@ describe("dev-server-service", () => {
 
         const startCall = h.startServer.mock.calls[0]![0]!;
         expect(startCall.startMode.cwd).toBe(`${h.worktreePath}/apps/web`);
-
-        const reconcileCall = h.reconcile.mock.calls[0]![0]!;
-        expect(reconcileCall.configuredServers[0].cwd).toBe(
-          `${h.worktreePath}/apps/web`,
-        );
       });
 
       it('resolves "." cwd to the worktree root', async () => {
@@ -394,7 +412,7 @@ describe("dev-server-service", () => {
               name: "web",
               command: "next dev --port $CC_ASSIGNED_PORT",
               cwd: ".",
-              port: { strategy: "cc-assigned", base: 3000, range: 10 },
+              port: { base: 3000, range: 10 },
             },
           ],
         });
@@ -424,9 +442,6 @@ describe("dev-server-service", () => {
 
         const startCall = h.startServer.mock.calls[0]![0]!;
         expect(startCall.startMode.cwd).toBe(h.worktreePath);
-
-        const reconcileCall = h.reconcile.mock.calls[0]![0]!;
-        expect(reconcileCall.configuredServers[0].cwd).toBe(h.worktreePath);
       });
 
       it("passes absolute cwd through unchanged", async () => {
@@ -436,7 +451,7 @@ describe("dev-server-service", () => {
               name: "web",
               command: "next dev --port $CC_ASSIGNED_PORT",
               cwd: "/opt/some/abs/path",
-              port: { strategy: "cc-assigned", base: 3000, range: 10 },
+              port: { base: 3000, range: 10 },
             },
           ],
         });
@@ -527,7 +542,6 @@ describe("dev-server-service", () => {
             status: "running",
             port: 3000,
             ownedByThisSession: true,
-            source: "cc-started",
           }),
         ],
       });

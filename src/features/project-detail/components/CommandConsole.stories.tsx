@@ -49,12 +49,6 @@ const slashSuggestions: Suggestion[] = [
   },
   {
     kind: "action",
-    id: "install-preset",
-    label: "/install-preset — Install a preset…",
-    grp: "Actions",
-  },
-  {
-    kind: "action",
     id: "capabilities",
     label: "/capabilities — Configure capabilities",
     grp: "Actions",

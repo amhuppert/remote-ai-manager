@@ -4,6 +4,13 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { DevServerRuntimeState } from "@/lib/dev-server/schemas";
 
+export interface UnmanagedConflictInfo {
+  serverName: string;
+  port: number;
+  pid: number;
+  cwd: string;
+}
+
 export interface DevServerDrawerProps {
   open: boolean;
   servers: DevServerRuntimeState[];
@@ -13,6 +20,10 @@ export interface DevServerDrawerProps {
   onStop: (name: string) => void;
   onStartAll: () => void;
   onStopAll: () => void;
+  unmanagedConflict?: UnmanagedConflictInfo | null;
+  onDismissUnmanagedConflict?: () => void;
+  onStopUnmanagedAndRetry?: () => void;
+  isStoppingUnmanaged?: boolean;
 }
 
 function ServerIcon() {
@@ -82,18 +93,6 @@ function ServerRow({
         )}
         <span className="ds-status-text">{server.status}</span>
         {server.port != null && <span className="ds-port">:{server.port}</span>}
-        {server.source === "external-adopted" && (
-          <span
-            className="ds-source-tag"
-            title={
-              server.ownerPid != null
-                ? `Adopted external listener (pid ${server.ownerPid})`
-                : "Adopted external listener"
-            }
-          >
-            adopted
-          </span>
-        )}
       </div>
       <div className="ds-row-actions">
         {isActive ? (
@@ -129,6 +128,67 @@ export interface DevServerPanelProps extends Omit<
   anchorRef: RefObject<HTMLElement | null>;
 }
 
+function UnmanagedConflictDialog({
+  conflict,
+  onCancel,
+  onRetry,
+  onStop,
+  isStopping,
+}: {
+  conflict: UnmanagedConflictInfo;
+  onCancel: () => void;
+  onRetry: () => void;
+  onStop: () => void;
+  isStopping: boolean;
+}) {
+  return (
+    <div
+      className="ds-conflict"
+      role="dialog"
+      aria-label="Unmanaged dev server detected"
+    >
+      <div className="ds-conflict-title">Port {conflict.port} already in use</div>
+      <div className="ds-conflict-body">
+        Another process (pid {conflict.pid}) inside this worktree is listening on
+        port {conflict.port}. Command Center didn&apos;t start it, so it
+        won&apos;t be managed here.
+      </div>
+      <div className="ds-conflict-meta">
+        <div>
+          <span className="ds-conflict-meta-label">cwd:</span>{" "}
+          <code>{conflict.cwd}</code>
+        </div>
+      </div>
+      <div className="ds-conflict-actions">
+        <button
+          type="button"
+          className="btn btn-sm"
+          onClick={onCancel}
+          disabled={isStopping}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="btn btn-sm"
+          onClick={onRetry}
+          disabled={isStopping}
+        >
+          Try Again
+        </button>
+        <button
+          type="button"
+          className="btn btn-sm btn-danger"
+          onClick={onStop}
+          disabled={isStopping}
+        >
+          {isStopping ? "Stopping…" : "Stop Server & Retry"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function DevServerPanel({
   open,
   servers,
@@ -138,6 +198,10 @@ export function DevServerPanel({
   onStartAll,
   onStopAll,
   anchorRef,
+  unmanagedConflict,
+  onDismissUnmanagedConflict,
+  onStopUnmanagedAndRetry,
+  isStoppingUnmanaged = false,
 }: DevServerPanelProps): React.JSX.Element | null {
   const [panelPos, setPanelPos] = useState<{ top: number; right: number }>({
     top: 0,
@@ -194,6 +258,18 @@ export function DevServerPanel({
           </button>
         </div>
         <div className="ds-body">
+          {unmanagedConflict && (
+            <UnmanagedConflictDialog
+              conflict={unmanagedConflict}
+              onCancel={onDismissUnmanagedConflict ?? (() => {})}
+              onRetry={() => {
+                onDismissUnmanagedConflict?.();
+                onStart(unmanagedConflict.serverName);
+              }}
+              onStop={onStopUnmanagedAndRetry ?? (() => {})}
+              isStopping={isStoppingUnmanaged}
+            />
+          )}
           {servers.length === 0 ? (
             <div className="ds-empty">No dev servers configured</div>
           ) : (
@@ -240,6 +316,10 @@ export default function DevServerDrawer({
   onStop,
   onStartAll,
   onStopAll,
+  unmanagedConflict = null,
+  onDismissUnmanagedConflict,
+  onStopUnmanagedAndRetry,
+  isStoppingUnmanaged = false,
 }: DevServerDrawerProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
 
@@ -293,6 +373,10 @@ export default function DevServerDrawer({
         onStartAll={onStartAll}
         onStopAll={onStopAll}
         anchorRef={triggerRef}
+        unmanagedConflict={unmanagedConflict}
+        onDismissUnmanagedConflict={onDismissUnmanagedConflict}
+        onStopUnmanagedAndRetry={onStopUnmanagedAndRetry}
+        isStoppingUnmanaged={isStoppingUnmanaged}
       />
     </div>
   );

@@ -69,6 +69,10 @@ export default function ConversationDetailPage({
     stopServer: dsStopServer,
     startAll: dsStartAll,
     stopAll: dsStopAll,
+    unmanagedConflict: dsUnmanagedConflict,
+    dismissUnmanagedConflict: dsDismissUnmanagedConflict,
+    stopUnmanagedAndRetry: dsStopUnmanagedAndRetry,
+    isStoppingUnmanaged: dsIsStoppingUnmanaged,
   } = useDevServers(projectName, sessionName);
 
   const session = sessionQuery.data;
@@ -329,6 +333,10 @@ export default function ConversationDetailPage({
         dsStopServer,
         dsStartAll,
         dsStopAll,
+        dsUnmanagedConflict,
+        dsDismissUnmanagedConflict,
+        dsStopUnmanagedAndRetry,
+        dsIsStoppingUnmanaged,
         tddEnabled: session.tddEnabled,
         onTddChange: (val) => tddMutation.mutate(val),
         tddDisabled: tddMutation.isPending,

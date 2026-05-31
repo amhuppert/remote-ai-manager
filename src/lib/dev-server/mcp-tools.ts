@@ -207,7 +207,7 @@ export function registerDevServerTools(
     "get_dev_servers",
     {
       description:
-        "List dev servers configured for this session, with reconciled runtime status (status, port, localUrl, remoteUrl, ownedByThisSession, source). Call this before assuming a server is running.",
+        "List dev servers configured for this session, with reconciled runtime status (status, port, localUrl, remoteUrl, ownedByThisSession, source, logFilePath). `logFilePath` points to the interleaved stdout/stderr log on disk (truncated per spawn) — read it when diagnosing startup failures or runtime errors. Call this before assuming a server is running.",
       inputSchema: {},
     },
     createGetHandler(context, service),
@@ -217,7 +217,7 @@ export function registerDevServerTools(
     "ensure_dev_server",
     {
       description:
-        "Ensure a dev server for this session worktree is running. Adopts an existing owned server, starts a stopped/errored one, or waits for an already-starting one. Returns the localUrl and remoteUrl to use. Always call this before driving Playwright, browser, visual, or Next.js MCP tools — do not assume ports like 3000 or 6006 belong to your worktree.",
+        "Ensure a dev server for this session worktree is running. Adopts an existing owned server, starts a stopped/errored one, or waits for an already-starting one. Returns the localUrl, remoteUrl, and logFilePath to use. `logFilePath` is the interleaved stdout/stderr log on disk (truncated per spawn) — read it when diagnosing startup failures. Always call this before driving Playwright, browser, visual, or Next.js MCP tools — do not assume ports like 3000 or 6006 belong to your worktree.",
       inputSchema: ensureDevServerInputSchema,
     },
     createEnsureHandler(context, service),

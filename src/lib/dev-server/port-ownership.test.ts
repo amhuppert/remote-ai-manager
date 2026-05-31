@@ -1,8 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   createPortOwnershipService,
+  getExitStatus,
   isOwnedProcessCwd,
   isSameOrDescendantPath,
+  listListeningPidsViaExecFile,
   listListeningPidsWithExec,
   normalizePath,
   parseLsofListenerOutput,
@@ -283,6 +285,96 @@ describe("production listener PID lookup", () => {
 
     await expect(listListeningPidsWithExec(65000, exec)).rejects.toThrow(
       /unusable/,
+    );
+  });
+});
+
+describe("getExitStatus", () => {
+  it("returns the exit code from execSync errors (status field)", () => {
+    expect(getExitStatus({ status: 1 })).toBe(1);
+    expect(getExitStatus({ status: 127 })).toBe(127);
+  });
+
+  it("returns the exit code from execFile/promisified errors (code field)", () => {
+    expect(getExitStatus({ code: 1 })).toBe(1);
+    expect(getExitStatus({ code: 127 })).toBe(127);
+  });
+
+  it("returns null for system error codes like ENOENT (non-numeric code)", () => {
+    expect(getExitStatus({ code: "ENOENT" })).toBeNull();
+  });
+
+  it("returns null when neither field is present", () => {
+    expect(getExitStatus({})).toBeNull();
+    expect(getExitStatus(new Error("boom"))).toBeNull();
+  });
+
+  it("prefers status over code when both present (execSync semantics)", () => {
+    expect(getExitStatus({ status: 1, code: "ENOENT" })).toBe(1);
+  });
+});
+
+describe("listListeningPidsViaExecFile (async production path)", () => {
+  type ExecFileLike = (
+    cmd: string,
+    args: readonly string[],
+  ) => Promise<{ stdout: string; stderr: string }>;
+
+  function makeExecFileError(code: number | string): Error {
+    const e = new Error("exec failed") as Error & { code: number | string };
+    e.code = code;
+    return e;
+  }
+
+  it("returns [] on macOS when ss is missing and lsof exits 1 (port free)", async () => {
+    // This is the production failure scenario reported by the user.
+    const execFile: ExecFileLike = vi.fn(async (cmd: string) => {
+      if (cmd === "ss") throw makeExecFileError("ENOENT");
+      if (cmd === "lsof") throw makeExecFileError(1);
+      throw new Error("unexpected cmd: " + cmd);
+    });
+
+    await expect(listListeningPidsViaExecFile(3001, execFile)).resolves.toEqual(
+      [],
+    );
+  });
+
+  it("throws when both ss and lsof are missing (ENOENT)", async () => {
+    const execFile: ExecFileLike = vi.fn(async () => {
+      throw makeExecFileError("ENOENT");
+    });
+
+    await expect(
+      listListeningPidsViaExecFile(3001, execFile),
+    ).rejects.toThrow(/unusable/);
+  });
+
+  it("returns PIDs parsed from lsof stdout when lsof succeeds", async () => {
+    const execFile: ExecFileLike = vi.fn(async (cmd: string) => {
+      if (cmd === "ss") throw makeExecFileError("ENOENT");
+      if (cmd === "lsof") return { stdout: "12345\n", stderr: "" };
+      throw new Error("unexpected cmd: " + cmd);
+    });
+
+    await expect(listListeningPidsViaExecFile(3001, execFile)).resolves.toEqual(
+      [12345],
+    );
+  });
+
+  it("prefers ss output when ss returns PIDs (Linux happy path)", async () => {
+    const execFile: ExecFileLike = vi.fn(async (cmd: string) => {
+      if (cmd === "ss") {
+        return {
+          stdout:
+            'LISTEN 0 511 0.0.0.0:3001 0.0.0.0:* users:(("next",pid=4242,fd=23))\n',
+          stderr: "",
+        };
+      }
+      throw new Error("should not have fallen through to lsof");
+    });
+
+    await expect(listListeningPidsViaExecFile(3001, execFile)).resolves.toEqual(
+      [4242],
     );
   });
 });

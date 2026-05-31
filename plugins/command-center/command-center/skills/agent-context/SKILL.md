@@ -52,9 +52,11 @@ These tools are scoped to your session worktree. Use them before driving any bro
 
 | Tool | Purpose |
 |---|---|
-| `get_dev_servers` | List configured dev servers and their reconciled runtime status (`status`, `port`, `localUrl`, `remoteUrl`, `ownedByThisSession`, `source`). |
-| `ensure_dev_server({ name?, wait?, timeout_ms? })` | Make sure a dev server is running for THIS session. Adopts an externally started owned server, starts a stopped/errored one, or waits for an already-starting one. Returns the `localUrl` and `remoteUrl` to use. |
+| `get_dev_servers` | List configured dev servers and their reconciled runtime status (`status`, `port`, `localUrl`, `remoteUrl`, `ownedByThisSession`, `source`, `logFilePath`). |
+| `ensure_dev_server({ name?, wait?, timeout_ms? })` | Make sure a dev server is running for THIS session. Starts a stopped/errored server or waits for an already-starting one. Returns the `localUrl`, `remoteUrl`, and `logFilePath` to use. If an unmanaged process is already listening on the target port, the call fails with an `UNMANAGED_DEV_SERVER_DETECTED` error — surface that to the user via the UI rather than retrying blindly. |
 | `stop_dev_server({ name })` | Stop a named dev server. CC verifies worktree ownership before signalling so externally owned listeners are never killed. |
+
+**Diagnosing dev-server problems:** Each running server has a `logFilePath` pointing to its interleaved stdout/stderr log on disk (truncated per spawn, line-prefixed `[OUT]`/`[ERR]`). When a server fails to start or behaves badly, read that file with the `Read` tool for the full output — it's authoritative and not size-limited like `recentOutput`.
 
 **How to use them:**
 
@@ -99,7 +101,7 @@ If validation fails, CC may use auto-fix: it sends the error output to Claude to
 
 CC can launch dev servers for your session. Each entry has a `name` and `command`.
 
-Dev servers use the **CC_PORT protocol**: the script must print `CC_PORT=<port>` to stdout within 60 seconds. CC monitors liveness by polling the port every 5 seconds.
+Dev servers use the **`cc-assigned` port strategy**: CC scans the entry's configured port range, picks an owned-or-free port, injects it into the child process via `$CC_ASSIGNED_PORT` (and `$PORT`), and waits for TCP readiness. CC monitors liveness by polling the port every 5 seconds.
 
 **How agents interact with dev servers**: use the `ensure_dev_server` MCP tool (see *Dev-Server Tools* above) to get a server running for your session worktree on demand. The tool returns the correct `localUrl` and `remoteUrl` for your worktree's port — do not assume defaults like 3000 or 6006.
 

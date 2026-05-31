@@ -41,12 +41,7 @@ describe("computeSuggestions — slash mode", () => {
       archivedCount: 0,
     });
     const ids = result.map((s) => (s.kind === "action" ? s.id : "FILTER"));
-    expect(ids).toEqual([
-      "new",
-      "install-preset",
-      "capabilities",
-      "workflow-builder",
-    ]);
+    expect(ids).toEqual(["new", "capabilities", "workflow-builder"]);
     expect(result.every((s) => s.kind === "action")).toBe(true);
   });
 
@@ -203,12 +198,7 @@ describe("computeSuggestions — free-text mode (no slash)", () => {
     const actionIds = result
       .filter((s): s is ActionSuggestion => s.kind === "action")
       .map((s) => s.id);
-    expect(actionIds).toEqual([
-      "new",
-      "install-preset",
-      "capabilities",
-      "workflow-builder",
-    ]);
+    expect(actionIds).toEqual(["new", "capabilities", "workflow-builder"]);
   });
 
   it("orders actions before filters on empty draft", () => {
@@ -264,7 +254,6 @@ describe("computeSuggestions — free-text mode (no slash)", () => {
       .filter((s): s is ActionSuggestion => s.kind === "action")
       .map((s) => s.id);
     expect(actionIds).not.toContain("new");
-    expect(actionIds).not.toContain("install-preset");
     expect(actionIds).not.toContain("capabilities");
   });
 

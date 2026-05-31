@@ -14,10 +14,10 @@ const stoppedNextDev: DevServerRuntimeState = {
   startedAt: null,
   errorMessage: null,
   recentOutput: [],
-  source: null,
   ownedByThisSession: false,
   worktreePath: null,
   ownerPid: null,
+  logFilePath: null,
 };
 
 const stoppedStorybook: DevServerRuntimeState = {
@@ -29,10 +29,10 @@ const stoppedStorybook: DevServerRuntimeState = {
   startedAt: null,
   errorMessage: null,
   recentOutput: [],
-  source: null,
   ownedByThisSession: false,
   worktreePath: null,
   ownerPid: null,
+  logFilePath: null,
 };
 
 const runningNextDev: DevServerRuntimeState = {
@@ -44,10 +44,10 @@ const runningNextDev: DevServerRuntimeState = {
   startedAt: new Date().toISOString(),
   errorMessage: null,
   recentOutput: [],
-  source: "cc-started",
   ownedByThisSession: true,
   worktreePath: "/home/alex/projects/app/.worktrees/feature",
   ownerPid: 12345,
+  logFilePath: "/home/alex/projects/app/.worktrees/feature/.cc/dev-server-logs/nextjs.log",
 };
 
 const runningStorybook: DevServerRuntimeState = {
@@ -59,25 +59,10 @@ const runningStorybook: DevServerRuntimeState = {
   startedAt: new Date().toISOString(),
   errorMessage: null,
   recentOutput: [],
-  source: "cc-started",
   ownedByThisSession: true,
   worktreePath: "/home/alex/projects/app/.worktrees/feature",
   ownerPid: 12346,
-};
-
-const adoptedNextDev: DevServerRuntimeState = {
-  serverName: "nextjs",
-  command: "bun run dev",
-  status: "running",
-  port: 3004,
-  remoteUrl: "http://my-machine.tailnet.ts.net:3004",
-  startedAt: new Date().toISOString(),
-  errorMessage: null,
-  recentOutput: [],
-  source: "external-adopted",
-  ownedByThisSession: true,
-  worktreePath: "/home/alex/projects/app/.worktrees/feature",
-  ownerPid: 88421,
+  logFilePath: "/home/alex/projects/app/.worktrees/feature/.cc/dev-server-logs/storybook.log",
 };
 
 const startingNextDev: DevServerRuntimeState = {
@@ -89,10 +74,10 @@ const startingNextDev: DevServerRuntimeState = {
   startedAt: new Date().toISOString(),
   errorMessage: null,
   recentOutput: ["Compiling...", "Optimizing modules..."],
-  source: null,
   ownedByThisSession: false,
   worktreePath: "/home/alex/projects/app/.worktrees/feature",
   ownerPid: null,
+  logFilePath: "/home/alex/projects/app/.worktrees/feature/.cc/dev-server-logs/nextjs.log",
 };
 
 const errorNextDev: DevServerRuntimeState = {
@@ -105,10 +90,10 @@ const errorNextDev: DevServerRuntimeState = {
   errorMessage:
     "Process exited (code=1) before reporting CC_PORT.\nError: Cannot find module 'next'",
   recentOutput: [],
-  source: null,
   ownedByThisSession: false,
   worktreePath: "/home/alex/projects/app/.worktrees/feature",
   ownerPid: null,
+  logFilePath: "/home/alex/projects/app/.worktrees/feature/.cc/dev-server-logs/nextjs.log",
 };
 
 // ── Toolbar decorator (simulates topbar session controls) ────
@@ -360,10 +345,17 @@ export const OpenWithError = {
   decorators: [ToolbarDecorator],
 } satisfies Story;
 
-export const OpenWithAdopted = {
+export const OpenWithUnmanagedConflict = {
   args: {
     open: true,
-    servers: [adoptedNextDev, runningStorybook],
+    servers: [stoppedNextDev, stoppedStorybook],
+    unmanagedConflict: {
+      serverName: "nextjs",
+      port: 3007,
+      pid: 5001,
+      cwd: "/home/alex/projects/app/.worktrees/feature",
+    },
+    isStoppingUnmanaged: false,
   },
   decorators: [ToolbarDecorator],
 } satisfies Story;

@@ -1,8 +1,13 @@
-import { execSync, type ChildProcess } from "node:child_process";
+import { type ChildProcess } from "node:child_process";
 import { spawn as timedSpawn } from "../shared/exec";
-import { readFileSync } from "node:fs";
+import {
+  createWriteStream,
+  mkdirSync,
+  type WriteStream,
+} from "node:fs";
 import { createServer } from "node:net";
 import net from "node:net";
+import path from "node:path";
 import { buildChildEnv } from "../shared/child-env";
 import { createLogger } from "../logging";
 import type { BroadcastFn } from "../events/broadcaster";
@@ -23,35 +28,30 @@ import {
   type PortOwnershipResult,
 } from "./port-ownership";
 import type {
-  DevServerSource,
   DevServerStatus,
   DevServerStatusEvent,
 } from "@/lib/dev-server/schemas";
 const logger = createLogger("dev-server");
 
 const GLOBAL_KEY = "__cc_dev_servers" as const;
-const STARTUP_TIMEOUT_MS = 60_000;
 const OUTPUT_BUFFER_SIZE = 50;
 const KILL_GRACE_MS = 5_000;
 const TAILSCALE_POLL_INTERVAL_MS = 500;
 const TAILSCALE_POLL_TIMEOUT_MS = 30_000;
+const LOG_SUBDIR = ".cc/dev-server-logs";
 
 /**
- * How the registry should start a dev server. The default `stdout-cc-port`
- * mode preserves the legacy preset script protocol (parse `CC_PORT=<n>` on
- * stdout, transition to running when the line is seen). `cc-assigned` mode
- * pre-allocates the port, injects it into the child via env vars, and waits
- * for a TCP readiness probe before transitioning to running.
+ * Parameters CC uses to spawn a dev server. CC pre-allocates the port,
+ * injects it into the child via `CC_ASSIGNED_PORT` / `PORT` (plus any caller-
+ * supplied aliases), and waits for a TCP readiness probe before transitioning
+ * to `running`.
  */
-export type DevServerStartMode =
-  | { type: "stdout-cc-port" }
-  | {
-      type: "cc-assigned";
-      port: number;
-      envAliases?: ReadonlyArray<string>;
-      cwd?: string;
-      readiness: { type: "tcp"; timeoutMs: number };
-    };
+export interface DevServerStartMode {
+  port: number;
+  envAliases?: ReadonlyArray<string>;
+  cwd?: string;
+  readinessTimeoutMs: number;
+}
 
 /** In-memory state for a single dev server */
 export interface DevServerEntry {
@@ -68,12 +68,6 @@ export interface DevServerEntry {
   /** Worktree the server was spawned in; used to verify listener ownership on stop. */
   worktreePath: string;
   /**
-   * Whether this entry represents a process CC spawned (`cc-started`) or an
-   * externally started listener CC adopted (`external-adopted`). Null until the
-   * post-CC_PORT classification completes.
-   */
-  source: DevServerSource | null;
-  /**
    * True when the most recent ownership classification matched this session's
    * worktree (or configured app cwd). Cleanup safety gate — never kill unless
    * this is true at stop time.
@@ -84,12 +78,21 @@ export interface DevServerEntry {
    * may be null when ownership could not be determined.
    */
   ownerPid: number | null;
+  /**
+   * Absolute path of the on-disk log file capturing this spawn's stdout/stderr.
+   * Truncated on every start. Lines are prefixed with `[OUT] ` / `[ERR] `.
+   */
+  logFilePath: string;
   /** Internal: child process handle (not exposed via API) */
   _process: ChildProcess | null;
   /** Internal: PID of the process group leader (for group kills after shell exits) */
   _pid: number | null;
-  /** Internal: startup timeout timer */
-  _startupTimer: ReturnType<typeof setTimeout> | null;
+  /** Internal: write stream for the log file. Closed on process exit/error. */
+  _logStream: WriteStream | null;
+  /** Internal: leftover partial line from the last stdout chunk. */
+  _stdoutRemainder: string;
+  /** Internal: leftover partial line from the last stderr chunk. */
+  _stderrRemainder: string;
 }
 
 // ============================================================
@@ -120,16 +123,6 @@ export interface DevServerRegistryDeps {
   isProcessAlive(pid: number): boolean;
   /** Grace period (ms) between SIGTERM and SIGKILL escalation. */
   killGraceMs: number;
-  /**
-   * Classify whether a verified listener PID belongs to the process group CC
-   * spawned for this entry (cc-started) or some pre-existing process tree
-   * (external-adopted). The default implementation compares the PID directly
-   * and falls back to the listener's process-group id when they differ.
-   */
-  classifyServerSource(input: {
-    listenerPid: number;
-    spawnedPid: number | null;
-  }): Promise<DevServerSource>;
 }
 
 const defaultRegistryBroadcast: BroadcastFn = (event) => {
@@ -150,7 +143,6 @@ const defaultDevServerRegistryDeps: DevServerRegistryDeps = {
   sendSignal: defaultSendSignal,
   isProcessAlive: defaultIsProcessAlive,
   killGraceMs: KILL_GRACE_MS,
-  classifyServerSource: defaultClassifyServerSource,
 };
 
 // ============================================================
@@ -187,12 +179,48 @@ export function createDevServerRegistry(
       port: entry.port,
       remoteUrl: entry.remoteUrl,
       errorMessage: entry.errorMessage,
-      source: entry.source,
       ownedByThisSession: entry.ownedByThisSession,
       worktreePath: entry.worktreePath,
       ownerPid: entry.ownerPid,
+      logFilePath: entry.logFilePath,
     };
     deps.broadcast(event);
+  }
+
+  function writeChunkToLog(
+    entry: DevServerEntry,
+    stream: "stdout" | "stderr",
+    chunk: Buffer,
+  ): void {
+    if (!entry._logStream) return;
+    const prefix = stream === "stdout" ? "[OUT]" : "[ERR]";
+    const remainderKey =
+      stream === "stdout" ? "_stdoutRemainder" : "_stderrRemainder";
+    const text = entry[remainderKey] + chunk.toString();
+    const lines = text.split("\n");
+    entry[remainderKey] = lines.pop() ?? "";
+    for (const line of lines) {
+      entry._logStream.write(`${prefix} ${line}\n`);
+    }
+  }
+
+  function flushLogRemainders(entry: DevServerEntry): void {
+    if (!entry._logStream) return;
+    if (entry._stdoutRemainder.length > 0) {
+      entry._logStream.write(`[OUT] ${entry._stdoutRemainder}\n`);
+      entry._stdoutRemainder = "";
+    }
+    if (entry._stderrRemainder.length > 0) {
+      entry._logStream.write(`[ERR] ${entry._stderrRemainder}\n`);
+      entry._stderrRemainder = "";
+    }
+  }
+
+  function closeLogStream(entry: DevServerEntry): void {
+    if (!entry._logStream) return;
+    flushLogRemainders(entry);
+    entry._logStream.end();
+    entry._logStream = null;
   }
 
   function appendOutput(entry: DevServerEntry, line: string): void {
@@ -217,13 +245,6 @@ export function createDevServerRegistry(
     if (extra?.port !== undefined) entry.port = extra.port;
     if (extra?.remoteUrl !== undefined) entry.remoteUrl = extra.remoteUrl;
     broadcastStatus(entry);
-  }
-
-  function cleanupTimer(entry: DevServerEntry): void {
-    if (entry._startupTimer) {
-      clearTimeout(entry._startupTimer);
-      entry._startupTimer = null;
-    }
   }
 
   /**
@@ -254,27 +275,13 @@ export function createDevServerRegistry(
 
     entry.ownerPid = ownership.pid;
     entry.ownedByThisSession = true;
-    entry.source = await deps.classifyServerSource({
-      listenerPid: ownership.pid,
+
+    logger.info("dev-server.source.cc_started", {
+      serverName: entry.serverName,
+      port,
+      ownerPid: entry.ownerPid,
       spawnedPid: entry._pid,
     });
-
-    if (entry.source === "cc-started") {
-      logger.info("dev-server.source.cc_started", {
-        serverName: entry.serverName,
-        port,
-        ownerPid: entry.ownerPid,
-        spawnedPid: entry._pid,
-      });
-    } else {
-      logger.info("dev-server.source.external_adopted", {
-        serverName: entry.serverName,
-        port,
-        ownerPid: entry.ownerPid,
-        spawnedPid: entry._pid,
-        cwd: ownership.cwd,
-      });
-    }
 
     broadcastStatus(entry);
   }
@@ -350,8 +357,7 @@ export function createDevServerRegistry(
 
   /**
    * Poll for the assigned port to start listening, then transition to running.
-   * On timeout, transitions to error. Used only by cc-assigned start mode —
-   * stdout-cc-port mode relies on the CC_PORT line parser instead.
+   * On timeout, transitions to error.
    */
   async function runCcAssignedReadinessProbe(params: {
     entry: DevServerEntry;
@@ -373,7 +379,6 @@ export function createDevServerRegistry(
       const listening = await deps.checkPortListening(port);
       if (listening) {
         if (entry.status !== "starting") return;
-        cleanupTimer(entry);
         logger.info("dev-server.readiness.ready", {
           serverName: entry.serverName,
           port,
@@ -406,7 +411,6 @@ export function createDevServerRegistry(
     }
 
     if (entry.status !== "starting") return;
-    cleanupTimer(entry);
     logger.warn("dev-server.readiness.timeout", {
       serverName: entry.serverName,
       port,
@@ -425,8 +429,9 @@ export function createDevServerRegistry(
   }
 
   /**
-   * Start a dev server for a session.
-   * Spawns the command, monitors stdout for CC_PORT=<port>, and manages status transitions.
+   * Start a dev server for a session. Spawns the command with the assigned
+   * port injected via `CC_ASSIGNED_PORT`/`PORT`/aliases, polls for TCP
+   * readiness, and manages status transitions.
    */
   async function startServer(params: {
     projectPath: string;
@@ -434,13 +439,16 @@ export function createDevServerRegistry(
     serverName: string;
     command: string;
     worktreePath: string;
-    startMode?: DevServerStartMode;
+    startMode: DevServerStartMode;
   }): Promise<void> {
-    const { projectPath, sessionName, serverName, command, worktreePath } =
-      params;
-    const startMode: DevServerStartMode = params.startMode ?? {
-      type: "stdout-cc-port",
-    };
+    const {
+      projectPath,
+      sessionName,
+      serverName,
+      command,
+      worktreePath,
+      startMode,
+    } = params;
     const registry = getRegistry();
     const key = makeKey(projectPath, sessionName, serverName);
 
@@ -453,19 +461,14 @@ export function createDevServerRegistry(
     }
 
     const env = buildChildEnv();
-    if (startMode.type === "cc-assigned") {
-      const portStr = String(startMode.port);
-      env.CC_ASSIGNED_PORT = portStr;
-      env.PORT = portStr;
-      for (const alias of startMode.envAliases ?? []) {
-        env[alias] = portStr;
-      }
+    const portStr = String(startMode.port);
+    env.CC_ASSIGNED_PORT = portStr;
+    env.PORT = portStr;
+    for (const alias of startMode.envAliases ?? []) {
+      env[alias] = portStr;
     }
 
-    const spawnCwd =
-      startMode.type === "cc-assigned" && startMode.cwd
-        ? startMode.cwd
-        : worktreePath;
+    const spawnCwd = startMode.cwd ?? worktreePath;
 
     const child = timedSpawn(command, [], {
       shell: true,
@@ -475,6 +478,9 @@ export function createDevServerRegistry(
       env,
       eventPrefix: "dev-server",
     });
+
+    const logFilePath = path.join(worktreePath, LOG_SUBDIR, `${serverName}.log`);
+    const logStream = openLogStream(logFilePath, serverName);
 
     const entry: DevServerEntry = {
       serverName,
@@ -488,12 +494,14 @@ export function createDevServerRegistry(
       errorMessage: null,
       recentOutput: [],
       worktreePath,
-      source: null,
       ownedByThisSession: false,
       ownerPid: null,
+      logFilePath,
       _process: child,
       _pid: child.pid ?? null,
-      _startupTimer: null,
+      _logStream: logStream,
+      _stdoutRemainder: "",
+      _stderrRemainder: "",
     };
 
     registry.set(key, entry);
@@ -501,26 +509,16 @@ export function createDevServerRegistry(
     // Auto-start liveness poller when first server is registered
     deps.livenessStart();
 
-    if (startMode.type === "cc-assigned") {
-      logger.info("dev-server.start.cc_assigned_port", {
-        serverName,
-        command,
-        worktreePath,
-        cwd: spawnCwd,
-        port: startMode.port,
-        envAliases: startMode.envAliases ?? [],
-        readinessType: startMode.readiness.type,
-        readinessTimeoutMs: startMode.readiness.timeoutMs,
-        pid: child.pid,
-      });
-    } else {
-      logger.info("dev-server.start.stdout_protocol", {
-        serverName,
-        command,
-        worktreePath,
-        pid: child.pid,
-      });
-    }
+    logger.info("dev-server.start.cc_assigned_port", {
+      serverName,
+      command,
+      worktreePath,
+      cwd: spawnCwd,
+      port: startMode.port,
+      envAliases: startMode.envAliases ?? [],
+      readinessTimeoutMs: startMode.readinessTimeoutMs,
+      pid: child.pid,
+    });
 
     logger.info("dev-server.start", {
       serverName,
@@ -531,99 +529,44 @@ export function createDevServerRegistry(
 
     broadcastStatus(entry);
 
-    // Line-buffer stdout for CC_PORT detection (only stdout-cc-port mode)
-    let stdoutBuffer = "";
-    let portFound = false;
-    const detectsCcPort = startMode.type === "stdout-cc-port";
-
     child.stdout?.on("data", (chunk: Buffer) => {
-      stdoutBuffer += chunk.toString();
-      const lines = stdoutBuffer.split("\n");
-      stdoutBuffer = lines.pop() ?? "";
-
+      writeChunkToLog(entry, "stdout", chunk);
+      const lines = chunk.toString().split("\n");
       for (const line of lines) {
-        appendOutput(entry, line);
-
-        if (!detectsCcPort) continue;
-
-        const match = /^CC_PORT=(\d+)$/.exec(line.trim());
-        if (match && !portFound) {
-          portFound = true;
-          const port = parseInt(match[1]!, 10);
-          cleanupTimer(entry);
-
-          logger.info("dev-server.port_discovered", { serverName, port });
-
-          // Transition to running immediately so the UI knows the port.
-          // Tailscale registration is deferred until the server is actually
-          // listening — otherwise Tailscale's `serve --http=<port>` binds the
-          // port on the Tailscale interface before the dev server can, causing
-          // EADDRINUSE and interactive prompts that block forever.
-          transitionTo(entry, "running", { port, remoteUrl: null });
-          logger.info("dev-server.running", { serverName, port });
-
-          classifyEntrySource(entry, port).catch((err) => {
-            logger.warn("dev-server.source.classify_error", {
-              serverName,
-              port,
-              error: getErrorMessage(err),
-            });
-          });
-
-          // Deferred: wait for the server to bind the port, then resolve remote URL
-          deferredRemoteUrlRegister(entry, port).catch((err) => {
-            logger.warn("dev-server.remote_url_deferred_error", {
-              serverName,
-              port,
-              error: getErrorMessage(err),
-            });
-          });
-        }
+        if (line.length > 0) appendOutput(entry, line);
       }
     });
 
-    if (startMode.type === "cc-assigned") {
-      const assignedPort = startMode.port;
-      const readinessTimeoutMs = startMode.readiness.timeoutMs;
-      runCcAssignedReadinessProbe({
-        entry,
-        port: assignedPort,
-        timeoutMs: readinessTimeoutMs,
-      }).catch((err) => {
-        logger.warn("dev-server.readiness.error", {
-          serverName,
-          port: assignedPort,
-          error: getErrorMessage(err),
-        });
+    runCcAssignedReadinessProbe({
+      entry,
+      port: startMode.port,
+      timeoutMs: startMode.readinessTimeoutMs,
+    }).catch((err) => {
+      logger.warn("dev-server.readiness.error", {
+        serverName,
+        port: startMode.port,
+        error: getErrorMessage(err),
       });
-    }
+    });
 
     child.stderr?.on("data", (chunk: Buffer) => {
+      writeChunkToLog(entry, "stderr", chunk);
       const lines = chunk.toString().split("\n");
       for (const line of lines) {
         if (line.trim()) appendOutput(entry, line);
       }
     });
 
-    // Handle process exit
     child.on("exit", async (code, signal) => {
-      cleanupTimer(entry);
       entry._process = null;
+      closeLogStream(entry);
 
-      logger.info("dev-server.exit", {
-        serverName,
-        code,
-        signal,
-      });
+      logger.info("dev-server.exit", { serverName, code, signal });
 
       if (entry.status === "starting") {
         const output = entry.recentOutput.slice(-10).join("\n");
-        const reason =
-          startMode.type === "cc-assigned"
-            ? `port ${startMode.port} ever listening`
-            : "reporting CC_PORT";
         transitionTo(entry, "error", {
-          errorMessage: `Process exited (code=${code}, signal=${signal}) before ${reason}.\n${output}`,
+          errorMessage: `Process exited (code=${code}, signal=${signal}) before port ${startMode.port} ever listening.\n${output}`,
         });
         logger.error("dev-server.error", {
           serverName,
@@ -631,8 +574,6 @@ export function createDevServerRegistry(
           recentOutput: entry.recentOutput.slice(-10),
         });
       } else if (entry.status === "running" && entry.port) {
-        // Check if port is still alive — script may have exited but server
-        // continues running (e.g., found existing server and reported its port)
         const alive = await isPortAlive(entry.port);
         if (!alive) {
           logger.warn("dev-server.unexpected_exit", {
@@ -642,9 +583,6 @@ export function createDevServerRegistry(
             signal,
           });
           if (entry.port) {
-            // Wrap synchronously: deps may have been torn down by test teardown
-            // by the time this exit handler fires for an orphaned child, so
-            // calling readConfig() itself may throw rather than reject.
             Promise.resolve()
               .then(() => deps.readConfig())
               .then((cfg) => {
@@ -656,14 +594,12 @@ export function createDevServerRegistry(
           }
           transitionTo(entry, "stopped");
         }
-        // If alive, server is still running — liveness poller monitors from here
       }
-      // If status is already 'stopped' or 'error', we're in a controlled teardown
     });
 
     child.on("error", (err) => {
-      cleanupTimer(entry);
       entry._process = null;
+      closeLogStream(entry);
 
       logger.error("dev-server.error", {
         serverName,
@@ -674,33 +610,6 @@ export function createDevServerRegistry(
         errorMessage: `Failed to spawn process: ${err.message}`,
       });
     });
-
-    // Startup timeout — only for stdout-cc-port mode. cc-assigned mode owns
-    // its own readiness timeout per config.
-    if (startMode.type !== "stdout-cc-port") return;
-
-    entry._startupTimer = setTimeout(() => {
-      if (entry.status === "starting") {
-        logger.warn("dev-server.startup_timeout", {
-          serverName,
-          timeoutMs: STARTUP_TIMEOUT_MS,
-        });
-
-        const output = entry.recentOutput.slice(-10).join("\n");
-        transitionTo(entry, "error", {
-          errorMessage: `Startup timeout (${STARTUP_TIMEOUT_MS / 1000}s): CC_PORT not detected.\n${output}`,
-        });
-
-        // Kill the process group
-        if (entry._pid) {
-          try {
-            process.kill(-entry._pid, "SIGTERM");
-          } catch {
-            // Process group may have already exited
-          }
-        }
-      }
-    }, STARTUP_TIMEOUT_MS);
   }
 
   /**
@@ -721,24 +630,12 @@ export function createDevServerRegistry(
     if (!entry) return;
     if (entry.status !== "running" && entry.status !== "starting") return;
 
-    cleanupTimer(entry);
-
     logger.info("dev-server.stop", {
       serverName,
       port: entry.port,
       pid: entry._pid,
-      source: entry.source,
       ownedByThisSession: entry.ownedByThisSession,
     });
-
-    if (entry.source === "external-adopted") {
-      logger.info("dev-server.cleanup.stop_adopted", {
-        serverName,
-        port: entry.port,
-        ownerPid: entry.ownerPid,
-        worktreePath: entry.worktreePath,
-      });
-    }
 
     // Unregister from Tailscale if enabled
     if (entry.port) {
@@ -785,7 +682,6 @@ export function createDevServerRegistry(
         serverName,
         port: entry.port,
         worktreePath: entry.worktreePath,
-        source: entry.source,
         warning: stopWarning,
       });
     }
@@ -975,7 +871,6 @@ export function createDevServerRegistry(
     if (registry) {
       // Kill all process groups
       for (const entry of registry.values()) {
-        cleanupTimer(entry);
         if (entry._pid) {
           try {
             process.kill(-entry._pid, "SIGKILL");
@@ -995,6 +890,7 @@ export function createDevServerRegistry(
     stopAll,
     getSessionServers,
     getServer,
+    killListeningProcessForPort,
     _resetForTesting,
   };
 }
@@ -1083,6 +979,19 @@ async function killProcessGroup(pid: number): Promise<void> {
   }
 }
 
+function openLogStream(filePath: string, serverName: string): WriteStream {
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  const stream = createWriteStream(filePath, { flags: "w" });
+  stream.on("error", (err) => {
+    logger.warn("dev-server.log.write_error", {
+      serverName,
+      filePath,
+      error: err.message,
+    });
+  });
+  return stream;
+}
+
 function defaultSendSignal(pid: number, signal: NodeJS.Signals): boolean {
   try {
     process.kill(pid, signal);
@@ -1101,42 +1010,6 @@ function defaultIsProcessAlive(pid: number): boolean {
   }
 }
 
-/** Best-effort read of /proc/<pid>/stat or `ps -o pgid=` to recover the listener's pgid. */
-function readProcessGroupId(pid: number): number | null {
-  try {
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf-8");
-    const idx = stat.lastIndexOf(")");
-    if (idx >= 0) {
-      const fields = stat.slice(idx + 2).split(" ");
-      const pgid = parseInt(fields[2] ?? "", 10);
-      if (!isNaN(pgid)) return pgid;
-    }
-  } catch {
-    // /proc unavailable (macOS) or permission error — fall through to ps.
-  }
-
-  try {
-    const out = execSync(`ps -o pgid= -p ${pid}`, {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    const pgid = parseInt(out.trim(), 10);
-    return isNaN(pgid) ? null : pgid;
-  } catch {
-    return null;
-  }
-}
-
-async function defaultClassifyServerSource(input: {
-  listenerPid: number;
-  spawnedPid: number | null;
-}): Promise<DevServerSource> {
-  if (input.spawnedPid === null) return "external-adopted";
-  if (input.listenerPid === input.spawnedPid) return "cc-started";
-  const pgid = readProcessGroupId(input.listenerPid);
-  return pgid === input.spawnedPid ? "cc-started" : "external-adopted";
-}
-
 // ============================================================
 // Default singleton exports (backward-compatible)
 // ============================================================
@@ -1148,6 +1021,8 @@ export const stopServer = defaultRegistry.stopServer;
 export const stopAllForSession = defaultRegistry.stopAllForSession;
 export const getSessionServers = defaultRegistry.getSessionServers;
 export const getServer = defaultRegistry.getServer;
+export const killListeningProcessForPort =
+  defaultRegistry.killListeningProcessForPort;
 
 // ============================================================
 // SIGTERM Shutdown Handler

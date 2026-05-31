@@ -34,12 +34,14 @@ function createMockEntry(
     errorMessage: null,
     recentOutput: [],
     worktreePath: "/tmp",
-    source: null,
     ownedByThisSession: false,
     ownerPid: null,
+    logFilePath: "/tmp/.cc/dev-server-logs/web.log",
     _process: null,
     _pid: null,
-    _startupTimer: null,
+    _logStream: null,
+    _stdoutRemainder: "",
+    _stderrRemainder: "",
     ...overrides,
   };
 }
@@ -150,14 +152,13 @@ describe("LivenessPoller", () => {
     expect(entry.status).toBe("stopped");
   });
 
-  it("preserves source/ownerPid metadata when transitioning to stopped on dead port", async () => {
+  it("preserves ownerPid metadata when transitioning to stopped on dead port", async () => {
     const reg = getRegistryMap();
     mockClassifyPortOwnership.mockResolvedValue({ status: "available" });
 
     const entry = createMockEntry({
       port: 3000,
       status: "running",
-      source: "external-adopted",
       ownedByThisSession: true,
       ownerPid: 42424,
     });
@@ -167,14 +168,12 @@ describe("LivenessPoller", () => {
     await vi.advanceTimersByTimeAsync(5_000);
 
     expect(entry.status).toBe("stopped");
-    expect(entry.source).toBe("external-adopted");
     expect(entry.ownerPid).toBe(42424);
     expect(entry.ownedByThisSession).toBe(false);
     expect(mockBroadcast).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "dev-server-status",
         status: "stopped",
-        source: "external-adopted",
         ownerPid: 42424,
         ownedByThisSession: false,
         worktreePath: "/tmp",

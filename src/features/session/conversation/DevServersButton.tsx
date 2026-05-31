@@ -1,7 +1,10 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { DevServerPanel } from "@/components/DevServerDrawer";
+import {
+  DevServerPanel,
+  type UnmanagedConflictInfo,
+} from "@/components/DevServerDrawer";
 import type { DevServerRuntimeState } from "@/lib/dev-server/schemas";
 
 export interface DevServersButtonProps {
@@ -13,6 +16,10 @@ export interface DevServersButtonProps {
   onStop: (name: string) => void;
   onStartAll: () => void;
   onStopAll: () => void;
+  unmanagedConflict?: UnmanagedConflictInfo | null;
+  onDismissUnmanagedConflict?: () => void;
+  onStopUnmanagedAndRetry?: () => void;
+  isStoppingUnmanaged?: boolean;
 }
 
 function DevServersIcon({ size = 13 }: { size?: number }) {
@@ -57,6 +64,10 @@ export default function DevServersButton({
   onStop,
   onStartAll,
   onStopAll,
+  unmanagedConflict = null,
+  onDismissUnmanagedConflict,
+  onStopUnmanagedAndRetry,
+  isStoppingUnmanaged = false,
 }: DevServersButtonProps): React.JSX.Element {
   const triggerRef = useRef<HTMLButtonElement>(null);
 
@@ -115,6 +126,10 @@ export default function DevServersButton({
         onStartAll={onStartAll}
         onStopAll={onStopAll}
         anchorRef={triggerRef}
+        unmanagedConflict={unmanagedConflict}
+        onDismissUnmanagedConflict={onDismissUnmanagedConflict}
+        onStopUnmanagedAndRetry={onStopUnmanagedAndRetry}
+        isStoppingUnmanaged={isStoppingUnmanaged}
       />
     </div>
   );

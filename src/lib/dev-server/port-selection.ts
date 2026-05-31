@@ -24,8 +24,6 @@ export interface PortSelectionInput {
   maxAttempts?: number;
 }
 
-type PortSelectionSource = "external-adopted" | "available";
-
 export interface PortSelectionDiagnostic {
   port: number;
   status: "conflict" | "unknown";
@@ -37,10 +35,13 @@ export interface PortSelectionDiagnostic {
 export type PortSelectionResult =
   | {
       status: "selected";
-      source: PortSelectionSource;
       port: number;
-      pid?: number;
-      cwd?: string;
+    }
+  | {
+      status: "unmanaged-detected";
+      port: number;
+      pid: number;
+      cwd: string;
     }
   | {
       status: "exhausted";
@@ -79,20 +80,20 @@ export function createPortSelectionService(deps: PortSelectionDeps) {
       return result;
     };
 
-    // Pass 1 — find the lowest owned port anywhere in the range.
+    // Pass 1 — surface the lowest unmanaged listener anywhere in the range so
+    // the caller can prompt the user to stop it rather than silently adopting.
     for (let offset = 0; offset < maxAttempts; offset++) {
       const port = basePort + offset;
       const result = await classify(port);
       if (result.status === "owned") {
-        logger.info("dev-server.port_selection.owned_found", {
+        logger.info("dev-server.port_selection.unmanaged_detected", {
           basePort,
           port,
           pid: result.pid,
           cwd: result.cwd,
         });
         return {
-          status: "selected",
-          source: "external-adopted",
+          status: "unmanaged-detected",
           port,
           pid: result.pid,
           cwd: result.cwd,
@@ -109,7 +110,7 @@ export function createPortSelectionService(deps: PortSelectionDeps) {
           basePort,
           port,
         });
-        return { status: "selected", source: "available", port };
+        return { status: "selected", port };
       }
     }
 

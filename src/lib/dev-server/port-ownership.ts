@@ -278,27 +278,37 @@ export function createPortOwnershipService(deps: PortOwnershipDeps) {
 // Production dependency implementations
 // ============================================================
 
+export type ExecFileLike = (
+  cmd: string,
+  args: readonly string[],
+) => Promise<{ stdout: string; stderr: string }>;
+
 /**
- * Production listener-only PID lookup.
+ * Async listener-only PID lookup with an injectable exec function. The
+ * production path calls this with `execFileAsync`; tests inject a fake.
+ *
  * Linux: prefer `ss -H -tlnp sport = :PORT`.
  * Fallback (Linux + macOS): `lsof -tiTCP:PORT -sTCP:LISTEN -n -P`.
  * Never uses `lsof -ti :PORT` (which also returns client connections).
  *
- * Uses async `execFile` so the Node.js event loop stays responsive while
- * subprocesses run. Throws when ALL inspection tools fail — the caller must
- * treat that as `unknown`.
+ * Throws when ALL inspection tools fail — the caller must treat that as
+ * `unknown`. A `lsof` exit code of 1 means "no match" (port is free) and
+ * resolves to an empty array.
  */
-async function defaultListListeningPids(port: number): Promise<number[]> {
+export async function listListeningPidsViaExecFile(
+  port: number,
+  execFile: ExecFileLike,
+): Promise<number[]> {
   const pids = new Set<number>();
   let ssOk = false;
   let lsofOk = false;
 
   try {
-    const { stdout } = await execFileAsync(
-      "ss",
-      ["-H", "-tlnp", `sport = :${port}`],
-      { encoding: "utf-8" },
-    );
+    const { stdout } = await execFile("ss", [
+      "-H",
+      "-tlnp",
+      `sport = :${port}`,
+    ]);
     ssOk = true;
     addPidsFromOutput(stdout, pids);
     if (pids.size > 0) return Array.from(pids);
@@ -307,11 +317,12 @@ async function defaultListListeningPids(port: number): Promise<number[]> {
   }
 
   try {
-    const { stdout } = await execFileAsync(
-      "lsof",
-      ["-tiTCP:" + port, "-sTCP:LISTEN", "-n", "-P"],
-      { encoding: "utf-8" },
-    );
+    const { stdout } = await execFile("lsof", [
+      "-tiTCP:" + port,
+      "-sTCP:LISTEN",
+      "-n",
+      "-P",
+    ]);
     lsofOk = true;
     addPidsFromOutput(stdout, pids);
   } catch (err) {
@@ -329,6 +340,16 @@ async function defaultListListeningPids(port: number): Promise<number[]> {
   }
 
   return Array.from(pids);
+}
+
+const productionExecFile: ExecFileLike = (cmd, args) =>
+  execFileAsync(cmd, args as string[], { encoding: "utf-8" }) as Promise<{
+    stdout: string;
+    stderr: string;
+  }>;
+
+async function defaultListListeningPids(port: number): Promise<number[]> {
+  return listListeningPidsViaExecFile(port, productionExecFile);
 }
 
 /**
@@ -445,9 +466,17 @@ function addPidsFromOutput(output: string, pids: Set<number>): void {
   }
 }
 
-function getExitStatus(err: unknown): number | null {
-  const status = (err as { status?: unknown }).status;
-  return typeof status === "number" ? status : null;
+/**
+ * Extract a numeric exit code from an exec error. Handles both shapes:
+ * `execSync` errors carry the exit code on `.status`; promisified `execFile`
+ * errors carry it on `.code` (Node also puts string system errors like
+ * `'ENOENT'` on `.code`, so we only honour numeric values).
+ */
+export function getExitStatus(err: unknown): number | null {
+  const e = err as { status?: unknown; code?: unknown };
+  if (typeof e.status === "number") return e.status;
+  if (typeof e.code === "number") return e.code;
+  return null;
 }
 
 export async function listListeningPidsWithExec(

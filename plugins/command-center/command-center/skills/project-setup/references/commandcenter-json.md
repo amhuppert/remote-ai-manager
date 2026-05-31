@@ -45,14 +45,11 @@ Optional fields:
 
 Server names must be unique within the `devServers` array.
 
-### Port Strategies
+### Port Strategy
 
-| Strategy | When to use |
-|---|---|
-| `cc-assigned` (recommended) | CC picks the port from `[base, base+range)`, injects `$CC_ASSIGNED_PORT`/`$PORT`/your optional `env` alias, and waits for TCP readiness |
-| `stdout-cc-port` (legacy) | Your script picks its own port and writes `CC_PORT=<n>` to stdout. Used by older `.cc/dev-servers/*.sh` installs. |
+`cc-assigned` is the only supported strategy. CC picks the port from `[base, base+range)`, injects `$CC_ASSIGNED_PORT`/`$PORT`/your optional `env` alias, and waits for TCP readiness.
 
-See `references/dev-servers.md` for full examples and field reference.
+For full dev-server schema and examples, see the `dev-server-setup` skill (its `references/dev-servers.md`). This project-setup skill does not write `devServers` entries.
 
 ## Minimal Example
 
