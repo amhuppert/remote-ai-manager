@@ -1371,6 +1371,11 @@ describe("execution loop", () => {
         error: null,
         conflictFiles: [],
         conflictAnalysis: null,
+        preparedSha: null,
+        expectedTargetSha: null,
+        parkedRef: null,
+        refreshWarning: null,
+        phase: null,
       })),
     };
 

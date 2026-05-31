@@ -93,6 +93,7 @@ export default function NotificationsPanelContainer() {
     // Map currently running jobs from Zustand store
     for (const job of jobs.values()) {
       if (job.jobType === "merge") {
+        const isReadyToLand = job.status === "ready-to-land";
         result.push({
           type: "merge",
           id: job.jobId,
@@ -100,9 +101,11 @@ export default function NotificationsPanelContainer() {
           projectName: job.projectName,
           sessionName: job.sessionName,
           branchName: job.branchName,
-          status: "running",
+          status: isReadyToLand ? "ready-to-land" : "running",
           read: true,
           phase: job.phase,
+          preparedSha: job.preparedSha,
+          parkedRef: job.parkedRef,
         } satisfies MergeNotification);
       } else if (job.jobType === "commit") {
         result.push({
@@ -143,10 +146,15 @@ export default function NotificationsPanelContainer() {
         };
 
         if (notif.jobType === "merge") {
-          const statusMap: Record<string, "success" | "conflicts" | "error"> = {
+          const statusMap: Record<
+            string,
+            "success" | "conflicts" | "error" | "ready-to-land" | "discarded"
+          > = {
             "merge-completed": "success",
             "merge-failed": "error",
             "merge-conflicts": "conflicts",
+            "merge-ready-to-land": "ready-to-land",
+            "merge-discarded": "discarded",
           };
           result.push({
             ...base,

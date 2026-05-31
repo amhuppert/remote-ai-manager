@@ -76,3 +76,12 @@ export const ChildSessionConflicts = {
     conflictCount: 2,
   },
 } satisfies Story;
+
+/** Merge prepared but target worktree is dirty — awaiting Land */
+export const ReadyToLand = {
+  args: {
+    variant: "ready-to-land",
+    branchName: "csm/implement-auth",
+    targetBranch: "main",
+  },
+} satisfies Story;

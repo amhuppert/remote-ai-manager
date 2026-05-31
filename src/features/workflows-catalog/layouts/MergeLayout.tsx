@@ -23,54 +23,113 @@ const TRANSIENT_H = 50;
 const TERMINAL_H = 56;
 
 /**
- * Smart Merge — the most spatially complex layout. Three logical bands:
+ * Smart Merge — the most spatially complex layout. Four logical bands:
  *
- *   1. Setup (top)        : routing → checkUnc/commitUnc → mergingMain
- *   2. Validation (left)  : validating → squashMerging → completed,
- *                            with the fix-and-retry loop on the bottom-left
- *   3. Conflict (right)   : conflictsDetected → resolve / analyze paths,
- *                            terminating in `conflicts` if manual or partial
+ *   1. Entry routing (top)       : entryRouting → verifyingBranch | publishing | discarding
+ *   2. Setup (top)               : routing → checkUnc/commitUnc → mergingMain
+ *   3. Validation + publish      : validating → preparing → publishing →
+ *                                    completed | readyToLand | preparing (CAS retry)
+ *   4. Conflict (right)          : conflictsDetected → resolve/analyze paths,
+ *                                    terminating in `conflicts`
  *
- * Failed sits at the bottom-right; many onError edges land there. To keep the
- * picture readable we draw only the structurally distinct onError edges (the
- * ones with no equally-informative onDone neighbor).
+ * The Land entry path re-enters `publishing` directly; the Discard entry path
+ * runs `discarding` and lands in `discarded`. Failed sits at the bottom-right.
  */
 export default function MergeLayout({
   selectedStateId,
   onSelectState,
 }: LayoutProps): React.JSX.Element {
+  // Entry routing (top)
+  const entryRouting = box(560, 20, 200, TRANSIENT_H);
+
   // Setup band
-  const routing = box(560, 40, 200, TRANSIENT_H);
-  const checkUnc = box(560, 140, NODE_W, NODE_H);
-  const commitUnc = box(260, 140, NODE_W, NODE_H);
-  const mergingMain = box(560, 290, NODE_W, NODE_H);
+  const verifyingBranch = box(560, 110, NODE_W, NODE_H);
+  const routing = box(560, 220, 200, TRANSIENT_H);
+  const checkUnc = box(560, 305, NODE_W, NODE_H);
+  const commitUnc = box(260, 305, NODE_W, NODE_H);
+  const mergingMain = box(560, 425, NODE_W, NODE_H);
 
   // Conflict band (right)
-  const conflictsDetected = box(870, 305, 200, TRANSIENT_H);
-  const resolvingConflicts = box(870, 410, NODE_W, NODE_H);
-  const analyzingConflicts = box(1170, 410, NODE_W, NODE_H);
-  const committingResolution = box(870, 550, NODE_W, NODE_H);
-  const conflicts = box(1170, 580, NODE_W, TERMINAL_H);
+  const conflictsDetected = box(870, 440, 200, TRANSIENT_H);
+  const resolvingConflicts = box(870, 540, NODE_W, NODE_H);
+  const analyzingConflicts = box(1170, 540, NODE_W, NODE_H);
+  const committingResolution = box(870, 680, NODE_W, NODE_H);
+  const conflicts = box(1170, 710, NODE_W, TERMINAL_H);
 
   // Validation band (left)
-  const validating = box(560, 440, NODE_W, NODE_H);
-  const fixingValidation = box(260, 580, NODE_W, NODE_H);
-  const checkingFixChanges = box(260, 720, NODE_W, NODE_H);
-  const committingFix = box(40, 720, NODE_W, NODE_H);
-  const revalidating = box(260, 860, NODE_W, NODE_H);
-  const squashMerging = box(560, 860, NODE_W, NODE_H);
+  const validating = box(560, 565, NODE_W, NODE_H);
+  const fixingValidation = box(260, 705, NODE_W, NODE_H);
+  const checkingFixChanges = box(260, 845, NODE_W, NODE_H);
+  const committingFix = box(40, 845, NODE_W, NODE_H);
+  const revalidating = box(260, 985, NODE_W, NODE_H);
+
+  // Prepare/publish band
+  const preparing = box(560, 705, NODE_W, NODE_H);
+  const publishing = box(560, 845, NODE_W, NODE_H);
+
+  // Discard band (far left)
+  const discarding = box(40, 110, NODE_W, NODE_H);
+  const discarded = box(40, 230, NODE_W, TERMINAL_H);
 
   // Terminals
-  const completed = box(560, 1000, NODE_W, TERMINAL_H);
-  const failed = box(870, 1000, NODE_W, TERMINAL_H);
+  const completed = box(560, 985, NODE_W, TERMINAL_H);
+  const readyToLand = box(870, 845, NODE_W, TERMINAL_H);
+  const failed = box(870, 985, NODE_W, TERMINAL_H);
 
   const edges: EdgeSpec[] = [
-    // Init
+    // Init → entryRouting
     {
       id: "init",
-      from: { x: routing.x + routing.width / 2, y: 15 },
+      from: { x: entryRouting.x + entryRouting.width / 2, y: 0 },
+      to: topAnchor(entryRouting),
+      routing: "straight",
+      toStateId: "entryRouting",
+    },
+
+    // entryRouting branches
+    {
+      id: "entry-verifying",
+      from: bottomAnchor(entryRouting),
+      to: topAnchor(verifyingBranch),
+      routing: "straight",
+      label: "always (merge)",
+      dashed: true,
+      fromStateId: "entryRouting",
+      toStateId: "verifyingBranch",
+    },
+    {
+      id: "entry-publishing",
+      from: rightAnchor(entryRouting),
+      to: topAnchor(publishing),
+      routing: "curve",
+      label: "always (land)",
+      guard: "isLandEntry",
+      dashed: true,
+      fromStateId: "entryRouting",
+      toStateId: "publishing",
+    },
+    {
+      id: "entry-discarding",
+      from: leftAnchor(entryRouting),
+      to: topAnchor(discarding),
+      routing: "curve",
+      label: "always (discard)",
+      guard: "isDiscardEntry",
+      dashed: true,
+      fromStateId: "entryRouting",
+      toStateId: "discarding",
+    },
+
+    // verifyingBranch → routing
+    {
+      id: "verifying-routing",
+      from: bottomAnchor(verifyingBranch),
       to: topAnchor(routing),
       routing: "straight",
+      label: "onDone",
+      guard: "branchMatchesExpected",
+      dashed: true,
+      fromStateId: "verifyingBranch",
       toStateId: "routing",
     },
 
@@ -223,14 +282,14 @@ export default function MergeLayout({
 
     // Validation band
     {
-      id: "validating-squash",
-      from: bottomAnchor(validating, 30),
-      to: topAnchor(squashMerging, 30),
+      id: "validating-preparing",
+      from: bottomAnchor(validating),
+      to: topAnchor(preparing),
       routing: "straight",
       label: "onDone",
       dashed: true,
       fromStateId: "validating",
-      toStateId: "squashMerging",
+      toStateId: "preparing",
     },
     {
       id: "validating-fixing",
@@ -288,14 +347,15 @@ export default function MergeLayout({
       toStateId: "revalidating",
     },
     {
-      id: "revalidating-squash",
+      id: "revalidating-preparing",
       from: rightAnchor(revalidating),
-      to: leftAnchor(squashMerging),
-      routing: "straight",
+      to: leftAnchor(preparing),
+      routing: "curve",
+      bow: "v",
       label: "onDone",
       dashed: true,
       fromStateId: "revalidating",
-      toStateId: "squashMerging",
+      toStateId: "preparing",
     },
     {
       id: "revalidating-fixing-loop",
@@ -313,16 +373,65 @@ export default function MergeLayout({
       labelOffset: { x: -130, y: -180 },
     },
 
-    // Squash → completed
+    // preparing → publishing
     {
-      id: "squash-completed",
-      from: bottomAnchor(squashMerging),
+      id: "preparing-publishing",
+      from: bottomAnchor(preparing),
+      to: topAnchor(publishing),
+      routing: "straight",
+      label: "onDone",
+      guard: "!prepareProducedConflicts",
+      dashed: true,
+      fromStateId: "preparing",
+      toStateId: "publishing",
+    },
+
+    // publishing branches
+    {
+      id: "publishing-completed",
+      from: bottomAnchor(publishing),
       to: topAnchor(completed),
       routing: "straight",
       label: "onDone",
+      guard: "publishCompleted",
       dashed: true,
-      fromStateId: "squashMerging",
+      fromStateId: "publishing",
       toStateId: "completed",
+    },
+    {
+      id: "publishing-readyToLand",
+      from: rightAnchor(publishing),
+      to: leftAnchor(readyToLand),
+      routing: "straight",
+      label: "onDone",
+      guard: "publishReadyToLand",
+      dashed: true,
+      fromStateId: "publishing",
+      toStateId: "readyToLand",
+    },
+    {
+      id: "publishing-preparing-retry",
+      from: { x: publishing.x, y: publishing.y + 20 },
+      to: { x: preparing.x, y: preparing.y + preparing.height - 20 },
+      routing: "loop",
+      loopSide: "left",
+      label: "onDone",
+      guard: "publishCasLost && casRetriesRemaining",
+      fromStateId: "publishing",
+      toStateId: "preparing",
+      labelOffset: { x: -130, y: -50 },
+    },
+
+    // Discard branch
+    {
+      id: "discarding-discarded",
+      from: bottomAnchor(discarding),
+      to: topAnchor(discarded),
+      routing: "straight",
+      label: "onDone",
+      dashed: true,
+      fromStateId: "discarding",
+      toStateId: "discarded",
     },
 
     // Failures (only the structurally distinct ones to avoid clutter)
@@ -358,22 +467,56 @@ export default function MergeLayout({
       toStateId: "failed",
       labelOffset: { x: -60, y: -22 },
     },
+    {
+      id: "publishing-failed-cas",
+      from: bottomAnchor(publishing, -25),
+      to: topAnchor(failed, -25),
+      routing: "curve",
+      label: "onDone",
+      guard: "publishCasLost && !casRetriesRemaining",
+      dashed: true,
+      fromStateId: "publishing",
+      toStateId: "failed",
+    },
   ];
 
   return (
     <MachineCanvas
       width={1440}
-      height={1100}
+      height={1080}
       edges={edges}
       selectedStateId={selectedStateId}
     >
-      <InitialMarker x={routing.x + routing.width / 2} y={15} />
+      <InitialMarker x={entryRouting.x + entryRouting.width / 2} y={0} />
 
+      <StateNode
+        id="entryRouting"
+        label="entryRouting"
+        kind="transient"
+        status="initial"
+        x={entryRouting.x}
+        y={entryRouting.y}
+        width={entryRouting.width}
+        height={entryRouting.height}
+        selected={selectedStateId === "entryRouting"}
+        onClick={onSelectState}
+      />
+      <StateNode
+        id="verifyingBranch"
+        label="verifyingBranch"
+        kind="atomic"
+        x={verifyingBranch.x}
+        y={verifyingBranch.y}
+        width={verifyingBranch.width}
+        height={verifyingBranch.height}
+        invokes={["getCurrentBranch"]}
+        selected={selectedStateId === "verifyingBranch"}
+        onClick={onSelectState}
+      />
       <StateNode
         id="routing"
         label="routing"
         kind="transient"
-        status="initial"
         x={routing.x}
         y={routing.y}
         width={routing.width}
@@ -540,16 +683,54 @@ export default function MergeLayout({
         selected={selectedStateId === "revalidating"}
         onClick={onSelectState}
       />
+
       <StateNode
-        id="squashMerging"
-        label="squashMerging"
+        id="preparing"
+        label="preparing"
         kind="atomic"
-        x={squashMerging.x}
-        y={squashMerging.y}
-        width={squashMerging.width}
-        height={squashMerging.height}
-        invokes={["squashMerge"]}
-        selected={selectedStateId === "squashMerging"}
+        x={preparing.x}
+        y={preparing.y}
+        width={preparing.width}
+        height={preparing.height}
+        invokes={["prepare"]}
+        selected={selectedStateId === "preparing"}
+        onClick={onSelectState}
+      />
+      <StateNode
+        id="publishing"
+        label="publishing"
+        kind="atomic"
+        x={publishing.x}
+        y={publishing.y}
+        width={publishing.width}
+        height={publishing.height}
+        invokes={["publish"]}
+        selected={selectedStateId === "publishing"}
+        onClick={onSelectState}
+      />
+
+      <StateNode
+        id="discarding"
+        label="discarding"
+        kind="atomic"
+        x={discarding.x}
+        y={discarding.y}
+        width={discarding.width}
+        height={discarding.height}
+        invokes={["discardParkedRef"]}
+        selected={selectedStateId === "discarding"}
+        onClick={onSelectState}
+      />
+      <StateNode
+        id="discarded"
+        label="discarded"
+        kind="final"
+        status="warning"
+        x={discarded.x}
+        y={discarded.y}
+        width={discarded.width}
+        height={discarded.height}
+        selected={selectedStateId === "discarded"}
         onClick={onSelectState}
       />
 
@@ -563,6 +744,18 @@ export default function MergeLayout({
         width={completed.width}
         height={completed.height}
         selected={selectedStateId === "completed"}
+        onClick={onSelectState}
+      />
+      <StateNode
+        id="readyToLand"
+        label="readyToLand"
+        kind="final"
+        status="warning"
+        x={readyToLand.x}
+        y={readyToLand.y}
+        width={readyToLand.width}
+        height={readyToLand.height}
+        selected={selectedStateId === "readyToLand"}
         onClick={onSelectState}
       />
       <StateNode

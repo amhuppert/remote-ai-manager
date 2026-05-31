@@ -34,8 +34,10 @@ export default function MergeToastContainer() {
   if (!currentToast) return null;
 
   // Map notification type to toast variant
-  let variant: "success" | "conflicts" | "error";
-  if (currentToast.type.endsWith("-completed")) {
+  let variant: "success" | "conflicts" | "error" | "ready-to-land";
+  if (currentToast.type === "merge-ready-to-land") {
+    variant = "ready-to-land";
+  } else if (currentToast.type.endsWith("-completed")) {
     variant = "success";
   } else if (currentToast.type === "merge-conflicts") {
     variant = "conflicts";

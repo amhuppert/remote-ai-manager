@@ -153,6 +153,10 @@ function broadcastJobStatus(
     ...(job.conflictFiles && { conflictFiles: job.conflictFiles }),
     ...(job.errorMessage && { errorMessage: job.errorMessage }),
     ...(job.phase && { phase: job.phase }),
+    ...(job.parkedRef && { parkedRef: job.parkedRef }),
+    ...(job.preparedSha && { preparedSha: job.preparedSha }),
+    ...(job.expectedTargetSha && { expectedTargetSha: job.expectedTargetSha }),
+    ...(job.refreshWarning && { refreshWarning: job.refreshWarning }),
   };
   broadcast(event);
 
@@ -160,7 +164,9 @@ function broadcastJobStatus(
   if (
     job.status === "completed" ||
     job.status === "failed" ||
-    job.status === "conflicts"
+    job.status === "conflicts" ||
+    job.status === "ready-to-land" ||
+    job.status === "discarded"
   ) {
     persistTerminalState(job);
   }
@@ -238,6 +244,10 @@ function buildNotificationMessage(job: BackgroundJob): string {
       return job.errorMessage ?? `${job.jobType} failed on ${branch}`;
     case "running":
       return `${job.jobType} on ${branch}`;
+    case "ready-to-land":
+      return `Branch ${branch} prepared for ${target} — awaiting Land${job.preparedSha ? ` (${job.preparedSha.slice(0, 7)})` : ""}`;
+    case "discarded":
+      return `Prepared merge for ${branch} discarded`;
     default:
       return assertNever(job.status);
   }
@@ -379,7 +389,11 @@ function subscribeMergeActor(
       job.mergeHash = output.mergeHash ?? undefined;
       job.commitHash = output.commitHash ?? undefined;
       job.errorMessage = output.error ?? undefined;
-      job.phase = undefined;
+      job.phase = output.phase ?? undefined;
+      job.preparedSha = output.preparedSha ?? undefined;
+      job.expectedTargetSha = output.expectedTargetSha ?? undefined;
+      job.parkedRef = output.parkedRef ?? undefined;
+      job.refreshWarning = output.refreshWarning ?? undefined;
       job.completedAt = new Date().toISOString();
 
       if (output.conflictFiles.length > 0) {
@@ -473,7 +487,7 @@ function subscribeCommitActor(
  * The machine handles: commit uncommitted → merge main → detect/resolve
  * conflicts → validate → fix validation → squash merge.
  */
-export function dispatchMergeJob(params: {
+export interface DispatchMergeParams {
   projectPath: string;
   projectName: string;
   sessionName: string;
@@ -486,7 +500,15 @@ export function dispatchMergeJob(params: {
   broadcast?: BroadcastFn;
   acquireSessionLock?: AcquireSessionLockFn;
   machine?: MergeMachineType;
-}): Result<{ jobId: string }, JobDispatchError> {
+  entryMode?: "merge" | "land" | "discard";
+  preparedSha?: string;
+  expectedTargetSha?: string;
+  parkedRef?: string;
+}
+
+export function dispatchMergeJob(
+  params: DispatchMergeParams,
+): Result<{ jobId: string }, JobDispatchError> {
   // Inherit the caller's traceId (request that triggered dispatch) so the
   // background actor's timed() calls aggregate under the same trace.
   return runAsTrace(
@@ -496,20 +518,9 @@ export function dispatchMergeJob(params: {
   );
 }
 
-function dispatchMergeJobImpl(params: {
-  projectPath: string;
-  projectName: string;
-  sessionName: string;
-  worktreePath: string;
-  branchName: string;
-  message: string;
-  autoResolve: boolean;
-  targetBranch?: string;
-  targetWorktreePath?: string;
-  broadcast?: BroadcastFn;
-  acquireSessionLock?: AcquireSessionLockFn;
-  machine?: MergeMachineType;
-}): Result<{ jobId: string }, JobDispatchError> {
+function dispatchMergeJobImpl(
+  params: DispatchMergeParams,
+): Result<{ jobId: string }, JobDispatchError> {
   const {
     projectPath,
     projectName,
@@ -523,6 +534,10 @@ function dispatchMergeJobImpl(params: {
     broadcast = defaultJobBroadcast,
     acquireSessionLock,
     machine = mergeMachine,
+    entryMode,
+    preparedSha,
+    expectedTargetSha,
+    parkedRef,
   } = params;
 
   const prepared = prepareDispatch({
@@ -545,6 +560,7 @@ function dispatchMergeJobImpl(params: {
     worktreePath,
     branchName,
     autoResolve,
+    entryMode: entryMode ?? "merge",
   });
 
   // Create and start the merge machine actor
@@ -560,6 +576,10 @@ function dispatchMergeJobImpl(params: {
     jobType: "merge",
     targetBranch,
     targetWorktreePath,
+    ...(entryMode && { entryMode }),
+    ...(preparedSha && { preparedSha }),
+    ...(expectedTargetSha && { expectedTargetSha }),
+    ...(parkedRef && { parkedRef }),
   };
 
   const actor = createActor(

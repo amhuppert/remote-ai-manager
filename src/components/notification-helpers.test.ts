@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type {
   ConversationNotification,
   CommitNotification,
+  MergeNotification,
 } from "./NotificationsPanel";
 import { getItemLabel } from "./notification-helpers";
 
@@ -71,6 +72,46 @@ describe("getItemLabel", () => {
 
     it('returns "Commit failed" for error', () => {
       expect(getItemLabel(makeCommit("error"))).toBe("Commit failed");
+    });
+  });
+
+  describe("merge items", () => {
+    const mergeBase: Omit<MergeNotification, "status" | "phase"> = {
+      type: "merge",
+      id: "job-merge",
+      timestamp: new Date().toISOString(),
+      projectName: "my-app",
+      sessionName: "feat",
+      branchName: "csm/feat",
+    };
+
+    function makeMerge(
+      status: MergeNotification["status"],
+      phase?: string,
+    ): MergeNotification {
+      return { ...mergeBase, status, phase };
+    }
+
+    it('returns "Preparing merge..." for preparing phase', () => {
+      expect(getItemLabel(makeMerge("running", "preparing"))).toBe(
+        "Preparing merge...",
+      );
+    });
+
+    it('returns "Publishing..." for publishing phase', () => {
+      expect(getItemLabel(makeMerge("running", "publishing"))).toBe(
+        "Publishing...",
+      );
+    });
+
+    it('returns "Awaiting clean target..." for ready-to-land status', () => {
+      expect(getItemLabel(makeMerge("ready-to-land", "awaiting-land"))).toBe(
+        "Awaiting clean target...",
+      );
+    });
+
+    it('returns "Discarded" for discarded status', () => {
+      expect(getItemLabel(makeMerge("discarded"))).toBe("Discarded");
     });
   });
 

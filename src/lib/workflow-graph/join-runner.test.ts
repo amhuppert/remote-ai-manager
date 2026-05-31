@@ -98,6 +98,11 @@ function completed(mergeHash = "abc123"): MergeOutput {
     error: null,
     conflictFiles: [],
     conflictAnalysis: null,
+    preparedSha: null,
+    expectedTargetSha: null,
+    parkedRef: null,
+    refreshWarning: null,
+    phase: null,
   };
 }
 
@@ -109,6 +114,11 @@ function failed(error: string, conflictFiles: string[] = []): MergeOutput {
     error,
     conflictFiles,
     conflictAnalysis: null,
+    preparedSha: null,
+    expectedTargetSha: null,
+    parkedRef: null,
+    refreshWarning: null,
+    phase: null,
   };
 }
 

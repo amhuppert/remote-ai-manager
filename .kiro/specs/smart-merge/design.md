@@ -2,908 +2,810 @@
 
 ## Overview
 
-**Purpose**: Smart Merge delivers a safer, non-blocking, AI-assisted merge workflow for CC sessions. It protects the main branch from conflicts by resolving them on the feature branch first, frees users from waiting on long-running git operations by running them as background jobs, and provides automated conflict resolution powered by Claude Code with structured per-conflict review controls.
+**Purpose**: Smart Merge is a revision of CC's merge-into-main workflow that splits the squash merge into a **prepare** phase (off the target worktree) and a **publish** phase (an atomic compare-and-swap on the target branch ref). It deletes the legacy hard-fail on a dirty target worktree, replacing it with a new terminal outcome — `ready-to-land` — that parks the prepared commit until the user lands it. The end-to-end async/background, conflict-resolution, validation-recovery, and notification surfaces from the prior iteration remain in place; this revision changes how the merge itself is produced and committed to the branch ref.
 
-**Users**: Developers using CC to manage parallel Claude Code sessions will use this for merging completed session work into main without blocking their workflow or risking a dirty main branch.
+**Users**: Developers running CC against repos where main may be checked out in another worktree with in-flight work. They will see merges run to completion without being blocked by a dirty target, and they get a deterministic, user-initiated path to land prepared merges later.
 
-**Impact**: Replaces the current synchronous merge dialog and flow with an async two-phase pipeline. Replaces the UnifiedPanel with a NotificationsPanel that surfaces both conversation activity and background job results.
+**Impact**: Removes `squashMerge()` and `MergePreconditionFailed` from the git layer. Replaces them with `prepareSquashMerge()` and `publishPreparedMerge()`. Splits the `squashMerging` machine state into `preparing` and `publishing` and adds a `ready-to-land` terminal state. Narrows the project lock from the full job window to the publish + finalization critical section. Adds a `parkedRef` field and `ready-to-land` / `discarded` statuses to the job and SSE schemas, and a new API route + UI affordance to invoke the Land action.
 
 ### Goals
-- Eliminate the risk of leaving main in a conflicted state by resolving conflicts on the feature branch first
-- Remove blocking UI during commit and merge operations by running them as background jobs with SSE-delivered results
-- Provide AI-powered conflict resolution with structured per-conflict output and a manual review page
-- Unify conversation and job activity monitoring in a single notifications panel
+- Guarantee that long-running prepare and validation work never writes to the target (main) worktree.
+- Make branch-ref correctness a CAS guarantee (`git update-ref` with expected-old), not a lock guarantee.
+- Turn the legacy "main is dirty, fail" path into a `ready-to-land` outcome with a recoverable Land action.
+- Preserve every other behavior of the existing pipeline (conflict resolution UX, validation auto-recovery, notifications, dialog, conflicts page).
 
 ### Non-Goals
-- Job persistence across server restarts (in-memory only; recovery via worktree state detection)
-- Job cancellation (background git operations are not safely cancellable mid-execution)
-- Conflict resolution for binary files (directed to manual resolution)
-- Changes to the existing prompt execution pipeline (only commit and merge become async)
+- WIP-commit cleanup on the feature branch (deferred — Requirements §Out of Scope).
+- Cross-process / filesystem-level lockfile for the project lock — CAS already protects branch-ref integrity across processes.
+- Behavior changes to the `analyzingConflicts` / `resolvingConflicts` state-machine surface, the MergeConflictsPage, or the conflict-analysis prompt — preserved unchanged by Requirements 14 and 15.
 
 ## Architecture
 
 ### Existing Architecture Analysis
 
-The current merge flow is synchronous and direct: `MergeDialog` → `useMergeMutation` → `POST /merge` route → `squashMerge()` → response → navigate away. Conflicts abort the merge immediately and clean up the main branch. The session lock (`lock.ts`) prevents concurrent operations but is scoped to the HTTP request lifecycle. SSE broadcasting (`sse-broadcaster.ts`) delivers `conversation-status` and `ask-question` events to `NotificationListener.tsx`. All patterns use `globalThis` singletons for HMR safety.
+Today the merge flow is dispatched by `dispatchMergeJob` in `src/lib/jobs/queue.ts`, which spawns the Smart Merge XState machine (`src/lib/workflows/merge/machine.ts`). The machine drives a linear pipeline: `verifyingBranch → routing → checkingUncommitted → committingUncommitted → mergingMain → (conflict path) → validating → squashMerging → completed`. The `squashMerging` state invokes `squashMergeActor` (`src/lib/workflows/merge/actors.ts`) which:
 
-Key constraints:
-- `squashMerge()` operates on `projectPath` (main branch), not the session worktree
-- The session lock's `release()` closure is portable — callable from any async context
-- SSE broadcast uses `event.type` for dynamic routing — adding event types requires no broadcaster changes
+1. Acquires `acquireProjectLock(projectPath)` with a 30-second retry loop (`src/lib/prompt/single-flight.ts`).
+2. Calls `squashMerge(mergePath, branchName, message, targetBranch)` from `src/lib/git/worktree.ts`.
+3. Inside `squashMerge`: reads `git status --porcelain` on the target worktree; throws `MergePreconditionFailed` (defined in `src/lib/workflow-graph/errors.ts`) if any tracked file is dirty; otherwise runs `git merge --squash <branch>` followed by `git commit --no-verify -m <message>` inside the target worktree; returns the new commit hash.
+4. Calls `setSessionFinished`, `stopAllForSession`, and `retargetOrphanedChildren`; releases the project lock.
+
+The graph-workflow fan-in variant (`src/lib/workflow-graph/graph-context-squash-merge-actor.ts`) is a parallel implementation: same lock-with-retry shell, same `squashMerge` call, no session-lifecycle side effects.
+
+Constraints inherited from the existing system that this revision must respect:
+- The session lock and the conversation lock semantics in `src/lib/prompt/single-flight.ts` are unchanged.
+- The job registry and SSE broadcast contract live in `src/lib/jobs/queue.ts` and `src/lib/jobs/schemas.ts`.
+- The conflict-resolution and validation-fix actors and their UX surface (`MergeConflictsPage`, conflict-analysis prompt) are out of scope per Requirement 14.5 and 15.9.
+- The machine's terminal-state convention (`createTerminalStates` from `src/lib/workflows/utils.ts`) emits a standard `completed` / `failed` shape; new terminal states must follow the same convention.
 
 ### Architecture Pattern & Boundary Map
+
+Selected pattern: **Prepare/Publish split inside the existing XState orchestration**. The XState machine keeps owning the pipeline; the git layer is rewritten around two pure functions that the machine invokes via two new actors.
 
 ```mermaid
 graph TB
     subgraph Client
         SMD[SmartMergeDialog]
-        MCP[MergeConflictsPage]
+        LB[LandPreparedMergeButton]
         NP[NotificationsPanel]
-        MT[MergeToast]
-        NL[NotificationListener]
     end
 
-    subgraph API Routes
-        MR[POST merge route]
-        CR[POST commit route]
-        CRA[POST resolve-conflicts route]
-        CGA[GET conflicts route]
+    subgraph API
+        MR[POST merge]
+        LR[POST land]
+        DR[POST discard]
+        CR[POST resolve-conflicts]
     end
 
-    subgraph Background Jobs
-        BJ[background-jobs module]
+    subgraph Orchestration
+        Queue[jobs queue]
+        Machine[merge machine]
+        GraphActor[graph squash actor]
     end
 
-    subgraph Domain Logic
-        GO[git-operations]
-        CRes[conflict-resolution]
-        SSE[sse-broadcaster]
-        LK[lock]
+    subgraph Git Primitives
+        Prep[prepareSquashMerge]
+        Pub[publishPreparedMerge]
+        WTops[worktree discovery]
     end
 
-    SMD -->|submit| MR
-    MR -->|dispatch| BJ
-    CR -->|dispatch| BJ
-    CRA -->|dispatch| BJ
-    BJ -->|acquire/release| LK
-    BJ -->|two-phase merge| GO
-    BJ -->|commit| GO
-    BJ -->|resolve conflicts| CRes
-    CRes -->|Claude SDK query| CRes
-    BJ -->|broadcast job-status| SSE
-    SSE -->|SSE stream| NL
-    NL -->|update state| NP
-    NL -->|show toast| MT
-    CGA -->|read job results| BJ
-    MCP -->|fetch conflicts| CGA
-    MCP -->|submit decisions| CRA
+    subgraph Concurrency
+        PLock[acquireProjectLock narrow]
+    end
+
+    SMD --> MR
+    LB --> LR
+    LB --> DR
+    MR --> Queue
+    LR --> Queue
+    DR --> Queue
+    Queue --> Machine
+    Machine --> Prep
+    Machine --> Pub
+    Machine --> WTops
+    Pub --> PLock
+    GraphActor --> Prep
+    GraphActor --> Pub
+    GraphActor --> PLock
+    Machine --> NP
 ```
 
 **Architecture Integration**:
-- Selected pattern: Hybrid — new `background-jobs.ts` module for job lifecycle, extending existing SSE/lock infrastructure
-- Domain boundaries: Route handlers validate and dispatch; `background-jobs` owns execution, state, and notifications; `conflict-resolution` owns Claude SDK interaction; `git-operations` owns all git primitives
-- Existing patterns preserved: `globalThis` singleton storage, `acquireSessionLock`, `broadcast(SSEEvent)`, Zod schema-first data modeling
-- New components rationale: `background-jobs.ts` (new lifecycle concept), `conflict-resolution.ts` (new Claude SDK use case), `resolve-conflicts` route (new API surface)
-- Steering compliance: filesystem-backed state for job results (via worktree state), no external dependencies, single-flight locking
+- Selected pattern: prepare/publish split realized as two new git primitives + two new machine states.
+- Domain boundaries: `src/lib/git/worktree.ts` owns the git plumbing (no orchestration); `src/lib/workflows/merge/{actors,machine}.ts` owns orchestration (lock, retry, finalization); `src/lib/workflow-graph/graph-context-squash-merge-actor.ts` mirrors the same orchestration for graph fan-in but without session-lifecycle side effects.
+- Existing patterns preserved: XState `.provide()` for dependency injection, schema-first Zod contracts, `globalThis` singleton for the lock manager, SSE broadcast keyed on `event.type`.
+- New surfaces: `Land prepared merge` API route + UI affordance (Requirement 6), `Discard prepared merge` action (Requirement 6.6), `ready-to-land` and `discarded` job statuses.
+- Steering compliance (`.kiro/steering/engineering-principles.md`): the change is additive composition over existing primitives (XState machine + lock manager + jobs queue), not a structural rewrite. The two new git functions are pure (`stdout, stderr` only), pushing all orchestration to the edges per the agent-offloading principle.
 
 ### Technology Stack
 
 | Layer | Choice / Version | Role in Feature | Notes |
 |-------|------------------|-----------------|-------|
-| Frontend | React 19 + Next.js 15 App Router | SmartMergeDialog, MergeConflictsPage, NotificationsPanel, MergeToast | Existing stack; UI prototypes already built |
-| Backend | Next.js API routes + Node.js | Merge/commit/conflict API endpoints, background job dispatch | Existing stack |
-| AI | `@anthropic-ai/claude-agent-sdk` `query()` | Conflict analysis and resolution | Existing dependency; new use case |
-| Messaging | SSE via `sse-broadcaster.ts` | `job-status` event delivery to all clients | Extended with one new event type |
-| State | In-memory `globalThis` Map | Background job registry and results | Follows existing `sse-broadcaster` pattern |
+| Git plumbing | Git ≥ 2.38 (plumbing path) or any Git (fallback path) | `merge-tree --write-tree`, `commit-tree`, `update-ref`, `worktree list --porcelain` | Plumbing path is the default; fallback uses `worktree add --detach` + `merge --squash` |
+| Backend / Orchestration | XState v5 (existing) | Smart Merge machine states + actors | New `preparing`, `publishing`, `ready-to-land` states; new `prepareSquashMerge`, `publishPreparedMerge` actors |
+| Backend / API | Next.js App Router (existing) | `POST /merge`, `POST /merge/land`, `POST /merge/discard` | Land + Discard are new routes under `/api/projects/[name]/sessions/[session]/merge/` |
+| Concurrency | `acquireProjectLock` from `src/lib/prompt/single-flight.ts` (existing surface) | Finalization-side-effect serializer (scope narrowed) | No code change to the lock manager itself; only the call site narrows |
+| Schemas / Events | Zod v4 (existing) | `BackgroundJob`, `JobStatusEvent` schema additions | New status enum values `ready-to-land`, `discarded`; new optional `parkedRef` field |
+| Frontend | React 19 + Next.js App Router (existing) | Land affordance in `NotificationsPanel` and conflict-free job toast | Reuses existing `MergeToast`, `NotificationsPanel` |
 
 ## System Flows
 
-### Two-Phase Merge Pipeline
+### Prepare/publish merge pipeline
 
 ```mermaid
 sequenceDiagram
-    participant User
-    participant Dialog as SmartMergeDialog
-    participant API as POST merge
-    participant Jobs as background-jobs
-    participant Git as git-operations
-    participant Claude as conflict-resolution
-    participant ValFix as validation-fix
-    participant SSE as sse-broadcaster
+    participant Machine
+    participant Prep as prepareSquashMerge
+    participant Park as refs/cc-merges/<jobId>
+    participant Lock as acquireProjectLock
+    participant Disc as worktree discovery
+    participant Pub as publishPreparedMerge
+    participant Fin as finalization
 
-    User->>Dialog: Click Start Merge
-    Dialog->>API: POST merge with message and autoResolve
-    API->>Jobs: dispatchMergeJob
-    API-->>Dialog: 202 Accepted with jobId
-    Dialog->>Dialog: Show submitted state
+    Machine->>Prep: featureSha, targetSha, message
+    alt Git >= 2.38
+        Prep->>Prep: merge-tree --write-tree
+        Prep->>Prep: commit-tree -> preparedSha
+    else fallback
+        Prep->>Prep: worktree add --detach
+        Prep->>Prep: merge --squash; commit --no-verify
+        Prep->>Prep: rev-parse HEAD; worktree remove -f
+    end
+    Prep->>Park: update-ref refs/cc-merges/<jobId> preparedSha
+    Prep-->>Machine: preparedSha, expectedTargetSha, parkedRef
 
-    Jobs->>Jobs: Acquire session lock
-    Jobs->>SSE: broadcast job-status running
-
-    Note over Jobs,Git: Phase 1 - Merge main into feature branch
-    Jobs->>Git: mergeMainIntoFeature worktreePath
-
-    alt No conflicts
-        Note over Jobs,SSE: Phase 2 - Pre-merge validation (with recovery)
-        Jobs->>SSE: broadcast phase=validating
-        Jobs->>Jobs: runPreMergeValidation
-        alt Validation fails + autoResolve
-            Jobs->>SSE: broadcast phase=fixing-validation
-            Jobs->>ValFix: fixValidationErrors(output)
-            Jobs->>Git: commitChanges (fix)
-            Jobs->>SSE: broadcast phase=re-validating
-            Jobs->>Jobs: runPreMergeValidation (retry)
+    Machine->>Disc: git worktree list --porcelain
+    alt target not checked out
+        Machine->>Lock: acquire
+        Machine->>Pub: update-ref refs/heads/<target> preparedSha expectedTargetSha
+        alt CAS ok
+            Pub->>Park: update-ref -d refs/cc-merges/<jobId>
+            Pub-->>Machine: mergeHash = preparedSha
+            Machine->>Fin: setSessionFinished + retarget + stop
+            Machine->>Lock: release
+        else CAS lost & retries left
+            Machine->>Lock: release
+            Machine->>Prep: re-prepare against new tip
+        else CAS exhausted
+            Machine->>Lock: release
+            Machine-->>Machine: transition to failed
         end
-
-        Note over Jobs,Git: Phase 3 - Squash merge into main
-        Jobs->>SSE: broadcast phase=squash-merging
-        Jobs->>Jobs: Acquire project lock (projectPath)
-        Jobs->>Git: squashMerge projectPath branchName message
-        Jobs->>Jobs: Release project lock
-        Jobs->>Jobs: setSessionFinished
-        Jobs->>SSE: broadcast job-status completed with mergeHash
-        Jobs->>Jobs: Release session lock
-    else Conflicts detected
-        alt autoResolve enabled
-            Jobs->>Claude: resolveConflicts worktreePath
-            alt Claude succeeds
-                Jobs->>Git: commitChanges worktreePath resolution message
-                Note over Jobs,SSE: Validation with recovery (same as above)
-                Jobs->>SSE: broadcast phase=squash-merging
-                Jobs->>Jobs: Acquire project lock (projectPath)
-                Jobs->>Git: squashMerge projectPath branchName message
-                Jobs->>Jobs: Release project lock
-                Jobs->>Jobs: setSessionFinished
-                Jobs->>SSE: broadcast job-status completed with mergeHash
-            else Claude fails
-                Jobs->>SSE: broadcast job-status conflicts with analysis
-            end
-        else autoResolve disabled
-            Jobs->>SSE: broadcast job-status conflicts with conflictFiles
-        end
-        Jobs->>Jobs: Release session lock
+    else target checked out clean
+        Machine->>Lock: acquire
+        Machine->>Pub: CAS as above
+        Pub->>Pub: git -C <target> reset --hard preparedSha
+        Pub->>Park: update-ref -d refs/cc-merges/<jobId>
+        Machine->>Fin: setSessionFinished + retarget + stop
+        Machine->>Lock: release
+    else target checked out dirty
+        Machine-->>Machine: transition to ready-to-land
+        Note over Park: parked ref retained
     end
 ```
 
-### Conflict Resolution Flow
+Key decisions captured in the diagram:
+- The project lock is acquired only at the start of publish and released after finalization (Requirement 8).
+- Worktree discovery happens **before** lock acquisition; only the publish + finalization side-effects need serialization.
+- On lost CAS, the machine reruns prepare against the new tip with bounded retry (default 3 attempts including the original try, per Requirement 4.2).
+- A dirty target never triggers the lock, never advances the ref, and never deletes the parked ref.
+
+### Merge machine state graph (revised)
 
 ```mermaid
 stateDiagram-v2
-    [*] --> MergeStarted: User submits merge
-    MergeStarted --> Phase1: Background job starts
-    Phase1 --> NoConflicts: git merge main succeeds
-    Phase1 --> ConflictsDetected: git merge main has conflicts
-
-    NoConflicts --> Phase2: Proceed to squash merge
-    Phase2 --> Completed: Squash merge succeeds
-    Phase2 --> Failed: Squash merge fails
-
-    ConflictsDetected --> AutoResolving: autoResolve enabled
-    ConflictsDetected --> ManualReview: autoResolve disabled
-
-    AutoResolving --> ResolutionSucceeded: Claude resolves all
-    AutoResolving --> ManualReview: Claude fails
-
-    ResolutionSucceeded --> Phase2: Commit resolution
-    ManualReview --> UserReviewing: User on conflicts page
-    UserReviewing --> ResolveRequested: User clicks Fix with Claude
-    ResolveRequested --> AutoResolving: New resolution job
-
-    Completed --> [*]
-    Failed --> [*]
+    [*] --> entryRouting
+    entryRouting --> verifyingBranch: entryMode = "merge"
+    entryRouting --> publishing: entryMode = "land"
+    entryRouting --> discarding: entryMode = "discard"
+    verifyingBranch --> routing
+    routing --> checkingUncommitted
+    routing --> resolvingConflicts: resolve-conflicts job
+    checkingUncommitted --> committingUncommitted
+    checkingUncommitted --> mergingMain
+    committingUncommitted --> mergingMain
+    mergingMain --> validating: clean
+    mergingMain --> conflictsDetected: conflicts
+    conflictsDetected --> resolvingConflicts: autoResolve
+    conflictsDetected --> analyzingConflicts: manual
+    resolvingConflicts --> committingResolution: resolved
+    resolvingConflicts --> conflicts: failed
+    committingResolution --> validating
+    analyzingConflicts --> conflicts
+    validating --> preparing: ok
+    validating --> fixingValidation: fail + autoResolve
+    validating --> failed: fail + manual
+    fixingValidation --> checkingFixChanges
+    checkingFixChanges --> committingFix
+    checkingFixChanges --> revalidating
+    committingFix --> revalidating
+    revalidating --> preparing: ok
+    revalidating --> fixingValidation: retry
+    revalidating --> failed
+    preparing --> publishing: prepared
+    preparing --> failed: prepare conflicts surfaced
+    publishing --> completed: CAS ok + finalize ok
+    publishing --> readyToLand: target dirty
+    publishing --> preparing: CAS lost + merge mode + retries remain
+    publishing --> failed: CAS lost + land mode
+    publishing --> failed: CAS exhausted or finalize error
+    discarding --> discarded
+    readyToLand --> [*]
+    discarded --> [*]
+    conflicts --> [*]
+    failed --> [*]
+    completed --> [*]
 ```
 
-### Background Commit Flow
+Key decisions:
+- `squashMerging` is replaced by the explicit pair `preparing` → `publishing`.
+- `readyToLand` is a new terminal state distinct from `failed` and `completed`; its terminal output carries `parkedRef` and `preparedSha`.
+- The CAS-loss → re-prepare loop is encoded as a `publishing → preparing` edge guarded by **both** `entryMode === "merge"` and a remaining-retry counter held in machine context. The Land entry path cannot re-prepare (Requirement 6.2); CAS loss in Land mode takes the explicit `publishing → failed` edge with a directive to re-invoke the merge.
+- `entryRouting` is a transient initial state that uses `always` transitions to dispatch to the right entry point based on `entryMode` set from `MergeInput`.
+
+### Land prepared merge flow
 
 ```mermaid
 sequenceDiagram
     participant User
-    participant API as POST commit
-    participant Jobs as background-jobs
-    participant Git as git-operations
-    participant SSE as sse-broadcaster
+    participant UI as LandPreparedMergeButton
+    participant API as POST merge/land
+    participant Queue as jobs queue
+    participant Machine as land machine
+    participant Pub as publishPreparedMerge
 
-    User->>API: POST commit with message
-    API->>Jobs: dispatchCommitJob
-    API-->>User: 202 Accepted with jobId
-    Jobs->>Jobs: Acquire session lock
-    Jobs->>SSE: broadcast job-status running
-    Jobs->>Git: commitChanges worktreePath message
-    alt Success
-        Jobs->>SSE: broadcast job-status completed with hash
-    else Failure
-        Jobs->>SSE: broadcast job-status failed with error
+    User->>UI: click "Land prepared merge"
+    UI->>API: POST land
+    API->>Queue: dispatchLandJob(jobId)
+    Queue->>Machine: spawn machine with land entry
+    Machine->>Machine: re-discover target worktree
+    Machine->>Machine: verify refs/cc-merges/<jobId> still resolves
+    alt target clean (or not checked out)
+        Machine->>Pub: CAS + refresh + delete parked ref
+        Machine->>Machine: setSessionFinished + retarget + stop
+        Machine-->>UI: completed + mergeHash via SSE
+    else target still dirty
+        Machine-->>UI: ready-to-land retained via SSE
     end
-    Jobs->>Jobs: Release session lock
 ```
+
+The Land entry path is a thin re-entry to the same `publishing` state with `expectedTargetSha` re-read at entry; it does **not** re-run prepare or validation (Requirement 6.2).
 
 ## Requirements Traceability
 
 | Requirement | Summary | Components | Interfaces | Flows |
 |-------------|---------|------------|------------|-------|
-| 1.1 | Merge main into feature branch first | git-operations: `mergeMainIntoFeature` | Service | Two-Phase Merge Pipeline |
-| 1.2 | Proceed to squash merge after phase 1 success | background-jobs: merge pipeline | Service | Two-Phase Merge Pipeline |
-| 1.3 | Halt on conflicts, report files, do not modify main | background-jobs: merge pipeline, git-operations | Service, Event | Two-Phase Merge Pipeline |
-| 1.4 | Leave worktree in conflict state | git-operations: `mergeMainIntoFeature` | Service | Two-Phase Merge Pipeline |
-| 1.5 | Report merge commit hash | background-jobs: merge pipeline | Event | Two-Phase Merge Pipeline |
-| 2.1 | Fire-and-forget merge API | merge route, background-jobs | API | Two-Phase Merge Pipeline |
-| 2.2 | Hold session lock during merge job | background-jobs | Service | Two-Phase Merge Pipeline |
-| 2.3 | Broadcast merge result via SSE | background-jobs, sse-broadcaster | Event | Two-Phase Merge Pipeline |
-| 2.4 | Allow navigation during merge | SmartMergeDialog | — | — |
-| 2.5 | Toast on merge success | MergeToast, NotificationListener | Event | — |
-| 2.6 | Toast on merge conflicts | MergeToast, NotificationListener | Event | — |
-| 2.7 | Toast on merge error | MergeToast, NotificationListener | Event | — |
-| 3.1 | Fire-and-forget commit API | commit route, background-jobs | API | Background Commit Flow |
-| 3.2 | Hold session lock during commit job | background-jobs | Service | Background Commit Flow |
-| 3.3 | Broadcast commit result via SSE | background-jobs, sse-broadcaster | Event | Background Commit Flow |
-| 3.4 | Notification on commit success | NotificationListener, MergeToast | Event | Background Commit Flow |
-| 3.5 | Notification on commit error | NotificationListener, MergeToast | Event | Background Commit Flow |
-| 4.1 | In-memory job registry keyed by session | background-jobs | State | — |
-| 4.2 | Job lifecycle states | background-jobs | State | — |
-| 4.3 | Broadcast job-status SSE event on transitions | background-jobs, sse-broadcaster | Event | — |
-| 4.4 | Prevent concurrent jobs per session | background-jobs, lock | Service | — |
-| 4.5 | Guaranteed lock release (try/finally) | background-jobs | Service | — |
-| 4.6 | Stale job timeout recovery | background-jobs | Service | — |
-| 4.7 | Project-level lock for squash merge serialization | background-jobs, lock | Service | Two-Phase Merge Pipeline |
-| 4.8 | Project lock timeout with error | background-jobs, lock | Service | Two-Phase Merge Pipeline |
-| 5.1 | Auto-resolve toggle in merge dialog | SmartMergeDialog | — | — |
-| 5.2 | Auto-invoke Claude on conflicts | background-jobs, conflict-resolution | Service | Conflict Resolution Flow |
-| 5.3 | Notify user on manual review mode | background-jobs | Event | Conflict Resolution Flow |
-| 5.4 | Commit resolution and continue merge | background-jobs, git-operations | Service | Conflict Resolution Flow |
-| 5.5 | Fallback to manual on Claude failure | background-jobs | Service | Conflict Resolution Flow |
-| 6.1 | Invoke Claude SDK query for conflict analysis | conflict-resolution | Service | Conflict Resolution Flow |
-| 6.2 | Structured output per conflict | conflict-resolution | Service | Conflict Resolution Flow |
-| 6.3 | Store results via conflicts API | background-jobs, conflicts route | API, State | — |
-| 6.4 | Resolve conflict markers in working tree | conflict-resolution | Service | Conflict Resolution Flow |
-| 7.1 | Expandable conflict review cards | MergeConflictsPage | — | — |
-| 7.2 | Per-conflict approve/reject | MergeConflictsPage | — | — |
-| 7.3 | Auto-collapse on approve | MergeConflictsPage | — | — |
-| 7.4 | Feedback textarea on reject | MergeConflictsPage | — | — |
-| 7.5 | Summary banner | MergeConflictsPage | — | — |
-| 7.6 | Accept All and Fix action | MergeConflictsPage, resolve-conflicts route | API | — |
-| 7.7 | Fix with Claude action | MergeConflictsPage, resolve-conflicts route | API | — |
-| 7.8 | Navigate away without losing progress | conflicts route, background-jobs | State | — |
-| 8.1 | Slide-in notifications panel in topbar | NotificationsPanel, Topbar | — | — |
-| 8.2 | Conversations and Jobs sections | NotificationsPanel | — | — |
-| 8.3 | Conversation and job notification types | NotificationsPanel | — | — |
-| 8.4 | Notification item metadata | NotificationsPanel | — | — |
-| 8.5 | Click-to-navigate | NotificationsPanel | — | — |
-| 8.6 | Topbar badge with active count | Topbar, NotificationsPanel | — | — |
-| 8.7 | Real-time SSE updates | NotificationListener, NotificationsPanel | Event | — |
-| 9.1 | Auto-recovery on validation failure | validation-fix, background-jobs | Service | Two-Phase Merge Pipeline |
-| 9.2 | Claude fixes validation errors | validation-fix | Service | Two-Phase Merge Pipeline |
-| 9.3 | Commit fixes and re-validate | background-jobs, git-operations | Service | Two-Phase Merge Pipeline |
-| 9.4 | Proceed to squash on re-validation pass | background-jobs | Service | Two-Phase Merge Pipeline |
-| 9.5 | Report original error on recovery failure | background-jobs | Event | Two-Phase Merge Pipeline |
-| 9.6 | Single retry limit | background-jobs | Service | — |
-| 9.7 | Same SDK patterns as conflict-resolution | validation-fix | Service | — |
-| 10.1 | Phase field in job-status SSE event | schemas.ts | Event | — |
-| 10.2 | Phase field in BackgroundJob type | types | State | — |
-| 10.3 | Broadcast phase=validating | background-jobs | Event | Two-Phase Merge Pipeline |
-| 10.4 | Broadcast phase=fixing-validation | background-jobs | Event | Two-Phase Merge Pipeline |
-| 10.5 | Broadcast phase=re-validating | background-jobs | Event | Two-Phase Merge Pipeline |
-| 10.6 | Broadcast phase=squash-merging | background-jobs | Event | Two-Phase Merge Pipeline |
-| 10.7 | Phase-aware labels in Activities panel | NotificationsPanel | — | — |
-| 10.8 | Phase cleared on terminal state | background-jobs | Event | — |
-| 11.1 | Error summary in Activities panel | NotificationsPanel | — | — |
-| 11.2 | Intelligent error extraction | NotificationsPanel (summarizeError) | — | — |
-| 11.3 | Fallback truncation | NotificationsPanel (summarizeError) | — | — |
-| 11.4 | Full error tooltip on hover | NotificationsPanel | — | — |
-| 11.5 | Monospace error styling | globals.css (.np-item-error) | — | — |
-| 12.1 | Merge dialog with branch info and toggle | SmartMergeDialog | — | — |
-| 12.2 | Uncommitted changes warning | SmartMergeDialog | — | — |
-| 12.3 | Submitted confirmation state | SmartMergeDialog | — | — |
-| 12.4 | Contextual messaging by auto-resolve setting | SmartMergeDialog | — | — |
-| 12.5 | Dismissible at any time | SmartMergeDialog | — | — |
-| 12.6 | Cmd/Ctrl+Enter submit | SmartMergeDialog | — | — |
+| 1.1 | Merge target into feature first | merge actors: `mergeMain` (existing) | Service | merge state graph |
+| 1.2 | Proceed to prepare on clean merge | merge machine: `mergingMain → validating` | Service | merge state graph |
+| 1.3 | Halt on conflicts without touching target | merge actors: `mergeMain` (existing) | Service | merge state graph |
+| 1.4 | Leave worktree in conflict state | git plumbing: existing `mergeTargetIntoFeature` | Service | — |
+| 1.5 | Report merge commit hash on publish | merge machine: `publishing → completed` | Event | prepare/publish pipeline |
+| 2.1 | Prepare + publish split | git plumbing: `prepareSquashMerge`, `publishPreparedMerge` | Service | prepare/publish pipeline |
+| 2.2 | Prepare must not write target worktree | git plumbing: `prepareSquashMerge` (plumbing or detached fallback) | Service | prepare/publish pipeline |
+| 2.3 | Validation must not write target worktree | merge machine: `validating` runs in session worktree | Service | merge state graph |
+| 2.4 | Prepare produces preparedSha + expectedTargetSha | git plumbing: `prepareSquashMerge` return shape | Service | prepare/publish pipeline |
+| 2.5 | Park prepared commit at `refs/cc-merges/<jobId>` | git plumbing: `prepareSquashMerge` final step | Service | prepare/publish pipeline |
+| 2.6 | Delete `MergePreconditionFailed` | git layer surface change | Service | — |
+| 3.1 | Plumbing prepare path on Git ≥ 2.38 | git plumbing: `prepareSquashMerge` plumbing branch | Service | prepare/publish pipeline |
+| 3.2 | Plumbing conflict reporting | git plumbing: `prepareSquashMerge` conflict surface | Service | — |
+| 3.3 | Detached-worktree fallback | git plumbing: `prepareSquashMerge` fallback branch | Service | prepare/publish pipeline |
+| 3.4 | Same artifact shape from both paths | git plumbing: `PrepareResult` | Service | — |
+| 3.5 | Match `commit --no-verify` metadata posture | git plumbing: `prepareSquashMerge` plumbing branch | Service | — |
+| 3.6 | Fallback temp worktree cleanup | git plumbing: `prepareSquashMerge` fallback `finally` | Service | — |
+| 4.1 | CAS via `update-ref` with expected-old | git plumbing: `publishPreparedMerge` | Service | prepare/publish pipeline |
+| 4.2 | Bounded re-prepare on CAS loss | merge machine: `publishing → preparing` edge | Service | prepare/publish pipeline |
+| 4.3 | Failed on retry exhaustion | merge machine: `publishing → failed` edge | Event | prepare/publish pipeline |
+| 4.4 | CAS is the correctness primitive | git plumbing + machine docs | Service | — |
+| 4.5 | Broadcast new commit SHA on success | jobs queue: `merge-completed` SSE | Event | prepare/publish pipeline |
+| 5.1 | Discover checked-out target via `worktree list --porcelain` | git plumbing: `discoverTargetCheckout` | Service | prepare/publish pipeline |
+| 5.2 | Transition to `ready-to-land` on dirty target | merge machine: `publishing → readyToLand` | Service | prepare/publish pipeline |
+| 5.3 | SSE event includes `parkedRef` and `preparedSha` | jobs schemas: `JobStatusEvent.parkedRef` | Event | — |
+| 5.4 | Notify user with Land affordance | notifications: NotificationsPanel + MergeToast | Event | — |
+| 5.5 | `ready-to-land` is a distinct terminal state | merge machine + jobs schemas | State | merge state graph |
+| 5.6 | Parked ref retained until land or discard | git plumbing: `publishPreparedMerge` (skip delete on dirty), land/discard actors | Service | — |
+| 6.1 | Expose Land action on `ready-to-land` jobs | UI: LandPreparedMergeButton, NotificationsPanel | — | Land flow |
+| 6.2 | Land re-runs only publish-phase checks | merge machine: land entry (no prepare/validate) | Service | Land flow |
+| 6.3 | Land advances ref via same CAS protocol | git plumbing: `publishPreparedMerge` reused | Service | Land flow |
+| 6.4 | Land while still dirty keeps `ready-to-land` | merge machine: land entry → readyToLand | Service | Land flow |
+| 6.5 | Land success transitions to `completed`, broadcasts SSE, deletes parked ref | merge machine + git plumbing | Event | Land flow |
+| 6.6 | Discard action deletes parked ref and transitions to `discarded` | API + merge machine: discard entry | Service | — |
+| 7.1 | Refresh checked-out target after clean publish | git plumbing: `publishPreparedMerge` refresh step | Service | prepare/publish pipeline |
+| 7.2 | Skip refresh when target not checked out | git plumbing: `publishPreparedMerge` skip branch | Service | prepare/publish pipeline |
+| 7.3 | Never refresh a dirty target | machine routes dirty target to `readyToLand` before publish | Service | prepare/publish pipeline |
+| 7.4 | Refresh failure is non-fatal warning | git plumbing: `publishPreparedMerge` refresh-error path | Event | — |
+| 8.1 | Lock held only inside publish + finalization | merge actor: lock scope narrowed | Service | prepare/publish pipeline |
+| 8.2 | Lock not held during prepare / validate / conflict / fix | merge actor surface | Service | — |
+| 8.3 | Operations performed under the lock | merge actor: discovery + CAS + refresh + finalize | Service | — |
+| 8.4 | Lock is finalization serializer, CAS is correctness | merge actor + git plumbing | Service | — |
+| 8.5 | Session + conversation locks unchanged | `src/lib/prompt/single-flight.ts` untouched | Service | — |
+| 9.1 | `setSessionFinished` on success | merge actor: finalization step | Service | prepare/publish pipeline |
+| 9.2 | `retargetOrphanedChildren` on success | merge actor: finalization step | Service | prepare/publish pipeline |
+| 9.3 | `stopAllForSession` on success | merge actor: finalization step | Service | prepare/publish pipeline |
+| 9.4 | Delete parked ref on success | git plumbing: `publishPreparedMerge` cleanup | Service | prepare/publish pipeline |
+| 9.5 | Terminal `job-status` SSE event with new SHA | jobs queue | Event | prepare/publish pipeline |
+| 9.6 | Finalization runs under the narrowed lock | merge actor surface | Service | prepare/publish pipeline |
+| 10.1–10.8 | Async merge UX (unchanged) | dispatchMergeJob, SmartMergeDialog, MergeToast | API + Event | — |
+| 11.1–11.5 | Async commit UX (unchanged) | dispatchCommitJob | API + Event | — |
+| 12.1 | In-memory job registry | jobs queue (existing) | State | — |
+| 12.2 | Extended lifecycle states | jobs schemas: `preparing`, `publishing`, `ready-to-land`, `discarded`, `conflicts` | State | — |
+| 12.3 | Broadcast job-status SSE on transitions | jobs queue + jobs schemas | Event | — |
+| 12.4 | Prevent concurrent jobs per session | session lock (unchanged) | Service | — |
+| 12.5 | Lock release on terminal state | jobs queue try/finally (existing) | Service | — |
+| 12.6 | Stale job timeout recovery | jobs queue (existing) | Service | — |
+| 12.7 | Concurrent publishers serialized by lock; correctness by CAS | merge actor + git plumbing | Service | prepare/publish pipeline |
+| 13.1–13.5 | Auto-resolve toggle (unchanged) | SmartMergeDialog, merge machine | — | merge state graph |
+| 14.1–14.5 | Conflict analysis with Claude (unchanged) | conflict-resolution actor | Service | — |
+| 15.1–15.9 | Manual conflict review (unchanged) | MergeConflictsPage | — | — |
+| 16.1–16.7 | Notifications panel (extended for `ready-to-land`) | NotificationsPanel, notification.store | Event | Land flow |
+| 17.1–17.8 | Pre-merge validation auto-recovery (unchanged) | validation-fix actor | Service | merge state graph |
+| 18.1–18.10 | Phase-aware job status | jobs schemas: new `phase` strings | Event | — |
+| 19.1–19.5 | Error details in Activities panel (unchanged) | NotificationsPanel | — | — |
+| 20.1–20.7 | Smart Merge dialog (unchanged; precondition warning removed) | SmartMergeDialog | — | — |
 
 ## Components and Interfaces
 
-| Component | Domain/Layer | Intent | Req Coverage | Key Dependencies | Contracts |
-|-----------|-------------|--------|-------------|-----------------|-----------|
-| background-jobs | Backend/Infrastructure | Manage job lifecycle, dispatch, state tracking, SSE broadcast, validation recovery | 2.1-2.3, 3.1-3.3, 4.1-4.8, 5.2-5.5, 9.1-9.6, 10.3-10.6, 10.8 | lock (P0), git-operations (P0), conflict-resolution (P0), validation-fix (P0), sse-broadcaster (P0) | Service, Event, State |
-| validation-fix | Backend/Domain | Claude SDK auto-fix for pre-merge validation errors | 9.1-9.7 | claude-agent-sdk (P0) | Service |
-| lock (extension) | Backend/Infrastructure | Project-level lock to serialize squash merges across sessions | 1.2, 2.2 | — | Service |
-| git-operations (extension) | Backend/Domain | Two-phase merge, conflict detection | 1.1-1.5 | — | Service |
-| conflict-resolution | Backend/Domain | Claude SDK conflict analysis and resolution | 6.1-6.4 | claude-agent-sdk (P0), git-operations (P1) | Service |
-| merge route (extension) | Backend/API | Async merge dispatch | 2.1, 12.3 | background-jobs (P0) | API |
-| commit route (extension) | Backend/API | Async commit dispatch | 3.1 | background-jobs (P0) | API |
-| conflicts route (new) | Backend/API | Conflict data retrieval | 6.3, 7.8 | background-jobs (P0) | API |
-| resolve-conflicts route (new) | Backend/API | Conflict resolution dispatch | 7.6, 7.7 | background-jobs (P0) | API |
-| SmartMergeDialog (wiring) | Frontend/UI | Submit merge as background job | 9.1-9.6 | merge route (P0) | — |
-| MergeConflictsPage (wiring) | Frontend/UI | Review and act on conflict analysis | 7.1-7.8 | conflicts route (P0), resolve-conflicts route (P0) | — |
-| NotificationListener (extension) | Frontend/Infrastructure | Handle job-status SSE events | 8.7 | sse-broadcaster (P0), notification.store (P0) | Event |
-| notification.store (new) | Frontend/State | Zustand store for job notifications and toast queue | 8.2, 8.3, 8.7 | — | State |
-| NotificationsPanel (wiring) | Frontend/UI | Display conversations and jobs | 8.1-8.6 | notification.store (P0) | — |
-| MergeToast (wiring) | Frontend/UI | Ephemeral job result notifications | 2.5-2.7, 3.4-3.5 | notification.store (P0) | — |
-| Topbar (extension) | Frontend/UI | NotificationsPanel toggle, badge | 8.1, 8.6 | NotificationsPanel (P0) | — |
-| SessionDetailPage (extension) | Frontend/UI | Swap MergeDialog for SmartMergeDialog | 9.1 | SmartMergeDialog (P0) | — |
-| conflicts page route (new) | Frontend/Route | Next.js page wrapping MergeConflictsPage | 7.1 | MergeConflictsPage (P0), conflicts route (P0) | — |
+| Component | Domain/Layer | Intent | Req Coverage | Key Dependencies (P0/P1) | Contracts |
+|-----------|--------------|--------|--------------|--------------------------|-----------|
+| `prepareSquashMerge` (new) | Git plumbing (`src/lib/git/worktree.ts`) | Produce a parked single-parent squash commit OID without touching the target worktree | 2.1, 2.2, 2.4, 2.5, 3.1–3.6 | Git client (P0) | Service |
+| `publishPreparedMerge` (new) | Git plumbing (`src/lib/git/worktree.ts`) | Advance the target ref via CAS, optionally refresh a clean target worktree, delete the parked ref on success | 1.5, 4.1, 4.5, 5.6, 7.1–7.4, 9.4 | Git client (P0) | Service |
+| `discoverTargetCheckout` (new) | Git plumbing (`src/lib/git/worktree.ts`) | Read `git worktree list --porcelain` and `git status --porcelain` to classify the target worktree as not-checked-out / clean / dirty | 5.1, 7.2 | Git client (P0) | Service |
+| Removed: `squashMerge`, `MergePreconditionFailed` | Git plumbing (`src/lib/git/worktree.ts`, `src/lib/workflow-graph/errors.ts`) | Deleted; supplanted by prepare/publish split | 2.6 | — | — |
+| `prepareActor` (new) | Merge orchestration (`src/lib/workflows/merge/actors.ts`) | XState wrapper that invokes `prepareSquashMerge` and threads job context | 2.1, 2.4, 2.5 | `prepareSquashMerge` (P0) | Service |
+| `publishActor` (new) | Merge orchestration (`src/lib/workflows/merge/actors.ts`) | XState wrapper that runs target discovery, acquires the project lock, invokes `publishPreparedMerge`, runs finalization, releases the lock | 4.1–4.5, 5.1, 5.2, 5.6, 7.1–7.4, 8.1–8.4, 9.1–9.6, 12.7 | `discoverTargetCheckout` (P0), `publishPreparedMerge` (P0), `acquireProjectLock` (P0), session/state services (P0) | Service |
+| Removed: `squashMergeActor` | Merge orchestration (`src/lib/workflows/merge/actors.ts`) | Replaced by `prepareActor` + `publishActor` | — | — | — |
+| `mergeMachine` (extended) | Merge orchestration (`src/lib/workflows/merge/machine.ts`) | Adds `preparing`, `publishing`, `readyToLand` states; routes CAS-loss to re-prepare; routes dirty target to `readyToLand` | 4.2, 4.3, 5.2, 5.5, 6.2, 6.3, 6.4, 6.5, 6.6, 12.2 | `prepareActor` (P0), `publishActor` (P0) | State |
+| `graphContextSquashMergeActor` (rewritten) | Graph orchestration (`src/lib/workflow-graph/graph-context-squash-merge-actor.ts`) | Same prepare/publish split for graph fan-in; no session-lifecycle side effects | 2.1, 4.1, 4.2, 5.2, 7.1–7.4, 8.1–8.4 | `prepareSquashMerge` (P0), `publishPreparedMerge` (P0), `acquireProjectLock` (P0) | Service |
+| `acquireProjectLock` (call-site change only) | Concurrency (`src/lib/prompt/single-flight.ts`) | Lock surface unchanged; only the call sites narrow its scope to publish + finalization | 8.1, 8.2, 8.3 | — | Service |
+| Jobs schemas (extended) | Schemas (`src/lib/jobs/schemas.ts`) | Add `ready-to-land`, `discarded` status values; add `parkedRef`, new `phase` strings | 5.3, 5.5, 6.6, 10.4, 12.2, 18.1–18.10 | — | Event + State |
+| Merge route handlers (extended) | API (`src/app/api/projects/[name]/sessions/[session]/merge/route.ts`) | Removes any precondition warning based on the target worktree | 20.7 | — | API |
+| Land route (new) | API (`src/app/api/projects/[name]/sessions/[session]/merge/land/route.ts`) | Accepts a Land action against a `ready-to-land` job, dispatches the Land entry path | 6.1, 6.3 | jobs queue (P0) | API |
+| Discard route (new) | API (`src/app/api/projects/[name]/sessions/[session]/merge/discard/route.ts`) | Accepts an explicit discard, deletes the parked ref, transitions the job to `discarded` | 6.6 | jobs queue (P0) | API |
+| Notification surface (extended) | UI (`NotificationsPanel`, `MergeToast`) | Renders `ready-to-land` notifications with the Land affordance; preserves all other existing job rendering | 5.4, 6.1, 16.3, 16.5, 16.6 | jobs schemas (P0) | — |
+| `LandPreparedMergeButton` (new) | UI component (cross-feature: `src/components/`) | Per-job button shown in NotificationsPanel and on the conflicts/job detail surface for jobs in `ready-to-land`; submits Land or Discard | 5.4, 6.1, 6.6 | Land + Discard routes (P0) | — |
 
-### Backend / Infrastructure
+### Git plumbing
 
-#### background-jobs
+#### `prepareSquashMerge`
 
 | Field | Detail |
 |-------|--------|
-| Intent | Manage lifecycle of background commit and merge jobs: dispatch, execute, track state, broadcast results |
-| Requirements | 2.1-2.3, 3.1-3.3, 4.1-4.8, 5.2-5.5 |
+| Intent | Produce a single-parent squash commit OID with the target branch as parent, without writing to the target worktree |
+| Requirements | 2.1, 2.2, 2.4, 2.5, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6 |
 
 **Responsibilities & Constraints**
-- Owns the in-memory job registry (Map of active/completed jobs per session)
-- Orchestrates the two-phase merge pipeline (phase 1 → conflict check → auto-resolve or manual → phase 2)
-- Acquires and releases the session lock around job execution
-- Broadcasts `job-status` SSE events on every state transition
-- Stores conflict analysis results for retrieval by the conflicts API
-- Prevents concurrent jobs per session (rejects new jobs if one is active)
+- Owns the choice between plumbing and detached-worktree fallback paths.
+- Records the target SHA observed at the start of prepare as `expectedTargetSha`.
+- Parks the resulting commit at `refs/cc-merges/<jobId>` via `git update-ref refs/cc-merges/<jobId> <preparedSha>`.
+- Never invokes `git merge`, `git commit`, `git reset`, `git checkout`, `git read-tree`, or any other write against the target worktree.
+- On any failure of the fallback path, removes `.worktrees/__merge_<jobId>` before returning.
+- On success of either path, produces the same `PrepareResult` shape so the caller can ignore the path taken.
 
 **Dependencies**
-- Inbound: merge route, commit route, resolve-conflicts route — dispatch jobs (P0)
-- Outbound: git-operations — `mergeMainIntoFeature`, `squashMerge`, `commitChanges` (P0)
-- Outbound: conflict-resolution — `resolveConflicts` (P0)
-- Outbound: sse-broadcaster — `broadcast` (P0)
-- Outbound: lock — `acquireSessionLock`, `acquireProjectLock` (P0)
-- Outbound: state — `setSessionFinished` (P0)
-
-**Contracts**: Service [x] / Event [x] / State [x]
-
-##### Service Interface
-
-```typescript
-interface BackgroundJobsService {
-  dispatchMergeJob(params: {
-    projectPath: string;
-    sessionName: string;
-    worktreePath: string;
-    branchName: string;
-    message: string;
-    autoResolve: boolean;
-  }): Result<{ jobId: string }, JobDispatchError>;
-
-  dispatchCommitJob(params: {
-    projectPath: string;
-    sessionName: string;
-    worktreePath: string;
-    message: string;
-  }): Result<{ jobId: string }, JobDispatchError>;
-
-  dispatchResolveConflictsJob(params: {
-    projectPath: string;
-    sessionName: string;
-    worktreePath: string;
-    branchName: string;
-    mergeMessage: string;
-    decisions?: ConflictDecisionInput[];
-  }): Result<{ jobId: string }, JobDispatchError>;
-
-  getJob(projectPath: string, sessionName: string): BackgroundJob | undefined;
-
-  getConflictAnalysis(projectPath: string, sessionName: string): ConflictAnalysis | undefined;
-}
-
-type JobDispatchError = "SESSION_BUSY" | "JOB_ALREADY_RUNNING";
-```
-
-- Preconditions: Session must exist, not be finished, and not have an active job
-- Postconditions: Job is registered, session lock is acquired, SSE `running` event is broadcast
-- Invariants: At most one active job per session at any time
-
-##### Event Contract
-
-Published events:
-```typescript
-// JobStatusEvent — broadcast on every state transition
-{
-  type: "job-status";
-  jobType: "commit" | "merge" | "resolve-conflicts";
-  status: "running" | "completed" | "failed" | "conflicts";
-  projectName: string;
-  sessionName: string;
-  jobId: string;
-  // Result fields (present based on status)
-  mergeHash?: string;      // completed merge
-  commitHash?: string;     // completed commit
-  conflictCount?: number;  // conflicts status
-  conflictFiles?: string[];// conflicts status
-  errorMessage?: string;   // failed status
-  branchName: string;
-  phase?: string;          // current pipeline stage (validating, fixing-validation, re-validating, squash-merging)
-}
-```
-
-Ordering / delivery guarantees: Events are broadcast to all connected SSE clients. No ordering guarantees beyond SSE stream ordering. Clients that reconnect may miss events (acceptable for ephemeral job status).
-
-##### State Management
-
-```typescript
-interface BackgroundJob {
-  jobId: string;
-  jobType: "commit" | "merge" | "resolve-conflicts";
-  status: "running" | "completed" | "failed" | "conflicts";
-  projectName: string;
-  sessionName: string;
-  branchName: string;
-  startedAt: string;       // ISO timestamp
-  completedAt?: string;    // ISO timestamp
-  phase?: string;          // current pipeline stage (validating, fixing-validation, re-validating, squash-merging)
-  // Result data
-  mergeHash?: string;
-  commitHash?: string;
-  conflictCount?: number;
-  conflictFiles?: string[];
-  errorMessage?: string;
-}
-
-interface ConflictAnalysis {
-  jobId: string;
-  projectName: string;
-  sessionName: string;
-  conflicts: ConflictEntry[];
-  resolvedAt?: string;     // set after successful resolution
-}
-
-interface ConflictEntry {
-  file: string;
-  description: string;
-  resolution: string;
-  rationale: string;
-}
-```
-
-- Persistence: `globalThis.__cc_background_jobs` Map keyed by `"${projectPath}::${sessionName}"`
-- Consistency: Single-writer (only the background job's async execution writes to its own entry)
-- Concurrency: Dispatch functions check for existing active job before accepting; session lock prevents concurrent git operations
-
-**Implementation Notes**
-- The job registry uses the same `globalThis` singleton pattern as `sse-broadcaster.ts` to survive HMR
-- Job dispatch is synchronous: validates, acquires lock, registers job, spawns un-awaited Promise, returns jobId
-- The Promise's execution acquires no additional locks — the session lock from dispatch is passed via closure
-- **Lock safety**: The background job Promise MUST wrap its entire execution in `try/finally` to guarantee the session lock is released even on unhandled exceptions, OOM, or Claude SDK stream errors. The `finally` block releases the lock and transitions the job to `failed` if it hasn't already reached a terminal state.
-- **Stale lock recovery**: A `JOB_TIMEOUT_MS` constant (default: 10 minutes) acts as a safety net. When `dispatchMergeJob` / `dispatchCommitJob` rejects with `JOB_ALREADY_RUNNING`, the caller checks `startedAt` — if the running job exceeds `JOB_TIMEOUT_MS`, it is force-transitioned to `failed`, its lock is released, and the new job is accepted. This handles edge cases where `try/finally` is insufficient (e.g., process-level crashes between restarts are already handled since in-memory locks are cleared on restart).
-- On completion, the job entry remains in the registry for the conflicts API to read. Entries are overwritten on the next job dispatch for the same session.
-- Conflict analysis results are stored in a separate `globalThis.__cc_conflict_analysis` Map so they persist across job completions
-
----
-
-#### lock (extension)
-
-| Field | Detail |
-|-------|--------|
-| Intent | Add project-level lock to serialize squash merge operations across sessions |
-| Requirements | 1.2, 2.2 |
+- Outbound: Git CLI (`merge-tree`, `commit-tree`, `update-ref`, `worktree add`/`remove`, `merge --squash`, `commit --no-verify`, `rev-parse`) — Inbound to `prepareActor` and `graphContextSquashMergeActor` (P0).
+- External: Git ≥ 2.38 for the plumbing branch; any Git for the fallback branch.
 
 **Contracts**: Service [x]
 
 ##### Service Interface
-
 ```typescript
-// New function added to lock.ts
-function acquireProjectLock(projectPath: string): () => void;
+interface PrepareSquashMergeInput {
+  projectPath: string;
+  featureBranch: string;
+  featureSha: string;
+  targetBranch: string;
+  targetSha: string;        // expected-old captured at the start of prepare
+  message: string;
+  jobId: string;            // used to build refs/cc-merges/<jobId>
+}
+
+type PrepareResult =
+  | { kind: "prepared"; preparedSha: string; expectedTargetSha: string; parkedRef: string }
+  | { kind: "conflicts"; expectedTargetSha: string; conflictFiles: string[] };
+
+function prepareSquashMerge(input: PrepareSquashMergeInput): Promise<PrepareResult>;
 ```
 
-- Preconditions: No other project-level lock is held for `projectPath`
-- Postconditions: Lock is held; returned closure releases it
-- Throws: If a project lock is already held for `projectPath`
-
-**Implementation Notes**
-- Uses the same `globalThis` singleton pattern as session locks: `globalThis.__cc_project_locks` Map keyed by `projectPath`
-- Scoped narrowly: acquired only around the `squashMerge()` call in the merge pipeline (not the entire job). This ensures that two sessions' Phase 1 (merge main into feature branch) can run concurrently, but Phase 2 (squash merge into main) is serialized.
-- The background-jobs merge pipeline acquires the project lock, calls `squashMerge()`, then releases it in a `try/finally` block — independent of the session lock lifecycle.
-- If the project lock is held when a job reaches Phase 2, the job waits with a simple retry-with-backoff loop (100ms intervals, up to 30s timeout). On timeout, the job transitions to `failed` with an explanatory error message.
-
----
-
-#### git-operations (extension)
-
-| Field | Detail |
-|-------|--------|
-| Intent | Add two-phase merge capability: merge main into feature branch with conflict detection |
-| Requirements | 1.1-1.5 |
-
-**Contracts**: Service [x]
-
-##### Service Interface
-
-```typescript
-// New function added to git-operations.ts
-async function mergeMainIntoFeature(
-  worktreePath: string
-): Promise<MergeMainResult>;
-
-type MergeMainResult =
-  | { status: "clean" }
-  | { status: "conflicts"; conflictFiles: string[] };
-```
-
-- Preconditions: `worktreePath` is a valid git worktree with a branch diverged from `main`
+- Preconditions: `projectPath` is a valid git repo; `featureSha` is reachable; `targetSha` matches `git rev-parse refs/heads/<targetBranch>` at the call site (the caller is responsible for capturing it just before invocation).
 - Postconditions:
-  - `clean`: main is merged into the feature branch; worktree is in a clean merge state
-  - `conflicts`: worktree is left in a conflicted merge state (conflict markers present in files); `conflictFiles` lists all unmerged paths
-- Invariants: The main branch (projectPath) is never modified by this function
+  - `kind: "prepared"`: `refs/cc-merges/<jobId>` resolves to `preparedSha`; no worktree was written to; if the fallback path was used, `.worktrees/__merge_<jobId>` no longer exists.
+  - `kind: "conflicts"`: no commit and no parked ref were created; the worktree state is unchanged; `conflictFiles` lists the conflicted paths.
+- Invariants: the function never advances `refs/heads/<targetBranch>`; the function never reads or writes the target worktree.
 
 **Implementation Notes**
-- Runs `git merge main` in the session worktree (not projectPath)
-- On success: returns `{ status: "clean" }`
-- On error: inspects stderr for `CONFLICT` / `merge conflict`. If conflict detected: runs `git diff --name-only --diff-filter=U` to list conflicted files. Does NOT abort the merge — leaves the worktree in conflict state per requirement 1.4. Returns `{ status: "conflicts", conflictFiles }`
-- On non-conflict error: rethrows
+- Plumbing branch:
+  - `git merge-tree --write-tree -z <targetSha> <featureSha>` produces the merged tree OID on stdout (exit 0) or a conflicted tree OID plus the conflict-info section (exit 1).
+  - On exit 0, `git commit-tree <tree> -p <targetSha> -m <message>` produces `preparedSha`. Author/committer identity, message handling, and signing posture all derive from the same `GIT_AUTHOR_*`/`GIT_COMMITTER_*` env and user config that `git commit --no-verify` reads today; `commit-tree` skips pre-commit hooks (matching `--no-verify`).
+  - On exit 1, the function does not call `commit-tree`; it parses the conflicted-files section and returns `kind: "conflicts"`.
+- Fallback branch:
+  - Provision `.worktrees/__merge_<jobId>` via `git worktree add --detach <path> <targetSha>`.
+  - Inside that worktree: `git merge --squash <featureBranch>` then `git commit --no-verify -m <message>`. Capture the new commit SHA via `git rev-parse HEAD`.
+  - Remove the temp worktree with `git worktree remove -f <path>` in a `finally` block so cleanup happens whether the merge succeeded, conflicted, or threw.
+  - Conflict detection in the fallback branch reuses today's stderr/diff-filter inspection.
+- Plumbing-vs-fallback gating:
+  - Cache `git --version` once per process; compare against `2.38.0`.
+  - A documented parity-gap matrix (initially empty) can force the fallback path for specific repo configurations; the function reads this matrix from `repoConfig.preMergePreparePath` (`"auto" | "plumbing" | "fallback"`).
+- Parking step:
+  - Always `git update-ref refs/cc-merges/<jobId> <preparedSha>` immediately after the commit is produced; if parking fails, surface the error.
 
 ---
 
-#### conflict-resolution
+#### `publishPreparedMerge`
 
 | Field | Detail |
 |-------|--------|
-| Intent | Invoke Claude Agent SDK to analyze and resolve merge conflicts in a session worktree |
-| Requirements | 6.1-6.4 |
+| Intent | Atomically advance the target branch ref to `preparedSha`, refresh a clean target worktree, delete the parked ref on success, and surface a non-fatal warning on refresh failure |
+| Requirements | 1.5, 4.1, 4.5, 5.6, 7.1, 7.2, 7.3, 7.4, 9.4 |
 
 **Responsibilities & Constraints**
-- Constructs the conflict resolution prompt adapted from the `fix-merge-conflicts` skill
-- Invokes `query()` with full tool access in the session worktree
-- Extracts structured `ConflictEntry[]` from Claude's assistant text output
-- Claude both resolves conflict markers in files AND produces the structured analysis
+- Performs `git update-ref refs/heads/<targetBranch> <preparedSha> <expectedTargetSha>`.
+- On CAS failure, returns a typed result so the caller can decide whether to re-prepare.
+- On CAS success and a clean target worktree, runs `git -C <targetWorktreePath> reset --hard <preparedSha>`.
+- On CAS success and no target worktree, skips the refresh step.
+- On CAS success, deletes the parked ref via `git update-ref -d <parkedRef>`.
+- Returns refresh failure as a non-fatal warning; the caller surfaces it without rolling back the ref.
 
 **Dependencies**
-- Outbound: `@anthropic-ai/claude-agent-sdk` `query()` — AI execution (P0)
-- Inbound: background-jobs — called during merge pipeline (P0)
+- Outbound: Git CLI (`update-ref`, `reset --hard`) (P0).
+- Inbound: `publishActor` (P0), `graphContextSquashMergeActor` (P0).
 
 **Contracts**: Service [x]
 
 ##### Service Interface
-
 ```typescript
-async function resolveConflicts(params: {
-  worktreePath: string;
-  decisions?: ConflictDecisionInput[];
-}): Promise<ConflictResolutionResult>;
-
-interface ConflictDecisionInput {
-  file: string;
-  decision: "approved" | "rejected" | "pending";
-  feedback?: string;  // user guidance when rejected
+interface PublishPreparedMergeInput {
+  projectPath: string;
+  targetBranch: string;
+  preparedSha: string;
+  expectedTargetSha: string;
+  parkedRef: string;
+  cleanTargetWorktreePath: string | null;  // null when target is not checked out
 }
 
-type ConflictResolutionResult =
-  | { status: "resolved"; conflicts: ConflictEntry[] }
-  | { status: "failed"; error: string; partialConflicts?: ConflictEntry[] };
+type PublishResult =
+  | { kind: "published"; mergeHash: string; refreshWarning?: string }
+  | { kind: "cas-lost"; actualTargetSha: string };
+
+function publishPreparedMerge(input: PublishPreparedMergeInput): Promise<PublishResult>;
 ```
 
-- Preconditions: Worktree is in a merge conflict state (conflict markers present)
+- Preconditions:
+  - `parkedRef` resolves to `preparedSha`.
+  - The caller has already classified the target worktree; this function does not re-discover the worktree. (Discovery is a separate concern handled by `discoverTargetCheckout` so the caller can route dirty-target jobs to `readyToLand` without ever invoking publish.)
 - Postconditions:
-  - `resolved`: All conflict markers are removed from files. Files are staged with `git add`. `conflicts` contains the structured analysis.
-  - `failed`: Some or all conflicts remain. `partialConflicts` may contain analysis for conflicts that were resolved before failure.
-- Invariants: The function does not commit — the caller (background-jobs) handles committing the resolution
+  - `kind: "published"`: `refs/heads/<targetBranch>` resolves to `preparedSha`; the parked ref is deleted; if `cleanTargetWorktreePath` was non-null, the worktree has been reset to `preparedSha` (or `refreshWarning` carries the failure reason).
+  - `kind: "cas-lost"`: no ref was advanced; the parked ref is retained for the caller's retry decision.
+- Invariants: the function does not advance the ref unless `git update-ref` returned success; the function never deletes the parked ref unless the ref advance succeeded.
 
 **Implementation Notes**
-- System prompt instructs Claude to: (1) run `git diff --name-only --diff-filter=U` to find conflicts, (2) read and analyze each conflicted file, (3) edit files to resolve conflict markers, (4) stage resolved files with `git add`, (5) output a JSON code fence with `ConflictEntry[]` schema
-- When `decisions` are provided (manual review re-submission): the prompt includes per-file instructions — approved files are resolved freely, rejected files incorporate the user's feedback guidance, pending files are resolved with extra care
-- Uses `query()` with: `permissionMode: "bypassPermissions"`, `allowDangerouslySkipPermissions: true`, `systemPrompt` with preset `claude_code` and appended conflict resolution instructions, `maxTurns` unlimited (Claude may need multiple tool calls), `persistSession: false` (no need to resume)
-- JSON extraction: after the stream completes, scan all assistant text blocks for the last ````json` code fence, parse with `conflictEntryArraySchema.safeParse()`. On parse failure: return `{ status: "failed", error: "Could not extract structured analysis" }`
-- Abort timeout: uses the existing `claudeTimeoutMs` from global config
+- CAS detection: parse `git update-ref` exit code; on failure, run `git rev-parse refs/heads/<targetBranch>` to obtain `actualTargetSha` for the `cas-lost` result.
+- Refresh: `git -C <cleanTargetWorktreePath> reset --hard <preparedSha>`. On error, capture the stderr message into `refreshWarning` and continue; do not throw.
+- Parked-ref deletion uses `git update-ref -d <parkedRef> <preparedSha>` (with expected-old to defend against concurrent rewrite of the parked ref).
 
 ---
 
-#### validation-fix
+#### `discoverTargetCheckout`
 
 | Field | Detail |
 |-------|--------|
-| Intent | Invoke Claude Agent SDK to fix pre-merge validation errors in a session worktree |
-| Requirements | 9.1-9.7 |
-
-**Responsibilities & Constraints**
-- Receives the raw validation script output (ESLint, TypeScript, Prettier errors)
-- Invokes `query()` with full tool access in the session worktree
-- Claude reads files, makes targeted fixes, and stages changes with `git add`
-- No structured JSON output needed — the validation script re-runs to verify
-
-**Dependencies**
-- Outbound: `@anthropic-ai/claude-agent-sdk` `query()` — AI execution (P0)
-- Inbound: background-jobs — called during merge pipeline validation recovery (P0)
+| Intent | Classify the target branch's worktree state as one of `{ notCheckedOut, clean(path), dirty(path) }` |
+| Requirements | 5.1, 7.2 |
 
 **Contracts**: Service [x]
 
 ##### Service Interface
-
 ```typescript
-async function fixValidationErrors(params: {
-  worktreePath: string;
-  validationOutput: string;
-}): Promise<ValidationFixResult>;
+type TargetCheckoutState =
+  | { kind: "not-checked-out" }
+  | { kind: "clean"; worktreePath: string }
+  | { kind: "dirty"; worktreePath: string; trackedDirtyPaths: DirtyPath[] };
 
-type ValidationFixResult =
-  | { status: "fixed" }
+function discoverTargetCheckout(
+  projectPath: string,
+  targetBranch: string,
+): Promise<TargetCheckoutState>;
+```
+
+- Preconditions: `projectPath` is a valid git repo.
+- Postconditions: returns the classification based on the current snapshot; the result may be stale by the time the publish CAS runs (the CAS is what makes the change safe).
+- Invariants: read-only — does not modify any worktree, index, or ref.
+
+**Implementation Notes**
+- Parse `git -C <projectPath> worktree list --porcelain` to find the worktree (if any) whose `branch refs/heads/<targetBranch>` matches.
+- For a matching worktree, run `git -C <worktreePath> status --porcelain` and reuse `parseDirtyPaths` (existing helper in `src/lib/git/worktree.ts`); filter on `tracked === true` per Requirement 5.2.
+- Untracked files do not constitute "dirty" for this purpose.
+
+---
+
+#### Removed: `squashMerge`, `MergePreconditionFailed`
+
+Deleted from `src/lib/git/worktree.ts` and `src/lib/workflow-graph/errors.ts` respectively. No re-export shim is retained — direct importers (`actors.ts`, `graph-context-squash-merge-actor.ts`) are updated in the same change. Tests for the removed functions are deleted or rewritten against `prepareSquashMerge` / `publishPreparedMerge`.
+
+### Merge orchestration
+
+#### `prepareActor`
+
+| Field | Detail |
+|-------|--------|
+| Intent | XState wrapper that captures `expectedTargetSha`, invokes `prepareSquashMerge`, returns the structured result to the machine |
+| Requirements | 2.1, 2.4, 2.5 |
+
+**Contracts**: Service [x]
+
+##### Service Interface
+```typescript
+interface PrepareActorInput {
+  projectPath: string;
+  featureBranch: string;
+  worktreePath: string;
+  targetBranch: string;
+  message: string;
+  jobId: string;
+}
+
+type PrepareActorOutput =
+  | { status: "prepared"; preparedSha: string; expectedTargetSha: string; parkedRef: string }
+  | { status: "conflicts"; expectedTargetSha: string; conflictFiles: string[] };
+```
+
+- Preconditions: the machine has already verified the feature branch (`verifyingBranch`), committed any WIP, and either had a clean target merge or completed conflict resolution / validation.
+- Postconditions: on `prepared`, the parked ref exists; on `conflicts`, neither commit nor parked ref exists.
+- Invariants: this actor does not acquire any lock; the project lock is acquired only in `publishActor`.
+
+**Implementation Notes**
+- The actor reads `featureSha` via `git -C <worktreePath> rev-parse HEAD` and `targetSha` via `git -C <projectPath> rev-parse refs/heads/<targetBranch>` immediately before invoking `prepareSquashMerge`, then forwards both to the function.
+- The structured result is mapped into machine context so the `publishing` state can use `preparedSha`, `expectedTargetSha`, and `parkedRef` without redoing the read.
+
+---
+
+#### `publishActor`
+
+| Field | Detail |
+|-------|--------|
+| Intent | Discover the target worktree, acquire the project lock, invoke `publishPreparedMerge`, run finalization, release the lock, and route the outcome back to the machine |
+| Requirements | 4.1, 4.2, 4.3, 4.5, 5.1, 5.2, 5.6, 7.1, 7.2, 7.3, 7.4, 8.1, 8.2, 8.3, 8.4, 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 12.7 |
+
+**Contracts**: Service [x]
+
+##### Service Interface
+```typescript
+interface PublishActorInput {
+  projectPath: string;
+  sessionName: string;
+  targetBranch: string;
+  preparedSha: string;
+  expectedTargetSha: string;
+  parkedRef: string;
+  jobId: string;
+  finalizeSession: boolean;          // false for graphContextSquashMergeActor
+  maxLockWaitMs?: number;            // default 30_000
+}
+
+type PublishActorOutput =
+  | { status: "completed"; mergeHash: string; refreshWarning?: string }
+  | { status: "ready-to-land"; parkedRef: string; preparedSha: string; targetWorktreePath: string }
+  | { status: "cas-lost"; actualTargetSha: string }
   | { status: "failed"; error: string };
 ```
 
-- Preconditions: Worktree has code that fails a validation script; `validationOutput` contains the script's stderr/stdout
+- Preconditions: `parkedRef` resolves to `preparedSha`; `expectedTargetSha` reflects the target tip observed at the prior prepare step.
 - Postconditions:
-  - `fixed`: Claude has edited and staged files to address the validation errors. The caller must re-run validation to confirm.
-  - `failed`: Claude encountered an error (SDK timeout, config error). The worktree may have partial changes.
-- Invariants: The function does not commit — the caller (background-jobs) handles committing fixes
+  - `completed`: ref advanced, parked ref deleted, finalization side effects run (if `finalizeSession === true`).
+  - `ready-to-land`: ref not advanced; parked ref retained.
+  - `cas-lost`: ref not advanced; parked ref retained; the machine reruns prepare against the new tip.
+  - `failed`: the project lock could not be acquired within the bound, or a finalization side effect threw — in both cases the ref state is unchanged (or the merge is already durable but a side effect failed, which the actor surfaces as failure with the merge hash captured in the error message).
+- Invariants: the project lock is the only synchronization primitive this actor holds, and it is released in `finally`.
 
 **Implementation Notes**
-- System prompt instructs Claude to: (1) analyze the validation output, (2) read and fix each flagged file, (3) stage all fixes with `git add`, (4) NOT run the validation script itself
-- Uses `query()` with: `permissionMode: "bypassPermissions"`, `allowDangerouslySkipPermissions: true`, `systemPrompt` with preset `claude_code` and appended validation-fix instructions, `persistSession: false`
-- Simpler than conflict-resolution: no JSON extraction needed — just consume the stream and let Claude make edits
-- Abort timeout: uses the existing `claudeTimeoutMs` from global config
+- Discovery step (no lock): `discoverTargetCheckout(projectPath, targetBranch)`.
+  - If `kind === "dirty"`: return `ready-to-land` without acquiring the lock.
+- Acquire `acquireProjectLock(projectPath)` with the existing 30-second / 100 ms retry loop (factored out to be shared with `graphContextSquashMergeActor`).
+- Invoke `publishPreparedMerge`:
+  - `cleanTargetWorktreePath` = `worktreePath` if `kind === "clean"`, else `null`.
+- Map the result:
+  - `published`: run finalization (`setSessionFinished`, `retargetOrphanedChildren`, `stopAllForSession`) only if `finalizeSession === true`; return `completed`.
+  - `cas-lost`: return without finalizing.
+- Release the project lock in `finally`.
 
 ---
 
-### Backend / API
-
-#### POST /api/projects/[name]/sessions/[session]/merge (extension)
+#### `mergeMachine` (extended)
 
 | Field | Detail |
 |-------|--------|
-| Intent | Accept merge request, dispatch as background job, return 202 immediately |
-| Requirements | 2.1 |
+| Intent | Replace `squashMerging` with `preparing` + `publishing`; add `readyToLand` terminal state; encode CAS-loss → re-prepare loop with bounded retry; encode dirty-target → `readyToLand` short-circuit; add a `landing` entry path for Land actions |
+| Requirements | 4.2, 4.3, 5.2, 5.5, 6.2, 6.3, 6.4, 6.5, 6.6, 12.2 |
 
-##### API Contract
+**Contracts**: State [x]
 
-| Method | Endpoint | Request | Response | Errors |
-|--------|----------|---------|----------|--------|
-| POST | /api/projects/[name]/sessions/[session]/merge | `SmartMergeRequest` | 202 `{ jobId }` | 400, 404, 409 |
+**State additions**
+- `preparing`: invokes `prepareActor`. `entry` assigns `phase: "preparing"`. On `prepared`, transitions to `publishing` with `preparedSha`, `expectedTargetSha`, `parkedRef` written into context. On `conflicts`, transitions to `failed` (a prepare-time conflict that escapes earlier conflict resolution indicates a stale merge result; surfaced as failure with `conflictFiles`).
+- `publishing`: invokes `publishActor`. `entry` assigns `phase: "publishing"`. Branches on output:
+  - `completed`: transitions to `completed` with `mergeHash` (and `refreshWarning` captured in `error` if present, surfaced as a non-fatal note).
+  - `ready-to-land`: transitions to `readyToLand`.
+  - `cas-lost` (merge mode): guarded transition back to `preparing` if `casAttempt < maxCasAttempts` (default 3); otherwise transitions to `failed` with `"CAS contention exhausted on target branch"`.
+  - `cas-lost` (land mode): does **not** re-enter `preparing`. Transitions directly to `failed` with `"Target branch advanced since prepare; re-run merge to refresh the prepared commit."` This preserves Requirement 6.2 ("re-run only the publish-phase checks") — the Land entry path never re-prepares. The guard on the `publishing → preparing` edge is `context.entryMode === "merge" && context.casAttempt < context.maxCasAttempts`; all other `cas-lost` paths take the explicit `publishing → failed` edge so the user gets a clear next action (re-invoke the merge to refresh the prepared commit against the new tip).
+  - `failed`: transitions to `failed` with the carried error.
+- `readyToLand`: terminal state. `entry` assigns `phase: "awaiting-land"`, `finalStatus: "ready-to-land"`, persists `parkedRef` and `preparedSha` in the output, and fires `onTerminal`.
+- `landing` (entry path for Land action): re-uses `publishing` directly. The Land entry path is a separate machine input flag (`entryMode: "land"`) so the machine spawns directly into `publishing` with `preparedSha`, `expectedTargetSha`, and `parkedRef` taken from the existing job record. The Land entry path never visits `verifyingBranch`, `checkingUncommitted`, `mergingMain`, `validating`, `preparing`, or any conflict state (Requirement 6.2).
+
+**Context additions**
+- `preparedSha: string | null`
+- `expectedTargetSha: string | null`
+- `parkedRef: string | null`
+- `casAttempt: number` (initial 1)
+- `maxCasAttempts: number` (default 3)
+- `entryMode: "merge" | "land" | "discard"` (default `"merge"`)
+- `refreshWarning: string | null`
+
+**Output additions**
+- `status` extends to `"ready-to-land" | "discarded"` in addition to `"completed" | "failed" | "conflicts"`.
+- `parkedRef`, `preparedSha`, `refreshWarning` are added to `MergeOutput`.
+
+**Implementation Notes**
+- The `cas-lost` → `preparing` transition assigns `casAttempt: ({ context }) => context.casAttempt + 1` and clears the prepared-merge fields so the next prepare starts fresh.
+- **Initial-state branching for `entryMode`.** XState v5's `initial` field is static, so the machine cannot select its starting state directly from input/context. The wiring is: the machine's `initial` is a transient routing state `entryRouting`, which has no `invoke` and three `always` transitions guarded on `context.entryMode`:
+  - `{ guard: ({ context }) => context.entryMode === "merge", target: "verifyingBranch" }`
+  - `{ guard: ({ context }) => context.entryMode === "land", target: "publishing" }`
+  - `{ guard: ({ context }) => context.entryMode === "discard", target: "discarding" }`
+
+  `entryMode` is set from `MergeInput` at machine creation (the input-to-context mapping runs before `entryRouting` evaluates its `always` transitions). This keeps a single machine surface and avoids three parallel top-level machines.
+- The `discard` entry path goes straight to a new transient `discarding` state that deletes the parked ref via a thin actor (`git update-ref -d <parkedRef>`) and transitions to a `discarded` terminal state.
+
+---
+
+#### `graphContextSquashMergeActor` (rewritten)
+
+| Field | Detail |
+|-------|--------|
+| Intent | Same prepare/publish split for graph fan-in, without session-lifecycle side effects |
+| Requirements | 2.1, 4.1, 4.2, 5.2, 7.1–7.4, 8.1–8.4 |
+
+**Contracts**: Service [x]
+
+**Implementation Notes**
+- The current single function (`runGraphContextSquashMerge`) is rewritten to:
+  1. Capture `targetSha` and `featureSha`.
+  2. Invoke `prepareSquashMerge` (no lock).
+  3. Invoke `discoverTargetCheckout`.
+  4. Acquire the project lock (existing 30 s / 100 ms retry loop, factored into a shared helper).
+  5. Invoke `publishPreparedMerge`.
+  6. On `cas-lost`, release the lock, re-run from step 1 up to `maxCasAttempts`.
+  7. On `ready-to-land`, return a `ready-to-land` shape — the graph runner surfaces this to the user without finalizing the session.
+- The actor's output shape extends to `kind: "completed" | "ready-to-land" | "cas-lost" | "failed"` so the graph runner can distinguish outcomes.
+- Session-lifecycle side effects (`setSessionFinished`, `retargetOrphanedChildren`, `stopAllForSession`) remain absent from this actor per its existing contract.
+
+---
+
+#### `acquireProjectLock` (call-site change only)
+
+The lock surface in `src/lib/prompt/single-flight.ts` is unchanged. The two existing call sites (`squashMergeActor` in `src/lib/workflows/merge/actors.ts` and `runGraphContextSquashMerge` in `src/lib/workflow-graph/graph-context-squash-merge-actor.ts`) are rewritten so the acquire/release brackets wrap only:
+
+1. The CAS (with bounded retry).
+2. The clean-checkout refresh (when applicable).
+3. The finalization side effects (`setSessionFinished`, `retargetOrphanedChildren`, `stopAllForSession`, parked-ref deletion).
+4. The terminal SSE broadcast.
+
+The `prepareSquashMerge`, `discoverTargetCheckout`, conflict resolution, validation, and validation-fix calls are all outside the lock window.
+
+### Schemas (extension)
+
+#### `src/lib/jobs/schemas.ts`
 
 ```typescript
-// Extended request schema
-interface SmartMergeRequest {
-  message: string;       // merge commit message
-  autoResolve: boolean;  // whether to auto-invoke Claude on conflicts
-}
-```
+// jobStatusSchema gains two values
+const jobStatusSchema = z.enum([
+  "running",
+  "completed",
+  "failed",
+  "conflicts",
+  "ready-to-land",
+  "discarded",
+]);
 
-**Implementation Notes**
-- Retains existing validation (project exists, session exists, not finished, message non-empty)
-- Removes the synchronous `squashMerge()` call
-- Calls `dispatchMergeJob()` from background-jobs — returns 202 with `{ jobId }` on success
-- Returns 409 with `code: "SESSION_BUSY"` if a job is already running (from `dispatchMergeJob` rejection)
-- No longer checks for uncommitted changes or commit count — the background job handles the full pipeline (including auto-committing uncommitted changes if needed per requirement 9.2)
+// backgroundJobSchema gains parkedRef and preparedSha
+const backgroundJobSchema = z.object({
+  // ...existing fields...
+  parkedRef: z.string().optional(),
+  preparedSha: z.string().optional(),
+  refreshWarning: z.string().optional(),
+});
 
----
-
-#### POST /api/projects/[name]/sessions/[session]/commit (extension)
-
-| Field | Detail |
-|-------|--------|
-| Intent | Accept commit request, dispatch as background job, return 202 immediately |
-| Requirements | 3.1 |
-
-##### API Contract
-
-| Method | Endpoint | Request | Response | Errors |
-|--------|----------|---------|----------|--------|
-| POST | /api/projects/[name]/sessions/[session]/commit | `CommitRequest` | 202 `{ jobId }` | 400, 404, 409 |
-
-**Implementation Notes**
-- Retains existing validation (project exists, session exists, not finished, message non-empty)
-- Calls `dispatchCommitJob()` from background-jobs
-- Returns 202 with `{ jobId }` on success
-
----
-
-#### GET /api/projects/[name]/sessions/[session]/conflicts (new)
-
-| Field | Detail |
-|-------|--------|
-| Intent | Retrieve stored conflict analysis results for a session |
-| Requirements | 6.3, 7.8 |
-
-##### API Contract
-
-| Method | Endpoint | Request | Response | Errors |
-|--------|----------|---------|----------|--------|
-| GET | /api/projects/[name]/sessions/[session]/conflicts | — | `{ conflicts, jobId, resolvedAt? }` | 404 |
-
-**Implementation Notes**
-- Reads from `getConflictAnalysis()` on background-jobs module
-- Returns 404 if no conflict analysis exists for this session
-- Results persist in memory across page navigations (requirement 7.8)
-
----
-
-#### POST /api/projects/[name]/sessions/[session]/resolve-conflicts (new)
-
-| Field | Detail |
-|-------|--------|
-| Intent | Accept conflict resolution decisions and dispatch a resolve-conflicts background job |
-| Requirements | 7.6, 7.7 |
-
-##### API Contract
-
-| Method | Endpoint | Request | Response | Errors |
-|--------|----------|---------|----------|--------|
-| POST | /api/projects/[name]/sessions/[session]/resolve-conflicts | `ResolveConflictsRequest` | 202 `{ jobId }` | 400, 404, 409 |
-
-```typescript
-interface ResolveConflictsRequest {
-  mergeMessage: string;   // original merge commit message
-  decisions?: ConflictDecisionInput[];  // per-conflict decisions from review page
-}
-```
-
-**Implementation Notes**
-- Validates session exists and is in conflict state
-- Calls `dispatchResolveConflictsJob()` from background-jobs
-- If resolution succeeds, the background job automatically proceeds to squash merge
-
----
-
-### Backend / Domain
-
-#### schemas.ts (extension)
-
-New Zod schemas added:
-
-```typescript
-// Job status SSE event
+// jobStatusEventSchema gains the same optional fields
 const jobStatusEventSchema = z.object({
-  type: z.literal("job-status"),
-  jobType: z.enum(["commit", "merge", "resolve-conflicts"]),
-  status: z.enum(["running", "completed", "failed", "conflicts"]),
-  projectName: z.string(),
-  sessionName: z.string(),
-  jobId: z.string(),
-  branchName: z.string(),
-  mergeHash: z.string().optional(),
-  commitHash: z.string().optional(),
-  conflictCount: z.number().optional(),
-  conflictFiles: z.array(z.string()).optional(),
-  errorMessage: z.string().optional(),
-  phase: z.string().optional(),      // current pipeline stage
+  // ...existing fields...
+  parkedRef: z.string().optional(),
+  preparedSha: z.string().optional(),
+  refreshWarning: z.string().optional(),
 });
 
-// Extended SSE event union
-type SSEEvent = ConversationStatusEvent | AskQuestionEvent | JobStatusEvent;
-
-// Smart merge request
-const smartMergeRequestSchema = z.object({
-  message: z.string().trim().min(1),
-  autoResolve: z.boolean(),
-});
-
-// Conflict analysis
-const conflictEntrySchema = z.object({
-  file: z.string(),
-  description: z.string(),
-  resolution: z.string(),
-  rationale: z.string(),
-});
-
-// Resolve conflicts request
-const resolveConflictsRequestSchema = z.object({
-  mergeMessage: z.string().trim().min(1),
-  decisions: z.array(z.object({
-    file: z.string(),
-    decision: z.enum(["approved", "rejected", "pending"]),
-    feedback: z.string().optional(),
-  })).optional(),
-});
+// Phase enum (held as z.string() today) gains the new values
+//   "preparing", "publishing", "awaiting-land"
+// in addition to existing "committing-uncommitted", "merging-main",
+// "analyzing-conflicts", "resolving-conflicts", "validating",
+// "fixing-validation", "re-validating".
 ```
 
+- The schema additions are additive; consumers parsing legacy events continue to parse successfully because the new fields are optional and the new enum values do not affect existing parsing.
+- Per Requirement 5.5, the UI rendering for `ready-to-land` is distinct from both `failed` and `completed` (a success-pending-action badge, not an error badge).
+- **Phase clearing on terminal states (Requirement 18.10).** The terminal-state entry actions in `mergeMachine` set `phase` in machine context (and therefore in the terminal `job-status` SSE event) as follows:
+  - `completed`, `failed`, `conflicts`, `discarded`: `phase` is cleared (assigned `null` in context and omitted from the SSE event payload — the schema's `phase` field is optional).
+  - `readyToLand`: `phase` is set to `"awaiting-land"` on entry and retained in the in-memory job record until the user invokes Land or Discard (at which point the next job's terminal transition applies the rule above).
+  - This ensures the Activities panel never displays stale phase labels (e.g., "Publishing...") for a finished job, while still surfacing "Awaiting clean target..." for parked merges.
+
+### API
+
+#### `POST /api/projects/[name]/sessions/[session]/merge/land` (new)
+
+| Field | Detail |
+|-------|--------|
+| Intent | Dispatch a Land action against an existing `ready-to-land` job |
+| Requirements | 6.1, 6.3 |
+
+##### API Contract
+| Method | Endpoint | Request | Response | Errors |
+|--------|----------|---------|----------|--------|
+| POST | `/api/projects/[name]/sessions/[session]/merge/land` | `{ jobId: string }` | 202 `{ jobId }` | 400, 404, 409 |
+
+**Implementation Notes**
+- Validates that the job exists and is in `ready-to-land` and that `refs/cc-merges/<jobId>` still resolves.
+- Dispatches a new job via the existing jobs queue with `entryMode: "land"`. The session lock is acquired/released per the same contract as a new merge.
+- The Land machine spawn re-enters `publishing` directly (skips prepare and validation per Requirement 6.2). A re-discovery of the target worktree still happens inside `publishActor`.
+
 ---
 
-### Frontend / Infrastructure
-
-#### NotificationListener (extension)
+#### `POST /api/projects/[name]/sessions/[session]/merge/discard` (new)
 
 | Field | Detail |
 |-------|--------|
-| Intent | Extend SSE listener to handle `job-status` events, feed data to NotificationsPanel and trigger toasts |
-| Requirements | 8.7, 2.5-2.7, 3.4-3.5 |
+| Intent | Dispatch an explicit discard against an existing `ready-to-land` job |
+| Requirements | 6.6 |
+
+##### API Contract
+| Method | Endpoint | Request | Response | Errors |
+|--------|----------|---------|----------|--------|
+| POST | `/api/projects/[name]/sessions/[session]/merge/discard` | `{ jobId: string }` | 202 `{ jobId }` | 400, 404, 409 |
 
 **Implementation Notes**
-- Add `es.addEventListener("job-status", handler)` alongside existing listeners
-- Parse event data with `jobStatusEventSchema.safeParse()`
-- On `completed` merge: show success MergeToast, invalidate session queries
-- On `conflicts`: show conflicts MergeToast, store conflict data in client-side state
-- On `failed`: show error MergeToast
-- On `completed` commit: show success toast, invalidate diff and commits queries
-- Feed job events into the `useNotificationStore` Zustand store (see below) consumed by NotificationsPanel and MergeToast
+- Validates the job is in `ready-to-land`.
+- Spawns the machine with `entryMode: "discard"`, which transits to the `discarding` state, deletes `refs/cc-merges/<jobId>` (with expected-old to guard against ref rewrites), and terminates in `discarded`.
+- No CAS, no refresh, no finalization.
 
 ---
 
-### Frontend / UI
+#### `POST /api/projects/[name]/sessions/[session]/merge` (extension)
 
-UI components are already prototyped. The following describes the wiring work needed.
+Behavior preserved except for one change required by Requirement 20.7: the route handler no longer presents a precondition warning, error, or block based on the target worktree state. The merge dialog and the route handler accept the merge regardless of target dirtiness; the publish phase decides whether to advance the ref or transition to `ready-to-land`.
 
-#### SmartMergeDialog (wiring)
+### UI
 
-| Field | Detail |
-|-------|--------|
-| Intent | Wire handleSubmit to POST merge API, pass autoResolve |
-| Requirements | 9.1-9.6 |
+#### `LandPreparedMergeButton` (new)
 
-**Implementation Notes**
-- Replace stub `handleSubmit` with: `fetch(POST /api/.../merge, { message, autoResolve })` → on 202: set `submitted = true` → on 409: show error
-- Add to SessionDetailPage in place of current MergeDialog
-- The `hasUncommittedChanges` prop is already available from SessionDetailPage
-
-#### MergeConflictsPage (wiring)
-
-| Field | Detail |
-|-------|--------|
-| Intent | Wire to conflicts API for data, resolve-conflicts API for actions |
-| Requirements | 7.1-7.8 |
-
-**Implementation Notes**
-- Fetch conflict data from `GET /api/.../conflicts` on mount
-- Wire `onAcceptAll` to `POST /api/.../resolve-conflicts` with all decisions set to `approved`
-- Wire `onFixApproved` to `POST /api/.../resolve-conflicts` with per-conflict decisions
-- Create `src/app/projects/[name]/[session]/conflicts/page.tsx` route that renders the component with fetched data
-
-#### notification.store.ts (new)
-
-| Field | Detail |
-|-------|--------|
-| Intent | Zustand store for background job notifications, consumed by NotificationsPanel and MergeToast |
-| Requirements | 8.2, 8.3, 8.7 |
-
-**Store Shape**
+Cross-feature component placed at `src/components/LandPreparedMergeButton.tsx`. Props:
 
 ```typescript
-// src/stores/notification.store.ts
-interface NotificationStore {
-  // State
-  jobs: Map<string, BackgroundJob>;        // keyed by jobId
-  toastQueue: JobStatusEvent[];            // FIFO queue for MergeToast
-
-  // Actions
-  addOrUpdateJob(event: JobStatusEvent): void;  // upsert from SSE event
-  dismissToast(): void;                          // pop from toast queue
-  getActiveJobs(): BackgroundJob[];              // running or actionable (conflicts)
-  getJobsBySession(projectName: string, sessionName: string): BackgroundJob[];
+interface LandPreparedMergeButtonProps {
+  job: BackgroundJob;  // must be in ready-to-land
 }
 ```
 
-- Uses `immer` middleware consistent with existing Zustand stores (`unified-panel.store.ts`)
-- `addOrUpdateJob`: called by NotificationListener on each `job-status` SSE event. Upserts into `jobs` Map. If the event represents a terminal state (`completed`, `failed`, `conflicts`), also pushes to `toastQueue`.
-- `toastQueue`: consumed by MergeToast — displays one at a time, auto-dismissed after 8 seconds or manually by user.
-- `getActiveJobs`: returns jobs with `status === "running"` or `status === "conflicts"` (actionable).
+- Renders two actions: **Land** (calls `POST .../merge/land`) and **Discard** (calls `POST .../merge/discard`).
+- Disables both buttons while a Land or Discard request is in flight.
+- Reads `parkedRef` and `preparedSha` from the job record purely for display (truncated SHA, branch name).
+- Used by `NotificationsPanel` (per-job row) and by the active `MergeToast` (when toast type is `ready-to-land`).
 
-#### NotificationsPanel (wiring)
+#### `NotificationsPanel` (extended)
 
-| Field | Detail |
-|-------|--------|
-| Intent | Replace UnifiedPanel, connect to Zustand notification store |
-| Requirements | 8.1-8.6 |
+- Renders `ready-to-land` jobs with a distinct visual badge (per Requirement 5.5, success-pending-action — not failure).
+- Embeds `LandPreparedMergeButton` for each such job.
+- Click-to-navigate target for `ready-to-land` is the session page (where the Land button is also available); panel does not redirect away from the panel surface itself.
 
-**Implementation Notes**
-- Reads job data from `useNotificationStore` (selectors: `getActiveJobs`, `jobs`)
-- Conversations section: populated from existing `useActiveConversationsQuery` data
-- Jobs section: populated from `useNotificationStore().jobs` values, sorted by `startedAt` descending
-- Replace UnifiedPanel toggle in Topbar with NotificationsPanel toggle
-- Badge count: `activeConversations.length + useNotificationStore.getState().getActiveJobs().length`
+#### `MergeToast` (extended)
 
-#### MergeToast (wiring)
+- Adds a `ready-to-land` toast variant whose body shows the branch name, a short "Awaiting clean target" subtitle, and the Land affordance.
 
-| Field | Detail |
-|-------|--------|
-| Intent | Render ephemeral toasts triggered by job-status SSE events |
-| Requirements | 2.5-2.7, 3.4-3.5 |
+#### `SmartMergeDialog` (small change)
 
-**Implementation Notes**
-- Reads from `useNotificationStore().toastQueue` — displays the first item, calls `dismissToast()` on dismiss or auto-timeout
-- Toast queue: only one toast at a time; auto-dismiss after 8 seconds
-- Action button navigates to: session page (merge success), conflicts page (conflicts), session page (commit success)
-- Rendered in `layout.tsx` as a portal-mounted component
+Removes any UI affordance that warns about, blocks, or asks about the target worktree state (per Requirement 20.7). The dialog UI continues to show the auto-resolve toggle, the message field, the uncommitted-changes warning (which is about the session worktree, not the target), and the submitted confirmation state.
 
 ## Data Models
 
 ### Domain Model
 
-The feature introduces two new domain concepts that exist in-memory only:
+This revision touches one aggregate (`BackgroundJob`) and introduces a single new domain concept:
 
-**BackgroundJob** — Represents a running or completed background git operation. Lifecycle: `running → completed | failed | conflicts`. Keyed by `projectPath::sessionName` (at most one active per session). Aggregate root for job state transitions.
+**ParkedMerge** — A prepared squash commit reachable via `refs/cc-merges/<jobId>`. Lifecycle:
+- Created at the end of `prepareSquashMerge` (`prepared` outcome).
+- Read at the start of every `publishing` entry to verify the parked commit still resolves.
+- Deleted at the end of a successful publish, or at the end of an explicit discard.
+- Retained indefinitely while a job sits in `ready-to-land`.
 
-**ConflictAnalysis** — Represents the structured result of Claude's conflict analysis for a session. Contains `ConflictEntry[]` with per-file analysis. Stored separately from the job to persist after the job completes. Overwritten on each new conflict analysis invocation.
+`ParkedMerge` is not a separate persisted entity — its identity is the git ref itself. The `BackgroundJob` aggregate carries the ref name and the SHA so the UI can render and the machine can verify.
 
 ### Logical Data Model
 
 ```mermaid
 erDiagram
-    Session ||--o| BackgroundJob : has_active
-    Session ||--o| ConflictAnalysis : has_analysis
+    BackgroundJob ||--o| ParkedMerge : pins
     BackgroundJob ||--o{ JobStatusEvent : emits
-    ConflictAnalysis ||--|{ ConflictEntry : contains
 
     BackgroundJob {
         string jobId PK
@@ -912,73 +814,122 @@ erDiagram
         string projectName
         string sessionName
         string branchName
+        string targetBranch
         string startedAt
         string completedAt
+        string parkedRef
+        string preparedSha
+        string mergeHash
+        string refreshWarning
+        string errorMessage
+        string phase
     }
 
-    ConflictAnalysis {
-        string jobId FK
-        string projectName
-        string sessionName
-        string resolvedAt
-    }
-
-    ConflictEntry {
-        string file
-        string description
-        string resolution
-        string rationale
+    ParkedMerge {
+        string refName PK
+        string preparedSha
     }
 ```
 
-- In-memory storage: `globalThis.__cc_background_jobs` (Map), `globalThis.__cc_conflict_analysis` (Map)
-- Same key structure as existing singletons: `"${projectPath}::${sessionName}"`
-- No persistence to state.json — jobs are ephemeral; conflict state is detectable from the worktree's git status
+- `BackgroundJob` remains in the in-memory registry as today (Requirement 12.1).
+- `ParkedMerge` is materialized as a git ref and survives server restarts; the in-memory job pointer to it may be lost on restart, but the prepared commit is recoverable via `git for-each-ref refs/cc-merges/`.
 
 ## Error Handling
 
 ### Error Strategy
 
-Errors are categorized by recovery path. All job errors are broadcast via SSE `job-status` events with `status: "failed"` and an `errorMessage` field.
+Errors are categorized by recovery path and by whether they break the safety guarantee (target worktree untouched + branch ref correctness) or only the convenience guarantee (refresh, finalization).
 
 ### Error Categories and Responses
 
-**User Errors (4xx)**:
-- Invalid merge message → 400 with field validation error (existing pattern)
-- Session finished → 409 `SESSION_FINISHED` (existing pattern)
-- Session busy (concurrent job) → 409 `SESSION_BUSY` — user waits for current job to complete
+**Safety-breaking** (must abort, must not advance the ref):
+- `prepareSquashMerge` produces a conflicted result (Requirement 3.2) → surfaced through the existing conflict-resolution pipeline (this should already have been caught in `mergingMain`; a prepare-time conflict indicates the feature branch and target diverged between conflict resolution and prepare, which is unusual but handled).
+- `prepareSquashMerge` fallback path fails to create or clean up `.worktrees/__merge_<jobId>` → job transitions to `failed`; cleanup runs in the `finally` regardless.
+- `git update-ref` CAS lost → not an error; routes back to `preparing` with bounded retry.
+- `git update-ref` CAS lost after exhausted retries → job transitions to `failed` with `"CAS contention exhausted on target branch <name>"`.
 
-**System Errors (5xx)**:
-- Git command failure during merge → job transitions to `failed`, error broadcast via SSE, session lock released
-- Claude SDK failure during conflict resolution → job transitions to `conflicts` (falls back to manual review), error broadcast includes available conflict file list
-- Pre-commit hook failure during commit → job transitions to `failed`, error includes hook output (`gitOutput` property)
-- Project lock timeout during squash merge → job transitions to `failed` with message "Another merge is in progress for this project. Please retry.", session lock released
+**Convenience-breaking** (must surface as warning, must not roll back the ref):
+- Clean-checkout refresh failure (Requirement 7.4) → publish returns `refreshWarning`; job transitions to `completed`; warning is included in the terminal SSE event.
+- `stopAllForSession` failure → already best-effort today; preserved.
 
-**Business Logic Errors (conflict state)**:
-- Merge conflicts detected → not an error; job transitions to `conflicts` status with `conflictFiles` list
-- Claude partial resolution failure → treated as `conflicts` with partial analysis available for manual review
+**Recoverable terminal outcomes** (not errors):
+- Target worktree dirty at publish time → `ready-to-land`.
+
+**User actions**:
+- Land on still-dirty target → publish returns `ready-to-land`; job remains in `ready-to-land`.
+- Land succeeds → `completed` with the merge hash; parked ref deleted.
+- Discard → `discarded` with the parked ref deleted.
 
 ### Monitoring
 
-All job state transitions are logged via the existing `withTracing` pattern. SSE events provide real-time visibility. No additional monitoring infrastructure needed.
+All state transitions emit `job-status` SSE events with the new `phase` strings (`preparing`, `publishing`, `awaiting-land`). Logs use the project's structured logging (`createLogger("git-worktree")` for git plumbing, `createLogger("merge.actor.publish")` and `createLogger("merge.actor.prepare")` for the actors). Per-event fields include `casAttempt`, `expectedTargetSha`, `actualTargetSha` (on CAS loss), and `parkedRef` so the prepare/publish pipeline is debuggable from logs alone.
 
 ## Testing Strategy
 
-### Unit Tests
-- `background-jobs.ts`: dispatch validation, state transitions, concurrent job rejection, lock acquire/release lifecycle, try/finally lock release on unhandled error, stale job timeout recovery
-- `lock.ts`: `acquireProjectLock` acquire/release, concurrent acquire rejection, independence from session locks
-- `git-operations.ts`: `mergeMainIntoFeature` with clean merge, with conflicts, with non-conflict error
-- `conflict-resolution.ts`: JSON extraction from mock Claude responses, Zod parse failures, timeout handling
-- `schemas.ts`: `jobStatusEventSchema`, `smartMergeRequestSchema`, `conflictEntrySchema` validation
+### Unit Tests (`*.test.ts` colocated next to the source files)
+
+- `worktree.test.ts`:
+  - `prepareSquashMerge` plumbing-path success path (`merge-tree` clean, `commit-tree` produces a commit, parked ref exists, target ref unchanged).
+  - `prepareSquashMerge` plumbing-path conflicts path (returns `kind: "conflicts"` with `conflictFiles`; no commit, no parked ref).
+  - `prepareSquashMerge` fallback-path success path (`.worktrees/__merge_<jobId>` created, `merge --squash` + `commit --no-verify` runs, temp worktree removed).
+  - `prepareSquashMerge` fallback-path cleans up `.worktrees/__merge_<jobId>` on failure.
+  - `publishPreparedMerge` CAS success with clean refresh.
+  - `publishPreparedMerge` CAS success with no target worktree.
+  - `publishPreparedMerge` CAS success but refresh fails → returns `published` with `refreshWarning`, parked ref still deleted.
+  - `publishPreparedMerge` CAS loss → returns `cas-lost` with `actualTargetSha`, parked ref retained.
+  - `discoverTargetCheckout` distinguishes `not-checked-out`, `clean`, and `dirty` correctly (untracked-only is clean).
+
+- `actors.test.ts` (or via `machine.test.ts`):
+  - `prepareActor` captures `targetSha` immediately before invoking `prepareSquashMerge`.
+  - `publishActor` short-circuits to `ready-to-land` when discovery returns `dirty` — does not acquire the lock.
+  - `publishActor` returns `cas-lost` without finalizing.
+  - `publishActor` finalization is gated on `finalizeSession`.
+
+- `machine.test.ts`:
+  - `preparing` → `publishing` happy path.
+  - `publishing` → `readyToLand` short-circuit.
+  - `publishing` → `preparing` on CAS loss when retries remain; `casAttempt` increments.
+  - `publishing` → `failed` when CAS attempts exhausted; error message names CAS contention.
+  - Land entry path skips `preparing` and the entire conflict/validation chain.
+  - Discard entry path transitions to `discarded` with parked ref deleted.
+
+- `graph-context-squash-merge-actor.test.ts`:
+  - Same prepare/publish split surfaces `ready-to-land`, `cas-lost`, and `completed` outcomes without finalization.
+
+- `jobs/schemas.test.ts`:
+  - Round-trips `ready-to-land` and `discarded` status values and the new optional fields.
 
 ### Integration Tests
-- Merge pipeline end-to-end: dispatch → phase 1 → project lock → phase 2 → SSE broadcast (mock git commands)
-- Conflict pipeline: dispatch → phase 1 conflict → auto-resolve → commit resolution → project lock → phase 2 (mock Claude SDK)
-- Commit pipeline: dispatch → commit → SSE broadcast (mock git commands)
-- Concurrent merge serialization: two sessions' merge jobs reach phase 2 — verify project lock serializes squash merges
-- API routes: merge, commit, conflicts, resolve-conflicts request/response validation
+
+- End-to-end merge against a clean target with no checkout (default repo): prepare → publish → completed; ref advanced; parked ref absent.
+- End-to-end merge against a target checked out clean: prepare → publish → reset --hard on the target worktree → completed.
+- End-to-end merge against a target checked out dirty: prepare → discovery dirty → `ready-to-land`; parked ref present; ref untouched; target worktree untouched.
+- Land after `ready-to-land` when target becomes clean: re-publish → completed; parked ref deleted.
+- Discard `ready-to-land`: parked ref deleted; status `discarded`.
+- CAS contention: simulate `git update-ref` failures and verify bounded re-prepare; verify failure after the cap.
+- Concurrent publishers (two sessions, same target): the project lock serializes the publish window; the CAS guarantees only one advances per round.
 
 ### E2E/UI Tests
-- SmartMergeDialog: submit → shows submitted state → toast appears on completion
-- MergeConflictsPage: load conflicts → approve/reject → Fix with Claude → toast on completion
-- NotificationsPanel: open panel → shows active jobs → click navigates to correct page
+
+- `SmartMergeDialog` no longer surfaces a target-dirty precondition warning.
+- `NotificationsPanel` renders the Land affordance for a `ready-to-land` job; clicking Land triggers the Land flow; the panel updates to `completed` on success.
+- `MergeToast` `ready-to-land` variant appears with the Land action and persists until the user lands or discards.
+
+## Migration Strategy
+
+No data migration is required; the change is code-only.
+
+```mermaid
+flowchart LR
+    A[Pre-revision: squashMerge + MergePreconditionFailed] --> B[Add prepare/publish, keep squashMerge wrapped]
+    B --> C[Swap actors to prepare/publish]
+    C --> D[Remove squashMerge + MergePreconditionFailed]
+    D --> E[Land + Discard routes + UI affordance]
+```
+
+- Phase B compiles both paths so the test suite can validate the new path before either path is removed.
+- Phase C cuts over the two call sites (`actors.ts`, `graph-context-squash-merge-actor.ts`) atomically; rollback is `git revert`.
+- Phase D removes `squashMerge` and `MergePreconditionFailed` from the surface; no shim is retained per the steering rule against backwards-compat re-exports.
+- Phase E completes the user-facing surface for `ready-to-land`.
+
+Each phase is a single landable change; the feature flag for the prepare/publish split (if any) is the choice between phase B and phase C, not a runtime flag.

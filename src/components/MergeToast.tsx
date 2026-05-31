@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 
 // ── Types ──────────────────────────────────────────────────────
 
-type MergeToastVariant = "success" | "conflicts" | "error";
+type MergeToastVariant = "success" | "conflicts" | "error" | "ready-to-land";
 
 interface MergeToastProps {
   variant: MergeToastVariant;
@@ -21,7 +21,7 @@ interface MergeToastProps {
   onAction?: () => void;
   /** Callback when dismissing */
   onDismiss?: () => void;
-  /** Auto-dismiss after ms (0 = no auto-dismiss) */
+  /** Auto-dismiss after ms (0 = no auto-dismiss); ignored for ready-to-land */
   autoDismissMs?: number;
   /** Force visible for Storybook */
   visible?: boolean;
@@ -121,12 +121,13 @@ export default function MergeToast({
     }, 200);
   }, [onDismiss]);
 
-  // Auto-dismiss timer
+  // Auto-dismiss timer — ready-to-land persists until user lands or discards
   useEffect(() => {
+    if (variant === "ready-to-land") return;
     if (!autoDismissMs || !visible) return;
     const timer = setTimeout(handleDismiss, autoDismissMs);
     return () => clearTimeout(timer);
-  }, [autoDismissMs, visible, handleDismiss]);
+  }, [autoDismissMs, visible, handleDismiss, variant]);
 
   if (!visible) return null;
 
@@ -167,6 +168,20 @@ export default function MergeToast({
         </>
       ),
       actionLabel: "Details",
+    },
+    "ready-to-land": {
+      icon: <WarningIcon />,
+      title: (
+        <>
+          Merge ready to land — <code>{branchName}</code>
+        </>
+      ),
+      detail: (
+        <>
+          Awaiting clean <code>{targetBranch}</code> worktree
+        </>
+      ),
+      actionLabel: "Land",
     },
   };
 

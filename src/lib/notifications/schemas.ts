@@ -54,6 +54,8 @@ const notificationTypeSchema = z.enum([
   "merge-completed",
   "merge-failed",
   "merge-conflicts",
+  "merge-ready-to-land",
+  "merge-discarded",
   "commit-completed",
   "commit-failed",
   "resolve-completed",

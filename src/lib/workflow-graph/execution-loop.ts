@@ -2,11 +2,7 @@ import { randomUUID } from "node:crypto";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { captureTraceContext, createLogger, runAsTrace } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
-import {
-  MergePreconditionFailed,
-  toHaltReason,
-  type DirtyPath,
-} from "./errors";
+import { toHaltReason, type DirtyPath } from "./errors";
 import {
   runCircuitBreakerGate as defaultRunCircuitBreakerGate,
   type CircuitBreakerGateResult,
@@ -272,17 +268,14 @@ export function createGraphWorkflowExecutionLoop(
           return state.isolation === "worktree";
         })?.id ?? "";
 
-      const haltReason = toHaltReason(
-        new MergePreconditionFailed(
-          `Target branch '${session.branchName}' has ${trackedDirty.length} uncommitted change(s)`,
-          {
-            targetBranch: session.branchName,
-            dirtyPaths: trackedDirty,
-            dirtyCount: trackedDirty.length,
-          },
-        ),
-        { contextId: firstEligibleContextId, cause: "io" },
-      );
+      const haltReason: GraphWorkflowHaltReason = {
+        type: "merge_precondition_failed",
+        contextId: firstEligibleContextId,
+        targetBranch: session.branchName,
+        dirtyPaths: trackedDirty.slice(0, 5),
+        totalDirtyCount: trackedDirty.length,
+        message: `Target branch '${session.branchName}' has ${trackedDirty.length} uncommitted change(s)`,
+      };
 
       execLogger?.lifecycle("preflight.session_branch_dirty", {
         targetBranch: session.branchName,
@@ -440,7 +433,12 @@ export function createGraphWorkflowExecutionLoop(
             return;
           }
 
-          let mergeStatus: "completed" | "failed" | "conflicts";
+          let mergeStatus:
+            | "completed"
+            | "failed"
+            | "conflicts"
+            | "ready-to-land"
+            | "discarded";
           let mergeError: string | null = null;
           let mergeConflictFiles: string[] = [];
           try {
@@ -467,33 +465,6 @@ export function createGraphWorkflowExecutionLoop(
             mergeError = output.error;
             mergeConflictFiles = output.conflictFiles;
           } catch (error) {
-            if (error instanceof MergePreconditionFailed) {
-              const haltReason = toHaltReason(error, {
-                contextId,
-                cause: "io",
-              });
-              const haltResult =
-                await deps.workflowManager.recordPendingHaltReason({
-                  projectPath: input.projectPath,
-                  sessionName: input.sessionName,
-                  reason: haltReason,
-                  applyAdditionalMutation: (next) => {
-                    const cs = next.contextStates[contextId];
-                    if (cs) {
-                      cs.mergeStatus = "merged-failed";
-                      cs.lastMergeError = error.message;
-                    }
-                  },
-                });
-              execution = haltResult.execution;
-              logger.error("graph-workflow.merge.precondition_failed", {
-                executionId: execution.id,
-                contextId,
-                targetBranch: error.targetBranch,
-                dirtyCount: error.dirtyCount,
-              });
-              return;
-            }
             mergeStatus = "failed";
             mergeError = getErrorMessage(error);
             mergeConflictFiles = [];

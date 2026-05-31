@@ -7,6 +7,20 @@
 
 import { fromPromise } from "xstate";
 import type { ConflictEntry, ConflictDecisionInput } from "@/lib/jobs/schemas";
+import { createLogger } from "@/lib/logging";
+import {
+  acquireProjectLockWithRetry,
+  type AcquireProjectLockOptions,
+} from "@/lib/prompt/project-lock-retry";
+import type {
+  PrepareResult,
+  PrepareSquashMergeInput,
+  PublishPreparedMergeInput,
+  PublishResult,
+  TargetCheckoutState,
+} from "@/lib/git/worktree";
+
+const logger = createLogger("smart-merge-actors");
 
 // ============================================================
 // Helpers
@@ -121,17 +135,61 @@ export interface FixValidationOutput {
   error?: string;
 }
 
-export interface SquashMergeInput {
+export interface PrepareActorInput {
   projectPath: string;
+  worktreePath: string;
   branchName: string;
+  targetBranch: string;
   message: string;
+  jobId: string;
+  /** Override the auto-detected prepare path (sourced from per-repo config). */
+  forcePath?: "plumbing" | "fallback";
+}
+
+export type PrepareActorOutput =
+  | {
+      status: "prepared";
+      preparedSha: string;
+      expectedTargetSha: string;
+      parkedRef: string;
+    }
+  | {
+      status: "conflicts";
+      expectedTargetSha: string;
+      conflictFiles: string[];
+    };
+
+export interface PublishActorInput {
+  projectPath: string;
   sessionName: string;
   targetBranch: string;
-  targetWorktreePath: string | null;
+  preparedSha: string;
+  expectedTargetSha: string;
+  parkedRef: string;
+  /** When true, the actor finalises the session (state, dev-servers, child retargeting) on success. */
+  finalizeSession: boolean;
 }
-export interface SquashMergeOutput {
-  mergeHash: string;
-}
+
+export type PublishActorOutput =
+  | {
+      status: "completed";
+      mergeHash: string;
+      refreshWarning?: string;
+    }
+  | {
+      status: "ready-to-land";
+      parkedRef: string;
+      preparedSha: string;
+      targetWorktreePath: string;
+    }
+  | {
+      status: "cas-lost";
+      actualTargetSha: string;
+    }
+  | {
+      status: "failed";
+      error: string;
+    };
 
 // ============================================================
 // Actor Definitions
@@ -307,63 +365,279 @@ export const fixValidation = fromPromise<
   };
 });
 
-/** Squash merge into target branch, with project lock and session cleanup. */
-export const squashMergeActor = fromPromise<
-  SquashMergeOutput,
-  SquashMergeInput
->(async ({ input }) => {
-  const { squashMerge } = await import("@/lib/git/worktree");
-  const { acquireProjectLock } = await import("@/lib/prompt/single-flight");
-  const { setSessionFinished } = await import("@/lib/state-store");
-  const { stopAllForSession } = await import("@/lib/dev-server/registry");
-  const { retargetOrphanedChildren } = await import("@/lib/sessions/service");
+// ============================================================
+// prepareActor / publishActor — split squash-merge pipeline
+// ============================================================
 
-  // Acquire project lock with retry
-  const MAX_WAIT_MS = 30_000;
-  const RETRY_MS = 100;
-  let releaseProject: (() => void) | undefined;
-  const start = Date.now();
+export interface PrepareActorDeps {
+  prepareSquashMerge(input: PrepareSquashMergeInput): Promise<PrepareResult>;
+  revParse(cwd: string, ref: string): Promise<string>;
+}
 
-  while (Date.now() - start < MAX_WAIT_MS) {
-    try {
-      releaseProject = acquireProjectLock(input.projectPath);
-      break;
-    } catch {
-      await new Promise((r) => setTimeout(r, RETRY_MS));
-    }
+/** Pure inner runner — call directly in tests and from the actor factory. */
+export async function runPrepare(
+  deps: PrepareActorDeps,
+  input: PrepareActorInput,
+): Promise<PrepareActorOutput> {
+  const expectedTargetSha = (
+    await deps.revParse(input.projectPath, `refs/heads/${input.targetBranch}`)
+  ).trim();
+  const featureSha = (await deps.revParse(input.worktreePath, "HEAD")).trim();
+
+  const result = await deps.prepareSquashMerge({
+    projectPath: input.projectPath,
+    featureBranch: input.branchName,
+    featureSha,
+    targetBranch: input.targetBranch,
+    targetSha: expectedTargetSha,
+    message: input.message,
+    jobId: input.jobId,
+    forcePath: input.forcePath,
+  });
+
+  if (result.kind === "prepared") {
+    return {
+      status: "prepared",
+      preparedSha: result.preparedSha,
+      expectedTargetSha: result.expectedTargetSha,
+      parkedRef: result.parkedRef,
+    };
   }
 
-  if (!releaseProject) {
-    throw new Error(
-      "Another merge is in progress for this project. Please retry.",
-    );
+  return {
+    status: "conflicts",
+    expectedTargetSha: result.expectedTargetSha,
+    conflictFiles: result.conflictFiles,
+  };
+}
+
+export function createPrepareActor(deps: PrepareActorDeps) {
+  return fromPromise<PrepareActorOutput, PrepareActorInput>(async ({ input }) =>
+    runPrepare(deps, input),
+  );
+}
+
+export interface PublishActorDeps {
+  discoverTargetCheckout(
+    projectPath: string,
+    targetBranch: string,
+  ): Promise<TargetCheckoutState>;
+  publishPreparedMerge(
+    input: PublishPreparedMergeInput,
+  ): Promise<PublishResult>;
+  acquireProjectLock: AcquireProjectLockOptions["acquireProjectLock"];
+  setSessionFinished(projectPath: string, sessionName: string): Promise<void>;
+  retargetOrphanedChildren(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<void>;
+  stopAllForSession(args: {
+    projectPath: string;
+    sessionName: string;
+  }): Promise<void>;
+  maxLockWaitMs?: number;
+  retryMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+async function finalizeSessionSideEffects(
+  deps: PublishActorDeps,
+  projectPath: string,
+  sessionName: string,
+): Promise<void> {
+  try {
+    await deps.stopAllForSession({ projectPath, sessionName });
+  } catch (err) {
+    logger.warn("publishActor.stop_dev_servers_failed", {
+      projectPath,
+      sessionName,
+      err: err instanceof Error ? err.message : String(err),
+    });
   }
+
+  await deps.setSessionFinished(projectPath, sessionName);
+  await deps.retargetOrphanedChildren(projectPath, sessionName);
+}
+
+export async function runPublish(
+  deps: PublishActorDeps,
+  input: PublishActorInput,
+): Promise<PublishActorOutput> {
+  const discovery = await deps.discoverTargetCheckout(
+    input.projectPath,
+    input.targetBranch,
+  );
+
+  if (discovery.kind === "dirty") {
+    return {
+      status: "ready-to-land",
+      parkedRef: input.parkedRef,
+      preparedSha: input.preparedSha,
+      targetWorktreePath: discovery.worktreePath,
+    };
+  }
+
+  const cleanTargetWorktreePath =
+    discovery.kind === "clean" ? discovery.worktreePath : null;
+
+  const release = await acquireProjectLockWithRetry({
+    acquireProjectLock: deps.acquireProjectLock,
+    projectPath: input.projectPath,
+    maxWaitMs: deps.maxLockWaitMs,
+    retryMs: deps.retryMs,
+    sleep: deps.sleep,
+    callerLabel: "publish",
+  });
 
   try {
-    // When targeting a non-main branch, merge into the parent's worktree
-    const mergePath = input.targetWorktreePath ?? input.projectPath;
-    const { mergeHash } = await squashMerge(
-      mergePath,
-      input.branchName,
-      input.message,
-      input.targetBranch,
-    );
+    const result = await deps.publishPreparedMerge({
+      projectPath: input.projectPath,
+      targetBranch: input.targetBranch,
+      preparedSha: input.preparedSha,
+      expectedTargetSha: input.expectedTargetSha,
+      parkedRef: input.parkedRef,
+      cleanTargetWorktreePath,
+    });
 
-    // Stop dev servers (best-effort)
-    try {
-      await stopAllForSession({
-        projectPath: input.projectPath,
-        sessionName: input.sessionName,
-      });
-    } catch {
-      // best-effort
+    if (result.kind === "cas-lost") {
+      return {
+        status: "cas-lost",
+        actualTargetSha: result.actualTargetSha,
+      };
     }
 
-    await setSessionFinished(input.projectPath, input.sessionName);
-    await retargetOrphanedChildren(input.projectPath, input.sessionName);
+    if (input.finalizeSession) {
+      await finalizeSessionSideEffects(
+        deps,
+        input.projectPath,
+        input.sessionName,
+      );
+    }
 
-    return { mergeHash };
+    return result.refreshWarning === undefined
+      ? { status: "completed", mergeHash: result.mergeHash }
+      : {
+          status: "completed",
+          mergeHash: result.mergeHash,
+          refreshWarning: result.refreshWarning,
+        };
   } finally {
-    releaseProject();
+    release();
   }
+}
+
+export function createPublishActor(deps: PublishActorDeps) {
+  return fromPromise<PublishActorOutput, PublishActorInput>(async ({ input }) =>
+    runPublish(deps, input),
+  );
+}
+
+// ============================================================
+// discardParkedRefActor — used by the discard entry path
+// ============================================================
+
+export interface DiscardParkedRefInput {
+  projectPath: string;
+  parkedRef: string;
+  preparedSha: string;
+}
+export type DiscardParkedRefOutput = void;
+
+export interface DiscardParkedRefDeps {
+  deleteParkedRef(
+    projectPath: string,
+    parkedRef: string,
+    preparedSha: string,
+  ): Promise<void>;
+}
+
+export async function runDiscardParkedRef(
+  deps: DiscardParkedRefDeps,
+  input: DiscardParkedRefInput,
+): Promise<DiscardParkedRefOutput> {
+  await deps.deleteParkedRef(
+    input.projectPath,
+    input.parkedRef,
+    input.preparedSha,
+  );
+}
+
+export function createDiscardParkedRefActor(deps: DiscardParkedRefDeps) {
+  return fromPromise<DiscardParkedRefOutput, DiscardParkedRefInput>(
+    async ({ input }) => runDiscardParkedRef(deps, input),
+  );
+}
+
+export const discardParkedRefActor = fromPromise<
+  DiscardParkedRefOutput,
+  DiscardParkedRefInput
+>(async ({ input }) => {
+  const { defaultGitClient } = await import("@/lib/git/client");
+  return runDiscardParkedRef(
+    {
+      async deleteParkedRef(projectPath, parkedRef, preparedSha) {
+        await defaultGitClient.git(
+          ["update-ref", "-d", parkedRef, preparedSha],
+          projectPath,
+        );
+      },
+    },
+    input,
+  );
 });
+
+/** Default singleton wired to real implementations via lazy dynamic imports. */
+export const prepareActor = fromPromise<PrepareActorOutput, PrepareActorInput>(
+  async ({ input }) => {
+    const { prepareSquashMerge } = await import("@/lib/git/worktree");
+    const { defaultGitClient } = await import("@/lib/git/client");
+    const { readRepoConfig } = await import("@/lib/projects/repo-config");
+
+    let forcePath = input.forcePath;
+    if (!forcePath) {
+      try {
+        const repoConfig = await readRepoConfig(input.projectPath);
+        forcePath = repoConfig?.preMergePreparePath;
+      } catch {
+        // Best-effort: fall through to git --version auto-detect
+      }
+    }
+
+    return runPrepare(
+      {
+        prepareSquashMerge,
+        async revParse(cwd, ref) {
+          const { stdout } = await defaultGitClient.git(
+            ["rev-parse", ref],
+            cwd,
+          );
+          return stdout;
+        },
+      },
+      { ...input, forcePath },
+    );
+  },
+);
+
+export const publishActor = fromPromise<PublishActorOutput, PublishActorInput>(
+  async ({ input }) => {
+    const { discoverTargetCheckout, publishPreparedMerge } =
+      await import("@/lib/git/worktree");
+    const { acquireProjectLock } = await import("@/lib/prompt/single-flight");
+    const { setSessionFinished } = await import("@/lib/state-store");
+    const { stopAllForSession } = await import("@/lib/dev-server/registry");
+    const { retargetOrphanedChildren } = await import("@/lib/sessions/service");
+
+    return runPublish(
+      {
+        discoverTargetCheckout,
+        publishPreparedMerge,
+        acquireProjectLock,
+        setSessionFinished,
+        retargetOrphanedChildren,
+        stopAllForSession,
+      },
+      input,
+    );
+  },
+);

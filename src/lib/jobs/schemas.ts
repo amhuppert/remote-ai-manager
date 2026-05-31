@@ -8,9 +8,18 @@ export const jobStatusSchema = z.enum([
   "completed",
   "failed",
   "conflicts",
+  "ready-to-land",
+  "discarded",
 ]);
 export type JobStatus = z.infer<typeof jobStatusSchema>;
 
+// Documented phase strings (held as z.string() for forward compatibility):
+//   "committing-uncommitted" | "merging-main" | "analyzing-conflicts" |
+//   "resolving-conflicts" | "validating" | "fixing-validation" |
+//   "re-validating" | "preparing" | "publishing" | "awaiting-land"
+// Phase-clearing rule: phase is cleared on terminal transitions to completed,
+// failed, conflicts, or discarded; phase "awaiting-land" is retained on
+// ready-to-land terminal entry.
 export const backgroundJobSchema = z.object({
   jobId: z.string(),
   jobType: jobTypeSchema,
@@ -27,6 +36,10 @@ export const backgroundJobSchema = z.object({
   conflictFiles: z.array(z.string()).optional(),
   errorMessage: z.string().optional(),
   phase: z.string().optional(),
+  parkedRef: z.string().optional(),
+  preparedSha: z.string().optional(),
+  expectedTargetSha: z.string().optional(),
+  refreshWarning: z.string().optional(),
 });
 export type BackgroundJob = z.infer<typeof backgroundJobSchema>;
 
@@ -44,6 +57,10 @@ export const jobStatusEventSchema = z.object({
   conflictFiles: z.array(z.string()).optional(),
   errorMessage: z.string().optional(),
   phase: z.string().optional(),
+  parkedRef: z.string().optional(),
+  preparedSha: z.string().optional(),
+  expectedTargetSha: z.string().optional(),
+  refreshWarning: z.string().optional(),
 });
 export type JobStatusEvent = z.infer<typeof jobStatusEventSchema>;
 

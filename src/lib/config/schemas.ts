@@ -100,6 +100,7 @@ export const perRepoConfigSchema = z.object({
   initScriptPath: z.string().nullable().optional(),
   preMergeCommand: z.string().nullable().optional(),
   preMergeTimeoutMs: z.number().int().positive().optional(),
+  preMergePreparePath: z.enum(["plumbing", "fallback"]).optional(),
   devServers: z.array(devServerConfigSchema).optional(),
   branchPrefix: z.string().optional(),
 });

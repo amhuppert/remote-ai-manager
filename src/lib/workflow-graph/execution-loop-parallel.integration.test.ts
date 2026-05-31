@@ -29,7 +29,6 @@ import {
 import { createGraphWorkflowSignalHaltHandler } from "@/lib/workflow-graph/graph-workflow-signal-halt";
 import { createGraphWorkflowManager } from "./workflow-manager";
 import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
-import { MergePreconditionFailed } from "./errors";
 
 interface InMemoryExecutionRepository {
   getActive(
@@ -307,6 +306,11 @@ function buildSuccessMergeOutput(): MergeOutput {
     error: null,
     conflictFiles: [],
     conflictAnalysis: null,
+    preparedSha: null,
+    expectedTargetSha: null,
+    parkedRef: null,
+    refreshWarning: null,
+    phase: null,
   };
 }
 
@@ -318,6 +322,11 @@ function buildFailedMergeOutput(message: string): MergeOutput {
     error: message,
     conflictFiles: [],
     conflictAnalysis: null,
+    preparedSha: null,
+    expectedTargetSha: null,
+    parkedRef: null,
+    refreshWarning: null,
+    phase: null,
   };
 }
 
@@ -1262,7 +1271,7 @@ describe("execution loop — parallel integration", () => {
     expect(result.contextStates["ctx-b"]?.mergeStatus).toBe("merged-success");
   });
 
-  it("scenario 9: incident reproduction — A's merge succeeds, B's squash blocked by dirty target, halts with merge_precondition_failed", async () => {
+  it("scenario 9: A's fan-in merge completes; B's publish returns ready-to-land (dirty target) and B's worktree is retained for later Land/Discard", async () => {
     _resetActiveLoopsForTesting();
 
     const definition = createParallelDefinition(["ctx-a", "ctx-b"]);
@@ -1313,17 +1322,19 @@ describe("execution loop — parallel integration", () => {
     const mergeRunner: GraphMergeRunner = {
       async run(input) {
         if (input.contextId === "ctx-b") {
-          throw new MergePreconditionFailed(
-            "Target branch 'csm/session-1' has 2 uncommitted change(s)",
-            {
-              targetBranch: "csm/session-1",
-              dirtyPaths: [
-                { path: "src/dirty-a.ts", statusCode: " M", tracked: true },
-                { path: "src/dirty-b.ts", statusCode: " M", tracked: true },
-              ],
-              dirtyCount: 2,
-            },
-          );
+          return {
+            status: "ready-to-land",
+            mergeHash: null,
+            commitHash: null,
+            error: null,
+            conflictFiles: [],
+            conflictAnalysis: null,
+            preparedSha: "abc123prepared",
+            expectedTargetSha: "expected-target-sha",
+            parkedRef: `refs/cc-merges/${input.jobId}`,
+            refreshWarning: null,
+            phase: "awaiting-land",
+          };
         }
         return buildSuccessMergeOutput();
       },
@@ -1361,21 +1372,11 @@ describe("execution loop — parallel integration", () => {
       execution: initial,
     });
 
-    expect(result.status).toBe("halted");
-    expect(result.haltReason?.type).toBe("merge_precondition_failed");
-    if (result.haltReason?.type === "merge_precondition_failed") {
-      expect(result.haltReason.contextId).toBe("ctx-b");
-      expect(result.haltReason.targetBranch).toBe("csm/session-1");
-      expect(result.haltReason.totalDirtyCount).toBe(2);
-      expect(result.haltReason.dirtyPaths).toHaveLength(2);
-    }
     expect(result.contextStates["ctx-a"]?.mergeStatus).toBe("merged-success");
     expect(result.contextStates["ctx-a"]?.cleanupStatus).toBe("removed");
-    expect(result.contextStates["ctx-b"]?.mergeStatus).toBe("merged-failed");
-    expect(result.contextStates["ctx-b"]?.lastMergeError).toContain(
-      "Target branch 'csm/session-1' has",
-    );
 
+    // ctx-b returned ready-to-land — its worktree must be retained (not
+    // disposed) so the user can run Land/Discard against the parked ref.
     const disposeBranches = parallelWorktrees.disposeCalls.map(
       (c) => c.branchName,
     );

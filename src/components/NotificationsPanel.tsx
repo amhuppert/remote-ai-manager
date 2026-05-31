@@ -5,6 +5,8 @@ import { useCallback } from "react";
 import { assertNever } from "@/lib/shared/assert-never";
 import { getItemLabel } from "./notification-helpers";
 import { CloseIcon } from "@/components/icons";
+import LandPreparedMergeButton from "./LandPreparedMergeButton";
+import type { BackgroundJob } from "@/lib/jobs/schemas";
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -28,11 +30,19 @@ interface ServerNotificationBase extends BaseNotification {
 
 export interface MergeNotification extends ServerNotificationBase {
   type: "merge";
-  status: "running" | "success" | "conflicts" | "error";
+  status:
+    | "running"
+    | "success"
+    | "conflicts"
+    | "error"
+    | "ready-to-land"
+    | "discarded";
   mergeHash?: string;
   conflictCount?: number;
   errorMessage?: string;
   phase?: string;
+  preparedSha?: string;
+  parkedRef?: string;
 }
 
 export interface CommitNotification extends ServerNotificationBase {
@@ -201,6 +211,10 @@ function getItemStatusClass(item: NotificationItem): string {
           return "error";
         case "running":
           return "running";
+        case "ready-to-land":
+          return "success-pending-action";
+        case "discarded":
+          return "discarded";
         default:
           return assertNever(status);
       }
@@ -385,6 +399,11 @@ function NotificationRow({
     [item.id, onDismiss],
   );
 
+  const readyToLandJob =
+    item.type === "merge" && item.status === "ready-to-land"
+      ? buildReadyToLandJob(item)
+      : null;
+
   return (
     <li>
       <Link
@@ -404,6 +423,14 @@ function NotificationRow({
           {getErrorMessage(item) && (
             <div className="np-item-error" title={getErrorMessage(item)}>
               {summarizeError(getErrorMessage(item)!)}
+            </div>
+          )}
+          {readyToLandJob && (
+            <div
+              className="np-item-actions"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <LandPreparedMergeButton job={readyToLandJob} />
             </div>
           )}
         </div>
@@ -427,6 +454,21 @@ function NotificationRow({
       </Link>
     </li>
   );
+}
+
+function buildReadyToLandJob(item: MergeNotification): BackgroundJob {
+  return {
+    jobId: item.id,
+    jobType: "merge",
+    status: "ready-to-land",
+    projectName: item.projectName,
+    sessionName: item.sessionName,
+    branchName: item.branchName,
+    startedAt: item.timestamp,
+    preparedSha: item.preparedSha,
+    parkedRef: item.parkedRef,
+    phase: item.phase,
+  };
 }
 
 export default function NotificationsPanel({

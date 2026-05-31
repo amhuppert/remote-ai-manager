@@ -268,6 +268,8 @@ export function deriveNotificationType(
     case "merge":
       if (status === "completed") return "merge-completed";
       if (status === "conflicts") return "merge-conflicts";
+      if (status === "ready-to-land") return "merge-ready-to-land";
+      if (status === "discarded") return "merge-discarded";
       return "merge-failed";
     case "commit":
       if (status === "completed") return "commit-completed";
@@ -289,6 +291,10 @@ export function deriveNotificationTitle(type: NotificationType): string {
       return "Merge failed";
     case "merge-conflicts":
       return "Merge conflicts";
+    case "merge-ready-to-land":
+      return "Merge ready to land";
+    case "merge-discarded":
+      return "Prepared merge discarded";
     case "commit-completed":
       return "Commit completed";
     case "commit-failed":

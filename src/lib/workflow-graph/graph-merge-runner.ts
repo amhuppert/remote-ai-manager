@@ -4,7 +4,6 @@ import {
   mergeMachine,
   type MergeMachineType,
 } from "@/lib/workflows/merge/machine";
-import { graphContextSquashMergeActor } from "@/lib/workflow-graph/graph-context-squash-merge-actor";
 import type { MergeOutput } from "@/lib/workflows/merge/types";
 
 const logger = createLogger("graph-workflow-merge-runner");
@@ -28,10 +27,11 @@ export interface GraphMergeRunner {
 
 export interface GraphMergeRunnerDeps {
   /**
-   * For tests: build a merge machine variant. Production omits this and the
-   * runner constructs `mergeMachine.provide({ actors: { squashMerge:
-   * graphContextSquashMergeActor } })` so fan-in does not run the
-   * session-finalizing default squash actor.
+   * For tests: build a merge machine variant. Production omits this; the
+   * runner uses the default machine and signals "do not finalize the
+   * session on publish" via `finalizeSessionOnPublish: false` on the
+   * machine input — that's the only difference from a user-driven Smart
+   * Merge.
    */
   buildMachine?: () => MergeMachineType;
 }
@@ -39,14 +39,7 @@ export interface GraphMergeRunnerDeps {
 export function createGraphWorkflowMergeRunner(
   deps: GraphMergeRunnerDeps = {},
 ): GraphMergeRunner {
-  const buildMachine =
-    deps.buildMachine ??
-    (() =>
-      mergeMachine.provide({
-        actors: {
-          squashMerge: graphContextSquashMergeActor,
-        },
-      }));
+  const buildMachine = deps.buildMachine ?? (() => mergeMachine);
 
   return {
     async run(input: GraphMergeRunnerInput): Promise<MergeOutput> {
@@ -72,6 +65,7 @@ export function createGraphWorkflowMergeRunner(
           autoResolve: true,
           targetBranch: input.targetBranch,
           targetWorktreePath: input.targetWorktreePath,
+          finalizeSessionOnPublish: false,
         },
       });
       actor.start();

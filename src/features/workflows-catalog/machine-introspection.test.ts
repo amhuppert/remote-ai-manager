@@ -98,15 +98,21 @@ describe("introspectMachine", () => {
   it("smart-merge: kind classification (transient vs atomic vs final)", () => {
     const result = introspectMachine(mergeMachine);
     expect(result.machineId).toBe("smartMerge");
-    expect(result.initialState).toBe("verifyingBranch");
+    expect(result.initialState).toBe("entryRouting");
     const byId = new Map(result.states.map((s) => [s.id, s]));
+    expect(byId.get("entryRouting")?.kind).toBe("transient");
     expect(byId.get("verifyingBranch")?.kind).toBe("atomic");
     expect(byId.get("routing")?.kind).toBe("transient");
     expect(byId.get("conflictsDetected")?.kind).toBe("transient");
     expect(byId.get("checkingUncommitted")?.kind).toBe("atomic");
+    expect(byId.get("preparing")?.kind).toBe("atomic");
+    expect(byId.get("publishing")?.kind).toBe("atomic");
+    expect(byId.get("discarding")?.kind).toBe("atomic");
     expect(byId.get("completed")?.kind).toBe("final");
     expect(byId.get("failed")?.kind).toBe("final");
     expect(byId.get("conflicts")?.kind).toBe("final");
+    expect(byId.get("readyToLand")?.kind).toBe("final");
+    expect(byId.get("discarded")?.kind).toBe("final");
   });
 
   it("smart-merge: invokes are extracted per state", () => {
@@ -116,7 +122,9 @@ describe("introspectMachine", () => {
       "checkUncommitted",
     ]);
     expect(byId.get("mergingMain")?.invokes).toEqual(["mergeMain"]);
-    expect(byId.get("squashMerging")?.invokes).toEqual(["squashMerge"]);
+    expect(byId.get("preparing")?.invokes).toEqual(["prepare"]);
+    expect(byId.get("publishing")?.invokes).toEqual(["publish"]);
+    expect(byId.get("discarding")?.invokes).toEqual(["discardParkedRef"]);
   });
 
   it("optimistic: minimal machine — actors/guards/actions counts", () => {

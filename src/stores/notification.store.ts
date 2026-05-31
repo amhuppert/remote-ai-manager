@@ -62,19 +62,37 @@ export const useNotificationStore = create<NotificationStore>()(
 
     addOrUpdateJob: (event: JobStatusEvent) =>
       set((state) => {
-        const isTerminal =
+        // A session can only have one merge operation at a time (single-flight
+        // lock). When a new merge jobId shows up for a session, drop any prior
+        // merge job in the same session — including a stale ready-to-land —
+        // so Land/Discard don't leave the parked entry visible in the topbar.
+        if (event.jobType === "merge") {
+          for (const [id, j] of state.jobs) {
+            if (
+              j.jobType === "merge" &&
+              j.projectName === event.projectName &&
+              j.sessionName === event.sessionName &&
+              id !== event.jobId
+            ) {
+              state.jobs.delete(id);
+            }
+          }
+        }
+
+        const isTerminalNonActionable =
           event.status === "completed" ||
           event.status === "failed" ||
-          event.status === "conflicts";
+          event.status === "conflicts" ||
+          event.status === "discarded";
 
-        if (isTerminal) {
-          // Terminal state: remove from running jobs map.
+        if (isTerminalNonActionable) {
+          // Terminal non-actionable: remove from running jobs map.
           // Toast display is handled by notification-created events, not here.
           state.jobs.delete(event.jobId);
           return;
         }
 
-        // Running state: upsert into jobs map
+        // Running or ready-to-land (actionable terminal): upsert into jobs map
         const now = new Date().toISOString();
         const existing = state.jobs.get(event.jobId);
 
@@ -87,6 +105,9 @@ export const useNotificationStore = create<NotificationStore>()(
           branchName: event.branchName,
           startedAt: existing?.startedAt ?? now,
           phase: event.phase,
+          preparedSha: event.preparedSha,
+          parkedRef: event.parkedRef,
+          refreshWarning: event.refreshWarning,
         };
 
         state.jobs.set(event.jobId, job);
@@ -98,7 +119,7 @@ export const useNotificationStore = create<NotificationStore>()(
         // Replace the entire jobs map with server-authoritative data
         state.jobs.clear();
         for (const [id, job] of serverMap) {
-          if (job.status === "running") {
+          if (job.status === "running" || job.status === "ready-to-land") {
             state.jobs.set(id, job);
           }
         }
@@ -148,9 +169,28 @@ export const useActiveJobs = () => {
   return useMemo(
     () =>
       Array.from(jobs.values()).filter(
-        (j) => j.status === "running" || j.status === "conflicts",
+        (j) =>
+          j.status === "running" ||
+          j.status === "conflicts" ||
+          j.status === "ready-to-land",
       ),
     [jobs],
+  );
+};
+
+export const useJobsBySession = (projectName: string, sessionName: string) => {
+  const jobs = useNotificationStore((s) => s.jobs);
+  return useMemo(
+    () =>
+      Array.from(jobs.values()).filter(
+        (j) =>
+          j.projectName === projectName &&
+          j.sessionName === sessionName &&
+          (j.status === "running" ||
+            j.status === "conflicts" ||
+            j.status === "ready-to-land"),
+      ),
+    [jobs, projectName, sessionName],
   );
 };
 

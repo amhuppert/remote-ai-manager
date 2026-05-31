@@ -12,7 +12,9 @@ import {
   dispatchCommitJob,
   dispatchMergeJob,
   dispatchResolveConflictsJob,
+  getJob,
 } from "@/lib/jobs/queue";
+import { defaultGitClient, type GitClient } from "./client";
 import { createLogger, withTracing } from "@/lib/logging";
 import type { ApiError } from "@/lib/api/errors";
 const diffLogger = createLogger("api.diff");
@@ -424,6 +426,273 @@ export const resolveSessionConflicts = withTracing(
       {
         jobId: result.value.jobId,
         jobType: "resolve-conflicts" as const,
+        branchName: session.branchName,
+        startedAt: new Date().toISOString(),
+      },
+      { status: 202 },
+    );
+  },
+);
+
+// ============================================================
+// Land / Discard prepared merge — dispatch helpers + deps
+// ============================================================
+
+interface PreparedMergeRouteDeps {
+  gitClient: GitClient;
+}
+
+let preparedMergeRouteDeps: PreparedMergeRouteDeps = {
+  gitClient: defaultGitClient,
+};
+
+export function setPreparedMergeRouteDeps(
+  deps: Partial<PreparedMergeRouteDeps>,
+): void {
+  preparedMergeRouteDeps = { ...preparedMergeRouteDeps, ...deps };
+}
+
+export function _resetPreparedMergeRouteDepsForTesting(): void {
+  preparedMergeRouteDeps = { gitClient: defaultGitClient };
+}
+
+async function readParkedRefSha(
+  projectPath: string,
+  parkedRef: string,
+): Promise<string | null> {
+  try {
+    const { stdout } = await preparedMergeRouteDeps.gitClient.git(
+      ["rev-parse", "--verify", parkedRef],
+      projectPath,
+    );
+    const sha = stdout.trim();
+    return sha.length > 0 ? sha : null;
+  } catch {
+    return null;
+  }
+}
+
+/** POST /api/projects/[name]/sessions/[session]/merge/land — publish a prepared squash commit */
+export const landSession = withTracing(
+  async (_request, { params }: RouteContext) => {
+    const resolvedParams = await params;
+    const name = resolvedParams["name"] ?? "";
+    const sessionSlug = resolvedParams["session"] ?? "";
+    const sessionName = decodeURIComponent(sessionSlug);
+
+    const projectPath = await resolveProjectPath(name);
+    if (!projectPath) {
+      return NextResponse.json(
+        { error: "Project not found" } satisfies ApiError,
+        { status: 404 },
+      );
+    }
+
+    const session = await getSession(projectPath, sessionName);
+    if (!session) {
+      return NextResponse.json(
+        { error: "Session not found" } satisfies ApiError,
+        { status: 404 },
+      );
+    }
+
+    const existingJob = getJob(projectPath, sessionName);
+    if (!existingJob) {
+      return NextResponse.json(
+        { error: "No prepared merge for this session" } satisfies ApiError,
+        { status: 404 },
+      );
+    }
+
+    if (existingJob.status !== "ready-to-land") {
+      return NextResponse.json(
+        {
+          error: `Job is not ready to land (status: ${existingJob.status})`,
+          code: "JOB_NOT_READY_TO_LAND",
+        } satisfies ApiError,
+        { status: 409 },
+      );
+    }
+
+    const parkedRef =
+      existingJob.parkedRef ?? `refs/cc-merges/${existingJob.jobId}`;
+    const preparedSha = existingJob.preparedSha ?? null;
+    if (!preparedSha) {
+      return NextResponse.json(
+        {
+          error: "Prepared commit SHA missing from job record",
+          code: "PREPARED_SHA_MISSING",
+        } satisfies ApiError,
+        { status: 409 },
+      );
+    }
+
+    const expectedTargetSha = existingJob.expectedTargetSha ?? null;
+    if (!expectedTargetSha) {
+      return NextResponse.json(
+        {
+          error: "Expected target SHA missing from job record",
+          code: "EXPECTED_TARGET_SHA_MISSING",
+        } satisfies ApiError,
+        { status: 409 },
+      );
+    }
+
+    const actualSha = await readParkedRefSha(projectPath, parkedRef);
+    if (actualSha === null || actualSha !== preparedSha) {
+      return NextResponse.json(
+        {
+          error: `Parked ref ${parkedRef} no longer resolves to the prepared commit`,
+          code: "PARKED_REF_MISSING",
+        } satisfies ApiError,
+        { status: 409 },
+      );
+    }
+
+    const targetBranch = session.targetBranch ?? "main";
+    const mergeMessage = `Merge ${session.branchName} into ${targetBranch}`;
+
+    let targetWorktreePath: string | undefined;
+    if (targetBranch !== "main" && session.parentSessionName) {
+      const parentSession = await getSession(
+        projectPath,
+        session.parentSessionName,
+      );
+      targetWorktreePath = parentSession?.worktreePath;
+    }
+
+    const result = dispatchMergeJob({
+      projectPath,
+      projectName: name,
+      sessionName,
+      worktreePath: session.worktreePath,
+      branchName: session.branchName,
+      message: mergeMessage,
+      autoResolve: false,
+      targetBranch,
+      targetWorktreePath,
+      entryMode: "land",
+      preparedSha,
+      expectedTargetSha,
+      parkedRef,
+    });
+
+    if (!result.ok) {
+      const code = result.error;
+      return NextResponse.json(
+        {
+          error:
+            code === "SESSION_BUSY"
+              ? "Session is busy"
+              : "A job is already running for this session",
+          code,
+        } satisfies ApiError,
+        { status: 409 },
+      );
+    }
+
+    return NextResponse.json(
+      {
+        jobId: result.value.jobId,
+        jobType: "merge" as const,
+        branchName: session.branchName,
+        startedAt: new Date().toISOString(),
+      },
+      { status: 202 },
+    );
+  },
+);
+
+/** POST /api/projects/[name]/sessions/[session]/merge/discard — drop a parked prepared commit */
+export const discardSession = withTracing(
+  async (_request, { params }: RouteContext) => {
+    const resolvedParams = await params;
+    const name = resolvedParams["name"] ?? "";
+    const sessionSlug = resolvedParams["session"] ?? "";
+    const sessionName = decodeURIComponent(sessionSlug);
+
+    const projectPath = await resolveProjectPath(name);
+    if (!projectPath) {
+      return NextResponse.json(
+        { error: "Project not found" } satisfies ApiError,
+        { status: 404 },
+      );
+    }
+
+    const session = await getSession(projectPath, sessionName);
+    if (!session) {
+      return NextResponse.json(
+        { error: "Session not found" } satisfies ApiError,
+        { status: 404 },
+      );
+    }
+
+    const existingJob = getJob(projectPath, sessionName);
+    if (!existingJob) {
+      return NextResponse.json(
+        { error: "No prepared merge for this session" } satisfies ApiError,
+        { status: 404 },
+      );
+    }
+
+    if (existingJob.status !== "ready-to-land") {
+      return NextResponse.json(
+        {
+          error: `Job is not ready to land (status: ${existingJob.status})`,
+          code: "JOB_NOT_READY_TO_LAND",
+        } satisfies ApiError,
+        { status: 409 },
+      );
+    }
+
+    const parkedRef =
+      existingJob.parkedRef ?? `refs/cc-merges/${existingJob.jobId}`;
+    const preparedSha = existingJob.preparedSha ?? null;
+    if (!preparedSha) {
+      return NextResponse.json(
+        {
+          error: "Prepared commit SHA missing from job record",
+          code: "PREPARED_SHA_MISSING",
+        } satisfies ApiError,
+        { status: 409 },
+      );
+    }
+
+    const targetBranch = session.targetBranch ?? "main";
+    const mergeMessage = `Discard prepared merge for ${session.branchName}`;
+
+    const result = dispatchMergeJob({
+      projectPath,
+      projectName: name,
+      sessionName,
+      worktreePath: session.worktreePath,
+      branchName: session.branchName,
+      message: mergeMessage,
+      autoResolve: false,
+      targetBranch,
+      entryMode: "discard",
+      preparedSha,
+      parkedRef,
+    });
+
+    if (!result.ok) {
+      const code = result.error;
+      return NextResponse.json(
+        {
+          error:
+            code === "SESSION_BUSY"
+              ? "Session is busy"
+              : "A job is already running for this session",
+          code,
+        } satisfies ApiError,
+        { status: 409 },
+      );
+    }
+
+    return NextResponse.json(
+      {
+        jobId: result.value.jobId,
+        jobType: "merge" as const,
         branchName: session.branchName,
         startedAt: new Date().toISOString(),
       },

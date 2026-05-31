@@ -6,26 +6,6 @@ export type DirtyPath = {
   tracked: boolean;
 };
 
-type MergePreconditionFailedInit = {
-  targetBranch: string;
-  dirtyPaths: DirtyPath[];
-  dirtyCount: number;
-};
-
-export class MergePreconditionFailed extends Error {
-  readonly targetBranch: string;
-  readonly dirtyPaths: DirtyPath[];
-  readonly dirtyCount: number;
-
-  constructor(message: string, init: MergePreconditionFailedInit) {
-    super(message);
-    this.name = "MergePreconditionFailed";
-    this.targetBranch = init.targetBranch;
-    this.dirtyPaths = init.dirtyPaths;
-    this.dirtyCount = init.dirtyCount;
-  }
-}
-
 type AgentTurnFailedInit = {
   contextId: string;
   engine: "claude" | "codex";
@@ -71,14 +51,9 @@ export class WorktreeCreationDirty extends Error {
 
 export function isTypedWorkflowError(
   err: unknown,
-): err is
-  | MergePreconditionFailed
-  | AgentTurnFailedError
-  | WorktreeCreationDirty {
+): err is AgentTurnFailedError | WorktreeCreationDirty {
   return (
-    err instanceof MergePreconditionFailed ||
-    err instanceof AgentTurnFailedError ||
-    err instanceof WorktreeCreationDirty
+    err instanceof AgentTurnFailedError || err instanceof WorktreeCreationDirty
   );
 }
 
@@ -93,16 +68,6 @@ export function toHaltReason(
   err: unknown,
   fallback: HaltReasonFallback,
 ): GraphWorkflowHaltReason {
-  if (err instanceof MergePreconditionFailed) {
-    return {
-      type: "merge_precondition_failed",
-      contextId: fallback.contextId ?? "",
-      targetBranch: err.targetBranch,
-      dirtyPaths: err.dirtyPaths.slice(0, MAX_DIRTY_PATHS_IN_HALT),
-      totalDirtyCount: err.dirtyCount,
-      message: err.message,
-    };
-  }
   if (err instanceof AgentTurnFailedError) {
     return {
       type: "agent_turn_failed",

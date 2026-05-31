@@ -1,20 +1,18 @@
 /**
  * Smart Merge XState v5 Machine.
  *
- * Models the full merge pipeline with conflict resolution and validation:
+ * Models the full merge pipeline with conflict resolution, validation, and
+ * a prepare/publish split for the final squash:
  *
- *   routing → checkingUncommitted → committingUncommitted → mergingMain
- *                                                         ↓
- *                                         (clean) → validating → squashMerging → completed
- *                                         (conflicts + autoResolve) → resolvingConflicts → committingResolution → validating
- *                                         (conflicts + !autoResolve) → analyzingConflicts → conflicts (final)
+ *   entryRouting → merge → verifyingBranch → routing → ...
+ *                                                   ↓
+ *                                       validating → preparing → publishing → completed
+ *                                                                            → readyToLand (final)
+ *                                                                            → preparing (CAS retry, bounded)
+ *                                                                            → failed   (CAS exhausted or land-mode CAS loss)
  *
- *   routing → resolvingConflicts (for resolve-conflicts jobs)
- *
- *   validating → (fail + autoResolve) → fixingValidation → checkingFixChanges → committingFix → revalidating → squashMerging
- *                                                                             ↘ (no changes) → revalidating
- *                                                                          ↗ (retry if attempts remain)
- *             → (fail + !autoResolve) → failed (final)
+ *   entryRouting → land    → publishing (no prepare, uses parked commit)
+ *   entryRouting → discard → discarding → discarded (final)
  */
 
 import { setup, assign, fromPromise } from "xstate";
@@ -41,8 +39,12 @@ import type {
   RunValidationOutput,
   FixValidationInput,
   FixValidationOutput,
-  SquashMergeInput,
-  SquashMergeOutput,
+  PrepareActorInput,
+  PrepareActorOutput,
+  PublishActorInput,
+  PublishActorOutput,
+  DiscardParkedRefInput,
+  DiscardParkedRefOutput,
 } from "./actors";
 import {
   checkUncommitted,
@@ -53,18 +55,13 @@ import {
   analyzeConflictsActor,
   runValidation,
   fixValidation,
-  squashMergeActor,
+  prepareActor,
+  publishActor,
+  discardParkedRefActor,
 } from "./actors";
-import {
-  extractErrorMessage,
-  errorAssign,
-  createTerminalStates,
-} from "../utils";
+import { extractErrorMessage, errorAssign } from "../utils";
 
 const SCHEMA_VERSION = 1;
-
-/** Standard terminal states for the merge machine. */
-const terminals = createTerminalStates(["completed", "failed"] as const);
 
 /** Exported type alias so consumers can accept the machine or `.provide()` variants. */
 export type MergeMachineType = typeof mergeMachine;
@@ -101,11 +98,20 @@ export const mergeMachine = setup({
     fixValidation: fixValidation as ReturnType<
       typeof fromPromise<FixValidationOutput, FixValidationInput>
     >,
-    squashMerge: squashMergeActor as ReturnType<
-      typeof fromPromise<SquashMergeOutput, SquashMergeInput>
+    prepare: prepareActor as ReturnType<
+      typeof fromPromise<PrepareActorOutput, PrepareActorInput>
+    >,
+    publish: publishActor as ReturnType<
+      typeof fromPromise<PublishActorOutput, PublishActorInput>
+    >,
+    discardParkedRef: discardParkedRefActor as ReturnType<
+      typeof fromPromise<DiscardParkedRefOutput, DiscardParkedRefInput>
     >,
   },
   guards: {
+    isMergeEntry: ({ context }) => context.entryMode === "merge",
+    isLandEntry: ({ context }) => context.entryMode === "land",
+    isDiscardEntry: ({ context }) => context.entryMode === "discard",
     isResolveConflictsJob: ({ context }) =>
       context.jobType === "resolve-conflicts",
     branchMatchesExpected: ({ context, event }) => {
@@ -135,6 +141,29 @@ export const mergeMachine = setup({
     },
     hasFixRetriesRemaining: ({ context }) =>
       context.fixAttempt < context.maxFixAttempts,
+    prepareProducedConflicts: ({ event }) => {
+      const e = event as unknown as { output: PrepareActorOutput };
+      return e.output.status === "conflicts";
+    },
+    publishCompleted: ({ event }) => {
+      const e = event as unknown as { output: PublishActorOutput };
+      return e.output.status === "completed";
+    },
+    publishReadyToLand: ({ event }) => {
+      const e = event as unknown as { output: PublishActorOutput };
+      return e.output.status === "ready-to-land";
+    },
+    publishCasLost: ({ event }) => {
+      const e = event as unknown as { output: PublishActorOutput };
+      return e.output.status === "cas-lost";
+    },
+    publishFailed: ({ event }) => {
+      const e = event as unknown as { output: PublishActorOutput };
+      return e.output.status === "failed";
+    },
+    casRetriesRemaining: ({ context }) =>
+      context.entryMode === "merge" &&
+      context.casAttempt < context.maxCasAttempts,
   },
   actions: {
     onTerminal: () => {
@@ -170,14 +199,33 @@ export const mergeMachine = setup({
     finalStatus: null,
     targetBranch: input.targetBranch ?? "main",
     targetWorktreePath: input.targetWorktreePath ?? null,
+    entryMode: input.entryMode ?? "merge",
+    preparedSha: input.preparedSha ?? null,
+    expectedTargetSha: input.expectedTargetSha ?? null,
+    parkedRef: input.parkedRef ?? null,
+    refreshWarning: null,
+    casAttempt: 1,
+    maxCasAttempts: input.maxCasAttempts ?? 3,
+    finalizeSessionOnPublish: input.finalizeSessionOnPublish ?? true,
   }),
-  initial: "verifyingBranch",
+  initial: "entryRouting",
   states: {
     /**
+     * Transient initial state that routes to the right pipeline based on
+     * `entryMode`. Merge enters the full pipeline; Land jumps straight to
+     * publishing on an already-parked commit; Discard deletes the parked
+     * ref without ever touching the target branch.
+     */
+    entryRouting: {
+      always: [
+        { guard: "isLandEntry", target: "publishing" },
+        { guard: "isDiscardEntry", target: "discarding" },
+        { target: "verifyingBranch" },
+      ],
+    },
+
+    /**
      * Verify the feature worktree is still on the expected feature branch.
-     * Prevents the entire pipeline from running on `main` (or any other
-     * unintended branch) if something checked out a different ref in the
-     * worktree between provisioning and merge.
      */
     verifyingBranch: {
       invoke: {
@@ -207,11 +255,6 @@ export const mergeMachine = setup({
       },
     },
 
-    /**
-     * Routing state: resolve-conflicts jobs skip directly to resolvingConflicts.
-     * Merge jobs start with the full pipeline.
-     * This is a transient state (not observable via subscribe).
-     */
     routing: {
       always: [
         { guard: "isResolveConflictsJob", target: "resolvingConflicts" },
@@ -229,14 +272,9 @@ export const mergeMachine = setup({
             guard: "hasUncommittedChanges",
             target: "committingUncommitted",
           },
-          {
-            target: "mergingMain",
-          },
+          { target: "mergingMain" },
         ],
-        onError: {
-          target: "failed",
-          actions: errorAssign(),
-        },
+        onError: { target: "failed", actions: errorAssign() },
       },
     },
 
@@ -249,10 +287,7 @@ export const mergeMachine = setup({
           skipHooks: true,
         }),
         onDone: "mergingMain",
-        onError: {
-          target: "failed",
-          actions: errorAssign(),
-        },
+        onError: { target: "failed", actions: errorAssign() },
       },
     },
 
@@ -272,14 +307,9 @@ export const mergeMachine = setup({
             }),
             target: "conflictsDetected",
           },
-          {
-            target: "validating",
-          },
+          { target: "validating" },
         ],
-        onError: {
-          target: "failed",
-          actions: errorAssign(),
-        },
+        onError: { target: "failed", actions: errorAssign() },
       },
     },
 
@@ -307,15 +337,9 @@ export const mergeMachine = setup({
             }),
             target: "conflicts",
           },
-          {
-            // Analysis failed — go to conflicts without analysis
-            target: "conflicts",
-          },
+          { target: "conflicts" },
         ],
-        onError: {
-          // Graceful degradation — go to conflicts without analysis
-          target: "conflicts",
-        },
+        onError: { target: "conflicts" },
       },
     },
 
@@ -338,7 +362,6 @@ export const mergeMachine = setup({
             target: "committingResolution",
           },
           {
-            // Resolution failed — store partial results and go to conflicts
             actions: assign({
               conflictAnalysis: ({ event }) =>
                 event.output.partialConflicts ?? null,
@@ -346,10 +369,7 @@ export const mergeMachine = setup({
             target: "conflicts",
           },
         ],
-        onError: {
-          target: "failed",
-          actions: errorAssign(),
-        },
+        onError: { target: "failed", actions: errorAssign() },
       },
     },
 
@@ -362,10 +382,7 @@ export const mergeMachine = setup({
           skipHooks: true,
         }),
         onDone: "validating",
-        onError: {
-          target: "failed",
-          actions: errorAssign(),
-        },
+        onError: { target: "failed", actions: errorAssign() },
       },
     },
 
@@ -381,7 +398,7 @@ export const mergeMachine = setup({
           targetBranch: context.targetBranch,
           timeoutMs: context.validationTimeoutMs,
         }),
-        onDone: "squashMerging",
+        onDone: "preparing",
         onError: [
           {
             guard: "shouldAutoResolve",
@@ -390,10 +407,7 @@ export const mergeMachine = setup({
             }),
             target: "fixingValidation",
           },
-          {
-            target: "failed",
-            actions: errorAssign(),
-          },
+          { target: "failed", actions: errorAssign() },
         ],
       },
     },
@@ -414,46 +428,27 @@ export const mergeMachine = setup({
           isRetry: context.fixAttempt > 1,
         }),
         onDone: [
+          { guard: "fixSucceeded", target: "checkingFixChanges" },
           {
-            guard: "fixSucceeded",
-            target: "checkingFixChanges",
-          },
-          {
-            // Fix failed — go to failed with original error
             target: "failed",
             actions: assign({
               completedAt: () => new Date().toISOString(),
             }),
           },
         ],
-        onError: {
-          target: "failed",
-          actions: errorAssign(),
-        },
+        onError: { target: "failed", actions: errorAssign() },
       },
     },
 
-    /**
-     * Check whether the fix agent actually made changes before committing.
-     * If it didn't (e.g. it couldn't fix test failures), skip straight to
-     * revalidating so the machine can decide whether to retry or fail based
-     * on actual validation results, not a spurious commit error.
-     */
     checkingFixChanges: {
       invoke: {
         src: "checkUncommitted",
         input: ({ context }) => ({ worktreePath: context.worktreePath }),
         onDone: [
-          {
-            guard: "hasUncommittedChanges",
-            target: "committingFix",
-          },
+          { guard: "hasUncommittedChanges", target: "committingFix" },
           { target: "revalidating" },
         ],
-        onError: {
-          // Best-effort: if we can't check, try to commit anyway
-          target: "committingFix",
-        },
+        onError: { target: "committingFix" },
       },
     },
 
@@ -466,10 +461,7 @@ export const mergeMachine = setup({
           skipHooks: true,
         }),
         onDone: "revalidating",
-        onError: {
-          target: "failed",
-          actions: errorAssign(),
-        },
+        onError: { target: "failed", actions: errorAssign() },
       },
     },
 
@@ -486,47 +478,163 @@ export const mergeMachine = setup({
           timeoutMs: context.validationTimeoutMs,
         }),
         onDone: {
-          target: "squashMerging",
+          target: "preparing",
           actions: assign({ error: null }),
         },
         onError: [
           {
-            // Retry: go back to fixingValidation with new error output
             guard: "hasFixRetriesRemaining",
             actions: assign({
               error: ({ event }) => extractErrorMessage(event.error),
             }),
             target: "fixingValidation",
           },
-          {
-            // No retries remaining — fail
-            target: "failed",
-            actions: errorAssign(),
-          },
+          { target: "failed", actions: errorAssign() },
         ],
       },
     },
 
-    squashMerging: {
-      entry: assign({ phase: "squash-merging" as const }),
+    preparing: {
+      entry: assign({ phase: "preparing" as const }),
       invoke: {
-        src: "squashMerge",
+        src: "prepare",
         input: ({ context }) => ({
           projectPath: context.projectPath,
+          worktreePath: context.worktreePath,
           branchName: context.branchName,
+          targetBranch: context.targetBranch,
           message: context.message,
+          jobId: context.jobId,
+        }),
+        onDone: [
+          {
+            guard: "prepareProducedConflicts",
+            target: "failed",
+            actions: assign({
+              conflictFiles: ({ event }) => {
+                const out = event.output;
+                return out.status === "conflicts" ? out.conflictFiles : [];
+              },
+              error: ({ event }) => {
+                const out = event.output;
+                if (out.status !== "conflicts") return "prepare conflicts";
+                return `Prepare produced conflicts in ${out.conflictFiles.length} file(s): ${out.conflictFiles.join(", ")}`;
+              },
+              completedAt: () => new Date().toISOString(),
+            }),
+          },
+          {
+            target: "publishing",
+            actions: assign({
+              preparedSha: ({ event }) => {
+                const out = event.output;
+                return out.status === "prepared" ? out.preparedSha : null;
+              },
+              expectedTargetSha: ({ event }) => {
+                const out = event.output;
+                return out.status === "prepared" ? out.expectedTargetSha : null;
+              },
+              parkedRef: ({ event }) => {
+                const out = event.output;
+                return out.status === "prepared" ? out.parkedRef : null;
+              },
+            }),
+          },
+        ],
+        onError: { target: "failed", actions: errorAssign() },
+      },
+    },
+
+    publishing: {
+      entry: assign({ phase: "publishing" as const }),
+      invoke: {
+        src: "publish",
+        input: ({ context }) => ({
+          projectPath: context.projectPath,
           sessionName: context.sessionName,
           targetBranch: context.targetBranch,
-          targetWorktreePath: context.targetWorktreePath,
+          preparedSha: context.preparedSha ?? "",
+          expectedTargetSha: context.expectedTargetSha ?? "",
+          parkedRef: context.parkedRef ?? "",
+          finalizeSession: context.finalizeSessionOnPublish,
         }),
-        onDone: {
-          target: "completed",
-          actions: assign({
-            mergeHash: ({ event }) => event.output.mergeHash,
-            completedAt: () => new Date().toISOString(),
-            phase: null,
-          }),
-        },
+        onDone: [
+          {
+            guard: "publishCompleted",
+            target: "completed",
+            actions: assign({
+              mergeHash: ({ event }) => {
+                const out = event.output;
+                return out.status === "completed" ? out.mergeHash : null;
+              },
+              refreshWarning: ({ event }) => {
+                const out = event.output;
+                return out.status === "completed"
+                  ? (out.refreshWarning ?? null)
+                  : null;
+              },
+            }),
+          },
+          {
+            guard: "publishReadyToLand",
+            target: "readyToLand",
+          },
+          {
+            // CAS lost + retries remaining + merge mode → re-prepare
+            guard: ({ context, event }) => {
+              const e = event as unknown as { output: PublishActorOutput };
+              if (e.output.status !== "cas-lost") return false;
+              return (
+                context.entryMode === "merge" &&
+                context.casAttempt < context.maxCasAttempts
+              );
+            },
+            target: "preparing",
+            actions: assign({
+              casAttempt: ({ context }) => context.casAttempt + 1,
+              preparedSha: null,
+              expectedTargetSha: null,
+              parkedRef: null,
+            }),
+          },
+          {
+            // CAS lost in land mode → fail with a land-specific message
+            guard: ({ context, event }) => {
+              const e = event as unknown as { output: PublishActorOutput };
+              return (
+                e.output.status === "cas-lost" && context.entryMode === "land"
+              );
+            },
+            target: "failed",
+            actions: assign({
+              error:
+                "Target branch advanced since prepare; re-run merge to refresh the prepared commit.",
+              completedAt: () => new Date().toISOString(),
+            }),
+          },
+          {
+            // CAS lost + retries exhausted in merge mode → fail
+            guard: "publishCasLost",
+            target: "failed",
+            actions: assign({
+              error: ({ context }) =>
+                `CAS contention exhausted on target branch ${context.targetBranch}`,
+              completedAt: () => new Date().toISOString(),
+            }),
+          },
+          {
+            // publish actor returned failed
+            guard: "publishFailed",
+            target: "failed",
+            actions: assign({
+              error: ({ event }) => {
+                const out = event.output;
+                return out.status === "failed" ? out.error : "publish failed";
+              },
+              completedAt: () => new Date().toISOString(),
+            }),
+          },
+        ],
         onError: {
           target: "failed",
           actions: [errorAssign(), assign({ phase: null })],
@@ -534,17 +642,80 @@ export const mergeMachine = setup({
       },
     },
 
-    // Standard terminal states (completed, failed)
-    ...terminals,
+    discarding: {
+      invoke: {
+        src: "discardParkedRef",
+        input: ({ context }) => ({
+          projectPath: context.projectPath,
+          parkedRef: context.parkedRef ?? "",
+          preparedSha: context.preparedSha ?? "",
+        }),
+        onDone: "discarded",
+        onError: { target: "failed", actions: errorAssign() },
+      },
+    },
 
-    // Custom terminal state: conflicts has extra entry actions
+    // ============================================================
+    // Terminal states
+    // ============================================================
+    // Phase-clearing rule: clear `phase` on completed/failed/conflicts/discarded;
+    // retain `awaiting-land` on readyToLand.
+
+    completed: {
+      type: "final",
+      entry: [
+        assign({
+          finalStatus: "completed" as const,
+          phase: null,
+          completedAt: () => new Date().toISOString(),
+        }),
+        "onTerminal",
+      ],
+    },
+
+    failed: {
+      type: "final",
+      entry: [
+        assign({
+          finalStatus: "failed" as const,
+          phase: null,
+          completedAt: () => new Date().toISOString(),
+        }),
+        "onTerminal",
+      ],
+    },
+
     conflicts: {
       type: "final",
       entry: [
         assign({
-          completedAt: () => new Date().toISOString(),
-          phase: null,
           finalStatus: "conflicts" as const,
+          phase: null,
+          completedAt: () => new Date().toISOString(),
+        }),
+        "onTerminal",
+      ],
+    },
+
+    readyToLand: {
+      type: "final",
+      entry: [
+        assign({
+          finalStatus: "ready-to-land" as const,
+          phase: "awaiting-land" as const,
+          completedAt: () => new Date().toISOString(),
+        }),
+        "onTerminal",
+      ],
+    },
+
+    discarded: {
+      type: "final",
+      entry: [
+        assign({
+          finalStatus: "discarded" as const,
+          phase: null,
+          completedAt: () => new Date().toISOString(),
         }),
         "onTerminal",
       ],
@@ -557,5 +728,10 @@ export const mergeMachine = setup({
     error: context.error,
     conflictFiles: context.conflictFiles,
     conflictAnalysis: context.conflictAnalysis,
+    preparedSha: context.preparedSha,
+    expectedTargetSha: context.expectedTargetSha,
+    parkedRef: context.parkedRef,
+    refreshWarning: context.refreshWarning,
+    phase: context.phase,
   }),
 });

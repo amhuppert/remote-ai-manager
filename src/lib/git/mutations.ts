@@ -118,6 +118,79 @@ export function useSmartMergeMutation(
   });
 }
 
+export function useLandPreparedMergeMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+  const addOrUpdateJob = useAddOrUpdateJob();
+
+  return useMutation({
+    mutationFn: () =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/merge/land`,
+        "land-prepared-merge",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        },
+        jobDispatchResponseSchema,
+      ),
+    onSuccess: (data) => {
+      addOrUpdateJob({
+        type: "job-status",
+        jobType: data.jobType,
+        status: "running",
+        projectName,
+        sessionName,
+        jobId: data.jobId,
+        branchName: data.branchName,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.list(projectName),
+      });
+    },
+  });
+}
+
+export function useDiscardPreparedMergeMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+  const addOrUpdateJob = useAddOrUpdateJob();
+
+  return useMutation({
+    mutationFn: () =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/merge/discard`,
+        "discard-prepared-merge",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        },
+        jobDispatchResponseSchema,
+      ),
+    onSuccess: (data) => {
+      addOrUpdateJob({
+        type: "job-status",
+        jobType: data.jobType,
+        status: "running",
+        projectName,
+        sessionName,
+        jobId: data.jobId,
+        branchName: data.branchName,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
+      });
+    },
+  });
+}
+
 export function useResolveConflictsMutation(
   projectName: string,
   sessionName: string,

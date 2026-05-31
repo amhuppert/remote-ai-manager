@@ -61,8 +61,12 @@ import type {
   RunValidationOutput,
   FixValidationInput,
   FixValidationOutput,
-  SquashMergeInput,
-  SquashMergeOutput,
+  PrepareActorInput,
+  PrepareActorOutput,
+  PublishActorInput,
+  PublishActorOutput,
+  DiscardParkedRefInput,
+  DiscardParkedRefOutput,
   ResolveConflictsInput,
   ResolveConflictsOutput,
   AnalyzeConflictsInput,
@@ -189,7 +193,9 @@ describe("section 6.3 — merge + optimistic workflow parity (Task 6.3)", () => 
       "validating",
       "fixing-validation",
       "re-validating",
-      "squash-merging",
+      "preparing",
+      "publishing",
+      "awaiting-land",
     ];
 
     for (const phase of phases) {
@@ -251,9 +257,21 @@ describe("section 6.3 — merge + optimistic workflow parity (Task 6.3)", () => 
         fixValidation: fromPromise<FixValidationOutput, FixValidationInput>(
           async () => ({ status: "fixed" }),
         ),
-        squashMerge: fromPromise<SquashMergeOutput, SquashMergeInput>(
-          async () => ({ mergeHash: "merge-xyz" }),
+        prepare: fromPromise<PrepareActorOutput, PrepareActorInput>(
+          async () => ({
+            status: "prepared",
+            preparedSha: "prepared-xyz",
+            expectedTargetSha: "expected-xyz",
+            parkedRef: "refs/cc-merges/test",
+          }),
         ),
+        publish: fromPromise<PublishActorOutput, PublishActorInput>(
+          async () => ({ status: "completed", mergeHash: "merge-xyz" }),
+        ),
+        discardParkedRef: fromPromise<
+          DiscardParkedRefOutput,
+          DiscardParkedRefInput
+        >(async () => undefined),
       },
     });
 

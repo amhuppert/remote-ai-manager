@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   AgentTurnFailedError,
-  MergePreconditionFailed,
   WorktreeCreationDirty,
   isTypedWorkflowError,
   toHaltReason,
@@ -13,21 +12,6 @@ function makeDirty(path: string, statusCode = "M ", tracked = true): DirtyPath {
 }
 
 describe("errors module", () => {
-  describe("MergePreconditionFailed", () => {
-    it("captures targetBranch, dirtyPaths, and dirtyCount", () => {
-      const err = new MergePreconditionFailed("dirty", {
-        targetBranch: "feat/x",
-        dirtyPaths: [makeDirty("a.ts")],
-        dirtyCount: 1,
-      });
-      expect(err.name).toBe("MergePreconditionFailed");
-      expect(err.targetBranch).toBe("feat/x");
-      expect(err.dirtyPaths).toEqual([makeDirty("a.ts")]);
-      expect(err.dirtyCount).toBe(1);
-      expect(err.message).toBe("dirty");
-    });
-  });
-
   describe("AgentTurnFailedError", () => {
     it("captures contextId, engine, cause, originalMessage", () => {
       const err = new AgentTurnFailedError("boom", {
@@ -62,15 +46,6 @@ describe("errors module", () => {
     it("returns true for typed errors", () => {
       expect(
         isTypedWorkflowError(
-          new MergePreconditionFailed("m", {
-            targetBranch: "b",
-            dirtyPaths: [],
-            dirtyCount: 0,
-          }),
-        ),
-      ).toBe(true);
-      expect(
-        isTypedWorkflowError(
           new AgentTurnFailedError("m", {
             contextId: "c",
             engine: "claude",
@@ -99,55 +74,6 @@ describe("errors module", () => {
   });
 
   describe("toHaltReason", () => {
-    it("converts MergePreconditionFailed to merge_precondition_failed", () => {
-      const paths: DirtyPath[] = [
-        makeDirty("a.ts"),
-        makeDirty("b.ts"),
-        makeDirty("c.ts"),
-      ];
-      const err = new MergePreconditionFailed("dirty", {
-        targetBranch: "feat/x",
-        dirtyPaths: paths,
-        dirtyCount: 3,
-      });
-      const reason = toHaltReason(err, {
-        contextId: "ctx-1",
-        cause: "unknown",
-      });
-      expect(reason).toEqual({
-        type: "merge_precondition_failed",
-        contextId: "ctx-1",
-        targetBranch: "feat/x",
-        dirtyPaths: paths,
-        totalDirtyCount: 3,
-        message: "dirty",
-      });
-    });
-
-    it("truncates dirtyPaths to 5 while preserving totalDirtyCount", () => {
-      const paths: DirtyPath[] = Array.from({ length: 8 }, (_, i) =>
-        makeDirty(`file-${i}.ts`),
-      );
-      const err = new MergePreconditionFailed("dirty", {
-        targetBranch: "feat/x",
-        dirtyPaths: paths,
-        dirtyCount: 8,
-      });
-      const reason = toHaltReason(err, { contextId: "ctx-1", cause: "io" });
-      if (reason.type !== "merge_precondition_failed") {
-        throw new Error("expected merge_precondition_failed");
-      }
-      expect(reason.dirtyPaths).toHaveLength(5);
-      expect(reason.totalDirtyCount).toBe(8);
-      expect(reason.dirtyPaths.map((p) => p.path)).toEqual([
-        "file-0.ts",
-        "file-1.ts",
-        "file-2.ts",
-        "file-3.ts",
-        "file-4.ts",
-      ]);
-    });
-
     it("converts AgentTurnFailedError to agent_turn_failed", () => {
       const err = new AgentTurnFailedError("turn failed", {
         contextId: "ctx-2",

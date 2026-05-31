@@ -19,8 +19,12 @@ import type {
   RunValidationOutput,
   FixValidationInput,
   FixValidationOutput,
-  SquashMergeInput,
-  SquashMergeOutput,
+  PrepareActorInput,
+  PrepareActorOutput,
+  PublishActorInput,
+  PublishActorOutput,
+  DiscardParkedRefInput,
+  DiscardParkedRefOutput,
 } from "./actors";
 
 // ============================================================
@@ -91,11 +95,27 @@ function mockFixValidation(
   );
 }
 
-function mockSquashMerge(
-  fn: (input: SquashMergeInput) => Promise<SquashMergeOutput>,
+function mockPrepare(
+  fn: (input: PrepareActorInput) => Promise<PrepareActorOutput>,
 ) {
-  return fromPromise<SquashMergeOutput, SquashMergeInput>(async ({ input }) =>
+  return fromPromise<PrepareActorOutput, PrepareActorInput>(async ({ input }) =>
     fn(input),
+  );
+}
+
+function mockPublish(
+  fn: (input: PublishActorInput) => Promise<PublishActorOutput>,
+) {
+  return fromPromise<PublishActorOutput, PublishActorInput>(async ({ input }) =>
+    fn(input),
+  );
+}
+
+function mockDiscardParkedRef(
+  fn: (input: DiscardParkedRefInput) => Promise<DiscardParkedRefOutput>,
+) {
+  return fromPromise<DiscardParkedRefOutput, DiscardParkedRefInput>(
+    async ({ input }) => fn(input),
   );
 }
 
@@ -123,7 +143,9 @@ type ActorOverrides = {
   analyzeConflicts?: ReturnType<typeof mockAnalyzeConflicts>;
   runValidation?: ReturnType<typeof mockRunValidation>;
   fixValidation?: ReturnType<typeof mockFixValidation>;
-  squashMerge?: ReturnType<typeof mockSquashMerge>;
+  prepare?: ReturnType<typeof mockPrepare>;
+  publish?: ReturnType<typeof mockPublish>;
+  discardParkedRef?: ReturnType<typeof mockDiscardParkedRef>;
   onTerminal?: () => void;
 };
 
@@ -161,9 +183,23 @@ function createTestMachine(overrides: ActorOverrides = {}) {
       fixValidation:
         overrides.fixValidation ??
         mockFixValidation(async () => ({ status: "fixed" })),
-      squashMerge:
-        overrides.squashMerge ??
-        mockSquashMerge(async () => ({ mergeHash: "merge-abc" })),
+      prepare:
+        overrides.prepare ??
+        mockPrepare(async () => ({
+          status: "prepared",
+          preparedSha: "prepared-sha",
+          expectedTargetSha: "expected-target-sha",
+          parkedRef: "refs/cc-merges/test",
+        })),
+      publish:
+        overrides.publish ??
+        mockPublish(async () => ({
+          status: "completed",
+          mergeHash: "merge-abc",
+        })),
+      discardParkedRef:
+        overrides.discardParkedRef ??
+        mockDiscardParkedRef(async () => undefined),
     },
     actions: {
       onTerminal: overrides.onTerminal ?? vi.fn(),
@@ -177,7 +213,7 @@ function createTestMachine(overrides: ActorOverrides = {}) {
 
 describe("mergeMachine", () => {
   describe("happy path without conflicts", () => {
-    it("transitions: checkingUncommitted → mergingMain → validating → squashMerging → completed", async () => {
+    it("transitions: checkingUncommitted → mergingMain → validating → preparing → publishing → completed", async () => {
       const states: string[] = [];
       const machine = createTestMachine();
       const actor = createActor(machine, { input: defaultInput });
@@ -193,7 +229,8 @@ describe("mergeMachine", () => {
       expect(states).toContain("checkingUncommitted");
       expect(states).toContain("mergingMain");
       expect(states).toContain("validating");
-      expect(states).toContain("squashMerging");
+      expect(states).toContain("preparing");
+      expect(states).toContain("publishing");
       expect(states).toContain("completed");
     });
   });
@@ -592,14 +629,15 @@ describe("mergeMachine", () => {
       expect(output.status).toBe("completed");
       expect(states).toContain("fixingValidation");
       expect(states).toContain("revalidating");
-      expect(states).toContain("squashMerging");
+      expect(states).toContain("preparing");
+      expect(states).toContain("publishing");
     });
   });
 
-  describe("squash merge failure", () => {
-    it("goes to failed when squash merge throws", async () => {
+  describe("publish failure", () => {
+    it("goes to failed when publish throws", async () => {
       const machine = createTestMachine({
-        squashMerge: mockSquashMerge(async () => {
+        publish: mockPublish(async () => {
           throw new Error("Project lock timeout");
         }),
       });
@@ -728,7 +766,8 @@ describe("mergeMachine", () => {
       expect(states).toContain("verifyingBranch");
       expect(states).not.toContain("committingUncommitted");
       expect(states).not.toContain("mergingMain");
-      expect(states).not.toContain("squashMerging");
+      expect(states).not.toContain("preparing");
+      expect(states).not.toContain("publishing");
     });
 
     it("halts in failed state when worktree HEAD is detached", async () => {
@@ -810,11 +849,11 @@ describe("mergeMachine", () => {
 
       await toPromise(actor);
 
-      // Should see committing-uncommitted, merging-main, validating, squash-merging, null
       expect(phases).toContain("committing-uncommitted");
       expect(phases).toContain("merging-main");
       expect(phases).toContain("validating");
-      expect(phases).toContain("squash-merging");
+      expect(phases).toContain("preparing");
+      expect(phases).toContain("publishing");
     });
 
     it("transitions through verifyingBranch on happy path", async () => {
@@ -827,8 +866,9 @@ describe("mergeMachine", () => {
 
       await toPromise(actor);
 
-      expect(states[0]).toBe("verifyingBranch");
-      expect(states).toContain("squashMerging");
+      expect(states).toContain("verifyingBranch");
+      expect(states).toContain("preparing");
+      expect(states).toContain("publishing");
     });
 
     it("includes analyzing-conflicts phase when autoResolve is false", async () => {

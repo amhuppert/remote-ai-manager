@@ -138,7 +138,12 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
           };
         }
 
-        let mergeStatus: "completed" | "failed" | "conflicts";
+        let mergeStatus:
+          | "completed"
+          | "failed"
+          | "conflicts"
+          | "ready-to-land"
+          | "discarded";
         let mergeError: string | null = null;
         let mergeConflictFiles: string[] = [];
 
@@ -202,7 +207,13 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
 
         const failureStatus =
           mergeStatus === "conflicts" ? "conflicts" : "failed";
-        const message = mergeError ?? "Join merge failed";
+        const message =
+          mergeError ??
+          (mergeStatus === "ready-to-land"
+            ? "Join merge prepared but target worktree was dirty; cannot land autonomously"
+            : mergeStatus === "discarded"
+              ? "Join merge was discarded"
+              : "Join merge failed");
         execution = await mutateActive((e) =>
           applyJoinProgress(e, joinId, now(), {
             status: failureStatus,

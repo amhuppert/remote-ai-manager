@@ -126,6 +126,138 @@ describe("notification.store — optimistic job addition", () => {
       .jobs.get("job-123")?.startedAt;
     expect(updatedStartedAt).toBe(originalStartedAt);
   });
+
+  it("keeps ready-to-land jobs in the map and maps preparedSha/parkedRef/refreshWarning", () => {
+    useNotificationStore.getState().addOrUpdateJob(
+      makeRunningEvent({
+        status: "ready-to-land",
+        phase: "awaiting-land",
+        preparedSha: "abcdef0123456789",
+        parkedRef: "refs/cc-merges/job-123",
+        refreshWarning: "could not refresh target",
+      }),
+    );
+
+    const job = useNotificationStore.getState().jobs.get("job-123");
+    expect(job?.status).toBe("ready-to-land");
+    expect(job?.phase).toBe("awaiting-land");
+    expect(job?.preparedSha).toBe("abcdef0123456789");
+    expect(job?.parkedRef).toBe("refs/cc-merges/job-123");
+    expect(job?.refreshWarning).toBe("could not refresh target");
+  });
+
+  it("replaces a stale ready-to-land job when a Land dispatches a new jobId for the same session", () => {
+    // Original ready-to-land job for session
+    useNotificationStore.getState().addOrUpdateJob(
+      makeRunningEvent({
+        jobId: "job-park",
+        status: "ready-to-land",
+        preparedSha: "abc",
+        parkedRef: "refs/cc-merges/job-park",
+      }),
+    );
+    expect(useNotificationStore.getState().jobs.size).toBe(1);
+
+    // User clicks Land — new merge job dispatches with a different jobId
+    useNotificationStore.getState().addOrUpdateJob(
+      makeRunningEvent({
+        jobId: "job-land",
+        status: "running",
+      }),
+    );
+
+    const jobs = useNotificationStore.getState().jobs;
+    expect(jobs.size).toBe(1);
+    expect(jobs.has("job-park")).toBe(false);
+    expect(jobs.get("job-land")?.status).toBe("running");
+  });
+
+  it("replaces a stale ready-to-land job when Discard dispatches a new jobId for the same session", () => {
+    useNotificationStore.getState().addOrUpdateJob(
+      makeRunningEvent({
+        jobId: "job-park",
+        status: "ready-to-land",
+        preparedSha: "abc",
+        parkedRef: "refs/cc-merges/job-park",
+      }),
+    );
+
+    useNotificationStore.getState().addOrUpdateJob(
+      makeRunningEvent({
+        jobId: "job-discard",
+        status: "running",
+      }),
+    );
+
+    const jobs = useNotificationStore.getState().jobs;
+    expect(jobs.size).toBe(1);
+    expect(jobs.has("job-park")).toBe(false);
+    expect(jobs.has("job-discard")).toBe(true);
+  });
+
+  it("clears the stale ready-to-land job when the Land terminal event arrives for a different jobId in same session", () => {
+    useNotificationStore.getState().addOrUpdateJob(
+      makeRunningEvent({
+        jobId: "job-park",
+        status: "ready-to-land",
+        preparedSha: "abc",
+        parkedRef: "refs/cc-merges/job-park",
+      }),
+    );
+
+    // Land completes directly without an intervening running event in the store
+    useNotificationStore.getState().addOrUpdateJob(
+      makeRunningEvent({
+        jobId: "job-land",
+        status: "completed",
+      }),
+    );
+
+    const jobs = useNotificationStore.getState().jobs;
+    expect(jobs.size).toBe(0);
+  });
+
+  it("does not affect ready-to-land jobs in other sessions when a new job dispatches", () => {
+    useNotificationStore.getState().addOrUpdateJob(
+      makeRunningEvent({
+        jobId: "job-park",
+        sessionName: "session-a",
+        status: "ready-to-land",
+        preparedSha: "abc",
+        parkedRef: "refs/cc-merges/job-park",
+      }),
+    );
+
+    useNotificationStore.getState().addOrUpdateJob(
+      makeRunningEvent({
+        jobId: "job-other",
+        sessionName: "session-b",
+        status: "running",
+      }),
+    );
+
+    const jobs = useNotificationStore.getState().jobs;
+    expect(jobs.size).toBe(2);
+    expect(jobs.has("job-park")).toBe(true);
+    expect(jobs.has("job-other")).toBe(true);
+  });
+
+  it("removes the job when a discarded terminal event arrives", () => {
+    useNotificationStore.getState().addOrUpdateJob(
+      makeRunningEvent({
+        status: "ready-to-land",
+        preparedSha: "abc",
+        parkedRef: "refs/cc-merges/job-123",
+      }),
+    );
+    expect(useNotificationStore.getState().jobs.size).toBe(1);
+
+    useNotificationStore
+      .getState()
+      .addOrUpdateJob(makeRunningEvent({ status: "discarded" }));
+
+    expect(useNotificationStore.getState().jobs.size).toBe(0);
+  });
 });
 
 // ============================================================
@@ -257,6 +389,28 @@ describe("notification.store — reconcileJobs", () => {
     const jobs = useNotificationStore.getState().jobs;
     expect(jobs.size).toBe(1);
     expect(jobs.get("job-new")?.jobType).toBe("commit");
+  });
+
+  it("retains server-reported ready-to-land jobs", () => {
+    useNotificationStore.getState().reconcileJobs([
+      {
+        jobId: "job-park",
+        jobType: "merge",
+        status: "ready-to-land",
+        projectName: "proj",
+        sessionName: "sess",
+        branchName: "csm/sess",
+        startedAt: "2026-01-01T00:00:00Z",
+        phase: "awaiting-land",
+        preparedSha: "deadbeef",
+        parkedRef: "refs/cc-merges/job-park",
+      },
+    ]);
+
+    const jobs = useNotificationStore.getState().jobs;
+    expect(jobs.size).toBe(1);
+    expect(jobs.get("job-park")?.status).toBe("ready-to-land");
+    expect(jobs.get("job-park")?.preparedSha).toBe("deadbeef");
   });
 
   it("preserves non-job state (toasts, queues)", () => {

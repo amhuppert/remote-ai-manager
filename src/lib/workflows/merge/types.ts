@@ -17,7 +17,12 @@ export type MergePhase =
   | "validating"
   | "fixing-validation"
   | "re-validating"
-  | "squash-merging";
+  | "preparing"
+  | "publishing"
+  | "awaiting-land";
+
+/** Entry mode controlling which branch of the machine runs at start. */
+export type MergeEntryMode = "merge" | "land" | "discard";
 
 /** Machine context for the Smart Merge workflow. */
 export interface MergeContext extends BaseWorkflowContext {
@@ -73,13 +78,48 @@ export interface MergeContext extends BaseWorkflowContext {
   maxFixAttempts: number;
 
   /** Explicit terminal status set by final state entry actions. */
-  finalStatus: "completed" | "failed" | "conflicts" | null;
+  finalStatus:
+    | "completed"
+    | "failed"
+    | "conflicts"
+    | "ready-to-land"
+    | "discarded"
+    | null;
 
   /** Target branch for merge operations (default "main"). */
   targetBranch: string;
 
   /** Parent worktree path for non-main squash merges (null when targeting main). */
   targetWorktreePath: string | null;
+
+  /** Whether the machine is running a merge, a Land, or a Discard. */
+  entryMode: MergeEntryMode;
+
+  /** Prepared (but not yet published) squash commit SHA. */
+  preparedSha: string | null;
+
+  /** Target branch tip captured immediately before prepareSquashMerge — used for CAS. */
+  expectedTargetSha: string | null;
+
+  /** Ref under refs/cc-merges/ where the prepared commit is parked. */
+  parkedRef: string | null;
+
+  /** Best-effort warning when refreshing the target worktree failed after CAS. */
+  refreshWarning: string | null;
+
+  /** Current CAS attempt number (1-based; incremented on each re-prepare). */
+  casAttempt: number;
+
+  /** Maximum number of CAS attempts before giving up (default 3). */
+  maxCasAttempts: number;
+
+  /**
+   * Whether the publish step should also run session finalization
+   * (setSessionFinished + dev-server stop + retargetOrphanedChildren).
+   * False for graph fan-in publishes; true for user-driven Smart Merge.
+   * Defaults to true via MergeInput.
+   */
+  finalizeSessionOnPublish: boolean;
 }
 
 /** Input required to create a merge workflow actor. */
@@ -98,6 +138,17 @@ export interface MergeInput {
   maxFixAttempts?: number;
   targetBranch?: string;
   targetWorktreePath?: string;
+  /** Defaults to "merge". "land"/"discard" enter the machine on a parked prepared commit. */
+  entryMode?: MergeEntryMode;
+  /** Required when entryMode is "land" or "discard". */
+  preparedSha?: string;
+  /** Required when entryMode is "land" (used for CAS); ignored otherwise. */
+  expectedTargetSha?: string;
+  /** Required when entryMode is "land" or "discard". */
+  parkedRef?: string;
+  maxCasAttempts?: number;
+  /** Defaults to true; graph fan-in passes false so it doesn't finalize the session. */
+  finalizeSessionOnPublish?: boolean;
 }
 
 /** Events the merge machine can receive. */
@@ -105,10 +156,20 @@ export type MergeEvent = { type: "ABORT" };
 
 /** Output produced when the machine reaches a terminal state. */
 export interface MergeOutput {
-  status: "completed" | "failed" | "conflicts";
+  status: "completed" | "failed" | "conflicts" | "ready-to-land" | "discarded";
   mergeHash: string | null;
   commitHash: string | null;
   error: string | null;
   conflictFiles: string[];
   conflictAnalysis: ConflictEntry[] | null;
+  preparedSha: string | null;
+  expectedTargetSha: string | null;
+  parkedRef: string | null;
+  refreshWarning: string | null;
+  /**
+   * Phase to retain on the terminal job record. Null for terminal statuses
+   * that clear phase (completed/failed/conflicts/discarded); "awaiting-land"
+   * for ready-to-land.
+   */
+  phase: string | null;
 }

@@ -28,8 +28,12 @@ import type {
   RunValidationOutput,
   FixValidationInput,
   FixValidationOutput,
-  SquashMergeInput,
-  SquashMergeOutput,
+  PrepareActorInput,
+  PrepareActorOutput,
+  PublishActorInput,
+  PublishActorOutput,
+  DiscardParkedRefInput,
+  DiscardParkedRefOutput,
 } from "../workflows/merge/actors";
 import { getTraceContext, runWithTrace, type TraceContext } from "../logging";
 import type { JobStatusEvent } from "@/lib/jobs/schemas";
@@ -54,7 +58,9 @@ const mockResolveConflictsActor = vi.fn();
 const mockAnalyzeConflictsActor = vi.fn();
 const mockRunValidation = vi.fn();
 const mockFixValidation = vi.fn();
-const mockSquashMergeActor = vi.fn();
+const mockPrepareActor = vi.fn();
+const mockPublishActor = vi.fn();
+const mockDiscardParkedRefActor = vi.fn();
 
 /** Test machine: real merge machine with mock actors */
 const testMachine = mergeMachine.provide({
@@ -87,9 +93,16 @@ const testMachine = mergeMachine.provide({
     fixValidation: fromPromise<FixValidationOutput, FixValidationInput>(
       async ({ input }) => mockFixValidation(input),
     ),
-    squashMerge: fromPromise<SquashMergeOutput, SquashMergeInput>(
-      async ({ input }) => mockSquashMergeActor(input),
+    prepare: fromPromise<PrepareActorOutput, PrepareActorInput>(
+      async ({ input }) => mockPrepareActor(input),
     ),
+    publish: fromPromise<PublishActorOutput, PublishActorInput>(
+      async ({ input }) => mockPublishActor(input),
+    ),
+    discardParkedRef: fromPromise<
+      DiscardParkedRefOutput,
+      DiscardParkedRefInput
+    >(async ({ input }) => mockDiscardParkedRefActor(input)),
   },
 });
 
@@ -206,6 +219,15 @@ describe("background-jobs", () => {
     mockRunValidation.mockResolvedValue(undefined);
     // Default: fix validation succeeds
     mockFixValidation.mockResolvedValue({ status: "fixed" as const });
+    // Default: prepare actor succeeds with a parked SHA
+    mockPrepareActor.mockResolvedValue({
+      status: "prepared" as const,
+      preparedSha: "prepared-sha",
+      expectedTargetSha: "expected-target-sha",
+      parkedRef: "refs/cc-merges/test",
+    });
+    // Default: discard parked ref succeeds (used when entryMode === "discard")
+    mockDiscardParkedRefActor.mockResolvedValue(undefined);
   });
 
   // ----------------------------------------------------------
@@ -214,7 +236,10 @@ describe("background-jobs", () => {
   describe("dispatchMergeJob", () => {
     it("returns ok with jobId when no active job", () => {
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockSquashMergeActor.mockResolvedValue({ mergeHash: "abc123" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "abc123",
+      });
 
       const result = dispatchMergeJob(BASE_MERGE_PARAMS);
 
@@ -228,7 +253,10 @@ describe("background-jobs", () => {
 
     it("returns error when job already running", () => {
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockSquashMergeActor.mockResolvedValue({ mergeHash: "abc123" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "abc123",
+      });
 
       const first = dispatchMergeJob(BASE_MERGE_PARAMS);
       expect(first.ok).toBe(true);
@@ -242,7 +270,10 @@ describe("background-jobs", () => {
 
     it("clean merge: merging → validating → squash → completed broadcast", async () => {
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockSquashMergeActor.mockResolvedValue({ mergeHash: "abc123" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "abc123",
+      });
 
       const result = dispatchMergeJob(BASE_MERGE_PARAMS);
       expect(result.ok).toBe(true);
@@ -255,11 +286,17 @@ describe("background-jobs", () => {
           worktreePath: BASE_MERGE_PARAMS.worktreePath,
         }),
       );
-      expect(mockSquashMergeActor).toHaveBeenCalledWith(
+      expect(mockPrepareActor).toHaveBeenCalledWith(
         expect.objectContaining({
           projectPath: BASE_MERGE_PARAMS.projectPath,
           branchName: BASE_MERGE_PARAMS.branchName,
           message: BASE_MERGE_PARAMS.message,
+        }),
+      );
+      expect(mockPublishActor).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectPath: BASE_MERGE_PARAMS.projectPath,
+          preparedSha: "prepared-sha",
         }),
       );
 
@@ -287,7 +324,10 @@ describe("background-jobs", () => {
       mockCheckUncommitted.mockResolvedValue({ hasChanges: true });
       mockCommitChangesActor.mockResolvedValue({ hash: "phase0hash" });
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockSquashMergeActor.mockResolvedValue({ mergeHash: "abc123" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "abc123",
+      });
 
       const result = dispatchMergeJob(BASE_MERGE_PARAMS);
       expect(result.ok).toBe(true);
@@ -314,7 +354,10 @@ describe("background-jobs", () => {
     it("phase 0: skips commit when no uncommitted changes", async () => {
       mockCheckUncommitted.mockResolvedValue({ hasChanges: false });
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockSquashMergeActor.mockResolvedValue({ mergeHash: "abc123" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "abc123",
+      });
 
       dispatchMergeJob(BASE_MERGE_PARAMS);
       await settle();
@@ -366,7 +409,10 @@ describe("background-jobs", () => {
         ],
       });
       mockCommitChangesActor.mockResolvedValue({ hash: "resolve123" });
-      mockSquashMergeActor.mockResolvedValue({ mergeHash: "merge456" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "merge456",
+      });
 
       const result = dispatchMergeJob({
         ...BASE_MERGE_PARAMS,
@@ -397,7 +443,7 @@ describe("background-jobs", () => {
           timeoutMs: 300_000,
         }),
       );
-      expect(mockSquashMergeActor).toHaveBeenCalled();
+      expect(mockPublishActor).toHaveBeenCalled();
 
       const last = lastBroadcast();
       expect(last.status).toBe("completed");
@@ -514,7 +560,7 @@ describe("background-jobs", () => {
         gitOutput?: string;
       };
       err.gitOutput = "husky - pre-commit script failed (code 1)";
-      mockSquashMergeActor.mockRejectedValue(err);
+      mockPublishActor.mockRejectedValue(err);
 
       dispatchMergeJob(BASE_MERGE_PARAMS);
       await settle();
@@ -529,7 +575,10 @@ describe("background-jobs", () => {
 
     it("pre-merge validation is called before squash merge", async () => {
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockSquashMergeActor.mockResolvedValue({ mergeHash: "abc123" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "abc123",
+      });
 
       dispatchMergeJob(BASE_MERGE_PARAMS);
       await settle();
@@ -545,7 +594,7 @@ describe("background-jobs", () => {
       );
 
       const validationOrder = mockRunValidation.mock.invocationCallOrder[0]!;
-      const squashOrder = mockSquashMergeActor.mock.invocationCallOrder[0]!;
+      const squashOrder = mockPublishActor.mock.invocationCallOrder[0]!;
       expect(validationOrder).toBeLessThan(squashOrder);
     });
 
@@ -560,7 +609,7 @@ describe("background-jobs", () => {
       dispatchMergeJob(BASE_MERGE_PARAMS);
       await settle();
 
-      expect(mockSquashMergeActor).not.toHaveBeenCalled();
+      expect(mockPublishActor).not.toHaveBeenCalled();
 
       const last = lastBroadcast();
       expect(last.status).toBe("failed");
@@ -792,7 +841,10 @@ describe("background-jobs", () => {
   describe("stale job timeout recovery", () => {
     it("force-transitions stale running job and allows new dispatch", async () => {
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockSquashMergeActor.mockResolvedValue({ mergeHash: "abc" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "abc",
+      });
 
       const first = dispatchMergeJob(BASE_MERGE_PARAMS);
       expect(first.ok).toBe(true);
@@ -829,7 +881,10 @@ describe("background-jobs", () => {
         ],
       });
       mockCommitChangesActor.mockResolvedValue({ hash: "resolve_hash" });
-      mockSquashMergeActor.mockResolvedValue({ mergeHash: "squash_hash" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "squash_hash",
+      });
 
       const result = dispatchResolveConflictsJob(BASE_RESOLVE_PARAMS);
       expect(result.ok).toBe(true);
@@ -849,13 +904,14 @@ describe("background-jobs", () => {
         }),
       );
       expect(mockRunValidation).toHaveBeenCalled();
-      expect(mockSquashMergeActor).toHaveBeenCalledWith(
+      expect(mockPrepareActor).toHaveBeenCalledWith(
         expect.objectContaining({
           projectPath: BASE_RESOLVE_PARAMS.projectPath,
           branchName: BASE_RESOLVE_PARAMS.branchName,
           message: BASE_RESOLVE_PARAMS.mergeMessage,
         }),
       );
+      expect(mockPublishActor).toHaveBeenCalled();
 
       const last = lastBroadcast();
       expect(last.status).toBe("completed");
@@ -902,7 +958,10 @@ describe("background-jobs", () => {
         conflicts: [],
       });
       mockCommitChangesActor.mockResolvedValue({ hash: "h" });
-      mockSquashMergeActor.mockResolvedValue({ mergeHash: "m" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "m",
+      });
 
       const decisions = [
         { file: "file1.ts", decision: "approved" as const },
@@ -930,7 +989,10 @@ describe("background-jobs", () => {
         conflicts: [],
       });
       mockCommitChangesActor.mockResolvedValue({ hash: "h" });
-      mockSquashMergeActor.mockResolvedValue({ mergeHash: "m" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "m",
+      });
 
       dispatchResolveConflictsJob(BASE_RESOLVE_PARAMS);
       await settle();
@@ -945,7 +1007,7 @@ describe("background-jobs", () => {
       );
 
       const validationOrder = mockRunValidation.mock.invocationCallOrder[0]!;
-      const squashOrder = mockSquashMergeActor.mock.invocationCallOrder[0]!;
+      const squashOrder = mockPublishActor.mock.invocationCallOrder[0]!;
       expect(validationOrder).toBeLessThan(squashOrder);
     });
 
@@ -962,7 +1024,7 @@ describe("background-jobs", () => {
       dispatchResolveConflictsJob(BASE_RESOLVE_PARAMS);
       await settle();
 
-      expect(mockSquashMergeActor).not.toHaveBeenCalled();
+      expect(mockPublishActor).not.toHaveBeenCalled();
       const last = lastBroadcast();
       expect(last.status).toBe("failed");
       expect(last.errorMessage).toContain("Pre-merge validation failed");
@@ -1000,7 +1062,10 @@ describe("background-jobs", () => {
 
     it("getJob returns the job after dispatch", () => {
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockSquashMergeActor.mockResolvedValue({ mergeHash: "abc" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "abc",
+      });
 
       dispatchMergeJob(BASE_MERGE_PARAMS);
 
@@ -1020,7 +1085,10 @@ describe("background-jobs", () => {
   describe("targetBranch threading", () => {
     it("dispatchMergeJob passes targetBranch and targetWorktreePath to MergeInput", async () => {
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockSquashMergeActor.mockResolvedValue({ mergeHash: "abc123" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "abc123",
+      });
 
       const result = dispatchMergeJob({
         ...BASE_MERGE_PARAMS,
@@ -1037,11 +1105,16 @@ describe("background-jobs", () => {
           targetBranch: "csm/parent-branch",
         }),
       );
-      // squashMerge actor should receive targetBranch and targetWorktreePath
-      expect(mockSquashMergeActor).toHaveBeenCalledWith(
+      // prepare actor should receive targetBranch (publish discovers the
+      // target worktree itself; targetWorktreePath lives only on context)
+      expect(mockPrepareActor).toHaveBeenCalledWith(
         expect.objectContaining({
           targetBranch: "csm/parent-branch",
-          targetWorktreePath: "/projects/foo/.worktrees/parent",
+        }),
+      );
+      expect(mockPublishActor).toHaveBeenCalledWith(
+        expect.objectContaining({
+          targetBranch: "csm/parent-branch",
         }),
       );
     });
@@ -1052,7 +1125,10 @@ describe("background-jobs", () => {
         conflicts: [],
       });
       mockCommitChangesActor.mockResolvedValue({ hash: "h" });
-      mockSquashMergeActor.mockResolvedValue({ mergeHash: "m" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "m",
+      });
 
       const result = dispatchResolveConflictsJob({
         ...BASE_RESOLVE_PARAMS,
@@ -1063,17 +1139,20 @@ describe("background-jobs", () => {
 
       await settle();
 
-      expect(mockSquashMergeActor).toHaveBeenCalledWith(
-        expect.objectContaining({
-          targetBranch: "csm/parent-branch",
-          targetWorktreePath: "/projects/foo/.worktrees/parent",
-        }),
+      expect(mockPrepareActor).toHaveBeenCalledWith(
+        expect.objectContaining({ targetBranch: "csm/parent-branch" }),
+      );
+      expect(mockPublishActor).toHaveBeenCalledWith(
+        expect.objectContaining({ targetBranch: "csm/parent-branch" }),
       );
     });
 
     it("stores targetBranch on the registered BackgroundJob", () => {
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockSquashMergeActor.mockResolvedValue({ mergeHash: "abc" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "abc",
+      });
 
       dispatchMergeJob({
         ...BASE_MERGE_PARAMS,
@@ -1089,7 +1168,10 @@ describe("background-jobs", () => {
 
     it("defaults targetBranch to undefined on job when not provided", () => {
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockSquashMergeActor.mockResolvedValue({ mergeHash: "abc" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "abc",
+      });
 
       dispatchMergeJob(BASE_MERGE_PARAMS);
 
@@ -1104,7 +1186,10 @@ describe("background-jobs", () => {
       const { createNotification: mockCreateNotification } =
         await import("../notifications/repo");
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockSquashMergeActor.mockResolvedValue({ mergeHash: "abc123" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "abc123",
+      });
 
       dispatchMergeJob({
         ...BASE_MERGE_PARAMS,
@@ -1148,7 +1233,10 @@ describe("background-jobs", () => {
   describe("_resetForTesting", () => {
     it("clears all jobs and analyses", () => {
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockSquashMergeActor.mockResolvedValue({ mergeHash: "abc" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "abc",
+      });
 
       dispatchMergeJob(BASE_MERGE_PARAMS);
       expect(
@@ -1199,7 +1287,10 @@ describe("background-jobs", () => {
         return { hasChanges: false };
       });
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockSquashMergeActor.mockResolvedValue({ mergeHash: "abc123" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "abc123",
+      });
 
       const parent: TraceContext = {
         traceId: "parent-request-trace",
@@ -1231,7 +1322,10 @@ describe("background-jobs", () => {
         return { hasChanges: false };
       });
       mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
-      mockSquashMergeActor.mockResolvedValue({ mergeHash: "abc123" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "abc123",
+      });
 
       dispatchMergeJob(BASE_MERGE_PARAMS);
 
@@ -1273,7 +1367,10 @@ describe("background-jobs", () => {
         status: "conflict",
         conflictFiles: ["a.ts"],
       });
-      mockSquashMergeActor.mockResolvedValue({ mergeHash: "feedface" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "feedface",
+      });
 
       dispatchResolveConflictsJob(BASE_RESOLVE_PARAMS);
 

@@ -25,6 +25,8 @@ export function getItemLabel(item: NotificationItem): string {
           if (item.phase === "validating" || item.phase === "re-validating")
             return "Validating...";
           if (item.phase === "fixing-validation") return "Fixing errors...";
+          if (item.phase === "preparing") return "Preparing merge...";
+          if (item.phase === "publishing") return "Publishing...";
           if (item.phase === "squash-merging") return "Finalizing...";
           return "Merging...";
         case "success":
@@ -33,6 +35,10 @@ export function getItemLabel(item: NotificationItem): string {
           return `${item.conflictCount ?? 0} conflict${(item.conflictCount ?? 0) !== 1 ? "s" : ""}`;
         case "error":
           return "Merge failed";
+        case "ready-to-land":
+          return "Awaiting clean target...";
+        case "discarded":
+          return "Discarded";
         default:
           return assertNever(status);
       }

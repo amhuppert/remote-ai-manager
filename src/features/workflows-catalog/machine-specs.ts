@@ -395,8 +395,12 @@ const smartMergeMetadata: MachineMetadata = {
     "The merge pipeline. Commits any in-flight changes, merges the target branch, optionally auto-resolves conflicts, runs pre-merge validation, and either fixes-and-retries failures or fails out. The same machine handles plain merge jobs and bare resolve-conflicts jobs (routing state).",
   filePath: "src/lib/workflows/merge/machine.ts",
   states: {
-    verifyingBranch: {
+    entryRouting: {
       status: "initial",
+      description:
+        "Transient initial state that routes by entryMode (merge → verifyingBranch, land → publishing, discard → discarding).",
+    },
+    verifyingBranch: {
       description:
         "Reads the worktree's HEAD branch and fails fast if it does not match the expected feature branch (or is detached). Guards against operating on the wrong branch.",
     },
@@ -452,8 +456,16 @@ const smartMergeMetadata: MachineMetadata = {
       description:
         "Re-runs the validation command. Failure with retries left loops back; otherwise fails.",
     },
-    squashMerging: {
-      description: "Performs the squash merge into the target worktree.",
+    preparing: {
+      description:
+        "Builds the prepared squash commit off the target worktree via git plumbing (merge-tree + commit-tree) or a detached-worktree fallback; parks the result at refs/cc-merges/<jobId>.",
+    },
+    publishing: {
+      description:
+        "Discovers the target worktree (no lock), then acquires the project lock and atomically advances the target ref via update-ref CAS. Dirty target → readyToLand; CAS lost + retries → preparing; CAS lost + exhausted → failed.",
+    },
+    discarding: {
+      description: "Deletes the parked ref via git update-ref -d.",
     },
     completed: {
       status: "success",
@@ -467,6 +479,15 @@ const smartMergeMetadata: MachineMetadata = {
       status: "warning",
       description:
         "Manual resolution required. conflictAnalysis (if produced) is in context for the UI.",
+    },
+    readyToLand: {
+      status: "warning",
+      description:
+        "Terminal state — prepared commit parked, awaiting user Land or Discard. phase remains 'awaiting-land'.",
+    },
+    discarded: {
+      status: "warning",
+      description: "Terminal state — parked ref deleted, no merge landed.",
     },
   },
   actors: {
@@ -484,8 +505,12 @@ const smartMergeMetadata: MachineMetadata = {
       "Runs the project's preMergeCommand with timeout. Resolves on exit 0, rejects on non-zero or timeout.",
     fixValidation:
       "Agent-driven validation fix. Reuses the previous fix session (continuity across retries).",
-    squashMerge:
-      "Squashes the feature branch into the target worktree and pushes the merge commit.",
+    prepare:
+      "Reads featureSha and targetSha, then invokes prepareSquashMerge (plumbing or fallback). Returns { prepared, expectedTargetSha, parkedRef } or { conflicts }.",
+    publish:
+      "Discovers the target worktree (no lock). On dirty, returns ready-to-land. Otherwise acquires the project lock, performs CAS via publishPreparedMerge, optionally refreshes a clean target worktree, deletes the parked ref, and (when finalizeSession) runs setSessionFinished / retargetOrphanedChildren / stopAllForSession.",
+    discardParkedRef:
+      "git update-ref -d refs/cc-merges/<jobId> <preparedSha> — drops the parked commit without advancing the target ref.",
   },
   guards: {
     isResolveConflictsJob:
@@ -499,6 +524,22 @@ const smartMergeMetadata: MachineMetadata = {
     analysisSucceeded: 'analyzeConflicts returned status: "analyzed".',
     fixSucceeded: 'fixValidation returned status: "fixed".',
     hasFixRetriesRemaining: "fixAttempt < maxFixAttempts (default 2).",
+    isMergeEntry: "entryMode === 'merge' (default).",
+    isLandEntry: "entryMode === 'land' (re-entry on a parked prepared commit).",
+    isDiscardEntry:
+      "entryMode === 'discard' (drops the parked ref without advancing the target).",
+    prepareProducedConflicts:
+      'prepare actor returned status: "conflicts" — the merge-tree plumbing found conflicts that block a clean squash.',
+    publishCompleted:
+      'publish actor returned status: "completed" — CAS landed the prepared commit on the target ref.',
+    publishReadyToLand:
+      'publish actor returned status: "ready-to-land" — target worktree is dirty; parked ref retained for manual Land.',
+    publishCasLost:
+      'publish actor returned status: "cas-lost" — target ref advanced between prepare and publish; need to re-prepare.',
+    publishFailed:
+      'publish actor returned status: "failed" — non-CAS failure (e.g. update-ref error, worktree refresh blocker).',
+    casRetriesRemaining:
+      "casAttempt < maxCasAttempts (default 3) AND entryMode === 'merge'. Land mode never re-prepares.",
   },
   actions: {
     onTerminal:
