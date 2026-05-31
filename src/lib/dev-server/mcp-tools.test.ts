@@ -48,10 +48,10 @@ function makeStatusItem(
     startedAt: "2026-05-16T00:00:00.000Z",
     errorMessage: null,
     recentOutput: [],
-    source: "cc-started",
     ownedByThisSession: true,
     worktreePath: "/projects/test/.worktrees/s1",
     ownerPid: 1234,
+    logFilePath: "/projects/test/.worktrees/s1/.cc/dev-server-logs/nextjs.log",
     ...overrides,
   };
 }
@@ -63,6 +63,7 @@ function makeService(
     list: vi.fn(async () => []),
     ensure: vi.fn(async () => makeStatusItem()),
     stop: vi.fn(async () => makeStatusItem({ status: "stopped" })),
+    stopUnmanaged: vi.fn(async () => ({ killed: [], skipped: [] })),
     ...overrides,
   };
 }
@@ -100,7 +101,6 @@ describe("dev-server-mcp-tools", () => {
             port: null,
             localUrl: null,
             ownedByThisSession: false,
-            source: null,
             ownerPid: null,
           }),
         ]),
@@ -133,7 +133,6 @@ describe("dev-server-mcp-tools", () => {
         serverName: "nextjs",
         port: 3001,
         localUrl: "http://localhost:3001",
-        source: "external-adopted",
       });
       const service = makeService({
         ensure: vi.fn(async () => ensured),
@@ -155,7 +154,6 @@ describe("dev-server-mcp-tools", () => {
       };
       expect(payload.server.serverName).toBe("nextjs");
       expect(payload.server.localUrl).toBe("http://localhost:3001");
-      expect(payload.server.source).toBe("external-adopted");
     });
 
     it("forwards name and timeout_ms to the service", async () => {

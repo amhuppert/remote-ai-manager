@@ -52,6 +52,10 @@ export interface SessionContentProps {
   dsStopServer: SessionInfoStripProps["dsStopServer"];
   dsStartAll: () => void;
   dsStopAll: () => void;
+  dsUnmanagedConflict?: SessionInfoStripProps["dsUnmanagedConflict"];
+  dsDismissUnmanagedConflict?: () => void;
+  dsStopUnmanagedAndRetry?: () => void;
+  dsIsStoppingUnmanaged?: boolean;
   commitDisabled: boolean;
   onCommit: () => void;
   onMerge: () => void;
@@ -93,6 +97,10 @@ export default function SessionContent({
   dsStopServer,
   dsStartAll,
   dsStopAll,
+  dsUnmanagedConflict,
+  dsDismissUnmanagedConflict,
+  dsStopUnmanagedAndRetry,
+  dsIsStoppingUnmanaged,
   commitDisabled,
   onCommit,
   onMerge,
@@ -151,6 +159,10 @@ export default function SessionContent({
           dsStopServer={dsStopServer}
           dsStartAll={dsStartAll}
           dsStopAll={dsStopAll}
+          dsUnmanagedConflict={dsUnmanagedConflict}
+          dsDismissUnmanagedConflict={dsDismissUnmanagedConflict}
+          dsStopUnmanagedAndRetry={dsStopUnmanagedAndRetry}
+          dsIsStoppingUnmanaged={dsIsStoppingUnmanaged}
           changesAdd={diff.totalAdditions}
           changesDel={diff.totalDeletions}
           commitDisabled={commitDisabled}

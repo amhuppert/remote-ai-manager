@@ -3,7 +3,7 @@ import type { FilterToken } from "./filter-tokens";
 
 export interface ActionSuggestion {
   kind: "action";
-  id: "new" | "install-preset" | "capabilities" | "workflow-builder";
+  id: "new" | "capabilities" | "workflow-builder";
   label: string;
   grp: "Actions";
 }
@@ -32,12 +32,6 @@ const ACTIONS: ActionSuggestion[] = [
     kind: "action",
     id: "new",
     label: "/new — Create new session",
-    grp: "Actions",
-  },
-  {
-    kind: "action",
-    id: "install-preset",
-    label: "/install-preset — Install a preset…",
     grp: "Actions",
   },
   {

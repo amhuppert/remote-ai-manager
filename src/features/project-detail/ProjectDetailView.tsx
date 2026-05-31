@@ -4,8 +4,6 @@ import "./styles/project-detail.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSessionsQuery } from "@/lib/sessions/queries";
-import { usePresetsQuery } from "@/lib/dev-server/queries";
-import { useInstallPresetMutation } from "@/lib/dev-server/mutations";
 import {
   useBulkSessionsMutation,
   useDeleteSessionMutation,
@@ -22,7 +20,6 @@ import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { PlusIcon } from "@/components/icons";
 import ScopedAgentCapabilitiesConfig from "@/components/agent-capabilities/ScopedAgentCapabilitiesConfig";
 import CreateSessionModal from "./components/CreateSessionModal";
-import PresetInstallDialog from "./components/PresetInstallDialog";
 import SessionRows, { type SortState } from "./components/SessionRows";
 import SectionHeader from "./components/SectionHeader";
 import BulkConfirmModal, {
@@ -58,10 +55,8 @@ export default function ProjectDetailView({
   const cancelDelete = useCancelDeleteSession();
 
   const deleteMutation = useDeleteSessionMutation(projectName);
-  const installPresetMutation = useInstallPresetMutation(projectName);
   const bulkMutation = useBulkSessionsMutation(projectName);
 
-  const [presetDialogOpen, setPresetDialogOpen] = useState(false);
   const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
   const [consoleFocused, setConsoleFocused] = useState(false);
   const consoleInputRef = useRef<HTMLInputElement | null>(null);
@@ -76,12 +71,6 @@ export default function ProjectDetailView({
   const router = useRouter();
   const { tokens, draft, setDraft, addToken, removeToken, clear } =
     useSessionFilters();
-
-  const presetsQuery = usePresetsQuery(projectName);
-  const installedPresets = useMemo(
-    () => presetsQuery.data?.filter((p) => p.installed).map((p) => p.id) ?? [],
-    [presetsQuery.data],
-  );
 
   const sessions = useMemo(
     () => sessionsQuery.data ?? [],
@@ -127,9 +116,6 @@ export default function ProjectDetailView({
         switch (s.id) {
           case "new":
             openCreateModal();
-            break;
-          case "install-preset":
-            setPresetDialogOpen(true);
             break;
           case "capabilities":
             setCapabilitiesOpen(true);
@@ -377,24 +363,6 @@ export default function ProjectDetailView({
               projectName={projectName}
               open={modalOpen}
               onClose={closeCreateModal}
-            />
-
-            <PresetInstallDialog
-              open={presetDialogOpen}
-              projectName={projectName}
-              installedPresets={installedPresets}
-              isInstalling={installPresetMutation.isPending}
-              onInstall={(presetId, subdir) => {
-                installPresetMutation.mutate(
-                  { presetId, subdir },
-                  { onSuccess: () => setPresetDialogOpen(false) },
-                );
-              }}
-              onClose={() => {
-                if (!installPresetMutation.isPending) {
-                  setPresetDialogOpen(false);
-                }
-              }}
             />
 
             <ScopedAgentCapabilitiesConfig

@@ -1,23 +1,26 @@
 ---
-name: setup
+name: project-setup
 description: >-
   This skill should be used when the user wants to configure a project for
-  Command Center, set up CommandCenter.json, create worktree init scripts,
-  create pre-merge validation scripts, configure dev servers for CC, or
-  optimize test runner output for AI agents. Triggered by "set up CC",
+  Command Center: create or update `CommandCenter.json`, write a worktree
+  init script, write a pre-merge validation script, or optimize a test
+  runner config for AI agents. Triggered by "set up CC",
   "configure for command center", "create CommandCenter.json",
   "add CC config", "set up worktree init", "set up pre-merge validation",
-  "configure dev servers for CC", "initialize project for CC",
-  "CC project setup", or "set up command center config".
+  "initialize project for CC", "CC project setup", or "set up command
+  center config". For configuring dev servers, use the
+  `dev-server-setup` skill instead.
 ---
 
 # CC Project Setup
 
-Analyze the target project's tech stack and generate a complete Command Center configuration: `CommandCenter.json`, worktree init script, pre-merge validation script, and dev server entries.
+Analyze the target project's tech stack and generate the non-dev-server portion of a Command Center configuration: `CommandCenter.json` (sans `devServers`), worktree init script, pre-merge validation script, and any test runner config tweaks needed for AI-friendly output.
 
 **Workflow: Analyze → Load tech-specific references → Propose → Approve → Write**
 
 Do NOT write any files until the user explicitly approves.
+
+For dev server configuration (the `devServers` field in `CommandCenter.json`), use the separate `dev-server-setup` skill — it loads dev-server-specific guidance independently so this skill stays focused.
 
 ## Step 1: Analyze the Project
 
@@ -47,8 +50,6 @@ For each detected dependency, note which reference file you will need to load in
 
 | Detected | Concern | Reference to load (Step 2) |
 |---|---|---|
-| `next` | Dev server | `references/dev-servers.md` |
-| `storybook` or `@storybook/*` | Dev server | `references/dev-servers.md` |
 | `eslint` | Pre-merge linter | `references/eslint.md` |
 | `prettier` | Pre-merge formatter | `references/prettier.md` |
 | `typescript` (or `tsconfig.json` present) | Pre-merge type checker | `references/typescript.md` |
@@ -66,7 +67,6 @@ Check for:
 - `CommandCenter.json` — if it exists, read it (offer to update, never silently overwrite)
 - `scripts/worktree-init.sh` — existing init script
 - `scripts/pre-merge-validate.sh` — existing pre-merge script
-- `.cc/dev-servers/` — existing dev server scripts
 
 ### 1.5 Existing Test Runner Config
 
@@ -85,7 +85,7 @@ Check for:
 - `turbo.json` (Turborepo)
 - `nx.json` (Nx)
 
-If monorepo detected, note it in the analysis. For dev servers, ask the user which subdirectory contains the main application before proposing.
+If monorepo detected, note it in the analysis. (Dev-server `cwd` selection is handled by the separate `dev-server-setup` skill.)
 
 ## Step 2: Load Tech-Specific References
 
@@ -94,7 +94,6 @@ Based on the detection table in §1.3, load only the reference files for tools t
 - `references/commandcenter-json.md` — schema and field types
 - `references/pre-merge-script.md` — script contract, scoping pattern, shared shell prelude (only if any of eslint/prettier/typescript/vitest/jest was detected)
 - `references/init-script.md` — per-package-manager templates (only if `package.json` exists)
-- `references/dev-servers.md` — only if a framework was detected
 
 Conditionally load:
 
@@ -110,23 +109,20 @@ Present the analysis results and proposed files to the user.
 
 ### 3.1 Analysis Summary
 
-Show a table of detected aspects (package manager, frameworks, linter, formatter, type checker, test runner, ORM, monorepo, existing CC config).
+Show a table of detected aspects (package manager, frameworks, linter, formatter, type checker, test runner, ORM, monorepo, existing CC config). If frameworks were detected, mention that dev-server configuration is handled separately via the `dev-server-setup` skill.
 
 ### 3.2 Proposed Files
 
 Show each file that will be created, with full content in fenced code blocks. The files to generate:
 
 **Always:**
-- `CommandCenter.json` — with fields set based on what was detected (see `references/commandcenter-json.md`)
+- `CommandCenter.json` — with fields set based on what was detected (see `references/commandcenter-json.md`). Do NOT include a `devServers` array here — that is added by the `dev-server-setup` skill.
 
 **If package.json exists:**
 - `scripts/worktree-init.sh` — install command for the detected package manager, plus any code generation steps from `references/init-script.md`
 
 **If any of eslint, prettier, typescript, vitest, or jest detected:**
 - `scripts/pre-merge-validate.sh` — built from the shared shell prelude in `references/pre-merge-script.md` plus each detected tool's invocation block from its reference. Order: Prettier → ESLint → TypeScript → Vitest/Jest. Include only blocks for tools that were detected.
-
-**If frameworks detected:**
-- Add a `cc-assigned` entry per framework to `CommandCenter.json`. No shell scripts are written for the default presets (see `references/dev-servers.md`).
 
 **If vitest detected:**
 - Proposed `vitest.config.ts` modification (or new file) from `references/vitest.md`. Includes AI-optimal output AND `pool: "forks"` + `maxForks` cap + `execArgv` heap cap. Merge against any existing config.
@@ -140,33 +136,18 @@ Show each file that will be created, with full content in fenced code blocks. Th
 ```json
 {
   "initScriptPath": "scripts/worktree-init.sh",
-  "preMergeCommand": "scripts/pre-merge-validate.sh",
-  "devServers": [
-    {
-      "name": "<framework-id>",
-      "command": "<framework command using $CC_ASSIGNED_PORT>",
-      "port": { "strategy": "cc-assigned", "base": <base-port>, "range": 100 }
-    }
-  ]
+  "preMergeCommand": "scripts/pre-merge-validate.sh"
 }
 ```
 - Set `initScriptPath` to `"scripts/worktree-init.sh"` if package.json exists, otherwise `null`.
 - Set `preMergeCommand` to `"scripts/pre-merge-validate.sh"` if any validator was detected, otherwise omit.
-- Set `devServers` array with one `cc-assigned` entry per detected framework, otherwise omit.
-- For monorepos, set `cwd` on each entry to the subdirectory (e.g. `"cwd": "apps/web"`).
+- Do NOT include a `devServers` field. If the user wants dev servers, invoke `dev-server-setup` after this skill completes.
 
 **Init script:** Use the template from `references/init-script.md` matching the detected package manager. Add `prisma generate` if Prisma detected. Add `.env.example` copy if the file exists.
 
 **Pre-merge script:** Start with the shared shell prelude from `references/pre-merge-script.md`. Then append, in order, the invocation block from each detected tool's reference file. The result must contain only the blocks for tools that were actually detected — no placeholders for absent tools.
 
 **Test runner config:** Use the pattern from `references/vitest.md` or `references/jest.md`. For existing config files, show the modification as a merge against the existing config, not a replacement.
-
-### 3.4 Monorepo Handling
-
-If a monorepo was detected:
-- Ask the user which subdirectory contains the main application (e.g., `apps/web`).
-- Set `cwd` on each dev server entry to that subdirectory.
-- The init script runs at the repository root (workspace-level install handles all packages).
 
 ## Step 4: Get Approval
 
@@ -180,9 +161,9 @@ If the user wants changes, incorporate them and show the updated proposal before
 
 After approval:
 
-1. Create directories: `mkdir -p scripts` (and `.cc/dev-servers` only if the user opts in to the legacy `stdout-cc-port` strategy).
+1. Create directories: `mkdir -p scripts`.
 2. Write each approved file using the Write tool.
-3. Set executable permissions on shell scripts: `chmod +x scripts/*.sh` (and `.cc/dev-servers/*.sh` if applicable).
+3. Set executable permissions on shell scripts: `chmod +x scripts/*.sh`.
 4. For test runner config modifications: use the Edit tool to merge the AI detection + parallelism cap blocks into the existing config file.
 
 ## Step 6: Verify
@@ -199,12 +180,13 @@ Present:
 - Reminder to commit the new files to the repository.
 - Reminder to verify the init script by creating a test session in CC.
 - If a test runner config was modified, remind the user to run tests locally to confirm the new pool/worker caps don't conflict with project-specific test needs.
+- If frameworks (Next.js, Storybook, etc.) were detected, suggest running the `dev-server-setup` skill next to add `devServers` entries.
 
 ## Edge Cases
 
 **No package.json:** Generate a minimal `CommandCenter.json` with `initScriptPath: null` and no other fields. Inform the user that no JS/TS tooling was detected.
 
-**Existing CommandCenter.json:** Read it, diff against proposed config, show what would change. Offer to merge (add new entries) rather than overwrite. Never silently replace.
+**Existing CommandCenter.json:** Read it, diff against proposed config, show what would change. Offer to merge (add or update `initScriptPath` / `preMergeCommand`) rather than overwrite. Never silently replace. Preserve any existing `devServers` field untouched — it is owned by the `dev-server-setup` skill.
 
 **Existing scripts:** If `scripts/worktree-init.sh` or `scripts/pre-merge-validate.sh` already exist, show the diff between existing and proposed. Ask whether to replace or skip. Pay particular attention to whether the existing pre-merge script already scopes to changed files — if not, the proposal should highlight that as the main change.
 

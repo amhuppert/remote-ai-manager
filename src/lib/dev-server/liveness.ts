@@ -120,10 +120,10 @@ async function poll(): Promise<void> {
           port: entry.port,
           remoteUrl: null,
           errorMessage: null,
-          source: entry.source,
           ownedByThisSession: entry.ownedByThisSession,
           worktreePath: entry.worktreePath,
           ownerPid: entry.ownerPid,
+          logFilePath: entry.logFilePath,
         };
         d.broadcast(event);
       }

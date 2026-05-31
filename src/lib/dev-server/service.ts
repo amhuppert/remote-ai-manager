@@ -14,10 +14,8 @@ import {
   type PortSelectionInput,
   type PortSelectionResult,
 } from "./port-selection";
-import { getPresetScanHint } from "./presets";
 import type {
   DevServerConfig,
-  DevServerSource,
   DevServerStatus,
 } from "@/lib/dev-server/schemas";
 const logger = createLogger("dev-server-service");
@@ -35,10 +33,10 @@ export interface DevServerStatusItem {
   startedAt: string | null;
   errorMessage: string | null;
   recentOutput: string[];
-  source: DevServerSource | null;
   ownedByThisSession: boolean;
   worktreePath: string | null;
   ownerPid: number | null;
+  logFilePath: string | null;
 }
 
 interface ListDevServersParams {
@@ -60,10 +58,23 @@ interface StopDevServerParams {
   serverName: string;
 }
 
+interface StopUnmanagedParams {
+  projectPath: string;
+  sessionName: string;
+  serverName: string;
+  port: number;
+}
+
+export interface StopUnmanagedResult {
+  killed: number[];
+  skipped: Array<{ pid: number; reason: string; cwd?: string }>;
+}
+
 export interface DevServerService {
   list(params: ListDevServersParams): Promise<DevServerStatusItem[]>;
   ensure(params: EnsureDevServerParams): Promise<DevServerStatusItem>;
   stop(params: StopDevServerParams): Promise<DevServerStatusItem | null>;
+  stopUnmanaged(params: StopUnmanagedParams): Promise<StopUnmanagedResult>;
 }
 
 interface DevServerServiceSessionLookup {
@@ -77,8 +88,6 @@ interface DevServerServiceRepoConfig {
 interface ReconcileConfiguredServer {
   name: string;
   command: string;
-  scanHint?: { basePort: number; rangeSize: number } | null;
-  cwd?: string | null;
 }
 
 interface ReconcileInput {
@@ -120,6 +129,14 @@ export interface DevServerServiceDeps {
     sessionName: string;
     serverName: string;
   }): Promise<void>;
+  killListeningProcessForPort(input: {
+    port: number;
+    worktreePath: string;
+    allowedCwd?: string;
+  }): Promise<{
+    killed: number[];
+    skipped: Array<{ pid: number; reason: string; cwd?: string }>;
+  }>;
   sleep(ms: number): Promise<void>;
   now(): number;
 }
@@ -176,6 +193,21 @@ export class DevServerStartFailedError extends Error {
   }
 }
 
+export class UnmanagedDevServerDetectedError extends Error {
+  readonly code = "UNMANAGED_DEV_SERVER_DETECTED";
+  constructor(
+    public readonly serverName: string,
+    public readonly port: number,
+    public readonly pid: number,
+    public readonly cwd: string,
+  ) {
+    super(
+      `An unmanaged process (pid ${pid}, cwd ${cwd}) is already listening on port ${port} in this worktree. Stop it before starting dev server "${serverName}".`,
+    );
+    this.name = "UnmanagedDevServerDetectedError";
+  }
+}
+
 export class DevServerWaitTimeoutError extends Error {
   readonly code = "DEV_SERVER_WAIT_TIMEOUT";
   constructor(
@@ -205,10 +237,10 @@ function toStatusItem(
       startedAt: null,
       errorMessage: null,
       recentOutput: [],
-      source: null,
       ownedByThisSession: false,
       worktreePath: null,
       ownerPid: null,
+      logFilePath: null,
     };
   }
   return {
@@ -221,32 +253,19 @@ function toStatusItem(
     startedAt: entry.startedAt,
     errorMessage: entry.errorMessage,
     recentOutput: [...entry.recentOutput],
-    source: entry.source,
     ownedByThisSession: entry.ownedByThisSession,
     worktreePath: entry.worktreePath,
     ownerPid: entry.ownerPid,
+    logFilePath: entry.logFilePath,
   };
 }
 
 export function createDevServerService(
   deps: DevServerServiceDeps,
 ): DevServerService {
-  function resolveScanHint(
-    normalized: NormalizedDevServerConfig,
-  ): { basePort: number; rangeSize: number } | null {
-    if (normalized.port.base !== null) {
-      return {
-        basePort: normalized.port.base,
-        rangeSize: normalized.port.range,
-      };
-    }
-    return getPresetScanHint(normalized.name);
-  }
-
   // Relative cwd values are documented as relative to the session worktree;
-  // resolve them here so downstream callers (registry spawn, reconciliation
-  // port-ownership checks) receive an absolute path. Absolute values pass
-  // through unchanged.
+  // resolve them here so downstream callers (registry spawn, port-ownership
+  // checks) receive an absolute path. Absolute values pass through unchanged.
   function resolveCwd(cwd: string | null, worktreePath: string): string | null {
     if (cwd === null) return null;
     return path.resolve(worktreePath, cwd);
@@ -254,13 +273,10 @@ export function createDevServerService(
 
   function toReconcileConfig(
     normalized: NormalizedDevServerConfig,
-    worktreePath: string,
   ): ReconcileConfiguredServer {
     return {
       name: normalized.name,
       command: normalized.command,
-      scanHint: resolveScanHint(normalized),
-      cwd: resolveCwd(normalized.cwd, worktreePath),
     };
   }
 
@@ -298,9 +314,7 @@ export function createDevServerService(
       projectPath: params.projectPath,
       sessionName: params.sessionName,
       worktreePath,
-      configuredServers: configured.map((c) =>
-        toReconcileConfig(c, worktreePath),
-      ),
+      configuredServers: configured.map(toReconcileConfig),
     });
 
     const runtime = deps.getSessionServers({
@@ -344,7 +358,7 @@ export function createDevServerService(
       projectPath: params.projectPath,
       sessionName: params.sessionName,
       worktreePath,
-      configuredServers: [toReconcileConfig(target, worktreePath)],
+      configuredServers: [toReconcileConfig(target)],
     });
 
     let runtime = deps.getServer({
@@ -360,7 +374,6 @@ export function createDevServerService(
         serverName: target.name,
         outcome: "already_running",
         port: runtime!.port,
-        source: runtime!.source,
       });
       return toStatusItem(runtime, target);
     }
@@ -381,24 +394,16 @@ export function createDevServerService(
         serverName: target.name,
         outcome: "starting",
         priorStatus: runtime?.status ?? "absent",
-        startMode: startMode?.type ?? "stdout-cc-port",
+        port: startMode.port,
       });
-      const startInput: {
-        projectPath: string;
-        sessionName: string;
-        serverName: string;
-        command: string;
-        worktreePath: string;
-        startMode?: DevServerStartMode;
-      } = {
+      await deps.startServer({
         projectPath: params.projectPath,
         sessionName: params.sessionName,
         serverName: target.name,
         command: target.command,
         worktreePath,
-      };
-      if (startMode) startInput.startMode = startMode;
-      await deps.startServer(startInput);
+        startMode,
+      });
       runtime = deps.getServer({
         projectPath: params.projectPath,
         sessionName: params.sessionName,
@@ -459,11 +464,8 @@ export function createDevServerService(
   async function resolveStartMode(args: {
     normalized: NormalizedDevServerConfig;
     worktreePath: string;
-  }): Promise<DevServerStartMode | undefined> {
+  }): Promise<DevServerStartMode> {
     const { normalized, worktreePath } = args;
-    if (normalized.port.strategy !== "cc-assigned") return undefined;
-    if (normalized.port.base === null) return undefined;
-
     const absoluteCwd = resolveCwd(normalized.cwd, worktreePath);
 
     const selectPort =
@@ -475,7 +477,15 @@ export function createDevServerService(
       maxAttempts: normalized.port.range,
     });
 
-    if (selection.status !== "selected") {
+    if (selection.status === "unmanaged-detected") {
+      throw new UnmanagedDevServerDetectedError(
+        normalized.name,
+        selection.port,
+        selection.pid,
+        selection.cwd,
+      );
+    }
+    if (selection.status === "exhausted") {
       throw new DevServerStartFailedError(
         normalized.name,
         `Port selection exhausted starting at ${normalized.port.base} (range ${normalized.port.range}).`,
@@ -484,12 +494,8 @@ export function createDevServerService(
     }
 
     const startMode: DevServerStartMode = {
-      type: "cc-assigned",
       port: selection.port,
-      readiness: {
-        type: "tcp",
-        timeoutMs: normalized.readiness.timeoutMs,
-      },
+      readinessTimeoutMs: normalized.readinessTimeoutMs,
     };
     if (normalized.port.envAlias) {
       startMode.envAliases = [normalized.port.envAlias];
@@ -527,7 +533,34 @@ export function createDevServerService(
     return toStatusItem(after, target);
   }
 
-  return { list, ensure, stop };
+  async function stopUnmanaged(
+    params: StopUnmanagedParams,
+  ): Promise<StopUnmanagedResult> {
+    const { worktreePath, configured } = await resolveContext(params);
+    const target = configured.find((s) => s.name === params.serverName);
+    if (!target) throw new UnknownDevServerError(params.serverName);
+
+    const allowedCwd = resolveCwd(target.cwd, worktreePath) ?? undefined;
+
+    logger.info("dev-server.tool.stop_unmanaged", {
+      projectPath: params.projectPath,
+      sessionName: params.sessionName,
+      serverName: target.name,
+      port: params.port,
+      worktreePath,
+    });
+
+    const killInput: {
+      port: number;
+      worktreePath: string;
+      allowedCwd?: string;
+    } = { port: params.port, worktreePath };
+    if (allowedCwd !== undefined) killInput.allowedCwd = allowedCwd;
+
+    return deps.killListeningProcessForPort(killInput);
+  }
+
+  return { list, ensure, stop, stopUnmanaged };
 }
 
 function defaultSleep(ms: number): Promise<void> {
@@ -542,6 +575,7 @@ export const defaultDevServerServiceDeps: DevServerServiceDeps = {
   getServer: registry.getServer,
   startServer: registry.startServer,
   stopServer: registry.stopServer,
+  killListeningProcessForPort: registry.killListeningProcessForPort,
   selectPort: defaultPortSelectionService.selectPort,
   sleep: defaultSleep,
   now: () => Date.now(),
@@ -552,3 +586,4 @@ const defaultService = createDevServerService(defaultDevServerServiceDeps);
 export const listDevServers = defaultService.list;
 export const ensureDevServer = defaultService.ensure;
 export const stopDevServer = defaultService.stop;
+export const stopUnmanagedDevServer = defaultService.stopUnmanaged;

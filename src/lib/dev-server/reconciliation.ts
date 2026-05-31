@@ -5,13 +5,11 @@ import {
   defaultPortOwnershipService,
   type PortOwnershipInput,
   type PortOwnershipResult,
-  type ScanRangeInput,
-  type ScanRangeMatch,
 } from "./port-ownership";
 import { getGlobalSingleton } from "../shared/global-singleton";
-import { getPresetScanHint, type DevServerScanHint } from "./presets";
 import type { DevServerEntry } from "./registry";
 import type { DevServerStatusEvent } from "@/lib/dev-server/schemas";
+
 const logger = createLogger("dev-server");
 
 const REGISTRY_GLOBAL_KEY = "__cc_dev_servers" as const;
@@ -24,22 +22,6 @@ export interface DevServerReconciliationDeps {
   classifyPortOwnership(
     input: PortOwnershipInput,
   ): Promise<PortOwnershipResult>;
-  /**
-   * Batched scan-range lookup used by adoption: returns the first listener in
-   * `[basePort, basePort + rangeSize)` whose process cwd belongs to this
-   * session's worktree, or `{ status: "none" }` when nothing matches. A single
-   * call replaces what was previously one subprocess invocation per scanned
-   * port — critical so adoption doesn't block the Node.js event loop for
-   * tens of seconds on every dev-server status fetch.
-   */
-  findOwnedListenerInRange(input: ScanRangeInput): Promise<ScanRangeMatch>;
-  /**
-   * Return the scan range CC should sweep when looking for an externally
-   * started listener for `serverName`, or null when no strategy is known.
-   * Custom servers without explicit configuration must return null so the
-   * reconciler does not guess.
-   */
-  resolveScanStrategy(serverName: string): DevServerScanHint | null;
   broadcast: BroadcastFn;
   getRegistry(): Map<string, DevServerEntry>;
 }
@@ -47,18 +29,6 @@ export interface DevServerReconciliationDeps {
 interface ReconcileConfiguredServer {
   name: string;
   command: string;
-  /**
-   * Optional explicit scan range for this server. Wins over `resolveScanStrategy`
-   * when present, letting custom (non-preset) servers participate in adoption
-   * without having to register a global strategy.
-   */
-  scanHint?: DevServerScanHint | null;
-  /**
-   * Optional working directory for this server, relative to the worktree.
-   * Threaded into port-ownership classification as `allowedCwd` so processes
-   * running in subdirectories of the worktree are still treated as owned.
-   */
-  cwd?: string | null;
 }
 
 export interface ReconcileInput {
@@ -91,10 +61,10 @@ export function createDevServerReconciler(deps: DevServerReconciliationDeps) {
       port: entry.port,
       remoteUrl: entry.remoteUrl,
       errorMessage: entry.errorMessage,
-      source: entry.source,
       ownedByThisSession: entry.ownedByThisSession,
       worktreePath: entry.worktreePath,
       ownerPid: entry.ownerPid,
+      logFilePath: entry.logFilePath,
     };
   }
 
@@ -160,87 +130,15 @@ export function createDevServerReconciler(deps: DevServerReconciliationDeps) {
     deps.broadcast(buildEvent(entry));
   }
 
-  async function tryAdoptExternal(params: {
-    projectPath: string;
-    sessionName: string;
-    worktreePath: string;
-    serverName: string;
-    command: string;
-    scanHint: DevServerScanHint | null;
-    cwd: string | null;
-    existing: DevServerEntry | undefined;
-  }): Promise<void> {
-    const {
-      projectPath,
-      sessionName,
-      worktreePath,
-      serverName,
-      command,
-      scanHint,
-      cwd,
-      existing,
-    } = params;
-
-    const scan = scanHint ?? deps.resolveScanStrategy(serverName);
-    if (!scan) {
-      logger.info("dev-server.reconcile.skipped_no_scan_strategy", {
-        serverName,
-        worktreePath,
-      });
-      return;
-    }
-
-    const match = await deps.findOwnedListenerInRange({
-      basePort: scan.basePort,
-      rangeSize: scan.rangeSize,
-      worktreePath,
-      allowedCwd: cwd,
-    });
-
-    if (match.status !== "owned") return;
-
-    const registry = deps.getRegistry();
-    const key = makeKey(projectPath, sessionName, serverName);
-    const adopted: DevServerEntry = {
-      serverName,
-      projectPath,
-      sessionName,
-      command,
-      status: "running",
-      port: match.port,
-      remoteUrl: null,
-      startedAt: existing?.startedAt ?? new Date().toISOString(),
-      errorMessage: null,
-      recentOutput: existing?.recentOutput ?? [],
-      worktreePath,
-      source: "external-adopted",
-      ownedByThisSession: true,
-      ownerPid: match.pid,
-      _process: null,
-      _pid: null,
-      _startupTimer: null,
-    };
-    registry.set(key, adopted);
-
-    logger.info("dev-server.reconcile.adopted", {
-      serverName,
-      port: match.port,
-      ownerPid: match.pid,
-      worktreePath,
-    });
-
-    deps.broadcast(buildEvent(adopted));
-  }
-
   async function reconcile(input: ReconcileInput): Promise<void> {
-    const { projectPath, sessionName, worktreePath, configuredServers } = input;
+    const { projectPath, sessionName, configuredServers } = input;
 
     if (configuredServers.length === 0) return;
 
     logger.info("dev-server.reconcile.start", {
       projectPath,
       sessionName,
-      worktreePath,
+      worktreePath: input.worktreePath,
       configuredCount: configuredServers.length,
     });
 
@@ -252,25 +150,10 @@ export function createDevServerReconciler(deps: DevServerReconciliationDeps) {
 
       if (existing?.status === "running") {
         await verifyRunningEntry(existing);
-        continue;
       }
-
-      if (existing?.status === "starting") {
-        // CC is mid-spawn — let the start path drive the transition. Touching
-        // the entry now would race with the stdout CC_PORT parser.
-        continue;
-      }
-
-      await tryAdoptExternal({
-        projectPath,
-        sessionName,
-        worktreePath,
-        serverName: cfg.name,
-        command: cfg.command,
-        scanHint: cfg.scanHint ?? null,
-        cwd: cfg.cwd ?? null,
-        existing,
-      });
+      // No adoption: entries are only created by explicit start via the
+      // service layer, which surfaces unmanaged listeners as a typed error
+      // so the user can confirm stopping them before CC takes the port.
     }
   }
 
@@ -294,9 +177,6 @@ const defaultReconcilerBroadcast: BroadcastFn = (event) => {
 
 const defaultDevServerReconciliationDeps: DevServerReconciliationDeps = {
   classifyPortOwnership: defaultPortOwnershipService.classifyPort,
-  findOwnedListenerInRange:
-    defaultPortOwnershipService.findOwnedListenerInRange,
-  resolveScanStrategy: getPresetScanHint,
   broadcast: defaultReconcilerBroadcast,
   getRegistry: defaultGetRegistry,
 };
@@ -307,8 +187,8 @@ const defaultReconciler = createDevServerReconciler(
 
 /**
  * Reconcile in-memory dev-server runtime state for one session against live
- * port ownership. Verifies running entries, transitions stale ones, and
- * discovers externally started preset servers without requiring Start first.
+ * port ownership. Verifies running entries and transitions stale ones; never
+ * discovers or adopts externally started servers.
  */
 export function reconcileSessionDevServers(
   input: ReconcileInput,

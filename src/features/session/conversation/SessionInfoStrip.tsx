@@ -12,6 +12,7 @@ import { deriveSessionPromptCount } from "@/lib/sessions/derived";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionState, LayoutMode } from "@/lib/sessions/schemas";
 import type { DevServerRuntimeState } from "@/lib/dev-server/schemas";
+import type { UnmanagedConflictInfo } from "@/components/DevServerDrawer";
 
 interface SessionInfoStripProps {
   session: SessionState;
@@ -40,6 +41,10 @@ interface SessionInfoStripProps {
   dsStopServer: (name: string) => void;
   dsStartAll: () => void;
   dsStopAll: () => void;
+  dsUnmanagedConflict?: UnmanagedConflictInfo | null;
+  dsDismissUnmanagedConflict?: () => void;
+  dsStopUnmanagedAndRetry?: () => void;
+  dsIsStoppingUnmanaged?: boolean;
 
   changesAdd: number;
   changesDel: number;
@@ -73,6 +78,10 @@ function SessionInfoStrip({
   dsStopServer,
   dsStartAll,
   dsStopAll,
+  dsUnmanagedConflict = null,
+  dsDismissUnmanagedConflict,
+  dsStopUnmanagedAndRetry,
+  dsIsStoppingUnmanaged = false,
   changesAdd,
   changesDel,
   commitDisabled,
@@ -141,6 +150,10 @@ function SessionInfoStrip({
             onStop={dsStopServer}
             onStartAll={dsStartAll}
             onStopAll={dsStopAll}
+            unmanagedConflict={dsUnmanagedConflict}
+            onDismissUnmanagedConflict={dsDismissUnmanagedConflict}
+            onStopUnmanagedAndRetry={dsStopUnmanagedAndRetry}
+            isStoppingUnmanaged={dsIsStoppingUnmanaged}
           />
           <SessionActionsMenu
             targetBranch={targetBranch}

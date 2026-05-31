@@ -3,7 +3,11 @@ import {
   createDevServerRouteHandlers,
   type DevServerRouteDeps,
 } from "./route-handlers";
-import type { DevServerService, DevServerStatusItem } from "./service";
+import {
+  UnmanagedDevServerDetectedError,
+  type DevServerService,
+  type DevServerStatusItem,
+} from "./service";
 
 function makeStatus(
   overrides: Partial<DevServerStatusItem> = {},
@@ -18,10 +22,10 @@ function makeStatus(
     startedAt: null,
     errorMessage: null,
     recentOutput: [],
-    source: null,
     ownedByThisSession: false,
     worktreePath: null,
     ownerPid: null,
+    logFilePath: null,
     ...overrides,
   };
 }
@@ -33,6 +37,7 @@ function makeService(
     list: vi.fn(async () => []),
     ensure: vi.fn(async () => makeStatus({ status: "starting" })),
     stop: vi.fn(async () => makeStatus({ status: "stopped" })),
+    stopUnmanaged: vi.fn(async () => ({ killed: [], skipped: [] })),
     ...overrides,
   };
 }
@@ -71,7 +76,6 @@ describe("dev-server route handlers", () => {
           port: 3004,
           localUrl: "http://localhost:3004",
           ownedByThisSession: true,
-          source: "external-adopted",
           ownerPid: 1234,
           worktreePath: "/repos/project/.worktrees/s1",
         }),
@@ -96,7 +100,6 @@ describe("dev-server route handlers", () => {
           status: "running",
           port: 3004,
           ownedByThisSession: true,
-          source: "external-adopted",
         },
       ],
     });
@@ -176,5 +179,100 @@ describe("dev-server route handlers", () => {
 
     expect(response.status).toBe(400);
     expect(service.ensure).not.toHaveBeenCalled();
+  });
+
+  it("START returns 409 with structured payload when an unmanaged listener is detected", async () => {
+    const service = makeService({
+      ensure: vi.fn(async () => {
+        throw new UnmanagedDevServerDetectedError(
+          "web",
+          3007,
+          5001,
+          "/repos/project/.worktrees/s1",
+        );
+      }),
+    });
+    const { handlers } = makeHandlers(service);
+
+    const response = await handlers.START(
+      new Request("http://cc.test/dev-servers/web/start", {
+        method: "POST",
+      }),
+      context({ name: "project", session: "s1", serverName: "web" }),
+    );
+
+    expect(response.status).toBe(409);
+    const body = (await json(response)) as {
+      error: string;
+      code: string;
+      details: {
+        serverName: string;
+        port: number;
+        pid: number;
+        cwd: string;
+      };
+    };
+    expect(body.code).toBe("UNMANAGED_DEV_SERVER_DETECTED");
+    expect(body.details).toEqual({
+      serverName: "web",
+      port: 3007,
+      pid: 5001,
+      cwd: "/repos/project/.worktrees/s1",
+    });
+  });
+
+  it("STOP_UNMANAGED delegates to service.stopUnmanaged with structured request", async () => {
+    const stopUnmanaged = vi.fn(async () => ({
+      killed: [5001],
+      skipped: [],
+    }));
+    const service = makeService({ stopUnmanaged });
+    const { handlers } = makeHandlers(service);
+
+    const response = await handlers.STOP_UNMANAGED(
+      new Request("http://cc.test/dev-servers/web/stop-unmanaged", {
+        method: "POST",
+        body: JSON.stringify({ port: 3007 }),
+        headers: { "content-type": "application/json" },
+      }),
+      context({ name: "project", session: "s1", serverName: "web" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(stopUnmanaged).toHaveBeenCalledWith({
+      projectPath: "/repos/project",
+      sessionName: "s1",
+      serverName: "web",
+      port: 3007,
+    });
+    expect(await json(response)).toMatchObject({
+      status: "ok",
+      killed: [5001],
+    });
+  });
+
+  it("STOP_UNMANAGED returns 409 when ownership cannot be verified", async () => {
+    const stopUnmanaged = vi.fn(async () => ({
+      killed: [],
+      skipped: [{ pid: 5001, reason: "cwd_not_owned", cwd: "/other" }],
+    }));
+    const service = makeService({ stopUnmanaged });
+    const { handlers } = makeHandlers(service);
+
+    const response = await handlers.STOP_UNMANAGED(
+      new Request("http://cc.test/dev-servers/web/stop-unmanaged", {
+        method: "POST",
+        body: JSON.stringify({ port: 3007 }),
+        headers: { "content-type": "application/json" },
+      }),
+      context({ name: "project", session: "s1", serverName: "web" }),
+    );
+
+    expect(response.status).toBe(409);
+    const body = (await json(response)) as {
+      error: string;
+      code: string;
+    };
+    expect(body.code).toBe("UNMANAGED_OWNERSHIP_UNVERIFIED");
   });
 });

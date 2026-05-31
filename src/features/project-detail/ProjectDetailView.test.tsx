@@ -70,12 +70,6 @@ vi.mock("@/lib/mcp/queries", () => ({
     error: null,
   }),
 }));
-vi.mock("@/lib/dev-server/queries", () => ({
-  usePresetsQuery: () => ({ data: undefined }),
-}));
-vi.mock("@/lib/dev-server/mutations", () => ({
-  useInstallPresetMutation: () => ({ mutate: vi.fn(), isPending: false }),
-}));
 vi.mock("@/lib/sessions/queries", () => ({
   useSessionsQuery: () => mockSessionsData,
 }));

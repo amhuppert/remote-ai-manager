@@ -20,8 +20,8 @@ function classifyByMap(map: Record<number, PortOwnershipResult>): ClassifyFn {
 }
 
 describe("createPortSelectionService.selectPort", () => {
-  describe("two-pass owned-first selection", () => {
-    it("selects an owned port even when the base port is free", async () => {
+  describe("unmanaged listener detection", () => {
+    it("returns unmanaged-detected when an owned listener exists in range", async () => {
       const deps = depsFrom(
         classifyByMap({
           3000: { status: "available" },
@@ -39,15 +39,36 @@ describe("createPortSelectionService.selectPort", () => {
       });
 
       expect(result).toEqual({
-        status: "selected",
-        source: "external-adopted",
+        status: "unmanaged-detected",
         port: 3004,
         pid: 555,
         cwd: "/wt",
       });
     });
 
-    it("prefers an owned later port over an earlier free port when base conflicts", async () => {
+    it("returns the lowest owned port when multiple owned ports exist", async () => {
+      const deps = depsFrom(
+        classifyByMap({
+          3000: { status: "conflict", pid: 1, cwd: "/other" },
+          3002: { status: "owned", pid: 2, cwd: "/wt" },
+          3005: { status: "owned", pid: 3, cwd: "/wt" },
+        }),
+      );
+      const service = createPortSelectionService(deps);
+
+      const result = await service.selectPort({
+        basePort: 3000,
+        worktreePath: "/wt",
+      });
+
+      expect(result.status).toBe("unmanaged-detected");
+      if (result.status === "unmanaged-detected") {
+        expect(result.port).toBe(3002);
+        expect(result.pid).toBe(2);
+      }
+    });
+
+    it("ignores other-worktree conflicts when reporting unmanaged listener", async () => {
       const deps = depsFrom(
         classifyByMap({
           3000: { status: "conflict", pid: 100, cwd: "/other" },
@@ -64,32 +85,10 @@ describe("createPortSelectionService.selectPort", () => {
         worktreePath: "/wt",
       });
 
-      expect(result.status).toBe("selected");
-      if (result.status === "selected") {
-        expect(result.source).toBe("external-adopted");
+      expect(result.status).toBe("unmanaged-detected");
+      if (result.status === "unmanaged-detected") {
         expect(result.port).toBe(3004);
-      }
-    });
-
-    it("prefers the lowest owned port when multiple owned ports exist", async () => {
-      const deps = depsFrom(
-        classifyByMap({
-          3000: { status: "conflict", pid: 1, cwd: "/other" },
-          3002: { status: "owned", pid: 2, cwd: "/wt" },
-          3005: { status: "owned", pid: 3, cwd: "/wt" },
-        }),
-      );
-      const service = createPortSelectionService(deps);
-
-      const result = await service.selectPort({
-        basePort: 3000,
-        worktreePath: "/wt",
-      });
-
-      expect(result.status).toBe("selected");
-      if (result.status === "selected") {
-        expect(result.port).toBe(3002);
-        expect(result.source).toBe("external-adopted");
+        expect(result.cwd).toBe("/wt/app");
       }
     });
   });
@@ -111,7 +110,6 @@ describe("createPortSelectionService.selectPort", () => {
 
       expect(result).toEqual({
         status: "selected",
-        source: "available",
         port: 3001,
       });
     });
@@ -127,7 +125,6 @@ describe("createPortSelectionService.selectPort", () => {
 
       expect(result).toEqual({
         status: "selected",
-        source: "available",
         port: 3000,
       });
     });
@@ -149,7 +146,6 @@ describe("createPortSelectionService.selectPort", () => {
       expect(result.status).toBe("selected");
       if (result.status === "selected") {
         expect(result.port).toBe(3001);
-        expect(result.source).toBe("available");
       }
     });
   });

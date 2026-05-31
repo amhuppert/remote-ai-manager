@@ -11,9 +11,11 @@ import {
   NoDevServersConfiguredError,
   SessionNotFoundError,
   UnknownDevServerError,
+  UnmanagedDevServerDetectedError,
   ensureDevServer,
   listDevServers,
   stopDevServer,
+  stopUnmanagedDevServer,
   type DevServerService,
   type DevServerStatusItem,
 } from "./service";
@@ -22,12 +24,6 @@ import {
   stopAllForSession as defaultStopAllForSession,
   stopServer as defaultStopServer,
 } from "./registry";
-import {
-  getPreset,
-  getPresets,
-  getInstalledPresets,
-  installPreset,
-} from "./presets";
 import type { ApiError } from "@/lib/api/errors";
 import type {
   DevServerRuntimeState,
@@ -66,6 +62,7 @@ const defaultDeps: DevServerRouteDeps = {
     list: listDevServers,
     ensure: ensureDevServer,
     stop: stopDevServer,
+    stopUnmanaged: stopUnmanagedDevServer,
   },
   stopAllForSession: defaultStopAllForSession,
   getServer: defaultGetServer,
@@ -82,10 +79,10 @@ function toRuntimeState(item: DevServerStatusItem): DevServerRuntimeState {
     startedAt: item.startedAt,
     errorMessage: item.errorMessage,
     recentOutput: item.recentOutput,
-    source: item.source,
     ownedByThisSession: item.ownedByThisSession,
     worktreePath: item.worktreePath,
     ownerPid: item.ownerPid,
+    logFilePath: item.logFilePath,
   };
 }
 
@@ -94,10 +91,12 @@ function apiError(
   status: number,
   code?: string,
   output?: string,
+  details?: Record<string, unknown>,
 ): Response {
   const payload: ApiError = { error: message };
   if (code !== undefined) payload.code = code;
   if (output !== undefined) payload.output = output;
+  if (details !== undefined) payload.details = details;
   return NextResponse.json(payload, { status });
 }
 
@@ -117,6 +116,14 @@ function serviceErrorResponse(error: unknown): Response {
   if (error instanceof DevServerWaitTimeoutError) {
     return apiError(error.message, 504, error.code);
   }
+  if (error instanceof UnmanagedDevServerDetectedError) {
+    return apiError(error.message, 409, error.code, undefined, {
+      serverName: error.serverName,
+      port: error.port,
+      pid: error.pid,
+      cwd: error.cwd,
+    });
+  }
   if (error instanceof DevServerStartFailedError) {
     return apiError(
       error.message,
@@ -127,6 +134,10 @@ function serviceErrorResponse(error: unknown): Response {
   }
   return apiError(getErrorMessage(error), 500);
 }
+
+const stopUnmanagedRequestSchema = z.object({
+  port: z.number().int().positive(),
+});
 
 async function resolveProjectOr404(
   deps: DevServerRouteDeps,
@@ -316,7 +327,61 @@ export function createDevServerRouteHandlers(
     return NextResponse.json({ status: "ok" });
   }
 
-  return { GET, START, START_ALL, STOP, STOP_ALL };
+  async function STOP_UNMANAGED(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const params = await context.params;
+    const projectName = params["name"] ?? "";
+    const sessionName = decodeURIComponent(params["session"] ?? "");
+    const serverName = decodeURIComponent(params["serverName"] ?? "");
+    const resolved = await resolveProjectOr404(deps, projectName);
+    if (resolved instanceof Response) return resolved;
+
+    const body = (await request.json().catch(() => ({}))) as {
+      port?: number;
+    };
+    const parsed = stopUnmanagedRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return apiError(
+        "Invalid request: port (positive integer) is required",
+        400,
+      );
+    }
+
+    try {
+      const result = await deps.service.stopUnmanaged({
+        projectPath: resolved.projectPath,
+        sessionName,
+        serverName,
+        port: parsed.data.port,
+      });
+      if (result.killed.length === 0 && result.skipped.length > 0) {
+        return apiError(
+          `Could not verify ownership of listener on port ${parsed.data.port}; refused to signal it.`,
+          409,
+          "UNMANAGED_OWNERSHIP_UNVERIFIED",
+          undefined,
+          { skipped: result.skipped, port: parsed.data.port },
+        );
+      }
+      return NextResponse.json({
+        status: "ok",
+        killed: result.killed,
+        skipped: result.skipped,
+      });
+    } catch (error) {
+      logger.warn("dev-server.route.stop_unmanaged.error", {
+        projectName,
+        sessionName,
+        serverName,
+        error: getErrorMessage(error),
+      });
+      return serviceErrorResponse(error);
+    }
+  }
+
+  return { GET, START, START_ALL, STOP, STOP_ALL, STOP_UNMANAGED };
 }
 
 const defaultHandlers = createDevServerRouteHandlers();
@@ -336,65 +401,5 @@ export const STOP = withTracing(defaultHandlers.STOP);
 /** POST /api/projects/[name]/sessions/[session]/dev-servers/stop-all */
 export const STOP_ALL = withTracing(defaultHandlers.STOP_ALL);
 
-/** GET /api/projects/[name]/dev-servers/presets — list available presets with installed status */
-export const GET_PRESETS = withTracing(async (_request, { params }) => {
-  const { name } = await params;
-  const projectPath = await defaultResolveProjectPath(name ?? "");
-  if (!projectPath) {
-    return apiError("Project not found", 404);
-  }
-
-  const allPresets = getPresets();
-  const installed = await getInstalledPresets(projectPath);
-
-  const presets = allPresets.map((p) => ({
-    id: p.id,
-    name: p.name,
-    description: p.description,
-    badge: p.badge,
-    files: [
-      `.cc/dev-servers/_helpers.sh`,
-      `.cc/dev-servers/${p.scriptFileName}`,
-      "CommandCenter.json",
-    ],
-    installed: installed.includes(p.id),
-  }));
-
-  return NextResponse.json({ presets });
-});
-
-const installPresetRequestSchema = z.object({
-  presetId: z.string().min(1),
-  subdir: z.string().min(1).optional(),
-});
-
-/** POST /api/projects/[name]/dev-servers/presets/install — install a preset into a project */
-export const INSTALL_PRESET = withTracing(async (request, { params }) => {
-  const { name } = await params;
-  const projectPath = await defaultResolveProjectPath(name ?? "");
-  if (!projectPath) {
-    return apiError("Project not found", 404);
-  }
-
-  const body = installPresetRequestSchema.safeParse(await request.json());
-  if (!body.success) {
-    return apiError("Invalid request: presetId is required", 400);
-  }
-
-  const { presetId, subdir } = body.data;
-
-  if (!getPreset(presetId)) {
-    return apiError(`Unknown preset: ${presetId}`, 400);
-  }
-
-  try {
-    const result = await installPreset({ projectPath, presetId, subdir });
-    return NextResponse.json(result);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Installation failed";
-    if (message.includes("already installed")) {
-      return apiError(message, 409);
-    }
-    return apiError(message, 500);
-  }
-});
+/** POST /api/projects/[name]/sessions/[session]/dev-servers/[serverName]/stop-unmanaged */
+export const STOP_UNMANAGED = withTracing(defaultHandlers.STOP_UNMANAGED);
