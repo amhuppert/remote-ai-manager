@@ -249,7 +249,7 @@ work_items:
       Backend feature for drafting long-form documents with an agent, preserving
       structure and revision context across turns.
     lane: backend-features
-    status: planned
+    status: future
     priority: p2
     depends_on:
       - summarization
@@ -296,21 +296,6 @@ work_items:
       - observability
     estimate:
       value: 3
-      unit: days
-
-  - id: multi-session-ux
-    title: Multi-Session UX Improvements
-    summary: >
-      Make it easier to manage and track multiple sessions in Command Center —
-      overview, filtering, status surfacing.
-    lane: ui
-    status: planned
-    priority: p1
-    depends_on: []
-    tags:
-      - sessions
-    estimate:
-      value: 5
       unit: days
 
   - id: interact-with-graph-agents
@@ -400,7 +385,7 @@ work_items:
       message (e.g., "Writing tests for queue-route…", "Awaiting input · 3m",
       "Ran 4 bash commands"). Finder status-bar / Cursor agent strip pattern.
     lane: ui
-    status: planned
+    status: done
     priority: p1
     depends_on:
       - summarization
@@ -411,24 +396,6 @@ work_items:
       - 2026-05-14
     estimate:
       value: 2
-      unit: days
-
-  - id: panel-row-diff-stat
-    title: Session Row Inline Diff Stat
-    summary: >
-      Show +142 −18 next to the session title, color-coded green/red, with a
-      branch-ahead arrow when commits are queued. Cheap to compute, very high
-      signal for "is this worth my attention".
-    lane: ui
-    status: planned
-    priority: p1
-    depends_on: []
-    tags:
-      - sessions
-      - panel-row
-      - 2026-05-14
-    estimate:
-      value: 1
       unit: days
 
   - id: panel-row-last-message-preview
@@ -489,25 +456,6 @@ work_items:
 
   # ---------------- UI: Multi-conversation orchestration ----------------
 
-  - id: quick-reply-inline-row
-    title: Quick-Reply Inline Row Expansion
-    summary: >
-      A session row expands in place to reveal a prompt input plus the last
-      assistant message. No popover, no navigation. Optimized for "yes, proceed"
-      or single-line nudges without leaving the current conversation.
-    lane: ui
-    status: planned
-    priority: p1
-    depends_on: []
-    tags:
-      - sessions
-      - panel-row
-      - multi-conversation
-      - 2026-05-14
-    estimate:
-      value: 3
-      unit: days
-
   - id: conversation-peek-popover
     title: Conversation Peek Hover Popover
     summary: >
@@ -528,7 +476,7 @@ work_items:
       unit: days
 
   - id: bridge-view
-    title: Bridge View Multi-Conversation Layout
+    title: Split Screen Multi-Conversation Layout
     summary: >
       New layout mode replacing the single conversation with a 2×2 or 3×2 grid
       of conversation tiles, each tailing its own stream and independently
@@ -575,7 +523,9 @@ work_items:
     lane: ui
     status: planned
     priority: p2
-    depends_on: []
+    depends_on:
+      - bridge-view
+      - conversation-tabs
     tags:
       - layout
       - focus
