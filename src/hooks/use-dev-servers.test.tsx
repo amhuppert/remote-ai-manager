@@ -87,7 +87,8 @@ describe("useDevServers — unmanaged conflict flow", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch");
     fetchMock.mockImplementation(async (input) => {
       const url = typeof input === "string" ? input : (input as Request).url;
-      if (url.endsWith("/dev-servers")) return jsonResponse(200, { servers: [] });
+      if (url.endsWith("/dev-servers"))
+        return jsonResponse(200, { servers: [] });
       if (url.endsWith("/dev-servers/web/start")) {
         return jsonResponse(409, {
           error: "conflict",
@@ -106,7 +107,9 @@ describe("useDevServers — unmanaged conflict flow", () => {
     act(() => {
       result.current.startServer("web");
     });
-    await waitFor(() => expect(result.current.unmanagedConflict).not.toBeNull());
+    await waitFor(() =>
+      expect(result.current.unmanagedConflict).not.toBeNull(),
+    );
 
     act(() => {
       result.current.dismissUnmanagedConflict();
@@ -125,7 +128,8 @@ describe("useDevServers — unmanaged conflict flow", () => {
         ? (JSON.parse(init.body as string) as unknown)
         : undefined;
       calls.push({ url, method, body });
-      if (url.endsWith("/dev-servers")) return jsonResponse(200, { servers: [] });
+      if (url.endsWith("/dev-servers"))
+        return jsonResponse(200, { servers: [] });
       if (url.endsWith("/dev-servers/web/start")) {
         startCallCount += 1;
         if (startCallCount === 1) {
@@ -156,7 +160,9 @@ describe("useDevServers — unmanaged conflict flow", () => {
     act(() => {
       result.current.startServer("web");
     });
-    await waitFor(() => expect(result.current.unmanagedConflict).not.toBeNull());
+    await waitFor(() =>
+      expect(result.current.unmanagedConflict).not.toBeNull(),
+    );
 
     act(() => {
       result.current.stopUnmanagedAndRetry();

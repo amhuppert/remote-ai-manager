@@ -202,7 +202,9 @@ describe("DevServerRegistry", () => {
       });
 
       expect(server!.status).toBe("error");
-      expect(server!.errorMessage).toContain("before port 59803 ever listening");
+      expect(server!.errorMessage).toContain(
+        "before port 59803 ever listening",
+      );
     });
 
     it("captures recent output in buffer", async () => {

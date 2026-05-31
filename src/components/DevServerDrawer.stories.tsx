@@ -47,7 +47,8 @@ const runningNextDev: DevServerRuntimeState = {
   ownedByThisSession: true,
   worktreePath: "/home/alex/projects/app/.worktrees/feature",
   ownerPid: 12345,
-  logFilePath: "/home/alex/projects/app/.worktrees/feature/.cc/dev-server-logs/nextjs.log",
+  logFilePath:
+    "/home/alex/projects/app/.worktrees/feature/.cc/dev-server-logs/nextjs.log",
 };
 
 const runningStorybook: DevServerRuntimeState = {
@@ -62,7 +63,8 @@ const runningStorybook: DevServerRuntimeState = {
   ownedByThisSession: true,
   worktreePath: "/home/alex/projects/app/.worktrees/feature",
   ownerPid: 12346,
-  logFilePath: "/home/alex/projects/app/.worktrees/feature/.cc/dev-server-logs/storybook.log",
+  logFilePath:
+    "/home/alex/projects/app/.worktrees/feature/.cc/dev-server-logs/storybook.log",
 };
 
 const startingNextDev: DevServerRuntimeState = {
@@ -77,7 +79,8 @@ const startingNextDev: DevServerRuntimeState = {
   ownedByThisSession: false,
   worktreePath: "/home/alex/projects/app/.worktrees/feature",
   ownerPid: null,
-  logFilePath: "/home/alex/projects/app/.worktrees/feature/.cc/dev-server-logs/nextjs.log",
+  logFilePath:
+    "/home/alex/projects/app/.worktrees/feature/.cc/dev-server-logs/nextjs.log",
 };
 
 const errorNextDev: DevServerRuntimeState = {
@@ -93,7 +96,8 @@ const errorNextDev: DevServerRuntimeState = {
   ownedByThisSession: false,
   worktreePath: "/home/alex/projects/app/.worktrees/feature",
   ownerPid: null,
-  logFilePath: "/home/alex/projects/app/.worktrees/feature/.cc/dev-server-logs/nextjs.log",
+  logFilePath:
+    "/home/alex/projects/app/.worktrees/feature/.cc/dev-server-logs/nextjs.log",
 };
 
 // ── Toolbar decorator (simulates topbar session controls) ────

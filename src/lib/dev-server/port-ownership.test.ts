@@ -344,9 +344,9 @@ describe("listListeningPidsViaExecFile (async production path)", () => {
       throw makeExecFileError("ENOENT");
     });
 
-    await expect(
-      listListeningPidsViaExecFile(3001, execFile),
-    ).rejects.toThrow(/unusable/);
+    await expect(listListeningPidsViaExecFile(3001, execFile)).rejects.toThrow(
+      /unusable/,
+    );
   });
 
   it("returns PIDs parsed from lsof stdout when lsof succeeds", async () => {

@@ -147,10 +147,12 @@ function UnmanagedConflictDialog({
       role="dialog"
       aria-label="Unmanaged dev server detected"
     >
-      <div className="ds-conflict-title">Port {conflict.port} already in use</div>
+      <div className="ds-conflict-title">
+        Port {conflict.port} already in use
+      </div>
       <div className="ds-conflict-body">
-        Another process (pid {conflict.pid}) inside this worktree is listening on
-        port {conflict.port}. Command Center didn&apos;t start it, so it
+        Another process (pid {conflict.pid}) inside this worktree is listening
+        on port {conflict.port}. Command Center didn&apos;t start it, so it
         won&apos;t be managed here.
       </div>
       <div className="ds-conflict-meta">

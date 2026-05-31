@@ -1,10 +1,6 @@
 import { type ChildProcess } from "node:child_process";
 import { spawn as timedSpawn } from "../shared/exec";
-import {
-  createWriteStream,
-  mkdirSync,
-  type WriteStream,
-} from "node:fs";
+import { createWriteStream, mkdirSync, type WriteStream } from "node:fs";
 import { createServer } from "node:net";
 import net from "node:net";
 import path from "node:path";
@@ -479,7 +475,11 @@ export function createDevServerRegistry(
       eventPrefix: "dev-server",
     });
 
-    const logFilePath = path.join(worktreePath, LOG_SUBDIR, `${serverName}.log`);
+    const logFilePath = path.join(
+      worktreePath,
+      LOG_SUBDIR,
+      `${serverName}.log`,
+    );
     const logStream = openLogStream(logFilePath, serverName);
 
     const entry: DevServerEntry = {

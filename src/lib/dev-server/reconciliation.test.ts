@@ -3,10 +3,7 @@ import {
   createDevServerReconciler,
   type DevServerReconciliationDeps,
 } from "./reconciliation";
-import type {
-  PortOwnershipInput,
-  PortOwnershipResult,
-} from "./port-ownership";
+import type { PortOwnershipInput, PortOwnershipResult } from "./port-ownership";
 import type { DevServerEntry } from "./registry";
 
 const PROJECT = "/proj";

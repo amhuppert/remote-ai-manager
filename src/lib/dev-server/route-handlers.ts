@@ -343,7 +343,10 @@ export function createDevServerRouteHandlers(
     };
     const parsed = stopUnmanagedRequestSchema.safeParse(body);
     if (!parsed.success) {
-      return apiError("Invalid request: port (positive integer) is required", 400);
+      return apiError(
+        "Invalid request: port (positive integer) is required",
+        400,
+      );
     }
 
     try {
@@ -400,4 +403,3 @@ export const STOP_ALL = withTracing(defaultHandlers.STOP_ALL);
 
 /** POST /api/projects/[name]/sessions/[session]/dev-servers/[serverName]/stop-unmanaged */
 export const STOP_UNMANAGED = withTracing(defaultHandlers.STOP_UNMANAGED);
-
