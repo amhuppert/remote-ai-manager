@@ -44,6 +44,7 @@ import { safeAppendTranscriptEntry } from "@/lib/prompt/transcript";
 import { dispatchPushForCollaborationEvent } from "@/lib/push-notification/dispatcher";
 import type { AsymmetricCollaborationSliceDeps } from "./envelope";
 import { mutateConversation as defaultMutateConversation } from "@/lib/state-store";
+import { publishSessionStatus as defaultPublishSessionStatus } from "@/lib/workflows/primitives/default-session-status-bus";
 
 export interface CreateCollaborationDepsInput {
   projectPath: string;
@@ -96,6 +97,19 @@ export interface CreateCollaborationDepsInput {
    * serialize write-capable lane work.
    */
   laneScheduler?: LaneScheduler;
+  /**
+   * Optional override for the conversation state mutation. Tests inject an
+   * in-memory fake so they can assert mutator effects (status, unread,
+   * pending-question fields) without bootstrapping the on-disk state store.
+   */
+  mutateConversation?: typeof defaultMutateConversation;
+  /**
+   * Optional override for the SSE publisher used to broadcast the
+   * `conversation-unread` event after `markConversationAwaiting` completes.
+   * Tests inject a capturing fake; production routes through the default
+   * session status bus so the sidebar updates in real time.
+   */
+  publishSessionStatus?: typeof defaultPublishSessionStatus;
 }
 
 const logger = createLogger("workflows.collaboration.deps-factory");
@@ -124,6 +138,10 @@ export function createCollaborationDeps(
 
   const projectName = input.projectName ?? path.basename(input.projectPath);
   const sessionName = input.sessionName;
+  const mutateConversation =
+    input.mutateConversation ?? defaultMutateConversation;
+  const publishSessionStatus =
+    input.publishSessionStatus ?? defaultPublishSessionStatus;
 
   const statusBus =
     input.statusBus ??
@@ -173,20 +191,34 @@ export function createCollaborationDeps(
         projectName,
         sessionName,
       }),
-    markConversationAwaiting: (conversationId) =>
-      defaultMutateConversation(
+    markConversationAwaiting: async (conversationId) => {
+      // `unread = true` mirrors the regular conversation finish path
+      // (`markUnreadOnFinish`) so the originating conversation pins to
+      // "Finished — unread" in the Active Conversations sidebar when the
+      // collaboration returns control to the user. Set in the same mutator
+      // as `status = "awaiting"` so both fields land atomically.
+      await mutateConversation(
         input.projectPath,
         input.sessionName,
         conversationId,
         "collab.conversation_awaiting",
         (conversation) => {
           conversation.status = "awaiting";
+          conversation.unread = true;
           conversation.pendingQuestionId = null;
           conversation.pendingQuestions = null;
         },
-      ),
+      );
+      publishSessionStatus({
+        type: "conversation-unread",
+        projectName,
+        sessionName,
+        conversationId,
+        unread: true,
+      });
+    },
     updateConversationBackendRef: (conversationId, ref) =>
-      defaultMutateConversation(
+      mutateConversation(
         input.projectPath,
         input.sessionName,
         conversationId,

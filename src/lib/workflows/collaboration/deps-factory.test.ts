@@ -26,9 +26,44 @@ import {
   _resetTranscriptDepsForTesting,
 } from "@/lib/prompt/transcript";
 import type { SSEEvent } from "@/lib/api/sse-events";
+import type { ConversationState } from "@/lib/conversations/schemas";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+function makeFakeConversation(
+  overrides: Partial<ConversationState> = {},
+): ConversationState {
+  return {
+    id: "conv-A",
+    name: null,
+    transcriptPath: null,
+    status: "running",
+    promptCount: 1,
+    createdAt: "2026-01-01T00:00:00Z",
+    lastActivityAt: "2026-01-01T00:01:00Z",
+    source: "cc",
+    summary: null,
+    archived: false,
+    unread: false,
+    totalCostUsd: null,
+    totalDurationMs: null,
+    totalTurns: null,
+    pendingQuestionId: "q-9",
+    pendingQuestions: null,
+    pendingPromptText: null,
+    forkedFrom: null,
+    role: null,
+    activeTurnSource: null,
+    contextTokens: null,
+    contextWindowMax: null,
+    debugMode: null,
+    machineSnapshot: null,
+    agentBackend: "claude",
+    backendRef: null,
+    ...overrides,
+  } as unknown as ConversationState;
+}
 
 function makeStubCallAgent(): AsymmetricCollaborationSliceDeps["callAgent"] {
   return vi.fn(async () => {
@@ -177,5 +212,68 @@ describe("createCollaborationDeps", () => {
       }
       await rm(tmpRoot, { recursive: true, force: true });
     }
+  });
+
+  it("markConversationAwaiting sets unread=true alongside status=awaiting and broadcasts conversation-unread so the conversation pins to 'Finished — unread'", async () => {
+    const mutationCalls: Array<{
+      projectPath: string;
+      sessionName: string;
+      conversationId: string;
+      label: string;
+      result: ConversationState;
+    }> = [];
+    const publishedEvents: SSEEvent[] = [];
+
+    const deps = createCollaborationDeps({
+      ...baseInput,
+      callAgent: makeStubCallAgent(),
+      projectName: "example",
+      mutateConversation: async (
+        projectPath,
+        sessionName,
+        conversationId,
+        label,
+        mutate,
+      ) => {
+        const conversation = makeFakeConversation({ id: conversationId });
+        await mutate(conversation);
+        mutationCalls.push({
+          projectPath,
+          sessionName,
+          conversationId,
+          label,
+          result: conversation,
+        });
+        return undefined as never;
+      },
+      publishSessionStatus: (event) => {
+        publishedEvents.push(event);
+        return { delivered: true };
+      },
+    });
+
+    await deps.markConversationAwaiting!("conv-A", {
+      workflowId: "wf-001",
+      timestamp: "2026-04-28T10:00:00.000Z",
+    });
+
+    expect(mutationCalls).toHaveLength(1);
+    const call = mutationCalls[0]!;
+    expect(call.projectPath).toBe(baseInput.projectPath);
+    expect(call.sessionName).toBe(baseInput.sessionName);
+    expect(call.conversationId).toBe("conv-A");
+    expect(call.result.status).toBe("awaiting");
+    expect(call.result.unread).toBe(true);
+    expect(call.result.pendingQuestionId).toBeNull();
+    expect(call.result.pendingQuestions).toBeNull();
+
+    expect(publishedEvents).toHaveLength(1);
+    expect(publishedEvents[0]).toMatchObject({
+      type: "conversation-unread",
+      projectName: "example",
+      sessionName: baseInput.sessionName,
+      conversationId: "conv-A",
+      unread: true,
+    });
   });
 });
