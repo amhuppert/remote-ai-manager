@@ -67,6 +67,7 @@ describe("useSessionPageHandlers", () => {
           },
           clearCollabConfigDraft: () => {},
           clearPersistedPendingPromptOnSubmit: () => {},
+          enqueuePromptErrorToast: () => {},
         });
       },
       { wrapper: wrapper(client) },

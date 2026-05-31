@@ -63,14 +63,26 @@ export interface UsePromptSubmissionArgs {
   ) => Promise<void>;
   queueMessage: (text: string) => Promise<void>;
   collaborationStartMutation: {
-    mutate: (input: {
-      brief: string;
-      negotiationRounds: number;
-      autonomousResolutionThreshold: "none" | "minor" | "major" | "blocking";
-      conversationId: string;
-      backend?: AgentBackendId;
-    }) => void;
+    mutate: (
+      input: {
+        brief: string;
+        negotiationRounds: number;
+        autonomousResolutionThreshold: "none" | "minor" | "major" | "blocking";
+        conversationId: string;
+        backend?: AgentBackendId;
+      },
+      options?: {
+        onSuccess?: () => void;
+        onError?: (error: unknown) => void;
+      },
+    ) => void;
   };
+  enqueuePromptErrorToast: (item: {
+    projectName: string;
+    sessionName: string;
+    conversationId: string;
+    error: string;
+  }) => void;
 }
 
 export interface UsePromptSubmissionResult {
@@ -107,6 +119,7 @@ export function usePromptSubmission({
   sendPrompt,
   queueMessage,
   collaborationStartMutation,
+  enqueuePromptErrorToast,
 }: UsePromptSubmissionArgs): UsePromptSubmissionResult {
   const [pendingConcurrentSubmission, setPendingConcurrentSubmission] =
     useState<{
@@ -158,17 +171,42 @@ export function usePromptSubmission({
     if (hasCollabPrefix(trimmedPrompt)) {
       const brief = stripCollabPrefix(trimmedPrompt).trim();
       if (!brief) return;
-      clearPersistedPendingPromptOnSubmit();
+      const originalPromptText = trimmedPrompt;
+      const collabConversationId = conversationId;
       editorRef.current?.clear();
       setPromptText("");
-      collaborationStartMutation.mutate({
-        brief,
-        negotiationRounds: effectiveCollabConfig.negotiationRounds,
-        autonomousResolutionThreshold:
-          effectiveCollabConfig.autonomousResolutionThreshold,
-        conversationId,
-        backend: selectedBackend,
-      });
+      collaborationStartMutation.mutate(
+        {
+          brief,
+          negotiationRounds: effectiveCollabConfig.negotiationRounds,
+          autonomousResolutionThreshold:
+            effectiveCollabConfig.autonomousResolutionThreshold,
+          conversationId: collabConversationId,
+          backend: selectedBackend,
+        },
+        {
+          onSuccess: () => {
+            clearPersistedPendingPromptOnSubmit();
+          },
+          onError: (err) => {
+            const message =
+              err instanceof Error
+                ? err.message
+                : "Failed to start collaboration run";
+            enqueuePromptErrorToast({
+              projectName,
+              sessionName,
+              conversationId: collabConversationId,
+              error: message,
+            });
+            setPromptText(originalPromptText);
+            const editorInstance = editorRef.current?.editor;
+            if (editorInstance) {
+              editorInstance.commands.setContent(originalPromptText);
+            }
+          },
+        },
+      );
       clearCollabConfigDraft(projectName, sessionName, conversationId);
       return;
     }
@@ -221,6 +259,7 @@ export function usePromptSubmission({
     conversations,
     dispatchPrompt,
     clearPersistedPendingPromptOnSubmit,
+    enqueuePromptErrorToast,
   ]);
 
   const handleConcurrentConfirm = useCallback(() => {

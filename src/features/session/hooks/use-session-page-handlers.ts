@@ -40,6 +40,7 @@ export interface UseSessionPageHandlersArgs {
   effectiveCollabConfig: CollabConfigDraft;
   clearCollabConfigDraft: SubmissionArgs["clearCollabConfigDraft"];
   clearPersistedPendingPromptOnSubmit: SubmissionArgs["clearPersistedPendingPromptOnSubmit"];
+  enqueuePromptErrorToast: SubmissionArgs["enqueuePromptErrorToast"];
 }
 
 export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
@@ -64,6 +65,7 @@ export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
     effectiveCollabConfig,
     clearCollabConfigDraft,
     clearPersistedPendingPromptOnSubmit,
+    enqueuePromptErrorToast,
   } = args;
 
   const deleteMutation = useDeleteSessionMutation(projectName);
@@ -105,6 +107,7 @@ export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
     sendPrompt,
     queueMessage,
     collaborationStartMutation,
+    enqueuePromptErrorToast,
   });
 
   const { focusConfirmLoading, handleConfirmFocus } = useFocusInitialization({

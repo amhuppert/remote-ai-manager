@@ -25,6 +25,7 @@ import { useSessionPageDisplay } from "@/features/session/hooks/use-session-page
 import { useSessionPageLocalState } from "@/features/session/hooks/use-session-page-local-state";
 import { useSessionPageQueries } from "@/features/session/hooks/use-session-page-queries";
 import { useSessionPageViewProps } from "@/features/session/hooks/use-session-page-view-props";
+import { useEnqueuePromptErrorToast } from "@/stores/notification.store";
 
 interface Props {
   projectName: string;
@@ -101,6 +102,7 @@ export default function ConversationDetailPage({
     projectName,
     sessionName,
   );
+  const enqueuePromptErrorToast = useEnqueuePromptErrorToast();
 
   const collab = useCollabContext({
     projectName,
@@ -264,6 +266,7 @@ export default function ConversationDetailPage({
     effectiveCollabConfig,
     clearCollabConfigDraft,
     clearPersistedPendingPromptOnSubmit,
+    enqueuePromptErrorToast,
   });
 
   const hasUncommittedChanges = diff.files.length > 0;
