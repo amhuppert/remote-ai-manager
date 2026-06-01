@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { readConfig } from "@/lib/config/loader";
 import { createLogger } from "@/lib/logging";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { getSession, mutateSession } from "@/lib/state-store";
@@ -7,17 +9,30 @@ import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph
 import { createGraphWorkflowExecutionRepository } from "@/lib/workflow-graph/execution-repository";
 import { createExecutionTargetResolver } from "@/lib/workflow-graph/execution-target-resolver";
 import { createGraphWorkflowExecutionToolContext } from "@/lib/workflow-graph/execution-tool-context";
+import { buildImplementerCollaborationContext } from "@/lib/workflow-graph/implementer-collaboration-context";
+import { coerceGlobalDefaults } from "@/lib/workflow-graph/resolve-config";
 import { createGraphWorkflowRuntimeEditService } from "@/lib/workflow-graph/runtime-edits";
 import { createGraphWorkflowSharedDocumentRegistryService } from "@/lib/workflow-graph/shared-documents";
 import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
 import { createParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
+import { createWorkflowCollaboratorCaller } from "@/lib/workflow-graph/workflow-collaborator-caller";
 import { createGraphWorkflowManager } from "@/lib/workflow-graph/workflow-manager";
 import {
   registerGraphWorkflowExecutionTools,
   type GraphWorkflowToolServerContext,
 } from "@/lib/workflow-graph/tool-server";
+import { createCollaborationProductionAgentCaller } from "@/lib/workflows/collaboration/agent-caller-production";
+import { decideCollaborationNextStep } from "@/lib/workflows/collaboration/policy";
+import { createWorkflowCollaborationEnvelope } from "@/lib/workflows/collaboration/workflow-envelope";
+import { createLaneService } from "@/lib/workflows/primitives/lane-service";
+import { createSessionLaneStoreForProduction } from "@/lib/workflows/primitives/lane-store";
+import { createStatusBus } from "@/lib/workflows/primitives/status-bus";
+import { publishScopedStatusEvent } from "@/lib/workflows/primitives/default-session-status-bus";
+import { safeAppendTranscriptEntry } from "@/lib/prompt/transcript";
+import { createSessionWorkflowEnvelopeStoreForProduction } from "@/lib/workflows/primitives/default-session-workflow-envelope-store";
 import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 import { McpRouteError } from "./route-handler";
+import path from "node:path";
 
 const logger = createLogger("workflow-execution-server");
 
@@ -137,7 +152,124 @@ const defaultWorkflowExecutionMcpServerDeps: WorkflowExecutionMcpServerDeps = {
       session,
     });
 
-    return executionToolContextFactory.create({
+    // Per-context collaboration overrides live on the raw workflow definition;
+    // the resolved working definition used at execution time drops the
+    // `collaboration` field. Load the raw definition to feed the provenance
+    // cascade with the original per-node + workflow-level overrides.
+    const globalConfig = await readConfig();
+    const definitionRecord = await workflowStorage.get(
+      projectPath,
+      execution.seedDefinitionId,
+    );
+    const rawExecutionContext =
+      definitionRecord?.definition.executionContexts.find(
+        (context) => context.id === contextId,
+      ) ?? {
+        id: executionContext.id,
+        title: executionContext.title,
+        acceptanceCriteria: executionContext.acceptanceCriteria,
+      };
+    const rawWorkflowConfig = definitionRecord?.definition.workflowConfig ?? {};
+
+    const iterationCount =
+      execution.contextStates[contextId]?.iterationCount ?? 0;
+
+    const collaboration = buildImplementerCollaborationContext(
+      {
+        projectPath,
+        sessionName,
+        executionId,
+        contextId,
+        conversationId,
+        iterationIndex: iterationCount,
+        globalDefaults: coerceGlobalDefaults(globalConfig.workflowDefaults),
+        workflowConfig: rawWorkflowConfig,
+        executionContextDefinition: rawExecutionContext,
+      },
+      {
+        parentImplementerTurnIdFactory: () =>
+          `impl-${executionId}-${contextId}-iter${iterationCount}-${randomUUID().slice(0, 8)}`,
+        setPendingHaltReason: async (reason) => {
+          await workflowManager.recordPendingHaltReason({
+            projectPath,
+            sessionName,
+            reason,
+          });
+        },
+        startWorkflowCollaboration: async (args) => {
+          const projectName = path.basename(projectPath);
+          const sessionKey = `${projectPath}::${sessionName}`;
+          const laneService = createLaneService({
+            store: createSessionLaneStoreForProduction({
+              projectPath,
+              sessionName,
+            }),
+          });
+          const collabWorkflowId = randomUUID();
+          const agentCaller = createCollaborationProductionAgentCaller({
+            workflowId: collabWorkflowId,
+            projectPath,
+            sessionName,
+            worktreePath: executionTarget.worktreePath,
+            sessionKey,
+            originatingConversationId: args.conversationId,
+            laneService,
+          });
+          const statusBus = createStatusBus({
+            broadcast: (envelopeEvent) => {
+              const outcome = publishScopedStatusEvent({
+                scope: envelopeEvent.scope,
+                scopeId: envelopeEvent.scopeId,
+                status: envelopeEvent.status,
+                timestamp: envelopeEvent.timestamp,
+                projectName,
+                sessionName,
+                payload: envelopeEvent.payload,
+              });
+              if (!outcome.delivered) {
+                logger.warn("workflow-collab.status_bus.sse_delivery_failed", {
+                  scope: envelopeEvent.scope,
+                  scopeId: envelopeEvent.scopeId,
+                  status: envelopeEvent.status,
+                });
+              }
+            },
+          });
+          const envelope = createWorkflowCollaborationEnvelope({
+            envelopeStore: createSessionWorkflowEnvelopeStoreForProduction({
+              projectPath,
+              sessionName,
+            }),
+            policyDecide: decideCollaborationNextStep,
+            collaboratorCaller: createWorkflowCollaboratorCaller({
+              resolvedConfig: args.resolvedConfig,
+              worktreePath: executionTarget.worktreePath,
+              brief: args.brief,
+              parentImplementerTurnId: args.parentImplementerTurnId,
+              executionContextId: args.executionContextId,
+              conversationId: args.conversationId,
+              workflowId: collabWorkflowId,
+              sessionKey,
+              agentCaller,
+              laneService,
+            }),
+            statusBus,
+            appendTranscriptEntry: (conversationId, entry) =>
+              safeAppendTranscriptEntry(
+                conversationId,
+                entry,
+                undefined,
+                undefined,
+                { projectName, sessionName },
+              ),
+            workflowIdFactory: () => collabWorkflowId,
+          });
+          return envelope.start(args);
+        },
+      },
+    );
+
+    const baseContext = executionToolContextFactory.create({
       projectPath,
       sessionName,
       executionId,
@@ -146,7 +278,17 @@ const defaultWorkflowExecutionMcpServerDeps: WorkflowExecutionMcpServerDeps = {
       executionTarget,
       executionContextTitle: executionContext.title,
       allowAgentTaskAdd: executionContext.mutability.allowAgentTaskAdd,
+      allowAgentCollaboration: true,
+      collaboration,
     });
+
+    return {
+      ...baseContext,
+      getPendingHaltReason: async () => {
+        const freshSession = await getSession(projectPath, sessionName);
+        return freshSession?.graphWorkflowExecution?.pendingHaltReason ?? null;
+      },
+    };
   },
   registerGraphWorkflowExecutionTools,
 };

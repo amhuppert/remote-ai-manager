@@ -43,6 +43,15 @@ const workflowDefaults: WorkflowDefaults = {
   iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
   circuitBreaker: { consecutiveFailureThreshold: 3 },
   mutability: { allowAgentTaskAdd: false },
+  collaboration: {
+    secondAgent: {
+      backend: "claude",
+      model: "sonnet",
+      reasoningEffort: "medium",
+    },
+    negotiationRounds: 3,
+    autonomousResolutionThreshold: "minor",
+  },
 };
 
 const fullConfig: { config: GlobalConfig; raw: Record<string, unknown> } = {

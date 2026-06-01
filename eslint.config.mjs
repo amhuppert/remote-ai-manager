@@ -27,6 +27,51 @@ const eslintConfig = defineConfig([
       reportUnusedDisableDirectives: "off",
     },
   },
+  {
+    files: [
+      "src/lib/workflows/collaboration/workflow-envelope.ts",
+      "src/lib/workflows/collaboration/workflow-envelope.test.ts",
+      "src/lib/workflows/collaboration/feature-snapshot.ts",
+      "src/lib/workflows/collaboration/feature-snapshot.test.ts",
+    ],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "@/lib/workflows/primitives/human-approval-gate",
+              message:
+                "Workflow-scoped collaboration must NEVER pause for user input. Report requires_user_input as a structured result instead. See design §Workflow Collaboration Envelope and Requirement 4.1.",
+            },
+            {
+              name: "@/lib/workflows/collaboration/envelope",
+              message:
+                "Workflow-scoped collaboration must not couple to the user-triggered envelope. Duplicate the round/collaborator-invocation logic locally per design §Envelope Extraction Decision.",
+            },
+          ],
+          patterns: [
+            {
+              group: [
+                "**/workflows/primitives/human-approval-gate",
+                "**/workflows/primitives/human-approval-gate.*",
+              ],
+              message:
+                "Workflow-scoped collaboration must NEVER pause for user input. Report requires_user_input as a structured result instead.",
+            },
+            {
+              group: [
+                "**/workflows/collaboration/envelope",
+                "**/workflows/collaboration/envelope.*",
+              ],
+              message:
+                "Workflow-scoped collaboration must not couple to the user-triggered envelope.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 ]);
 
 export default eslintConfig;

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 import {
   createGraphWorkflowExecutionToolContext,
@@ -8,6 +8,7 @@ import type { ExecutionTarget } from "./execution-target-resolver";
 import { createGraphWorkflowRuntimeEditService } from "./runtime-edits";
 import { createGraphWorkflowSharedDocumentRegistryService } from "./shared-documents";
 import { createWorkflowExecution } from "./test-fixtures";
+import type { GraphWorkflowCollaborationContextBlock } from "./tool-server";
 
 interface FakeStore {
   current: GraphWorkflowExecution;
@@ -133,6 +134,7 @@ function buildToolContext(
     executionTarget: overrides.executionTarget ?? sessionTarget,
     executionContextTitle: overrides.executionContextTitle ?? "Plan",
     allowAgentTaskAdd: overrides.allowAgentTaskAdd ?? true,
+    allowAgentCollaboration: false,
   });
   return { store, toolContext, deps };
 }
@@ -450,6 +452,7 @@ describe("GraphWorkflowExecutionToolContext", () => {
       executionTarget: sessionTarget,
       executionContextTitle: "Plan",
       allowAgentTaskAdd: true,
+      allowAgentCollaboration: false,
     });
     const implementContext = factory.create({
       projectPath: "/projects/test",
@@ -460,6 +463,7 @@ describe("GraphWorkflowExecutionToolContext", () => {
       executionTarget: sessionTarget,
       executionContextTitle: "Implement",
       allowAgentTaskAdd: true,
+      allowAgentCollaboration: false,
     });
 
     await Promise.all([
@@ -476,6 +480,56 @@ describe("GraphWorkflowExecutionToolContext", () => {
       "implement done",
     );
     expect(store.mutateCount).toBe(2);
+  });
+
+  it("threads an optional collaboration block onto the bound tool context", () => {
+    const collaboration: GraphWorkflowCollaborationContextBlock = {
+      parentImplementerTurnId: "turn-1",
+      executionContextId: "context-plan",
+      conversationId: "conv-bound",
+      executionId: "execution-1",
+      iterationIndex: 0,
+      resolveCollaborationConfig: () => ({
+        secondAgent: {
+          value: {
+            backend: "codex",
+            model: "gpt-5.4",
+            reasoningEffort: "medium",
+          },
+          source: "global",
+        },
+        negotiationRounds: { value: 3, source: "global" },
+        autonomousResolutionThreshold: { value: "minor", source: "global" },
+      }),
+      startWorkflowCollaboration: vi.fn(),
+      setPendingHaltReason: vi.fn(),
+    };
+    const { toolContext } = buildToolContext({});
+    const factory = createGraphWorkflowExecutionToolContext({
+      workflowManager: {
+        mutateActive: async (_p, _s, fn) =>
+          fn(structuredClone(createWorkflowExecution())) as never,
+      },
+      runtimeEditService: createGraphWorkflowRuntimeEditService(),
+      sharedDocumentRegistry:
+        createGraphWorkflowSharedDocumentRegistryService(),
+    });
+    const bound = factory.create({
+      projectPath: "/projects/test",
+      sessionName: "session-1",
+      executionId: "execution-1",
+      contextId: "context-plan",
+      conversationId: "conv-bound",
+      executionTarget: sessionTarget,
+      executionContextTitle: "Plan",
+      allowAgentTaskAdd: true,
+      allowAgentCollaboration: true,
+      collaboration,
+    });
+
+    expect(bound.allowAgentCollaboration).toBe(true);
+    expect(bound.collaboration).toBe(collaboration);
+    expect(toolContext.collaboration).toBeUndefined();
   });
 
   it("preserves a sibling's addTask write when racing with a completeTask", async () => {
@@ -515,6 +569,7 @@ describe("GraphWorkflowExecutionToolContext", () => {
       executionTarget: sessionTarget,
       executionContextTitle: "Plan",
       allowAgentTaskAdd: true,
+      allowAgentCollaboration: false,
     });
     const implementContext = factory.create({
       projectPath: "/projects/test",
@@ -525,6 +580,7 @@ describe("GraphWorkflowExecutionToolContext", () => {
       executionTarget: sessionTarget,
       executionContextTitle: "Implement",
       allowAgentTaskAdd: true,
+      allowAgentCollaboration: false,
     });
 
     await Promise.all([

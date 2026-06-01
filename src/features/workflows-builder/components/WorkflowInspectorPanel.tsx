@@ -83,6 +83,15 @@ const SEEDED_DEFAULTS: WorkflowDefaults = {
   mutability: {
     allowAgentTaskAdd: false,
   },
+  collaboration: {
+    secondAgent: {
+      backend: "claude",
+      model: "sonnet",
+      reasoningEffort: "medium",
+    },
+    negotiationRounds: 3,
+    autonomousResolutionThreshold: "minor",
+  },
 };
 
 function sortTasks(

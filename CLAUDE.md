@@ -17,7 +17,7 @@ Kiro-style Spec Driven Development implementation on AI-DLC (AI Development Life
 ### Active Specifications
 
 - Check `.kiro/specs/` for active specifications
-- Use `/kiro:spec-status [feature-name]` to check progress
+- Use `/kiro-spec-status [feature-name]` to check progress
 
 ## Development Guidelines
 
@@ -25,23 +25,27 @@ Kiro-style Spec Driven Development implementation on AI-DLC (AI Development Life
 
 ## Minimal Workflow
 
-- Phase 0 (optional): `/kiro:steering`, `/kiro:steering-custom`
+- Phase 0 (optional): `/kiro-steering`, `/kiro-steering-custom`
+- Phase 0.5 (optional discovery): `/kiro-discovery <idea>` — produces `brief.md` and `roadmap.md` when scope is unclear (one spec vs many vs none)
 - Phase 1 (Specification):
-  - `/kiro:spec-init "description"`
-  - `/kiro:spec-requirements {feature}`
-  - `/kiro:validate-gap {feature}` (optional: for existing codebase)
-  - `/kiro:spec-design {feature} [-y]`
-  - `/kiro:validate-design {feature}` (optional: design review)
-  - `/kiro:spec-tasks {feature} [-y]`
-- Phase 2 (Implementation): `/kiro:spec-impl {feature} [tasks]`
-  - `/kiro:validate-impl {feature}` (optional: after implementation)
-- Progress check: `/kiro:spec-status {feature}` (use anytime)
+  - `/kiro-spec-init "description"`
+  - `/kiro-spec-requirements {feature}`
+  - `/kiro-validate-gap {feature}` (optional: for existing codebase)
+  - `/kiro-spec-design {feature} [-y]`
+  - `/kiro-validate-design {feature}` (optional: design review)
+  - `/kiro-spec-tasks {feature} [-y]`
+  - Alternative for multi-feature work: `/kiro-spec-batch` (parallel spec creation + cross-spec review)
+  - Fast path (single spec, intentional): `/kiro-spec-quick <what-to-build> [--auto]`
+- Phase 2 (Implementation): `/kiro-impl {feature} [tasks]`
+  - `/kiro-validate-impl {feature}` (optional: after implementation)
+  - `/kiro-debug` (failure investigation), `/kiro-review` (task review against specs), `/kiro-verify-completion` (evidence-based completion check)
+- Progress check: `/kiro-spec-status {feature}` (use anytime)
 
 ## Development Rules
 
 - 3-phase approval workflow: Requirements → Design → Tasks → Implementation
 - Human review required each phase; use `-y` only for intentional fast-track
-- Keep steering current and verify alignment with `/kiro:spec-status`
+- Keep steering current and verify alignment with `/kiro-spec-status`
 - Follow the user's instructions precisely, and within that scope act autonomously: gather the necessary context and complete the requested work end-to-end in this run, asking questions only when essential information is missing or the instructions are critically ambiguous.
 
 ## Worktree Isolation
@@ -55,7 +59,7 @@ Sessions run in git worktrees under `.worktrees/`. **All file operations and git
 
 ## Steering Configuration
 
-Project steering files are loaded automatically below. Custom files are supported (managed via `/kiro:steering-custom`).
+Project steering files are loaded automatically below. Custom files are supported (managed via `/kiro-steering-custom`).
 
 @.kiro/steering/engineering-principles.md
 @.kiro/steering/product.md

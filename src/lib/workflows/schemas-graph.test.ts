@@ -15,6 +15,8 @@ import {
   graphWorkflowExecutionSchema,
   graphWorkflowExecutionSessionRefSchema,
   graphWorkflowHaltReasonSchema,
+  workflowCollaborationStatusSchema,
+  workflowCollaborationResultSchema,
   graphWorkflowAgentSessionStateSchema,
   graphWorkflowMergeStatusEventSchema,
   graphWorkflowPendingHaltReasonEventSchema,
@@ -634,20 +636,30 @@ function createWorkflowDefaults() {
     },
     circuitBreaker: { consecutiveFailureThreshold: 3 },
     mutability: { allowAgentTaskAdd: false },
+    collaboration: {
+      secondAgent: {
+        backend: "claude",
+        model: "sonnet",
+        reasoningEffort: "medium",
+      },
+      negotiationRounds: 3,
+      autonomousResolutionThreshold: "minor",
+    },
   };
 }
 
 describe("workflowDefaultsSchema", () => {
-  it("parses with all six blocks specified", () => {
+  it("parses with every block specified", () => {
     const result = workflowDefaultsSchema.safeParse(createWorkflowDefaults());
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.contextValidator.type).toBe("claude");
       expect(result.data.scriptValidator.enabled).toBe(false);
+      expect(result.data.collaboration.negotiationRounds).toBe(3);
     }
   });
 
-  it("requires all six blocks including scriptValidator", () => {
+  it("requires every top-level block", () => {
     const result = workflowDefaultsSchema.safeParse({});
     expect(result.success).toBe(false);
   });
@@ -656,6 +668,13 @@ describe("workflowDefaultsSchema", () => {
     const defaults = createWorkflowDefaults();
     const { scriptValidator: _removed, ...withoutScriptValidator } = defaults;
     const result = workflowDefaultsSchema.safeParse(withoutScriptValidator);
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects workflowDefaults missing the collaboration block", () => {
+    const defaults = createWorkflowDefaults();
+    const { collaboration: _removed, ...withoutCollaboration } = defaults;
+    const result = workflowDefaultsSchema.safeParse(withoutCollaboration);
     expect(result.success).toBe(false);
   });
 });
@@ -1539,6 +1558,205 @@ describe("graphWorkflowHaltReasonSchema", () => {
       contextId: "",
       message: "Merge failed",
       conflictFiles: [],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a collaboration_failure halt reason with all required fields", () => {
+    const result = graphWorkflowHaltReasonSchema.safeParse({
+      type: "collaboration_failure",
+      status: "objective_disagreement",
+      brief: "Should we use Postgres or DynamoDB?",
+      executionContextId: "ctx-1",
+      conversationId: "conv-1",
+      summary: "Agents disagreed on core data-store choice",
+    });
+    expect(result.success).toBe(true);
+    if (result.success && result.data.type === "collaboration_failure") {
+      expect(result.data.status).toBe("objective_disagreement");
+      expect(result.data.brief).toBe("Should we use Postgres or DynamoDB?");
+      expect(result.data.executionContextId).toBe("ctx-1");
+      expect(result.data.conversationId).toBe("conv-1");
+      expect(result.data.summary).toBe(
+        "Agents disagreed on core data-store choice",
+      );
+    }
+  });
+
+  it("accepts every collaboration_failure status variant", () => {
+    for (const status of [
+      "converged",
+      "rounds_exhausted",
+      "requires_user_input",
+      "objective_disagreement",
+    ] as const) {
+      const result = graphWorkflowHaltReasonSchema.safeParse({
+        type: "collaboration_failure",
+        status,
+        brief: "brief",
+        executionContextId: "ctx-1",
+        conversationId: "conv-1",
+        summary: "summary",
+      });
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it("rejects a collaboration_failure halt reason with an unknown status", () => {
+    const result = graphWorkflowHaltReasonSchema.safeParse({
+      type: "collaboration_failure",
+      status: "nonsense",
+      brief: "brief",
+      executionContextId: "ctx-1",
+      conversationId: "conv-1",
+      summary: "summary",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a collaboration_failure halt reason missing any required field", () => {
+    const required = [
+      "status",
+      "brief",
+      "executionContextId",
+      "conversationId",
+      "summary",
+    ] as const;
+    const base = {
+      type: "collaboration_failure" as const,
+      status: "objective_disagreement",
+      brief: "brief",
+      executionContextId: "ctx-1",
+      conversationId: "conv-1",
+      summary: "summary",
+    };
+    for (const key of required) {
+      const variant: Record<string, unknown> = { ...base };
+      delete variant[key];
+      const result = graphWorkflowHaltReasonSchema.safeParse(variant);
+      expect(result.success).toBe(false);
+    }
+  });
+});
+
+describe("workflowCollaborationStatusSchema", () => {
+  it("accepts every named status", () => {
+    for (const status of [
+      "converged",
+      "rounds_exhausted",
+      "requires_user_input",
+      "objective_disagreement",
+    ] as const) {
+      expect(workflowCollaborationStatusSchema.safeParse(status).success).toBe(
+        true,
+      );
+    }
+  });
+
+  it("rejects unknown statuses", () => {
+    expect(workflowCollaborationStatusSchema.safeParse("unknown").success).toBe(
+      false,
+    );
+  });
+});
+
+describe("workflowCollaborationResultSchema", () => {
+  it("accepts a converged result with a finalAnswer and no openConflicts", () => {
+    const result = workflowCollaborationResultSchema.safeParse({
+      status: "converged",
+      finalAnswer: "Final decision: use Postgres.",
+      openConflicts: [],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.finalAnswer).toBe("Final decision: use Postgres.");
+      expect(result.data.openConflicts).toEqual([]);
+    }
+  });
+
+  it("defaults openConflicts to an empty array on converged results", () => {
+    const result = workflowCollaborationResultSchema.safeParse({
+      status: "converged",
+      finalAnswer: "Done.",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.openConflicts).toEqual([]);
+    }
+  });
+
+  it("rejects converged results with a null finalAnswer", () => {
+    const result = workflowCollaborationResultSchema.safeParse({
+      status: "converged",
+      finalAnswer: null,
+      openConflicts: [],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts an objective_disagreement result with a populated openConflicts list", () => {
+    const result = workflowCollaborationResultSchema.safeParse({
+      status: "objective_disagreement",
+      finalAnswer: null,
+      openConflicts: [
+        {
+          rejectingAgent: "agent_two",
+          disputedPoint: "Choice of database technology",
+          severity: "blocking",
+          category: "objective",
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.openConflicts).toHaveLength(1);
+      expect(result.data.openConflicts[0]?.rejectingAgent).toBe("agent_two");
+    }
+  });
+
+  it("rejects a non-converged result with no openConflicts", () => {
+    for (const status of [
+      "rounds_exhausted",
+      "requires_user_input",
+      "objective_disagreement",
+    ] as const) {
+      const result = workflowCollaborationResultSchema.safeParse({
+        status,
+        finalAnswer: null,
+        openConflicts: [],
+      });
+      expect(result.success).toBe(false);
+    }
+  });
+
+  it("rejects an openConflict with an unknown severity", () => {
+    const result = workflowCollaborationResultSchema.safeParse({
+      status: "objective_disagreement",
+      finalAnswer: null,
+      openConflicts: [
+        {
+          rejectingAgent: "agent_one",
+          disputedPoint: "Disputed thing",
+          severity: "nonsense",
+          category: "objective",
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an openConflict with a blank disputedPoint", () => {
+    const result = workflowCollaborationResultSchema.safeParse({
+      status: "objective_disagreement",
+      finalAnswer: null,
+      openConflicts: [
+        {
+          rejectingAgent: "agent_one",
+          disputedPoint: "",
+          severity: "blocking",
+          category: "objective",
+        },
+      ],
     });
     expect(result.success).toBe(false);
   });

@@ -2905,6 +2905,84 @@ describe("mid-iteration halt via signalHalt", () => {
     expect(signalHalt).not.toHaveBeenCalled();
   });
 
+  it("halts the iteration and skips follow-up turns when a tool handler writes pendingHaltReason mid-turn (collaboration_failure)", async () => {
+    // Same-Turn Tool Dispatch Contract (R5.3): a non-converged
+    // `request_collaboration` writes `pendingHaltReason` from inside the tool
+    // handler. The orchestrator's follow-up loop must read the field before
+    // sending the next agent turn and halt instead of dispatching.
+    const repository = seedRepoWithConsecutiveFailures(0);
+    const createToolServer = vi.fn(() => ({
+      server: {},
+      close: vi.fn(async () => undefined),
+    }));
+    const createConversation = vi.fn(async () => ({ id: "conv-pending-halt" }));
+
+    const signalHalt = vi.fn(
+      async (input: {
+        projectPath: string;
+        sessionName: string;
+        reason: unknown;
+      }) => {
+        const current = structuredClone(repository.read());
+        current.status = "halted";
+        current.haltReason =
+          input.reason as GraphWorkflowExecution["haltReason"];
+        await repository.mutateActive("/repo", "session-1", () => current);
+        return current;
+      },
+    );
+
+    const runAgentIteration = vi.fn(async () => {
+      // Simulate the `request_collaboration` handler writing pendingHaltReason
+      // before returning its tool_result on this turn.
+      await repository.mutateActive("/repo", "session-1", (current) => {
+        current.pendingHaltReason = {
+          type: "collaboration_failure",
+          status: "rounds_exhausted",
+          brief: "Should we use approach A or B?",
+          executionContextId: "context-plan",
+          conversationId: "conv-pending-halt",
+          summary: "Negotiation rounds exhausted without convergence",
+        };
+        return current;
+      });
+      return {
+        conversationId: "conv-mock",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      signalHalt,
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    // The initial agent turn ran; the follow-up loop detected
+    // pendingHaltReason and halted before dispatching turn 2.
+    expect(runAgentIteration).toHaveBeenCalledTimes(1);
+    expect(signalHalt).toHaveBeenCalledTimes(1);
+    expect(signalHalt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: expect.objectContaining({ type: "collaboration_failure" }),
+      }),
+    );
+    expect(result.execution.status).toBe("halted");
+    expect(result.execution.haltReason?.type).toBe("collaboration_failure");
+    expect(result.shouldContinueInContext).toBe(false);
+  });
+
   it("short-circuits completeTask as idempotent no-op when task is already completed (no validator re-run)", async () => {
     const baseExecution = createExecutionWithPlanTasks({
       "task-plan-1": "completed",

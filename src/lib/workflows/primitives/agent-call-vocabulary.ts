@@ -46,6 +46,13 @@ const baseRequestFields = {
   // turn. Both task runners (`claude/task-runner`, `codex/task-runner`) and
   // the conversation safety-net timer skip their timeout when this is 0.
   timeoutMs: z.number().int().nonnegative().optional(),
+  // Optional per-call model selection. When set, callers (workflow agents,
+  // collaborators) pass this through to the resolved task runner /
+  // conversation runtime so the backend uses the configured model instead of
+  // its default. Both fields are strings at this layer; backend-specific
+  // validation happens at the runner.
+  modelId: z.string().min(1).optional(),
+  reasoningEffort: z.string().min(1).optional(),
 } as const;
 
 export const agentCallRequestSchema = z.discriminatedUnion("kind", [

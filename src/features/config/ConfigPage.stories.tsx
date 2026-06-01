@@ -125,6 +125,15 @@ const fullyConfiguredConfig: GlobalConfig = {
     mutability: {
       allowAgentTaskAdd: false,
     },
+    collaboration: {
+      secondAgent: {
+        backend: "claude",
+        model: "sonnet",
+        reasoningEffort: "medium",
+      },
+      negotiationRounds: 3,
+      autonomousResolutionThreshold: "minor",
+    },
   },
 };
 

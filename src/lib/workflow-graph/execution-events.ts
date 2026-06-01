@@ -265,6 +265,15 @@ function haltReasonsEqual(
         previous.message === next.message &&
         previous.cause === next.cause
       );
+    case "collaboration_failure":
+      return (
+        next.type === "collaboration_failure" &&
+        previous.status === next.status &&
+        previous.brief === next.brief &&
+        previous.executionContextId === next.executionContextId &&
+        previous.conversationId === next.conversationId &&
+        previous.summary === next.summary
+      );
   }
 
   const exhaustive: never = previous;

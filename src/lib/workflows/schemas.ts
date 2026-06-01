@@ -120,6 +120,107 @@ export type ContextValidatorOverride = z.infer<
 
 const graphWorkflowCircuitBreakerConditionSchema = z.enum(["retry_exhaustion"]);
 
+// ============================================================
+// Collaboration severity / category / threshold primitives
+// ============================================================
+// Hoisted above the collaboration config block so the latter can compose
+// `collaborationAutonomousResolutionThresholdSchema`. Full collaboration
+// artifact schemas (initial_draft, cross_review, etc.) remain below in the
+// "Collaboration Mode — asymmetric artifact contract" section.
+const collaborationDisagreementSeveritySchema = z.enum([
+  "minor",
+  "major",
+  "blocking",
+]);
+export type CollaborationDisagreementSeverity = z.infer<
+  typeof collaborationDisagreementSeveritySchema
+>;
+
+const collaborationFlowAgentSchema = z.enum(["agent_one", "agent_two"]);
+export type CollaborationFlowAgent = z.infer<
+  typeof collaborationFlowAgentSchema
+>;
+
+const collaborationDisagreementCategorySchema = z.enum([
+  "objective",
+  "implementation",
+]);
+export type CollaborationDisagreementCategory = z.infer<
+  typeof collaborationDisagreementCategorySchema
+>;
+
+export const collaborationAutonomousResolutionThresholdSchema = z.enum([
+  "none",
+  "minor",
+  "major",
+  "blocking",
+]);
+export type CollaborationAutonomousResolutionThreshold = z.infer<
+  typeof collaborationAutonomousResolutionThresholdSchema
+>;
+
+// ============================================================
+// Agent-Invoked Collaboration Config
+// ============================================================
+// Composed into:
+//   - workflowDefaultsSchema (src/lib/config/schemas.ts) — required on parsed,
+//     optional on raw twin; loader seeds the default when absent.
+//   - workflowConfigOverrideSchema (this file) — optional override.
+//   - graphWorkflowExecutionContextDefinitionSchema (this file) — optional
+//     per-context override.
+// Resolved (with per-field provenance) by
+// `resolveCollaborationConfigWithProvenance` in
+// `src/lib/workflow-graph/resolve-config.ts`.
+export const workflowCollaborationConfigSchema = z.object({
+  secondAgent: graphWorkflowAgentConfigSchema,
+  negotiationRounds: z.number().int().positive(),
+  autonomousResolutionThreshold:
+    collaborationAutonomousResolutionThresholdSchema,
+});
+export type WorkflowCollaborationConfig = z.infer<
+  typeof workflowCollaborationConfigSchema
+>;
+
+// Override block at the workflow-level and per-context layers. Each field is
+// individually optional so the cascade can compute provenance per-field,
+// satisfying R2.1–R2.3 and the "no `??` across the block" invariant in
+// `resolveCollaborationConfigWithProvenance`.
+export const workflowCollaborationConfigOverrideSchema = z.object({
+  secondAgent: graphWorkflowAgentConfigSchema.optional(),
+  negotiationRounds: z.number().int().positive().optional(),
+  autonomousResolutionThreshold:
+    collaborationAutonomousResolutionThresholdSchema.optional(),
+});
+export type WorkflowCollaborationConfigOverride = z.infer<
+  typeof workflowCollaborationConfigOverrideSchema
+>;
+
+export const collaborationConfigSourceSchema = z.enum([
+  "per-node",
+  "workflow",
+  "global",
+]);
+export type CollaborationConfigSource = z.infer<
+  typeof collaborationConfigSourceSchema
+>;
+
+const provenancedField = <T extends z.ZodTypeAny>(value: T) =>
+  z.object({
+    value,
+    source: collaborationConfigSourceSchema,
+  });
+
+export const resolvedCollaborationConfigSchema = z.object({
+  secondAgent: provenancedField(graphWorkflowAgentConfigSchema),
+  negotiationRounds: provenancedField(z.number().int().positive()),
+  autonomousResolutionThreshold: provenancedField(
+    collaborationAutonomousResolutionThresholdSchema,
+  ),
+});
+export type ResolvedCollaborationConfig = z.infer<
+  typeof resolvedCollaborationConfigSchema
+>;
+
 export const workflowConfigOverrideSchema = z.object({
   implementer: graphWorkflowAgentConfigSchema.optional(),
   contextValidator: graphWorkflowAgentValidatorConfigSchema.optional(),
@@ -127,6 +228,7 @@ export const workflowConfigOverrideSchema = z.object({
   iterationPolicy: graphWorkflowIterationPolicySchema.optional(),
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.optional(),
   mutability: graphWorkflowMutabilityPolicySchema.optional(),
+  collaboration: workflowCollaborationConfigOverrideSchema.optional(),
 });
 export type WorkflowConfigOverride = z.infer<
   typeof workflowConfigOverrideSchema
@@ -150,6 +252,7 @@ export const graphWorkflowExecutionContextDefinitionSchema = z.object({
   mutability: graphWorkflowMutabilityPolicySchema.optional(),
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.optional(),
   iterationPolicy: graphWorkflowIterationPolicySchema.optional(),
+  collaboration: workflowCollaborationConfigOverrideSchema.optional(),
 });
 export type GraphWorkflowExecutionContextDefinition = z.infer<
   typeof graphWorkflowExecutionContextDefinitionSchema
@@ -411,9 +514,79 @@ export const graphWorkflowHaltReasonSchema = z.discriminatedUnion("type", [
     message: z.string(),
     cause: z.enum(["sdk_error", "validation", "io", "unknown"]),
   }),
+  z.object({
+    type: z.literal("collaboration_failure"),
+    status: z.enum([
+      "converged",
+      "rounds_exhausted",
+      "requires_user_input",
+      "objective_disagreement",
+    ]),
+    brief: z.string().trim().min(1),
+    executionContextId: z.string().trim().min(1),
+    conversationId: z.string().trim().min(1),
+    summary: z.string().trim().min(1),
+  }),
 ]);
 export type GraphWorkflowHaltReason = z.infer<
   typeof graphWorkflowHaltReasonSchema
+>;
+
+// ============================================================
+// Workflow Collaboration Result
+// ============================================================
+// The structured value returned by the workflow-scoped collaboration envelope
+// (and surfaced to the implementer agent via `request_collaboration`). The
+// four-value status mirrors the agent-facing branches of the collaboration
+// policy mapping table (research.md §10.1); the result-level `superRefine`
+// enforces the invariants the policy expresses informally:
+//   - converged outcomes MUST carry a non-empty `finalAnswer`
+//   - any non-converged outcome MUST carry at least one open conflict so the
+//     surfaced failure record is never structurally empty.
+export const workflowCollaborationStatusSchema = z.enum([
+  "converged",
+  "rounds_exhausted",
+  "requires_user_input",
+  "objective_disagreement",
+]);
+export type WorkflowCollaborationStatus = z.infer<
+  typeof workflowCollaborationStatusSchema
+>;
+
+const workflowCollaborationOpenConflictSchema = z.object({
+  rejectingAgent: collaborationFlowAgentSchema,
+  disputedPoint: z.string().trim().min(1),
+  severity: collaborationDisagreementSeveritySchema,
+  category: collaborationDisagreementCategorySchema,
+});
+export type WorkflowCollaborationOpenConflict = z.infer<
+  typeof workflowCollaborationOpenConflictSchema
+>;
+
+export const workflowCollaborationResultSchema = z
+  .object({
+    status: workflowCollaborationStatusSchema,
+    finalAnswer: z.string().min(1).nullable(),
+    openConflicts: z.array(workflowCollaborationOpenConflictSchema).default([]),
+  })
+  .superRefine((result, ctx) => {
+    if (result.status === "converged" && result.finalAnswer == null) {
+      ctx.addIssue({
+        code: "custom",
+        message: "converged result must include a non-empty finalAnswer",
+        path: ["finalAnswer"],
+      });
+    }
+    if (result.status !== "converged" && result.openConflicts.length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        message: "non-converged result must populate at least one openConflict",
+        path: ["openConflicts"],
+      });
+    }
+  });
+export type WorkflowCollaborationResult = z.infer<
+  typeof workflowCollaborationResultSchema
 >;
 
 const graphWorkflowExecutionLaneIdSchema = z.string().trim().min(1);
@@ -1036,45 +1209,18 @@ export type WorkflowGeneratedDraft = z.infer<
 // ============================================================
 // Collaboration Mode — asymmetric artifact contract
 // ============================================================
-
 // Source of truth: memory-bank/COLLABORATION_MODE_FLOW.md §"Agent output
 // contract". The primary (agent_one) and secondary (agent_two) agents emit
 // kind-discriminated artifact records (initial_draft, cross_review,
 // proposed_changes, counter_proposal, resolution_decision, final_answer,
 // open_conflicts). Convergence and routing are decided by the orchestrator
 // from the resolution_decision artifact, not by the agent narrative.
-
-const collaborationDisagreementSeveritySchema = z.enum([
-  "minor",
-  "major",
-  "blocking",
-]);
-export type CollaborationDisagreementSeverity = z.infer<
-  typeof collaborationDisagreementSeveritySchema
->;
-
-const collaborationFlowAgentSchema = z.enum(["agent_one", "agent_two"]);
-export type CollaborationFlowAgent = z.infer<
-  typeof collaborationFlowAgentSchema
->;
-
-const collaborationDisagreementCategorySchema = z.enum([
-  "objective",
-  "implementation",
-]);
-export type CollaborationDisagreementCategory = z.infer<
-  typeof collaborationDisagreementCategorySchema
->;
-
-export const collaborationAutonomousResolutionThresholdSchema = z.enum([
-  "none",
-  "minor",
-  "major",
-  "blocking",
-]);
-export type CollaborationAutonomousResolutionThreshold = z.infer<
-  typeof collaborationAutonomousResolutionThresholdSchema
->;
+//
+// The severity / category / flow-agent / autonomous-threshold enums used by
+// these artifacts are defined higher up in this file (so the agent-invoked
+// collaboration config block can compose the threshold). The artifact
+// schemas themselves remain here next to the per-artifact JSON-Schema
+// projections in `types.ts`.
 
 const collaborationReferenceSchema = z
   .object({

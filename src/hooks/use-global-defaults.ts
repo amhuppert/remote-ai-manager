@@ -32,6 +32,15 @@ const SEEDED_DEFAULTS: WorkflowDefaults = {
   mutability: {
     allowAgentTaskAdd: false,
   },
+  collaboration: {
+    secondAgent: {
+      backend: "claude",
+      model: "sonnet",
+      reasoningEffort: "medium",
+    },
+    negotiationRounds: 3,
+    autonomousResolutionThreshold: "minor",
+  },
 };
 
 export interface UseGlobalDefaultsResult {
@@ -56,6 +65,7 @@ export function useGlobalDefaults(): UseGlobalDefaultsResult {
         defaults.iterationPolicy ?? SEEDED_DEFAULTS.iterationPolicy,
       circuitBreaker: defaults.circuitBreaker ?? SEEDED_DEFAULTS.circuitBreaker,
       mutability: defaults.mutability ?? SEEDED_DEFAULTS.mutability,
+      collaboration: defaults.collaboration ?? SEEDED_DEFAULTS.collaboration,
     };
   }, [query.data]);
 

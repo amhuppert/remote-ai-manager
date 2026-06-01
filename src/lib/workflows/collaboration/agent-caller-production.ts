@@ -146,6 +146,12 @@ function buildInnerCallAgent(
           capabilityView: capabilityViewForBackend(request.backend),
           workingDirectory: input.worktreePath,
           autonomous: true,
+          ...(request.modelId !== undefined
+            ? { modelId: request.modelId }
+            : {}),
+          ...(request.reasoningEffort !== undefined
+            ? { reasoningEffort: request.reasoningEffort }
+            : {}),
           ...(codexResumeRef !== null ? { resumeRef: codexResumeRef } : {}),
           ...codexHardenedSettings,
         }),
@@ -198,6 +204,12 @@ function buildInnerCallAgent(
           capabilityView: capabilityViewForBackend(backend),
           signal: abort.signal,
           autonomous: true,
+          ...(request.modelId !== undefined
+            ? { modelId: request.modelId }
+            : {}),
+          ...(request.reasoningEffort !== undefined
+            ? { reasoningEffort: request.reasoningEffort }
+            : {}),
           sessionInstructions: [],
         }),
       });

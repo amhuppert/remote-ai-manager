@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { GlobalConfig, WorkflowDefaults } from "@/lib/config/schemas";
 import type {
+  CollaborationAutonomousResolutionThreshold,
   GraphWorkflowAgentConfig,
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowCircuitBreakerPolicy,
@@ -8,10 +9,12 @@ import type {
   GraphWorkflowIterationPolicy,
   GraphWorkflowMutabilityPolicy,
   GraphWorkflowScriptValidatorConfig,
+  WorkflowCollaborationConfig,
   WorkflowConfigOverride,
   WorkflowSemanticDefinition,
 } from "@/lib/workflows/schemas";
 import {
+  resolveCollaborationConfigWithProvenance,
   resolveContext,
   resolveWorkflowConfig,
   resolveWorkflowDefinition,
@@ -58,6 +61,15 @@ const GLOBAL_DEFAULTS: WorkflowDefaults = {
   iterationPolicy: GLOBAL_ITERATION,
   circuitBreaker: GLOBAL_CB,
   mutability: GLOBAL_MUTABILITY,
+  collaboration: {
+    secondAgent: {
+      backend: "claude",
+      model: "sonnet",
+      reasoningEffort: "medium",
+    },
+    negotiationRounds: 3,
+    autonomousResolutionThreshold: "minor",
+  },
 };
 
 function makeGlobalConfig(overrides: Partial<GlobalConfig> = {}): GlobalConfig {
@@ -254,6 +266,7 @@ describe("resolveWorkflowConfig", () => {
       iterationPolicy: undefined as unknown as GraphWorkflowIterationPolicy,
       circuitBreaker: undefined as unknown as GraphWorkflowCircuitBreakerPolicy,
       mutability: undefined as unknown as GraphWorkflowMutabilityPolicy,
+      collaboration: undefined as unknown as WorkflowDefaults["collaboration"],
     };
     const global = makeGlobalConfig({ workflowDefaults: partialGlobal });
 
@@ -341,5 +354,270 @@ describe("resolveWorkflowDefinition", () => {
     expect(resolved.executionContexts[0]?.acceptanceCriteria).toBe(
       "context-level AC",
     );
+  });
+});
+
+describe("resolveCollaborationConfigWithProvenance", () => {
+  const GLOBAL_SECOND_AGENT: GraphWorkflowAgentConfig = {
+    backend: "claude",
+    model: "sonnet",
+    reasoningEffort: "medium",
+  };
+  const WORKFLOW_SECOND_AGENT: GraphWorkflowAgentConfig = {
+    backend: "codex",
+    model: "gpt-5.4",
+    reasoningEffort: "high",
+  };
+  const CONTEXT_SECOND_AGENT: GraphWorkflowAgentConfig = {
+    backend: "claude",
+    model: "haiku",
+    reasoningEffort: "low",
+  };
+
+  const GLOBAL_NEGOTIATION_ROUNDS = 3;
+  const WORKFLOW_NEGOTIATION_ROUNDS = 5;
+  const CONTEXT_NEGOTIATION_ROUNDS = 7;
+
+  const GLOBAL_THRESHOLD: CollaborationAutonomousResolutionThreshold = "minor";
+  const WORKFLOW_THRESHOLD: CollaborationAutonomousResolutionThreshold =
+    "major";
+  const CONTEXT_THRESHOLD: CollaborationAutonomousResolutionThreshold =
+    "blocking";
+
+  const GLOBAL_COLLAB: WorkflowCollaborationConfig = {
+    secondAgent: GLOBAL_SECOND_AGENT,
+    negotiationRounds: GLOBAL_NEGOTIATION_ROUNDS,
+    autonomousResolutionThreshold: GLOBAL_THRESHOLD,
+  };
+
+  function globalDefaults(
+    overrides: Partial<WorkflowCollaborationConfig> = {},
+  ): WorkflowDefaults {
+    return {
+      ...GLOBAL_DEFAULTS,
+      collaboration: { ...GLOBAL_COLLAB, ...overrides },
+    };
+  }
+
+  describe("3-field × 3-source matrix", () => {
+    it("secondAgent: per-node supplies → source = per-node", () => {
+      const resolved = resolveCollaborationConfigWithProvenance(
+        globalDefaults(),
+        {},
+        makeContext({ collaboration: { secondAgent: CONTEXT_SECOND_AGENT } }),
+      );
+      expect(resolved.secondAgent.value).toEqual(CONTEXT_SECOND_AGENT);
+      expect(resolved.secondAgent.source).toBe("per-node");
+    });
+
+    it("secondAgent: workflow supplies, per-node omits → source = workflow", () => {
+      const resolved = resolveCollaborationConfigWithProvenance(
+        globalDefaults(),
+        { collaboration: { secondAgent: WORKFLOW_SECOND_AGENT } },
+        makeContext(),
+      );
+      expect(resolved.secondAgent.value).toEqual(WORKFLOW_SECOND_AGENT);
+      expect(resolved.secondAgent.source).toBe("workflow");
+    });
+
+    it("secondAgent: both override layers omit → source = global", () => {
+      const resolved = resolveCollaborationConfigWithProvenance(
+        globalDefaults(),
+        {},
+        makeContext(),
+      );
+      expect(resolved.secondAgent.value).toEqual(GLOBAL_SECOND_AGENT);
+      expect(resolved.secondAgent.source).toBe("global");
+    });
+
+    it("negotiationRounds: per-node supplies → source = per-node", () => {
+      const resolved = resolveCollaborationConfigWithProvenance(
+        globalDefaults(),
+        {},
+        makeContext({
+          collaboration: { negotiationRounds: CONTEXT_NEGOTIATION_ROUNDS },
+        }),
+      );
+      expect(resolved.negotiationRounds.value).toBe(CONTEXT_NEGOTIATION_ROUNDS);
+      expect(resolved.negotiationRounds.source).toBe("per-node");
+    });
+
+    it("negotiationRounds: workflow supplies, per-node omits → source = workflow", () => {
+      const resolved = resolveCollaborationConfigWithProvenance(
+        globalDefaults(),
+        { collaboration: { negotiationRounds: WORKFLOW_NEGOTIATION_ROUNDS } },
+        makeContext(),
+      );
+      expect(resolved.negotiationRounds.value).toBe(
+        WORKFLOW_NEGOTIATION_ROUNDS,
+      );
+      expect(resolved.negotiationRounds.source).toBe("workflow");
+    });
+
+    it("negotiationRounds: both override layers omit → source = global", () => {
+      const resolved = resolveCollaborationConfigWithProvenance(
+        globalDefaults(),
+        {},
+        makeContext(),
+      );
+      expect(resolved.negotiationRounds.value).toBe(GLOBAL_NEGOTIATION_ROUNDS);
+      expect(resolved.negotiationRounds.source).toBe("global");
+    });
+
+    it("autonomousResolutionThreshold: per-node supplies → source = per-node", () => {
+      const resolved = resolveCollaborationConfigWithProvenance(
+        globalDefaults(),
+        {},
+        makeContext({
+          collaboration: {
+            autonomousResolutionThreshold: CONTEXT_THRESHOLD,
+          },
+        }),
+      );
+      expect(resolved.autonomousResolutionThreshold.value).toBe(
+        CONTEXT_THRESHOLD,
+      );
+      expect(resolved.autonomousResolutionThreshold.source).toBe("per-node");
+    });
+
+    it("autonomousResolutionThreshold: workflow supplies, per-node omits → source = workflow", () => {
+      const resolved = resolveCollaborationConfigWithProvenance(
+        globalDefaults(),
+        {
+          collaboration: {
+            autonomousResolutionThreshold: WORKFLOW_THRESHOLD,
+          },
+        },
+        makeContext(),
+      );
+      expect(resolved.autonomousResolutionThreshold.value).toBe(
+        WORKFLOW_THRESHOLD,
+      );
+      expect(resolved.autonomousResolutionThreshold.source).toBe("workflow");
+    });
+
+    it("autonomousResolutionThreshold: both override layers omit → source = global", () => {
+      const resolved = resolveCollaborationConfigWithProvenance(
+        globalDefaults(),
+        {},
+        makeContext(),
+      );
+      expect(resolved.autonomousResolutionThreshold.value).toBe(
+        GLOBAL_THRESHOLD,
+      );
+      expect(resolved.autonomousResolutionThreshold.source).toBe("global");
+    });
+  });
+
+  describe("mixed-provenance + invariants", () => {
+    it("yields three distinct sources when each layer supplies a different field", () => {
+      const resolved = resolveCollaborationConfigWithProvenance(
+        globalDefaults(),
+        {
+          collaboration: {
+            autonomousResolutionThreshold: WORKFLOW_THRESHOLD,
+          },
+        },
+        makeContext({
+          collaboration: {
+            negotiationRounds: CONTEXT_NEGOTIATION_ROUNDS,
+          },
+        }),
+      );
+
+      expect(resolved.secondAgent.source).toBe("global");
+      expect(resolved.secondAgent.value).toEqual(GLOBAL_SECOND_AGENT);
+
+      expect(resolved.negotiationRounds.source).toBe("per-node");
+      expect(resolved.negotiationRounds.value).toBe(CONTEXT_NEGOTIATION_ROUNDS);
+
+      expect(resolved.autonomousResolutionThreshold.source).toBe("workflow");
+      expect(resolved.autonomousResolutionThreshold.value).toBe(
+        WORKFLOW_THRESHOLD,
+      );
+
+      const sources = new Set([
+        resolved.secondAgent.source,
+        resolved.negotiationRounds.source,
+        resolved.autonomousResolutionThreshold.source,
+      ]);
+      expect(sources).toEqual(new Set(["per-node", "workflow", "global"]));
+    });
+
+    it("per-node takes precedence over workflow for the same field", () => {
+      const resolved = resolveCollaborationConfigWithProvenance(
+        globalDefaults(),
+        { collaboration: { negotiationRounds: WORKFLOW_NEGOTIATION_ROUNDS } },
+        makeContext({
+          collaboration: { negotiationRounds: CONTEXT_NEGOTIATION_ROUNDS },
+        }),
+      );
+      expect(resolved.negotiationRounds.value).toBe(CONTEXT_NEGOTIATION_ROUNDS);
+      expect(resolved.negotiationRounds.source).toBe("per-node");
+    });
+
+    it("per-node takes precedence over global for the same field", () => {
+      const resolved = resolveCollaborationConfigWithProvenance(
+        globalDefaults(),
+        {},
+        makeContext({
+          collaboration: {
+            autonomousResolutionThreshold: CONTEXT_THRESHOLD,
+          },
+        }),
+      );
+      expect(resolved.autonomousResolutionThreshold.value).toBe(
+        CONTEXT_THRESHOLD,
+      );
+      expect(resolved.autonomousResolutionThreshold.source).toBe("per-node");
+    });
+
+    it("workflow takes precedence over global for the same field", () => {
+      const resolved = resolveCollaborationConfigWithProvenance(
+        globalDefaults(),
+        { collaboration: { secondAgent: WORKFLOW_SECOND_AGENT } },
+        makeContext(),
+      );
+      expect(resolved.secondAgent.value).toEqual(WORKFLOW_SECOND_AGENT);
+      expect(resolved.secondAgent.source).toBe("workflow");
+    });
+
+    it("returns provenance for every field even when all come from a single layer", () => {
+      const resolved = resolveCollaborationConfigWithProvenance(
+        globalDefaults(),
+        {},
+        makeContext({
+          collaboration: {
+            secondAgent: CONTEXT_SECOND_AGENT,
+            negotiationRounds: CONTEXT_NEGOTIATION_ROUNDS,
+            autonomousResolutionThreshold: CONTEXT_THRESHOLD,
+          },
+        }),
+      );
+      expect(resolved.secondAgent.source).toBe("per-node");
+      expect(resolved.negotiationRounds.source).toBe("per-node");
+      expect(resolved.autonomousResolutionThreshold.source).toBe("per-node");
+    });
+
+    it("respects each global field independently when only some override layers fire", () => {
+      const customGlobal = globalDefaults({
+        secondAgent: GLOBAL_SECOND_AGENT,
+        negotiationRounds: 9,
+        autonomousResolutionThreshold: "none",
+      });
+      const resolved = resolveCollaborationConfigWithProvenance(
+        customGlobal,
+        { collaboration: { negotiationRounds: WORKFLOW_NEGOTIATION_ROUNDS } },
+        makeContext(),
+      );
+      expect(resolved.secondAgent.source).toBe("global");
+      expect(resolved.secondAgent.value).toEqual(GLOBAL_SECOND_AGENT);
+      expect(resolved.negotiationRounds.source).toBe("workflow");
+      expect(resolved.negotiationRounds.value).toBe(
+        WORKFLOW_NEGOTIATION_ROUNDS,
+      );
+      expect(resolved.autonomousResolutionThreshold.source).toBe("global");
+      expect(resolved.autonomousResolutionThreshold.value).toBe("none");
+    });
   });
 });

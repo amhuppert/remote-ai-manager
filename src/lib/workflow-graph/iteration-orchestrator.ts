@@ -32,6 +32,7 @@ import {
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import type { ScriptValidatorOutcome } from "@/lib/workflow-graph/script-validator-runner";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
+import type { ToolResultBlock } from "./tool-dispatcher";
 import {
   runCircuitBreakerGate as defaultRunCircuitBreakerGate,
   type CircuitBreakerGateResult,
@@ -193,11 +194,18 @@ export interface GraphWorkflowIterationResult {
 
 export class IterationHaltedError extends Error {
   readonly haltReason: GraphWorkflowHaltReason;
+  readonly syntheticToolResults?: readonly ToolResultBlock[];
 
-  constructor(haltReason: GraphWorkflowHaltReason) {
+  constructor(
+    haltReason: GraphWorkflowHaltReason,
+    syntheticToolResults?: readonly ToolResultBlock[],
+  ) {
     super(`Iteration halted: ${haltReason.type}`);
     this.name = "IterationHaltedError";
     this.haltReason = haltReason;
+    if (syntheticToolResults && syntheticToolResults.length > 0) {
+      this.syntheticToolResults = syntheticToolResults;
+    }
   }
 }
 
@@ -1579,6 +1587,50 @@ export function createGraphWorkflowIterationOrchestrator(
         reasoningEffort: context.implementer.reasoningEffort,
       });
 
+      // Same-Turn Tool Dispatch Contract (design §Same-Turn Tool Dispatch
+      // Contract, R5.3, R5.4). This helper is the orchestrator-level
+      // enforcement that pairs with the production per-handler wrapper
+      // `wrapMcpHandlerWithHaltCheck` (tool-dispatcher.ts) registered in
+      // `tool-server.ts`. The contract is two-part:
+      //
+      //   1. Within a turn the MCP transport serializes sibling tool_use
+      //      blocks one request at a time. Each wrapped handler checks
+      //      `pendingHaltReason` BEFORE doing real work; if set it returns a
+      //      synthetic isError `tool_result` whose text is exactly
+      //      `buildHaltMessage(reason)` = `"iteration halted: <type>"`. So
+      //      every sibling tool_use in the same turn after a non-converged
+      //      `request_collaboration` already has a structured result attached
+      //      by the time control returns here.
+      //
+      //   2. After every agent turn the orchestrator inspects
+      //      `pendingHaltReason` and, if set, terminates the iteration with
+      //      `IterationHaltedError`. This guarantees R5.3 ("no further tool
+      //      calls in the iteration") at the iteration boundary regardless of
+      //      whether the agent intended a follow-up turn.
+      async function checkPendingHaltOrThrow(
+        turnLabel: "initial_turn" | "follow_up_turn",
+        attempt: number,
+      ): Promise<void> {
+        const latest = await loadCurrentExecution(
+          input.projectPath,
+          input.sessionName,
+        );
+        if (!latest.pendingHaltReason) {
+          return;
+        }
+        execLogger?.iteration(
+          input.contextId,
+          "iteration.pending_halt_detected",
+          {
+            haltReasonType: latest.pendingHaltReason.type,
+            turnLabel,
+            attempt,
+          },
+        );
+        await haltIteration(latest.pendingHaltReason);
+        throw new IterationHaltedError(latest.pendingHaltReason);
+      }
+
       let agentResult = await deps.runAgentIteration({
         ...agentCallBase,
         prompt: initialPrompt,
@@ -1592,8 +1644,17 @@ export function createGraphWorkflowIterationOrchestrator(
         contextWindowMax: agentResult.contextWindowMax,
       });
 
+      // Post-turn enforcement of the Same-Turn Tool Dispatch Contract
+      // (part 2 above). Fires immediately after the initial agent turn so the
+      // orchestrator halts even when the agent does not request a follow-up.
+      await checkPendingHaltOrThrow("initial_turn", 0);
+
       // Follow-up loop: re-message if there are still incomplete tasks
       for (let attempt = 1; attempt <= MAX_FOLLOW_UPS; attempt++) {
+        // Pre-dispatch halt check before sending the next follow-up turn.
+        // Pairs with `checkPendingHaltOrThrow` above for full R5.3 coverage.
+        await checkPendingHaltOrThrow("follow_up_turn", attempt);
+
         const midExecution = await loadCurrentExecution(
           input.projectPath,
           input.sessionName,

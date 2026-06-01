@@ -24,7 +24,8 @@ export type WorkflowConfigBlock =
   | "scriptValidator"
   | "iterationPolicy"
   | "circuitBreaker"
-  | "mutability";
+  | "mutability"
+  | "collaboration";
 
 export interface WorkflowBuilderDraftData {
   definition: WorkflowSemanticDefinition;

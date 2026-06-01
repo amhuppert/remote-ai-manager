@@ -1,8 +1,12 @@
 import type { GlobalConfig, WorkflowDefaults } from "@/lib/config/schemas";
 import type {
+  CollaborationConfigSource,
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowResolvedContext,
+  ResolvedCollaborationConfig,
   ResolvedWorkflowSemanticDefinition,
+  WorkflowCollaborationConfig,
+  WorkflowCollaborationConfigOverride,
   WorkflowConfigOverride,
   WorkflowSemanticDefinition,
 } from "@/lib/workflows/schemas";
@@ -35,9 +39,18 @@ const SEEDED_DEFAULTS: WorkflowDefaults = {
   mutability: {
     allowAgentTaskAdd: false,
   },
+  collaboration: {
+    secondAgent: {
+      backend: "claude",
+      model: "sonnet",
+      reasoningEffort: "medium",
+    },
+    negotiationRounds: 3,
+    autonomousResolutionThreshold: "minor",
+  },
 };
 
-function coerceGlobalDefaults(
+export function coerceGlobalDefaults(
   globalDefaults: WorkflowDefaults | undefined,
 ): WorkflowDefaults {
   if (!globalDefaults) return SEEDED_DEFAULTS;
@@ -52,6 +65,8 @@ function coerceGlobalDefaults(
     circuitBreaker:
       globalDefaults.circuitBreaker ?? SEEDED_DEFAULTS.circuitBreaker,
     mutability: globalDefaults.mutability ?? SEEDED_DEFAULTS.mutability,
+    collaboration:
+      globalDefaults.collaboration ?? SEEDED_DEFAULTS.collaboration,
   };
 }
 
@@ -68,6 +83,24 @@ export function resolveWorkflowConfig(
     iterationPolicy: override.iterationPolicy ?? defaults.iterationPolicy,
     circuitBreaker: override.circuitBreaker ?? defaults.circuitBreaker,
     mutability: override.mutability ?? defaults.mutability,
+    collaboration: mergeCollaborationOverWithDefaults(
+      override.collaboration,
+      defaults.collaboration,
+    ),
+  };
+}
+
+function mergeCollaborationOverWithDefaults(
+  override: WorkflowCollaborationConfigOverride | undefined,
+  global: WorkflowCollaborationConfig,
+): WorkflowCollaborationConfig {
+  if (!override) return global;
+  return {
+    secondAgent: override.secondAgent ?? global.secondAgent,
+    negotiationRounds: override.negotiationRounds ?? global.negotiationRounds,
+    autonomousResolutionThreshold:
+      override.autonomousResolutionThreshold ??
+      global.autonomousResolutionThreshold,
   };
 }
 
@@ -150,4 +183,47 @@ export function resolveWorkflowDefinition(
     tasks: definition.tasks,
     edges: definition.edges,
   };
+}
+
+// Per-field cascade: per-node → workflow → global. Each field is computed
+// independently so a single resolved config can carry three distinct
+// `source` values. Design §Collaboration Config Resolver, R2.1–R2.3, R2.5.
+export function resolveCollaborationConfigWithProvenance(
+  globalDefaults: WorkflowDefaults,
+  workflowConfig: WorkflowConfigOverride,
+  contextConfig: GraphWorkflowExecutionContextDefinition,
+): ResolvedCollaborationConfig {
+  const perNode: WorkflowCollaborationConfigOverride =
+    contextConfig.collaboration ?? {};
+  const workflow: WorkflowCollaborationConfigOverride =
+    workflowConfig.collaboration ?? {};
+  const global: WorkflowCollaborationConfig = globalDefaults.collaboration;
+
+  return {
+    secondAgent: pickProvenancedField(
+      perNode.secondAgent,
+      workflow.secondAgent,
+      global.secondAgent,
+    ),
+    negotiationRounds: pickProvenancedField(
+      perNode.negotiationRounds,
+      workflow.negotiationRounds,
+      global.negotiationRounds,
+    ),
+    autonomousResolutionThreshold: pickProvenancedField(
+      perNode.autonomousResolutionThreshold,
+      workflow.autonomousResolutionThreshold,
+      global.autonomousResolutionThreshold,
+    ),
+  };
+}
+
+function pickProvenancedField<T>(
+  perNode: T | undefined,
+  workflow: T | undefined,
+  global: T,
+): { value: T; source: CollaborationConfigSource } {
+  if (perNode !== undefined) return { value: perNode, source: "per-node" };
+  if (workflow !== undefined) return { value: workflow, source: "workflow" };
+  return { value: global, source: "global" };
 }

@@ -4,7 +4,21 @@ import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import type { AgentAddedTask } from "@/lib/workflow-graph/runtime-edits";
 import type { SharedDocumentUpsertInput } from "@/lib/workflow-graph/shared-documents";
+import type {
+  GraphWorkflowHaltReason,
+  ResolvedCollaborationConfig,
+  WorkflowCollaborationResult,
+} from "@/lib/workflows/schemas";
+import {
+  type ExecutionLogger,
+  getExecutionLogger as defaultGetExecutionLogger,
+} from "./execution-logger";
 import { IterationHaltedError } from "./iteration-orchestrator";
+import {
+  buildHaltMessage,
+  wrapMcpHandlerWithHaltCheck,
+  type GetPendingHaltReasonFn,
+} from "./tool-dispatcher";
 
 const logger = createLogger("graph-workflow-tools");
 
@@ -47,6 +61,18 @@ const addTaskSchema = z.object({
       "Self-contained instructions for the agent that will execute this task. Include what to change, why, which files are involved, and how to verify — the executing agent has no access to your conversation context.",
     ),
 });
+
+export const requestCollaborationSchema = z
+  .object({
+    brief: z
+      .string()
+      .trim()
+      .min(1)
+      .describe(
+        "The question or decision you want the collaboration partner to weigh in on. State the problem clearly; do not include solution preferences.",
+      ),
+  })
+  .strict();
 
 const sharedDocumentSchema = z.object({
   relativePath: z
@@ -97,10 +123,7 @@ function createToolErrorResult(message: string) {
 }
 
 function createHaltedToolErrorResult(error: IterationHaltedError) {
-  const reasonType = error.haltReason.type;
-  return createToolErrorResult(
-    `Iteration halted (${reasonType}): no further tool calls will be accepted in this iteration.`,
-  );
+  return createToolErrorResult(buildHaltMessage(error.haltReason));
 }
 
 function createTextResult(message: string) {
@@ -114,12 +137,43 @@ function createTextResult(message: string) {
   };
 }
 
+export interface GraphWorkflowCollaborationContextBlock {
+  parentImplementerTurnId: string;
+  executionContextId: string;
+  conversationId: string;
+  executionId: string;
+  iterationIndex: number;
+  resolveCollaborationConfig(): ResolvedCollaborationConfig;
+  startWorkflowCollaboration(args: {
+    brief: string;
+    resolvedConfig: ResolvedCollaborationConfig;
+    parentImplementerTurnId: string;
+    executionContextId: string;
+    conversationId: string;
+    executionId: string;
+    iterationIndex: number;
+  }): Promise<{
+    result: WorkflowCollaborationResult;
+    roundsConsumed: number;
+  }>;
+  setPendingHaltReason(reason: GraphWorkflowHaltReason): Promise<void>;
+}
+
 export interface GraphWorkflowToolServerContext {
   executionContextTitle: string;
   allowAgentTaskAdd: boolean;
+  allowAgentCollaboration: boolean;
+  collaboration?: GraphWorkflowCollaborationContextBlock;
   completeTask(taskId: string, summary: string): Promise<unknown>;
   addTask(task: AgentAddedTask): Promise<unknown>;
   upsertSharedDocument(document: SharedDocumentUpsertInput): Promise<unknown>;
+  /**
+   * Reads the workflow's persisted `pendingHaltReason`. Production wiring
+   * reads from session state via the workflow manager; tests inject a
+   * mutable ref. When omitted, halt-check wrapping is a no-op — used in
+   * legacy tests that don't exercise the halt contract.
+   */
+  getPendingHaltReason?: GetPendingHaltReasonFn;
 }
 
 const COMPLETE_TASK_DESCRIPTION =
@@ -232,17 +286,194 @@ function createAddTaskHandler(context: GraphWorkflowToolServerContext) {
   };
 }
 
+export interface RequestCollaborationHandlerContext {
+  executionContextTitle: string;
+  parentImplementerTurnId: string;
+  executionContextId: string;
+  conversationId: string;
+  executionId: string;
+  iterationIndex: number;
+  resolveCollaborationConfig(): ResolvedCollaborationConfig;
+  startWorkflowCollaboration(args: {
+    brief: string;
+    resolvedConfig: ResolvedCollaborationConfig;
+    parentImplementerTurnId: string;
+    executionContextId: string;
+    conversationId: string;
+    executionId: string;
+    iterationIndex: number;
+  }): Promise<{
+    result: WorkflowCollaborationResult;
+    roundsConsumed: number;
+  }>;
+  setPendingHaltReason(reason: GraphWorkflowHaltReason): Promise<void>;
+}
+
+export interface RequestCollaborationHandlerDeps {
+  getExecutionLogger?(executionId: string): ExecutionLogger | null;
+}
+
+function buildCollaborationFailureSummary(
+  result: WorkflowCollaborationResult,
+): string {
+  if (result.status === "converged") {
+    return "collaboration converged";
+  }
+  const conflictCount = result.openConflicts.length;
+  const plural = conflictCount === 1 ? "conflict" : "conflicts";
+  return `collaboration ended with status=${result.status}; ${conflictCount} open ${plural}`;
+}
+
+export function createRequestCollaborationHandler(
+  context: RequestCollaborationHandlerContext,
+  deps?: RequestCollaborationHandlerDeps,
+) {
+  const getExecutionLogger =
+    deps?.getExecutionLogger ?? defaultGetExecutionLogger;
+
+  return async (args: unknown) => {
+    const parsed = requestCollaborationSchema.safeParse(args);
+    if (!parsed.success) {
+      logger.warn("graph-workflow.tool.validation_error", {
+        tool: "request_collaboration",
+        error: parsed.error.message,
+      });
+      return createValidationErrorResult(parsed.error.message);
+    }
+
+    const { brief } = parsed.data;
+    const resolvedConfig = context.resolveCollaborationConfig();
+    const executionLogger = getExecutionLogger(context.executionId);
+
+    logger.info("graph-workflow.tool.request_collaboration.invoked", {
+      runId: context.executionId,
+      executionContextId: context.executionContextId,
+      conversationId: context.conversationId,
+      parentImplementerTurnId: context.parentImplementerTurnId,
+      brief,
+      resolvedConfig,
+    });
+
+    executionLogger?.task(
+      context.executionContextId,
+      "collaboration.request_collaboration.invoked",
+      {
+        parentImplementerTurnId: context.parentImplementerTurnId,
+        conversationId: context.conversationId,
+        brief,
+        resolvedConfig,
+      },
+    );
+
+    let envelopeOutput: {
+      result: WorkflowCollaborationResult;
+      roundsConsumed: number;
+    };
+    try {
+      envelopeOutput = await context.startWorkflowCollaboration({
+        brief,
+        resolvedConfig,
+        parentImplementerTurnId: context.parentImplementerTurnId,
+        executionContextId: context.executionContextId,
+        conversationId: context.conversationId,
+        executionId: context.executionId,
+        iterationIndex: context.iterationIndex,
+      });
+    } catch (error) {
+      if (error instanceof IterationHaltedError) {
+        logger.warn("graph-workflow.tool.request_collaboration.halted", {
+          haltReasonType: error.haltReason.type,
+        });
+        return createHaltedToolErrorResult(error);
+      }
+      logger.warn("graph-workflow.tool.request_collaboration.error", {
+        error: getErrorMessage(error),
+      });
+      return createToolErrorResult(getErrorMessage(error));
+    }
+
+    const { result, roundsConsumed } = envelopeOutput;
+
+    executionLogger?.task(
+      context.executionContextId,
+      "collaboration.request_collaboration.completed",
+      {
+        parentImplementerTurnId: context.parentImplementerTurnId,
+        conversationId: context.conversationId,
+        status: result.status,
+        roundsConsumed,
+        openConflictsSummary: result.openConflicts,
+        resolvedConfig,
+      },
+    );
+
+    logger.info("graph-workflow.tool.request_collaboration.completed", {
+      runId: context.executionId,
+      executionContextId: context.executionContextId,
+      conversationId: context.conversationId,
+      parentImplementerTurnId: context.parentImplementerTurnId,
+      status: result.status,
+      roundsConsumed,
+      openConflictsSummary: result.openConflicts,
+      resolvedConfig,
+    });
+
+    if (result.status !== "converged") {
+      const summary = buildCollaborationFailureSummary(result);
+      const haltReason: GraphWorkflowHaltReason = {
+        type: "collaboration_failure",
+        status: result.status,
+        brief,
+        executionContextId: context.executionContextId,
+        conversationId: context.conversationId,
+        summary,
+      };
+      await context.setPendingHaltReason(haltReason);
+
+      executionLogger?.decision("collaboration.failure_halt", {
+        executionContextId: context.executionContextId,
+        conversationId: context.conversationId,
+        parentImplementerTurnId: context.parentImplementerTurnId,
+        status: result.status,
+        brief,
+        resolvedConfig,
+        openConflicts: result.openConflicts,
+      });
+    }
+
+    return createTextResult(JSON.stringify(result));
+  };
+}
+
+const REQUEST_COLLABORATION_DESCRIPTION =
+  "Request a structured second-opinion collaboration on a design decision. Provide a focused brief that describes the question or trade-off without preferring a solution. The collaboration runs synchronously on this turn and returns a structured result; if collaborators cannot converge, this iteration will halt for human review.";
+
+/**
+ * Production wiring of the Same-Turn Tool Dispatch Contract.
+ *
+ * Every registered tool handler is wrapped with `wrapMcpHandlerWithHaltCheck`
+ * so each handler inspects `pendingHaltReason` BEFORE invoking real work.
+ * The SDK MCP transport serializes sibling tool_use blocks one request at a
+ * time (design §Same-Turn Tool Dispatch Contract), so per-handler
+ * pre-dispatch enforcement is the runtime guarantee that R5.3 holds. The
+ * `complete_task`, `upsert_shared_document`, `request_collaboration`, and
+ * `add_task` registrations below are the production path the contract refers
+ * to; `createTurnDispatcher` is the isolated test harness that reproduces
+ * the same behavior over a synthetic tool_use[] list.
+ */
 export function registerGraphWorkflowExecutionTools(
   server: McpServer,
   context: GraphWorkflowToolServerContext,
 ): void {
+  const haltCheck = context.getPendingHaltReason ?? (async () => null);
+
   server.registerTool(
     "complete_task",
     {
       description: COMPLETE_TASK_DESCRIPTION,
       inputSchema: completeTaskSchema.shape,
     },
-    createCompleteTaskHandler(context),
+    wrapMcpHandlerWithHaltCheck(haltCheck, createCompleteTaskHandler(context)),
   );
 
   server.registerTool(
@@ -251,8 +482,36 @@ export function registerGraphWorkflowExecutionTools(
       description: UPSERT_SHARED_DOCUMENT_DESCRIPTION,
       inputSchema: sharedDocumentSchema.shape,
     },
-    createUpsertSharedDocumentHandler(context),
+    wrapMcpHandlerWithHaltCheck(
+      haltCheck,
+      createUpsertSharedDocumentHandler(context),
+    ),
   );
+
+  if (context.allowAgentCollaboration && context.collaboration) {
+    const collaboration = context.collaboration;
+    server.registerTool(
+      "request_collaboration",
+      {
+        description: REQUEST_COLLABORATION_DESCRIPTION,
+        inputSchema: requestCollaborationSchema.shape,
+      },
+      wrapMcpHandlerWithHaltCheck(
+        haltCheck,
+        createRequestCollaborationHandler({
+          executionContextTitle: context.executionContextTitle,
+          parentImplementerTurnId: collaboration.parentImplementerTurnId,
+          executionContextId: collaboration.executionContextId,
+          conversationId: collaboration.conversationId,
+          executionId: collaboration.executionId,
+          iterationIndex: collaboration.iterationIndex,
+          resolveCollaborationConfig: collaboration.resolveCollaborationConfig,
+          startWorkflowCollaboration: collaboration.startWorkflowCollaboration,
+          setPendingHaltReason: collaboration.setPendingHaltReason,
+        }),
+      ),
+    );
+  }
 
   if (!context.allowAgentTaskAdd) {
     return;
@@ -264,6 +523,6 @@ export function registerGraphWorkflowExecutionTools(
       description: ADD_TASK_DESCRIPTION,
       inputSchema: addTaskSchema.shape,
     },
-    createAddTaskHandler(context),
+    wrapMcpHandlerWithHaltCheck(haltCheck, createAddTaskHandler(context)),
   );
 }

@@ -117,6 +117,20 @@ export function formatGraphWorkflowHaltReason(
       };
     case "aborted":
       return { headline: "Execution aborted", detail: null, action: null };
+    case "collaboration_failure":
+      return {
+        headline: `Collaboration failure in ${reason.executionContextId} — ${reason.status}`,
+        detail: (
+          <>
+            <p>{reason.summary}</p>
+            <pre className="wb-exec-halt-pre">{reason.brief}</pre>
+          </>
+        ),
+        action:
+          reason.status === "requires_user_input"
+            ? "Provide direction to the implementer, then resume."
+            : "Review the collaboration log and resume when ready.",
+      };
   }
 }
 

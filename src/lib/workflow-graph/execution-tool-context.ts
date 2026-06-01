@@ -3,6 +3,7 @@ import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 import type { ExecutionTarget } from "./execution-target-resolver";
 import type { AgentAddedTask } from "./runtime-edits";
 import type { SharedDocumentUpsertInput } from "./shared-documents";
+import type { GraphWorkflowCollaborationContextBlock } from "./tool-server";
 
 const logger = createLogger("graph-workflow-execution-tool-context");
 
@@ -48,11 +49,15 @@ interface CreateGraphWorkflowExecutionToolContextInput {
   executionTarget: ExecutionTarget;
   executionContextTitle: string;
   allowAgentTaskAdd: boolean;
+  allowAgentCollaboration: boolean;
+  collaboration?: GraphWorkflowCollaborationContextBlock;
 }
 
 interface BoundGraphWorkflowExecutionToolContext {
   executionContextTitle: string;
   allowAgentTaskAdd: boolean;
+  allowAgentCollaboration: boolean;
+  collaboration?: GraphWorkflowCollaborationContextBlock;
   completeTask(
     taskId: string,
     summary: string,
@@ -242,6 +247,8 @@ export function createGraphWorkflowExecutionToolContext(
     return {
       executionContextTitle: input.executionContextTitle,
       allowAgentTaskAdd: input.allowAgentTaskAdd,
+      allowAgentCollaboration: input.allowAgentCollaboration,
+      ...(input.collaboration ? { collaboration: input.collaboration } : {}),
       completeTask,
       addTask,
       upsertSharedDocument,
