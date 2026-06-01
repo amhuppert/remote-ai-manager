@@ -1,4 +1,5 @@
 import path from "node:path";
+import net from "node:net";
 import { createLogger } from "../logging";
 import * as registry from "./registry";
 import type { DevServerEntry, DevServerStartMode } from "./registry";
@@ -14,6 +15,13 @@ import {
   type PortSelectionInput,
   type PortSelectionResult,
 } from "./port-selection";
+import {
+  createTailscaleServeReconciler,
+  type BackendReachableProbeResult,
+} from "./tailscale-cleanup";
+import { createTailscaleService } from "../shared/tailscale";
+import { readConfig as readGlobalConfig } from "../config/loader";
+import { getErrorMessage } from "@/lib/shared/errors";
 import type {
   DevServerConfig,
   DevServerStatus,
@@ -124,6 +132,13 @@ export interface DevServerServiceDeps {
     startMode?: DevServerStartMode;
   }): Promise<void>;
   selectPort?(input: PortSelectionInput): Promise<PortSelectionResult>;
+  /**
+   * One-shot reconciliation of stale `tailscale serve` entries from a prior
+   * CC process that exited without unregistering. Runs lazily before the
+   * first port selection per CC process. Optional — when omitted, no
+   * reconciliation is attempted (used in tests that don't need it).
+   */
+  reconcileTailscaleServeOrphans?(): Promise<void>;
   stopServer(input: {
     projectPath: string;
     sessionName: string;
@@ -263,6 +278,24 @@ function toStatusItem(
 export function createDevServerService(
   deps: DevServerServiceDeps,
 ): DevServerService {
+  // One-shot gate: stale-serve reconciliation runs exactly once per service
+  // instance (i.e. once per CC process). The promise is cached so concurrent
+  // ensure() calls share it instead of each spawning their own scan.
+  let tailscaleReconcileOnce: Promise<void> | null = null;
+  async function reconcileTailscaleOnce(): Promise<void> {
+    if (!deps.reconcileTailscaleServeOrphans) return;
+    if (!tailscaleReconcileOnce) {
+      tailscaleReconcileOnce = deps
+        .reconcileTailscaleServeOrphans()
+        .catch((err) => {
+          logger.warn("dev-server.tailscale.reconcile_failed", {
+            error: getErrorMessage(err),
+          });
+        });
+    }
+    await tailscaleReconcileOnce;
+  }
+
   // Relative cwd values are documented as relative to the session worktree;
   // resolve them here so downstream callers (registry spawn, port-ownership
   // checks) receive an absolute path. Absolute values pass through unchanged.
@@ -385,6 +418,13 @@ export function createDevServerService(
       (runtime.status === "running" && !runtime.ownedByThisSession);
 
     if (needsStart) {
+      // Clear any stale `tailscale serve` entries from a prior CC process
+      // before we pick a port — otherwise port-selection sees the port as
+      // free (lsof misses root-owned tailscaled), then the spawn dies with
+      // EADDRINUSE because the wildcard bind collides with tailscaled's
+      // specific-address bind. Runs at most once per CC process.
+      await reconcileTailscaleOnce();
+
       const startMode = await resolveStartMode({
         normalized: target,
         worktreePath,
@@ -567,6 +607,52 @@ function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function probeBackendReachableViaConnect(
+  port: number,
+): Promise<BackendReachableProbeResult> {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    let settled = false;
+    const finish = (result: BackendReachableProbeResult) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(result);
+    };
+    socket.setTimeout(500);
+    socket.once("connect", () => finish({ reachable: true }));
+    socket.once("timeout", () =>
+      finish({ reachable: false, reason: "connect_timeout" }),
+    );
+    socket.once("error", (err) =>
+      finish({
+        reachable: false,
+        reason: (err as NodeJS.ErrnoException).code ?? err.message,
+      }),
+    );
+    socket.connect(port, "127.0.0.1");
+  });
+}
+
+const defaultTailscaleService = createTailscaleService();
+const defaultTailscaleReconciler = createTailscaleServeReconciler({
+  listServeRegistrations: () =>
+    defaultTailscaleService.listServeRegistrations(),
+  probeBackendReachable: probeBackendReachableViaConnect,
+  unregisterServe: (port) => defaultTailscaleService.unregister(port),
+  tailscaleEnabled: async () => {
+    try {
+      const cfg = await readGlobalConfig();
+      return cfg.tailscaleEnabled === true;
+    } catch {
+      return false;
+    }
+  },
+});
+async function defaultReconcileTailscaleServeOrphans(): Promise<void> {
+  await defaultTailscaleReconciler.reconcileOrphans();
+}
+
 export const defaultDevServerServiceDeps: DevServerServiceDeps = {
   getSession,
   readRepoConfig,
@@ -577,6 +663,7 @@ export const defaultDevServerServiceDeps: DevServerServiceDeps = {
   stopServer: registry.stopServer,
   killListeningProcessForPort: registry.killListeningProcessForPort,
   selectPort: defaultPortSelectionService.selectPort,
+  reconcileTailscaleServeOrphans: defaultReconcileTailscaleServeOrphans,
   sleep: defaultSleep,
   now: () => Date.now(),
 };

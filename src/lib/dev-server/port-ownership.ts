@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readlink, realpath as nodeRealpath } from "node:fs/promises";
+import net from "node:net";
 import path from "node:path";
 import { createLogger } from "../logging";
 import { getErrorMessage } from "@/lib/shared/errors";
@@ -13,6 +14,10 @@ const logger = createLogger("dev-server");
 // Public types
 // ============================================================
 
+export type PortBindProbeResult =
+  | { bindable: true }
+  | { bindable: false; reason: string };
+
 export interface PortOwnershipDeps {
   listListeningPids(port: number): Promise<number[]>;
   /**
@@ -24,6 +29,16 @@ export interface PortOwnershipDeps {
   listAllListeningPorts(): Promise<Map<number, number[]>>;
   getProcessCwd(pid: number): Promise<string | null>;
   realpath(path: string): Promise<string | null>;
+  /**
+   * Attempt to bind a server socket on `port` on both IPv6 wildcard (`::`)
+   * and IPv4 wildcard (`0.0.0.0`). Returns `{ bindable: true }` only when
+   * BOTH binds succeed (the sockets are immediately closed). This is the only
+   * reliable signal that the port is truly free — `lsof`/`ss` miss root-owned
+   * listeners (e.g. tailscaled when `tailscale serve --http=PORT` is active)
+   * and specific-address binds that still trip wildcard-bind attempts with
+   * EADDRINUSE.
+   */
+  probePortBindable(port: number): Promise<PortBindProbeResult>;
 }
 
 export interface PortOwnershipInput {
@@ -35,7 +50,12 @@ export interface PortOwnershipInput {
 export type PortOwnershipResult =
   | { status: "available" }
   | { status: "owned"; pid: number; cwd: string }
-  | { status: "conflict"; pid: number; cwd: string | null }
+  | {
+      status: "conflict";
+      pid: number | null;
+      cwd: string | null;
+      reason?: string;
+    }
   | { status: "unknown"; reason: string };
 
 export type ExecSyncLike = (
@@ -140,8 +160,25 @@ export function createPortOwnershipService(deps: PortOwnershipDeps) {
     }
 
     if (pids.length === 0) {
-      logger.info("dev-server.ownership.available", { port });
-      return { status: "available" };
+      // Listener lookup found no owning PIDs — but unprivileged `lsof` on macOS
+      // can't see root-owned sockets (notably tailscaled when `tailscale serve`
+      // is active), and specific-address binds still cause our subsequent
+      // wildcard bind to fail. Confirm bindability before declaring available.
+      const probe = await deps.probePortBindable(port);
+      if (probe.bindable) {
+        logger.info("dev-server.ownership.available", { port });
+        return { status: "available" };
+      }
+      logger.warn("dev-server.ownership.hidden_conflict", {
+        port,
+        reason: probe.reason,
+      });
+      return {
+        status: "conflict",
+        pid: null,
+        cwd: null,
+        reason: probe.reason,
+      };
     }
 
     const worktreeReal = await resolveReal(deps, worktreePath);
@@ -558,11 +595,62 @@ async function defaultRealpath(p: string): Promise<string | null> {
   }
 }
 
+/**
+ * Production bind-probe. Attempts a wildcard bind on both `::` (IPv6-only)
+ * and `0.0.0.0`. We bind IPv6 with `ipv6Only` so the IPv6 attempt doesn't
+ * claim the IPv4 port via dual-stack and falsely free it for the IPv4 probe.
+ * If either bind fails (typically EADDRINUSE), the port is not truly free.
+ */
+export async function probePortBindableViaNet(
+  port: number,
+): Promise<PortBindProbeResult> {
+  const tryBind = (
+    host: string,
+    ipv6Only: boolean,
+  ): Promise<PortBindProbeResult> =>
+    new Promise((resolve) => {
+      const server = net.createServer();
+      server.unref();
+      const cleanup = () => {
+        server.removeAllListeners();
+        try {
+          server.close();
+        } catch {
+          // already closed
+        }
+      };
+      server.once("error", (err: NodeJS.ErrnoException) => {
+        cleanup();
+        const code = err.code ?? "EUNKNOWN";
+        resolve({ bindable: false, reason: `${code} on ${host}` });
+      });
+      server.once("listening", () => {
+        cleanup();
+        resolve({ bindable: true });
+      });
+      try {
+        server.listen({ host, port, exclusive: true, ipv6Only });
+      } catch (err) {
+        cleanup();
+        resolve({
+          bindable: false,
+          reason: `listen threw on ${host}: ${getErrorMessage(err)}`,
+        });
+      }
+    });
+
+  const ipv6 = await tryBind("::", true);
+  if (!ipv6.bindable) return ipv6;
+  const ipv4 = await tryBind("0.0.0.0", false);
+  return ipv4;
+}
+
 const defaultPortOwnershipDeps: PortOwnershipDeps = {
   listListeningPids: defaultListListeningPids,
   listAllListeningPorts: defaultListAllListeningPorts,
   getProcessCwd: defaultGetProcessCwd,
   realpath: defaultRealpath,
+  probePortBindable: probePortBindableViaNet,
 };
 
 export const defaultPortOwnershipService = createPortOwnershipService(

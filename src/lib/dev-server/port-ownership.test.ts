@@ -22,6 +22,7 @@ function createTestDeps(
       .mockResolvedValue(new Map<number, number[]>()),
     getProcessCwd: vi.fn().mockResolvedValue(null),
     realpath: vi.fn().mockImplementation(async (p: string) => p),
+    probePortBindable: vi.fn().mockResolvedValue({ bindable: true }),
     ...overrides,
   };
 }
@@ -95,9 +96,10 @@ describe("pure path helpers", () => {
 });
 
 describe("createPortOwnershipService.classifyPort", () => {
-  it("returns available when no listener exists on the port", async () => {
+  it("returns available when no listener exists on the port and the port is bindable", async () => {
     const deps = createTestDeps({
       listListeningPids: vi.fn().mockResolvedValue([]),
+      probePortBindable: vi.fn().mockResolvedValue({ bindable: true }),
     });
     const service = createPortOwnershipService(deps);
 
@@ -108,6 +110,44 @@ describe("createPortOwnershipService.classifyPort", () => {
 
     expect(result).toEqual({ status: "available" });
     expect(deps.getProcessCwd).not.toHaveBeenCalled();
+    expect(deps.probePortBindable).toHaveBeenCalledWith(3000);
+  });
+
+  it("returns conflict with null pid when listener lookup is empty but bind probe fails — the Tailscale-on-macOS case where root-owned listeners are invisible to unprivileged lsof", async () => {
+    const deps = createTestDeps({
+      listListeningPids: vi.fn().mockResolvedValue([]),
+      probePortBindable: vi.fn().mockResolvedValue({
+        bindable: false,
+        reason: "EADDRINUSE on ::",
+      }),
+    });
+    const service = createPortOwnershipService(deps);
+
+    const result = await service.classifyPort({
+      port: 3001,
+      worktreePath: "/wt",
+    });
+
+    expect(result.status).toBe("conflict");
+    if (result.status === "conflict") {
+      expect(result.pid).toBeNull();
+      expect(result.cwd).toBeNull();
+      expect(result.reason).toMatch(/EADDRINUSE/);
+    }
+  });
+
+  it("does NOT probe-bind when a listener is identified — the existing classification path is authoritative when lsof succeeds", async () => {
+    const probe = vi.fn().mockResolvedValue({ bindable: false });
+    const deps = createTestDeps({
+      listListeningPids: vi.fn().mockResolvedValue([12345]),
+      getProcessCwd: vi.fn().mockResolvedValue("/wt"),
+      probePortBindable: probe,
+    });
+    const service = createPortOwnershipService(deps);
+
+    await service.classifyPort({ port: 3000, worktreePath: "/wt" });
+
+    expect(probe).not.toHaveBeenCalled();
   });
 
   it("returns owned when listener cwd exactly equals the worktree path", async () => {

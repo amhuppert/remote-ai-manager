@@ -162,4 +162,70 @@ describe("TailscaleService", () => {
       await service.unregister(3000);
     });
   });
+
+  describe("listServeRegistrations", () => {
+    it("extracts symmetric http://localhost:N → port N entries that CC creates", async () => {
+      const { deps, mockExecFile } = createMockDeps();
+      mockExecFile.mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          TCP: {
+            "3001": { HTTP: true },
+            "6007": { HTTP: true },
+            "443": { HTTPS: true },
+          },
+          Web: {
+            "host.ts.net:3001": {
+              Handlers: { "/": { Proxy: "http://localhost:3001" } },
+            },
+            "host.ts.net:6007": {
+              Handlers: { "/": { Proxy: "http://localhost:6007" } },
+            },
+            "host.ts.net:443": {
+              Handlers: {
+                "/": { Proxy: "https+insecure://localhost:3000" },
+              },
+            },
+          },
+        }),
+      });
+
+      const service = createTailscaleService(deps);
+      const entries = await service.listServeRegistrations();
+
+      expect(entries).toEqual(
+        expect.arrayContaining([
+          { port: 3001, proxyTarget: "http://localhost:3001" },
+          { port: 6007, proxyTarget: "http://localhost:6007" },
+        ]),
+      );
+      // The 443 → localhost:3000 entry is asymmetric (CC's app, user-configured)
+      // and must be excluded so reconciliation never touches it.
+      expect(entries.find((e) => e.port === 443)).toBeUndefined();
+      expect(entries.find((e) => e.port === 3000)).toBeUndefined();
+    });
+
+    it("returns [] when tailscale CLI is unavailable", async () => {
+      const { deps, mockExecFile } = createMockDeps();
+      mockExecFile.mockRejectedValueOnce(new Error("command not found"));
+
+      const service = createTailscaleService(deps);
+      expect(await service.listServeRegistrations()).toEqual([]);
+    });
+
+    it("returns [] when tailscale serve status emits unparseable JSON", async () => {
+      const { deps, mockExecFile } = createMockDeps();
+      mockExecFile.mockResolvedValueOnce({ stdout: "not-json" });
+
+      const service = createTailscaleService(deps);
+      expect(await service.listServeRegistrations()).toEqual([]);
+    });
+
+    it("returns [] when no serve entries are configured", async () => {
+      const { deps, mockExecFile } = createMockDeps();
+      mockExecFile.mockResolvedValueOnce({ stdout: "{}" });
+
+      const service = createTailscaleService(deps);
+      expect(await service.listServeRegistrations()).toEqual([]);
+    });
+  });
 });

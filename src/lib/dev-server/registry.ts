@@ -1,7 +1,6 @@
 import { type ChildProcess } from "node:child_process";
 import { spawn as timedSpawn } from "../shared/exec";
 import { createWriteStream, mkdirSync, type WriteStream } from "node:fs";
-import { createServer } from "node:net";
 import net from "node:net";
 import path from "node:path";
 import { buildChildEnv } from "../shared/child-env";
@@ -575,7 +574,7 @@ export function createDevServerRegistry(
           recentOutput: entry.recentOutput.slice(-10),
         });
       } else if (entry.status === "running" && entry.port) {
-        const alive = await isPortAlive(entry.port);
+        const alive = await isPortListening(entry.port);
         if (!alive) {
           logger.warn("dev-server.unexpected_exit", {
             serverName,
@@ -812,9 +811,15 @@ export function createDevServerRegistry(
     }
 
     if (ownership.status === "conflict") {
+      // Hidden conflicts (pid: null) come from the bind-probe — we have no PID
+      // to signal, so report a sentinel 0 and a reason that surfaces the cause.
+      const reason =
+        ownership.pid === null
+          ? `hidden_owner: ${ownership.reason ?? "bind probe failed"}`
+          : "cwd_not_owned";
       const skip: { pid: number; reason: string; cwd?: string } = {
-        pid: ownership.pid,
-        reason: "cwd_not_owned",
+        pid: ownership.pid ?? 0,
+        reason,
       };
       if (ownership.cwd !== null) skip.cwd = ownership.cwd;
       logger.warn("dev-server.stop.unverified_owner", {
@@ -823,7 +828,7 @@ export function createDevServerRegistry(
         cwd: ownership.cwd,
         worktreePath,
         allowedCwd: allowedCwd ?? null,
-        reason: "cwd_not_owned",
+        reason,
         ownership: "conflict",
       });
       skipped.push(skip);
@@ -901,44 +906,28 @@ export function createDevServerRegistry(
 // ============================================================
 
 /**
- * Check if a port is actually in use (something is listening on localhost).
- * Attempts to bind to 127.0.0.1:port — EADDRINUSE means something is there.
- * Used by deferredTailscaleRegister to wait for the server to start listening.
+ * Check whether anything is accepting TCP connections on `127.0.0.1:port`.
+ *
+ * Used as the readiness probe for newly-started dev servers and as the
+ * pre-register gate in `deferredTailscaleRegister`. A bind-probe is NOT a
+ * reliable test on macOS: a tcp46 wildcard listener (Next.js dev's default)
+ * does not always block a specific `127.0.0.1` bind, so the bind would
+ * succeed and the probe would falsely report "no listener" — readiness
+ * timeouts even though the server is up.
  */
-function isPortListening(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = createServer();
-    socket.once("error", (err: NodeJS.ErrnoException) => {
-      socket.close();
-      // EADDRINUSE means something is listening
-      resolve(err.code === "EADDRINUSE");
-    });
-    socket.once("listening", () => {
-      // We were able to bind → nobody is listening
-      socket.close(() => resolve(false));
-    });
-    socket.listen(port, "127.0.0.1");
-  });
-}
-
-/**
- * Check if a port is alive by attempting a TCP connection.
- * More reliable than bind test for detecting running servers.
- * Used by liveness poller and exit handler.
- */
-function isPortAlive(port: number): Promise<boolean> {
+export function isPortListening(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = new net.Socket();
     socket.setTimeout(2000);
-    socket.on("connect", () => {
+    socket.once("connect", () => {
       socket.destroy();
       resolve(true);
     });
-    socket.on("timeout", () => {
+    socket.once("timeout", () => {
       socket.destroy();
       resolve(false);
     });
-    socket.on("error", () => {
+    socket.once("error", () => {
       resolve(false);
     });
     socket.connect(port, "127.0.0.1");

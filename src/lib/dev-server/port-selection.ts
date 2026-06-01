@@ -120,12 +120,11 @@ export function createPortSelectionService(deps: PortSelectionDeps) {
       const result = classifications.get(port);
       if (!result) continue;
       if (result.status === "conflict") {
-        diagnostics.push({
-          port,
-          status: "conflict",
-          pid: result.pid,
-          cwd: result.cwd,
-        });
+        const diag: PortSelectionDiagnostic = { port, status: "conflict" };
+        if (result.pid !== null) diag.pid = result.pid;
+        if (result.cwd !== null) diag.cwd = result.cwd;
+        if (result.reason) diag.reason = result.reason;
+        diagnostics.push(diag);
       } else if (result.status === "unknown") {
         diagnostics.push({
           port,

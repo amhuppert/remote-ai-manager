@@ -112,9 +112,13 @@ export function createDevServerReconciler(deps: DevServerReconciliationDeps) {
         port: entry.port,
         conflictPid: ownership.pid,
         conflictCwd: ownership.cwd,
+        conflictReason: ownership.reason ?? null,
         worktreePath: entry.worktreePath,
       });
-      entry.errorMessage = `Port ${entry.port} is now owned by pid ${ownership.pid}${ownership.cwd ? ` (cwd ${ownership.cwd})` : ""}, which is outside this session's worktree (${entry.worktreePath}).`;
+      entry.errorMessage =
+        ownership.pid === null
+          ? `Port ${entry.port} is in use by a process invisible to lsof (likely root-owned, e.g. a stale tailscale serve entry): ${ownership.reason ?? "bind probe failed"}.`
+          : `Port ${entry.port} is now owned by pid ${ownership.pid}${ownership.cwd ? ` (cwd ${ownership.cwd})` : ""}, which is outside this session's worktree (${entry.worktreePath}).`;
     } else {
       logger.warn("dev-server.reconcile.stale_stopped", {
         serverName: entry.serverName,

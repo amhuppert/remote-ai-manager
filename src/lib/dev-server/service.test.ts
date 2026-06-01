@@ -10,6 +10,7 @@ import {
   type DevServerServiceDeps,
 } from "./service";
 import type { DevServerConfig } from "@/lib/dev-server/schemas";
+import type { PortSelectionResult } from "./port-selection";
 type ConfiguredServer = DevServerConfig;
 
 function makeEntry(overrides: Partial<DevServerEntry>): DevServerEntry {
@@ -107,6 +108,12 @@ function makeHarness(opts?: {
       killed: [],
       skipped: [],
     })),
+    selectPort: vi.fn(
+      async (): Promise<PortSelectionResult> => ({
+        status: "selected",
+        port: 3001,
+      }),
+    ),
     async sleep(_ms) {},
     now: () => Date.now(),
   };
@@ -329,6 +336,97 @@ describe("dev-server-service", () => {
       });
       expect(result.status).toBe("starting");
       expect(h.startServer).toHaveBeenCalledOnce();
+    });
+
+    describe("tailscale serve orphan reconciliation", () => {
+      it("runs the reconciler before starting the first server, and shares the result across concurrent ensure() calls", async () => {
+        const h = makeHarness();
+        const reconcile = vi.fn(async () => {
+          // Simulate IO latency so concurrent ensures must wait on the same
+          // promise rather than each spawning their own scan.
+          await new Promise((r) => setTimeout(r, 20));
+        });
+        h.deps.reconcileTailscaleServeOrphans = reconcile;
+        h.deps.selectPort = vi.fn(async () => {
+          // selectPort must observe that reconcile already ran so the stale
+          // listener it would have collided with has been cleared first.
+          expect(reconcile).toHaveBeenCalled();
+          return { status: "selected", port: 3001 } as const;
+        });
+        h.startServer.mockImplementation(
+          async (input: { serverName: string }) => {
+            h.registry.set(
+              input.serverName,
+              makeEntry({
+                serverName: input.serverName,
+                status: "running",
+                port: 3001,
+                ownedByThisSession: true,
+              }),
+            );
+          },
+        );
+
+        const service = createDevServerService(h.deps);
+        await Promise.all([
+          service.ensure({ projectPath: "/projects/test", sessionName: "s1" }),
+          service.ensure({ projectPath: "/projects/test", sessionName: "s1" }),
+        ]);
+
+        expect(reconcile).toHaveBeenCalledTimes(1);
+      });
+
+      it("does not run the reconciler when the server is already running and owned", async () => {
+        const h = makeHarness({
+          initialEntries: [
+            makeEntry({
+              serverName: "nextjs",
+              status: "running",
+              port: 3001,
+              ownedByThisSession: true,
+            }),
+          ],
+        });
+        const reconcile = vi.fn(async () => undefined);
+        h.deps.reconcileTailscaleServeOrphans = reconcile;
+
+        const service = createDevServerService(h.deps);
+        await service.ensure({
+          projectPath: "/projects/test",
+          sessionName: "s1",
+        });
+
+        expect(reconcile).not.toHaveBeenCalled();
+      });
+
+      it("does not block ensure() when reconcile throws — the error is logged and start proceeds", async () => {
+        const h = makeHarness();
+        h.deps.reconcileTailscaleServeOrphans = vi.fn(async () => {
+          throw new Error("tailscale CLI exploded");
+        });
+        h.startServer.mockImplementation(
+          async (input: { serverName: string }) => {
+            h.registry.set(
+              input.serverName,
+              makeEntry({
+                serverName: input.serverName,
+                status: "running",
+                port: 3001,
+                ownedByThisSession: true,
+              }),
+            );
+          },
+        );
+
+        const service = createDevServerService(h.deps);
+        const result = await service.ensure({
+          projectPath: "/projects/test",
+          sessionName: "s1",
+        });
+
+        expect(result.status).toBe("running");
+        expect(h.startServer).toHaveBeenCalledOnce();
+      });
     });
 
     it("waits for an already-starting server to reach running when wait=true", async () => {

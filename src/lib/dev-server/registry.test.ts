@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import net from "node:net";
 import path from "node:path";
 import {
   createDevServerRegistry,
+  isPortListening,
   type DevServerRegistryDeps,
   type DevServerStartMode,
 } from "./registry";
@@ -935,5 +937,57 @@ describe("DevServerRegistry", () => {
       const pwdLine = server?.recentOutput.find((l) => l.startsWith("PWD="));
       expect(pwdLine).toBe("PWD=/usr");
     });
+  });
+});
+
+describe("isPortListening (production probe)", () => {
+  // Regression: Next.js 16 dev binds tcp46 wildcard ("*.<port>"). On macOS,
+  // a 127.0.0.1 bind-probe of that port can still succeed — so the prior
+  // bind-probe impl falsely reported "no listener" and dev servers
+  // hit a 60s readiness timeout despite Next.js logging "Ready in 4.7s".
+  // The probe MUST detect tcp46 wildcard listeners via TCP connect.
+
+  function listenWildcard(): Promise<{
+    port: number;
+    close: () => Promise<void>;
+  }> {
+    return new Promise((resolve, reject) => {
+      const server = net.createServer();
+      server.once("error", reject);
+      server.listen(0, () => {
+        const addr = server.address();
+        if (!addr || typeof addr === "string") {
+          reject(new Error("no address"));
+          return;
+        }
+        resolve({
+          port: addr.port,
+          close: () =>
+            new Promise<void>((res) => {
+              server.close(() => res());
+            }),
+        });
+      });
+    });
+  }
+
+  it("returns true for a real wildcard tcp46 listener (Next.js dev shape)", async () => {
+    const listener = await listenWildcard();
+    try {
+      const result = await isPortListening(listener.port);
+      expect(result).toBe(true);
+    } finally {
+      await listener.close();
+    }
+  });
+
+  it("returns false when nothing is listening on the port", async () => {
+    // Bind+close to obtain a port number that's free at probe time.
+    const listener = await listenWildcard();
+    const freePort = listener.port;
+    await listener.close();
+
+    const result = await isPortListening(freePort);
+    expect(result).toBe(false);
   });
 });
