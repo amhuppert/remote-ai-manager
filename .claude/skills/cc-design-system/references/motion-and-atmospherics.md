@@ -40,8 +40,9 @@ Modal overlay:
 
 ```css
 background: rgba(6, 9, 15, 0.8);
-backdrop-filter: blur(8px);
 ```
+
+Modal overlays use a flat semi-transparent fill (no `backdrop-filter`). Live blur on a fullscreen overlay forces a per-frame GPU recomposite of the underlying view, which starves the main thread's input dispatch queue whenever the overlay's contents (e.g. a textarea) are typed in. Use opacity to communicate "behind glass" instead.
 
 **Never frost content surfaces** — cards, panels, transcripts, sidebars all stay opaque.
 
