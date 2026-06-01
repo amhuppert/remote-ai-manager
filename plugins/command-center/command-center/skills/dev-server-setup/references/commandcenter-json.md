@@ -14,7 +14,7 @@ Place `CommandCenter.json` at the root of the git repository. It is optional —
     {
       "name": "nextjs",
       "command": "npx next dev --port $CC_ASSIGNED_PORT",
-      "port": { "strategy": "cc-assigned", "base": 3000, "range": 100 }
+      "port": { "base": 3000, "range": 100 }
     }
   ]
 }
@@ -36,18 +36,17 @@ Both `initScriptPath` and `preMergeCommand` can be relative or absolute paths. R
 
 Each dev server entry requires:
 - `name` — unique identifier (min 1 char), displayed in the UI
-- `command` — shell command or script path to start the server (min 1 char)
+- `command` — shell command to start the server (min 1 char), referencing `$CC_ASSIGNED_PORT` (or relying on `$PORT`)
+- `port` — the port window CC assigns from (`{ base, range? }`)
 
-Optional fields:
+Optional field:
 - `cwd` — working directory relative to the worktree (e.g. `apps/web`)
-- `port` — port allocation strategy (see [`references/dev-servers.md`](./dev-servers.md))
-- `readiness` — how CC decides the server is ready
 
 Server names must be unique within the `devServers` array.
 
-### Port Strategy
+### Port Assignment
 
-`cc-assigned` is the only supported strategy. CC picks the port from `[base, base+range)`, injects `$CC_ASSIGNED_PORT`/`$PORT`/your optional `env` alias, and waits for TCP readiness.
+CC owns port assignment. CC picks a port from `[base, base+range)` (range defaults to 100) — adopting one already owned by this worktree or the first free one — injects it as `$CC_ASSIGNED_PORT`/`$PORT`/your optional `env` alias, and waits for TCP readiness (fixed 60s timeout).
 
 See `references/dev-servers.md` for full examples and field reference.
 
@@ -69,13 +68,12 @@ See `references/dev-servers.md` for full examples and field reference.
     {
       "name": "nextjs",
       "command": "npx next dev --port $CC_ASSIGNED_PORT",
-      "port": { "strategy": "cc-assigned", "base": 3000, "range": 100 },
-      "readiness": { "type": "tcp", "timeoutMs": 60000 }
+      "port": { "base": 3000, "range": 100 }
     },
     {
       "name": "storybook",
       "command": "npx storybook dev --port $CC_ASSIGNED_PORT --no-open",
-      "port": { "strategy": "cc-assigned", "base": 6006, "range": 50 }
+      "port": { "base": 6006, "range": 100 }
     }
   ]
 }

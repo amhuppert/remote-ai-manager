@@ -245,7 +245,8 @@ export function createDevServerRegistry(
 
   /**
    * Classify the listener owning `port` and update the entry with source,
-   * ownerPid, and ownedByThisSession. Runs after CC_PORT is detected. Best
+   * ownerPid, and ownedByThisSession. Runs after the assigned port is
+   * listening. Best
    * effort — leaves the entry's defaults intact when ownership is unverified.
    */
   async function classifyEntrySource(

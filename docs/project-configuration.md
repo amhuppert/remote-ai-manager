@@ -27,7 +27,7 @@ my-project/
     {
       "name": "nextjs",
       "command": "npx next dev --port $CC_ASSIGNED_PORT",
-      "port": { "strategy": "cc-assigned", "base": 3000, "range": 100 }
+      "port": { "base": 3000, "range": 100 }
     }
   ]
 }
@@ -210,35 +210,29 @@ Declares dev servers that users can start and stop from the session detail page 
 
 ### Configuration
 
-Each entry has two required fields and three optional ones:
+Each entry has three required fields (`name`, `command`, `port`) and one optional one (`cwd`):
 
-| Field | Type | Description |
-|---|---|---|
-| `name` | `string` (min 1 char) | Unique identifier for the server, displayed in the UI |
-| `command` | `string` (min 1 char) | Shell command to start the server |
-| `cwd` | `string` (optional) | Working directory relative to the worktree (e.g. `apps/web`) |
-| `port` | `object` (optional) | Port allocation strategy — see [Port Strategy](#port-strategy) |
-| `readiness` | `object` (optional) | Override how CC waits for the server to be ready |
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | `string` (min 1 char) | Yes | Unique identifier for the server, displayed in the UI |
+| `command` | `string` (min 1 char) | Yes | Shell command to start the server; references `$CC_ASSIGNED_PORT` (or relies on `$PORT`) |
+| `port` | `object` | Yes | The CC-assigned port window — see [Port Assignment](#port-assignment) |
+| `cwd` | `string` | No | Working directory relative to the worktree (e.g. `apps/web`) |
 
 ```json
 {
   "devServers": [
-    { "name": "nextjs", "command": ".cc/dev-servers/nextjs.sh" },
-    { "name": "storybook", "command": ".cc/dev-servers/storybook.sh" }
+    { "name": "nextjs",    "command": "npx next dev --port $CC_ASSIGNED_PORT",            "port": { "base": 3000, "range": 100 } },
+    { "name": "storybook", "command": "npx storybook dev --port $CC_ASSIGNED_PORT --no-open", "port": { "base": 6006, "range": 100 } }
   ]
 }
 ```
 
 Server names must be unique within the `devServers` array.
 
-#### Port Strategy
+#### Port Assignment
 
-The optional `port` block tells CC how to allocate a TCP port for the server. Two strategies are supported:
-
-| Strategy | When to use | What CC does |
-|---|---|---|
-| `stdout-cc-port` (default for legacy entries) | Your script picks its own port and prints `CC_PORT=<n>` | CC reads stdout for the line and treats that port as the server's port |
-| `cc-assigned` | You want CC to pick the port and pass it to the server | CC scans the configured range, picks an owned-or-available port, injects it via `$CC_ASSIGNED_PORT`, `$PORT`, and any `env` alias, and waits for TCP readiness instead of stdout parsing |
+CC owns port assignment. Before spawning the server, CC scans the window `base‥base+range−1` and picks the first port that is either already owned by this worktree (so the existing process can be adopted) or completely free. It never claims a port whose ownership it cannot verify. The chosen port is injected into the spawned child as `CC_ASSIGNED_PORT` and `PORT` (plus any `port.env` alias). Your command references `$CC_ASSIGNED_PORT`, or relies on `$PORT`.
 
 ```json
 {
@@ -248,12 +242,10 @@ The optional `port` block tells CC how to allocate a TCP port for the server. Tw
       "command": "bun run dev -- --port $CC_ASSIGNED_PORT",
       "cwd": ".",
       "port": {
-        "strategy": "cc-assigned",
         "base": 3000,
         "range": 100,
         "env": "CC_ASSIGNED_PORT"
-      },
-      "readiness": { "type": "tcp", "timeoutMs": 60000 }
+      }
     }
   ]
 }
@@ -261,14 +253,9 @@ The optional `port` block tells CC how to allocate a TCP port for the server. Tw
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `port.strategy` | `"stdout-cc-port" \| "cc-assigned"` | `"cc-assigned"` when `port` is present, `"stdout-cc-port"` otherwise | How CC discovers/assigns the port |
-| `port.base` | `number` (1–65535) | required when strategy is `cc-assigned` | Starting port for the scan |
+| `port.base` | `number` (1–65535) | required | Starting port for the scan |
 | `port.range` | `number` (≥1) | `100` | How many ports above `base` to scan |
 | `port.env` | `string` | none | Extra env var name to set to the assigned port (alongside `CC_ASSIGNED_PORT` and `PORT`) |
-| `readiness.type` | `"tcp" \| "stdout-cc-port"` | `"tcp"` for `cc-assigned`, `"stdout-cc-port"` otherwise | How CC decides the server is ready |
-| `readiness.timeoutMs` | `number` (100–600000) | 60_000 | How long to wait before transitioning to `error` |
-
-When `cc-assigned` is used, the server script does **not** need to print `CC_PORT=<port>` — CC already knows the port and will wait for the server to start listening on it. This removes the need for `.cc/dev-servers/*.sh` shell helpers for most setups.
 
 ### When It Runs
 
@@ -306,39 +293,14 @@ Agents should call `ensure_dev_server` before any Playwright, browser, visual, o
 
 ### Readiness Detection
 
-Command Center supports two readiness strategies, picked automatically from the port strategy:
-
-| `readiness.type` | When CC marks the server `running` |
-|---|---|
-| `tcp` (default for `cc-assigned`) | When the assigned port begins accepting TCP connections from the loopback interface |
-| `stdout-cc-port` (default for legacy entries) | When the server writes `CC_PORT=<port>` to stdout |
-
-Both strategies fall back to the same timeout (60s by default, configurable via `readiness.timeoutMs`). If the deadline elapses the server transitions to `error`, the process is killed, and the last 10 lines of output are surfaced as the error message.
-
-#### The `CC_PORT` Protocol (legacy / stdout strategy)
-
-When a server uses `readiness.type: "stdout-cc-port"` (which is the default whenever no `port` block is provided), Command Center watches stdout for:
-
-```
-CC_PORT=<port>
-```
-
-**Rules:**
-
-- The script **must print `CC_PORT=<port>` to stdout** where `<port>` is the TCP port number the server is listening on.
-- The `CC_PORT` line must be on its own line and match the exact format `CC_PORT=<digits>` (no spaces, no quotes).
-- Print `CC_PORT` **before or at the same time as** starting the server process. The typical pattern is: determine the port, print `CC_PORT=<port>`, then `exec` the actual server.
-- This line must appear within `readiness.timeoutMs` (default 60s).
-
-Servers using `cc-assigned` ports do **not** need to print `CC_PORT` — CC already knows the port it injected.
+Readiness is always a TCP connect on the assigned port: CC marks the server `running` once the assigned port begins accepting TCP connections from the loopback interface. The timeout is a hardcoded 60 seconds (`READINESS_TIMEOUT_MS`) and is not configurable. If the deadline elapses the server transitions to `error`, the process is killed, and the last 10 lines of output are surfaced as the error message.
 
 ### Server Lifecycle
 
 ```
 [User clicks Start]
     → status: "starting"
-    → cc-assigned: port pre-selected from scan range; env (CC_ASSIGNED_PORT/PORT/alias) injected
-    → stdout-cc-port: script spawned; CC watches stdout for CC_PORT=<port>
+    → port pre-selected from scan range; env (CC_ASSIGNED_PORT/PORT/alias) injected; command spawned
 
 [Readiness satisfied within timeout]
     → status: "running"
@@ -364,36 +326,22 @@ Servers using `cc-assigned` ports do **not** need to print `CC_PORT` — CC alre
 
 ### Port Conflict Handling
 
-When multiple sessions run the same dev server they need different ports. Command Center has two ways to handle this:
+When multiple sessions run the same dev server they need different ports. CC handles this itself: it runs the scan over the configured `port.base` + `port.range` window before spawning the command. It picks the first port that is either already owned by this worktree (so the existing process can be adopted) or completely free, injects it into the child via `CC_ASSIGNED_PORT`/`PORT`/your optional `port.env` alias, and waits for TCP readiness on that port. CC never claims a port whose ownership it cannot verify; if every port in the range is occupied by someone else (or has an unverifiable owner), the start fails.
 
-**`cc-assigned` (recommended for new configs).** CC itself runs the scan over the configured `port.base` + `port.range` window before spawning the script. It picks the first port that is either already owned by this worktree (so the existing process can be adopted) or completely free, injects it into the child via `CC_ASSIGNED_PORT`/`PORT`/your optional `port.env` alias, and waits for TCP readiness on that port. No shell helpers are required and CC never claims a port whose ownership cannot be verified.
+### Writing Entries
 
-**`stdout-cc-port` (legacy).** The dev server script is responsible for the scan and prints `CC_PORT=<n>` once it has chosen a port. The preset installer ships shell helpers under `.cc/dev-servers/_helpers.sh` that do this:
-
-1. **Pass 1 — adopt an externally started server.** Scan the entire range for a listener whose process working directory is inside the session's worktree. If one is found, print its port and exit without starting a new server. Owned ports are preferred over free ones.
-2. **Pass 2 — start on the lowest free port.** If no owned server exists in the range, pick the first port that has no listener at all. Ports with listeners owned by other worktrees, or whose ownership cannot be determined, are skipped.
-3. **Error if exhausted.** If every port in the range is occupied by someone else (or has an unverifiable owner), the script exits non-zero with a diagnostic line on stderr.
-
-The two strategies are interchangeable — pick `cc-assigned` for new projects to avoid the helper script, keep `stdout-cc-port` if you already have working scripts that print `CC_PORT`.
-
-### Using Presets vs Custom Configs
-
-**Presets** (recommended for common frameworks): Command Center can install configuration for Next.js and Storybook via the session UI. The current preset emits a `cc-assigned` entry directly in `CommandCenter.json` — no shell script is written. The framework command is invoked with `$CC_ASSIGNED_PORT` already in the environment.
+For common frameworks, reference `$CC_ASSIGNED_PORT` directly in the command and let CC manage the scan + readiness:
 
 ```json
 {
   "devServers": [
-    {
-      "name": "nextjs",
-      "command": "npx next dev --port $CC_ASSIGNED_PORT",
-      "port": { "strategy": "cc-assigned", "base": 3000, "range": 100 },
-      "readiness": { "type": "tcp", "timeoutMs": 60000 }
-    }
+    { "name": "nextjs",    "command": "npx next dev --port $CC_ASSIGNED_PORT",            "port": { "base": 3000, "range": 100 } },
+    { "name": "storybook", "command": "npx storybook dev --port $CC_ASSIGNED_PORT --no-open", "port": { "base": 6006, "range": 100 } }
   ]
 }
 ```
 
-**Custom servers**: For other frameworks just reference `$CC_ASSIGNED_PORT` in your command and let CC manage the scan + readiness:
+**Custom servers** work the same way — reference `$CC_ASSIGNED_PORT` in your command:
 
 ```json
 {
@@ -401,23 +349,13 @@ The two strategies are interchangeable — pick `cc-assigned` for new projects t
     {
       "name": "api",
       "command": "node server.js --port $CC_ASSIGNED_PORT",
-      "port": { "strategy": "cc-assigned", "base": 8080, "range": 50 }
+      "port": { "base": 8080, "range": 50 }
     }
   ]
 }
 ```
 
-If you prefer to keep a shell script (e.g. you already have one that prints `CC_PORT`), omit the `port` block entirely — CC will fall back to the legacy `stdout-cc-port` strategy and read the port from stdout.
-
-#### Legacy Helper Scripts
-
-Older preset installs wrote `.cc/dev-servers/_helpers.sh` plus per-framework wrappers (`nextjs.sh`, `storybook.sh`) that performed the two-pass scan themselves. These remain supported via the `stdout-cc-port` strategy. The helper functions are:
-
-- `check_port <port> <expected_cwd>` — classifies a single port (exit `0` available, `1` owned, `2` conflict)
-- `find_owned_port <base> <expected_cwd>` — scans the range for an already-owned listener
-- `find_available_port <base> <expected_cwd>` — scans the range for the first port with no listener at all
-
-If you migrate an existing project to `cc-assigned`, you can delete the helper scripts; nothing else in the system depends on them.
+Frameworks that read only `PORT` can omit the flag, since CC also exports `PORT` with the assigned port.
 
 ---
 
@@ -450,13 +388,12 @@ A project using all features:
     {
       "name": "nextjs",
       "command": "npx next dev --port $CC_ASSIGNED_PORT",
-      "port": { "strategy": "cc-assigned", "base": 3000, "range": 100 },
-      "readiness": { "type": "tcp", "timeoutMs": 60000 }
+      "port": { "base": 3000, "range": 100 }
     },
     {
       "name": "storybook",
       "command": "npx storybook dev --port $CC_ASSIGNED_PORT --no-open",
-      "port": { "strategy": "cc-assigned", "base": 6006, "range": 50 }
+      "port": { "base": 6006, "range": 100 }
     }
   ]
 }

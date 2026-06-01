@@ -20,7 +20,7 @@ Add or update `devServers` entries in `CommandCenter.json` so Command Center can
 
 Do NOT write any files until the user explicitly approves.
 
-CC owns port assignment — every entry uses the `cc-assigned` strategy. CC scans a port range, picks an owned-or-free port, injects it via `$CC_ASSIGNED_PORT` (and `$PORT`), and waits for TCP readiness. No shell helper scripts are required.
+CC owns port assignment. CC scans a port range, picks an owned-or-free port, injects it via `$CC_ASSIGNED_PORT` (and `$PORT`), and waits for TCP readiness. No shell helper scripts are required.
 
 ## Step 1: Detect Frameworks
 
@@ -80,7 +80,7 @@ Show the full draft array in a fenced JSON block. Each entry uses:
 {
   "name": "<unique-id>",
   "command": "<command using $CC_ASSIGNED_PORT>",
-  "port": { "strategy": "cc-assigned", "base": <base-port>, "range": 100 }
+  "port": { "base": <base-port>, "range": 100 }
 }
 ```
 
@@ -109,7 +109,7 @@ After approval:
 2. If it exists, merge the new `devServers` entries into the existing object, preserving every other field.
 3. Write the file using the Write tool.
 
-No shell scripts are written — `cc-assigned` does not need any helper files.
+No shell scripts are written — CC-assigned ports do not need any helper files.
 
 ## Step 6: Verify
 
@@ -123,8 +123,4 @@ After writing:
 
 **Custom server with no framework:** Ask the user for the command and a base port. Default `range` is `100`. If the server only reads `PORT` (no flag), the command can omit the flag — CC always exports `PORT=$CC_ASSIGNED_PORT`.
 
-**Framework that auto-picks its port and cannot accept a flag:** `cc-assigned` requires the framework to honor either `$CC_ASSIGNED_PORT` (via a flag or alias) or `$PORT` (via env). If the framework does neither, surface this as a blocker — CC no longer supports stdout-based port discovery. Suggest opening an upstream issue or wrapping the framework with a small launcher that respects `$PORT`.
-
-**Existing entries using a legacy `stdout-cc-port` strategy:** This strategy has been removed from Command Center. If you find such entries in an existing `CommandCenter.json`, propose rewriting them as `cc-assigned` entries. Surface the change explicitly so the user can confirm; do not silently migrate.
-
-**Existing `.cc/dev-servers/*.sh` scripts:** These are legacy artifacts from the removed `stdout-cc-port` strategy. Once the new `cc-assigned` entries are in place, the scripts are no longer used. Offer to delete them in a follow-up step (do not delete without confirmation — they may contain custom logic worth preserving).
+**Framework that auto-picks its port and cannot accept a flag:** CC requires the framework to honor either `$CC_ASSIGNED_PORT` (via a flag or alias) or `$PORT` (via env). If the framework does neither, surface this as a blocker. Suggest opening an upstream issue or wrapping the framework with a small launcher that respects `$PORT`.

@@ -1,6 +1,6 @@
 # Dev Server Reference
 
-CC manages every dev server with the `cc-assigned` port strategy: CC scans the configured port range, picks an owned-or-free port, injects it into the child process via `CC_ASSIGNED_PORT`, `PORT`, and any user-defined alias, and waits for TCP readiness on that port. **No shell helper scripts are required.**
+CC owns port assignment for every dev server: CC scans the configured port range, picks an owned-or-free port, injects it into the child process via `CC_ASSIGNED_PORT`, `PORT`, and any user-defined alias, and waits for TCP readiness on that port. **No shell helper scripts are required.**
 
 ## `CommandCenter.json` entries
 
@@ -10,13 +10,12 @@ CC manages every dev server with the `cc-assigned` port strategy: CC scans the c
     {
       "name": "nextjs",
       "command": "npx next dev --port $CC_ASSIGNED_PORT",
-      "port": { "strategy": "cc-assigned", "base": 3000, "range": 100 },
-      "readiness": { "type": "tcp", "timeoutMs": 60000 }
+      "port": { "base": 3000, "range": 100 }
     },
     {
       "name": "storybook",
       "command": "npx storybook dev --port $CC_ASSIGNED_PORT --no-open",
-      "port": { "strategy": "cc-assigned", "base": 6006, "range": 50 }
+      "port": { "base": 6006, "range": 100 }
     }
   ]
 }
@@ -24,13 +23,12 @@ CC manages every dev server with the `cc-assigned` port strategy: CC scans the c
 
 | Field | Default | Notes |
 |---|---|---|
-| `port.strategy` | `"cc-assigned"` | The only supported strategy. |
 | `port.base` | required | First port in the scan window. |
 | `port.range` | `100` | Number of ports to scan upward from `base`. |
 | `port.env` | none | Optional extra env var name to set to the assigned port. |
-| `readiness.type` | `"tcp"` | The only supported readiness type. |
-| `readiness.timeoutMs` | `60000` | Hard timeout before transitioning to `error`. |
 | `cwd` | the worktree root | Optional subdirectory (e.g. `apps/web`). |
+
+Readiness is always a TCP connect on the assigned port, with a fixed 60s timeout (not configurable).
 
 ## Subdirectory variant (monorepos)
 
@@ -43,7 +41,7 @@ Set `cwd` to the subdirectory relative to the worktree. CC will spawn the comman
       "name": "nextjs",
       "command": "npx next dev --port $CC_ASSIGNED_PORT",
       "cwd": "apps/web",
-      "port": { "strategy": "cc-assigned", "base": 3000, "range": 100 }
+      "port": { "base": 3000, "range": 100 }
     }
   ]
 }
@@ -59,7 +57,7 @@ Any framework that accepts a port flag works the same way — just reference `$C
     {
       "name": "api",
       "command": "node server.js --port $CC_ASSIGNED_PORT",
-      "port": { "strategy": "cc-assigned", "base": 8080, "range": 50 }
+      "port": { "base": 8080, "range": 50 }
     }
   ]
 }
@@ -70,7 +68,7 @@ If your framework only reads `PORT`, you can omit the flag — CC always exports
 ```json
 {
   "command": "node server.js",
-  "port": { "strategy": "cc-assigned", "base": 8080, "range": 50 }
+  "port": { "base": 8080, "range": 50 }
 }
 ```
 
@@ -81,7 +79,7 @@ If your framework only reads `PORT`, you can omit the flag — CC always exports
   → CC scans [base, base+range) and picks an owned-or-free port
   → "starting" — env injected (CC_ASSIGNED_PORT, PORT, alias), command spawned in cwd
   → CC polls TCP loopback on the assigned port
-  → port accepting connections within readiness.timeoutMs → "running"
+  → port accepting connections within the 60s readiness timeout → "running"
   → timeout → "error" (process killed, last 10 output lines surfaced)
   → liveness check loses the port → "stopped"
 ```

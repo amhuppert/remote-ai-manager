@@ -233,6 +233,31 @@ function logAndThrowValidationFailure(
   });
 }
 
+/**
+ * Loud-log a forward-incompatible / corrupt *nullable* workflow column and let
+ * the caller substitute the column's null/default. A feature branch that
+ * extends a persisted enum (e.g. a new graph-workflow halt-reason variant) and
+ * writes into the shared database leaves rows the current schema cannot parse;
+ * hard-throwing here would take down every full-state read (readState,
+ * mutateState, getSession) for one bad row. Degrading the offending column
+ * in-memory keeps the rest of the session — and the app — usable, while the
+ * error log preserves the full diagnostic. The on-disk value is left intact, so
+ * a schema that understands the value will parse it on a later read.
+ */
+function logColumnQuarantine(
+  projectPath: string,
+  sessionName: string,
+  column: string,
+  issues: unknown,
+): void {
+  logger.error("state-store.sessions.column_quarantined", {
+    projectPath,
+    sessionName,
+    column,
+    issues,
+  });
+}
+
 const opaqueRecordSchema = z.record(z.string(), z.unknown());
 const graphWorkflowExecutionHistoryArraySchema = z.array(
   graphWorkflowExecutionSchema,
@@ -371,15 +396,23 @@ function rowToDomain(rawRow: unknown): {
     );
   }
 
+  let graphWorkflowExecution: GraphWorkflowExecution | null = null;
+  let graphWorkflowExecutionMigration: GraphWorkflowExecutionMigration | null =
+    null;
   const gwExec = loadGraphWorkflowExecutionColumn(row.graph_workflow_execution);
-  if (!gwExec.ok) {
-    return logAndThrowValidationFailure(
+  if (gwExec.ok) {
+    graphWorkflowExecution = gwExec.value;
+    graphWorkflowExecutionMigration = gwExec.migration;
+  } else {
+    logColumnQuarantine(
       row.project_path,
       row.session_name,
+      "graphWorkflowExecution",
       gwExec.issues,
     );
   }
 
+  let graphWorkflowExecutionHistory: GraphWorkflowExecution[] = [];
   const gwHistory = parseJsonColumn(
     "graphWorkflowExecutionHistory",
     row.graph_workflow_execution_history,
@@ -387,66 +420,87 @@ function rowToDomain(rawRow: unknown): {
     "default",
     [],
   );
-  if (!gwHistory.ok) {
-    return logAndThrowValidationFailure(
+  if (gwHistory.ok) {
+    graphWorkflowExecutionHistory = gwHistory.value ?? [];
+  } else {
+    logColumnQuarantine(
       row.project_path,
       row.session_name,
+      "graphWorkflowExecutionHistory",
       gwHistory.issues,
     );
   }
 
+  let workflowEnvelopes: z.infer<typeof opaqueRecordSchema> | undefined;
   const envelopes = parseJsonColumn(
     "workflowEnvelopes",
     row.workflow_envelopes,
     opaqueRecordSchema,
     "absent",
   );
-  if (!envelopes.ok) {
-    return logAndThrowValidationFailure(
+  if (envelopes.ok) {
+    workflowEnvelopes = envelopes.value;
+  } else {
+    logColumnQuarantine(
       row.project_path,
       row.session_name,
+      "workflowEnvelopes",
       envelopes.issues,
     );
   }
 
+  let workflowLanes: z.infer<typeof opaqueRecordSchema> | undefined;
   const lanes = parseJsonColumn(
     "workflowLanes",
     row.workflow_lanes,
     opaqueRecordSchema,
     "absent",
   );
-  if (!lanes.ok) {
-    return logAndThrowValidationFailure(
+  if (lanes.ok) {
+    workflowLanes = lanes.value;
+  } else {
+    logColumnQuarantine(
       row.project_path,
       row.session_name,
+      "workflowLanes",
       lanes.issues,
     );
   }
 
+  let mcpOverrides: z.infer<typeof mcpOverridesSchema> | undefined;
   const mcp = parseJsonColumn(
     "mcpOverrides",
     row.mcp_overrides,
     mcpOverridesSchema,
     "absent",
   );
-  if (!mcp.ok) {
-    return logAndThrowValidationFailure(
+  if (mcp.ok) {
+    mcpOverrides = mcp.value;
+  } else {
+    logColumnQuarantine(
       row.project_path,
       row.session_name,
+      "mcpOverrides",
       mcp.issues,
     );
   }
 
+  let agentCapabilityOverrides:
+    | z.infer<typeof agentCapabilityOverridesSchema>
+    | undefined;
   const agentCaps = parseJsonColumn(
     "agentCapabilityOverrides",
     row.agent_capability_overrides,
     agentCapabilityOverridesSchema,
     "absent",
   );
-  if (!agentCaps.ok) {
-    return logAndThrowValidationFailure(
+  if (agentCaps.ok) {
+    agentCapabilityOverrides = agentCaps.value;
+  } else {
+    logColumnQuarantine(
       row.project_path,
       row.session_name,
+      "agentCapabilityOverrides",
       agentCaps.issues,
     );
   }
@@ -465,17 +519,17 @@ function rowToDomain(rawRow: unknown): {
     tddEnabled: row.tdd_enabled === 1,
     targetBranch: row.target_branch,
     parentSessionName: row.parent_session_name,
-    graphWorkflowExecution: gwExec.value ?? null,
-    graphWorkflowExecutionHistory: gwHistory.value ?? [],
+    graphWorkflowExecution,
+    graphWorkflowExecutionHistory,
     conversations: [],
     referenceDocuments: [],
   };
-  if (envelopes.value !== undefined)
-    candidate.workflowEnvelopes = envelopes.value;
-  if (lanes.value !== undefined) candidate.workflowLanes = lanes.value;
-  if (mcp.value !== undefined) candidate.mcpOverrides = mcp.value;
-  if (agentCaps.value !== undefined) {
-    candidate.agentCapabilityOverrides = agentCaps.value;
+  if (workflowEnvelopes !== undefined)
+    candidate.workflowEnvelopes = workflowEnvelopes;
+  if (workflowLanes !== undefined) candidate.workflowLanes = workflowLanes;
+  if (mcpOverrides !== undefined) candidate.mcpOverrides = mcpOverrides;
+  if (agentCapabilityOverrides !== undefined) {
+    candidate.agentCapabilityOverrides = agentCapabilityOverrides;
   }
 
   const result = sessionStateSchema.safeParse(candidate);
@@ -489,7 +543,7 @@ function rowToDomain(rawRow: unknown): {
   return {
     projectPath: row.project_path,
     session: result.data,
-    graphWorkflowExecutionMigration: gwExec.migration,
+    graphWorkflowExecutionMigration,
   };
 }
 

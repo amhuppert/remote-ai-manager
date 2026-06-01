@@ -4,11 +4,13 @@
   "devServers": [
     {
       "name": "nextjs",
-      "command": ".cc/dev-servers/nextjs.sh"
+      "command": "bun run dev",
+      "port": { "base": 3000, "range": 100 }
     },
     {
       "name": "storybook",
-      "command": ".cc/dev-servers/storybook.sh"
+      "command": "npx storybook dev --port $CC_ASSIGNED_PORT --no-open",
+      "port": { "base": 6006, "range": 100 }
     }
   ]
 }

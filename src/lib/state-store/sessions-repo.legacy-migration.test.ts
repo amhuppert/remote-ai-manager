@@ -24,7 +24,6 @@ vi.mock("@/lib/logging", () => ({
 import type Database from "better-sqlite3";
 import { _createTestDb } from "./state-db";
 import { createSessionsRepo, type SessionsRepo } from "./sessions-repo";
-import { PersistenceError } from "../shared/errors";
 import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 type Db = InstanceType<typeof Database>;
 
@@ -247,7 +246,7 @@ describe("sessions-repo graph-workflow legacy migration on load", () => {
     );
   });
 
-  it("(c) malformed record (post-migration parse fails) preserves the original on disk and raises a typed load error", () => {
+  it("(c) malformed record (post-migration parse fails) degrades the column to null in memory, loud-logs, and preserves the original on disk", () => {
     const malformed = JSON.stringify({
       id: "exec-bad-1",
       seedDefinitionId: "seed-1",
@@ -261,9 +260,20 @@ describe("sessions-repo graph-workflow legacy migration on load", () => {
     });
     rawInsertSession(malformed);
 
-    expect(() => repo.findByKey(PROJECT_PATH, SESSION_NAME)).toThrow(
-      PersistenceError,
+    const out = repo.findByKey(PROJECT_PATH, SESSION_NAME);
+    expect(out).not.toBeNull();
+    expect(out?.graphWorkflowExecution).toBeNull();
+
+    const quarantineLogs = capturedLogs.filter(
+      (e) =>
+        e.level === "error" &&
+        e.message === "state-store.sessions.column_quarantined",
     );
+    expect(quarantineLogs).toHaveLength(1);
+    expect(quarantineLogs[0]?.data).toMatchObject({
+      column: "graphWorkflowExecution",
+    });
+
     const onDisk = readGraphWorkflowExecutionColumn();
     expect(onDisk).toBe(malformed);
   });

@@ -4,14 +4,14 @@ Per-project config at repo root. Optional — all fields nullable. Read on deman
 
 ## Key files
 
-- `src/lib/schemas.ts` — `perRepoConfigSchema` (Zod): `initScriptPath`, `preMergeCommand`, `devServers`
-- `src/lib/repo-config.ts` — `readRepoConfig()`, `runPreMergeValidation()`
-- `src/lib/sessions.ts` — init script execution lives **in `createSession()`**, not in `repo-config.ts`
+- `src/lib/config/schemas.ts` — `perRepoConfigSchema` (Zod): `initScriptPath`, `preMergeCommand`, `devServers`
+- `src/lib/projects/repo-config.ts` — `readRepoConfig()`, `runPreMergeValidation()`
+- `src/lib/sessions/service.ts` — init script execution lives **in `createSession()`**, not in `repo-config.ts`
 - `src/lib/workflow-graph/parallel-worktrees.ts` — `provision()` runs the same init script after each graph-workflow parallel-context worktree is created
-- `src/lib/dev-server-registry.ts` — spawn/stop/liveness, `CC_PORT` protocol
-- `src/lib/dev-server-presets.ts` — script generation, `installPreset()`
-- `src/lib/dev-server-liveness.ts` — liveness polling
-- `src/lib/child-env.ts` — `buildChildEnv()` strips `NODE_ENV`, `__NEXT_*`, `__TURBOPACK_*`
+- `src/lib/dev-server/registry.ts` — spawn/stop, CC-assigned port injection (`CC_ASSIGNED_PORT`/`PORT`)
+- `src/lib/dev-server/port-selection.ts` — port scan + ownership (`selectPort`)
+- `src/lib/dev-server/liveness.ts` — liveness polling
+- `src/lib/shared/child-env.ts` — `buildChildEnv()` strips `NODE_ENV`, `__NEXT_*`, `__TURBOPACK_*`
 - `docs/project-configuration.md` — user-facing docs
 
 ## Three features
@@ -38,12 +38,12 @@ Shared:
 
 ### `devServers` — Dev server declarations
 
-- Array of `{ name, command }` — UI-started, not auto-started
+- Array of `{ name, command, port: { base, range? }, cwd? }` — UI-started, not auto-started. `port` is required.
 - Spawned with `shell: true` (unlike init/pre-merge)
-- **`CC_PORT=<port>` stdout protocol** — script must print within 60s (`STARTUP_TIMEOUT_MS` in `dev-server-registry.ts`)
-- Liveness polling every 5s after port detected
-- Remote URL via Tailscale Serve or LAN IP (`dev-server-registry.ts`)
-- Presets install to `.cc/dev-servers/` and update `CommandCenter.json`
+- **CC owns port assignment.** CC scans `port.base`‥`port.base + port.range − 1` (`range` default 100), picks the first port already owned by this worktree (adopt) or free, and injects it as `CC_ASSIGNED_PORT` and `PORT` (plus any optional `port.env` alias). The `command` references `$CC_ASSIGNED_PORT`/`$PORT` directly — there is no `CC_PORT` stdout protocol and no helper scripts.
+- Readiness = TCP connect on the assigned port; 60s timeout (`READINESS_TIMEOUT_MS` in `dev-server/config.ts`) → `error`
+- Liveness polling every 5s once the server is listening
+- Remote URL via Tailscale Serve or LAN IP (`dev-server/registry.ts`)
 
 ## Env var differences
 
@@ -63,7 +63,7 @@ Shared:
 
 ## Navigation
 
-- Init logic: search `initScriptPath` in `sessions.ts` and `workflow-graph/parallel-worktrees.ts` (not `repo-config.ts`)
-- Pre-merge logic: `repo-config.ts` is the single module
-- Dev server lifecycle: `dev-server-registry.ts` (core), `dev-server-presets.ts` (install), `dev-server-liveness.ts` (polling)
-- Timeouts: init = none (script self-bounds), pre-merge = `config.ts` (`preMergeTimeoutMs`), dev server = `STARTUP_TIMEOUT_MS` in `dev-server-registry.ts`
+- Init logic: search `initScriptPath` in `sessions/service.ts` and `workflow-graph/parallel-worktrees.ts` (not `repo-config.ts`)
+- Pre-merge logic: `projects/repo-config.ts` is the single module
+- Dev server lifecycle: `dev-server/registry.ts` (spawn/stop), `dev-server/port-selection.ts` (port scan/ownership), `dev-server/liveness.ts` (polling)
+- Timeouts: init = none (script self-bounds), pre-merge = `config/` (`preMergeTimeoutMs`), dev server readiness = `READINESS_TIMEOUT_MS` in `dev-server/config.ts`

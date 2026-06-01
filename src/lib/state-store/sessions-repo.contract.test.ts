@@ -455,3 +455,85 @@ describe("canonicalSessionRow", () => {
     );
   });
 });
+
+describe("rowToDomain quarantine: forward-incompatible workflow columns degrade in-memory", () => {
+  const REQUIRED_COLUMNS =
+    `(project_path, session_name, worktree_path, branch_name,
+      created_at, last_activity_at` as const;
+
+  /**
+   * A graph_workflow_execution payload that is structurally a valid execution
+   * but carries a halt reason whose discriminator the current schema does not
+   * recognise — the exact shape a feature branch writes when it extends the
+   * halt-reason union and persists into the shared database.
+   */
+  const execWithUnknownHaltReason = JSON.stringify({
+    id: "wf-bad",
+    seedDefinitionId: "seed",
+    seedDefinitionRevision: 1,
+    workingDefinition: {},
+    status: "halted",
+    startedAt: "2026-01-01T00:00:00Z",
+    haltReason: { type: "collaboration_failure", contextId: "ctx-1" },
+  });
+
+  function insertRaw(
+    sessionName: string,
+    columns: string,
+    placeholders: string,
+    values: unknown[],
+  ): void {
+    db.prepare(
+      `INSERT INTO sessions ${REQUIRED_COLUMNS}, ${columns})
+       VALUES (?, ?, ?, ?, ?, ?, ${placeholders})`,
+    ).run(
+      PROJECT_PATH,
+      sessionName,
+      `/wt/${sessionName}`,
+      `csm/${sessionName}`,
+      "2026-01-01T00:00:00Z",
+      "2026-02-01T00:00:00Z",
+      ...values,
+    );
+  }
+
+  it("findByKey returns the session with graphWorkflowExecution nulled instead of throwing", () => {
+    insertRaw("bad-exec", "graph_workflow_execution", "?", [
+      execWithUnknownHaltReason,
+    ]);
+
+    const out = repo.findByKey(PROJECT_PATH, "bad-exec");
+    expect(out).not.toBeNull();
+    expect(out?.sessionName).toBe("bad-exec");
+    expect(out?.graphWorkflowExecution).toBeNull();
+  });
+
+  it("findAll does not throw and includes the degraded session alongside healthy ones", () => {
+    insertRaw("bad-exec", "graph_workflow_execution", "?", [
+      execWithUnknownHaltReason,
+    ]);
+    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "healthy" }));
+
+    const all = repo.findAll();
+    const names = all.map((r) => r.session.sessionName).sort();
+    expect(names).toEqual(["bad-exec", "healthy"]);
+    const bad = all.find((r) => r.session.sessionName === "bad-exec");
+    expect(bad?.session.graphWorkflowExecution).toBeNull();
+  });
+
+  it("degrades an unparseable graph_workflow_execution_history to an empty array", () => {
+    insertRaw("bad-history", "graph_workflow_execution_history", "?", [
+      `[${execWithUnknownHaltReason}]`,
+    ]);
+
+    const out = repo.findByKey(PROJECT_PATH, "bad-history");
+    expect(out).not.toBeNull();
+    expect(out?.graphWorkflowExecutionHistory).toEqual([]);
+  });
+
+  it("still throws (fail-loud) when a core scalar column is unparseable", () => {
+    insertRaw("bad-source", "source", "?", ["not-a-valid-source"]);
+
+    expect(() => repo.findByKey(PROJECT_PATH, "bad-source")).toThrow();
+  });
+});
