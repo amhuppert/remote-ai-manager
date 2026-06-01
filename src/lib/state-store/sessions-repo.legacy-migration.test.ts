@@ -79,6 +79,8 @@ function buildLegacyExecutionJson(
     completedAt: null,
     haltReason: null,
     pendingHaltReason: null,
+    pendingCollaborations: {},
+    collaborationContinuations: {},
     ...overrides,
   };
   return JSON.stringify(exec);
@@ -111,6 +113,8 @@ function buildCleanExecutionJson(): string {
     haltReason: null,
     pendingHaltReason: null,
     secondaryHaltReasons: [],
+    pendingCollaborations: {},
+    collaborationContinuations: {},
     pendingMergeRetry: [],
   };
   return JSON.stringify(exec);

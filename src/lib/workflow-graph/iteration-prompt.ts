@@ -1,4 +1,5 @@
 import type {
+  GraphWorkflowCollaborationContinuation,
   GraphWorkflowResolvedContext,
   GraphWorkflowSharedDocumentEntry,
   GraphWorkflowTaskDefinition,
@@ -28,6 +29,7 @@ export interface BuildIterationPromptInput {
   allowAgentTaskAdd: boolean;
   contextValidationAcceptanceCriteria?: string;
   latestContextValidationFailure?: LatestContextValidationFailureFeedback;
+  collaborationContinuations?: GraphWorkflowCollaborationContinuation[];
 }
 
 function buildTaskLines(
@@ -113,6 +115,43 @@ function buildLatestContextValidationFailureSection(
   return sections.join("\n").trimEnd();
 }
 
+function buildCollaborationContinuationSection(
+  collaborationContinuations?: GraphWorkflowCollaborationContinuation[],
+): string | null {
+  if (!collaborationContinuations || collaborationContinuations.length === 0) {
+    return null;
+  }
+
+  const sections = [
+    "## Collaboration Results",
+    "Use these collaboration outcomes while continuing the remaining tasks.",
+  ];
+
+  for (const continuation of collaborationContinuations) {
+    sections.push(
+      "",
+      `### ${continuation.workflowId}`,
+      `Brief: ${continuation.brief}`,
+      `Status: ${continuation.result.status}`,
+    );
+    if (continuation.result.finalAnswer) {
+      sections.push("", continuation.result.finalAnswer);
+    }
+    if (continuation.result.openConflicts.length > 0) {
+      sections.push(
+        "",
+        "Open Conflicts:",
+        ...continuation.result.openConflicts.map(
+          (conflict) =>
+            `- ${conflict.severity}/${conflict.category}: ${conflict.disputedPoint}`,
+        ),
+      );
+    }
+  }
+
+  return sections.join("\n").trimEnd();
+}
+
 export function buildIterationPrompt(input: BuildIterationPromptInput): string {
   const sections: string[] = [];
 
@@ -138,6 +177,12 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
     );
   if (latestContextValidationFailureSection) {
     sections.push(latestContextValidationFailureSection);
+  }
+
+  const collaborationContinuationSection =
+    buildCollaborationContinuationSection(input.collaborationContinuations);
+  if (collaborationContinuationSection) {
+    sections.push(collaborationContinuationSection);
   }
 
   // Task list with failure feedback inline
@@ -224,6 +269,7 @@ export interface BuildFollowUpPromptInput {
   attemptNumber: number;
   maxAttempts: number;
   latestContextValidationFailure?: LatestContextValidationFailureFeedback;
+  collaborationContinuations?: GraphWorkflowCollaborationContinuation[];
 }
 
 export function buildFollowUpPrompt(input: BuildFollowUpPromptInput): string {
@@ -238,6 +284,12 @@ export function buildFollowUpPrompt(input: BuildFollowUpPromptInput): string {
     );
   if (latestContextValidationFailureSection) {
     sections.push(latestContextValidationFailureSection);
+  }
+
+  const collaborationContinuationSection =
+    buildCollaborationContinuationSection(input.collaborationContinuations);
+  if (collaborationContinuationSection) {
+    sections.push(collaborationContinuationSection);
   }
 
   sections.push(

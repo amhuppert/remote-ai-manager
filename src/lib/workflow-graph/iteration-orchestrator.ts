@@ -4,6 +4,7 @@ import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
+  GraphWorkflowCollaborationContinuation,
   GraphWorkflowExecution,
   GraphWorkflowResolvedContext,
   GraphWorkflowHaltReason,
@@ -224,6 +225,15 @@ function cloneExecution(
 
 function getNow(deps: GraphWorkflowIterationOrchestratorDeps): string {
   return deps.now?.() ?? new Date().toISOString();
+}
+
+function getUndeliveredCollaborationContinuations(
+  execution: GraphWorkflowExecution,
+  contextId: string,
+): GraphWorkflowCollaborationContinuation[] {
+  return (execution.collaborationContinuations?.[contextId] ?? []).filter(
+    (continuation) => continuation.deliveredAt === null,
+  );
 }
 
 function buildMachineSnapshot(
@@ -1382,6 +1392,47 @@ export function createGraphWorkflowIterationOrchestrator(
         `Execution context "${input.contextId}" does not exist in runtime state`,
       );
     }
+    const collaborationContinuations = getUndeliveredCollaborationContinuations(
+      seededExecution,
+      input.contextId,
+    );
+    const collaborationContinuationWorkflowIds = collaborationContinuations.map(
+      (continuation) => continuation.workflowId,
+    );
+
+    async function markCollaborationContinuationsDelivered(): Promise<void> {
+      if (collaborationContinuationWorkflowIds.length === 0) {
+        return;
+      }
+      const deliveredAt = getNow(deps);
+      await deps.executionRepository.mutateActive(
+        input.projectPath,
+        input.sessionName,
+        (latest) => {
+          const next = cloneExecution(latest);
+          const continuations =
+            next.collaborationContinuations?.[input.contextId] ?? [];
+          next.collaborationContinuations ??= {};
+          const workflowIdSet = new Set(collaborationContinuationWorkflowIds);
+          next.collaborationContinuations[input.contextId] = continuations.map(
+            (continuation) =>
+              workflowIdSet.has(continuation.workflowId) &&
+              continuation.deliveredAt === null
+                ? { ...continuation, deliveredAt }
+                : continuation,
+          );
+          return next;
+        },
+      );
+      execLogger?.iteration(input.contextId, "collaboration.delivered", {
+        workflowIds: collaborationContinuationWorkflowIds,
+      });
+      logger.info("graph-workflow.collaboration.delivered", {
+        executionId: seededExecution.id,
+        contextId: input.contextId,
+        workflowIds: collaborationContinuationWorkflowIds,
+      });
+    }
 
     // Pre-declare toolServer so haltIteration can close it before toolServer is assigned below.
     // eslint-disable-next-line prefer-const
@@ -1556,6 +1607,7 @@ export function createGraphWorkflowIterationOrchestrator(
               attemptNumber: 1,
               maxAttempts: MAX_FOLLOW_UPS,
               latestContextValidationFailure,
+              collaborationContinuations,
             })
           : buildIterationPrompt({
               context,
@@ -1569,6 +1621,7 @@ export function createGraphWorkflowIterationOrchestrator(
                   ? context.acceptanceCriteria
                   : undefined,
               latestContextValidationFailure,
+              collaborationContinuations,
             });
 
       // Log the prompt sent to the agent
@@ -1595,12 +1648,12 @@ export function createGraphWorkflowIterationOrchestrator(
       //
       //   1. Within a turn the MCP transport serializes sibling tool_use
       //      blocks one request at a time. Each wrapped handler checks
-      //      `pendingHaltReason` BEFORE doing real work; if set it returns a
-      //      synthetic isError `tool_result` whose text is exactly
-      //      `buildHaltMessage(reason)` = `"iteration halted: <type>"`. So
-      //      every sibling tool_use in the same turn after a non-converged
-      //      `request_collaboration` already has a structured result attached
-      //      by the time control returns here.
+      //      `pendingHaltReason` and pending collaboration state BEFORE doing
+      //      real work. A pending halt returns the canonical
+      //      `"iteration halted: <type>"` message; a pending collaboration
+      //      returns a non-terminal tool error so sibling tool calls in the
+      //      same turn cannot mutate workflow state while the collaboration
+      //      is running.
       //
       //   2. After every agent turn the orchestrator inspects
       //      `pendingHaltReason` and, if set, terminates the iteration with
@@ -1631,10 +1684,44 @@ export function createGraphWorkflowIterationOrchestrator(
         throw new IterationHaltedError(latest.pendingHaltReason);
       }
 
+      async function hasPendingCollaboration(
+        turnLabel: "initial_turn" | "follow_up_turn",
+        attempt: number,
+      ): Promise<boolean> {
+        const latest = await loadCurrentExecution(
+          input.projectPath,
+          input.sessionName,
+        );
+        const pending = latest.pendingCollaborations?.[input.contextId];
+        if (!pending) {
+          return false;
+        }
+        execLogger?.iteration(
+          input.contextId,
+          "iteration.collaboration_pending",
+          {
+            workflowId: pending.workflowId,
+            turnLabel,
+            attempt,
+          },
+        );
+        logger.info("graph-workflow.iteration.collaboration_pending", {
+          executionId: latest.id,
+          contextId: input.contextId,
+          workflowId: pending.workflowId,
+          turnLabel,
+          attempt,
+        });
+        return true;
+      }
+
+      let stoppedForCollaboration = false;
+
       let agentResult = await deps.runAgentIteration({
         ...agentCallBase,
         prompt: initialPrompt,
       });
+      await markCollaborationContinuationsDelivered();
       await recordTurnOutcome(agentResult);
       completedTurnCount += 1;
 
@@ -1648,12 +1735,27 @@ export function createGraphWorkflowIterationOrchestrator(
       // (part 2 above). Fires immediately after the initial agent turn so the
       // orchestrator halts even when the agent does not request a follow-up.
       await checkPendingHaltOrThrow("initial_turn", 0);
+      stoppedForCollaboration = await hasPendingCollaboration(
+        "initial_turn",
+        0,
+      );
 
       // Follow-up loop: re-message if there are still incomplete tasks
-      for (let attempt = 1; attempt <= MAX_FOLLOW_UPS; attempt++) {
+      for (
+        let attempt = 1;
+        !stoppedForCollaboration && attempt <= MAX_FOLLOW_UPS;
+        attempt++
+      ) {
         // Pre-dispatch halt check before sending the next follow-up turn.
         // Pairs with `checkPendingHaltOrThrow` above for full R5.3 coverage.
         await checkPendingHaltOrThrow("follow_up_turn", attempt);
+        stoppedForCollaboration = await hasPendingCollaboration(
+          "follow_up_turn",
+          attempt,
+        );
+        if (stoppedForCollaboration) {
+          break;
+        }
 
         const midExecution = await loadCurrentExecution(
           input.projectPath,
@@ -1719,6 +1821,7 @@ export function createGraphWorkflowIterationOrchestrator(
               midExecution,
               input.contextId,
             ),
+          collaborationContinuations: [],
         });
         execLogger?.writePrompt(
           input.contextId,
@@ -1747,13 +1850,21 @@ export function createGraphWorkflowIterationOrchestrator(
             contextWindowMax: agentResult.contextWindowMax,
           },
         );
+
+        await checkPendingHaltOrThrow("follow_up_turn", attempt);
+        stoppedForCollaboration = await hasPendingCollaboration(
+          "follow_up_turn",
+          attempt,
+        );
       }
 
-      await processContextCompletionValidation({
-        input,
-        execLogger,
-        onHalt: haltIteration,
-      });
+      if (!stoppedForCollaboration) {
+        await processContextCompletionValidation({
+          input,
+          execLogger,
+          onHalt: haltIteration,
+        });
+      }
     } catch (error) {
       if (!(error instanceof IterationHaltedError)) {
         if (completedTurnCount > 0) {

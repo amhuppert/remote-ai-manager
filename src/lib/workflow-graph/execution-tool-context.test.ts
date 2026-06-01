@@ -501,7 +501,7 @@ describe("GraphWorkflowExecutionToolContext", () => {
         negotiationRounds: { value: 3, source: "global" },
         autonomousResolutionThreshold: { value: "minor", source: "global" },
       }),
-      startWorkflowCollaboration: vi.fn(),
+      triggerWorkflowCollaboration: vi.fn(),
       setPendingHaltReason: vi.fn(),
     };
     const { toolContext } = buildToolContext({});

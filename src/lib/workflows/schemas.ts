@@ -589,6 +589,30 @@ export type WorkflowCollaborationResult = z.infer<
   typeof workflowCollaborationResultSchema
 >;
 
+const graphWorkflowPendingCollaborationSchema = z.object({
+  workflowId: z.string().trim().min(1),
+  contextId: z.string().trim().min(1),
+  conversationId: z.string().trim().min(1),
+  parentImplementerTurnId: z.string().trim().min(1),
+  brief: z.string().trim().min(1),
+  startedAt: z.string().trim().min(1),
+});
+export type GraphWorkflowPendingCollaboration = z.infer<
+  typeof graphWorkflowPendingCollaborationSchema
+>;
+
+const graphWorkflowCollaborationContinuationSchema = z.object({
+  workflowId: z.string().trim().min(1),
+  brief: z.string().trim().min(1),
+  result: workflowCollaborationResultSchema,
+  roundsConsumed: z.number().int().min(0),
+  completedAt: z.string().trim().min(1),
+  deliveredAt: z.string().trim().min(1).nullable().default(null),
+});
+export type GraphWorkflowCollaborationContinuation = z.infer<
+  typeof graphWorkflowCollaborationContinuationSchema
+>;
+
 const graphWorkflowExecutionLaneIdSchema = z.string().trim().min(1);
 
 const graphWorkflowExecutionLaneKindSchema = z.enum(["session", "worktree"]);
@@ -1101,6 +1125,12 @@ export const graphWorkflowExecutionSchema = z.object({
   haltReason: graphWorkflowHaltReasonSchema.nullable().default(null),
   pendingHaltReason: graphWorkflowHaltReasonSchema.nullable().default(null),
   secondaryHaltReasons: z.array(graphWorkflowHaltReasonSchema).default([]),
+  pendingCollaborations: z
+    .record(z.string(), graphWorkflowPendingCollaborationSchema)
+    .default({}),
+  collaborationContinuations: z
+    .record(z.string(), z.array(graphWorkflowCollaborationContinuationSchema))
+    .default({}),
   pendingMergeRetry: z.array(z.string().trim().min(1)).default([]),
 });
 export type GraphWorkflowExecution = z.infer<

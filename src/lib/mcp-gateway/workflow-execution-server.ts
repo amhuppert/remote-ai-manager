@@ -15,6 +15,7 @@ import { createGraphWorkflowRuntimeEditService } from "@/lib/workflow-graph/runt
 import { createGraphWorkflowSharedDocumentRegistryService } from "@/lib/workflow-graph/shared-documents";
 import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
 import { createParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
+import { createGraphWorkflowCollaborationCoordinator } from "@/lib/workflow-graph/workflow-collaboration-coordinator";
 import { createWorkflowCollaboratorCaller } from "@/lib/workflow-graph/workflow-collaborator-caller";
 import { createGraphWorkflowManager } from "@/lib/workflow-graph/workflow-manager";
 import {
@@ -103,6 +104,10 @@ const workflowManager = createGraphWorkflowManager({
   parallelWorktrees: createParallelWorktrees(),
   getSession,
 });
+const workflowCollaborationCoordinator =
+  createGraphWorkflowCollaborationCoordinator({
+    workflowManager,
+  });
 
 const runtimeEditService = createGraphWorkflowRuntimeEditService();
 const sharedDocumentRegistry =
@@ -196,76 +201,90 @@ const defaultWorkflowExecutionMcpServerDeps: WorkflowExecutionMcpServerDeps = {
             reason,
           });
         },
-        startWorkflowCollaboration: async (args) => {
-          const projectName = path.basename(projectPath);
-          const sessionKey = `${projectPath}::${sessionName}`;
-          const laneService = createLaneService({
-            store: createSessionLaneStoreForProduction({
-              projectPath,
-              sessionName,
-            }),
-          });
-          const collabWorkflowId = randomUUID();
-          const agentCaller = createCollaborationProductionAgentCaller({
-            workflowId: collabWorkflowId,
+        triggerWorkflowCollaboration: async (args) =>
+          workflowCollaborationCoordinator.trigger({
             projectPath,
             sessionName,
-            worktreePath: executionTarget.worktreePath,
-            sessionKey,
-            originatingConversationId: args.conversationId,
-            laneService,
-          });
-          const statusBus = createStatusBus({
-            broadcast: (envelopeEvent) => {
-              const outcome = publishScopedStatusEvent({
-                scope: envelopeEvent.scope,
-                scopeId: envelopeEvent.scopeId,
-                status: envelopeEvent.status,
-                timestamp: envelopeEvent.timestamp,
-                projectName,
-                sessionName,
-                payload: envelopeEvent.payload,
+            executionId,
+            contextId,
+            conversationId: args.conversationId,
+            parentImplementerTurnId: args.parentImplementerTurnId,
+            iterationIndex: args.iterationIndex,
+            brief: args.brief,
+            resolvedConfig: args.resolvedConfig,
+            runCollaboration: async (run) => {
+              const projectName = path.basename(projectPath);
+              const sessionKey = `${projectPath}::${sessionName}`;
+              const laneService = createLaneService({
+                store: createSessionLaneStoreForProduction({
+                  projectPath,
+                  sessionName,
+                }),
               });
-              if (!outcome.delivered) {
-                logger.warn("workflow-collab.status_bus.sse_delivery_failed", {
-                  scope: envelopeEvent.scope,
-                  scopeId: envelopeEvent.scopeId,
-                  status: envelopeEvent.status,
-                });
-              }
+              const agentCaller = createCollaborationProductionAgentCaller({
+                workflowId: run.workflowId,
+                projectPath,
+                sessionName,
+                worktreePath: executionTarget.worktreePath,
+                sessionKey,
+                originatingConversationId: run.conversationId,
+                laneService,
+              });
+              const statusBus = createStatusBus({
+                broadcast: (envelopeEvent) => {
+                  const outcome = publishScopedStatusEvent({
+                    scope: envelopeEvent.scope,
+                    scopeId: envelopeEvent.scopeId,
+                    status: envelopeEvent.status,
+                    timestamp: envelopeEvent.timestamp,
+                    projectName,
+                    sessionName,
+                    payload: envelopeEvent.payload,
+                  });
+                  if (!outcome.delivered) {
+                    logger.warn(
+                      "workflow-collab.status_bus.sse_delivery_failed",
+                      {
+                        scope: envelopeEvent.scope,
+                        scopeId: envelopeEvent.scopeId,
+                        status: envelopeEvent.status,
+                      },
+                    );
+                  }
+                },
+              });
+              const envelope = createWorkflowCollaborationEnvelope({
+                envelopeStore: createSessionWorkflowEnvelopeStoreForProduction({
+                  projectPath,
+                  sessionName,
+                }),
+                policyDecide: decideCollaborationNextStep,
+                collaboratorCaller: createWorkflowCollaboratorCaller({
+                  resolvedConfig: run.resolvedConfig,
+                  worktreePath: executionTarget.worktreePath,
+                  brief: run.brief,
+                  parentImplementerTurnId: run.parentImplementerTurnId,
+                  executionContextId: run.executionContextId,
+                  conversationId: run.conversationId,
+                  workflowId: run.workflowId,
+                  sessionKey,
+                  agentCaller,
+                  laneService,
+                }),
+                statusBus,
+                appendTranscriptEntry: (conversationId, entry) =>
+                  safeAppendTranscriptEntry(
+                    conversationId,
+                    entry,
+                    undefined,
+                    undefined,
+                    { projectName, sessionName },
+                  ),
+                workflowIdFactory: () => run.workflowId,
+              });
+              return envelope.start(run);
             },
-          });
-          const envelope = createWorkflowCollaborationEnvelope({
-            envelopeStore: createSessionWorkflowEnvelopeStoreForProduction({
-              projectPath,
-              sessionName,
-            }),
-            policyDecide: decideCollaborationNextStep,
-            collaboratorCaller: createWorkflowCollaboratorCaller({
-              resolvedConfig: args.resolvedConfig,
-              worktreePath: executionTarget.worktreePath,
-              brief: args.brief,
-              parentImplementerTurnId: args.parentImplementerTurnId,
-              executionContextId: args.executionContextId,
-              conversationId: args.conversationId,
-              workflowId: collabWorkflowId,
-              sessionKey,
-              agentCaller,
-              laneService,
-            }),
-            statusBus,
-            appendTranscriptEntry: (conversationId, entry) =>
-              safeAppendTranscriptEntry(
-                conversationId,
-                entry,
-                undefined,
-                undefined,
-                { projectName, sessionName },
-              ),
-            workflowIdFactory: () => collabWorkflowId,
-          });
-          return envelope.start(args);
-        },
+          }),
       },
     );
 
@@ -287,6 +306,21 @@ const defaultWorkflowExecutionMcpServerDeps: WorkflowExecutionMcpServerDeps = {
       getPendingHaltReason: async () => {
         const freshSession = await getSession(projectPath, sessionName);
         return freshSession?.graphWorkflowExecution?.pendingHaltReason ?? null;
+      },
+      getPendingToolBlock: async () => {
+        const freshSession = await getSession(projectPath, sessionName);
+        const pending =
+          freshSession?.graphWorkflowExecution?.pendingCollaborations[
+            contextId
+          ] ?? null;
+        if (!pending) {
+          return null;
+        }
+        return {
+          type: "pending_collaboration",
+          workflowId: pending.workflowId,
+          contextId,
+        };
       },
     };
   },

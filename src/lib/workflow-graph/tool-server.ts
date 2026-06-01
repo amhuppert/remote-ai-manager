@@ -7,7 +7,6 @@ import type { SharedDocumentUpsertInput } from "@/lib/workflow-graph/shared-docu
 import type {
   GraphWorkflowHaltReason,
   ResolvedCollaborationConfig,
-  WorkflowCollaborationResult,
 } from "@/lib/workflows/schemas";
 import {
   type ExecutionLogger,
@@ -16,6 +15,7 @@ import {
 import { IterationHaltedError } from "./iteration-orchestrator";
 import {
   buildHaltMessage,
+  type GetPendingToolBlockFn,
   wrapMcpHandlerWithHaltCheck,
   type GetPendingHaltReasonFn,
 } from "./tool-dispatcher";
@@ -144,7 +144,7 @@ export interface GraphWorkflowCollaborationContextBlock {
   executionId: string;
   iterationIndex: number;
   resolveCollaborationConfig(): ResolvedCollaborationConfig;
-  startWorkflowCollaboration(args: {
+  triggerWorkflowCollaboration(args: {
     brief: string;
     resolvedConfig: ResolvedCollaborationConfig;
     parentImplementerTurnId: string;
@@ -152,10 +152,7 @@ export interface GraphWorkflowCollaborationContextBlock {
     conversationId: string;
     executionId: string;
     iterationIndex: number;
-  }): Promise<{
-    result: WorkflowCollaborationResult;
-    roundsConsumed: number;
-  }>;
+  }): Promise<{ workflowId: string }>;
   setPendingHaltReason(reason: GraphWorkflowHaltReason): Promise<void>;
 }
 
@@ -174,6 +171,7 @@ export interface GraphWorkflowToolServerContext {
    * legacy tests that don't exercise the halt contract.
    */
   getPendingHaltReason?: GetPendingHaltReasonFn;
+  getPendingToolBlock?: GetPendingToolBlockFn;
 }
 
 const COMPLETE_TASK_DESCRIPTION =
@@ -294,7 +292,7 @@ export interface RequestCollaborationHandlerContext {
   executionId: string;
   iterationIndex: number;
   resolveCollaborationConfig(): ResolvedCollaborationConfig;
-  startWorkflowCollaboration(args: {
+  triggerWorkflowCollaboration(args: {
     brief: string;
     resolvedConfig: ResolvedCollaborationConfig;
     parentImplementerTurnId: string;
@@ -302,26 +300,12 @@ export interface RequestCollaborationHandlerContext {
     conversationId: string;
     executionId: string;
     iterationIndex: number;
-  }): Promise<{
-    result: WorkflowCollaborationResult;
-    roundsConsumed: number;
-  }>;
+  }): Promise<{ workflowId: string }>;
   setPendingHaltReason(reason: GraphWorkflowHaltReason): Promise<void>;
 }
 
 export interface RequestCollaborationHandlerDeps {
   getExecutionLogger?(executionId: string): ExecutionLogger | null;
-}
-
-function buildCollaborationFailureSummary(
-  result: WorkflowCollaborationResult,
-): string {
-  if (result.status === "converged") {
-    return "collaboration converged";
-  }
-  const conflictCount = result.openConflicts.length;
-  const plural = conflictCount === 1 ? "conflict" : "conflicts";
-  return `collaboration ended with status=${result.status}; ${conflictCount} open ${plural}`;
 }
 
 export function createRequestCollaborationHandler(
@@ -365,12 +349,9 @@ export function createRequestCollaborationHandler(
       },
     );
 
-    let envelopeOutput: {
-      result: WorkflowCollaborationResult;
-      roundsConsumed: number;
-    };
+    let triggerOutput: { workflowId: string };
     try {
-      envelopeOutput = await context.startWorkflowCollaboration({
+      triggerOutput = await context.triggerWorkflowCollaboration({
         brief,
         resolvedConfig,
         parentImplementerTurnId: context.parentImplementerTurnId,
@@ -392,67 +373,42 @@ export function createRequestCollaborationHandler(
       return createToolErrorResult(getErrorMessage(error));
     }
 
-    const { result, roundsConsumed } = envelopeOutput;
+    const { workflowId } = triggerOutput;
 
     executionLogger?.task(
       context.executionContextId,
-      "collaboration.request_collaboration.completed",
+      "collaboration.request_collaboration.started",
       {
         parentImplementerTurnId: context.parentImplementerTurnId,
         conversationId: context.conversationId,
-        status: result.status,
-        roundsConsumed,
-        openConflictsSummary: result.openConflicts,
+        workflowId,
+        brief,
         resolvedConfig,
       },
     );
 
-    logger.info("graph-workflow.tool.request_collaboration.completed", {
+    logger.info("graph-workflow.tool.request_collaboration.started", {
       runId: context.executionId,
       executionContextId: context.executionContextId,
       conversationId: context.conversationId,
       parentImplementerTurnId: context.parentImplementerTurnId,
-      status: result.status,
-      roundsConsumed,
-      openConflictsSummary: result.openConflicts,
+      workflowId,
       resolvedConfig,
     });
 
-    if (result.status !== "converged") {
-      const summary = buildCollaborationFailureSummary(result);
-      const haltReason: GraphWorkflowHaltReason = {
-        type: "collaboration_failure",
-        status: result.status,
-        brief,
-        executionContextId: context.executionContextId,
-        conversationId: context.conversationId,
-        summary,
-      };
-      await context.setPendingHaltReason(haltReason);
-
-      executionLogger?.decision("collaboration.failure_halt", {
-        executionContextId: context.executionContextId,
-        conversationId: context.conversationId,
-        parentImplementerTurnId: context.parentImplementerTurnId,
-        status: result.status,
-        brief,
-        resolvedConfig,
-        openConflicts: result.openConflicts,
-      });
-    }
-
-    return createTextResult(JSON.stringify(result));
+    return createTextResult(JSON.stringify({ status: "started", workflowId }));
   };
 }
 
 const REQUEST_COLLABORATION_DESCRIPTION =
-  "Request a structured second-opinion collaboration on a design decision. Provide a focused brief that describes the question or trade-off without preferring a solution. The collaboration runs synchronously on this turn and returns a structured result; if collaborators cannot converge, this iteration will halt for human review.";
+  "Request a structured second-opinion collaboration on a design decision. Provide a focused brief that describes the question or trade-off without preferring a solution. Command Center starts the collaboration in the background and returns a workflowId immediately; stop work on this turn and wait for the workflow follow-up.";
 
 /**
  * Production wiring of the Same-Turn Tool Dispatch Contract.
  *
  * Every registered tool handler is wrapped with `wrapMcpHandlerWithHaltCheck`
- * so each handler inspects `pendingHaltReason` BEFORE invoking real work.
+ * so each handler inspects terminal halt state and pending collaboration
+ * blockers BEFORE invoking real work.
  * The SDK MCP transport serializes sibling tool_use blocks one request at a
  * time (design §Same-Turn Tool Dispatch Contract), so per-handler
  * pre-dispatch enforcement is the runtime guarantee that R5.3 holds. The
@@ -466,6 +422,7 @@ export function registerGraphWorkflowExecutionTools(
   context: GraphWorkflowToolServerContext,
 ): void {
   const haltCheck = context.getPendingHaltReason ?? (async () => null);
+  const pendingToolBlock = context.getPendingToolBlock;
 
   server.registerTool(
     "complete_task",
@@ -473,7 +430,11 @@ export function registerGraphWorkflowExecutionTools(
       description: COMPLETE_TASK_DESCRIPTION,
       inputSchema: completeTaskSchema.shape,
     },
-    wrapMcpHandlerWithHaltCheck(haltCheck, createCompleteTaskHandler(context)),
+    wrapMcpHandlerWithHaltCheck(
+      haltCheck,
+      createCompleteTaskHandler(context),
+      pendingToolBlock,
+    ),
   );
 
   server.registerTool(
@@ -485,6 +446,7 @@ export function registerGraphWorkflowExecutionTools(
     wrapMcpHandlerWithHaltCheck(
       haltCheck,
       createUpsertSharedDocumentHandler(context),
+      pendingToolBlock,
     ),
   );
 
@@ -506,9 +468,11 @@ export function registerGraphWorkflowExecutionTools(
           executionId: collaboration.executionId,
           iterationIndex: collaboration.iterationIndex,
           resolveCollaborationConfig: collaboration.resolveCollaborationConfig,
-          startWorkflowCollaboration: collaboration.startWorkflowCollaboration,
+          triggerWorkflowCollaboration:
+            collaboration.triggerWorkflowCollaboration,
           setPendingHaltReason: collaboration.setPendingHaltReason,
         }),
+        pendingToolBlock,
       ),
     );
   }
@@ -523,6 +487,10 @@ export function registerGraphWorkflowExecutionTools(
       description: ADD_TASK_DESCRIPTION,
       inputSchema: addTaskSchema.shape,
     },
-    wrapMcpHandlerWithHaltCheck(haltCheck, createAddTaskHandler(context)),
+    wrapMcpHandlerWithHaltCheck(
+      haltCheck,
+      createAddTaskHandler(context),
+      pendingToolBlock,
+    ),
   );
 }

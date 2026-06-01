@@ -1891,6 +1891,58 @@ describe("graphWorkflowExecutionSchema parallel-execution fields", () => {
     }
   });
 
+  it("defaults collaboration wait-state fields to empty maps when omitted", () => {
+    const result = graphWorkflowExecutionSchema.safeParse(minimalExecution);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.pendingCollaborations).toEqual({});
+      expect(result.data.collaborationContinuations).toEqual({});
+    }
+  });
+
+  it("round-trips pending collaboration and continuation state", () => {
+    const result = graphWorkflowExecutionSchema.safeParse({
+      ...minimalExecution,
+      pendingCollaborations: {
+        "ctx-1": {
+          workflowId: "collab-1",
+          contextId: "ctx-1",
+          conversationId: "conv-1",
+          parentImplementerTurnId: "impl-turn-1",
+          brief: "Choose the data-store strategy.",
+          startedAt: timestamp,
+        },
+      },
+      collaborationContinuations: {
+        "ctx-1": [
+          {
+            workflowId: "collab-0",
+            brief: "Choose the queue strategy.",
+            result: {
+              status: "converged",
+              finalAnswer: "Use the existing job queue.",
+              openConflicts: [],
+            },
+            roundsConsumed: 1,
+            completedAt: timestamp,
+            deliveredAt: null,
+          },
+        ],
+      },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.pendingCollaborations["ctx-1"]?.workflowId).toBe(
+        "collab-1",
+      );
+      expect(
+        result.data.collaborationContinuations["ctx-1"]?.[0]?.result
+          .finalAnswer,
+      ).toBe("Use the existing job queue.");
+    }
+  });
+
   it("parses activeContextIds as a string array", () => {
     const result = graphWorkflowExecutionSchema.safeParse({
       ...minimalExecution,

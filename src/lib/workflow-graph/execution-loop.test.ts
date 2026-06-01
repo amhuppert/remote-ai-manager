@@ -128,6 +128,8 @@ function createRunningExecution(
     haltReason: null,
     pendingHaltReason: null,
     secondaryHaltReasons: [],
+    pendingCollaborations: {},
+    collaborationContinuations: {},
     pendingMergeRetry: [],
     ...overrides,
   };
@@ -178,6 +180,7 @@ interface BuildHarnessInput {
   soloContextCommitter?: GraphWorkflowExecutionLoopDeps["soloContextCommitter"];
   laneCommitter?: GraphWorkflowExecutionLoopDeps["laneCommitter"];
   getSession?: GraphWorkflowExecutionLoopDeps["getSession"];
+  waitForCollaborationProgress?: GraphWorkflowExecutionLoopDeps["waitForCollaborationProgress"];
 }
 
 function buildHarness(input: BuildHarnessInput): LoopHarness {
@@ -362,6 +365,7 @@ function buildHarness(input: BuildHarnessInput): LoopHarness {
     executionTargetResolver,
     getSession,
     runCircuitBreakerGate: input.runCircuitBreakerGate,
+    waitForCollaborationProgress: input.waitForCollaborationProgress,
   };
 
   return {
@@ -455,6 +459,89 @@ describe("execution loop", () => {
 
     expect(result.status).toBe("completed");
     expect(result.haltReason).toBeNull();
+    expect(harness.sendSpy).toHaveBeenCalledWith("/repo", "session-1", {
+      type: "complete",
+    });
+  });
+
+  it("waits instead of completing while a collaboration is pending, then resumes the context when it clears", async () => {
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition, {
+      activeContextIds: ["ctx-1"],
+      contextStates: {
+        "ctx-1": {
+          ...createRunningExecution(definition).contextStates["ctx-1"]!,
+          status: "running",
+        },
+      },
+      pendingCollaborations: {
+        "ctx-1": {
+          workflowId: "collab-1",
+          contextId: "ctx-1",
+          conversationId: "conv-1",
+          parentImplementerTurnId: "turn-1",
+          brief: "Choose the queue.",
+          startedAt: "2026-03-27T12:01:00.000Z",
+        },
+      },
+    });
+
+    let iterationCallCount = 0;
+    const waitForCollaborationProgress = vi.fn(async () => {
+      expect(harness.sendSpy).not.toHaveBeenCalled();
+      const next = structuredClone(harness.getCurrent());
+      delete next.pendingCollaborations["ctx-1"];
+      next.contextStates["ctx-1"]!.status = "ready";
+      next.collaborationContinuations["ctx-1"] = [
+        {
+          workflowId: "collab-1",
+          brief: "Choose the queue.",
+          result: {
+            status: "converged",
+            finalAnswer: "Use the existing queue.",
+            openConflicts: [],
+          },
+          roundsConsumed: 1,
+          completedAt: "2026-03-27T12:02:00.000Z",
+          deliveredAt: null,
+        },
+      ];
+      harness.setCurrent(next);
+    });
+
+    const harness = buildHarness({
+      initialExecution: initial,
+      waitForCollaborationProgress,
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          iterationCallCount += 1;
+          const next = structuredClone(harness.getCurrent());
+          next.contextStates["ctx-1"]!.iterationCount = 2;
+          next.contextStates["ctx-1"]!.status = "completed";
+          next.contextStates["ctx-1"]!.completedTaskCount = 1;
+          next.taskStates["task-1"]!.status = "completed";
+          next.activeContextIds = [];
+          harness.setCurrent(next);
+          return {
+            conversationId: "conv-2",
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      },
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(waitForCollaborationProgress).toHaveBeenCalledTimes(1);
+    expect(iterationCallCount).toBe(1);
+    expect(result.status).toBe("completed");
     expect(harness.sendSpy).toHaveBeenCalledWith("/repo", "session-1", {
       type: "complete",
     });

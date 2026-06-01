@@ -4,21 +4,21 @@
  * Production runtime path:
  *
  *   SDK MCP transport (serializes individual tool_use requests one at a time)
- *     → `wrapMcpHandlerWithHaltCheck(getPendingHaltReason, handler)`
+ *     → `wrapMcpHandlerWithHaltCheck(getPendingHaltReason, handler, getPendingToolBlock)`
  *
  * The MCP transport already serializes each tool_use as a separate request to
  * the registered MCP handler, so the dispatch loop is in the transport layer,
- * not in this module. `wrapMcpHandlerWithHaltCheck` is what supplies the
- * pre-dispatch `pendingHaltReason` inspection at the runtime boundary where
+ * not in this module. `wrapMcpHandlerWithHaltCheck` supplies pre-dispatch
+ * halt and non-terminal blocker inspection at the runtime boundary where
  * production tool handlers are invoked — see `tool-server.ts` for every
  * registered handler being wrapped this way.
  *
  * `createTurnDispatcher` in this file is a TEST HARNESS that reproduces the
  * contract behavior in isolation: it walks a synthetic `tool_use[]` list
- * sequentially, calls `getPendingHaltReason` before each invocation, and
+ * sequentially, calls the pre-dispatch guards before each invocation, and
  * emits synthetic `tool_result` blocks for the remaining sibling tool_use
- * blocks when a halt fires mid-turn. This is what backs the "same-turn halt"
- * integration test in `tool-dispatcher.collaboration.test.ts`. It is
+ * blocks when a halt or blocker fires mid-turn. This is what backs the
+ * dispatch integration tests. It is
  * intentionally separate from the production path because the SDK gives us no
  * application-level list of tool_use blocks to walk over; the transport
  * already provides the serialization the contract asserts.
@@ -43,8 +43,17 @@ export interface ToolResultBlock {
 export type GetPendingHaltReasonFn =
   () => Promise<GraphWorkflowHaltReason | null>;
 
+export interface PendingToolBlock {
+  type: "pending_collaboration";
+  workflowId: string;
+  contextId: string;
+}
+
+export type GetPendingToolBlockFn = () => Promise<PendingToolBlock | null>;
+
 export interface TurnDispatcherDeps {
   getPendingHaltReason: GetPendingHaltReasonFn;
+  getPendingToolBlock?: GetPendingToolBlockFn;
   invokeHandler(toolUse: ToolUseBlock): Promise<ToolResultBlock>;
 }
 
@@ -63,6 +72,13 @@ export function buildHaltMessage(haltReason: GraphWorkflowHaltReason): string {
   return `iteration halted: ${haltReason.type}`;
 }
 
+export function buildPendingToolBlockMessage(block: PendingToolBlock): string {
+  if (block.type === "pending_collaboration") {
+    return `collaboration pending: ${block.workflowId}`;
+  }
+  return "tool dispatch blocked";
+}
+
 function buildSyntheticHaltResult(
   toolUseId: string,
   haltReason: GraphWorkflowHaltReason,
@@ -74,6 +90,23 @@ function buildSyntheticHaltResult(
       {
         type: "text",
         text: buildHaltMessage(haltReason),
+      },
+    ],
+    is_error: true,
+  };
+}
+
+function buildSyntheticBlockResult(
+  toolUseId: string,
+  block: PendingToolBlock,
+): ToolResultBlock {
+  return {
+    type: "tool_result",
+    tool_use_id: toolUseId,
+    content: [
+      {
+        type: "text",
+        text: buildPendingToolBlockMessage(block),
       },
     ],
     is_error: true,
@@ -105,6 +138,18 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
         throw new IterationHaltedError(haltReason, synthetic);
       }
 
+      const block = await deps.getPendingToolBlock?.();
+      if (block) {
+        for (let j = i; j < toolUses.length; j++) {
+          const remaining = toolUses[j];
+          if (!remaining) {
+            continue;
+          }
+          results.push(buildSyntheticBlockResult(remaining.id, block));
+        }
+        break;
+      }
+
       const result = await deps.invokeHandler(toolUse);
       results.push(result);
     }
@@ -116,20 +161,17 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
 }
 
 /**
- * Production-path pre-dispatch halt check for MCP tool handlers.
+ * Production-path pre-dispatch guard for MCP tool handlers.
  *
  * This is the runtime enforcement of the Same-Turn Tool Dispatch Contract
  * (see file header). It is applied per-handler at registration time in
- * `tool-server.ts` so every registered tool inspects `getPendingHaltReason`
- * before doing real work: if a halt is already pending, the handler
- * short-circuits and returns a synthetic halt `tool_result` instead of
- * executing. The MCP transport already serializes sibling tool_use blocks one
- * at a time, so the per-handler pre-dispatch check is sufficient to guarantee
- * R5.3 (no further tool calls in the iteration once a halt fires) — there is
- * no separate orchestrator-side dispatch loop to wrap. After the turn ends,
- * the iteration orchestrator's between-turn halt check observes the same
- * `pendingHaltReason` and throws `IterationHaltedError` so the iteration
- * loop unwinds cleanly.
+ * `tool-server.ts` so every registered tool inspects terminal halt state and
+ * non-terminal collaboration blockers before doing real work. The MCP
+ * transport already serializes sibling tool_use blocks one at a time, so the
+ * per-handler pre-dispatch check is sufficient to prevent additional tool
+ * mutations after a halt or collaboration request has been recorded. After
+ * the turn ends, the iteration orchestrator observes the same persisted state
+ * and either unwinds for a halt or waits for collaboration completion.
  *
  * The synthetic `tool_result` content uses the exact text format produced by
  * `buildHaltMessage` (`"iteration halted: <haltReason.type>"`) so the
@@ -145,6 +187,7 @@ export type McpHandlerResult = {
 export function wrapMcpHandlerWithHaltCheck<I>(
   getPendingHaltReason: GetPendingHaltReasonFn,
   handler: (input: I) => Promise<McpHandlerResult>,
+  getPendingToolBlock?: GetPendingToolBlockFn,
 ): (input: I) => Promise<McpHandlerResult> {
   return async (input) => {
     const haltReason = await getPendingHaltReason();
@@ -154,6 +197,18 @@ export function wrapMcpHandlerWithHaltCheck<I>(
           {
             type: "text",
             text: buildHaltMessage(haltReason),
+          },
+        ],
+        isError: true,
+      };
+    }
+    const block = await getPendingToolBlock?.();
+    if (block) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: buildPendingToolBlockMessage(block),
           },
         ],
         isError: true,

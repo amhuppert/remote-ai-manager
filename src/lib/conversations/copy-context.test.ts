@@ -221,6 +221,8 @@ function makeGraphWorkflowExecution(
     haltReason: null,
     pendingHaltReason: null,
     secondaryHaltReasons: [],
+    pendingCollaborations: {},
+    collaborationContinuations: {},
     pendingMergeRetry: [],
     ...overrides,
   } as GraphWorkflowExecution;

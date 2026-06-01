@@ -143,6 +143,11 @@ export interface GraphWorkflowExecutionLoopDeps {
   getSessionWorktreeDirtyPaths?: (input: {
     sessionWorktreePath: string;
   }) => Promise<DirtyPath[]>;
+  waitForCollaborationProgress?: (input: {
+    projectPath: string;
+    sessionName: string;
+    executionId: string;
+  }) => Promise<void>;
 }
 
 // -- Active loop registry -----------------------------------------------------
@@ -172,6 +177,18 @@ function isRetryableIterationError(error: unknown): boolean {
   return /stream closed|querysession (died|is dead|ended before)|processtransport is not ready for writing/i.test(
     getErrorMessage(error),
   );
+}
+
+function hasPendingCollaborations(execution: GraphWorkflowExecution): boolean {
+  return Object.keys(execution.pendingCollaborations ?? {}).length > 0;
+}
+
+async function defaultWaitForCollaborationProgress(_input: {
+  projectPath: string;
+  sessionName: string;
+  executionId: string;
+}): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 1000));
 }
 
 // -- Execution loop -----------------------------------------------------------
@@ -220,6 +237,35 @@ export function createGraphWorkflowExecutionLoop(
         reason,
       });
       execution = result.execution;
+    }
+
+    async function waitForPendingCollaborationProgress(): Promise<void> {
+      const pendingWorkflowIds = Object.values(
+        execution.pendingCollaborations ?? {},
+      ).map((pending) => pending.workflowId);
+      execLogger?.lifecycle("collaboration.waiting", {
+        pendingWorkflowIds,
+      });
+      logger.info("graph-workflow.collaboration.waiting", {
+        executionId: execution.id,
+        pendingWorkflowIds,
+      });
+
+      await (
+        deps.waitForCollaborationProgress ?? defaultWaitForCollaborationProgress
+      )({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        executionId: execution.id,
+      });
+
+      const refreshed = await deps.workflowManager.getActive(
+        input.projectPath,
+        input.sessionName,
+      );
+      if (refreshed) {
+        execution = refreshed;
+      }
     }
 
     async function readSessionWorktreeDirtyPaths(
@@ -645,6 +691,20 @@ export function createGraphWorkflowExecutionLoop(
           }
 
           execution = iterationResult.execution;
+
+          const pendingCollaboration =
+            execution.pendingCollaborations?.[contextId];
+          if (pendingCollaboration) {
+            execLogger?.iteration(contextId, "loop.collaboration_pending", {
+              workflowId: pendingCollaboration.workflowId,
+            });
+            logger.info("graph-workflow.parallel.collaboration_pending", {
+              executionId: execution.id,
+              contextId,
+              workflowId: pendingCollaboration.workflowId,
+            });
+            return;
+          }
 
           if (execution.status !== "running") {
             // Orchestrator-driven halt (e.g., signalHalt). Stop iterating;
@@ -1229,6 +1289,10 @@ export function createGraphWorkflowExecutionLoop(
               sessionName: input.sessionName,
             });
             break;
+          }
+          if (hasPendingCollaborations(execution)) {
+            await waitForPendingCollaborationProgress();
+            continue;
           }
           const joinOutcome = await runEligibleJoinIfAny();
           if (joinOutcome === "halted") {

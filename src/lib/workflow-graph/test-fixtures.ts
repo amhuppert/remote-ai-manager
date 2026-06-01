@@ -295,6 +295,8 @@ export function createWorkflowExecution(
     haltReason: null,
     pendingHaltReason: null,
     secondaryHaltReasons: [],
+    pendingCollaborations: {},
+    collaborationContinuations: {},
     pendingMergeRetry: [],
     ...overrides,
   };

@@ -4,7 +4,7 @@
  * The builder produces the `GraphWorkflowCollaborationContextBlock` that the
  * workflow MCP gateway attaches to the tool-server context for implementer
  * registrations. It must derive a non-empty `parentImplementerTurnId` on
- * every invocation, expose a callable `startWorkflowCollaboration`, and
+ * every invocation, expose a callable `triggerWorkflowCollaboration`, and
  * resolve collaboration config with provenance.
  */
 
@@ -15,7 +15,6 @@ import type {
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowHaltReason,
   ResolvedCollaborationConfig,
-  WorkflowCollaborationResult,
   WorkflowConfigOverride,
 } from "@/lib/workflows/schemas";
 
@@ -76,13 +75,8 @@ function baseInput() {
 function baseDeps() {
   return {
     setPendingHaltReason: vi.fn(async () => undefined),
-    startWorkflowCollaboration: vi.fn(async () => ({
-      result: {
-        status: "converged",
-        finalAnswer: "ok",
-        openConflicts: [],
-      } satisfies WorkflowCollaborationResult,
-      roundsConsumed: 1,
+    triggerWorkflowCollaboration: vi.fn(async () => ({
+      workflowId: "collab-1",
     })),
   };
 }
@@ -142,11 +136,11 @@ describe("buildImplementerCollaborationContext", () => {
     });
   });
 
-  it("provides a callable startWorkflowCollaboration that delegates to the injected dep", async () => {
+  it("provides a callable triggerWorkflowCollaboration that delegates to the injected dep", async () => {
     const deps = baseDeps();
     const block = buildImplementerCollaborationContext(baseInput(), deps);
 
-    expect(typeof block.startWorkflowCollaboration).toBe("function");
+    expect(typeof block.triggerWorkflowCollaboration).toBe("function");
 
     const resolvedConfig: ResolvedCollaborationConfig = {
       secondAgent: {
@@ -161,7 +155,7 @@ describe("buildImplementerCollaborationContext", () => {
       autonomousResolutionThreshold: { value: "minor", source: "global" },
     };
 
-    await block.startWorkflowCollaboration({
+    await block.triggerWorkflowCollaboration({
       brief: "test brief",
       resolvedConfig,
       parentImplementerTurnId: block.parentImplementerTurnId,
@@ -171,8 +165,8 @@ describe("buildImplementerCollaborationContext", () => {
       iterationIndex: 0,
     });
 
-    expect(deps.startWorkflowCollaboration).toHaveBeenCalledTimes(1);
-    expect(deps.startWorkflowCollaboration).toHaveBeenCalledWith(
+    expect(deps.triggerWorkflowCollaboration).toHaveBeenCalledTimes(1);
+    expect(deps.triggerWorkflowCollaboration).toHaveBeenCalledWith(
       expect.objectContaining({
         brief: "test brief",
         executionContextId: "ctx-implement",

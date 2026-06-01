@@ -108,6 +108,8 @@ function makeExecution(
     haltReason: null,
     pendingHaltReason: null,
     secondaryHaltReasons: [],
+    pendingCollaborations: {},
+    collaborationContinuations: {},
     pendingMergeRetry: [],
     ...overrides,
   };

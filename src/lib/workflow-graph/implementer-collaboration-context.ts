@@ -30,7 +30,7 @@ export interface ImplementerCollaborationContextInput {
 export interface ImplementerCollaborationContextDeps {
   parentImplementerTurnIdFactory?(): string;
   setPendingHaltReason(reason: GraphWorkflowHaltReason): Promise<void>;
-  startWorkflowCollaboration: GraphWorkflowCollaborationContextBlock["startWorkflowCollaboration"];
+  triggerWorkflowCollaboration: GraphWorkflowCollaborationContextBlock["triggerWorkflowCollaboration"];
 }
 
 export function buildImplementerCollaborationContext(
@@ -53,7 +53,7 @@ export function buildImplementerCollaborationContext(
         input.workflowConfig,
         input.executionContextDefinition,
       ),
-    startWorkflowCollaboration: deps.startWorkflowCollaboration,
+    triggerWorkflowCollaboration: deps.triggerWorkflowCollaboration,
     setPendingHaltReason: deps.setPendingHaltReason,
   };
 }

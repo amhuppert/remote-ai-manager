@@ -7,11 +7,7 @@ import {
   type RequestCollaborationHandlerDeps,
 } from "./tool-server";
 import { IterationHaltedError } from "./iteration-orchestrator";
-import type {
-  GraphWorkflowHaltReason,
-  ResolvedCollaborationConfig,
-  WorkflowCollaborationResult,
-} from "@/lib/workflows/schemas";
+import type { ResolvedCollaborationConfig } from "@/lib/workflows/schemas";
 import type { ExecutionLogger } from "./execution-logger";
 
 type ToolHandler = (args: unknown) => Promise<unknown>;
@@ -255,14 +251,7 @@ describe("graph workflow tool server", () => {
             source: "per-node",
           },
         }),
-        startWorkflowCollaboration: async () => ({
-          result: {
-            status: "converged",
-            finalAnswer: "ok",
-            openConflicts: [],
-          },
-          roundsConsumed: 1,
-        }),
+        triggerWorkflowCollaboration: async () => ({ workflowId: "wf-1" }),
         setPendingHaltReason: async () => undefined,
       },
       completeTask: vi.fn(async () => undefined),
@@ -368,27 +357,8 @@ describe("createRequestCollaborationHandler", () => {
     autonomousResolutionThreshold: { value: "minor", source: "per-node" },
   };
 
-  const CONVERGED_RESULT: WorkflowCollaborationResult = {
-    status: "converged",
-    finalAnswer: "Adopt Postgres for the new service tier.",
-    openConflicts: [],
-  };
-
-  const NON_CONVERGED_RESULT: WorkflowCollaborationResult = {
-    status: "objective_disagreement",
-    finalAnswer: null,
-    openConflicts: [
-      {
-        rejectingAgent: "agent_one",
-        disputedPoint: "Postgres vs MySQL is the wrong dichotomy",
-        severity: "blocking",
-        category: "objective",
-      },
-    ],
-  };
-
   function buildContext(overrides?: {
-    startWorkflowCollaboration?: RequestCollaborationHandlerContext["startWorkflowCollaboration"];
+    triggerWorkflowCollaboration?: RequestCollaborationHandlerContext["triggerWorkflowCollaboration"];
     setPendingHaltReason?: RequestCollaborationHandlerContext["setPendingHaltReason"];
     resolveCollaborationConfig?: RequestCollaborationHandlerContext["resolveCollaborationConfig"];
   }): RequestCollaborationHandlerContext {
@@ -401,9 +371,9 @@ describe("createRequestCollaborationHandler", () => {
       iterationIndex: 0,
       resolveCollaborationConfig:
         overrides?.resolveCollaborationConfig ?? (() => RESOLVED_CONFIG),
-      startWorkflowCollaboration:
-        overrides?.startWorkflowCollaboration ??
-        (async () => ({ result: CONVERGED_RESULT, roundsConsumed: 1 })),
+      triggerWorkflowCollaboration:
+        overrides?.triggerWorkflowCollaboration ??
+        (async () => ({ workflowId: "collab-123" })),
       setPendingHaltReason:
         overrides?.setPendingHaltReason ?? (async () => undefined),
     };
@@ -442,13 +412,13 @@ describe("createRequestCollaborationHandler", () => {
     };
   }
 
-  it("returns a validation-error tool result and never invokes the envelope when brief is empty", async () => {
-    const startWorkflowCollaboration = vi.fn();
+  it("returns a validation-error tool result and never triggers collaboration when brief is empty", async () => {
+    const triggerWorkflowCollaboration = vi.fn();
     const setPendingHaltReason = vi.fn();
     const resolveCollaborationConfig = vi.fn(() => RESOLVED_CONFIG);
     const handler = createRequestCollaborationHandler(
       buildContext({
-        startWorkflowCollaboration,
+        triggerWorkflowCollaboration,
         setPendingHaltReason,
         resolveCollaborationConfig,
       }),
@@ -462,15 +432,15 @@ describe("createRequestCollaborationHandler", () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toContain("Validation error");
-    expect(startWorkflowCollaboration).not.toHaveBeenCalled();
+    expect(triggerWorkflowCollaboration).not.toHaveBeenCalled();
     expect(setPendingHaltReason).not.toHaveBeenCalled();
     expect(resolveCollaborationConfig).not.toHaveBeenCalled();
   });
 
   it("returns a validation-error tool result for a whitespace-only brief", async () => {
-    const startWorkflowCollaboration = vi.fn();
+    const triggerWorkflowCollaboration = vi.fn();
     const handler = createRequestCollaborationHandler(
-      buildContext({ startWorkflowCollaboration }),
+      buildContext({ triggerWorkflowCollaboration }),
       buildDeps(),
     );
 
@@ -479,36 +449,35 @@ describe("createRequestCollaborationHandler", () => {
     };
 
     expect(result.isError).toBe(true);
-    expect(startWorkflowCollaboration).not.toHaveBeenCalled();
+    expect(triggerWorkflowCollaboration).not.toHaveBeenCalled();
   });
 
   it("returns a validation-error tool result for missing brief field", async () => {
-    const startWorkflowCollaboration = vi.fn();
+    const triggerWorkflowCollaboration = vi.fn();
     const handler = createRequestCollaborationHandler(
-      buildContext({ startWorkflowCollaboration }),
+      buildContext({ triggerWorkflowCollaboration }),
       buildDeps(),
     );
 
     const result = (await handler({})) as { isError?: boolean };
 
     expect(result.isError).toBe(true);
-    expect(startWorkflowCollaboration).not.toHaveBeenCalled();
+    expect(triggerWorkflowCollaboration).not.toHaveBeenCalled();
   });
 
-  it("invokes the workflow envelope with the resolved config, parentImplementerTurnId, executionContextId, and conversationId on a valid brief", async () => {
-    const startWorkflowCollaboration = vi.fn(async () => ({
-      result: CONVERGED_RESULT,
-      roundsConsumed: 1,
+  it("triggers workflow collaboration with the resolved config and parent context on a valid brief", async () => {
+    const triggerWorkflowCollaboration = vi.fn(async () => ({
+      workflowId: "collab-456",
     }));
     const handler = createRequestCollaborationHandler(
-      buildContext({ startWorkflowCollaboration }),
+      buildContext({ triggerWorkflowCollaboration }),
       buildDeps(),
     );
 
     await handler({ brief: "Should we adopt Postgres?" });
 
-    expect(startWorkflowCollaboration).toHaveBeenCalledTimes(1);
-    expect(startWorkflowCollaboration).toHaveBeenCalledWith({
+    expect(triggerWorkflowCollaboration).toHaveBeenCalledTimes(1);
+    expect(triggerWorkflowCollaboration).toHaveBeenCalledWith({
       brief: "Should we adopt Postgres?",
       resolvedConfig: RESOLVED_CONFIG,
       parentImplementerTurnId: "turn-7",
@@ -519,14 +488,13 @@ describe("createRequestCollaborationHandler", () => {
     });
   });
 
-  it("does NOT set pendingHaltReason on a converged outcome", async () => {
+  it("does not set pendingHaltReason when collaboration is only started", async () => {
     const setPendingHaltReason = vi.fn();
-    const startWorkflowCollaboration = vi.fn(async () => ({
-      result: CONVERGED_RESULT,
-      roundsConsumed: 1,
+    const triggerWorkflowCollaboration = vi.fn(async () => ({
+      workflowId: "collab-456",
     }));
     const handler = createRequestCollaborationHandler(
-      buildContext({ startWorkflowCollaboration, setPendingHaltReason }),
+      buildContext({ triggerWorkflowCollaboration, setPendingHaltReason }),
       buildDeps(),
     );
 
@@ -535,77 +503,15 @@ describe("createRequestCollaborationHandler", () => {
     expect(setPendingHaltReason).not.toHaveBeenCalled();
   });
 
-  it("sets pendingHaltReason on a non-converged outcome with the four required fields", async () => {
-    const haltCalls: GraphWorkflowHaltReason[] = [];
-    const setPendingHaltReason = vi.fn(async (reason) => {
-      haltCalls.push(reason);
-    });
-    const startWorkflowCollaboration = vi.fn(async () => ({
-      result: NON_CONVERGED_RESULT,
-      roundsConsumed: 2,
-    }));
-    const handler = createRequestCollaborationHandler(
-      buildContext({ startWorkflowCollaboration, setPendingHaltReason }),
-      buildDeps(),
-    );
-
-    await handler({ brief: "Should we adopt Postgres?" });
-
-    expect(haltCalls).toHaveLength(1);
-    const reason = haltCalls[0]!;
-    expect(reason.type).toBe("collaboration_failure");
-    if (reason.type === "collaboration_failure") {
-      expect(reason.status).toBe("objective_disagreement");
-      expect(reason.brief).toBe("Should we adopt Postgres?");
-      expect(reason.executionContextId).toBe("context-implement");
-      expect(reason.conversationId).toBe("conv-abc");
-      expect(reason.summary.length).toBeGreaterThan(0);
-    }
-  });
-
-  it("sets pendingHaltReason BEFORE constructing the tool result on the non-converged path", async () => {
-    const callOrder: string[] = [];
-    const setPendingHaltReason = vi.fn(async () => {
-      callOrder.push("setPendingHaltReason");
-    });
-    const startWorkflowCollaboration = vi.fn(async () => {
-      callOrder.push("startWorkflowCollaboration");
-      return { result: NON_CONVERGED_RESULT, roundsConsumed: 2 };
-    });
-    const executionLoggerStub = buildExecutionLoggerStub(callOrder);
-    const handler = createRequestCollaborationHandler(
-      buildContext({ startWorkflowCollaboration, setPendingHaltReason }),
-      buildDeps({ getExecutionLogger: () => executionLoggerStub }),
-    );
-
-    await handler({ brief: "Should we adopt Postgres?" });
-    callOrder.push("handlerReturned");
-
-    const haltIdx = callOrder.indexOf("setPendingHaltReason");
-    const failureLogIdx = callOrder.indexOf(
-      "decision:collaboration.failure_halt",
-    );
-    const completedLogIdx = callOrder.indexOf(
-      "task:context-implement:collaboration.request_collaboration.completed",
-    );
-    const returnedIdx = callOrder.indexOf("handlerReturned");
-
-    expect(haltIdx).toBeGreaterThanOrEqual(0);
-    expect(returnedIdx).toBeGreaterThanOrEqual(0);
-    expect(haltIdx).toBeLessThan(returnedIdx);
-    expect(completedLogIdx).toBeLessThan(haltIdx);
-    expect(haltIdx).toBeLessThan(failureLogIdx);
-  });
-
-  it("writes the invocation and completion log events through the execution logger on the converged path", async () => {
+  it("writes the invocation and started log events through the execution logger", async () => {
     const callOrder: string[] = [];
     const executionLoggerStub = buildExecutionLoggerStub(callOrder);
-    const startWorkflowCollaboration = vi.fn(async () => {
-      callOrder.push("startWorkflowCollaboration");
-      return { result: CONVERGED_RESULT, roundsConsumed: 1 };
+    const triggerWorkflowCollaboration = vi.fn(async () => {
+      callOrder.push("triggerWorkflowCollaboration");
+      return { workflowId: "collab-456" };
     });
     const handler = createRequestCollaborationHandler(
-      buildContext({ startWorkflowCollaboration }),
+      buildContext({ triggerWorkflowCollaboration }),
       buildDeps({ getExecutionLogger: () => executionLoggerStub }),
     );
 
@@ -613,18 +519,17 @@ describe("createRequestCollaborationHandler", () => {
 
     expect(callOrder).toEqual([
       "task:context-implement:collaboration.request_collaboration.invoked",
-      "startWorkflowCollaboration",
-      "task:context-implement:collaboration.request_collaboration.completed",
+      "triggerWorkflowCollaboration",
+      "task:context-implement:collaboration.request_collaboration.started",
     ]);
   });
 
-  it("returns a text tool result containing the serialized WorkflowCollaborationResult on the converged path", async () => {
-    const startWorkflowCollaboration = vi.fn(async () => ({
-      result: CONVERGED_RESULT,
-      roundsConsumed: 1,
+  it("returns a started acknowledgment instead of a final collaboration result", async () => {
+    const triggerWorkflowCollaboration = vi.fn(async () => ({
+      workflowId: "collab-456",
     }));
     const handler = createRequestCollaborationHandler(
-      buildContext({ startWorkflowCollaboration }),
+      buildContext({ triggerWorkflowCollaboration }),
       buildDeps(),
     );
 
@@ -633,29 +538,13 @@ describe("createRequestCollaborationHandler", () => {
     })) as { content: Array<{ text: string }>; isError?: boolean };
 
     expect(result.isError).toBeUndefined();
-    const text = result.content[0]?.text ?? "";
-    expect(text).toContain("converged");
-    expect(text).toContain("Adopt Postgres for the new service tier.");
+    expect(JSON.parse(result.content[0]?.text ?? "{}")).toEqual({
+      status: "started",
+      workflowId: "collab-456",
+    });
   });
 
-  it("returns a tool result on the non-converged path that the agent can still read (no thrown exception)", async () => {
-    const startWorkflowCollaboration = vi.fn(async () => ({
-      result: NON_CONVERGED_RESULT,
-      roundsConsumed: 2,
-    }));
-    const handler = createRequestCollaborationHandler(
-      buildContext({ startWorkflowCollaboration }),
-      buildDeps(),
-    );
-
-    const result = (await handler({
-      brief: "Should we adopt Postgres?",
-    })) as { content: Array<{ text: string }>; isError?: boolean };
-
-    expect(result.content[0]?.text ?? "").toContain("objective_disagreement");
-  });
-
-  it("does not write a failure_halt decision log on the converged path", async () => {
+  it("does not write a failure_halt decision log when starting collaboration", async () => {
     const callOrder: string[] = [];
     const executionLoggerStub = buildExecutionLoggerStub(callOrder);
     const handler = createRequestCollaborationHandler(
@@ -677,18 +566,11 @@ describe("createRequestCollaborationHandler", () => {
       payload: Record<string, unknown> | undefined;
     }
 
-    interface CapturedDecisionRow {
-      event: string;
-      payload: Record<string, unknown> | undefined;
-    }
-
     function buildPayloadCapturingLogger(): {
       logger: ExecutionLogger;
       tasks: CapturedTaskRow[];
-      decisions: CapturedDecisionRow[];
     } {
       const tasks: CapturedTaskRow[] = [];
-      const decisions: CapturedDecisionRow[] = [];
       const logger: ExecutionLogger = {
         executionId: "exec-123",
         logDir: "/tmp/test-logs",
@@ -701,21 +583,16 @@ describe("createRequestCollaborationHandler", () => {
         validation: vi.fn(),
         writePrompt: vi.fn(),
         writeValidatorResponse: vi.fn(),
-        decision: vi.fn((event: string, data) => {
-          decisions.push({ event, payload: data });
-        }),
+        decision: vi.fn(),
       };
-      return { logger, tasks, decisions };
+      return { logger, tasks };
     }
 
     it("(happy path) tasks.jsonl `invoked` row carries brief and resolvedConfig with source fields", async () => {
       const { logger, tasks } = buildPayloadCapturingLogger();
       const handler = createRequestCollaborationHandler(
         buildContext({
-          startWorkflowCollaboration: async () => ({
-            result: CONVERGED_RESULT,
-            roundsConsumed: 1,
-          }),
+          triggerWorkflowCollaboration: async () => ({ workflowId: "wf-1" }),
         }),
         buildDeps({ getExecutionLogger: () => logger }),
       );
@@ -741,97 +618,29 @@ describe("createRequestCollaborationHandler", () => {
       expect(resolved?.autonomousResolutionThreshold.source).toBe("per-node");
     });
 
-    it("(happy path) tasks.jsonl `completed` row carries status, roundsConsumed, openConflictsSummary, and resolvedConfig", async () => {
+    it("(happy path) tasks.jsonl `started` row carries workflowId and resolvedConfig", async () => {
       const { logger, tasks } = buildPayloadCapturingLogger();
       const handler = createRequestCollaborationHandler(
         buildContext({
-          startWorkflowCollaboration: async () => ({
-            result: CONVERGED_RESULT,
-            roundsConsumed: 2,
-          }),
+          triggerWorkflowCollaboration: async () => ({ workflowId: "wf-2" }),
         }),
         buildDeps({ getExecutionLogger: () => logger }),
       );
 
       await handler({ brief: "Should we adopt Postgres?" });
 
-      const completed = tasks.find(
-        (row) => row.event === "collaboration.request_collaboration.completed",
+      const started = tasks.find(
+        (row) => row.event === "collaboration.request_collaboration.started",
       );
-      expect(completed).toBeDefined();
-      const payload = completed?.payload ?? {};
-      expect(payload.status).toBe("converged");
-      expect(payload.roundsConsumed).toBe(2);
-      expect(Array.isArray(payload.openConflictsSummary)).toBe(true);
+      expect(started).toBeDefined();
+      const payload = started?.payload ?? {};
+      expect(payload.workflowId).toBe("wf-2");
+      expect(payload.brief).toBe("Should we adopt Postgres?");
       expect(payload.resolvedConfig).toBeDefined();
       expect(
         (payload.resolvedConfig as ResolvedCollaborationConfig).secondAgent
           .value.backend,
       ).toBe("codex");
-    });
-
-    it("(failure path) decisions.jsonl `failure_halt` row carries brief, resolvedConfig, and open-conflicts payload", async () => {
-      const { logger, decisions } = buildPayloadCapturingLogger();
-      const handler = createRequestCollaborationHandler(
-        buildContext({
-          startWorkflowCollaboration: async () => ({
-            result: NON_CONVERGED_RESULT,
-            roundsConsumed: 2,
-          }),
-        }),
-        buildDeps({ getExecutionLogger: () => logger }),
-      );
-
-      await handler({ brief: "Should we adopt Postgres?" });
-
-      const failureHalt = decisions.find(
-        (row) => row.event === "collaboration.failure_halt",
-      );
-      expect(failureHalt).toBeDefined();
-      const payload = failureHalt?.payload ?? {};
-      expect(payload.brief).toBe("Should we adopt Postgres?");
-      expect(payload.executionContextId).toBe("context-implement");
-      expect(payload.conversationId).toBe("conv-abc");
-      expect(payload.parentImplementerTurnId).toBe("turn-7");
-      expect(payload.status).toBe("objective_disagreement");
-
-      const conflicts = payload.openConflicts as
-        | Array<{ rejectingAgent: string; disputedPoint: string }>
-        | undefined;
-      expect(conflicts?.length).toBeGreaterThan(0);
-      expect(conflicts?.[0]?.disputedPoint).toContain("Postgres");
-
-      const resolved = payload.resolvedConfig as
-        | ResolvedCollaborationConfig
-        | undefined;
-      expect(resolved?.secondAgent.source).toBe("global");
-    });
-
-    it("(failure path) records pendingHaltReason before the handler returns even when the writer resolves asynchronously", async () => {
-      const callOrder: string[] = [];
-      const setPendingHaltReason = vi.fn(async () => {
-        // Force the writer to yield to the microtask queue before resolving.
-        // The handler must await this write before constructing/returning the
-        // tool result; if the await is dropped, the ordering assertion fails.
-        await new Promise<void>((resolve) => setImmediate(resolve));
-        callOrder.push("setPendingHaltReason");
-      });
-      const startWorkflowCollaboration = vi.fn(async () => ({
-        result: NON_CONVERGED_RESULT,
-        roundsConsumed: 2,
-      }));
-      const handler = createRequestCollaborationHandler(
-        buildContext({ startWorkflowCollaboration, setPendingHaltReason }),
-        buildDeps(),
-      );
-
-      await handler({ brief: "Should we adopt Postgres?" });
-      callOrder.push("handlerReturned");
-
-      const haltIdx = callOrder.indexOf("setPendingHaltReason");
-      const returnedIdx = callOrder.indexOf("handlerReturned");
-      expect(haltIdx).toBeGreaterThanOrEqual(0);
-      expect(returnedIdx).toBeGreaterThan(haltIdx);
     });
   });
 });
