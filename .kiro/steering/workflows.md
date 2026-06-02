@@ -326,16 +326,6 @@ Per-context validator overrides:
 
 Codex reasoning levels are model-aware — `getCodexReasoningLevelsForModel()` returns allowed levels.
 
-## Clearing legacy state
-
-The cascade refactor removed `agent`, `contextValidation`, `taskValidation`, `contextSoftLimitTokens`, `contextHardLimitTokens`. The schema-cutover guard rejects legacy shapes at read time. Existing state must be cleared:
-
-```bash
-bun scripts/clean-graph-workflow-state.ts
-```
-
-Clears `graphWorkflowExecution` / `graphWorkflowExecutionHistory` from every session in `state.json` and deletes `workflows/` directory. Idempotent. Recreate workflows via UI or MCP.
-
 ## Land-gate invariant
 
 Scheduler eligibility for a worktree-isolation context's dependents requires the upstream's `mergeStatus === "merged-success"`. A completed-but-unmerged side branch does not satisfy a downstream context's dependency, because the downstream may fan out from a base that does not yet include the upstream's work.

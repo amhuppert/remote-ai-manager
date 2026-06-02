@@ -33,7 +33,7 @@ Two consumers:
 
 Shared:
 - Direct exec (`execFile`, **shebang required**)
-- cwd = worktree, timeout = `preMergeTimeoutMs` (default 5min, `src/lib/config.ts`)
+- cwd = worktree, timeout = `preMergeTimeoutMs` (default 5min, `src/lib/config/`)
 - Combined stdout/stderr captured
 
 ### `devServers` — Dev server declarations

@@ -14,7 +14,7 @@ dispatchJob() → Job Registry (Map) → SSE "job-status" → Zustand running jo
 
 Three stores, three concerns:
 - **In-memory `Map`** (`globalThis`) — running jobs only; removed on terminal
-- **SQLite** (`notifications.db`, WAL) — persistent notifications/jobs; UI source of truth
+- **SQLite** (`command-center.db`, WAL) — persistent notifications/jobs; UI source of truth
 - **Zustand store** — client running jobs + FIFO toast queue
 
 ## Job Lifecycle
@@ -48,7 +48,7 @@ prepareDispatch()
 
 ## SQLite
 
-Location: `<config-dir>/notifications.db` (WAL).
+Location: `<config-dir>/command-center.db` (WAL).
 
 Tables: `notifications` (indexed on `read`, `created_at`, `project+session`) + `job_records`.
 

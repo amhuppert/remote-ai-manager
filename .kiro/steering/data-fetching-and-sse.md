@@ -21,24 +21,25 @@ SSE never delivers bulk data. TanStack Query never polls when an SSE channel can
 
 - One `EventSource("/api/events")` per tab, opened by `NotificationListener` mounted at the root layout.
 - Per-feature streams are forbidden except for genuinely high-frequency content streams (live token streaming for an active prompt). Lifecycle/status updates ride the global bus.
-- The broadcaster (`src/lib/sse-broadcaster.ts`) is the **sole** publication mechanism for cross-client events. API route handlers and workflow primitives publish through it (directly or via `StatusBus`); they never open their own streams for lifecycle/status concerns.
+- The broadcaster (`src/lib/events/broadcaster.ts`) is the **sole** publication mechanism for cross-client events. API route handlers and workflow primitives publish through it (directly or via `StatusBus`); they never open their own streams for lifecycle/status concerns.
 
 ### Typed events, discriminator-driven
 
 Every SSE frame uses a typed event name and a Zod-validated payload:
 
 ```typescript
+// Canonical union assembled in src/lib/api/sse-events.ts from per-domain event schemas
 type SSEEvent =
-  | { type: "session-status"; projectName: string; sessionName: string; status: SessionStatus }
   | { type: "conversation-status"; projectName: string; sessionName: string; conversationId: string; status: ConvStatus }
-  | { type: "message-delta"; projectName: string; sessionName: string; conversationId: string; seq: number; delta: MessageDelta }
-  | { type: "job-update"; jobId: string; status: JobStatus }
-  | { type: "mcp-config"; scope: McpScope; change: McpChange }
-  | { type: "notification"; notification: Notification };
+  | { type: "message-appended"; projectName: string; sessionName: string; conversationId: string; message: Message }
+  | { type: "job-status"; jobId: string; status: JobStatus }
+  | { type: "notification-created"; notification: Notification }
+  | { type: "mcp-config-updated"; scope: McpScope; change: McpChange }
+  | { type: "dev-server-status"; projectName: string; sessionName: string; status: DevServerStatus };
 ```
 
 - `event.type` is the discriminator clients switch on.
-- Payload schemas live in `src/lib/schemas.ts`; types via `z.infer`.
+- Each event's payload schema lives in its domain's `src/lib/<domain>/schemas.ts`; the `SSEEvent` union is assembled in `src/lib/api/sse-events.ts`; types via `z.infer`.
 - Listener parses with `safeParse` — invalid frames are logged and dropped, never thrown.
 
 ### Payload shape
@@ -59,10 +60,10 @@ Never broadcast a full conversation transcript, full session list, or full diff.
 ### Publication path
 
 ```
-domain code → StatusBus.publish(event) → sse-broadcaster.broadcast(event) → all clients
+domain code → StatusBus.publish(event) → broadcaster.broadcast(event) → all clients
 ```
 
-- `StatusBus` (`src/lib/workflows/primitives/status-bus.ts`) is the canonical publication surface. New broadcast sites add a `publish` call there; they do not import `sse-broadcaster` directly except inside the bus itself.
+- `StatusBus` (`src/lib/workflows/primitives/status-bus.ts`) is the canonical publication surface. New broadcast sites add a `publish` call there; they do not import the broadcaster (`src/lib/events/broadcaster.ts`) directly except inside the bus itself.
 - Every route that mutates state and would otherwise require the client to poll publishes one event before returning.
 
 ---
@@ -102,7 +103,7 @@ export const conversationKeys = {
 } as const;
 ```
 
-Centralize factories in `src/lib/query-keys.ts`. Hooks in `src/lib/queries.ts` consume them; mutations in `src/lib/mutations.ts` reference them for invalidation and optimistic updates.
+Each domain owns its factories, colocated: keys in `src/lib/<domain>/query-keys.ts`, hooks in `src/lib/<domain>/queries.ts`, mutations in `src/lib/<domain>/mutations.ts` (which reference the keys for invalidation and optimistic updates).
 
 ### Lean response shapes
 
@@ -267,7 +268,7 @@ SSE-first. Polling is a fallback, not a default.
 - ❌ A `useQuery` with `refetchInterval` next to a feature whose state is already broadcast by SSE.
 - ❌ A mutation that writes via API and then waits for the SSE event to update local state with no optimistic step (visible UI lag for trivial operations).
 - ❌ A second `new EventSource(...)` somewhere in feature code for "lifecycle" updates.
-- ❌ Per-feature route handlers calling `sse-broadcaster.broadcast(...)` directly, bypassing `StatusBus`.
+- ❌ Per-feature route handlers calling `broadcaster.broadcast(...)` directly, bypassing `StatusBus`.
 - ❌ SSE handlers that re-fetch via `invalidateQueries` when the event payload already contained the delta.
 
 ---
@@ -276,11 +277,12 @@ SSE-first. Polling is a fallback, not a default.
 
 | Path | Contents |
 |---|---|
-| `src/lib/query-keys.ts` | All query key factories |
-| `src/lib/queries.ts` | `useXxxQuery` hooks + `queryOptions` |
-| `src/lib/mutations.ts` | `useXxxMutation` hooks with `onMutate`/`onError`/`onSettled` |
-| `src/lib/schemas.ts` | Zod schemas for SSE events and API payloads |
-| `src/lib/sse-broadcaster.ts` | Server-side broadcast primitive |
+| `src/lib/<domain>/query-keys.ts` | Per-domain query key factories |
+| `src/lib/<domain>/queries.ts` | `useXxxQuery` hooks + `queryOptions` |
+| `src/lib/<domain>/mutations.ts` | `useXxxMutation` hooks with `onMutate`/`onError`/`onSettled` |
+| `src/lib/<domain>/schemas.ts` | Zod schemas for SSE events and API payloads |
+| `src/lib/api/sse-events.ts` | Canonical `SSEEvent` union (assembled from per-domain schemas) |
+| `src/lib/events/broadcaster.ts` | Server-side broadcast primitive |
 | `src/lib/workflows/primitives/status-bus.ts` | Canonical publication surface |
 | `src/components/NotificationListener.tsx` | Sole SSE consumer; dispatches to query cache |
 | `src/app/api/events/route.ts` | Single SSE endpoint with replay + heartbeat |

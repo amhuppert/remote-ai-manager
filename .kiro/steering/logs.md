@@ -10,13 +10,13 @@ Persistent data lives under config dir (`~/.config/cc` Linux, `~/Library/Applica
 │       ├── session.log                          # Session-scoped NDJSON
 │       └── conversations/<conversationSlug>.log # Conversation-scoped NDJSON
 ├── config.json                                  # Global config
-├── notifications.db                             # SQLite (jobs/notifications, WAL mode)
+├── command-center.db                             # SQLite (WAL) — sessions/projects/conversations/jobs/notifications
 ├── transcripts/{conversationId}.jsonl           # Per-conversation
 ├── transcripts/images/{conversationId}/...      # Externalized images
 └── workflow-logs/{executionId}/                 # Graph workflow execution logs
 ```
 
-State now lives in `notifications.db` (SQLite); the legacy `state.json` is removed.
+State lives in `command-center.db` (SQLite); the legacy `state.json` is removed.
 
 ## Debug Log — NDJSON
 
@@ -98,8 +98,8 @@ All `timed()`-emitted logs inherit `traceId`/`action`/`projectName`/`sessionName
 | `tailscale` (via exec, `eventPrefix: "tailscale"`) | `tailscale.complete` / `.error` | All `tailscale` CLI calls |
 | `dev-server` (via exec, `eventPrefix: "dev-server"`) | `dev-server.start` / `dev-server.exit` | Per-session dev server process lifecycle |
 | `init-script` (via exec, `eventPrefix: "init-script"`) | `init-script.complete` / `.error` | Worktree init scripts |
-| `sse-broadcaster` | `sse.broadcast.complete` | `eventType`, `seq`, `subscriberCount`, `delivered`, `payloadBytes`, `durationMs` |
-| `sse-broadcaster` | `broadcast.no_clients` | Zero subscribers (warn) |
+| `sse` | `sse.broadcast.complete` | `eventType`, `seq`, `subscriberCount`, `delivered`, `payloadBytes`, `durationMs` |
+| `sse` | `broadcast.no_clients` | Zero subscribers (warn) |
 | `transcript` | `transcript.read.complete` | `messageCount`, `durationMs` |
 | `state-db` (via `notification-db`) | `state-db.createNotification` / `.createJobRecord` / `.updateJobRecord` / `.recoverStaleJobs` / `.cleanupOldNotifications` `.complete` | Per-write fields (`notificationId`, `jobId`, `status`, `deleted`, `recoveredCount`) |
 | `state-store` | `state.mutate.complete` | `label`, `sessionName`, `durationMs` |
@@ -205,7 +205,7 @@ Content blocks: `text`, `tool_use`, `tool_result`, `command` (parsed slash comma
 
 ## State Store (SQLite)
 
-State lives in `notifications.db` (WAL mode) and is accessed through a write queue (`src/lib/state-store/`). The aggregate exposes the legacy `ManagerState → projects → sessions → conversations[]` hierarchy to callers.
+State lives in `command-center.db` (WAL mode) and is accessed through a write queue (`src/lib/state-store/`). The aggregate exposes the legacy `ManagerState → projects → sessions → conversations[]` hierarchy to callers.
 
 Key `ConversationState` fields: `id` (matches transcript filename), `status` (`new`/`awaiting`/`running`/`waiting_for_input`), `claudeSessionId` (SDK resume), `transcriptPath`, `totalCostUsd`, `totalDurationMs`, `totalTurns`, `promptCount`.
 
@@ -213,7 +213,7 @@ Startup: stale `running`/`waiting_for_input` conversations are reset to `awaitin
 
 ## SSE Events
 
-Broadcast via `sse-broadcaster.ts`; client-side Zod-validated.
+Broadcast via `events/broadcaster.ts`; client-side Zod-validated.
 
 | Event | Trigger |
 |---|---|
@@ -222,7 +222,7 @@ Broadcast via `sse-broadcaster.ts`; client-side Zod-validated.
 | `message-queued` | Queued via `streamInput()` into running conversation |
 | `job-status` | Background job state change |
 | `notification-created` / `notification-updated` | Notification lifecycle |
-| `graph-workflow-status` / `-context-status` / `-task-status` / `-validation-result` / `-retry` / `-circuit-breaker` / `-shared-documents-updated` | Graph workflow events |
+| `graph-workflow-status` / `-context-status` / `-task-status` / `-validation-result` / `-circuit-breaker` / `-shared-documents-updated` / `-pending-halt-reason` / `-merge-status` / `-batch-scheduled` / `-lane-status` / `-join-status` | Graph workflow events |
 | `dev-server-status` | Dev server lifecycle/health |
 
 ## Tracing

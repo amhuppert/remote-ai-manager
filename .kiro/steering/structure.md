@@ -14,7 +14,6 @@ App Router routing layer is **isolated** in `src/app/`. All page-level UI lives 
 | `src/stores/` | Zustand stores. | One per concern; Immer middleware (`*.store.ts`). |
 | `src/lib/<domain>/` | Business logic, server actions, route handlers, queries, mutations, schemas for one domain. | Each domain owns `schemas.ts`, `route-handlers.ts`, `service.ts` (or split), `queries.ts`, `mutations.ts`, `query-keys.ts`, tests. |
 | `src/lib/api/` | Shared React Query / fetch plumbing only (`fetcher.ts`, `errors.ts`, `sse.ts`). No domain code. | Per-domain queries/mutations live in `src/lib/<domain>/`. |
-| `src/types/` | Ambient/global `.d.ts` only (module shims, global window types). | No application types — those live in the owning domain's `schemas.ts`. |
 
 ## Routing & Domain Boundary (the Next.js exception)
 

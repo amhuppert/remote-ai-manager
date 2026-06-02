@@ -2,7 +2,7 @@
 
 ## Architecture
 
-Server-rendered Next.js + API routes as backend. **Dual storage**: JSON state file (atomic write-temp-rename) for session/project state; SQLite (WAL mode) for notification/job history. Claude Code driven via `@anthropic-ai/claude-agent-sdk` `query()`.
+Server-rendered Next.js + API routes as backend. **Persistence**: a single SQLite database (`command-center.db`, WAL mode) is the source of truth for all durable state — sessions, projects, conversations, jobs, notifications — accessed through a serialized write queue (`src/lib/state-store/`). Global config lives in `config.json`. Claude Code driven via `@anthropic-ai/claude-agent-sdk` `query()`.
 
 ## Stack
 
@@ -10,12 +10,12 @@ Server-rendered Next.js + API routes as backend. **Dual storage**: JSON state fi
 - **Next.js 16** (App Router) + **React 19** + **Node.js**
 - **Zod v4** — schema-first; types derived via `z.infer`; `safeParse` external/untrusted, `parse` internal/trusted
 - **Zustand + Immer** — client state (`src/stores/`)
-- **@tanstack/react-query** — server state; factories in `src/lib/queries.ts`, `mutations.ts`, `query-keys.ts`
+- **@tanstack/react-query** — server state; per-domain factories in `src/lib/<domain>/{queries,mutations,query-keys}.ts`
 - **@tanstack/react-virtual** — virtualized message lists
 - **react-markdown + remark-gfm + react-syntax-highlighter** — markdown rendering
 - **mermaid + svg-pan-zoom** — diagram rendering
 - **react-hotkeys-hook** — shortcuts
-- **better-sqlite3** — SQLite (WAL) for jobs/notifications
+- **better-sqlite3** — SQLite (WAL); primary persistent store (`command-center.db`) for all state
 
 ### Zod v4 gotcha
 
@@ -26,7 +26,7 @@ z.record(valueSchema);              // ❌ v4 treats single arg as key schema
 
 ## Schema location
 
-All entity schemas in `src/lib/schemas.ts`; types/interfaces re-exported from `src/types/index.ts`.
+Each domain owns its schemas in `src/lib/<domain>/schemas.ts`; types are derived via `z.infer` and exported from the same file. No central `src/lib/schemas.ts`. Cross-domain shared primitives (rare) live in `src/lib/shared/schemas.ts`. See `structure.md`.
 
 ## Commands
 

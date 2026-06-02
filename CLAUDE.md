@@ -156,7 +156,7 @@ await new Promise(resolve => setTimeout(resolve, 2000));
 
 ### Testing
 
-- **Never use `vi.mock()` for internal project modules.** Use dependency injection instead: setter pattern (`setXxxDeps()`) for modules with many deps, factory pattern (`createXxx(deps)`) for smaller surfaces, XState `.provide()` for machine actors/actions. See `src/lib/workflows/conversation/actor-implementations.ts` and `src/lib/prompt.ts` for examples.
+- **Never use `vi.mock()` for internal project modules.** Use dependency injection instead: setter pattern (`setXxxDeps()`) for modules with many deps, factory pattern (`createXxx(deps)`) for smaller surfaces, XState `.provide()` for machine actors/actions. See `src/lib/workflows/conversation/actor-implementations.ts` and `src/lib/prompt/sdk-driver.ts` for examples.
 - **`vi.mock()` is only acceptable for infrastructure concerns** that have module-level side effects (e.g., `@/lib/logging`'s `createLogger()` call, `@/lib/sdk-env`).
 - **Extract pure functions** from complex modules so core logic can be tested directly without any mocking. Prefer many focused unit tests of pure functions over fewer integration tests that require elaborate mock setups.
 - **Deps interfaces should use method syntax** (not property syntax) to leverage TypeScript's bivariant parameter checking, avoiding contravariance issues when assigning production functions to interface slots. See `ActorImplementationDeps` in `actor-implementations.ts`.
