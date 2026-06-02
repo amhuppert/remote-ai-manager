@@ -46,8 +46,12 @@ import {
 import { createSessionLaneStoreForProduction } from "@/lib/workflows/primitives/lane-store";
 import { getSession as defaultGetSession } from "@/lib/state-store";
 import { getConversation as defaultGetConversation } from "@/lib/conversations/service";
+import { readConfig as defaultReadConfig } from "@/lib/config/loader";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import { type AgentSessionRef } from "@/lib/agent-backends/schemas";
+import {
+  getDefaultCodexModel,
+  type AgentSessionRef,
+} from "@/lib/agent-backends/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import { collaborationAutonomousResolutionThresholdSchema } from "./types";
 import { dispatchPushForCollaborationEvent } from "@/lib/push-notification/dispatcher";
@@ -289,7 +293,21 @@ export interface CollaborationManagerDeps {
     workflowId: string;
     conversationId: string;
     laneService: LaneService;
+    codexModel: string;
+    codexReasoningEffort?: string;
   }): AsymmetricCollaborationSliceDeps["callAgent"];
+
+  /**
+   * Resolves the Codex lane's model + reasoning effort from the global config
+   * cascade. Standalone Collaboration mode carries no per-call model, so the
+   * resolved model is threaded to the Codex lane to avoid the Codex SDK's
+   * built-in default (rejected for ChatGPT-account auth). Defaults to reading
+   * the singleton global config; tests inject a deterministic value.
+   */
+  resolveCodexModelConfig(): Promise<{
+    model: string;
+    reasoningEffort?: string;
+  }>;
 
   /**
    * Runs the slice. Production uses the imported
@@ -381,6 +399,10 @@ const defaultBuildCallAgent: CollaborationManagerDeps["buildCallAgent"] = (
     sessionKey: `${input.projectPath}::${input.sessionName}`,
     originatingConversationId: input.conversationId,
     laneService: input.laneService,
+    codexModel: input.codexModel,
+    ...(input.codexReasoningEffort !== undefined
+      ? { codexReasoningEffort: input.codexReasoningEffort }
+      : {}),
   });
 
 const defaultDeps: CollaborationManagerDeps = {
@@ -419,6 +441,15 @@ const defaultDeps: CollaborationManagerDeps = {
       }),
     }),
   buildCallAgent: defaultBuildCallAgent,
+  async resolveCodexModelConfig() {
+    const config = await defaultReadConfig();
+    return {
+      model: config.codex?.model ?? getDefaultCodexModel(),
+      ...(config.codex?.reasoningEffort !== undefined
+        ? { reasoningEffort: config.codex.reasoningEffort }
+        : {}),
+    };
+  },
   runSlice: runAsymmetricCollaborationSlice,
   createEnvelopeRepository(input) {
     return createSessionWorkflowEnvelopeRepositoryForProduction({
@@ -616,6 +647,8 @@ export function createCollaborationManager(
         sessionName: input.sessionName,
       });
 
+      const codexModelConfig = await deps.resolveCodexModelConfig();
+
       const callAgent = deps.buildCallAgent({
         projectPath: input.projectPath,
         sessionName: input.sessionName,
@@ -623,6 +656,10 @@ export function createCollaborationManager(
         workflowId,
         conversationId: parsed.conversationId,
         laneService,
+        codexModel: codexModelConfig.model,
+        ...(codexModelConfig.reasoningEffort !== undefined
+          ? { codexReasoningEffort: codexModelConfig.reasoningEffort }
+          : {}),
       });
 
       const sliceDeps = deps.createDeps({
@@ -804,6 +841,7 @@ export function createCollaborationManager(
         projectPath: input.projectPath,
         sessionName: input.sessionName,
       });
+      const codexModelConfig = await deps.resolveCodexModelConfig();
       const callAgent = deps.buildCallAgent({
         projectPath: input.projectPath,
         sessionName: input.sessionName,
@@ -811,6 +849,10 @@ export function createCollaborationManager(
         workflowId: input.workflowId,
         conversationId,
         laneService,
+        codexModel: codexModelConfig.model,
+        ...(codexModelConfig.reasoningEffort !== undefined
+          ? { codexReasoningEffort: codexModelConfig.reasoningEffort }
+          : {}),
       });
       const sliceDeps = deps.createDeps({
         projectPath: input.projectPath,

@@ -39,6 +39,7 @@ import type {
   ConversationBackendTurnInput,
 } from "../conversation";
 import type { PortableMcpConfig } from "../portable-mcp";
+import { getDefaultCodexModel } from "@/lib/agent-backends/schemas";
 
 // ============================================================
 // Helpers
@@ -426,14 +427,14 @@ describe("CodexConversationRuntime", () => {
       );
     });
 
-    it("omits model/effort from thread options when not set", async () => {
+    it("defaults model to the global default codex model and omits effort when not set", async () => {
       setupThread(minimalSuccessEvents());
       const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
 
       await runtime.sendTurn(makeTurnInput());
 
       const threadOpts = startThreadFn.mock.calls[0]![0];
-      expect(threadOpts).not.toHaveProperty("model");
+      expect(threadOpts.model).toBe(getDefaultCodexModel());
       expect(threadOpts).not.toHaveProperty("modelReasoningEffort");
     });
 

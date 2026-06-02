@@ -79,6 +79,16 @@ export interface CollaborationProductionAgentCallerInput {
    * WorkflowAgentCaller land on the same `LaneState` the slice operates on.
    */
   laneService: LaneService;
+  /**
+   * Model the Codex lane runs with. The asymmetric slice builds Codex requests
+   * without a per-call model, so without this the Codex SDK falls back to its
+   * own built-in default — rejected for ChatGPT-account auth. Resolved from the
+   * global config cascade by the manager. A per-call `request.modelId` (if a
+   * future caller sets one) still takes precedence.
+   */
+  codexModel?: string;
+  /** Reasoning effort the Codex lane runs with, resolved alongside `codexModel`. */
+  codexReasoningEffort?: string;
   /** Optional override for testing. Defaults to module-level `executeAgentCall`. */
   executeAgentCallImpl?: (
     request: AgentCallRequest,
@@ -124,33 +134,40 @@ function buildInnerCallAgent(
   ): Promise<AgentCallResult> => {
     if (request.kind === "task_run") {
       const runner = resolveTaskRunner(request.backend);
+      const isCodex = request.backend === "codex";
       const codexResumeRef =
         continuity.laneAction === "reuse" &&
         continuity.resumeRef &&
         continuity.resumeRef.backend === "codex"
           ? continuity.resumeRef
           : null;
-      const codexHardenedSettings =
-        request.backend === "codex"
-          ? {
-              sandboxMode: "danger-full-access" as const,
-              approvalPolicy: "never" as const,
-              webSearchMode: "disabled" as const,
-              skipGitRepoCheck: true,
-              networkAccessEnabled: true,
-            }
-          : {};
+      const codexHardenedSettings = isCodex
+        ? {
+            sandboxMode: "danger-full-access" as const,
+            approvalPolicy: "never" as const,
+            webSearchMode: "disabled" as const,
+            skipGitRepoCheck: true,
+            networkAccessEnabled: true,
+          }
+        : {};
+      // The slice omits a per-call model, so fall back to the lane's configured
+      // Codex model rather than the SDK's built-in default.
+      const effectiveModelId =
+        request.modelId ?? (isCodex ? input.codexModel : undefined);
+      const effectiveReasoningEffort =
+        request.reasoningEffort ??
+        (isCodex ? input.codexReasoningEffort : undefined);
       const result = await exec(request, {
         resolveTaskRunner: () => ({
           runner,
           capabilityView: capabilityViewForBackend(request.backend),
           workingDirectory: input.worktreePath,
           autonomous: true,
-          ...(request.modelId !== undefined
-            ? { modelId: request.modelId }
+          ...(effectiveModelId !== undefined
+            ? { modelId: effectiveModelId }
             : {}),
-          ...(request.reasoningEffort !== undefined
-            ? { reasoningEffort: request.reasoningEffort }
+          ...(effectiveReasoningEffort !== undefined
+            ? { reasoningEffort: effectiveReasoningEffort }
             : {}),
           ...(codexResumeRef !== null ? { resumeRef: codexResumeRef } : {}),
           ...codexHardenedSettings,

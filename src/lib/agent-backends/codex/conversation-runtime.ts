@@ -33,6 +33,7 @@ import { registerConversationBackendFactory } from "../registry-core";
 import {
   codexReasoningEffortSchema,
   getCodexReasoningLevelsForModel,
+  getDefaultCodexModel,
 } from "@/lib/agent-backends/schemas";
 import { createLogger } from "@/lib/logging";
 import type { CodexRuntimeCapabilityConfig } from "@/lib/agent-capabilities/codex-runtime-translator";
@@ -462,9 +463,9 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
       skipGitRepoCheck: true,
     };
 
-    if (this.modelId) {
-      options.model = this.modelId;
-    }
+    // Always pin a model. With no model the Codex SDK falls back to its own
+    // built-in default, which is rejected for ChatGPT-account auth.
+    options.model = this.modelId ?? getDefaultCodexModel();
     if (this.reasoningEffort) {
       options.modelReasoningEffort = this
         .reasoningEffort as ThreadOptions["modelReasoningEffort"];

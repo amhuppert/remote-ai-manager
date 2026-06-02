@@ -16,6 +16,7 @@ import {
 } from "./native-mcp-suppression";
 import {
   codexReasoningEffortSchema,
+  getDefaultCodexModel,
   type CodexReasoningEffort,
 } from "@/lib/agent-backends/schemas";
 import { toStringEnv } from "./shared";
@@ -119,7 +120,9 @@ export class CodexTaskRunner implements AgentTaskRunner {
       ...(input.additionalDirectories
         ? { additionalDirectories: input.additionalDirectories }
         : {}),
-      ...(input.modelId ? { model: input.modelId } : {}),
+      // Always pin a model. With no model the Codex SDK falls back to its own
+      // built-in default, which is rejected for ChatGPT-account auth.
+      model: input.modelId ?? getDefaultCodexModel(),
       ...(validatedReasoningEffort
         ? { modelReasoningEffort: validatedReasoningEffort }
         : {}),

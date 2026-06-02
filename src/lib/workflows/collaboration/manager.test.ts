@@ -77,6 +77,7 @@ interface ScriptedDepsOptions {
   >;
   stopRegistryOverride?: CollaborationStopRegistry;
   sliceDepsOverride?: AsymmetricCollaborationSliceDeps;
+  resolveCodexModelConfigResult?: { model: string; reasoningEffort?: string };
 }
 
 function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
@@ -88,6 +89,8 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
   buildCallAgentCalls: Array<{
     workflowId: string;
     worktreePath: string;
+    codexModel?: string;
+    codexReasoningEffort?: string;
   }>;
   publishedStatuses: Array<
     Omit<
@@ -113,6 +116,8 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
   const buildCallAgentCalls: Array<{
     workflowId: string;
     worktreePath: string;
+    codexModel?: string;
+    codexReasoningEffort?: string;
   }> = [];
   const publishedStatuses: Array<
     Omit<
@@ -170,11 +175,15 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
       buildCallAgentCalls.push({
         workflowId: input.workflowId,
         worktreePath: input.worktreePath,
+        codexModel: input.codexModel,
+        codexReasoningEffort: input.codexReasoningEffort,
       });
       return async () => {
         throw new Error("stub callAgent should not be called in tests");
       };
     },
+    resolveCodexModelConfig: async () =>
+      options.resolveCodexModelConfigResult ?? { model: "gpt-5.4" },
     runSlice: async (input, sliceDeps) => {
       runSliceCalls.push({ input, deps: sliceDeps });
       try {
@@ -376,10 +385,14 @@ describe("createCollaborationManager.start", () => {
     expect(call.input.primaryAgentBackend).toBe("claude");
   });
 
-  it("forwards the workflowId and worktreePath to buildCallAgent", async () => {
+  it("forwards the workflowId, worktreePath, and resolved codex model config to buildCallAgent", async () => {
     const { deps, buildCallAgentCalls, runSliceCompletion } = buildScriptedDeps(
       {
         resolveSessionResult: { worktreePath: "/wt/xyz" },
+        resolveCodexModelConfigResult: {
+          model: "gpt-5.5",
+          reasoningEffort: "high",
+        },
       },
     );
     const manager = createCollaborationManager(deps);
@@ -396,7 +409,12 @@ describe("createCollaborationManager.start", () => {
     await runSliceCompletion;
 
     expect(buildCallAgentCalls).toEqual([
-      { workflowId: "wf-1", worktreePath: "/wt/xyz" },
+      {
+        workflowId: "wf-1",
+        worktreePath: "/wt/xyz",
+        codexModel: "gpt-5.5",
+        codexReasoningEffort: "high",
+      },
     ]);
   });
 

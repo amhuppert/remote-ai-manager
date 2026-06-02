@@ -584,4 +584,123 @@ describe("createCollaborationProductionCallAgent", () => {
       null,
     ]);
   });
+
+  it("applies the configured codex model and reasoning effort to a codex task_run request that carries none", async () => {
+    const laneService = createLaneService({ store: createInMemoryLaneStore() });
+    await laneService.initialize({
+      workflowId: "wf-codex-model",
+      laneId: "codex",
+      backend: "codex",
+      writeCapability: "write_capable",
+      policy: { continuityEnabled: true },
+      backendState: { backend: "codex" },
+      metrics: { backend: "codex", rotateBeforeNextTurn: false },
+      lastUsedAt: "2026-04-28T10:00:00.000Z",
+    });
+
+    const taskRequests: AgentTaskRequest[] = [];
+    const runner: AgentTaskRunner = {
+      backend: "codex",
+      async run(request): Promise<AgentTaskResult> {
+        taskRequests.push(request);
+        const structuredOutput = draftOutput(1);
+        return {
+          backendRef: { backend: "codex", threadId: "real-thread-1" },
+          text: JSON.stringify(structuredOutput),
+          structuredOutput,
+          usage: null,
+          error: null,
+          timedOut: false,
+        };
+      },
+    };
+
+    const callAgent = createCollaborationProductionCallAgent({
+      workflowId: "wf-codex-model",
+      projectPath: "/projects/example",
+      sessionName: "sess-1",
+      worktreePath: "/worktrees/sess-1",
+      sessionKey: "/projects/example::sess-1",
+      originatingConversationId: "test-originating-conv",
+      laneService,
+      getTaskRunner: () => runner,
+      codexModel: "gpt-5.5",
+      codexReasoningEffort: "high",
+    });
+
+    await callAgent({
+      kind: "task_run",
+      backend: "codex",
+      prompt: "round 1",
+      laneRef: { workflowId: "wf-codex-model", laneId: "codex" },
+      writeCapability: "write_capable",
+      outputSchema:
+        COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA as unknown as Record<
+          string,
+          unknown
+        >,
+    });
+
+    expect(taskRequests[0]?.modelId).toBe("gpt-5.5");
+    expect(taskRequests[0]?.reasoningEffort).toBe("high");
+  });
+
+  it("prefers an explicit request modelId over the configured codex model", async () => {
+    const laneService = createLaneService({ store: createInMemoryLaneStore() });
+    await laneService.initialize({
+      workflowId: "wf-codex-model-override",
+      laneId: "codex",
+      backend: "codex",
+      writeCapability: "write_capable",
+      policy: { continuityEnabled: true },
+      backendState: { backend: "codex" },
+      metrics: { backend: "codex", rotateBeforeNextTurn: false },
+      lastUsedAt: "2026-04-28T10:00:00.000Z",
+    });
+
+    const taskRequests: AgentTaskRequest[] = [];
+    const runner: AgentTaskRunner = {
+      backend: "codex",
+      async run(request): Promise<AgentTaskResult> {
+        taskRequests.push(request);
+        const structuredOutput = draftOutput(1);
+        return {
+          backendRef: { backend: "codex", threadId: "real-thread-1" },
+          text: JSON.stringify(structuredOutput),
+          structuredOutput,
+          usage: null,
+          error: null,
+          timedOut: false,
+        };
+      },
+    };
+
+    const callAgent = createCollaborationProductionCallAgent({
+      workflowId: "wf-codex-model-override",
+      projectPath: "/projects/example",
+      sessionName: "sess-1",
+      worktreePath: "/worktrees/sess-1",
+      sessionKey: "/projects/example::sess-1",
+      originatingConversationId: "test-originating-conv",
+      laneService,
+      getTaskRunner: () => runner,
+      codexModel: "gpt-5.5",
+    });
+
+    await callAgent({
+      kind: "task_run",
+      backend: "codex",
+      prompt: "round 1",
+      modelId: "gpt-5.4",
+      laneRef: { workflowId: "wf-codex-model-override", laneId: "codex" },
+      writeCapability: "write_capable",
+      outputSchema:
+        COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA as unknown as Record<
+          string,
+          unknown
+        >,
+    });
+
+    expect(taskRequests[0]?.modelId).toBe("gpt-5.4");
+  });
 });

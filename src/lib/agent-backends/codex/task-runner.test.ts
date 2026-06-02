@@ -32,6 +32,7 @@ import { Codex } from "@openai/codex-sdk";
 import { registerTaskRunner } from "../registry-core";
 import { CodexTaskRunner, type CodexTaskRunnerDeps } from "./task-runner";
 import type { AgentTaskRequest } from "../task";
+import { getDefaultCodexModel } from "@/lib/agent-backends/schemas";
 
 function makeRequest(overrides?: Partial<AgentTaskRequest>): AgentTaskRequest {
   return {
@@ -88,6 +89,22 @@ describe("CodexTaskRunner", () => {
 
     expect(startThreadMock).toHaveBeenCalledWith(
       expect.objectContaining({ modelReasoningEffort: "high" }),
+    );
+  });
+
+  it("defaults to the global default codex model when no modelId is provided", async () => {
+    await runner.run(makeRequest());
+
+    expect(startThreadMock).toHaveBeenCalledWith(
+      expect.objectContaining({ model: getDefaultCodexModel() }),
+    );
+  });
+
+  it("passes an explicit modelId to thread options", async () => {
+    await runner.run(makeRequest({ modelId: "gpt-5.5" }));
+
+    expect(startThreadMock).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "gpt-5.5" }),
     );
   });
 
