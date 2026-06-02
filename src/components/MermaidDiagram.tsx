@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, useCallback } from "react";
+import { useOverlayScope } from "@/hooks/useOverlayScope";
 
 interface Props {
   /** Raw mermaid diagram source code */
@@ -102,7 +103,10 @@ export default function MermaidDiagram({ code }: Props): React.JSX.Element {
         role="button"
         tabIndex={0}
         onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") openFullscreen();
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            openFullscreen();
+          }
         }}
       />
       {isFullscreen && svgContent && (
@@ -139,6 +143,8 @@ function MermaidFullscreenOverlay({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
+
+  useOverlayScope(true);
 
   // Inject SVG and initialize pan/zoom
   useEffect(() => {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect } from "react";
+import { useOverlayScope } from "@/hooks/useOverlayScope";
 import {
   HOTKEY_REGISTRY,
   formatHotkeyDisplay,
@@ -54,6 +55,8 @@ export default function HotkeyHelpModal({
         });
     }
   }, [open, handleKeyDown]);
+
+  useOverlayScope(open);
 
   if (!open) return null;
 

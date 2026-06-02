@@ -10,6 +10,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import { useOverlayScope } from "@/hooks/useOverlayScope";
 interface ModelOption {
   id: string;
   label: string;
@@ -110,6 +111,8 @@ export default function ModelSelector({
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
   }, [open]);
+
+  useOverlayScope(open);
 
   const dropdown = (
     <div

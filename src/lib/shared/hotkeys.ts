@@ -81,6 +81,10 @@ export const HOTKEY_REGISTRY: HotkeyRegistry = {
       "Show or hide dev tool buttons (Next.js panel, TanStack Query)",
     category: "general",
   },
+  // focusSidebarSearch and focusCommandConsole intentionally share mod+k: they
+  // are route-exclusive (sidebar search lives on the session page via
+  // ConversationSidebar; the command console lives on the project page via
+  // ProjectDetailView) and never mount together, so the binding never collides.
   focusSidebarSearch: {
     id: "focusSidebarSearch",
     keys: "mod+k",

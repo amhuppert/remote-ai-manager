@@ -40,6 +40,7 @@ import {
   useSidebarGroupByPersistent,
 } from "@/features/session/hooks/use-sidebar-persistent-filters";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
+import { isEditableTarget } from "@/lib/shared/dom";
 import { useLongPress } from "@/hooks/use-long-press";
 import ConversationSidebarHeader from "@/features/session/sidebar/ConversationSidebarHeader";
 import ConversationSidebarFilters from "@/features/session/sidebar/ConversationSidebarFilters";
@@ -243,16 +244,8 @@ function ConversationSidebar({
   useAppHotkey("focusSidebarSearch", () => {
     // Don't steal focus from the prompt composer or other editable element.
     const active = document.activeElement;
-    if (active instanceof HTMLElement) {
-      const tag = active.tagName;
-      const isEditable =
-        tag === "INPUT" ||
-        tag === "TEXTAREA" ||
-        tag === "SELECT" ||
-        active.isContentEditable;
-      // If editable and not our own search input, leave focus alone.
-      if (isEditable && active !== searchInputRef.current) return;
-    }
+    // If editable and not our own search input, leave focus alone.
+    if (isEditableTarget(active) && active !== searchInputRef.current) return;
     searchInputRef.current?.focus();
     searchInputRef.current?.select();
   });

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useSmartMergeMutation, ApiCallError } from "@/lib/git/mutations";
+import { useOverlayScope } from "@/hooks/useOverlayScope";
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -87,6 +88,8 @@ export default function SmartMergeDialog({
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
   }, [open, onClose]);
+
+  useOverlayScope(open);
 
   const merge = useSmartMergeMutation(projectName, sessionName);
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useOverlayScope } from "@/hooks/useOverlayScope";
 
 export type BulkConfirmKind = "archive" | "unarchive" | "delete";
 
@@ -71,6 +72,8 @@ export default function BulkConfirmModal({
     document.addEventListener("keydown", handleKeyDown, true);
     return () => document.removeEventListener("keydown", handleKeyDown, true);
   }, [open, onClose]);
+
+  useOverlayScope(open);
 
   if (!open) return null;
 

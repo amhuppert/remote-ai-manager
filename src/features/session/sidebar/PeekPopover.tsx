@@ -14,6 +14,7 @@ import {
   useInteractions,
 } from "@floating-ui/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useOverlayScope } from "@/hooks/useOverlayScope";
 import AskQuestionPanel from "@/components/AskQuestionPanel";
 import MessageRow from "@/components/conversation/MessageRow";
 import TypingIndicator from "@/components/conversation/TypingIndicator";
@@ -282,6 +283,9 @@ export default function PeekPopover({
 
   const dismiss = useDismiss(context);
   const { getFloatingProps } = useInteractions([dismiss]);
+
+  useOverlayScope(true);
+
   const setFloatingRef = useCallback(
     (node: HTMLElement | null) => {
       refs.setFloating(node);

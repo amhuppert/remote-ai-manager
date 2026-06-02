@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
+import { useOverlayScope } from "@/hooks/useOverlayScope";
 import type { DevServerRuntimeState } from "@/lib/dev-server/schemas";
 
 export interface UnmanagedConflictInfo {
@@ -229,6 +230,8 @@ export function DevServerPanel({
       right: window.innerWidth - rect.right,
     });
   }, [open, anchorRef]);
+
+  useOverlayScope(open);
 
   if (!open) return null;
 

@@ -6,6 +6,7 @@ import { useCreateSessionMutation } from "@/lib/sessions/mutations";
 import { useSessionsQuery } from "@/lib/sessions/queries";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
+import { useOverlayScope } from "@/hooks/useOverlayScope";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import { FileAutocomplete } from "@/components/FileAutocomplete";
 import BranchSelector from "@/components/BranchSelector";
@@ -157,8 +158,11 @@ export default function CreateSessionModal({
     },
     {
       enabled: open && voiceEnabled && voiceAvailable && !isProcessing,
+      keepActiveInOverlay: true,
     },
   );
+
+  useOverlayScope(open);
 
   // Reset state when modal opens (state-during-render pattern)
   const [prevOpen, setPrevOpen] = useState(false);

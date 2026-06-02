@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useOverlayScope } from "@/hooks/useOverlayScope";
 
 export interface SessionActionsMenuProps {
   targetBranch: string;
@@ -41,6 +42,8 @@ export default function SessionActionsMenu({
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
+
+  useOverlayScope(open);
 
   const pick = (fn: (() => void) | undefined) => () => {
     setOpen(false);

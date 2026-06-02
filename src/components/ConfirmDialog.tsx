@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useOverlayScope } from "@/hooks/useOverlayScope";
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -47,6 +48,8 @@ export default function ConfirmDialog({
     document.addEventListener("keydown", handleKeyDown, true);
     return () => document.removeEventListener("keydown", handleKeyDown, true);
   }, [open, onConfirm, onCancel]);
+
+  useOverlayScope(open);
 
   if (!open) return null;
 

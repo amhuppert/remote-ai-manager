@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
+import { useOverlayScope } from "@/hooks/useOverlayScope";
 import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
 
 interface InfoDetailsPopoverProps {
@@ -89,6 +90,13 @@ export default function InfoDetailsPopover({
       if (hoverTimer.current) clearTimeout(hoverTimer.current);
     };
   }, []);
+
+  useOverlayScope(pinned, {
+    onEscape: () => {
+      setPinned(false);
+      setOpen(false);
+    },
+  });
 
   const handleEnter = useCallback(() => {
     if (hoverTimer.current) clearTimeout(hoverTimer.current);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useOverlayScope } from "@/hooks/useOverlayScope";
 
 export interface ContextMenuItem {
   label: string;
@@ -45,6 +46,8 @@ export default function CardContextMenu({
       document.removeEventListener("keydown", handleEscape);
     };
   }, [open, onToggle]);
+
+  useOverlayScope(open);
 
   return (
     <div className="card-menu-wrap" ref={wrapRef}>

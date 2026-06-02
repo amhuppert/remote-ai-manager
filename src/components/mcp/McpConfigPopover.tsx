@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useOverlayScope } from "@/hooks/useOverlayScope";
 import McpServerList from "./McpServerList";
 import type { McpServerCardActions, McpServerView } from "./types";
 
@@ -63,6 +64,8 @@ export default function McpConfigPopover({
       document.removeEventListener("keydown", handleKey);
     };
   }, [open, onClose, anchorRef]);
+
+  useOverlayScope(open);
 
   const summary = summarise(servers);
   const pendingCount = pendingServerIds?.length ?? 0;

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { useOverlayScope } from "@/hooks/useOverlayScope";
 
 interface ContextMenuActionItem {
   kind: "item";
@@ -78,6 +79,8 @@ export default function ConversationSidebarRowContextMenu({
       window.removeEventListener("keydown", onKey);
     };
   }, [onClose]);
+
+  useOverlayScope(true);
 
   if (typeof document === "undefined") return null;
 

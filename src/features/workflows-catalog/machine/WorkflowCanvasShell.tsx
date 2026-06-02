@@ -9,6 +9,8 @@ import {
   type ReactNode,
 } from "react";
 import { CanvasZoomContext } from "../canvas/MachineCanvas";
+import { isEditableTarget } from "@/lib/shared/dom";
+import { isOverlayOpen } from "@/stores/overlay-scope.store";
 
 interface SiblingInfo {
   name: string;
@@ -322,8 +324,8 @@ export default function WorkflowCanvasShell({
   // Keyboard shortcuts. Ignore when an input/textarea is focused.
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
-      const target = e.target as HTMLElement | null;
-      if (target?.tagName === "INPUT" || target?.tagName === "TEXTAREA") return;
+      if (isEditableTarget(e.target)) return;
+      if (isOverlayOpen()) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       switch (e.key) {
         case "+":

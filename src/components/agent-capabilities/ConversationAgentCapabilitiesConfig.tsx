@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 
+import { useOverlayScope } from "@/hooks/useOverlayScope";
 import type { AgentCapabilityScope } from "@/hooks/use-agent-capabilities";
 
 import { AgentCapabilitiesConfigurator } from "./AgentCapabilitiesConfigurator";
@@ -85,6 +86,8 @@ function AgentCapabilitiesModal({
   layerOptions: readonly AgentCapabilityLayerOption[];
   initialScope: AgentCapabilityScope;
 }): React.JSX.Element | null {
+  useOverlayScope(open, { onEscape: onClose });
+
   if (!open || typeof document === "undefined") return null;
 
   const overlay = (

@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import TddToggle from "@/components/TddToggle";
+import { useOverlayScope } from "@/hooks/useOverlayScope";
 
 interface MobileActionMenuProps {
   /** Whether TDD mode is enabled */
@@ -59,6 +60,8 @@ export default function MobileActionMenu({
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   }, [open]);
+
+  useOverlayScope(open);
 
   return (
     <>

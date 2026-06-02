@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useOverlayScope } from "@/hooks/useOverlayScope";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 interface ModelOption {
@@ -94,6 +95,8 @@ export default function MobilePromptToolbar({
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   }, [sheet]);
+
+  useOverlayScope(sheet !== null);
 
   const selectedModelOpt = modelOptions.find((m) => m.id === selectedModel);
   const selectedEffortOpt = effortOptions.find((e) => e.id === selectedEffort);

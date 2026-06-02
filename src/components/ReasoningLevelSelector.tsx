@@ -9,6 +9,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
+import { useOverlayScope } from "@/hooks/useOverlayScope";
 export interface EffortOption {
   id: EffortLevel;
   label: string;
@@ -110,6 +111,8 @@ export default function ReasoningLevelSelector({
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
   }, [open]);
+
+  useOverlayScope(open);
 
   const dropdown = (
     <div

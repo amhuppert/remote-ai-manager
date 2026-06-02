@@ -13,13 +13,39 @@ describe("HOTKEY_REGISTRY", () => {
       "firstMessage",
       "lastMessage",
       "toggleSidebar",
+      "toggleActivePanel",
+      "toggleDevTools",
+      "focusSidebarSearch",
       "nextFile",
       "prevFile",
       "nextChange",
       "prevChange",
+      "newSession",
+      "focusCommandConsole",
     ];
     for (const id of expectedIds) {
       expect(HOTKEY_REGISTRY[id]).toBeDefined();
+    }
+  });
+
+  it("binds each key combo to a single entry except allow-listed route-exclusive duplicates", async () => {
+    const { HOTKEY_REGISTRY } = await import("./hotkeys");
+    // focusSidebarSearch + focusCommandConsole intentionally share mod+k; they
+    // are never mounted on the same route. Any other duplicate is a bug.
+    const ALLOWED_DUPLICATE_KEYS = new Set(["mod+k"]);
+    const idsByKeys = new Map<string, string[]>();
+    for (const def of Object.values(HOTKEY_REGISTRY)) {
+      const ids = idsByKeys.get(def.keys) ?? [];
+      ids.push(def.id);
+      idsByKeys.set(def.keys, ids);
+    }
+    for (const [keys, ids] of idsByKeys) {
+      if (ids.length > 1) {
+        expect(
+          ALLOWED_DUPLICATE_KEYS.has(keys),
+          `unexpected duplicate binding for "${keys}": ${ids.join(", ")}`,
+        ).toBe(true);
+      }
     }
   });
 

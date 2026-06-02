@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useCommitMutation } from "@/lib/git/mutations";
+import { useOverlayScope } from "@/hooks/useOverlayScope";
 
 interface CommitDialogProps {
   open: boolean;
@@ -43,6 +44,8 @@ export default function CommitDialog({
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
   }, [open, onClose]);
+
+  useOverlayScope(open);
 
   const handleSubmit = () => {
     if (!message.trim() || commitMutation.isPending) return;

@@ -2,6 +2,7 @@ import { Anybody, Manrope, Geist_Mono } from "next/font/google";
 import Providers from "@/components/Providers";
 import NotificationListener from "@/components/NotificationListener";
 import GlobalHotkeyHelp from "@/components/GlobalHotkeyHelp";
+import GlobalActivePanelHotkey from "@/components/GlobalActivePanelHotkey";
 import TooltipProvider from "@/components/TooltipProvider";
 import NotificationsPanelContainer from "@/components/NotificationsPanelContainer";
 import MergeToastContainer from "@/components/MergeToastContainer";
@@ -76,6 +77,7 @@ export default function RootLayout({
           <DevToolsGate />
           <ReactScanInstrumentation />
           <GlobalHotkeyHelp />
+          <GlobalActivePanelHotkey />
           <TooltipProvider />
         </Providers>
       </body>

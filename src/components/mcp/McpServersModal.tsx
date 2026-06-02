@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect } from "react";
 import { createPortal } from "react-dom";
+import { useOverlayScope } from "@/hooks/useOverlayScope";
 import McpServerList from "./McpServerList";
 import type {
   McpServerCardActions,
@@ -50,6 +51,8 @@ export default function McpServersModal({
     return () =>
       document.removeEventListener("keydown", handleKey, { capture: true });
   }, [open, handleKey]);
+
+  useOverlayScope(open);
 
   if (!open || typeof document === "undefined") return null;
 

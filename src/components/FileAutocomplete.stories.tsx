@@ -13,8 +13,6 @@ import {
 // ---------------------------------------------------------------------------
 
 const MOCK_FILES = [
-  "src/components/CommandAutocomplete.tsx",
-  "src/components/CommandAutocomplete.test.tsx",
   "src/components/ConfirmDialog.tsx",
   "src/components/ConfirmDialog.stories.tsx",
   "src/components/FileAutocomplete.tsx",
