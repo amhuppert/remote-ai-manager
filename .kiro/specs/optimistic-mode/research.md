@@ -12,7 +12,7 @@
 
 ### Existing Session Mode Architecture
 - **Context**: Understand how fast/focus modes are implemented to find extension points
-- **Sources Consulted**: `src/lib/schemas.ts`, `src/lib/sessions.ts`, `src/app/api/projects/[name]/sessions/route.ts`, `CreateSessionModal.tsx`
+- **Sources Consulted**: `src/lib/sessions/schemas.ts`, `src/lib/sessions.ts`, `src/app/api/projects/[name]/sessions/route.ts`, `CreateSessionModal.tsx`
 - **Findings**:
   - `sessionCreationModeSchema` is a `z.enum(["fast", "focus"])` — adding `"optimistic"` is a one-line change
   - `createSessionRequestSchema` is a `z.discriminatedUnion("mode", [...])` — new variant needed for optimistic

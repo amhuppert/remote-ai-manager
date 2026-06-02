@@ -29,8 +29,8 @@
 The project discovery feature operates within CC's existing flat-module architecture:
 
 - **Domain logic** in `src/lib/` as standalone async functions (no classes)
-- **Schemas** centralized in `src/lib/schemas.ts` with Zod v4
-- **Types** re-exported from `src/types/index.ts`
+- **Schemas** per-domain in the relevant `src/lib/<domain>/schemas.ts` (e.g. `src/lib/config/schemas.ts`, `src/lib/projects/schemas.ts`)
+- **Types** derived via `z.infer` from each domain's `schemas.ts`; no central type re-export
 - **API routes** in `src/app/api/` following Next.js App Router conventions
 - **State** persisted as JSON on the filesystem, read via `state.ts`
 
@@ -74,7 +74,7 @@ graph TB
 
 | Layer      | Choice / Version                      | Role in Feature                                    | Notes                             |
 | ---------- | ------------------------------------- | -------------------------------------------------- | --------------------------------- |
-| Backend    | Next.js 15 App Router                 | API route handler                                  | `force-dynamic` for fresh results |
+| Backend    | Next.js 16 App Router                 | API route handler                                  | `force-dynamic` for fresh results |
 | Runtime    | Node.js (built-in `fs`, `path`, `os`) | Filesystem scanning, path resolution, OS detection | No external dependencies          |
 | Validation | Zod v4                                | Config schema validation                           | `safeParse` for disk-read config  |
 | Data       | JSON filesystem (via `state.ts`)      | Session metadata source                            | Read-only access                  |

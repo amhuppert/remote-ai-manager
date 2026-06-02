@@ -95,7 +95,7 @@ graph TB
 | Layer | Choice / Version | Role in Feature | Notes |
 |-------|------------------|-----------------|-------|
 | Frontend | React 19, TanStack Query | DevServerPanel component, useDevServers hook | Consistent with existing session UI |
-| Backend | Next.js 15 API Routes | REST endpoints for start/stop/status | `withTracing` wrapper, `force-dynamic` |
+| Backend | Next.js 16 API Routes | REST endpoints for start/stop/status | `withTracing` wrapper, `force-dynamic` |
 | Process Mgmt | Node.js `child_process.spawn` with `shell: true` | Long-lived dev server process management | First `spawn` usage in codebase; `shell: true` gives Node.js direct handle for clean termination |
 | Networking | Tailscale CLI (`tailscale serve`, `tailscale status`) | HTTPS exposure over tailnet | Requires `--operator` pre-configured |
 | Events | SSE via `sse-broadcaster.ts` | Real-time status updates to UI | New `dev-server-status` event type |

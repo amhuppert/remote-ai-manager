@@ -15,15 +15,15 @@ to answer: "Does this port belong to this session worktree?"
 
 ## Files To Create
 
-- `src/lib/dev-server-port-ownership.ts`
-- `src/lib/dev-server-port-ownership.test.ts`
+- `src/lib/dev-server/port-ownership.ts`
+- `src/lib/dev-server/port-ownership.test.ts`
 
 ## Files To Update
 
-- `src/lib/dev-server-registry.ts`
-- `src/lib/dev-server-liveness.ts`
-- `src/lib/dev-server-registry.test.ts`
-- `src/lib/dev-server-liveness.test.ts`
+- `src/lib/dev-server/registry.ts`
+- `src/lib/dev-server/liveness.ts`
+- `src/lib/dev-server/registry.test.ts`
+- `src/lib/dev-server/liveness.test.ts`
 
 ## Service Shape
 

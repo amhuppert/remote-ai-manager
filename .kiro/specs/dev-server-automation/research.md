@@ -56,12 +56,12 @@
 
 ### Existing Codebase Integration Points
 - **Context**: Where to hook dev server lifecycle into existing session management
-- **Sources Consulted**: `src/lib/sessions.ts`, `src/lib/background-jobs.ts`, `src/lib/sse-broadcaster.ts`, `src/lib/schemas.ts`
+- **Sources Consulted**: `src/lib/sessions.ts`, `src/lib/background-jobs.ts`, `src/lib/events/broadcaster.ts`, `src/lib/dev-server/schemas.ts`
 - **Findings**:
   - **Session delete** (`deleteSession` in `sessions.ts`): Hook before `git worktree remove` to stop dev servers
   - **Session merge** (`setSessionFinished` called from `background-jobs.ts`): Hook after merge to stop dev servers
   - **CC shutdown**: No existing shutdown hook; needs a new `process.on('SIGTERM')` handler in the registry module
-  - **SSE pattern**: Add `DevServerStatusEvent` to the `SSEEvent` union in `schemas.ts`; call `broadcast()` on all status transitions
+  - **SSE pattern**: Add `DevServerStatusEvent` to the `SSEEvent` union in `src/lib/dev-server/schemas.ts`; call `broadcast()` on all status transitions
   - **globalThis pattern**: 7 existing modules use `__cc_*` keys; new registry at `__cc_dev_servers`
   - **API routes**: Follow `withTracing` + `export const dynamic = "force-dynamic"` convention; place under `/api/projects/[name]/sessions/[session]/dev-servers/`
   - **Config**: Extend `perRepoConfigSchema` with an optional `devServers` array

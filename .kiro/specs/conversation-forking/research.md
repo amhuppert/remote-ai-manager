@@ -22,7 +22,7 @@
 
 ### Transcript Storage & Fork Point
 - **Context**: How to copy transcript entries up to a fork point and how to locate the SDK message UUID at the boundary
-- **Sources Consulted**: `src/lib/transcript.ts`, JSONL file format
+- **Sources Consulted**: `src/lib/prompt/transcript.ts`, JSONL file format
 - **Findings**:
   - Transcripts are append-only JSONL files at `{configDir}/transcripts/{id}.jsonl`
   - Each line is a `TranscriptEntry` with `timestamp`, `type`, `role?`, `content?`, `raw?`
@@ -34,7 +34,7 @@
 
 ### ConversationState Schema Extension
 - **Context**: How to track fork provenance and the persistent prompt input
-- **Sources Consulted**: `src/lib/schemas.ts`
+- **Sources Consulted**: `src/lib/conversations/schemas.ts`
 - **Findings**:
   - Schema uses Zod with `.nullable()` / `.default()` for backward compatibility (existing conversations without new fields parse cleanly)
   - Two additive fields cover the feature: `forkedFrom` (with `sourceConversationId`, `messageIndex`, `sourceBackend`, `sourceBackendRef`, `forkLocator`, `forkMode`) and `pendingPromptText`
@@ -59,7 +59,7 @@
 
 | Option | Description | Strengths | Risks / Limitations | Notes |
 |--------|-------------|-----------|---------------------|-------|
-| Extend existing | Add fork logic to conversations.ts, extend transcript.ts | Minimal files, follows patterns | ConversationDetailPage grows | Chosen |
+| Extend existing | Add fork logic to conversations/service.ts, extend prompt/transcript.ts | Minimal files, follows patterns | ConversationDetailPage grows | Chosen |
 | New module | Create src/lib/fork.ts | Clean separation | More indirection | Fork logic tightly coupled to existing flows |
 | Hybrid | Extract fork business logic, extend UI in place | Balance | Slightly more files | Good for larger teams |
 
@@ -111,6 +111,6 @@
 
 ## References
 - Claude Agent SDK type declarations: `node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts`
-- CC conversation management: `src/lib/conversations.ts`
-- CC prompt execution: `src/lib/prompt.ts`
-- CC transcript storage: `src/lib/transcript.ts`
+- CC conversation management: `src/lib/conversations/service.ts`
+- CC prompt execution: `src/lib/prompt/route-handlers.ts`
+- CC transcript storage: `src/lib/prompt/transcript.ts`

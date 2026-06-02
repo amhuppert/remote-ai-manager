@@ -7,7 +7,7 @@
 - **Key Findings**:
   - Backend ports `ConversationBackendRuntime` (`src/lib/agent-backends/conversation.ts`) and `AgentTaskRunner` (`src/lib/agent-backends/task.ts`) are already healthy and capability-typed; the duplication lives one level above them, in feature orchestrators that re-pick backends, re-apply MCP, and re-validate structured output.
   - Graph workflow continuity (`src/lib/workflows/graph-workflow/workflow-continuity-service.ts`) is the strongest existing prototype for `Lane`. It already encodes backend identity, rotation policy, stale-session metadata, and per-engine continuity — but its types are graph-shaped (`implementer` / `context_validator`), so generalization must happen behind a compatibility adapter, not a rewrite.
-  - Existing artifact paths are heterogeneous and must be preserved: session-level reference documents (`src/lib/state.ts`), `memory-bank/focus.md` (focus mode), `memory-bank/codex/...` (Codex `run_codex`), `.cc/graph-workflow-docs/` (graph shared documents), and validation logs. A registry that forces one tree would regress all of these. The registry must dispatch on artifact kind to existing paths, not invert them.
+  - Existing artifact paths are heterogeneous and must be preserved: session-level reference documents (`src/lib/state-store/`), `memory-bank/focus.md` (focus mode), `memory-bank/codex/...` (Codex `run_codex`), `.cc/graph-workflow-docs/` (graph shared documents), and validation logs. A registry that forces one tree would regress all of these. The registry must dispatch on artifact kind to existing paths, not invert them.
 
 ## Research Log
 
@@ -29,7 +29,7 @@
 - **Context**: Requirement 2 wants Lane as a reusable named-stream primitive. Graph workflow already has the closest behavior in production.
 - **Sources Consulted**:
   - `src/lib/workflows/graph-workflow/workflow-continuity-service.ts` — `createWorkflowContinuityService(deps)`, `resolveImplementerCall`, `resolveValidatorCall`, `recordClaudeTurnOutcome`, `recordCodexTurnOutcome`, `clearForNewContext`.
-  - `src/lib/schemas.ts` — `graphWorkflowLaneStateSchema` (discriminated union by engine), `graphWorkflowLaneContinuityPolicySchema`, `graphWorkflowLaneKindSchema`.
+  - `src/lib/workflows/schemas.ts` — `graphWorkflowLaneStateSchema` (discriminated union by engine), `graphWorkflowLaneContinuityPolicySchema`, `graphWorkflowLaneKindSchema`.
 - **Findings**:
   - Continuity already tracks Claude conversation IDs, Codex thread IDs, context-window metrics, rotation flags, and stale-session recovery markers.
   - Graph-specific fields (`lane: implementer | context_validator`) are encoded into the schema; rotating into a generalized `Lane` requires renaming `engine` → `backend` at the conceptual layer while keeping graph schemas intact through an adapter.
@@ -55,7 +55,7 @@
 
 - **Context**: Requirement 4 wants one scoped status transport across features without forcing one payload schema.
 - **Sources Consulted**:
-  - `src/lib/sse-broadcaster.ts` — `addClient`, `removeClient`, `broadcast(event: SSEEvent)`, globalThis-keyed singleton.
+  - `src/lib/events/broadcaster.ts` — `addClient`, `removeClient`, `broadcast(event: SSEEvent)`, globalThis-keyed singleton.
   - `src/lib/workflow-graph/execution-events.ts` — `GraphWorkflowExecutionEvent`, dedicated publisher with `dispatchPush`.
   - `src/lib/workflows/conversation/machine.ts` — `broadcastConversationStatus`, `broadcastAskQuestion`, `broadcastDebugModeStatus` actions.
   - `src/lib/background-jobs.ts` — `JobStatusEvent` broadcast directly.
@@ -66,10 +66,10 @@
 
 - **Context**: Requirement 5 demands one shared writing+registration flow without forcing one directory.
 - **Sources Consulted**:
-  - `src/lib/state.ts` — `createReferenceDocument`, `getReferenceDocuments`, `deleteReferenceDocument`; reference docs nest under `ConversationState`.
-  - `src/lib/schemas.ts` — `referenceDocumentSchema`.
-  - `src/lib/reference-document-tools.ts` — MCP tool surface.
-  - `src/lib/codex-tool.ts` — Codex writes its own reference documents into `memory-bank/codex/...` after each `run_codex` call.
+  - `src/lib/state-store/` — `createReferenceDocument`, `getReferenceDocuments`, `deleteReferenceDocument`; reference docs nest under `ConversationState`.
+  - `src/lib/reference-documents/schemas.ts` — `referenceDocumentSchema`.
+  - `src/lib/reference-documents/tools.ts` — MCP tool surface.
+  - `src/lib/agent-backends/codex/codex-tool.ts` — Codex writes its own reference documents into `memory-bank/codex/...` after each `run_codex` call.
   - `src/lib/workflow-graph/shared-documents.ts` — graph shared docs under `.cc/graph-workflow-docs/`.
   - Focus mode writes `memory-bank/focus.md` from a conversation actor.
 - **Findings**:
@@ -81,7 +81,7 @@
 
 - **Context**: Requirement 6 wants minimal durable lifecycle metadata without an event store.
 - **Sources Consulted**:
-  - `src/lib/schemas.ts` — `graphWorkflowExecutionSchema` already persists ID, status, history, and lanes inside `SessionState`.
+  - `src/lib/workflows/schemas.ts` — `graphWorkflowExecutionSchema` already persists ID, status, history, and lanes inside `SessionState`.
   - `src/lib/workflow-graph/execution-route-handlers.ts` — discovers active executions through session state.
   - `src/lib/active-conversations-route-handlers.ts` — discovers active conversations.
 - **Findings**: The graph execution object is the working precedent for durable lifecycle storage in session state; building a parallel registry would fragment state.
@@ -187,6 +187,6 @@
 - `src/lib/agent-backends/{types.ts, conversation.ts, task.ts, registry.ts}` — backend port surfaces.
 - `src/lib/workflows/graph-workflow/workflow-continuity-service.ts` — Lane prototype.
 - `src/lib/workflow-graph/{validator-runner.ts, script-validator-runner.ts, shared-documents.ts}` — gate and artifact prototypes.
-- `src/lib/sse-broadcaster.ts`, `src/lib/workflow-graph/execution-events.ts` — current SSE publishing surfaces.
-- `src/lib/state.ts`, `src/lib/state-mutex.ts`, `src/lib/lock.ts` — durable state and locking.
-- `src/lib/codex-tool.ts`, `src/lib/reference-document-tools.ts` — existing artifact write paths.
+- `src/lib/events/broadcaster.ts`, `src/lib/workflow-graph/execution-events.ts` — current SSE publishing surfaces.
+- `src/lib/state-store/`, `src/lib/state-mutex.ts`, `src/lib/lock.ts` — durable state and locking.
+- `src/lib/agent-backends/codex/codex-tool.ts`, `src/lib/reference-documents/tools.ts` — existing artifact write paths.

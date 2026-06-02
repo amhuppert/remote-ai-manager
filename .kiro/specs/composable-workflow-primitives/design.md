@@ -56,10 +56,10 @@ owned by feature stacks rather than a shared primitive domain:
 - `src/lib/workflow-graph/validator-runner.ts`,
   `src/lib/workflow-graph/script-validator-runner.ts`, and conversation
   ask-user flows already demonstrate several gate shapes.
-- `src/lib/sse-broadcaster.ts` already provides the shared wire for live status
+- `src/lib/events/broadcaster.ts` already provides the shared wire for live status
   delivery.
-- `src/lib/state.ts`, `src/lib/reference-document-tools.ts`,
-  `src/lib/codex-tool.ts`, and
+- `src/lib/state-store/`, `src/lib/reference-documents/tools.ts`,
+  `src/lib/agent-backends/codex/codex-tool.ts`, and
   `src/lib/workflow-graph/shared-documents.ts` already cover the artifact paths
   that must be preserved.
 - `graphWorkflowExecution` inside session state is the working precedent for a
@@ -164,7 +164,7 @@ graph TD
 | Frontend / CLI | Next.js 16 UI + Claude/Codex prompt surfaces | Existing workflow UIs consume shared status and artifacts | No new UI framework |
 | Backend / Services | TypeScript service layer under `src/lib/` | Hosts primitive services and adapters | Follows existing DI and factory patterns |
 | Data / Storage | Session JSON state guarded by `withStateLock` | Stores lanes, envelopes, and registrations | No new DB required in first pass |
-| Messaging / Events | SSE via `src/lib/sse-broadcaster.ts` | Carries scoped live status | `StatusBus` wraps, does not replace, the wire |
+| Messaging / Events | SSE via `src/lib/events/broadcaster.ts` | Carries scoped live status | `StatusBus` wraps, does not replace, the wire |
 | Infrastructure / Runtime | Existing backend registry + worktree/session locks | Executes agent calls safely | Preserves separate conversation and task ports |
 
 ## System Flows

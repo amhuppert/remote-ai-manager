@@ -33,7 +33,7 @@
 
 **Architecture Integration**:
 - Selected pattern: Incremental extension of existing conversation model with a `role` discriminator
-- Domain boundaries: Data model change in schemas → domain logic in `conversations.ts` → API route → UI integration in `SessionDetailPage`
+- Domain boundaries: Data model change in schemas → domain logic in `src/lib/conversations/service.ts` → API route → UI integration in `SessionDetailPage`
 - Existing patterns preserved: Zod schema-first modeling, `mutationFetch` pattern for API calls, TanStack Query invalidation, component colocation
 - New components: `FocusConfirmationBar` (shared component), `finalize-initialization` API route
 - Steering compliance: Follows schema-first, colocation, and REST resource hierarchy patterns
@@ -42,7 +42,7 @@
 
 | Layer | Choice / Version | Role in Feature | Notes |
 |-------|------------------|-----------------|-------|
-| Frontend | React 19 + Next.js 15 | SessionDetailPage renders FocusConfirmationBar conditionally | Uses existing TanStack Query + Zustand patterns |
+| Frontend | React 19 + Next.js 16 | SessionDetailPage renders FocusConfirmationBar conditionally | Uses existing TanStack Query + Zustand patterns |
 | Backend | Next.js API Routes | `finalize-initialization` endpoint | Follows existing route conventions |
 | Data / Storage | Filesystem JSON state | `role` field on ConversationState | Backward-compatible via Zod `.default(null)` |
 | Shared Components | `src/components/` | FocusConfirmationBar | Cross-page capable, currently used in SessionDetailPage |
@@ -85,12 +85,12 @@ Key decisions:
 | Requirement | Summary | Components | Interfaces | Flows |
 |-------------|---------|------------|------------|-------|
 | 1 | Role identification | `conversationRoleSchema`, `sessions.ts` | ConversationState schema | Session provisioning |
-| 2 | Two-phase prompt execution | `prompt-templates.ts` | getUnderstandObjectivePrompt, getWriteFocusDocumentPrompt | Phase 1, Phase 2 |
+| 2 | Two-phase prompt execution | `src/lib/prompt/templates.ts` | getUnderstandObjectivePrompt, getWriteFocusDocumentPrompt | Phase 1, Phase 2 |
 | 3 | Confirmation bar | `FocusConfirmationBar.tsx`, `SessionDetailPage.tsx` | FocusConfirmationBarProps | Phase 2 trigger |
-| 4 | Focus document writing | `SessionDetailPage.tsx`, `prompt-templates.ts` | sendPrompt | Phase 2 execution |
-| 5 | Init conversation archival | `conversations.ts`, finalize-initialization route | finalizeInitialization | Phase 2 finalization |
-| 6 | Navigation to new conversation | `SessionDetailPage.tsx`, `mutations.ts` | useFinalizeInitializationMutation | Phase 2 completion |
-| 7 | Finalize API endpoint | finalize-initialization route, `conversations.ts` | POST endpoint | Phase 2 finalization |
+| 4 | Focus document writing | `SessionDetailPage.tsx`, `src/lib/prompt/templates.ts` | sendPrompt | Phase 2 execution |
+| 5 | Init conversation archival | `src/lib/conversations/service.ts`, finalize-initialization route | finalizeInitialization | Phase 2 finalization |
+| 6 | Navigation to new conversation | `SessionDetailPage.tsx`, `src/lib/sessions/mutations.ts` | useFinalizeInitializationMutation | Phase 2 completion |
+| 7 | Finalize API endpoint | finalize-initialization route, `src/lib/conversations/service.ts` | POST endpoint | Phase 2 finalization |
 
 ## Components and Interfaces
 
@@ -101,8 +101,8 @@ Key decisions:
 | getWriteFocusDocumentPrompt | Prompt Templates | Document-writing prompt | 2, 4 | None | — |
 | FocusConfirmationBar | UI / Shared | Confirmation button bar | 3 | None | — |
 | SessionDetailPage (integration) | UI / Page | Orchestrates confirmation flow | 3, 4, 6 | FocusConfirmationBar, mutations | — |
-| finalizeInitialization | Domain Logic | Archive init + create new convo | 5, 6 | state.ts | Service |
-| finalize-initialization route | API | HTTP endpoint for finalization | 7 | conversations.ts | API |
+| finalizeInitialization | Domain Logic | Archive init + create new convo | 5, 6 | src/lib/state-store/ | Service |
+| finalize-initialization route | API | HTTP endpoint for finalization | 7 | src/lib/conversations/service.ts | API |
 | useFinalizeInitializationMutation | Client Hooks | React Query mutation | 6, 7 | mutations.ts | — |
 
 ### Data Model

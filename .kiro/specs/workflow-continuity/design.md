@@ -71,7 +71,7 @@ graph TD
   - Claude execution stays in the existing conversation domain.
   - Codex continuity stays in a dedicated runner that owns thread start/resume details.
 - **Existing patterns preserved**:
-  - Schema-first state modeling in `src/lib/schemas.ts`
+  - Schema-first state modeling in `src/lib/workflows/schemas.ts`
   - Session-scoped runtime persistence in `state.json`
   - DI-friendly orchestration modules and focused helper services
   - Existing transcript viewer and validation history surfaces

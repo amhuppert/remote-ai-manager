@@ -27,15 +27,15 @@ GET /api/projects/[name]/files → { items: FileItem[] }
 
 ### 3. Schemas & Types
 
-In `src/lib/schemas.ts`:
+In `src/lib/files/schemas.ts`:
 ```typescript
 export const fileItemSchema = z.object({ path: z.string() });
 export const projectFilesResponseSchema = z.object({ items: z.array(fileItemSchema) });
 ```
 
-In `src/types/index.ts`: Re-export `FileItem`, `ProjectFilesResponse`
+Types (`FileItem`, `ProjectFilesResponse`) are derived via `z.infer` from `src/lib/files/schemas.ts` — there is no central re-export.
 
-In `src/lib/query-keys.ts`:
+In `src/lib/files/query-keys.ts`:
 ```typescript
 export const fileKeys = {
   all: ["files"] as const,

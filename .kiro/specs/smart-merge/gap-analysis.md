@@ -60,7 +60,7 @@
 | Release lock on job completion | `acquireSessionLock()` returns sync `release()` function | **Constraint**: Release function must be callable from async background context |
 
 **Key files to create**: `src/lib/background-jobs.ts`
-**Key files to modify**: `src/lib/schemas.ts` (new event type), `src/lib/lock.ts` (may need to extend for background job compatibility)
+**Key files to modify**: `src/lib/jobs/schemas.ts` (new event type), `src/lib/lock.ts` (may need to extend for background job compatibility)
 
 ### Requirement 5: Auto-Resolve Conflicts Toggle
 
@@ -88,7 +88,7 @@
 - The existing `fix-merge-conflicts` skill prompt — adapt for programmatic use
 
 **Key files to create**: `src/lib/conflict-resolution.ts` (or extend `git-operations.ts`)
-**Key files to modify**: `src/lib/schemas.ts` (conflict analysis result schema)
+**Key files to modify**: `src/lib/jobs/schemas.ts` (conflict analysis result schema)
 
 ### Requirement 7: Manual Conflict Review Page
 

@@ -3,12 +3,12 @@
 ## Tasks
 
 - [x] 1. Add conversation role to data model
-- [x] 1.1 Add `conversationRoleSchema` and `role` field to `conversationStateSchema` in `src/lib/schemas.ts`
+- [x] 1.1 Add `conversationRoleSchema` and `role` field to `conversationStateSchema` in `src/lib/conversations/schemas.ts`
   - Define `conversationRoleSchema` as `z.enum(["initialization"]).nullable().default(null)`
   - Add `role: conversationRoleSchema` to `conversationStateSchema`
   - Export `ConversationRole` type
   - _Requirements: 1_
-- [x] 1.2 Re-export `ConversationRole` from `src/types/index.ts`
+- [x] 1.2 `ConversationRole` type is inferred from `conversationRoleSchema` in `src/lib/conversations/schemas.ts` (types derive from domain schemas via `z.infer`)
   - _Requirements: 1_
 - [x] 1.3 Update test helpers in all test files to include `role: null` in conversation objects
   - Update `SessionsList.test.tsx`, `SessionDetailPage.test.tsx`, `conversations.test.ts`, `prompt.test.ts`
@@ -17,22 +17,22 @@
 - [x] 2. Set role during session provisioning
 - [x] 2.1 Update `provisionSession` in `src/lib/sessions.ts` to set `role: "initialization"` for focus sessions and `role: null` for fast sessions
   - _Requirements: 1_
-- [x] 2.2 Update `createConversation` in `src/lib/conversations.ts` to accept optional `role` parameter
+- [x] 2.2 Update `createConversation` in `src/lib/conversations/service.ts` to accept optional `role` parameter
   - Add `opts?: { role?: ConversationRole }` parameter
   - Set `role: opts?.role ?? null` on created conversation
   - _Requirements: 1_
 
 - [x] 3. Split prompt templates into two phases
-- [x] 3.1 Refactor `getUnderstandObjectivePrompt` in `src/lib/prompt-templates.ts` to cover only research and Q&A (Steps 1-3)
+- [x] 3.1 Refactor `getUnderstandObjectivePrompt` in `src/lib/prompt/templates.ts` to cover only research and Q&A (Steps 1-3)
   - Add explicit instruction: "Do NOT write focus.md"
   - _Requirements: 2_
-- [x] 3.2 Create `getWriteFocusDocumentPrompt` in `src/lib/prompt-templates.ts` for the document-writing phase
+- [x] 3.2 Create `getWriteFocusDocumentPrompt` in `src/lib/prompt/templates.ts` for the document-writing phase
   - Template includes focus.md structure (Objective, Detailed Requirements, Key Design Decisions, Implementation Approach, Relevant Patterns)
   - Instruct "Write the file and nothing else. Do NOT begin any implementation work."
   - _Requirements: 2_
 
 - [x] 4. Implement finalize initialization domain logic
-- [x] 4.1 Add `finalizeInitialization` function in `src/lib/conversations.ts`
+- [x] 4.1 Add `finalizeInitialization` function in `src/lib/conversations/service.ts`
   - Find conversation with `role === "initialization"`, archive it
   - Create new conversation with `role: null`
   - Persist state atomically
@@ -46,7 +46,7 @@
   - _Requirements: 7_
 
 - [x] 6. Create client mutation hook
-- [x] 6.1 Add `useFinalizeInitializationMutation` in `src/lib/mutations.ts`
+- [x] 6.1 Add `useFinalizeInitializationMutation` in `src/lib/sessions/mutations.ts`
   - POST to finalize-initialization endpoint
   - On success: invalidate conversation list and session detail queries
   - _Requirements: 6, 7_
@@ -84,7 +84,7 @@
   - Test: archives init conversation, creates new regular conversation
   - Test: throws when no init conversation found
   - _Requirements: 5, 6_
-- [x] 9.2 Test prompt template outputs in `src/lib/prompt-templates.test.ts`
+- [x] 9.2 Test prompt template outputs in `src/lib/prompt/templates.test.ts`
   - Verify `getUnderstandObjectivePrompt` contains "Do NOT write focus.md"
   - Verify `getWriteFocusDocumentPrompt` contains focus.md structure
   - _Requirements: 2_

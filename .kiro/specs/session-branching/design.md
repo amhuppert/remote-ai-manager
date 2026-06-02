@@ -181,7 +181,7 @@ sequenceDiagram
 
 ##### State Management
 ```typescript
-// Additions to sessionStateSchema in src/lib/schemas.ts
+// Additions to sessionStateSchema in src/lib/sessions/schemas.ts
 {
   targetBranch: z.string().default("main"),
   parentSessionName: z.string().nullable().default(null),

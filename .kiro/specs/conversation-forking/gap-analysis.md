@@ -6,19 +6,19 @@
 
 | Asset | File | Purpose |
 |-------|------|---------|
-| ConversationState schema | `src/lib/schemas.ts` | Defines conversation data shape with `forkedFrom`, `pendingPromptText`, `backendRef` |
-| createConversation() | `src/lib/conversations.ts` | Creates new conversation in session state |
-| getConversation() | `src/lib/conversations.ts` | Retrieves conversation by ID |
-| mutateSession() | `src/lib/conversations.ts` | Atomic mutation of session and its conversations |
-| forkConversation() | `src/lib/conversations.ts` | Fork creation with the four cases (assistant inclusive, user idx>0 exclusive, user idx 0 brand-new, synthetic fallback) |
-| readConversationMessages() | `src/lib/transcript.ts` | Reads JSONL transcript into `TranscriptMessage[]` |
-| appendTranscriptEntry() | `src/lib/transcript.ts` | Appends a single JSONL entry |
-| copyTranscriptUpTo() | `src/lib/transcript.ts` | Mode-driven (`inclusive`/`exclusive`) transcript subset copy |
-| findForkAnchorUuid() | `src/lib/transcript.ts` | Resolves the SDK message UUID at a fork boundary |
-| buildSyntheticForkSeed() | `src/lib/transcript.ts` | Serializes local transcript into a single-shot prompt seed |
-| forkSession() | `@anthropic-ai/claude-agent-sdk` (consumed in `src/lib/conversations.ts`) | Native eager SDK session fork |
-| getTranscriptPath() | `src/lib/transcript.ts` | Returns the per-conversation JSONL path under the configured `transcripts/` dir |
-| executePromptStream() | `src/lib/prompt.ts` | SDK query execution with SSE streaming |
+| ConversationState schema | `src/lib/conversations/schemas.ts` | Defines conversation data shape with `forkedFrom`, `pendingPromptText`, `backendRef` |
+| createConversation() | `src/lib/conversations/service.ts` | Creates new conversation in session state |
+| getConversation() | `src/lib/conversations/service.ts` | Retrieves conversation by ID |
+| mutateSession() | `src/lib/conversations/service.ts` | Atomic mutation of session and its conversations |
+| forkConversation() | `src/lib/conversations/service.ts` | Fork creation with the four cases (assistant inclusive, user idx>0 exclusive, user idx 0 brand-new, synthetic fallback) |
+| readConversationMessages() | `src/lib/prompt/transcript.ts` | Reads JSONL transcript into `TranscriptMessage[]` |
+| appendTranscriptEntry() | `src/lib/prompt/transcript.ts` | Appends a single JSONL entry |
+| copyTranscriptUpTo() | `src/lib/prompt/transcript.ts` | Mode-driven (`inclusive`/`exclusive`) transcript subset copy |
+| findForkAnchorUuid() | `src/lib/prompt/transcript.ts` | Resolves the SDK message UUID at a fork boundary |
+| buildSyntheticForkSeed() | `src/lib/prompt/transcript.ts` | Serializes local transcript into a single-shot prompt seed |
+| forkSession() | `@anthropic-ai/claude-agent-sdk` (consumed in `src/lib/conversations/service.ts`) | Native eager SDK session fork |
+| getTranscriptPath() | `src/lib/prompt/transcript.ts` | Returns the per-conversation JSONL path under the configured `transcripts/` dir |
+| executePromptStream() | `src/lib/prompt/route-handlers.ts` | SDK query execution with SSE streaming |
 | useSendPrompt() | `src/hooks/use-send-prompt.ts` | Client-side prompt dispatch hook |
 | ConversationDetailPage | `src/app/projects/[name]/[session]/ConversationDetailPage.tsx` | Full conversation UI: virtualized list, persistent prompt input, fork wiring |
 | ConversationSidebar | `src/app/.../ConversationSidebar.tsx` | Conversation list with fork indicator |
@@ -107,9 +107,9 @@ If the source SDK session file has been compacted away or removed by the time th
 ### Option A: Extend Existing Components (Chosen)
 
 **Which files extended**:
-- `src/lib/schemas.ts` — Added `forkedFrom` (with `forkMode`, `sourceBackend`, `sourceBackendRef`, `forkLocator`) and `pendingPromptText` fields.
-- `src/lib/conversations.ts` — `forkConversation()` covering all four cases.
-- `src/lib/transcript.ts` — `copyTranscriptUpTo({mode})`, `findForkAnchorUuid`, `buildSyntheticForkSeed`.
+- `src/lib/conversations/schemas.ts` — Added `forkedFrom` (with `forkMode`, `sourceBackend`, `sourceBackendRef`, `forkLocator`) and `pendingPromptText` fields.
+- `src/lib/conversations/service.ts` — `forkConversation()` covering all four cases.
+- `src/lib/prompt/transcript.ts` — `copyTranscriptUpTo({mode})`, `findForkAnchorUuid`, `buildSyntheticForkSeed`.
 - `src/app/api/.../fork/route.ts` — Fork API route.
 - `src/app/api/.../pending-prompt/route.ts` + `src/lib/pending-prompt-route-handlers.ts` — Pending-prompt route.
 - `src/app/.../ConversationDetailPage.tsx` — Wired MessageActions, persistent prompt input, synthetic-fallback indicator.
@@ -125,7 +125,7 @@ If the source SDK session file has been compacted away or removed by the time th
 
 ### Option B: Create New Module
 
-Extract forking into a dedicated `src/lib/fork.ts` module. Not chosen — fork logic is tightly coupled to `conversations.ts` (state mutation) and reuses transcript helpers; a separate module would add indirection without reducing complexity.
+Extract forking into a dedicated `src/lib/fork.ts` module. Not chosen — fork logic is tightly coupled to `src/lib/conversations/service.ts` (state mutation) and reuses transcript helpers; a separate module would add indirection without reducing complexity.
 
 ---
 
@@ -140,7 +140,7 @@ Extract forking into a dedicated `src/lib/fork.ts` module. Not chosen — fork l
 ## Recommendations for Design Phase
 
 ### Preferred Approach
-Option A (Extend), with `forkConversation()` and the transcript helpers living in `conversations.ts` and `transcript.ts` respectively.
+Option A (Extend), with `forkConversation()` and the transcript helpers living in `src/lib/conversations/service.ts` and `src/lib/prompt/transcript.ts` respectively.
 
 ### Key Design Decisions
 1. **Eager SDK fork**: Call `forkSession()` at fork-creation time, not lazily on the first prompt. This decouples the fork from later mutations of the source.

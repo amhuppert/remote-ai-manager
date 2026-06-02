@@ -79,7 +79,7 @@ graph TB
 |-------|------------------|-----------------|-------|
 | Frontend | React 19, Next.js 16, TanStack Query 5 | Five capability panels, mutations, cache invalidation | New components borrow MCP interaction patterns without reusing MCP server cards |
 | Backend | Next.js route handlers, TypeScript strict mode | API routes, route handler factories, runtime orchestration | Keep route files thin and inject dependencies for tests |
-| Validation | Zod v4 | Persisted state, API requests, API responses, SSE events | Schemas live in `src/lib/schemas.ts`; types derive from schemas |
+| Validation | Zod v4 | Persisted state, API requests, API responses, SSE events | Schemas live in `src/lib/agent-capabilities/schemas.ts`; types derive from schemas |
 | Data / Storage | Existing state JSON plus new global JSON file | Sparse override persistence and runtime apply state | Global uses atomic temp-rename; lower scopes use state mutators |
 | Messaging / Events | Existing SSE broadcaster | Cross-client synchronization and pending-state refresh | Events carry ids and invalidation hints only |
 | Runtime | `@anthropic-ai/claude-agent-sdk` `^0.2.111`, `@openai/codex-sdk` `^0.125.0` | Claude idle apply and Codex next-turn staging | Registry shows newer package versions; implementation stays compatible with installed APIs unless a separate upgrade is approved |

@@ -30,8 +30,8 @@
   - `discovery.ts` depends on `config.ts` (read-only) and `state.ts` (read-only)
   - `project-resolver.ts` depends on `config.ts` (read-only)
   - Neither module writes state — they are pure consumers
-  - `DiscoveredProject` interface lives in `src/types/index.ts` (not derived from Zod)
-  - `GlobalConfig` is Zod-derived from `src/lib/schemas.ts`
+  - `DiscoveredProject` interface lives in `src/lib/projects/schemas.ts` (not derived from Zod)
+  - `GlobalConfig` is Zod-derived from `src/lib/config/schemas.ts`
 - **Implications**: Read-only dependencies simplify testing and reduce risk of side effects
 
 ### Testing Patterns
@@ -67,7 +67,7 @@
 
 ### Decision: DiscoveredProject as Plain Interface
 
-- **Context**: `DiscoveredProject` is defined as a TypeScript interface in `src/types/index.ts`, not as a Zod schema
+- **Context**: `DiscoveredProject` is defined as a TypeScript interface in `src/lib/projects/schemas.ts`, not as a Zod schema
 - **Alternatives Considered**:
   1. Add a Zod schema for `DiscoveredProject` — would enable runtime validation of API responses
   2. Keep as plain interface — simpler, sufficient for internal-only type

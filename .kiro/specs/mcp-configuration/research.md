@@ -71,7 +71,7 @@
   - `.claude/settings.json`
   - `.codex/config.toml`
   - `src/lib/config.ts`
-  - `src/lib/state.ts`
+  - `src/lib/state-store/`
   - `npm view smol-toml`
 - **Findings**:
   - The worktree has `.mcp.json` and `.codex/config.toml` definitions for `next-devtools` and `chrome-devtools`.
@@ -104,15 +104,15 @@
 ### API, State, and SSE Integration
 - **Context**: Identify project patterns for routes, state mutation, and live client updates.
 - **Sources Consulted**:
-  - `src/lib/schemas.ts`
-  - `src/lib/state.ts`
-  - `src/lib/sse-broadcaster.ts`
+  - `src/lib/mcp/schemas.ts`
+  - `src/lib/state-store/`
+  - `src/lib/events/broadcaster.ts`
   - `src/components/NotificationListener.tsx`
   - `src/app/api/projects/[name]/sessions/[session]/mcp/route.ts`
   - `src/app/api/config/route.ts`
   - `src/app/api/projects/[name]/queue/queue-route-handlers.ts`
 - **Findings**:
-  - `src/lib/schemas.ts` is the central Zod schema file and should receive new state and SSE event schemas.
+  - `src/lib/mcp/schemas.ts` is the domain Zod schema file and should receive new MCP state and SSE event schemas (schemas are per-domain).
   - Route handlers commonly delegate to testable factory functions with injected dependencies.
   - `NotificationListener` centralizes EventSource handling and TanStack Query invalidation.
   - The current `/api/projects/[name]/sessions/[session]/mcp` path is an MCP protocol endpoint, so configuration routes must avoid that namespace.
@@ -242,8 +242,8 @@
 - `src/lib/agent-backends/claude/conversation-runtime.ts` - Claude runtime MCP application hook.
 - `src/lib/agent-backends/codex/conversation-runtime.ts` - Codex next-turn MCP staging hook.
 - `src/lib/mcp-gateway/portable-config.ts` - CC-injected MCP gateway server builders.
-- `src/lib/schemas.ts` - Central Zod schema and SSE event definitions.
-- `src/lib/state.ts` - Project, session, and conversation state mutation helpers.
+- `src/lib/mcp/schemas.ts` - MCP domain Zod schema and SSE event definitions (schemas are per-domain).
+- `src/lib/state-store/` - Project, session, and conversation state mutation helpers.
 - `src/lib/config.ts` - Global configuration directory handling.
 - `src/app/api/projects/[name]/sessions/[session]/mcp/route.ts` - Existing streamable HTTP MCP gateway route.
 - `src/components/mcp/` - Existing presentational MCP UI primitives.

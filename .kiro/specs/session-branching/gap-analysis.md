@@ -4,8 +4,8 @@
 
 | Requirement | Existing Assets | Gap |
 |---|---|---|
-| **R1: Session State Schema** | `sessionStateSchema` in `src/lib/schemas.ts:540-555` has all session fields but lacks `targetBranch` and `parentSessionName` | **Missing**: Two new fields with Zod `.default()` |
-| **R2: Create Session Request** | `createSessionRequestSchema` in `src/lib/schemas.ts:675-692` — discriminated union with `fast`, `focus`, `optimistic` modes; no parent session field | **Missing**: Optional `parentSessionName` field on each variant |
+| **R1: Session State Schema** | `sessionStateSchema` in `src/lib/sessions/schemas.ts:540-555` has all session fields but lacks `targetBranch` and `parentSessionName` | **Missing**: Two new fields with Zod `.default()` |
+| **R2: Create Session Request** | `createSessionRequestSchema` in `src/lib/sessions/schemas.ts:675-692` — discriminated union with `fast`, `focus`, `optimistic` modes; no parent session field | **Missing**: Optional `parentSessionName` field on each variant |
 | **R3: Child Session Provisioning** | `provisionSession()` in `src/lib/sessions.ts:202-280` creates worktree with `git worktree add -b <branch> <path> main`; always uses `main` as base | **Missing**: `baseBranch` parameter; parent session lookup; setting `targetBranch`/`parentSessionName` on new state |
 | **R4: Git Operations** | `src/lib/git-operations.ts` — `getCommitLog`, `getCommitDiff`, `mergeMainIntoFeature`, `isBranchAncestorOfMain`, `isBranchMentionedInMainLog`, `squashMerge` all hardcode `"main"` | **Missing**: `targetBranch` parameter on each function (6 functions total) |
 | **R5: Merge Workflow** | `MergeInput` in `types.ts:83-96`, `MergeContext` in `types.ts:23-80`, `MergeMainInput` in `actors.ts:31-33`, `SquashMergeInput` in `actors.ts:80-83` — no `targetBranch` field | **Missing**: `targetBranch` field on all merge types; threading through machine; squash merge worktree resolution |
@@ -15,7 +15,7 @@
 ## Existing Patterns to Leverage
 
 ### Schema-First with Zod Defaults (Backward Compatibility)
-The `forkedFromSchema` (`schemas.ts:176-186`) demonstrates the pattern for nullable fields with `.default(null)`. The `sessionStateSchema` already uses `.default()` extensively — adding `targetBranch: z.string().default("main")` and `parentSessionName: z.string().nullable().default(null)` follows the exact same convention. No migration needed.
+The `forkedFromSchema` (`src/lib/sessions/schemas.ts:176-186`) demonstrates the pattern for nullable fields with `.default(null)`. The `sessionStateSchema` already uses `.default()` extensively — adding `targetBranch: z.string().default("main")` and `parentSessionName: z.string().nullable().default(null)` follows the exact same convention. No migration needed.
 
 ### DI Service Pattern (Testing)
 `createGitOperationsService()` and `createSessionService()` both use the factory pattern for DI. Adding a `targetBranch` parameter to git operation functions and `baseBranch` to `provisionSession()` fits naturally. Tests can inject deps without `vi.mock()`.
@@ -42,8 +42,8 @@ This feature is a natural extension of existing structures. No new files or modu
 
 **Files requiring changes** (ordered by dependency):
 
-1. `src/lib/schemas.ts` — Add `targetBranch`, `parentSessionName` to session schema; add optional fields to creation request
-2. `src/types/index.ts` — Types auto-derived, no changes needed
+1. `src/lib/sessions/schemas.ts` — Add `targetBranch`, `parentSessionName` to session schema; add optional fields to creation request
+2. Types are auto-derived via `z.infer` from the domain's `src/lib/sessions/schemas.ts` — no changes needed
 3. `src/lib/git-operations.ts` — Add `targetBranch` param (default `"main"`) to 6 functions; rename `mergeMainIntoFeature` → `mergeTargetIntoFeature`
 4. `src/lib/sessions.ts` — Add `baseBranch` to `provisionSession()`; parent session lookup; set new fields
 5. `src/lib/workflows/merge/types.ts` — Add `targetBranch` to `MergeInput`, `MergeContext`

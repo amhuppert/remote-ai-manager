@@ -34,7 +34,7 @@
 The current architecture follows a simple pattern: Zod schema defines status values → derivation functions compute session/project status → UI components display status text and CSS classes → SSE broadcasts status changes for real-time updates.
 
 Key constraints to respect:
-- **Schema-first**: All data shapes defined as Zod schemas in `src/lib/schemas.ts`
+- **Schema-first**: All data shapes defined as Zod schemas in the relevant domain's `src/lib/<domain>/schemas.ts` (schemas are per-domain)
 - **Filesystem-backed state**: Single JSON file with atomic writes
 - **SSE for real-time**: Single `EventSource` connection per client via `/api/events`
 - **TanStack Query**: Cache invalidation drives UI updates on SSE events

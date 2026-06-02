@@ -7,20 +7,21 @@
   - Write unit tests for session state parsing with and without the new fields, and request validation with and without the parent session field
   - _Requirements: 1.1, 1.2, 1.3, 2.1_
 
-- [x] 2. (P) Parameterize git operations with configurable target branch
+- [ ] 2. (P) Parameterize git operations with configurable target branch
 - [x] 2.1 Add target branch parameter to commit log and commit diff functions
   - Add an optional target branch parameter (default "main") to the commit log function; replace all hardcoded "main" references in the log and stat queries with this parameter
   - Add the same parameter to the commit diff function; replace hardcoded "main" in merge-base calculations and ancestor checks
   - Write tests verifying both functions use the provided target branch instead of "main"
   - _Requirements: 1.4, 4.1, 4.2, 4.5_
 
-- [x] 2.2 Rename and parameterize merge detection functions
+- [ ] 2.2 Rename and parameterize merge detection functions
   - Rename the "is branch ancestor of main" function to "is branch ancestor of target" and add a target branch parameter (default "main")
   - Rename the "is branch mentioned in main log" function to "is branch mentioned in target log" and add the same parameter
   - Replace all hardcoded "main" references in both functions with the parameter
   - Update all call sites in merge actors and detection logic to use the new names
   - Write tests verifying detection checks against a non-main target branch
   - _Requirements: 1.4, 4.4, 4.5_
+  > **Not implemented:** neither the original nor renamed merge-detection functions (`isBranchAncestorOfTarget` / `isBranchMentionedInTargetLog`) exist in `src/`, and no `merge-detection.ts` service was built. The external merge-detection subsystem (Req 4.4, 6.4) is a real gap.
 
 - [x] 2.3 Rename and parameterize merge-into-feature and squash merge functions
   - Rename "merge main into feature" to "merge target into feature" with a target branch parameter (default "main")
@@ -30,7 +31,7 @@
   - Write tests for both functions when operating against a non-main target branch
   - _Requirements: 1.4, 4.3, 4.5_
 
-- [x] 3. Extend session lifecycle for branching and orphan handling
+- [ ] 3. Extend session lifecycle for branching and orphan handling
 - [x] 3.1 Support creating sessions from any base branch
   - Accept optional base branch, target branch, and parent session name parameters in session provisioning
   - Use the base branch in the worktree creation command instead of hardcoded "main"
@@ -48,11 +49,12 @@
   - Write tests covering: single child, multiple children, no children, and transitive descendants not affected
   - _Requirements: 6.1, 6.2, 6.3, 6.4_
 
-- [x] 3.3 Update merge-detection service to use targetBranch
+- [ ] 3.3 Update merge-detection service to use targetBranch
   - Update the merge-detection DI deps interface to reference the renamed functions (isBranchAncestorOfTarget, isBranchMentionedInTargetLog)
   - Pass session.targetBranch (defaulting to "main") to both detection calls instead of hardcoded "main"
   - Write tests verifying merge detection uses the session's target branch for non-main targets
   - _Requirements: 4.4, 6.4_
+  > **Not implemented:** depends on the merge-detection service (Req 6.4), which does not exist in the codebase.
 
 - [x] 4. Thread target branch through the merge workflow
 - [x] 4.1 Add target branch fields to merge workflow types and machine context

@@ -20,7 +20,7 @@
 
 ### MCP Configuration Precedent
 
-- `src/lib/schemas.ts` defines MCP override, runtime application, API response, diagnostics, and SSE schemas.
+- `src/lib/agent-capabilities/schemas.ts` defines MCP override, runtime application, API response, diagnostics, and SSE schemas.
 - `src/lib/mcp/global-store.ts` persists global MCP overrides through a dedicated atomic JSON file.
 - `src/lib/mcp/scope-store.ts` writes project, session, and conversation MCP overrides through the state manager.
 - `src/lib/mcp/overrides-patch.ts` applies pure patch operations and prunes empty overrides.
@@ -53,7 +53,7 @@
 
 | Requirement | Existing assets | Gap tags | Notes |
 | --- | --- | --- | --- |
-| 1. Five independent per-backend cascade stores | MCP has one portable cascade store shape in `src/lib/schemas.ts` and MCP store modules. | Missing, Constraint | New schemas and persistence are needed. Reusing MCP server/tool schemas would conflate backend-native identities. |
+| 1. Five independent per-backend cascade stores | MCP has one portable cascade store shape in `src/lib/agent-capabilities/schemas.ts` and MCP store modules. | Missing, Constraint | New schemas and persistence are needed. Reusing MCP server/tool schemas would conflate backend-native identities. |
 | 2. Four-layer cascade resolution | `src/lib/mcp/resolver.ts`, `src/lib/mcp/scope-store.ts`, `src/lib/mcp/global-store.ts`. | Missing | Resolution pattern is reusable, but capability items need backend/kind/item keys, native defaults, stale status, and plugin-parent forcing. |
 | 3. Defaults mirror existing backend settings | `src/lib/commands.ts` reads some native Claude/Codex sources for discovery. | Missing, Unknown, Constraint | Native defaults must be read-only and must converge after external changes. Exact Claude and Codex enablement/default sources need research. |
 | 4. Per-item enable/disable toggling | MCP patch service and route handlers support set/reset operations. | Missing | Need capability-specific patch operations and validation for five cascade kinds. |
@@ -65,7 +65,7 @@
 | 10. Codex next-turn staging | Codex runtime already stages MCP via `stagedPortableMcp`. | Missing, Unknown | Need Codex capability config shape and staging path. SDK does not expose typed capability APIs in current usage. |
 | 11. Five UI configuration panels | `src/components/mcp/*` and MCP query/mutation hooks. | Missing | UI patterns are reusable, but server/tool components do not model five panels, backend-native metadata, plugin-child forcing, filters, or layer switching. |
 | 12. Backend capability metadata for gating | `src/lib/mcp/backend-capabilities.ts`; broad metadata in `src/lib/agent-backends/types.ts`. | Missing | Need capability-kind metadata: supported kinds, discovery sources, apply semantics, runtime visibility, and composition strategy. |
-| 13. Validation and user-visible errors | Zod schemas in `src/lib/schemas.ts`; route-handler validation patterns. | Missing | Need structured schemas/errors for capability item IDs, cascade kinds, stale override acceptance, and composition/apply diagnostics. |
+| 13. Validation and user-visible errors | Zod schemas in `src/lib/agent-capabilities/schemas.ts`; route-handler validation patterns. | Missing | Need structured schemas/errors for capability item IDs, cascade kinds, stale override acceptance, and composition/apply diagnostics. |
 | 14. Persistence | State manager for project/session/conversation; MCP global atomic file. | Missing, Constraint | Need a persistence shape that survives restart without corrupting existing state. Global capability state should likely follow the MCP dedicated-file pattern, but design must confirm. |
 | 15. Cross-client synchronization | MCP SSE broadcast/invalidation and TanStack query keys. | Missing | Need new SSE event(s), invalidation rules, query keys, optimistic updates, and conflict behavior for capability cascades. |
 | 16. Diagnostics and error visibility | Structured logging guidance in `.kiro/steering/logs.md`; MCP diagnostics schemas. | Missing | Need logging module names/events and UI diagnostics for mutation, discovery, composition, and apply outcomes. |
@@ -88,7 +88,7 @@ Extend the existing MCP schemas, route handlers, resolver, mutation service, run
 
 ### Likely Changes
 
-- Add capability kinds and item schemas near existing MCP schemas in `src/lib/schemas.ts`.
+- Add capability kinds and item schemas near existing MCP schemas in `src/lib/agent-capabilities/schemas.ts`.
 - Generalize MCP patch/resolver/composer modules to accept multiple resource kinds.
 - Expand MCP routes and query keys or add sibling route variants backed by shared internals.
 - Retrofit MCP UI components to render capability item rows and plugin-child state.

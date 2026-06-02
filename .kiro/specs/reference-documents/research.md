@@ -23,7 +23,7 @@
 
 ### State Mutation Pattern
 - **Context**: How to store/retrieve reference documents in session state
-- **Sources Consulted**: `src/lib/state.ts`, `src/lib/schemas.ts`
+- **Sources Consulted**: `src/lib/state-store/`, `src/lib/reference-documents/schemas.ts`
 - **Findings**:
   - `mutateSession()` takes `projectPath`, `sessionName`, `label`, and a mutation callback
   - Roadmap items use `mutateState()` (project-level); reference documents use `mutateSession()` (session-level)

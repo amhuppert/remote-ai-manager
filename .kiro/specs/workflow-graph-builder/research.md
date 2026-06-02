@@ -29,7 +29,7 @@
 ### Session, Conversation, and MCP Tool Patterns
 - **Context**: Execution contexts iterate through fresh conversations and need tool-mediated task state changes and document registration.
 - **Sources Consulted**:
-  - `src/lib/conversations.ts`
+  - `src/lib/conversations/`
   - `src/lib/query-session.ts`
   - `src/lib/ralph-loop/mcp-tools.ts`
   - `src/lib/ralph-loop/orchestrator.ts`

@@ -100,7 +100,7 @@ graph TB
   - Execution domain owns the mutable working snapshot, lifecycle control, iteration orchestration, runtime edits, validation outcomes, and shared-document registry
   - Tool/validation domain owns task tools, document registration, task-level validation, and execution-context-level validation
 - Existing patterns preserved:
-  - `src/lib/schemas.ts` remains the canonical schema home
+  - the relevant domain's `src/lib/<domain>/schemas.ts` (schemas are per-domain)
   - `src/lib/workflows/<name>/` remains the long-running workflow pattern
   - `state.json` remains the canonical mutable session-state store
   - transcript JSONL remains the durable content log
@@ -301,7 +301,7 @@ Flow-level decisions:
 **Dependencies**
 - Inbound: Workflow Storage — persistence (P0)
 - Inbound: Graph Validation Service — semantic validation (P0)
-- Outbound: `src/lib/schemas.ts` and `src/types/index.ts` export surface (P0)
+- Outbound: `src/lib/workflows/schemas.ts` export surface; types are derived via `z.infer` from domain schemas (P0)
 
 **Contracts**: Service [x] / API [ ] / Event [ ] / Batch [ ] / State [x]
 
@@ -412,7 +412,7 @@ interface WorkflowSharedDocumentEntry {
   - archived history
 
 **Implementation Notes**
-- Integration: keep schema definitions in `src/lib/schemas.ts` and reserve helper logic for `src/lib/workflow-graph/`
+- Integration: keep schema definitions in `src/lib/workflows/schemas.ts` and reserve helper logic for `src/lib/workflow-graph/`
 - Validation: treat `reopenTaskIds` plus unresolved issues as a failing validator outcome even if a model returns `pass: true`
 - Risks: duplicated semantic meaning across execution and definition layers would reintroduce drift, so the active run must mutate only `WorkflowExecution.workingDefinition` rather than reconstructing runtime semantics from scattered patches
 
@@ -654,7 +654,7 @@ interface WorkflowLayoutService {
 
 **Dependencies**
 - Inbound: Workflow Manager, Runtime Edit Service, Shared Document Registry (P0)
-- Outbound: `src/lib/state.ts` session mutation helpers (P0)
+- Outbound: `src/lib/state-store/` session mutation helpers (P0)
 
 **Contracts**: Service [x] / API [ ] / Event [ ] / Batch [ ] / State [x]
 
@@ -987,7 +987,7 @@ interface SharedDocumentRegistryService {
 
 **Dependencies**
 - Inbound: Workflow Manager, Iteration Orchestrator, Runtime Edit Service (P0)
-- Outbound: `src/lib/sse-broadcaster.ts` (P0)
+- Outbound: `src/lib/events/broadcaster.ts` (P0)
 - Outbound: repository-local execution stream registry (P0)
 
 **Contracts**: Service [ ] / API [ ] / Event [x] / Batch [x] / State [ ]
@@ -1010,7 +1010,7 @@ interface SharedDocumentRegistryService {
 
 **Implementation Notes**
 - Integration: add a dedicated `graph-workflow.store.ts` for context/task/document patching rather than extending the Ralph summary store
-- Validation: all event schemas live in `src/lib/schemas.ts` and are Zod-validated in the client
+- Validation: all event schemas live in `src/lib/workflows/schemas.ts` and are Zod-validated in the client
 - Risks: task-level event burst volume can overwhelm the UI if every event causes a full execution refetch; the store must patch by ID
 
 ## Data Models

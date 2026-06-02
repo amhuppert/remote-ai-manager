@@ -11,15 +11,15 @@
 
 | Asset | File(s) | Purpose |
 |-------|---------|---------|
-| Graph workflow execution persistence | `src/lib/schemas.ts`, `src/lib/workflow-graph/execution-repository.ts`, `src/lib/workflows/graph-workflow/workflow-manager.ts` | Persists active execution state inside `session.graphWorkflowExecution` and already survives restart/resume flows. |
+| Graph workflow execution persistence | `src/lib/workflows/schemas.ts`, `src/lib/workflow-graph/execution-repository.ts`, `src/lib/workflows/graph-workflow/workflow-manager.ts` | Persists active execution state inside `session.graphWorkflowExecution` and already survives restart/resume flows. |
 | Implementer iteration orchestration | `src/lib/workflows/graph-workflow/iteration-orchestrator.ts`, `src/lib/workflows/graph-workflow/execution-loop.ts` | Runs one execution-context iteration at a time, increments iteration counters, and already has the execution-context boundary where continuity must reset. |
-| Claude conversation continuity primitives | `src/lib/workflows/conversation/actor-implementations.ts`, `src/lib/query-session.ts`, `src/lib/workflows/conversation/manager.ts`, `src/lib/prompt.ts` | Already supports persisted Claude session IDs, resumed sessions, long-lived SDK subprocesses, and context token/window tracking. |
+| Claude conversation continuity primitives | `src/lib/workflows/conversation/actor-implementations.ts`, `src/lib/agent-backends/claude/query-session.ts`, `src/lib/workflows/conversation/manager.ts`, `src/lib/prompt/` | Already supports persisted Claude session IDs, resumed sessions, long-lived SDK subprocesses, and context token/window tracking. |
 | Current validator orchestration | `src/lib/workflow-graph/validator-runner.ts`, `src/lib/workflow-graph/execution-validation.ts`, `src/lib/workflow-graph/execution-route-handlers.ts` | Provides task-level and execution-context-level validator prompts and dispatch, but each invocation is currently one-shot. |
-| Codex one-shot execution helper | `src/lib/codex-tool.ts` | Runs Codex as a fresh thread per call today. This is the main surface that would need a persistent-thread wrapper for continuity. |
-| Workflow builder schema and planner output | `src/lib/schemas.ts`, `src/lib/workflow-graph/planner-tools.ts` | Defines iteration policy and validator config, but still models the old soft/hard token limit pair and exposes no continuity settings. |
+| Codex one-shot execution helper | `src/lib/agent-backends/codex/codex-tool.ts` | Runs Codex as a fresh thread per call today. This is the main surface that would need a persistent-thread wrapper for continuity. |
+| Workflow builder schema and planner output | `src/lib/workflows/schemas.ts`, `src/lib/workflow-graph/planner-tools.ts` | Defines iteration policy and validator config, but still models the old soft/hard token limit pair and exposes no continuity settings. |
 | Workflow configuration UI | `src/app/projects/[name]/workflows/WorkflowInspectorPanel.tsx` | Already edits iteration policy and validator config, so it is the natural UI surface for continuity and single-limit settings. |
-| Execution history and transcript linkage | `src/app/projects/[name]/[session]/workflow/GraphWorkflowPanel.tsx`, `src/lib/schemas.ts` | Task state already stores `lastConversationId`, and the UI already opens a transcript by conversation ID, which is compatible with reused sessions. |
-| Claude session reuse precedent outside graph workflows | `src/lib/validation-fix.ts` | Demonstrates persisted `claudeSessionId` reuse across retries and is a concrete local pattern for resumed Claude work. |
+| Execution history and transcript linkage | `src/app/projects/[name]/[session]/workflow/GraphWorkflowPanel.tsx`, `src/lib/workflows/schemas.ts` | Task state already stores `lastConversationId`, and the UI already opens a transcript by conversation ID, which is compatible with reused sessions. |
+| Claude session reuse precedent outside graph workflows | `src/lib/workflows/validation-fix.ts` | Demonstrates persisted `claudeSessionId` reuse across retries and is a concrete local pattern for resumed Claude work. |
 
 ### Architectural Constraints Observed
 
@@ -53,7 +53,7 @@
 
 ### Conventions to Reuse
 
-- New persisted execution data should remain Zod-first in `src/lib/schemas.ts`.
+- New persisted execution data should remain Zod-first in `src/lib/workflows/schemas.ts`.
 - Graph workflow runtime state should continue living inside `session.graphWorkflowExecution`, not in an external store.
 - Claude continuity should reuse the existing conversation stack instead of introducing raw SDK session handling directly into graph workflow code.
 - Internal modules should continue following the project's DI-heavy testable factory pattern.
@@ -78,7 +78,7 @@
 ### Additional Gaps and Constraints
 
 1. **Schema migration fanout is broad**
-   - `src/lib/schemas.ts`, `src/lib/workflow-graph/planner-tools.ts`, `src/app/projects/[name]/workflows/WorkflowInspectorPanel.tsx`, and `src/lib/schemas-workflow-graph.test.ts` all encode the old iteration-policy shape.
+   - `src/lib/workflows/schemas.ts`, `src/lib/workflow-graph/planner-tools.ts`, `src/app/projects/[name]/workflows/WorkflowInspectorPanel.tsx`, and `src/lib/schemas-workflow-graph.test.ts` all encode the old iteration-policy shape.
    - Replacing soft/hard limits is not just a runtime change.
 
 2. **Implementer continuity likely needs execution-owned conversation identity**

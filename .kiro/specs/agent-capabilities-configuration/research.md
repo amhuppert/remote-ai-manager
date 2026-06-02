@@ -15,7 +15,7 @@
 ### Existing MCP Configuration Precedent
 - **Context**: Requirements explicitly mirror the MCP global -> project -> session -> conversation cascade, but the resources are not portable MCP servers.
 - **Sources Consulted**:
-  - `src/lib/schemas.ts`
+  - `src/lib/agent-capabilities/schemas.ts`
   - `src/lib/mcp/global-store.ts`
   - `src/lib/mcp/scope-store.ts`
   - `src/lib/mcp/overrides-patch.ts`
@@ -113,15 +113,15 @@
 ### API, State, SSE, and UI Patterns
 - **Context**: New storage and UI must fit the existing Next.js and TanStack Query architecture.
 - **Sources Consulted**:
-  - `src/lib/schemas.ts`
+  - `src/lib/agent-capabilities/schemas.ts`
   - `src/lib/state.ts`
   - `src/lib/query-keys.ts`
   - `src/lib/mutations.ts`
-  - `src/lib/sse-broadcaster.ts`
+  - `src/lib/events/broadcaster.ts`
   - `src/components/NotificationListener.tsx`
   - `src/components/mcp/`
 - **Findings**:
-  - Zod schemas and types belong in `src/lib/schemas.ts`; exported types flow through `src/types/index.ts`.
+  - Zod schemas and types belong in the domain's `src/lib/agent-capabilities/schemas.ts`; types are inferred from schemas via `z.infer` (there is no central re-export file).
   - Project, session, and conversation state already have optional `mcpOverrides` fields; capability overrides can follow the same state-placement pattern with a new field.
   - MCP route handlers are dependency-injected and tested as pure handler factories. The same pattern is appropriate here.
   - React Query key factories and mutation hooks are centralized.
@@ -226,7 +226,7 @@
 - `src/lib/workflows/conversation/actor-implementations.ts` - Conversation runtime creation and turn-start integration point.
 - `src/lib/agent-backends/claude/query-session.ts` - Claude SDK options wrapper.
 - `src/lib/agent-backends/codex/conversation-runtime.ts` - Codex next-turn staging precedent.
-- `src/lib/schemas.ts` - Zod schema and SSE event home.
+- `src/lib/agent-capabilities/schemas.ts` - Zod schema and SSE event home.
 - `src/components/mcp/` - Existing inherited-config UI patterns.
 - `node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts` - Installed Claude Agent SDK capability-related types.
 - `node_modules/@openai/codex-sdk/dist/index.d.ts` - Installed Codex SDK generic config surface.

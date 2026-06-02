@@ -16,12 +16,11 @@ verified worktree ownership, not source.
 
 ## Files To Update
 
-- `src/lib/schemas.ts`
-- `src/types/index.ts`
-- `src/lib/dev-server-registry.ts`
-- `src/lib/dev-server-registry.test.ts`
-- `src/lib/dev-server-liveness.ts`
-- `src/lib/dev-server-liveness.test.ts`
+- `src/lib/dev-server/schemas.ts`
+- `src/lib/dev-server/registry.ts`
+- `src/lib/dev-server/registry.test.ts`
+- `src/lib/dev-server/liveness.ts`
+- `src/lib/dev-server/liveness.test.ts`
 - `src/app/api/projects/[name]/sessions/[session]/dev-servers/route.ts`
 - `src/components/DevServerDrawer.tsx`
 - `src/components/DevServerDrawer.stories.tsx`

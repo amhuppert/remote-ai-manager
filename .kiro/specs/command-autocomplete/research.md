@@ -45,7 +45,7 @@
   - fuse.js is ~25KB minified — overkill for 20-50 items with a known scoring spec
   - The algorithm is simple enough to implement as a pure function (~40 lines)
   - Score tiers: prefix (100), substring (80), ordered chars (60 - spread), desc match (40)
-- **Implications**: No library needed. Implement as `src/lib/fuzzy.ts` with full test coverage.
+- **Implications**: No library needed. Implement as `src/lib/shared/fuzzy.ts` with full test coverage.
 
 ## Architecture Pattern Evaluation
 

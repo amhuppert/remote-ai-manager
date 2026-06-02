@@ -75,7 +75,7 @@ sequenceDiagram
 |-------|------------------|-----------------|-------|
 | Frontend | React 19, Zustand | Attachment state, paste/file handlers, preview UI | Extends existing SessionDetailPage |
 | Transport | Fetch API, JSON, SSE | Carries base64 images in request body | No config change needed — App Router uses Web Request API |
-| Backend | Node.js, Next.js 15 App Router | Receives images, passes to SDK | Extends existing API routes |
+| Backend | Node.js, Next.js 16 App Router | Receives images, passes to SDK | Extends existing API routes |
 | SDK | `@anthropic-ai/claude-agent-sdk` | Accepts `AsyncIterable<SDKUserMessage>` with image content blocks | Uses native SDK multi-modal support |
 | Storage | JSONL filesystem | Stores image content blocks in transcript entries | Full base64 stored inline |
 

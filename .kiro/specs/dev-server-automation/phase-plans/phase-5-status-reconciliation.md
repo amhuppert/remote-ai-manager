@@ -16,14 +16,14 @@ servers when the project configuration provides enough information.
 
 ## Files To Create
 
-- `src/lib/dev-server-reconciliation.ts`
-- `src/lib/dev-server-reconciliation.test.ts`
+- `src/lib/dev-server/reconciliation.ts`
+- `src/lib/dev-server/reconciliation.test.ts`
 
 ## Files To Update
 
 - `src/app/api/projects/[name]/sessions/[session]/dev-servers/route.ts`
-- `src/lib/dev-server-registry.ts`
-- `src/lib/dev-server-registry.test.ts`
+- `src/lib/dev-server/registry.ts`
+- `src/lib/dev-server/registry.test.ts`
 - `src/lib/dev-server-presets.ts`
 
 ## Reconciliation Behavior

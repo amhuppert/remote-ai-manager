@@ -8,12 +8,12 @@
 |------|------|-----------|
 | `src/app/projects/[name]/[session]/SessionDetailPage.tsx` | Main session UI — prompt textarea, actions bar, message list | **Primary UI modification target** — needs clipboard handler, file picker, attachment preview |
 | `src/hooks/use-send-prompt.ts` | Client-side prompt submission hook — builds JSON body, reads SSE stream | **Must transmit image data** — currently sends `{ prompt: string, modelId? }` |
-| `src/lib/schemas.ts` | Zod schemas for all data entities | **Must extend** `runPromptRequestSchema` and `messageContentBlockSchema` |
-| `src/lib/prompt.ts` | Server-side SDK integration — calls `query()`, processes messages, writes transcript | **Must convert images** to SDK format and record in transcript |
+| `src/lib/prompt/schemas.ts`, `src/lib/images/schemas.ts`, `src/lib/conversations/schemas.ts` | Zod schemas for relevant domain entities (schemas are per-domain) | **Must extend** `runPromptRequestSchema` and `messageContentBlockSchema` |
+| `src/lib/prompt/` | Server-side SDK integration — calls `query()`, processes messages, writes transcript | **Must convert images** to SDK format and record in transcript |
 | `src/app/api/.../prompt/route.ts` (×2) | API routes for session-level and conversation-level prompts | **Must parse** new request format with images |
-| `src/lib/transcript.ts` | JSONL transcript read/write | **Must handle** image content blocks in entries |
+| `src/lib/prompt/transcript.ts` | JSONL transcript read/write | **Must handle** image content blocks in entries |
 | `src/components/MessageContent.tsx` | Renders message content blocks | **Must render** image blocks |
-| `src/types/index.ts` | Type re-exports | **Must re-export** new image-related types |
+| `src/lib/images/schemas.ts` | Types inferred via `z.infer` from domain schemas (no central re-export) | **Must define** new image-related types |
 
 ### Existing Conventions
 
@@ -144,5 +144,5 @@ Use Option A for transport (base64 in JSON body) but optimize transcript storage
 
 ### Research Items
 - Confirm `AsyncIterable<SDKUserMessage>` works for single-shot multi-modal prompts (vs. only for multi-turn streaming mode)
-- Verify Next.js 15 App Router body size configuration mechanism
+- Verify Next.js 16 App Router body size configuration mechanism
 - Check if the `resume` option on `query()` works correctly with the async iterable prompt form

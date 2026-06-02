@@ -34,7 +34,7 @@ The feature extends the session detail page by adding:
 Existing patterns preserved:
 - API route pattern: `withTracing` wrapper, async params, `resolveProjectPath`, Zod validation, typed error responses
 - Component pattern: `"use client"` directive, prop-driven state, colocation with shared components
-- Schema pattern: Zod schema → `z.infer` type, re-exported from `src/types/index.ts`
+- Schema pattern: Zod schema → `z.infer` type; types are inferred from the domain's `src/lib/commands/schemas.ts` (schemas are per-domain)
 - File reading pattern: `node:fs/promises` with `existsSync` guard, matching `hooks.ts` and `discovery.ts`
 
 ### Architecture Pattern & Boundary Map
@@ -79,7 +79,7 @@ graph TB
 
 **Architecture Integration**:
 - Selected pattern: Server-side discovery with client-side filtering. The API route fetches all commands once; the client filters and scores them per keystroke.
-- Domain boundaries: Command discovery is a new domain module (`src/lib/commands.ts`); fuzzy filtering is a standalone utility (`src/lib/fuzzy.ts`); the autocomplete UI is a shared component (`src/components/CommandAutocomplete.tsx`).
+- Domain boundaries: Command discovery is a new domain module (`src/lib/commands/`); fuzzy filtering is a standalone utility (`src/lib/shared/fuzzy.ts`); the autocomplete UI is a shared component (`src/components/CommandAutocomplete.tsx`).
 - Existing patterns preserved: API route structure, Zod schemas, `withTracing`, `resolveProjectPath`, `os.homedir()` for Claude paths.
 - New components rationale: Each addresses a distinct concern — filesystem scanning, text matching, and UI rendering.
 - Steering compliance: No new external dependencies; TypeScript strict mode; Zod for data validation; minimal library footprint.
@@ -199,7 +199,7 @@ function parseFrontmatter(content: string): FrontmatterResult;
 **Implementation Notes**
 - Regex-based: split on `/^---\s*$/m`, parse lines as `key: value`
 - Trim values; strip surrounding quotes if present
-- Located at `src/lib/commands.ts` (co-located with discovery logic, not a separate file)
+- Located at `src/lib/commands/` (co-located with discovery logic, not a separate file)
 
 #### discoverCommands
 
@@ -248,7 +248,7 @@ function discoverCommands(worktreePath: string): Promise<CommandItem[]>;
 - Skill name derivation: directory name under `skills/` is the skill name; prefixed with `/` (e.g., `skills/commit/SKILL.md` → `/commit`)
 - For skills, the `description` field from `SKILL.md` frontmatter is used; the `name` frontmatter field is not used for display
 - Plugin path resolution: `~/.claude/plugins/cache/<marketplace>/<pluginName>/<version>/`
-- Located at `src/lib/commands.ts`
+- Located at `src/lib/commands/`
 
 ### Server / API
 
@@ -320,7 +320,7 @@ function fuzzyMatch(query: string, target: string): FuzzyResult;
 - Invariants: If `match` is false, `score` is 0 and `indices` is empty
 
 **Implementation Notes**
-- Located at `src/lib/fuzzy.ts`
+- Located at `src/lib/shared/fuzzy.ts`
 - Exported for use by both `CommandAutocomplete` and unit tests
 - Score tiers: prefix match (score 100, indices 0..n), substring match (score 80, indices at offset), ordered character match (score = max(10, 60 - spread))
 - The component handles description matching logic (calls fuzzyMatch against description when query length >= 3, assigns score 40 for description-only matches)
@@ -400,7 +400,7 @@ interface CommandAutocompleteProps {
 ### Domain Model
 
 ```typescript
-// Zod schema — src/lib/schemas.ts
+// Zod schema — src/lib/commands/schemas.ts
 const commandItemSchema = z.object({
   name: z.string(),
   description: z.string(),

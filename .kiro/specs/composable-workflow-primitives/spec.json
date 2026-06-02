@@ -1,9 +1,9 @@
 {
   "feature_name": "composable-workflow-primitives",
   "created_at": "2026-04-27T18:04:49Z",
-  "updated_at": "2026-04-27T22:01:24Z",
+  "updated_at": "2026-06-02T20:00:44.000Z",
   "language": "en",
-  "phase": "tasks-generated",
+  "phase": "implementation-complete",
   "approvals": {
     "requirements": {
       "generated": true,

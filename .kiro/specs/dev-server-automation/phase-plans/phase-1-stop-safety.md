@@ -12,7 +12,7 @@ not only the listening dev server process.
 
 ## Current Risk
 
-- `src/lib/dev-server-registry.ts` uses `lsof -ti :${port}` in `killByPort()`.
+- `src/lib/dev-server/registry.ts` uses `lsof -ti :${port}` in `killByPort()`.
 - That command can return any process with a connection involving the port,
   including browsers connected to the dev server.
 - Stop, Stop All, merge cleanup, archive cleanup, and shutdown cleanup all flow
@@ -21,9 +21,9 @@ not only the listening dev server process.
 
 ## Files To Touch
 
-- `src/lib/dev-server-registry.ts`
-- `src/lib/dev-server-registry.test.ts`
-- Potentially new test helper under `src/lib/dev-server-test-helpers.ts`
+- `src/lib/dev-server/registry.ts`
+- `src/lib/dev-server/registry.test.ts`
+- Potentially new test helper under `src/lib/dev-server/test-helpers.ts`
 
 ## Red Tests First
 

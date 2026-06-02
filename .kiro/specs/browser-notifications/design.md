@@ -30,7 +30,7 @@ The hook pipeline currently flows: Claude CLI `Stop` event → `POST /api/hooks`
 Key constraints:
 - CC is a single Node.js process with no database or message broker
 - In-memory state patterns exist (e.g., `promptLocks` map in `prompt.ts`)
-- All schemas are Zod-first in `src/lib/schemas.ts`
+- All schemas are Zod-first in the relevant domain's `src/lib/<domain>/schemas.ts` (schemas are per-domain)
 
 ### Architecture Pattern & Boundary Map
 
@@ -337,7 +337,7 @@ No new aggregates or entities. The feature introduces one event type that flows 
 **SSE Event Schema**
 
 ```typescript
-// src/lib/schemas.ts
+// src/lib/notifications/schemas.ts
 const sessionReadyEventSchema = z.object({
   type: z.literal("session-ready"),
   projectName: z.string(),
@@ -351,7 +351,7 @@ type SessionReadyEvent = z.infer<typeof sessionReadyEventSchema>;
 **Hook Event Result Schema**
 
 ```typescript
-// src/lib/schemas.ts
+// src/lib/notifications/schemas.ts
 const hookEventResultSchema = z.object({
   matched: z.boolean(),
   projectName: z.string().optional(),

@@ -11,17 +11,17 @@
 
 | Asset | File(s) | Purpose |
 |-------|---------|---------|
-| Schema-first modeling with Zod | `src/lib/schemas.ts`, `src/types/index.ts` | Canonical data modeling pattern for persisted entities and SSE payloads |
-| Global persisted state manager | `src/lib/state.ts` | Atomic read/mutate/write over `state.json`; already supports project-level and session-level entities |
-| Project-level CRUD precedent | `src/lib/state.ts`, `src/app/api/projects/[name]/roadmap-items/*.ts` | Existing pattern for project-scoped resources with REST routes and client validation |
-| Session-scoped workflow runtime | `src/lib/schemas.ts`, `src/lib/ralph-loop/workflow-route-handlers.ts` | Current Ralph Loop workflow is stored as `session.workflow` with session-local history |
+| Schema-first modeling with Zod | `src/lib/workflows/schemas.ts` (per-domain; types via `z.infer`) | Canonical data modeling pattern for persisted entities and SSE payloads |
+| Global persisted state manager | `src/lib/state-store/` | Atomic read/mutate/write over `state.json`; already supports project-level and session-level entities |
+| Project-level CRUD precedent | `src/lib/state-store/`, `src/app/api/projects/[name]/roadmap-items/*.ts` | Existing pattern for project-scoped resources with REST routes and client validation |
+| Session-scoped workflow runtime | `src/lib/workflows/schemas.ts`, `src/lib/ralph-loop/workflow-route-handlers.ts` | Current Ralph Loop workflow is stored as `session.workflow` with session-local history |
 | Generic workflow/XState infrastructure | `src/lib/workflows/types.ts`, `src/lib/workflows/actions.ts`, `src/lib/workflows/persistence.ts` | Reusable actor persistence, SSE broadcasting, runtime registries, and machine conventions |
 | Ralph Loop machine/runtime | `src/lib/workflows/ralph-loop/*`, `src/lib/ralph-loop/*` | Iterative autonomous execution engine, circuit breaker, plan generation, per-iteration MCP tools |
 | Structured AI planning pattern | `src/lib/ralph-loop/plan-generator.ts`, `src/lib/ralph-loop/init-tool.ts` | Existing pattern for SDK queries that capture structured output via in-process MCP tools |
 | Existing workflow UI shell | `src/app/projects/[name]/[session]/workflow/*`, `src/stores/workflow.store.ts` | Session workflow page, config panel, task editor, live iteration stream, SSE-driven client tracking |
 | Task editing and drag/reorder pattern | `src/app/projects/[name]/[session]/workflow/TaskPlanEditor.tsx` | Existing ordered-list editing UX for session task plans |
 | Read-only diagram rendering | `src/components/MermaidDiagram.tsx`, `package.json` | Mermaid rendering with zoom/pan; useful for display but not editing |
-| Script validation entry point | `src/lib/repo-config.ts`, `CommandCenter.json` support in `src/lib/schemas.ts` | Existing project-configured pre-merge command that can be reused by execution-context validators |
+| Script validation entry point | `src/lib/repo-config.ts`, `CommandCenter.json` support in `src/lib/workflows/schemas.ts` | Existing project-configured pre-merge command that can be reused by execution-context validators |
 | Session worktree document precedent | `src/lib/sessions.ts`, `src/app/api/projects/[name]/sessions/[session]/focus-doc/route.ts` | Existing pattern for known files inside a session worktree (`memory-bank/focus.md`) |
 
 ### Architectural Constraints Observed
@@ -69,7 +69,7 @@
 
 | Need | Existing Asset | Gap |
 |------|---------------|-----|
-| Schema-first workflow definition with stable IDs, semantic/layout/runtime layers, versioning | `src/lib/schemas.ts` schema-first convention | **Missing** — no workflow-graph schemas, no layered model, no versioned workflow-definition entity |
+| Schema-first workflow definition with stable IDs, semantic/layout/runtime layers, versioning | `src/lib/workflows/schemas.ts` schema-first convention | **Missing** — no workflow-graph schemas, no layered model, no versioned workflow-definition entity |
 | Semantic integrity validation for DAGs, ID uniqueness, ownership rules, runtime edit validation | Zod + existing validation helpers patterns | **Missing** — no DAG validator, no topological validation utilities, no runtime edit validator |
 | Future-extensible persisted model | Zod + `.passthrough()` precedent on Ralph workflow | **Available pattern** but **Missing implementation** for this domain |
 
@@ -77,7 +77,7 @@
 
 | Need | Existing Asset | Gap |
 |------|---------------|-----|
-| Execution contexts as first-class entities with model/effort, iteration policy, circuit breaker, validator config | Ralph workflow config + circuit breaker config in `src/lib/schemas.ts` | **Missing** — current config applies to one whole workflow, not per execution context |
+| Execution contexts as first-class entities with model/effort, iteration policy, circuit breaker, validator config | Ralph workflow config + circuit breaker config in `src/lib/workflows/schemas.ts` | **Missing** — current config applies to one whole workflow, not per execution context |
 | Ordered tasks owned by exactly one execution context | `fixPlan` tasks and `TaskPlanEditor.tsx` | **Constraint** — current tasks are flat and grouped numerically, not owned by execution-context entities |
 | Dependency graph between execution contexts | Ralph task groups imply rough ordering | **Missing** — no graph edges, no entry/terminal context detection, no concurrently-eligible context calculation |
 | Task-level and execution-context-level validation with structured issues, reopen, and fix-task creation | `update_fix_plan` tool, `runPreMergeValidation()` | **Missing** — no validator abstraction, no issue schema, no reopen-by-validator behavior, no validator-specific agent config |
@@ -105,7 +105,7 @@
 
 | Need | Existing Asset | Gap |
 |------|---------------|-----|
-| Project-scoped CRUD for workflow definitions | Roadmap item CRUD (`src/lib/state.ts`, `/api/projects/[name]/roadmap-items`) | **Partial** — strong pattern exists, but no workflow-definition store or routes |
+| Project-scoped CRUD for workflow definitions | Roadmap item CRUD (`src/lib/state-store/`, `/api/projects/[name]/roadmap-items`) | **Partial** — strong pattern exists, but no workflow-definition store or routes |
 | Save both semantic definition and layout | State manager and project-scoped routes | **Missing** — no workflow-definition persistence model |
 | Unique IDs for definitions | `randomUUID()` pattern in `state.ts` | **Available pattern** |
 | AI-generated workflow definitions through structured output | `plan-generator.ts`, `init-tool.ts` | **Partial** — existing structured output covers flat task plans only |

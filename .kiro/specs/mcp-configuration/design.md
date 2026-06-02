@@ -26,8 +26,8 @@ The implementation adds a backend-neutral MCP domain layer that reads two CC-own
 - Claude currently translates portable MCP config and can call `query.setMcpServers`.
 - Codex currently stages translated MCP config and applies it when creating the next turn.
 - `src/lib/mcp-gateway/portable-config.ts` owns CC-injected session, graph workflow, and workflow draft server definitions.
-- `src/lib/state.ts` is the persistence boundary for project, session, and conversation state.
-- `src/lib/schemas.ts` is the central schema boundary for persistent state and SSE events.
+- `src/lib/state-store/` is the persistence boundary for project, session, and conversation state.
+- `src/lib/mcp/schemas.ts` is the domain schema boundary for MCP-specific persistent state and SSE events (schemas are per-domain).
 - `/api/projects/[name]/sessions/[session]/mcp` is already the streamable HTTP MCP protocol endpoint and must remain unchanged.
 
 ### Architecture Pattern & Boundary Map
@@ -37,7 +37,7 @@ The implementation adds a backend-neutral MCP domain layer that reads two CC-own
 - Domain boundary: `src/lib/mcp/` owns discovery, override resolution, tool inventory, emitted config composition, route handler logic, and runtime application policy.
 - Backend boundary: Claude and Codex translators remain the only places that know backend-specific SDK config shapes.
 - UI boundary: React components and hooks consume `McpConfigViewResponse` only.
-- Steering compliance: state schemas stay in `src/lib/schemas.ts`, route handlers remain thin, and new code uses structured logging via `createLogger`.
+- Steering compliance: state schemas stay in the relevant domain's `src/lib/<domain>/schemas.ts` (schemas are per-domain), route handlers remain thin, and new code uses structured logging via `createLogger`.
 
 ```mermaid
 graph TB
@@ -229,7 +229,7 @@ The emitted config hash includes user-resolved MCP definitions plus protected in
 | Component | Domain / Layer | Intent | Req Coverage | Key Dependencies | Contracts |
 |-----------|----------------|--------|--------------|------------------|-----------|
 | MCP Source Discovery | Backend services | Read CC-owned `.mcp.json` files (global + project) into canonical server definitions | 2, 7, 8 | File system, JSON | Service |
-| MCP Override Store | Backend services | Persist global, project, session, and conversation override diffs | 1, 3, 6, 8 | `src/lib/state.ts`, config dir | Service, State |
+| MCP Override Store | Backend services | Persist global, project, session, and conversation override diffs | 1, 3, 6, 8 | `src/lib/state-store/`, config dir | Service, State |
 | MCP Cascade Resolver | Domain core | Merge sources and overrides into effective config and view model | 1, 2, 3, 4, 7, 8, 9, 10 | Source Discovery, Override Store, Tool Discovery | Service |
 | MCP Tool Discovery | Backend services | Discover and cache tool inventories per server | 4, 5, 7 | MCP SDK, Claude runtime status | Service, State |
 | MCP Capability Registry | Backend services | Describe backend MCP support and limitations | 4, 6, 8, 10 | Claude adapter, Codex adapter | Service |
@@ -303,7 +303,7 @@ interface McpSourceDiscoveryResult {
 
 **Dependencies**
 - Inbound: MCP API Route Handlers - read and patch overrides (P0)
-- Outbound: `src/lib/state.ts` - project, session, and conversation mutation (P0)
+- Outbound: `src/lib/state-store/` - project, session, and conversation mutation (P0)
 - Outbound: config directory helpers - global MCP override file location (P0)
 
 **Contracts**: Service [x] / API [ ] / Event [ ] / Batch [ ] / State [x]
@@ -585,7 +585,7 @@ interface McpApplyAtTurnStartInput {
 | Requirements | 1 through 11 |
 
 **Responsibilities & Constraints**
-- Validate request bodies with Zod schemas in `src/lib/schemas.ts`.
+- Validate request bodies with Zod schemas in `src/lib/mcp/schemas.ts`.
 - Keep route files thin and delegate to factory-created handlers.
 - Broadcast SSE events after successful mutations and tool refreshes.
 - Use `/mcp-config` route names for scoped resources to avoid the existing MCP gateway route.

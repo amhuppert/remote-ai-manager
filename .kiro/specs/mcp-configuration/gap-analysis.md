@@ -88,11 +88,11 @@ The requirements document has been generated but is not yet approved. Design sho
 
 ### State and Config
 
-- `src/lib/schemas.ts`
-  - Defines global config, project state, session state, conversation state, and SSE event schemas.
+- `src/lib/mcp/schemas.ts` (schemas are per-domain)
+  - Defines MCP-specific state and SSE event schemas.
   - No MCP override state exists today.
 
-- `src/lib/state.ts`
+- `src/lib/state-store/`
   - Provides atomic state mutation and persistence for project/session/conversation data.
   - Good fit for project, session, and conversation MCP override state.
 

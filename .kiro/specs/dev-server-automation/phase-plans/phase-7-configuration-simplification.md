@@ -17,12 +17,12 @@ readiness logic into Command Center where possible, while keeping the existing
 
 ## Files To Update
 
-- `src/lib/schemas.ts`
-- `src/lib/repo-config.ts`
+- `src/lib/dev-server/schemas.ts`
+- `src/lib/config/schemas.ts`
 - `src/lib/dev-server-presets.ts`
 - `src/lib/dev-server-presets.test.ts`
-- `src/lib/dev-server-reconciliation.ts`
-- `src/lib/dev-server-port-selection.ts`
+- `src/lib/dev-server/reconciliation.ts`
+- `src/lib/dev-server/port-selection.ts`
 - `docs/project-configuration.md`
 - `plugins/command-center/command-center/skills/setup/SKILL.md`
 - `plugins/command-center/command-center/skills/setup/references/dev-servers.md`

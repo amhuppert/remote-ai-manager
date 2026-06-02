@@ -48,13 +48,14 @@
   - Extract the instructions form as a reusable component for the standalone dialog
   - _Requirements: 2.1, 2.2, 2.3_
 
-- [x] 4.2 Create the standalone optimistic dialog for quick access from project pages
+- [ ] 4.2 Create the standalone optimistic dialog for quick access from project pages
   - Build a lightweight modal that can be opened from any project-related page via a trigger in the project layout
   - Reuse the shared instructions form component from the create session modal
   - Receive the project name from context to target the correct project when submitting
   - On success, close the dialog with a confirmation toast (fire-and-forget)
   - Prevent submission when instructions are empty
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5_
+  > **Not implemented:** no standalone `OptimisticDialog` component exists anywhere in `src/`; only the in-modal Optimistic tab (4.1) was built. A stale path reference survives in `src/components/FileAutocomplete.stories.tsx`.
 
 - [x] 4.3 (P) Add the optimistic mode badge to the sessions list
   - Display an "optimistic" badge for sessions created in optimistic mode, following the existing badge styling pattern with a distinct color

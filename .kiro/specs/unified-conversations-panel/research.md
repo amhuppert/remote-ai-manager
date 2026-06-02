@@ -4,7 +4,7 @@
 - **Feature**: `unified-conversations-panel`
 - **Discovery Scope**: Extension — modifying existing status system and adding a new cross-project UI panel
 - **Key Findings**:
-  - Status values are hardcoded as a Zod enum (`idle`, `ready`, `running`) in `src/lib/schemas.ts:19`. Every status reference (schema, derivation, UI display, CSS classes) needs updating.
+  - Status values are hardcoded as a Zod enum (`idle`, `ready`, `running`) in `src/lib/conversations/schemas.ts`. Every status reference (schema, derivation, UI display, CSS classes) needs updating.
   - SSE infrastructure already broadcasts `session-ready` events with project/session/conversation context. Extending to broadcast on `running` transitions and adding a new event type is straightforward.
   - A new API endpoint is needed to aggregate conversations across all projects — no existing endpoint returns cross-project conversation data.
 
@@ -15,12 +15,12 @@
 - **Context**: Need to understand every location that references status values to plan the rename scope.
 - **Sources Consulted**: Full codebase grep for `idle`, `ready`, `running` in status contexts
 - **Findings**:
-  - **Schema**: `src/lib/schemas.ts:19` — `z.enum(["idle", "ready", "running"])`
+  - **Schema**: `src/lib/conversations/schemas.ts` — `z.enum(["idle", "ready", "running"])`
   - **Derivation**: `src/lib/session-derived.ts:13-25` — checks `"running"` then `"ready"`, defaults to `"idle"`
-  - **Creation**: `src/lib/conversations.ts:37` — new conversations start as `"ready"`
-  - **Import**: `src/lib/conversations.ts:401` — imported conversations start as `"idle"`
-  - **Prompt start**: `src/lib/prompt.ts:97` — sets `"running"`
-  - **Prompt end**: `src/lib/prompt.ts:295` — sets `"ready"`
+  - **Creation**: `src/lib/conversations/service.ts` — new conversations start as `"ready"`
+  - **Import**: `src/lib/conversations/service.ts` — imported conversations start as `"idle"`
+  - **Prompt start**: `src/lib/prompt/route-handlers.ts` — sets `"running"`
+  - **Prompt end**: `src/lib/prompt/route-handlers.ts` — sets `"ready"`
   - **Hook Stop**: `src/lib/hooks.ts` — sets `"ready"` on Stop event
   - **UI display**: ProjectCard, SessionsList, ConversationList, ConversationSidebar, SessionDetailPage — all reference `"running"`, `"ready"`, `"idle"` for CSS class selection and text display
   - **CSS**: `globals.css` — `.session-status.running`, `.session-status.ready`, `.session-status.idle`, `.sidebar-dot.running`, `.sidebar-dot.ready`
@@ -31,7 +31,7 @@
 ### SSE Infrastructure Analysis
 
 - **Context**: Unified panel needs real-time updates. Evaluate existing SSE infrastructure for extension.
-- **Sources Consulted**: `src/lib/sse-broadcaster.ts`, `src/app/api/events/route.ts`, `src/components/NotificationListener.tsx`
+- **Sources Consulted**: `src/lib/events/broadcaster.ts`, `src/app/api/events/route.ts`, `src/components/NotificationListener.tsx`
 - **Findings**:
   - Broadcaster uses `globalThis` for HMR safety — solid pattern
   - Currently only emits `session-ready` event type with `SessionReadyEvent` payload
@@ -46,7 +46,7 @@
 ### Cross-Project Data Access Pattern
 
 - **Context**: Unified panel needs to aggregate conversations across all projects. No existing endpoint provides this.
-- **Sources Consulted**: API route structure, `src/lib/state.ts`, `src/lib/discovery.ts`
+- **Sources Consulted**: API route structure, `src/lib/state-store/`, `src/lib/discovery.ts`
 - **Findings**:
   - `readState()` returns the entire `ManagerState` with all projects/sessions/conversations
   - Current session APIs are scoped to a single project: `GET /api/projects/[name]/sessions`
@@ -152,7 +152,7 @@
 - **Risk**: Large number of active conversations degrades panel performance → **Mitigation**: Panel only shows `running` + `awaiting`; in practice this is a small number (typically <20 across all projects).
 
 ## References
-- Existing SSE pattern: `src/lib/sse-broadcaster.ts`
+- Existing SSE pattern: `src/lib/events/broadcaster.ts`
 - TanStack Query invalidation: `src/components/NotificationListener.tsx`
 - Design system: `.claude/skills/cc-design-system/SKILL.md`
 - Zustand store pattern: `src/stores/session-detail.store.ts`

@@ -29,11 +29,11 @@
 ### Claude Session Continuity
 - **Context**: The design needed to verify whether a new continuity abstraction was required for Claude-backed implementers and validators.
 - **Sources Consulted**:
-  - `src/lib/prompt.ts`
-  - `src/lib/conversations.ts`
+  - `src/lib/prompt/` (prompt domain)
+  - `src/lib/conversations/` (conversations domain)
   - `src/lib/workflows/conversation/actor-implementations.ts`
-  - `src/lib/query-session.ts`
-  - `src/lib/validation-fix.ts`
+  - `src/lib/agent-backends/claude/query-session.ts`
+  - `src/lib/workflows/validation-fix.ts`
   - Anthropic Agent SDK Sessions documentation: <https://platform.claude.com/docs/agent-sdk/sessions>
 - **Findings**:
   - `executePromptStream()` already routes prompt execution through the conversation machine, and the machine persists `claudeSessionId`, `contextTokens`, and `contextWindowMax` on the conversation record.
@@ -46,7 +46,7 @@
 ### Codex Thread Continuity and Limits
 - **Context**: The design needed to confirm whether Codex validators can preserve conversation history and whether configured context limits can be enforced accurately.
 - **Sources Consulted**:
-  - `src/lib/codex-tool.ts`
+  - `src/lib/agent-backends/codex/codex-tool.ts`
   - `node_modules/@openai/codex-sdk/dist/index.d.ts`
   - `node_modules/@openai/codex-sdk/README.md`
   - OpenAI Codex SDK README: <https://github.com/openai/codex/blob/main/sdk/typescript/README.md>
@@ -62,7 +62,7 @@
 ### Configuration and UI Fanout
 - **Context**: The feature changes how iteration and validator behavior are configured, so the design needed to identify all configuration surfaces.
 - **Sources Consulted**:
-  - `src/lib/schemas.ts`
+  - `src/lib/workflows/schemas.ts`
   - `src/lib/workflow-graph/planner-tools.ts`
   - `src/app/projects/[name]/workflows/WorkflowInspectorPanel.tsx`
   - `src/lib/schemas-workflow-graph.test.ts`
@@ -83,7 +83,7 @@
   - `src/app/projects/[name]/[session]/workflow/GraphWorkflowPanel.tsx`
   - `src/app/projects/[name]/[session]/workflow/ExecutionInspectorPanel.tsx`
   - `src/lib/workflow-graph/execution-events.ts`
-  - `src/lib/schemas.ts`
+  - `src/lib/workflows/schemas.ts`
 - **Findings**:
   - Implementer task review already hinges on `taskState.lastConversationId`, which remains valid even if many tasks share the same conversation.
   - Validator history is stored in `GraphWorkflowValidationResultEvent`, but that event currently has no session or thread reference.
