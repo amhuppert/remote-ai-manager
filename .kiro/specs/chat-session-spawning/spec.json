@@ -1,0 +1,22 @@
+{
+  "feature_name": "chat-session-spawning",
+  "created_at": "2026-06-02T21:50:29Z",
+  "updated_at": "2026-06-02T21:53:00Z",
+  "language": "en",
+  "phase": "tasks-generated",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": true
+    },
+    "design": {
+      "generated": true,
+      "approved": true
+    },
+    "tasks": {
+      "generated": true,
+      "approved": true
+    }
+  },
+  "ready_for_implementation": true
+}
