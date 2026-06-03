@@ -1,12 +1,30 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, fireEvent, act } from "@testing-library/react";
+import { render, fireEvent, act, waitFor } from "@testing-library/react";
 import { createRef } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   PromptEditor,
+  shouldOpenSlashPopup,
   type PromptEditorHandle,
 } from "@/features/session/prompt/PromptEditor";
 import type { ImageAttachment } from "@/hooks/use-image-attachments";
+import type { AgentBackendId } from "@/lib/shared/schemas";
+
+const { mockUseCommandsQuery, mockUseAgentCapabilityViewQuery } = vi.hoisted(
+  () => ({
+    mockUseCommandsQuery: vi.fn(),
+    mockUseAgentCapabilityViewQuery: vi.fn(),
+  }),
+);
+
+vi.mock("@/lib/commands/queries", () => ({
+  useCommandsQuery: mockUseCommandsQuery,
+}));
+
+vi.mock("@/hooks/use-agent-capabilities", () => ({
+  useAgentCapabilityViewQuery: mockUseAgentCapabilityViewQuery,
+}));
 
 // jsdom doesn't implement getClientRects/getBoundingClientRect on
 // contenteditable nodes the way Tiptap expects.  Tiptap and ProseMirror
@@ -41,6 +59,22 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.clearAllMocks();
+});
+
+beforeEach(() => {
+  mockUseCommandsQuery.mockReturnValue({
+    data: { items: [] },
+    isPending: false,
+    isError: false,
+    error: null,
+  });
+  mockUseAgentCapabilityViewQuery.mockReturnValue({
+    data: undefined,
+    isPending: false,
+    isError: false,
+    error: null,
+  });
+  Element.prototype.scrollIntoView = vi.fn();
 });
 
 function makeAddImage(
@@ -422,5 +456,171 @@ describe("PromptEditor", () => {
     expect(placeholder?.getAttribute("data-placeholder")).toBe(
       "Type something…",
     );
+  });
+});
+
+describe("shouldOpenSlashPopup", () => {
+  it("opens the $ skills trigger only on the Codex backend", () => {
+    expect(shouldOpenSlashPopup("$", "codex")).toBe(true);
+    expect(shouldOpenSlashPopup("$", "claude")).toBe(false);
+    expect(shouldOpenSlashPopup("$", undefined)).toBe(false);
+  });
+
+  it("opens the / command trigger on every backend", () => {
+    expect(shouldOpenSlashPopup("/", "codex")).toBe(true);
+    expect(shouldOpenSlashPopup("/", "claude")).toBe(true);
+    expect(shouldOpenSlashPopup("/", undefined)).toBe(true);
+  });
+});
+
+describe("PromptEditor — backend-dependent slash/skill triggers", () => {
+  function editorTree(
+    backend: AgentBackendId,
+    ref: React.RefObject<PromptEditorHandle | null>,
+    client: QueryClient,
+  ) {
+    return (
+      <QueryClientProvider client={client}>
+        <PromptEditor
+          ref={ref}
+          conversationId="conv-1"
+          value=""
+          onChange={() => {}}
+          onSubmit={() => {}}
+          pendingImages={[]}
+          onAddImage={makeAddImage()}
+          onRemoveImage={() => {}}
+          cumulativeImageCount={0}
+          projectName="proj"
+          sessionName="sess"
+          backend={backend}
+        />
+      </QueryClientProvider>
+    );
+  }
+
+  async function typeTrigger(
+    ref: React.RefObject<PromptEditorHandle | null>,
+    char: string,
+  ) {
+    await act(async () => {
+      ref.current?.editor?.chain().focus().insertContent(char).run();
+      await Promise.resolve();
+    });
+  }
+
+  it("does not open a popup when typing $ on the Claude backend", async () => {
+    const ref = createRef<PromptEditorHandle>();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { container } = render(editorTree("claude", ref, client));
+    await typeTrigger(ref, "$");
+    expect(container.querySelector(".cmd-autocomplete")).toBeNull();
+  });
+
+  it("opens the Skills popup when typing $ on the Codex backend", async () => {
+    const ref = createRef<PromptEditorHandle>();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { container } = render(editorTree("codex", ref, client));
+    await typeTrigger(ref, "$");
+    await waitFor(() => {
+      expect(container.querySelector(".cmd-autocomplete")).not.toBeNull();
+    });
+    expect(container.querySelector(".cmd-header")?.textContent).toContain(
+      "Skills",
+    );
+  });
+
+  it("opens the Commands popup when typing / on the Codex backend", async () => {
+    const ref = createRef<PromptEditorHandle>();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { container } = render(editorTree("codex", ref, client));
+    await typeTrigger(ref, "/");
+    await waitFor(() => {
+      expect(container.querySelector(".cmd-autocomplete")).not.toBeNull();
+    });
+    expect(container.querySelector(".cmd-header")?.textContent).toContain(
+      "Commands",
+    );
+  });
+
+  // Regression: the editor is created once and never rebuilt. Toggling the
+  // backend (before the first message) or the conversation's stored backend
+  // loading after mount (mid-conversation) must still enable the $ skills
+  // trigger without recreating the editor.
+  it("enables the $ trigger after the backend switches from Claude to Codex", async () => {
+    const ref = createRef<PromptEditorHandle>();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { container, rerender } = render(editorTree("claude", ref, client));
+    const editorBefore = ref.current?.editor;
+
+    await act(async () => {
+      rerender(editorTree("codex", ref, client));
+      await Promise.resolve();
+    });
+
+    // The same editor instance is reused (not recreated) across the switch.
+    expect(ref.current?.editor).toBe(editorBefore);
+
+    await typeTrigger(ref, "$");
+    await waitFor(() => {
+      expect(container.querySelector(".cmd-autocomplete")).not.toBeNull();
+    });
+    expect(container.querySelector(".cmd-header")?.textContent).toContain(
+      "Skills",
+    );
+  });
+
+  it("still submits with Ctrl+Enter after typing $ on the Claude backend", async () => {
+    const onSubmit = vi.fn();
+    const ref = createRef<PromptEditorHandle>();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { container } = render(
+      <QueryClientProvider client={client}>
+        <PromptEditor
+          ref={ref}
+          conversationId="conv-1"
+          value=""
+          onChange={() => {}}
+          onSubmit={onSubmit}
+          pendingImages={[]}
+          onAddImage={makeAddImage()}
+          onRemoveImage={() => {}}
+          cumulativeImageCount={0}
+          projectName="proj"
+          sessionName="sess"
+          backend="claude"
+        />
+      </QueryClientProvider>,
+    );
+    await typeTrigger(ref, "$cost");
+    const pm = container.querySelector(".ProseMirror") as HTMLElement;
+    fireEvent.keyDown(pm, { key: "Enter", ctrlKey: true });
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables the $ trigger after the backend switches from Codex to Claude", async () => {
+    const ref = createRef<PromptEditorHandle>();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { container, rerender } = render(editorTree("codex", ref, client));
+
+    await act(async () => {
+      rerender(editorTree("claude", ref, client));
+      await Promise.resolve();
+    });
+
+    await typeTrigger(ref, "$");
+    expect(container.querySelector(".cmd-autocomplete")).toBeNull();
   });
 });
