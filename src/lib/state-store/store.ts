@@ -6,11 +6,13 @@ import { PersistenceError } from "../shared/errors";
 import { createLogger } from "@/lib/logging";
 import { timed } from "@/lib/logging/timed";
 
+import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import { createAccessors } from "./accessors";
 import {
   canonicalConversationRow,
   createConversationsRepo,
 } from "./conversations-repo";
+import { createProjectConversationsRepo } from "./project-conversations-repo";
 import { createProjectsRepo } from "./projects-repo";
 import {
   canonicalReferenceDocumentRow,
@@ -71,6 +73,8 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     projects: deps.repos?.projects ?? createProjectsRepo(db),
     sessions: deps.repos?.sessions ?? createSessionsRepo(db),
     conversations: deps.repos?.conversations ?? createConversationsRepo(db),
+    projectConversations:
+      deps.repos?.projectConversations ?? createProjectConversationsRepo(db),
     referenceDocuments:
       deps.repos?.referenceDocuments ?? createReferenceDocumentsRepo(db),
   };
@@ -194,6 +198,14 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     label: string,
     mutate: (conversation: ConversationState) => T | Promise<T>,
   ): Promise<T> {
+    if (isProjectSentinel(sessionName)) {
+      return mutateProjectConversation<T>(
+        projectPath,
+        conversationId,
+        label,
+        mutate,
+      );
+    }
     return mutateSession<T>(
       projectPath,
       sessionName,
@@ -213,6 +225,44 @@ export function createStateStore(deps: StateStoreDeps = {}) {
         session.lastActivityAt = now;
         return result;
       },
+    );
+  }
+
+  /**
+   * Mutate a session-less project conversation. Loads the project record, runs
+   * the mutator, stamps `lastActivityAt`, and upserts via the project repo
+   * inside the write queue. Never touches `mutateSession` / the session
+   * aggregate — project conversations live outside `ManagerState`.
+   */
+  async function mutateProjectConversation<T = void>(
+    projectPath: string,
+    conversationId: string,
+    label: string,
+    mutate: (conversation: ConversationState) => T | Promise<T>,
+  ): Promise<T> {
+    return writeQueue.withWriteQueue(
+      `${label}[project::${conversationId}]`,
+      () =>
+        timed(
+          logger,
+          "state.mutate",
+          { label, projectPath, conversationId },
+          async () => {
+            const conversation = repos.projectConversations.findByKey(
+              projectPath,
+              conversationId,
+            );
+            if (!conversation) {
+              throw new Error(
+                `Project conversation "${conversationId}" not found in project "${projectPath}" during ${label}`,
+              );
+            }
+            const result = await mutate(conversation);
+            conversation.lastActivityAt = new Date().toISOString();
+            repos.projectConversations.upsert(projectPath, conversation);
+            return result;
+          },
+        ),
     );
   }
 
@@ -271,11 +321,16 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     mutateState,
     mutateSession,
     mutateConversation,
+    mutateProjectConversation,
     getProjectSessions: accessors.getProjectSessions,
     getProjectSessionListItems: accessors.getProjectSessionListItems,
     getSession: accessors.getSession,
     getConversation: accessors.getConversation,
     getSessionConversations: accessors.getSessionConversations,
+    getProjectConversation: accessors.getProjectConversation,
+    getProjectConversations: accessors.getProjectConversations,
+    listAllProjectConversations: accessors.listAllProjectConversations,
+    getSpawnedSessionStatuses: accessors.getSpawnedSessionStatuses,
     getReferenceDocuments: accessors.getReferenceDocuments,
     getProjectMcpOverrides: accessors.getProjectMcpOverrides,
     getArchivedProjects: accessors.getArchivedProjects,
@@ -287,8 +342,15 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     setSessionTddEnabled: setters.setSessionTddEnabled,
     setSessionFinished: setters.setSessionFinished,
     setConversationPendingPromptText: setters.setConversationPendingPromptText,
+    createProjectConversation: setters.createProjectConversation,
+    setProjectConversationArchived: setters.setProjectConversationArchived,
+    setProjectConversationOpen: setters.setProjectConversationOpen,
+    setProjectConversationPendingPromptText:
+      setters.setProjectConversationPendingPromptText,
     setProjectArchived: setters.setProjectArchived,
     setProjectPinned: setters.setProjectPinned,
+    setSessionSpawnedFrom: setters.setSessionSpawnedFrom,
+    addPlcSpawnedSessionIds: setters.addPlcSpawnedSessionIds,
     createReferenceDocument: setters.createReferenceDocument,
     deleteReferenceDocument: setters.deleteReferenceDocument,
   };

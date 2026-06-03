@@ -1,9 +1,10 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
-import type { ActiveConversation } from "@/lib/active-conversations/schemas";
+import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
 import ConversationSidebarRow from "@/features/session/sidebar/ConversationSidebarRow";
 
-const BASE_CONVERSATION: ActiveConversation = {
+const BASE_CONVERSATION: SessionActiveConversation = {
+  scope: "session",
   id: "convo-01HXAMPLE0000000000000001",
   name: "Add fork lineage badge",
   status: "running",
@@ -26,8 +27,8 @@ const BASE_CONVERSATION: ActiveConversation = {
 };
 
 function buildConversation(
-  overrides: Partial<ActiveConversation>,
-): ActiveConversation {
+  overrides: Partial<SessionActiveConversation>,
+): SessionActiveConversation {
   return { ...BASE_CONVERSATION, ...overrides };
 }
 

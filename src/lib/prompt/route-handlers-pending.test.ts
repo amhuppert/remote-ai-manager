@@ -15,6 +15,7 @@ function makeConvo(
 ): ConversationState {
   return {
     id: "convo-1",
+    scope: "session",
     name: null,
     transcriptPath: null,
     status: "new",

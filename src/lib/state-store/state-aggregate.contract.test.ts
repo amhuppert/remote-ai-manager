@@ -103,6 +103,9 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     branchName: "csm/s1",
     createdAt: "2026-01-01T00:00:00Z",
     lastActivityAt: "2026-01-01T00:00:00Z",
+    // The sessions repo materializes an explicit `spawnedFrom: null` on decode,
+    // so the round-trip fixture must carry it to match the loaded aggregate.
+    spawnedFrom: null,
     ...overrides,
   });
 }
@@ -256,6 +259,7 @@ describe("state-aggregate.readAll", () => {
         ],
         upsert: () => {},
         delete: () => {},
+        setSpawnedFrom: () => false,
       },
       conversations: {
         findById: () => null,

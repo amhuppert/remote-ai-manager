@@ -40,6 +40,7 @@ const TEST_DIR = path.join("/tmp", "cc-mcp-runtime-apply-test-" + Date.now());
 function baseConversation(overrides: Record<string, unknown> = {}) {
   return {
     id: CONVERSATION_ID,
+    scope: "session" as const,
     name: null,
     transcriptPath: null,
     status: "awaiting" as const,

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useConflictsQuery } from "@/lib/git/queries";
+import { useConflictsQuery, useMainWorktreeDiffQuery } from "@/lib/git/queries";
 function makeClient() {
   return new QueryClient({
     defaultOptions: {
@@ -75,5 +75,57 @@ describe("useConflictsQuery", () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
     expect(result.current.data).toBeNull();
+  });
+});
+
+describe("useMainWorktreeDiffQuery", () => {
+  const fetchSpy = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("hits the main-worktree diff route and validates SessionDiff", async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse({
+        files: [{ filePath: "a.ts", additions: 1, deletions: 0, hunks: [] }],
+        totalAdditions: 1,
+        totalDeletions: 0,
+      }),
+    );
+
+    const { result } = renderHook(() => useMainWorktreeDiffQuery("proj"), {
+      wrapper: wrapperFor(makeClient()),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(fetchSpy).toHaveBeenCalledWith("/api/projects/proj/diff");
+    expect(result.current.data?.files[0]?.filePath).toBe("a.ts");
+  });
+
+  it("degrades to null when the endpoint is absent (404)", async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ error: "not found" }, 404));
+
+    const { result } = renderHook(() => useMainWorktreeDiffQuery("proj"), {
+      wrapper: wrapperFor(makeClient()),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toBeNull();
+  });
+
+  it("rejects a payload that is not a SessionDiff", async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ unexpected: true }));
+
+    const { result } = renderHook(() => useMainWorktreeDiffQuery("proj"), {
+      wrapper: wrapperFor(makeClient()),
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
   });
 });

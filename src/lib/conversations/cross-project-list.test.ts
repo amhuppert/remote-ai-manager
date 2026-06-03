@@ -9,6 +9,7 @@ function makeConversation(
 ): ConversationState {
   return {
     id: overrides.id,
+    scope: overrides.scope ?? "session",
     name: overrides.name ?? null,
     transcriptPath: overrides.transcriptPath ?? null,
     status: overrides.status ?? "new",

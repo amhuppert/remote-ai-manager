@@ -108,8 +108,14 @@ describe("sessions-repo round-trip contract", () => {
     expect(out.workflowEnvelopes).toBeUndefined();
     expect(out.workflowLanes).toBeUndefined();
     expect(out.mcpOverrides).toBeUndefined();
+    // The repo materializes an explicit `spawnedFrom: null` for non-spawned
+    // rows; the minimal fixture omits it (optional, no default).
+    expect(out.spawnedFrom).toBeNull();
 
-    expect(sessionStateSchema.parse(out)).toEqual(fixture);
+    expect(sessionStateSchema.parse(out)).toEqual({
+      ...fixture,
+      spawnedFrom: null,
+    });
   });
 
   it("upsert + findByKey round-trips a fully populated fixture (every field set, JSON sub-trees included)", () => {
@@ -120,8 +126,29 @@ describe("sessions-repo round-trip contract", () => {
     expect(out).not.toBeNull();
     if (!out) return;
 
-    expect(out).toEqual(fixture);
-    expect(sessionStateSchema.parse(out)).toEqual(fixture);
+    // The repo materializes `spawnedFrom: null` for the (non-spawned) fixture.
+    const expected = { ...fixture, spawnedFrom: null };
+    expect(out).toEqual(expected);
+    expect(sessionStateSchema.parse(out)).toEqual(expected);
+  });
+
+  it("round-trips a chat-spawned session's spawnedFrom origin tag", () => {
+    const fixture = makeMinimalSession({
+      sessionName: "from-chat",
+      spawnedFrom: {
+        source: "chat",
+        projectName: "my-project",
+        conversationId: "conv-1",
+      },
+    });
+    repo.upsert(PROJECT_PATH, fixture);
+
+    const out = repo.findByKey(PROJECT_PATH, "from-chat");
+    expect(out?.spawnedFrom).toEqual({
+      source: "chat",
+      projectName: "my-project",
+      conversationId: "conv-1",
+    });
   });
 
   it("findByProject returns all sessions belonging to a project, no others", () => {

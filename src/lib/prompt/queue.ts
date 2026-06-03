@@ -10,6 +10,7 @@ import { getRuntime as defaultGetRuntime } from "@/lib/agent-backends/runtime-re
 import { appendTranscriptEntry as defaultAppendTranscriptEntry } from "./transcript";
 import { type BroadcastFn } from "@/lib/events/broadcaster";
 import { publishSessionStatus } from "@/lib/workflows/primitives/default-session-status-bus";
+import { conversationEventScopeFields } from "@/lib/conversations/project-conversation-scope";
 import { createLogger } from "@/lib/logging";
 
 const logger = createLogger("queue-message");
@@ -91,9 +92,7 @@ export async function queueMessage(params: QueueMessageParams): Promise<void> {
   try {
     d.broadcast({
       type: "message-queued",
-      projectName,
-      sessionName,
-      conversationId,
+      ...conversationEventScopeFields(projectName, sessionName, conversationId),
       text,
     });
   } catch {

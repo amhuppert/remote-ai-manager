@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ActiveConversation } from "@/lib/active-conversations/schemas";
+import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import PeekPopover from "@/features/session/sidebar/PeekPopover";
 
@@ -15,7 +15,8 @@ vi.mock("@/lib/logging", () => ({
   }),
 }));
 
-const BASE_CONVERSATION: ActiveConversation = {
+const BASE_CONVERSATION: SessionActiveConversation = {
+  scope: "session",
   id: "convo-1",
   name: "Schema and deps foundation",
   status: "running",

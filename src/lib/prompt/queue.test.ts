@@ -113,8 +113,30 @@ describe("queueMessage", () => {
 
     expect(broadcastMock).toHaveBeenCalledWith({
       type: "message-queued",
+      scope: "session",
       projectName: "my-project",
       sessionName: "my-session",
+      conversationId: "conv-123",
+      text: "queued prompt",
+    });
+  });
+
+  it("broadcasts the scope=project variant (no sessionName) for the project sentinel", async () => {
+    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+
+    await queueMessage({
+      conversationId: "conv-123",
+      projectName: "my-project",
+      sessionName: "__project__",
+      text: "queued prompt",
+      deps,
+    });
+
+    expect(broadcastMock).toHaveBeenCalledWith({
+      type: "message-queued",
+      scope: "project",
+      projectName: "my-project",
       conversationId: "conv-123",
       text: "queued prompt",
     });

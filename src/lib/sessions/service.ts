@@ -224,6 +224,11 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       targetBranch?: string;
       parentSessionName?: string;
       reservedDirName?: string;
+      // Explicit branch name used verbatim (no prefix). When omitted the branch
+      // is derived from the session name + config branch prefix as usual. Used
+      // by chat-spawning so a reviewed/edited branch is exactly what gets
+      // created (and a duplicate/invalid branch is rejected by `worktree add`).
+      branchName?: string;
     },
   ): Promise<SessionState> {
     const dirName =
@@ -233,7 +238,8 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     const globalConfig = await readConfig();
     const repoConfig = await readRepoConfig(projectPath);
     const prefix = resolveBranchPrefix(globalConfig, repoConfig);
-    const branchName = prefix ? `${prefix}/${dirName}` : dirName;
+    const branchName =
+      opts.branchName ?? (prefix ? `${prefix}/${dirName}` : dirName);
 
     const worktreePath = path.join(projectPath, ".worktrees", dirName);
 
@@ -248,6 +254,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     const now = new Date().toISOString();
     const initialConversation: ConversationState = {
       id: crypto.randomUUID(),
+      scope: "session",
       name: `${sessionName} 1`,
       transcriptPath: null,
       status: "new",
@@ -547,6 +554,49 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     });
 
     return session;
+  }
+
+  /**
+   * Provision a chat-spawned session deterministically with an explicit name,
+   * branch, target, and creation mode — reusing `provisionSession` (worktree +
+   * init + focus.md for focus mode) and the same name validations as the New
+   * Session flow. It deliberately does NOT fire any auto-run workflow (even for
+   * optimistic mode): the shared readiness-gated first-turn dispatcher delivers
+   * the first turn for every mode, and autonomous orchestration beyond the first
+   * turn (merging/workflow launches) is out of scope for spawned sessions.
+   */
+  async function createSpawnedSession(
+    projectPath: string,
+    input: {
+      name: string;
+      branch: string;
+      targetBranch: string;
+      mode: SessionCreationMode;
+      baseBranch: string;
+      objective: string | null;
+      tddEnabled?: boolean;
+    },
+  ): Promise<SessionState> {
+    const validationError = validateSessionName(input.name);
+    if (validationError) {
+      throw new Error(validationError);
+    }
+
+    const state = await readState();
+    const project = state.projects[projectPath];
+    const existingNames = new Set(Object.keys(project?.sessions ?? {}));
+    if (existingNames.has(input.name)) {
+      throw new Error(`Session "${input.name}" already exists in this project`);
+    }
+
+    return provisionSession(projectPath, input.name, {
+      mode: input.mode,
+      objective: input.objective,
+      tddEnabled: input.tddEnabled,
+      baseBranch: input.baseBranch,
+      targetBranch: input.targetBranch,
+      branchName: input.branch,
+    });
   }
 
   /**
@@ -871,6 +921,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     createSessionFast,
     createSessionFocus,
     createSessionOptimistic,
+    createSpawnedSession,
     ensurePlannerSession,
     retargetOrphanedChildren,
     deleteSession,
@@ -888,6 +939,7 @@ const defaultService = createSessionService();
 export const createSessionFast = defaultService.createSessionFast;
 export const createSessionFocus = defaultService.createSessionFocus;
 export const createSessionOptimistic = defaultService.createSessionOptimistic;
+export const createSpawnedSession = defaultService.createSpawnedSession;
 export const ensurePlannerSession = defaultService.ensurePlannerSession;
 export const retargetOrphanedChildren = defaultService.retargetOrphanedChildren;
 export const deleteSession = defaultService.deleteSession;

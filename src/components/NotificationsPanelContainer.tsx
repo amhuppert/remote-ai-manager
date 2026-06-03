@@ -74,6 +74,7 @@ export default function NotificationsPanelContainer() {
     // Map active conversations
     if (activeConversations) {
       for (const conv of activeConversations) {
+        if (conv.scope !== "session") continue;
         result.push({
           type: "conversation",
           id: conv.id,

@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { fn, userEvent, within } from "storybook/test";
-import type { ActiveConversation } from "@/lib/active-conversations/schemas";
+import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
 import type {
   AskQuestionItem,
   TranscriptMessage,
@@ -12,7 +12,8 @@ const now = new Date("2026-05-15T12:42:00.000Z");
 const minutesAgo = (minutes: number) =>
   new Date(now.getTime() - minutes * 60_000).toISOString();
 
-const BASE_CONVERSATION: ActiveConversation = {
+const BASE_CONVERSATION: SessionActiveConversation = {
+  scope: "session",
   id: "convo-peek-base",
   name: "Peek and reply popover",
   status: "running",
@@ -36,8 +37,8 @@ const BASE_CONVERSATION: ActiveConversation = {
 };
 
 function buildConversation(
-  overrides: Partial<ActiveConversation>,
-): ActiveConversation {
+  overrides: Partial<SessionActiveConversation>,
+): SessionActiveConversation {
   return {
     ...BASE_CONVERSATION,
     ...overrides,
@@ -154,7 +155,7 @@ const MULTI_SELECT_QUESTION: AskQuestionItem[] = [
 ];
 
 interface PeekStoryProps {
-  conversation: ActiveConversation;
+  conversation: SessionActiveConversation;
   transcriptMessages: TranscriptMessage[];
 }
 

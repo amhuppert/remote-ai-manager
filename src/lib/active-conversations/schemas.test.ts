@@ -5,6 +5,7 @@ import {
 } from "./schemas";
 
 const BASE_CONVERSATION = {
+  scope: "session" as const,
   id: "conv-1",
   name: "Test conversation",
   lastActivityAt: "2026-01-01T00:00:00.000Z",

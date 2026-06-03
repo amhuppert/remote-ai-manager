@@ -122,6 +122,7 @@ describe("POST /conversations/[id]/mark-read", () => {
     if (parsed.success) {
       expect(parsed.data).toEqual({
         type: "conversation-unread",
+        scope: "session",
         projectName: "demo",
         sessionName: "s1",
         conversationId: "conv-1",

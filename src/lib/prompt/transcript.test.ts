@@ -1813,6 +1813,28 @@ describe("appendTranscriptEntry — message-appended broadcast", () => {
     expect(captured).toHaveLength(0);
   });
 
+  it("broadcasts the scope=project message-appended variant for the project sentinel", async () => {
+    await appendTranscriptEntry(
+      "conv-proj",
+      makeEntry("assistant", "on main"),
+      TEST_DIR,
+      { projectName: "demo", sessionName: "__project__" },
+    );
+    expect(captured).toHaveLength(1);
+    const event = captured[0] as {
+      scope: string;
+      projectName: string;
+      conversationId: string;
+      sessionName?: string;
+    };
+    expect(event.scope).toBe("project");
+    expect(event.projectName).toBe("demo");
+    expect(event.conversationId).toBe("conv-proj");
+    expect("sessionName" in event).toBe(false);
+    // The discriminated union accepts the project variant.
+    expect(messageAppendedEventSchema.safeParse(event).success).toBe(true);
+  });
+
   it("does not broadcast for system/result entries even when meta is provided", async () => {
     await appendTranscriptEntry(
       "conv-sys",

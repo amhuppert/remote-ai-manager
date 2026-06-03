@@ -219,6 +219,7 @@ describe("section 6.1 — conversation + focus-mode parity (Task 6.1)", () => {
 
     const event: AskQuestionEvent = {
       type: "ask-question",
+      scope: "session",
       projectName: "acme",
       sessionName: "session-1",
       conversationId: "conv-1",

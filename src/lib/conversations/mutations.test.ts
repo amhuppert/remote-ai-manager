@@ -15,15 +15,16 @@ import { conversationKeys } from "@/lib/conversations/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type {
-  ActiveConversation,
+  SessionActiveConversation,
   ActiveConversationsResponse,
 } from "@/lib/active-conversations/schemas";
 
 function activeConvo(
-  overrides: Partial<ActiveConversation> & { id: string },
-): ActiveConversation {
+  overrides: Partial<SessionActiveConversation> & { id: string },
+): SessionActiveConversation {
   return {
     id: overrides.id,
+    scope: "session",
     name: overrides.name ?? null,
     status: overrides.status ?? "new",
     lastActivityAt: overrides.lastActivityAt ?? "2025-01-01T00:00:00.000Z",
@@ -46,7 +47,7 @@ function activeConvo(
 }
 
 function activeResponse(
-  conversations: ActiveConversation[],
+  conversations: SessionActiveConversation[],
 ): ActiveConversationsResponse {
   return {
     conversations,
@@ -81,6 +82,7 @@ function conversation(
 ): ConversationState {
   return {
     id: overrides.id,
+    scope: overrides.scope ?? "session",
     name: overrides.name ?? null,
     transcriptPath: overrides.transcriptPath ?? null,
     status: overrides.status ?? "new",

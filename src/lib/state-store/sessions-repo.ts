@@ -8,13 +8,14 @@ import {
   sessionCreationModeSchema,
   sessionSourceSchema,
   sessionStateSchema,
+  spawnedFromSchema,
 } from "@/lib/sessions/schemas";
 import { PersistenceError, getErrorMessage } from "../shared/errors";
 import {
   migrateLegacyExecution,
   needsLegacyMigration,
 } from "@/lib/workflow-graph/migrate-legacy-execution";
-import type { SessionState } from "@/lib/sessions/schemas";
+import type { SessionState, SpawnedFrom } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 type Db = InstanceType<typeof Database>;
 
@@ -37,6 +38,7 @@ interface SessionListItemRow {
   objective: string | null;
   has_active_graph_workflow: 0 | 1;
   workflow_envelopes: string | null;
+  spawned_from: string | null;
 }
 
 export interface SessionsRepo {
@@ -46,6 +48,16 @@ export interface SessionsRepo {
   findAll(): { projectPath: string; session: SessionState }[];
   upsert(projectPath: string, session: SessionState): void;
   delete(projectPath: string, sessionName: string): void;
+  /**
+   * Focused single-column write of the `from chat` origin tag (Pattern 2: no
+   * whole-state read). Called once at chat-spawn creation. Returns whether a
+   * row was updated.
+   */
+  setSpawnedFrom(
+    projectPath: string,
+    sessionName: string,
+    spawnedFrom: SpawnedFrom | null,
+  ): boolean;
 }
 
 /**
@@ -74,6 +86,7 @@ const sessionsTableRowSchema = z.object({
   workflow_lanes: z.string().nullable(),
   mcp_overrides: z.string().nullable(),
   agent_capability_overrides: z.string().nullable(),
+  spawned_from: z.string().nullable(),
 });
 type SessionsTableRow = z.infer<typeof sessionsTableRowSchema>;
 
@@ -98,6 +111,7 @@ interface SqlBindRow {
   workflow_lanes: string | null;
   mcp_overrides: string | null;
   agent_capability_overrides: string | null;
+  spawned_from: string | null;
 }
 
 function stableStringify(value: unknown): string {
@@ -156,6 +170,7 @@ function sessionToSqlBind(
     workflow_lanes: jsonOrNull(session.workflowLanes),
     mcp_overrides: jsonOrNull(session.mcpOverrides),
     agent_capability_overrides: jsonOrNull(session.agentCapabilityOverrides),
+    spawned_from: jsonOrNull(session.spawnedFrom ?? null),
   };
 }
 
@@ -505,6 +520,25 @@ function rowToDomain(rawRow: unknown): {
     );
   }
 
+  let spawnedFrom: z.infer<typeof spawnedFromSchema> | null = null;
+  const spawnedFromResult = parseJsonColumn(
+    "spawnedFrom",
+    row.spawned_from,
+    spawnedFromSchema,
+    "default",
+    null,
+  );
+  if (spawnedFromResult.ok) {
+    spawnedFrom = spawnedFromResult.value ?? null;
+  } else {
+    logColumnQuarantine(
+      row.project_path,
+      row.session_name,
+      "spawnedFrom",
+      spawnedFromResult.issues,
+    );
+  }
+
   const candidate: Record<string, unknown> = {
     sessionName: row.session_name,
     worktreePath: row.worktree_path,
@@ -523,6 +557,7 @@ function rowToDomain(rawRow: unknown): {
     graphWorkflowExecutionHistory,
     conversations: [],
     referenceDocuments: [],
+    spawnedFrom,
   };
   if (workflowEnvelopes !== undefined)
     candidate.workflowEnvelopes = workflowEnvelopes;
@@ -585,7 +620,7 @@ export function createSessionsRepo(db: Db): SessionsRepo {
          AND json_extract(graph_workflow_execution, '$.status')
            NOT IN ('completed', 'failed', 'cancelled')
          THEN 1 ELSE 0 END AS has_active_graph_workflow,
-       workflow_envelopes
+       workflow_envelopes, spawned_from
      FROM sessions
      WHERE project_path = ?
      ORDER BY last_activity_at DESC`,
@@ -601,14 +636,16 @@ export function createSessionsRepo(db: Db): SessionsRepo {
        objective, creation_mode, tdd_enabled, target_branch,
        parent_session_name, graph_workflow_execution,
        graph_workflow_execution_history, workflow_envelopes,
-       workflow_lanes, mcp_overrides, agent_capability_overrides
+       workflow_lanes, mcp_overrides, agent_capability_overrides,
+       spawned_from
      ) VALUES (
        @project_path, @session_name, @worktree_path, @branch_name,
        @created_at, @last_activity_at, @archived, @finished, @source,
        @objective, @creation_mode, @tdd_enabled, @target_branch,
        @parent_session_name, @graph_workflow_execution,
        @graph_workflow_execution_history, @workflow_envelopes,
-       @workflow_lanes, @mcp_overrides, @agent_capability_overrides
+       @workflow_lanes, @mcp_overrides, @agent_capability_overrides,
+       @spawned_from
      )
      ON CONFLICT(project_path, session_name) DO UPDATE SET
        worktree_path                    = excluded.worktree_path,
@@ -628,10 +665,15 @@ export function createSessionsRepo(db: Db): SessionsRepo {
        workflow_envelopes               = excluded.workflow_envelopes,
        workflow_lanes                   = excluded.workflow_lanes,
        mcp_overrides                    = excluded.mcp_overrides,
-       agent_capability_overrides       = excluded.agent_capability_overrides`,
+       agent_capability_overrides       = excluded.agent_capability_overrides,
+       spawned_from                     = excluded.spawned_from`,
   );
   const deleteStmt = db.prepare(
     `DELETE FROM sessions WHERE project_path = ? AND session_name = ?`,
+  );
+  const setSpawnedFromStmt = db.prepare(
+    `UPDATE sessions SET spawned_from = ?
+     WHERE project_path = ? AND session_name = ?`,
   );
   const updateGraphWorkflowExecutionStmt = db.prepare(
     `UPDATE sessions SET graph_workflow_execution = ?
@@ -723,6 +765,16 @@ export function createSessionsRepo(db: Db): SessionsRepo {
     delete(projectPath, sessionName) {
       timed("delete", projectPath, sessionName, () => {
         deleteStmt.run(projectPath, sessionName);
+      });
+    },
+    setSpawnedFrom(projectPath, sessionName, spawnedFrom) {
+      return timed("setSpawnedFrom", projectPath, sessionName, () => {
+        const info = setSpawnedFromStmt.run(
+          jsonOrNull(spawnedFrom),
+          projectPath,
+          sessionName,
+        );
+        return info.changes > 0;
       });
     },
   };

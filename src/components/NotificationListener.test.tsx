@@ -270,6 +270,7 @@ describe("NotificationListener", () => {
 
     es.emit("conversation-status", {
       type: "conversation-status",
+      scope: "session",
       projectName: "proj",
       sessionName: "sess",
       conversationId: "conv-1",
@@ -423,6 +424,7 @@ describe("NotificationListener", () => {
 
     es.emit("message-appended", {
       type: "message-appended",
+      scope: "session",
       projectName: "proj",
       sessionName: "sess",
       conversationId: "conv-1",
@@ -475,6 +477,7 @@ describe("NotificationListener", () => {
 
     es.emit("message-appended", {
       type: "message-appended",
+      scope: "session",
       projectName: "proj",
       sessionName: "sess",
       conversationId: "conv-1",
@@ -535,6 +538,7 @@ describe("NotificationListener", () => {
 
     es.emit("message-updated", {
       type: "message-updated",
+      scope: "session",
       projectName: "proj",
       sessionName: "sess",
       conversationId: "conv-1",
@@ -571,6 +575,7 @@ describe("NotificationListener", () => {
 
     es.emit("conversation-created", {
       type: "conversation-created",
+      scope: "session",
       projectName: "proj",
       sessionName: "sess",
       conversation: {
@@ -625,6 +630,7 @@ describe("NotificationListener", () => {
 
     es.emit("conversation-renamed", {
       type: "conversation-renamed",
+      scope: "session",
       projectName: "proj",
       sessionName: "sess",
       conversationId: "conv-1",
@@ -656,6 +662,7 @@ describe("NotificationListener", () => {
 
     es.emit("conversation-archived", {
       type: "conversation-archived",
+      scope: "session",
       projectName: "proj",
       sessionName: "sess",
       conversationId: "conv-2",

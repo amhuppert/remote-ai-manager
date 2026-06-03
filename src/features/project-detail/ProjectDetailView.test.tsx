@@ -171,9 +171,7 @@ describe("ProjectDetailView", () => {
     renderWithQuery(<ProjectDetailView projectName="my-project" />);
     expect(screen.getByText("No sessions yet")).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "Create a session to start working with Claude in this project.",
-      ),
+      screen.getByText("Create a session to start working in this project."),
     ).toBeInTheDocument();
   });
 
@@ -222,12 +220,11 @@ describe("ProjectDetailView", () => {
     expect(primary?.textContent).toContain("New session");
   });
 
-  it("renders command console", () => {
+  it("renders the unified composer in place of the legacy command console", () => {
     mockSessionsData.data = [];
-    const { container } = renderWithQuery(
-      <ProjectDetailView projectName="my-project" />,
-    );
-    expect(container.querySelector(".v2-console")).not.toBeNull();
+    renderWithQuery(<ProjectDetailView projectName="my-project" />);
+    // The legacy CommandConsole is gone; the unified composer replaces it.
+    expect(screen.getByLabelText("Project composer")).toBeInTheDocument();
   });
 
   it("renders table with all column headers (Req 2.1)", () => {

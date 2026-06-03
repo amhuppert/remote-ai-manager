@@ -29,6 +29,7 @@ import {
   messageAppendedEventSchema,
   type MessageAppendedEvent,
 } from "@/lib/conversations/schemas";
+import { conversationEventScopeFields } from "@/lib/conversations/project-conversation-scope";
 // ============================================================
 // Transcript Entry Types
 // ============================================================
@@ -211,9 +212,11 @@ export async function appendTranscriptEntry(
   ) {
     const event: MessageAppendedEvent = messageAppendedEventSchema.parse({
       type: "message-appended",
-      projectName: meta.projectName,
-      sessionName: meta.sessionName,
-      conversationId,
+      ...conversationEventScopeFields(
+        meta.projectName,
+        meta.sessionName,
+        conversationId,
+      ),
       seq,
       message: {
         role: entry.role,

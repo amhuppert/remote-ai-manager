@@ -113,6 +113,7 @@ async function listRows(conversations: ConversationState[]) {
     readState: vi.fn().mockResolvedValue(makeState(conversations)),
     getProjectDisplayName: vi.fn().mockReturnValue("project"),
     readLastAssistantContent: vi.fn().mockResolvedValue(null),
+    listProjectConversations: vi.fn().mockResolvedValue([]),
   };
   const handlers = createActiveConversationsRouteHandlers(deps);
   const response = await handlers.GET();

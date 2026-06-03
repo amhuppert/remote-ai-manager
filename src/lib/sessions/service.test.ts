@@ -307,6 +307,12 @@ describe("validateSessionName", () => {
     );
   });
 
+  it("rejects the reserved project-conversation sentinel", () => {
+    expect(validateSessionName("__project__")).toMatch(/reserved/);
+    // Other underscore names remain valid.
+    expect(validateSessionName("my_feature")).toBeNull();
+  });
+
   it("returns null for valid alphanumeric name", () => {
     expect(validateSessionName("myFeature")).toBeNull();
   });
@@ -2316,5 +2322,90 @@ describe("ensurePlannerSession", () => {
     expect(session.conversations[0]?.id).toBe("planner-conv-1");
     expect(gitMock).not.toHaveBeenCalled();
     expect(writeStateMock).not.toHaveBeenCalled();
+  });
+});
+
+// ===========================================================================
+// createSpawnedSession (chat-spawning creation path) — honors the explicit
+// branch, reuses provisionSession, validates the name, and never auto-runs.
+// ===========================================================================
+describe("createSpawnedSession", () => {
+  it("creates the branch from the explicit branch name verbatim (no prefix derivation)", async () => {
+    mockGitSuccess(); // git worktree add
+    const session = await service.createSpawnedSession("/projects/repo", {
+      name: "Login form",
+      branch: "feat/login",
+      targetBranch: "main",
+      mode: "fast",
+      baseBranch: "HEADSHA",
+      objective: null,
+    });
+
+    expect(session.branchName).toBe("feat/login");
+    expect(session.sessionName).toBe("Login form");
+    expect(session.creationMode).toBe("fast");
+    // git worktree add -b <explicit branch> <worktree> <committed-HEAD base>
+    expect(gitMock).toHaveBeenCalledWith(
+      ["worktree", "add", "-b", "feat/login", session.worktreePath, "HEADSHA"],
+      "/projects/repo",
+    );
+  });
+
+  it("never fires the optimistic auto-run workflow, even for optimistic mode", async () => {
+    mockGitSuccess();
+    await service.createSpawnedSession("/projects/repo", {
+      name: "Auto task",
+      branch: "feat/auto",
+      targetBranch: "main",
+      mode: "optimistic",
+      baseBranch: "HEADSHA",
+      objective: "do the work",
+    });
+    expect(deps.executeOptimisticWorkflow).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid session name", async () => {
+    await expect(
+      service.createSpawnedSession("/projects/repo", {
+        name: "",
+        branch: "feat/x",
+        targetBranch: "main",
+        mode: "fast",
+        baseBranch: "HEADSHA",
+        objective: null,
+      }),
+    ).rejects.toThrow("Session name cannot be empty");
+    expect(gitMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a duplicate session name in the same project", async () => {
+    readStateMock.mockResolvedValue(stateWithSession("/projects/repo", "dup"));
+    await expect(
+      service.createSpawnedSession("/projects/repo", {
+        name: "dup",
+        branch: "feat/dup",
+        targetBranch: "main",
+        mode: "fast",
+        baseBranch: "HEADSHA",
+        objective: null,
+      }),
+    ).rejects.toThrow('Session "dup" already exists');
+    expect(gitMock).not.toHaveBeenCalled();
+  });
+
+  it("propagates a worktree-add failure (e.g. duplicate/invalid branch) so the batch can record it", async () => {
+    mockGitFailure(
+      new Error("fatal: a branch named 'feat/login' already exists"),
+    );
+    await expect(
+      service.createSpawnedSession("/projects/repo", {
+        name: "Login form",
+        branch: "feat/login",
+        targetBranch: "main",
+        mode: "fast",
+        baseBranch: "HEADSHA",
+        objective: null,
+      }),
+    ).rejects.toThrow("already exists");
   });
 });

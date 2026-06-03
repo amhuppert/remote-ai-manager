@@ -68,6 +68,7 @@ const SCHEMA_DDL = `
     workflow_lanes                     TEXT,
     mcp_overrides                      TEXT,
     agent_capability_overrides         TEXT,
+    spawned_from                       TEXT,
     PRIMARY KEY (project_path, session_name),
     FOREIGN KEY (project_path) REFERENCES projects(root_path) ON DELETE CASCADE
   );
@@ -116,6 +117,47 @@ const SCHEMA_DDL = `
     ON conversations(project_path, session_name);
   CREATE INDEX IF NOT EXISTS idx_conversations_last_activity
     ON conversations(last_activity_at);
+
+  CREATE TABLE IF NOT EXISTS project_conversations (
+    id                    TEXT PRIMARY KEY,
+    project_path          TEXT NOT NULL,
+    name                  TEXT,
+    transcript_path       TEXT,
+    status                TEXT NOT NULL,
+    prompt_count          INTEGER NOT NULL DEFAULT 0,
+    created_at            TEXT NOT NULL,
+    last_activity_at      TEXT NOT NULL,
+    source                TEXT NOT NULL DEFAULT 'cc',
+    summary               TEXT,
+    archived              INTEGER NOT NULL DEFAULT 0,
+    open                  INTEGER NOT NULL DEFAULT 1,
+    total_cost_usd        REAL,
+    total_duration_ms     INTEGER,
+    total_turns           INTEGER,
+    pending_question_id   TEXT,
+    pending_questions     TEXT,
+    pending_prompt_text   TEXT,
+    forked_from           TEXT,
+    role                  TEXT,
+    context_tokens        INTEGER,
+    context_window_max    INTEGER,
+    debug_mode            TEXT,
+    machine_snapshot      TEXT,
+    agent_backend         TEXT NOT NULL DEFAULT 'claude',
+    backend_ref           TEXT,
+    mcp_overrides         TEXT,
+    mcp_runtime           TEXT,
+    agent_capability_overrides TEXT,
+    agent_capabilities_runtime TEXT,
+    unread                INTEGER NOT NULL DEFAULT 0,
+    spawned_session_ids   TEXT,
+    FOREIGN KEY (project_path) REFERENCES projects(root_path) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_project_conversations_project
+    ON project_conversations(project_path);
+  CREATE INDEX IF NOT EXISTS idx_project_conversations_last_activity
+    ON project_conversations(last_activity_at);
 
   CREATE TABLE IF NOT EXISTS reference_documents (
     id            TEXT PRIMARY KEY,
@@ -240,6 +282,17 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
     table: "conversations",
     column: "unread",
     type: "INTEGER NOT NULL DEFAULT 0",
+  },
+  {
+    table: "project_conversations",
+    column: "open",
+    type: "INTEGER NOT NULL DEFAULT 1",
+  },
+  { table: "sessions", column: "spawned_from", type: "TEXT" },
+  {
+    table: "project_conversations",
+    column: "spawned_session_ids",
+    type: "TEXT",
   },
 ];
 

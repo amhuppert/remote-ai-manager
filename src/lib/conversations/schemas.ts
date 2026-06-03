@@ -193,8 +193,17 @@ const conversationIdSchema = z
   .max(128)
   .regex(/^[A-Za-z0-9_-]+$/);
 
+// Explicit scope discriminator distinguishing session-owned conversations from
+// session-less project conversations. Defaults to "session" so conversation
+// rows persisted before this field existed decode natively (no migration).
+export const conversationScopeSchema = z
+  .enum(["session", "project"])
+  .default("session");
+export type ConversationScope = z.infer<typeof conversationScopeSchema>;
+
 export const conversationStateSchema = z.object({
   id: conversationIdSchema,
+  scope: conversationScopeSchema,
   name: z.string().nullable().default(null),
   transcriptPath: z.string().nullable(),
   status: conversationStatusSchema,
@@ -204,6 +213,15 @@ export const conversationStateSchema = z.object({
   source: z.enum(["cc", "imported"]).default("cc"),
   summary: z.string().nullable().default(null),
   archived: z.boolean().default(false),
+  // Project conversations model an open/closed tab state independent of
+  // archiving (`closed = open === false && !archived`). Optional because
+  // session conversations have no such concept — they never persist `open`.
+  open: z.boolean().optional(),
+  // Back-link a project conversation persists to the sessions it spawned from
+  // its inline spawn cards. Optional+PLC-only (like `open`): session
+  // conversations never carry it, and the project-conversations repo provides
+  // an explicit `[]` on decode so a populated/legacy PLC always reads an array.
+  spawnedSessionIds: z.array(z.string()).optional(),
   totalCostUsd: z.number().nullable().default(null),
   totalDurationMs: z.number().nullable().default(null),
   totalTurns: z.number().nullable().default(null),
@@ -307,103 +325,217 @@ export const answerQuestionRequestSchema = z.object({
 });
 
 // ============================================================
-// SSE Event Schemas
+// SSE Event Schemas (scope-discriminated)
 // ============================================================
 
-export const conversationStatusEventSchema = z.object({
-  type: z.literal("conversation-status"),
+// Each conversation SSE event is a `scope`-discriminated union. The session
+// variant is wire-compatible with the pre-scope payload — it still carries
+// `sessionName` — so existing producers/consumers behave unchanged once they
+// stamp `scope:"session"`. The project variant carries `projectName` (plus the
+// event's identity payload) and omits `sessionName`: a session-less project
+// conversation has no owning session. Project variants are `.strict()` so a
+// stray `sessionName` is rejected rather than silently stripped.
+const sessionEventIdentity = {
+  scope: z.literal("session"),
   projectName: z.string(),
   sessionName: z.string(),
-  conversationId: z.string(),
-  status: z.enum(["running", "awaiting", "waiting_for_input"]),
-  error: z.string().optional(),
-});
+};
+const projectEventIdentity = {
+  scope: z.literal("project"),
+  projectName: z.string(),
+};
+
+export const conversationStatusEventSchema = z.discriminatedUnion("scope", [
+  z.object({
+    type: z.literal("conversation-status"),
+    ...sessionEventIdentity,
+    conversationId: z.string(),
+    status: z.enum(["running", "awaiting", "waiting_for_input"]),
+    error: z.string().optional(),
+  }),
+  z
+    .object({
+      type: z.literal("conversation-status"),
+      ...projectEventIdentity,
+      conversationId: z.string(),
+      status: z.enum(["running", "awaiting", "waiting_for_input"]),
+      error: z.string().optional(),
+    })
+    .strict(),
+]);
 export type ConversationStatusEvent = z.infer<
   typeof conversationStatusEventSchema
 >;
 
-export const messageAppendedEventSchema = z.object({
-  type: z.literal("message-appended"),
-  projectName: z.string(),
-  sessionName: z.string(),
-  conversationId: z.string(),
-  seq: z.number().int().nonnegative(),
-  message: transcriptMessageSchema,
-});
+export const messageAppendedEventSchema = z.discriminatedUnion("scope", [
+  z.object({
+    type: z.literal("message-appended"),
+    ...sessionEventIdentity,
+    conversationId: z.string(),
+    seq: z.number().int().nonnegative(),
+    message: transcriptMessageSchema,
+  }),
+  z
+    .object({
+      type: z.literal("message-appended"),
+      ...projectEventIdentity,
+      conversationId: z.string(),
+      seq: z.number().int().nonnegative(),
+      message: transcriptMessageSchema,
+    })
+    .strict(),
+]);
 export type MessageAppendedEvent = z.infer<typeof messageAppendedEventSchema>;
 
-export const messageUpdatedEventSchema = z.object({
-  type: z.literal("message-updated"),
-  projectName: z.string(),
-  sessionName: z.string(),
-  conversationId: z.string(),
-  seq: z.number().int().nonnegative(),
-  message: transcriptMessageSchema,
-});
+export const messageUpdatedEventSchema = z.discriminatedUnion("scope", [
+  z.object({
+    type: z.literal("message-updated"),
+    ...sessionEventIdentity,
+    conversationId: z.string(),
+    seq: z.number().int().nonnegative(),
+    message: transcriptMessageSchema,
+  }),
+  z
+    .object({
+      type: z.literal("message-updated"),
+      ...projectEventIdentity,
+      conversationId: z.string(),
+      seq: z.number().int().nonnegative(),
+      message: transcriptMessageSchema,
+    })
+    .strict(),
+]);
 export type MessageUpdatedEvent = z.infer<typeof messageUpdatedEventSchema>;
 
-export const conversationCreatedEventSchema = z.object({
-  type: z.literal("conversation-created"),
-  projectName: z.string(),
-  sessionName: z.string(),
-  conversation: conversationStateSchema,
-});
+export const conversationCreatedEventSchema = z.discriminatedUnion("scope", [
+  z.object({
+    type: z.literal("conversation-created"),
+    ...sessionEventIdentity,
+    conversation: conversationStateSchema,
+  }),
+  z
+    .object({
+      type: z.literal("conversation-created"),
+      ...projectEventIdentity,
+      conversation: conversationStateSchema,
+    })
+    .strict(),
+]);
 export type ConversationCreatedEvent = z.infer<
   typeof conversationCreatedEventSchema
 >;
 
-export const conversationRenamedEventSchema = z.object({
-  type: z.literal("conversation-renamed"),
-  projectName: z.string(),
-  sessionName: z.string(),
-  conversationId: z.string(),
-  name: z.string().nullable(),
-});
+export const conversationRenamedEventSchema = z.discriminatedUnion("scope", [
+  z.object({
+    type: z.literal("conversation-renamed"),
+    ...sessionEventIdentity,
+    conversationId: z.string(),
+    name: z.string().nullable(),
+  }),
+  z
+    .object({
+      type: z.literal("conversation-renamed"),
+      ...projectEventIdentity,
+      conversationId: z.string(),
+      name: z.string().nullable(),
+    })
+    .strict(),
+]);
 export type ConversationRenamedEvent = z.infer<
   typeof conversationRenamedEventSchema
 >;
 
-export const conversationArchivedEventSchema = z.object({
-  type: z.literal("conversation-archived"),
-  projectName: z.string(),
-  sessionName: z.string(),
-  conversationId: z.string(),
-  archived: z.boolean(),
-});
+export const conversationArchivedEventSchema = z.discriminatedUnion("scope", [
+  z.object({
+    type: z.literal("conversation-archived"),
+    ...sessionEventIdentity,
+    conversationId: z.string(),
+    archived: z.boolean(),
+  }),
+  z
+    .object({
+      type: z.literal("conversation-archived"),
+      ...projectEventIdentity,
+      conversationId: z.string(),
+      archived: z.boolean(),
+    })
+    .strict(),
+]);
 export type ConversationArchivedEvent = z.infer<
   typeof conversationArchivedEventSchema
 >;
 
-export const conversationUnreadEventSchema = z.object({
-  type: z.literal("conversation-unread"),
-  projectName: z.string(),
-  sessionName: z.string(),
-  conversationId: z.string(),
-  unread: z.boolean(),
-});
+export const conversationUnreadEventSchema = z.discriminatedUnion("scope", [
+  z.object({
+    type: z.literal("conversation-unread"),
+    ...sessionEventIdentity,
+    conversationId: z.string(),
+    unread: z.boolean(),
+  }),
+  z
+    .object({
+      type: z.literal("conversation-unread"),
+      ...projectEventIdentity,
+      conversationId: z.string(),
+      unread: z.boolean(),
+    })
+    .strict(),
+]);
 export type ConversationUnreadEvent = z.infer<
   typeof conversationUnreadEventSchema
 >;
 
+// Project-only lifecycle event: a project conversation gained or lost its open
+// tab (closed/reopened). Session conversations do not model open/closed as a
+// first-class tab state, so this event is scoped to "project" only; it can be
+// widened to a scope union later if sessions adopt the same concept.
+export const conversationOpenEventSchema = z.object({
+  type: z.literal("conversation-open"),
+  scope: z.literal("project"),
+  projectName: z.string(),
+  conversationId: z.string(),
+  open: z.boolean(),
+});
+export type ConversationOpenEvent = z.infer<typeof conversationOpenEventSchema>;
+
 // ============================================================
-// AskUserQuestion Event Schemas
+// AskUserQuestion Event Schemas (scope-discriminated)
 // ============================================================
 
-export const askQuestionEventSchema = z.object({
-  type: z.literal("ask-question"),
-  projectName: z.string(),
-  sessionName: z.string(),
-  conversationId: z.string(),
-  questionId: z.string(),
-  questions: z.array(askQuestionItemSchema),
-});
+export const askQuestionEventSchema = z.discriminatedUnion("scope", [
+  z.object({
+    type: z.literal("ask-question"),
+    ...sessionEventIdentity,
+    conversationId: z.string(),
+    questionId: z.string(),
+    questions: z.array(askQuestionItemSchema),
+  }),
+  z
+    .object({
+      type: z.literal("ask-question"),
+      ...projectEventIdentity,
+      conversationId: z.string(),
+      questionId: z.string(),
+      questions: z.array(askQuestionItemSchema),
+    })
+    .strict(),
+]);
 export type AskQuestionEvent = z.infer<typeof askQuestionEventSchema>;
 
-export const messageQueuedEventSchema = z.object({
-  type: z.literal("message-queued"),
-  projectName: z.string(),
-  sessionName: z.string(),
-  conversationId: z.string(),
-  text: z.string(),
-});
+export const messageQueuedEventSchema = z.discriminatedUnion("scope", [
+  z.object({
+    type: z.literal("message-queued"),
+    ...sessionEventIdentity,
+    conversationId: z.string(),
+    text: z.string(),
+  }),
+  z
+    .object({
+      type: z.literal("message-queued"),
+      ...projectEventIdentity,
+      conversationId: z.string(),
+      text: z.string(),
+    })
+    .strict(),
+]);
 export type MessageQueuedEvent = z.infer<typeof messageQueuedEventSchema>;

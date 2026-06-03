@@ -24,6 +24,7 @@ const testSession: SessionState = {
   conversations: [
     {
       id: "conv-123",
+      scope: "session",
       name: null,
       transcriptPath: null,
       status: "new",

@@ -18,14 +18,17 @@ export type ActiveConversationForkedFrom = z.infer<
   typeof activeConversationForkedFromSchema
 >;
 
-export const activeConversationSchema = z.object({
+// Fields common to both scopes. The session variant adds the owning session's
+// identity (`sessionName`, `branchName`); the project variant omits them — a
+// session-less project conversation runs in the project's main worktree, so
+// `worktreePath` is the project root and there is no session branch.
+const activeConversationSharedFields = {
   id: z.string(),
   name: z.string().nullable(),
   status: z.enum(["new", "running", "awaiting", "waiting_for_input"]),
   lastActivityAt: z.string(),
   projectName: z.string(),
   projectPath: z.string(),
-  sessionName: z.string(),
   agentBackend: agentBackendSchema,
   summary: z.string().nullable(),
   pendingQuestion: z.string().nullable(),
@@ -36,12 +39,35 @@ export const activeConversationSchema = z.object({
   role: z
     .enum(["initialization", "iteration", "validator", "planner"])
     .nullable(),
-  branchName: z.string().nullable(),
   worktreePath: z.string(),
   lastActivitySummary: z.string().nullable(),
   unread: z.boolean(),
-});
+};
+
+export const activeConversationSchema = z.discriminatedUnion("scope", [
+  z.object({
+    scope: z.literal("session"),
+    ...activeConversationSharedFields,
+    sessionName: z.string(),
+    branchName: z.string().nullable(),
+  }),
+  z.object({
+    scope: z.literal("project"),
+    ...activeConversationSharedFields,
+  }),
+]);
 export type ActiveConversation = z.infer<typeof activeConversationSchema>;
+
+/** The session-scoped variant — carries `sessionName`/`branchName`. */
+export type SessionActiveConversation = Extract<
+  ActiveConversation,
+  { scope: "session" }
+>;
+/** The project-scoped variant — session-less, runs in the main worktree. */
+export type ProjectActiveConversation = Extract<
+  ActiveConversation,
+  { scope: "project" }
+>;
 
 const activeGraphWorkflowContextMergeProgressSchema = z.object({
   contextId: z.string(),

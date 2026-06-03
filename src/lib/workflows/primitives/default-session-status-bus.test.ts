@@ -27,6 +27,7 @@ describe("default session status bus", () => {
 
     const event: SSEEvent = {
       type: "conversation-status",
+      scope: "session",
       projectName: "p",
       sessionName: "s",
       conversationId: "conv-1",
@@ -67,6 +68,7 @@ describe("default session status bus", () => {
     const events: SSEEvent[] = [
       {
         type: "conversation-status",
+        scope: "session",
         projectName: "p",
         sessionName: "s",
         conversationId: "conv-1",
@@ -74,6 +76,7 @@ describe("default session status bus", () => {
       },
       {
         type: "ask-question",
+        scope: "session",
         projectName: "p",
         sessionName: "s",
         conversationId: "conv-1",
@@ -189,6 +192,7 @@ describe("publishScopedStatusEvent", () => {
 
     publishSessionStatus({
       type: "conversation-status",
+      scope: "session",
       projectName: "p",
       sessionName: "s",
       conversationId: "conv-1",
@@ -316,6 +320,7 @@ describe("publishScopedStatusEvent", () => {
     try {
       const outcome = publishSessionStatus({
         type: "conversation-status",
+        scope: "session",
         projectName: "p",
         sessionName: "s",
         conversationId: "conv-9",
@@ -342,6 +347,7 @@ describe("publishScopedStatusEvent", () => {
 
     publishSessionStatus({
       type: "conversation-status",
+      scope: "session",
       projectName: "p",
       sessionName: "s",
       conversationId: "conv-trace",
@@ -382,6 +388,7 @@ describe("publishScopedStatusEvent", () => {
     runWithTrace(outer, () => {
       publishSessionStatus({
         type: "conversation-status",
+        scope: "session",
         projectName: "p",
         sessionName: "s",
         conversationId: "conv-1",

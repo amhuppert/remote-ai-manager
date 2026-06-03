@@ -6,7 +6,11 @@ import {
   deriveSessionStatusFromParts,
   getCollaborationEnvelopeContribution,
 } from "@/lib/sessions/derived";
-import { sessionListItemSchema } from "@/lib/sessions/schemas";
+import {
+  sessionListItemSchema,
+  spawnedFromSchema,
+} from "@/lib/sessions/schemas";
+import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { McpOverrides } from "@/lib/mcp/schemas";
 import type { ManagerState } from "@/lib/projects/schemas";
@@ -139,6 +143,20 @@ export function createAccessors(core: StateStoreCore) {
         const collabContribution = getCollaborationEnvelopeContribution({
           workflowEnvelopes: parsedEnvelopes,
         });
+        let spawnedFrom: SessionListItem["spawnedFrom"] = null;
+        if (row.spawned_from !== null) {
+          try {
+            const parsed = spawnedFromSchema.safeParse(
+              JSON.parse(row.spawned_from),
+            );
+            if (parsed.success) spawnedFrom = parsed.data;
+          } catch {
+            logger.warn("state-store.spawned_from_parse_failed", {
+              projectPath,
+              sessionName: row.session_name,
+            });
+          }
+        }
         const convs = convsBySession.get(row.session_name) ?? [];
         const derivedStatus = deriveSessionStatusFromParts({
           finished: row.finished === 1,
@@ -170,6 +188,7 @@ export function createAccessors(core: StateStoreCore) {
           derivedLastActivityAt,
           collabContribution,
           hasActiveGraphWorkflow: row.has_active_graph_workflow === 1,
+          spawnedFrom,
         };
         return item;
       });
@@ -193,6 +212,12 @@ export function createAccessors(core: StateStoreCore) {
   ): Promise<ConversationState | null> {
     const start = performance.now();
     try {
+      if (isProjectSentinel(sessionName)) {
+        return repos.projectConversations.findByKey(
+          projectPath,
+          conversationId,
+        );
+      }
       return repos.conversations.findByKey(
         projectPath,
         sessionName,
@@ -203,6 +228,77 @@ export function createAccessors(core: StateStoreCore) {
         accessor: "getConversation",
         projectPath,
         sessionName,
+        conversationId,
+      });
+    }
+  }
+
+  async function getProjectConversation(
+    projectPath: string,
+    conversationId: string,
+  ): Promise<ConversationState | null> {
+    const start = performance.now();
+    try {
+      return repos.projectConversations.findByKey(projectPath, conversationId);
+    } finally {
+      emitReadTiming(start, {
+        accessor: "getProjectConversation",
+        projectPath,
+        conversationId,
+      });
+    }
+  }
+
+  async function getProjectConversations(
+    projectPath: string,
+  ): Promise<ConversationState[]> {
+    const start = performance.now();
+    try {
+      return repos.projectConversations.findByProject(projectPath);
+    } finally {
+      emitReadTiming(start, {
+        accessor: "getProjectConversations",
+        projectPath,
+      });
+    }
+  }
+
+  async function listAllProjectConversations(): Promise<
+    { projectPath: string; conversation: ConversationState }[]
+  > {
+    const start = performance.now();
+    try {
+      return repos.projectConversations.findAll();
+    } finally {
+      emitReadTiming(start, { accessor: "listAllProjectConversations" });
+    }
+  }
+
+  /**
+   * Passive status read for the sessions a project conversation spawned:
+   * intersect the PLC's `spawnedSessionIds` with the project's slim session
+   * list items, returning the linked sessions' slim status (incl.
+   * `derivedStatus`). Since-deleted session names drop out (not in the list).
+   * Reuses the focused list-item accessor — never `readState()` (Pattern 1).
+   */
+  async function getSpawnedSessionStatuses(
+    projectPath: string,
+    conversationId: string,
+  ): Promise<SessionListItem[]> {
+    const start = performance.now();
+    try {
+      const plc = repos.projectConversations.findByKey(
+        projectPath,
+        conversationId,
+      );
+      const linked = new Set(plc?.spawnedSessionIds ?? []);
+      if (linked.size === 0) return [];
+      const items = await getProjectSessionListItems(projectPath);
+      return items.filter((item) => linked.has(item.sessionName));
+    } finally {
+      emitReadTiming(start, {
+        accessor: "getSpawnedSessionStatuses",
+        projectPath,
         conversationId,
       });
     }
@@ -288,6 +384,10 @@ export function createAccessors(core: StateStoreCore) {
     getProjectSessionListItems,
     getConversation,
     getSessionConversations,
+    getProjectConversation,
+    getProjectConversations,
+    listAllProjectConversations,
+    getSpawnedSessionStatuses,
     getReferenceDocuments,
     getProjectMcpOverrides,
     getArchivedProjects,

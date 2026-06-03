@@ -15,6 +15,7 @@ function makeConversation(
 ): ConversationState {
   return {
     id: "conv-123",
+    scope: "session",
     name: null,
     status: "awaiting",
     transcriptPath: "/tmp/test.jsonl",

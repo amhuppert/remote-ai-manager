@@ -1,0 +1,171 @@
+/* Inline spawn card — rendered into the cockpit transcript mount.
+   DS tokens only (no hard-coded color/spacing); follows the card recipe. */
+
+.spawn-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--cyan);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  margin: var(--space-sm) 0;
+  font-family: var(--font-mono);
+}
+
+.spawn-card--invalid {
+  border-left-color: var(--amber);
+}
+
+.spawn-card__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.spawn-card__title {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+}
+
+.spawn-card__rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.spawn-card-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg-base);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-md);
+}
+
+.spawn-card-row__name {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.spawn-card-row__branch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.spawn-card-row__arrow {
+  color: var(--text-tertiary);
+}
+
+.spawn-card-row__mode {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.spawn-card-row__agent,
+.spawn-card-row__mode {
+  margin-left: auto;
+}
+
+.spawn-card-row__agent + .spawn-card-row__mode {
+  margin-left: var(--space-xs);
+}
+
+.spawn-card-edit {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--bg-base);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-md);
+}
+
+.spawn-card-edit__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+}
+
+.spawn-card-edit__field--wide {
+  grid-column: 1 / -1;
+}
+
+.spawn-card-edit__input {
+  width: 100%;
+}
+
+.spawn-card__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+
+.spawn-card__create {
+  margin-left: var(--space-xs);
+}
+
+.spawn-card__issues,
+.spawn-card__created,
+.spawn-card__failed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.spawn-card__issue {
+  color: var(--amber);
+  font-size: 0.75rem;
+}
+
+.spawn-card__result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.spawn-card__created-row,
+.spawn-card__failed-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: 0.75rem;
+}
+
+.spawn-card__created-name {
+  color: var(--text-primary);
+}
+
+.spawn-card__created-status {
+  margin-left: auto;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.7rem;
+}
+
+.spawn-card__failed-name {
+  color: var(--text-primary);
+}
+
+.spawn-card__failed-error {
+  color: var(--red);
+}
+
+.spawn-card__error {
+  color: var(--red);
+  font-size: 0.75rem;
+}

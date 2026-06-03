@@ -17,6 +17,7 @@ function makeConvo(
 ): ConversationState {
   return {
     id: "convo-1",
+    scope: "session",
     name: null,
     transcriptPath: "/tmp/convo-1.jsonl",
     status: "new",

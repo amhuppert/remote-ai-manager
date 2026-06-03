@@ -28,6 +28,21 @@ export const sessionCreationModeSchema = z.enum([
 ]);
 export type SessionCreationMode = z.infer<typeof sessionCreationModeSchema>;
 
+/**
+ * Origin tag identifying a session created from a project conversation's spawn
+ * card, with a back-reference to the spawning conversation. Always an object
+ * when set; the field is nullable+optional on the session schema so legacy /
+ * non-spawned session rows decode without it (the sessions repo provides an
+ * explicit `null` on decode, mirroring how project conversations handle their
+ * PLC-only `open` column).
+ */
+export const spawnedFromSchema = z.object({
+  source: z.literal("chat"),
+  projectName: z.string(),
+  conversationId: z.string(),
+});
+export type SpawnedFrom = z.infer<typeof spawnedFromSchema>;
+
 export const sessionStateSchema = z.object({
   sessionName: z.string(),
   worktreePath: z.string(),
@@ -59,6 +74,12 @@ export const sessionStateSchema = z.object({
   workflowLanes: z.record(z.string(), z.unknown()).optional(),
   mcpOverrides: mcpOverridesSchema.optional(),
   agentCapabilityOverrides: agentCapabilityOverridesSchema.optional(),
+  // Origin tag for sessions spawned from a project conversation's spawn card.
+  // Nullable+optional (like the PLC-only `open`/`spawnedSessionIds` fields) so
+  // the ~30 existing SessionState literal sites decode unchanged; the sessions
+  // repo always materializes an explicit value on decode — `null` for
+  // legacy/non-spawned rows, the chat origin for spawned sessions.
+  spawnedFrom: spawnedFromSchema.nullable().optional(),
 });
 export type SessionState = z.infer<typeof sessionStateSchema>;
 
@@ -84,6 +105,9 @@ export const sessionListItemSchema = z.object({
   derivedLastActivityAt: z.string(),
   collabContribution: z.enum(["running", "paused"]).nullable(),
   hasActiveGraphWorkflow: z.boolean(),
+  // Surfaced so the slim list / passive status read can show the `from chat`
+  // origin without a whole-state read. Nullable+optional like the state field.
+  spawnedFrom: spawnedFromSchema.nullable().optional(),
 });
 export type SessionListItem = z.infer<typeof sessionListItemSchema>;
 

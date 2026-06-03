@@ -125,6 +125,7 @@ function makeConvo(
 ): ConversationState {
   return {
     id: crypto.randomUUID(),
+    scope: "session",
     name: null,
     transcriptPath: null,
     status: "new",

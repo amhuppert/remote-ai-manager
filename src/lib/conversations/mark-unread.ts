@@ -15,6 +15,7 @@ import type {
   ConversationState,
   ConversationUnreadEvent,
 } from "./schemas";
+import { conversationEventScopeFields } from "./project-conversation-scope";
 
 export interface MarkUnreadOnFinishDeps {
   mutateConversation(
@@ -55,9 +56,11 @@ export async function markUnreadOnFinish(
 
   deps.publishSessionStatus({
     type: "conversation-unread",
-    projectName: ctx.projectName,
-    sessionName: ctx.sessionName,
-    conversationId: ctx.conversationId,
+    ...conversationEventScopeFields(
+      ctx.projectName,
+      ctx.sessionName,
+      ctx.conversationId,
+    ),
     unread: true,
   });
 }
@@ -85,9 +88,11 @@ export async function markReadOnUserTurnStart(
 
   deps.publishSessionStatus({
     type: "conversation-unread",
-    projectName: ctx.projectName,
-    sessionName: ctx.sessionName,
-    conversationId: ctx.conversationId,
+    ...conversationEventScopeFields(
+      ctx.projectName,
+      ctx.sessionName,
+      ctx.conversationId,
+    ),
     unread: false,
   });
 }

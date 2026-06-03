@@ -84,6 +84,7 @@ describe("section 4 — shared status + artifact handling (end to end)", () => {
     const events: SSEEvent[] = [
       {
         type: "conversation-status",
+        scope: "session",
         projectName: "p",
         sessionName: "s",
         conversationId: "conv-1",
@@ -91,6 +92,7 @@ describe("section 4 — shared status + artifact handling (end to end)", () => {
       },
       {
         type: "ask-question",
+        scope: "session",
         projectName: "p",
         sessionName: "s",
         conversationId: "conv-1",
@@ -153,6 +155,7 @@ describe("section 4 — shared status + artifact handling (end to end)", () => {
     setDefaultSessionStatusBusBroadcastForTesting(wire);
 
     const baseFields = {
+      scope: "session",
       projectName: "p",
       sessionName: "s",
       conversationId: "conv-1",

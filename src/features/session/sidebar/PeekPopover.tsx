@@ -25,7 +25,10 @@ import {
   type PromptEditorHandle,
 } from "@/features/session/prompt/PromptEditor";
 import { useVoiceWiring } from "@/features/session/hooks/use-voice-wiring";
-import type { ActiveConversation } from "@/lib/active-conversations/schemas";
+import type {
+  ActiveConversation,
+  SessionActiveConversation,
+} from "@/lib/active-conversations/schemas";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import type { ImageAttachment } from "@/hooks/use-image-attachments";
 
@@ -33,7 +36,7 @@ type ActiveConversationStatus = ActiveConversation["status"];
 
 interface PeekPopoverProps {
   anchorEl: HTMLElement | null;
-  conversation: ActiveConversation;
+  conversation: SessionActiveConversation;
   transcriptMessages: TranscriptMessage[];
   onClose: () => void;
   onOpenFull: () => void;
@@ -93,7 +96,7 @@ function PeekReplyComposer({
   conversation,
   onReplyText,
 }: {
-  conversation: ActiveConversation;
+  conversation: SessionActiveConversation;
   onReplyText: (text: string) => void;
 }): React.JSX.Element {
   const [replyText, setReplyText] = useState("");

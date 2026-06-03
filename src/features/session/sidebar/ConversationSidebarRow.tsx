@@ -1,10 +1,13 @@
 "use client";
 
 import { useCallback, useRef } from "react";
-import type { ActiveConversation } from "@/lib/active-conversations/schemas";
+import type {
+  ActiveConversation,
+  SessionActiveConversation,
+} from "@/lib/active-conversations/schemas";
 
 interface Props {
-  conversation: ActiveConversation;
+  conversation: SessionActiveConversation;
   href?: string;
   isActive?: boolean;
   isFirstInSession?: boolean;

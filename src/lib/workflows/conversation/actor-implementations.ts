@@ -65,6 +65,8 @@ import {
 } from "@/lib/prompt/sdk-driver";
 import { isUndeliveredQuerySessionError } from "@/lib/agent-backends/claude/query-session-errors";
 import { buildSyntheticForkSeed } from "@/lib/sessions/synthetic-fork-seed";
+import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
+import { PROJECT_CC_CONTEXT } from "@/lib/project-conversations/system-prompt";
 import { createExternalTurnHandler } from "./external-turn-handler";
 import { createArtifactRegistry } from "@/lib/workflows/primitives/artifact-registry";
 import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
@@ -1301,20 +1303,28 @@ export async function executePromptForMachine(
       input.sessionName,
     );
 
-    await registerFocusMemoryIfPresent({
-      worktreePath: input.worktreePath,
-      projectPath: input.projectPath,
-      sessionName: input.sessionName,
-      conversationId: input.conversationId,
-      fileExists: deps.fileExists,
-      registerReferenceDocument: deps.createReferenceDocument,
-    });
+    // Project conversations are session-less: the focus-memory registration and
+    // reference-document loading are session-scoped (they read/write through the
+    // session aggregate, which the project sentinel cannot address — a write
+    // would fail because `__project__` is not a real session). Skip both for a
+    // project turn so a repo-root with `memory-bank/focus.md` does not break
+    // turn startup.
+    const isProjectConversation = isProjectSentinel(input.sessionName);
+    if (!isProjectConversation) {
+      await registerFocusMemoryIfPresent({
+        worktreePath: input.worktreePath,
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        conversationId: input.conversationId,
+        fileExists: deps.fileExists,
+        registerReferenceDocument: deps.createReferenceDocument,
+      });
+    }
 
     // Build reference documents system prompt section
-    const referenceDocs = await deps.getReferenceDocuments(
-      input.projectPath,
-      input.sessionName,
-    );
+    const referenceDocs = isProjectConversation
+      ? []
+      : await deps.getReferenceDocuments(input.projectPath, input.sessionName);
     const referenceDocsPrompt =
       referenceDocs.length > 0
         ? [
@@ -1327,9 +1337,12 @@ export async function executePromptForMachine(
           ].join("\n")
         : null;
 
-    // Build session instructions (baked into the runtime once)
+    // Build session instructions (baked into the runtime once). Project
+    // conversations run in the main worktree, so they use a CC context that
+    // omits the per-session dev-server promise.
+    const ccContext = isProjectConversation ? PROJECT_CC_CONTEXT : CC_CONTEXT;
     const sessionInstructions = [
-      CC_CONTEXT,
+      ccContext,
       sessionState?.objective
         ? `<objective>${sessionState.objective}</objective>`
         : null,

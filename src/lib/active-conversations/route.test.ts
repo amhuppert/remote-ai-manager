@@ -112,6 +112,7 @@ function createTestDeps(): ActiveConversationsRouteDeps {
     readState: vi.fn().mockResolvedValue(makeState()),
     getProjectDisplayName: vi.fn().mockReturnValue("my-project"),
     readLastAssistantContent: vi.fn().mockResolvedValue(null),
+    listProjectConversations: vi.fn().mockResolvedValue([]),
   };
 }
 

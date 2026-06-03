@@ -143,6 +143,7 @@ export function createConversationService(
         const sequenceNumber = session.conversations.length + 1;
         const conv: ConversationState = {
           id: crypto.randomUUID(),
+          scope: "session",
           name: `${sessionName} ${sequenceNumber}`,
           transcriptPath: null,
           status: "new",
@@ -564,6 +565,7 @@ export function createConversationService(
       (sess) => {
         const conversation: ConversationState = {
           id: newId,
+          scope: "session",
           name: forkName,
           transcriptPath,
           status: "new",
@@ -633,6 +635,7 @@ export function createConversationService(
         const sequenceNumber = session.conversations.length + 1;
         const newConvo: ConversationState = {
           id: crypto.randomUUID(),
+          scope: "session",
           name: `${sessionName} ${sequenceNumber}`,
           transcriptPath: null,
           status: "new",

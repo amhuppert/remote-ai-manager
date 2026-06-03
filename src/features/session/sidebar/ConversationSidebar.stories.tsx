@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { z } from "zod";
 import {
   activeConversationsResponseSchema,
-  type ActiveConversation,
+  type SessionActiveConversation,
 } from "@/lib/active-conversations/schemas";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { useSessionDetailStore } from "@/stores/session-detail.store";
@@ -31,9 +31,11 @@ const minutesAgo = (m: number) =>
   new Date(now.getTime() - m * 60_000).toISOString();
 
 function makeActive(
-  overrides: Partial<ActiveConversation> & Pick<ActiveConversation, "id">,
-): ActiveConversation {
+  overrides: Partial<SessionActiveConversation> &
+    Pick<SessionActiveConversation, "id">,
+): SessionActiveConversation {
   return {
+    scope: "session",
     id: overrides.id,
     name: overrides.name ?? "Untitled conversation",
     status: overrides.status ?? "running",
@@ -59,7 +61,7 @@ function makeActive(
   };
 }
 
-const mixedActive: ActiveConversation[] = [
+const mixedActive: SessionActiveConversation[] = [
   makeActive({
     id: "conv-new",
     name: "Draft outline for spec",
@@ -126,7 +128,7 @@ const mixedActive: ActiveConversation[] = [
   }),
 ];
 
-const needsYouActive: ActiveConversation[] = [
+const needsYouActive: SessionActiveConversation[] = [
   makeActive({
     id: "conv-wfi-1",
     name: "Plan refactor",
@@ -178,11 +180,10 @@ const needsYouActive: ActiveConversation[] = [
   }),
 ];
 
-const needsYouQuestionsOnly: ActiveConversation[] = needsYouActive.filter(
-  (c) => c.status === "waiting_for_input" || !c.unread,
-);
+const needsYouQuestionsOnly: SessionActiveConversation[] =
+  needsYouActive.filter((c) => c.status === "waiting_for_input" || !c.unread);
 
-const needsYouFinishedOnly: ActiveConversation[] = needsYouActive.filter(
+const needsYouFinishedOnly: SessionActiveConversation[] = needsYouActive.filter(
   (c) => c.status !== "waiting_for_input",
 );
 

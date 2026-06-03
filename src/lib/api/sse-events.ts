@@ -9,6 +9,7 @@ import type {
   ConversationUnreadEvent,
   AskQuestionEvent,
   MessageQueuedEvent,
+  ConversationOpenEvent,
 } from "@/lib/conversations/schemas";
 import type { JobStatusEvent } from "@/lib/jobs/schemas";
 import type {
@@ -41,6 +42,7 @@ import type {
   AgentCapabilitiesUpdatedEvent,
   AgentCapabilitiesDiscoveryUpdatedEvent,
 } from "@/lib/agent-capabilities/schemas";
+import type { SpawnResultEvent } from "@/lib/chat-spawning/schemas";
 
 // ============================================================
 // Scoped Status SSE Event (StatusBus → SSE bridge)
@@ -96,6 +98,7 @@ export type SSEEvent =
   | NotificationCreatedEvent
   | NotificationUpdatedEvent
   | MessageQueuedEvent
+  | ConversationOpenEvent
   | GraphWorkflowStatusEvent
   | GraphWorkflowContextStatusEvent
   | GraphWorkflowTaskStatusEvent
@@ -114,4 +117,5 @@ export type SSEEvent =
   | McpToolsUpdatedEvent
   | AgentCapabilitiesUpdatedEvent
   | AgentCapabilitiesDiscoveryUpdatedEvent
-  | ScopedStatusEvent;
+  | ScopedStatusEvent
+  | SpawnResultEvent;

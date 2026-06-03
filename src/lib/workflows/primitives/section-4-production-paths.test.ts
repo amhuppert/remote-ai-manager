@@ -145,6 +145,7 @@ describe("section 4 production paths — migrated publishers go through the shar
     expect(wire).toHaveBeenCalledTimes(1);
     expect(wire.mock.calls[0]?.[0]).toEqual({
       type: "message-queued",
+      scope: "session",
       projectName: "p",
       sessionName: "s",
       conversationId: "conv-prod-1",

@@ -110,6 +110,7 @@ export function createMarkReadRouteHandlers(
     try {
       const event = conversationUnreadEventSchema.parse({
         type: "conversation-unread",
+        scope: "session",
         projectName,
         sessionName,
         conversationId,

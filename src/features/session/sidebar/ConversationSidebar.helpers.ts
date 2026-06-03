@@ -1,21 +1,17 @@
-import type { z } from "zod";
-import type { activeConversationSchema } from "@/lib/active-conversations/schemas";
+import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-type ActiveConversationBase = z.infer<typeof activeConversationSchema>;
-
 /**
- * The shape sidebar presentation helpers operate on. The base type is the
- * Zod-inferred `ActiveConversation` from `@/lib/active-conversations/schemas`; the enriched fields
- * (`summary`, `branchName`) are added by the backend so the sidebar can
- * search and display them. This alias accepts either form: if the enriched
- * fields are present on the inferred type, the intersection collapses to it;
- * if not, callers can still satisfy the shape by providing the extras.
+ * The shape sidebar presentation helpers operate on. The sidebar today renders
+ * session-scoped conversations (project-conversation rail presentation is a
+ * downstream concern), so the base is the session variant of
+ * `ActiveConversation`; the enriched fields (`summary`, `branchName`) are added
+ * by the backend so the sidebar can search and display them.
  */
-export type SidebarConversation = ActiveConversationBase & {
+export type SidebarConversation = SessionActiveConversation & {
   summary: string | null;
   branchName: string | null;
 };

@@ -14,6 +14,7 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { CollaborationAutonomousResolutionThreshold } from "@/lib/workflows/schemas";
 import type { ConversationActorRef } from "@/lib/workflows/conversation/machine";
 import type { ConversationEvent } from "@/lib/workflows/conversation/types";
+import type { EnsureActorInputData } from "@/lib/workflows/conversation/manager";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import { createLogger } from "@/lib/logging";
 import {
@@ -210,7 +211,10 @@ export interface PromptDeps {
     projectPath: string,
     sessionName: string,
     conversationId: string,
-    options?: { executionTarget?: ExecutionTarget },
+    options?: {
+      executionTarget?: ExecutionTarget;
+      actorInput?: EnsureActorInputData;
+    },
   ): Promise<ConversationActorRef>;
   attachPromptStream(
     projectPath: string,
@@ -406,6 +410,13 @@ export interface PromptStreamOptions {
    * pre-parallelization session-worktree flow.
    */
   executionTarget?: ExecutionTarget;
+  /**
+   * Explicit actor input passed through to `ensureConversationActor`, bypassing
+   * the manager's session-based loader. The session-less project-conversation
+   * entry supplies this (built from the project record + repo-root worktree)
+   * because the conversation has no host session to load from.
+   */
+  actorInput?: EnsureActorInputData;
 }
 
 export interface PromptStreamResult {
@@ -634,13 +645,21 @@ export async function executePromptStream(
   });
 
   // Ensure actor exists (creates if needed, loading from state)
+  const actorOptions: {
+    executionTarget?: ExecutionTarget;
+    actorInput?: EnsureActorInputData;
+  } = {};
+  if (options?.executionTarget !== undefined) {
+    actorOptions.executionTarget = options.executionTarget;
+  }
+  if (options?.actorInput !== undefined) {
+    actorOptions.actorInput = options.actorInput;
+  }
   const actor = await resolvedDeps.ensureConversationActor(
     projectPath,
     session.sessionName,
     conversationId,
-    options?.executionTarget !== undefined
-      ? { executionTarget: options.executionTarget }
-      : undefined,
+    Object.keys(actorOptions).length > 0 ? actorOptions : undefined,
   );
 
   // Register per-invocation tooling overrides on the conversation runtime state

@@ -65,6 +65,7 @@ function makeConversation(
 ): ConversationState {
   return {
     id: "conv-123",
+    scope: "session",
     name: null,
     transcriptPath: null,
     status: "new" as const,

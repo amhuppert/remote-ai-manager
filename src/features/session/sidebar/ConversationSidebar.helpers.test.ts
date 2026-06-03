@@ -18,6 +18,7 @@ function makeRow(
   overrides: Partial<SidebarConversation> = {},
 ): SidebarConversation {
   return {
+    scope: "session",
     id: "id-1",
     name: "Conversation One",
     summary: null,

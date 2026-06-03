@@ -9,7 +9,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { ActiveConversation } from "@/lib/active-conversations/schemas";
+import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
 import { useActiveConversationsQuery } from "@/lib/active-conversations/queries";
 import { PlusIcon } from "@/components/icons";
 import {
@@ -84,7 +84,7 @@ interface SidebarRowItemProps {
   row: AnnotatedSidebarConversation<
     SidebarConversation & Partial<{ archived: boolean }>
   >;
-  conversation: ActiveConversation;
+  conversation: SessionActiveConversation;
   href: string;
   isActive: boolean;
   activeConversationId: string;
@@ -169,7 +169,8 @@ function ConversationSidebar({
   // --- Active conversations query ---
   const { data: activeData } = useActiveConversationsQuery();
   const activeConvoList = useMemo(
-    () => activeData?.conversations ?? [],
+    () =>
+      (activeData?.conversations ?? []).filter((c) => c.scope === "session"),
     [activeData],
   );
   const activeGraphWorkflows = useMemo(
@@ -457,7 +458,8 @@ function ConversationSidebar({
       const isEditing = editingId === row.id;
       const isActive = row.id === activeConversationId;
       const archived = row.archived === true;
-      const conversation: ActiveConversation = {
+      const conversation: SessionActiveConversation = {
+        scope: "session",
         id: row.id,
         name: row.name,
         status: row.status,

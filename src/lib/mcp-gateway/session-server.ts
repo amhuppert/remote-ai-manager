@@ -16,6 +16,7 @@ import { resolveConfiguredTimeoutMs } from "@/lib/agent-backends/timeout";
 import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
 import { registerPlannerTools } from "@/lib/workflow-graph/planner-tools";
 import { getConversationRuntime } from "@/lib/workflows/conversation/runtime-state";
+import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import type { GlobalConfig } from "@/lib/config/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { McpRouteError } from "./route-handler";
@@ -162,6 +163,25 @@ export async function createSessionMcpServer(
   const projectPath = await deps.resolveProjectPath(params.name);
   if (!projectPath) {
     throw new McpRouteError(404, "Project not found");
+  }
+
+  // Session-less project conversation: there is no session row to load, the
+  // turn runs in the repo-root (main) worktree, and the main-worktree guard
+  // forbids dev-server tooling. Register only the project-safe tool surface
+  // (AskUserQuestion, routed scope-aware via the sentinel) and skip the
+  // session-scoped tools (reference docs, planner/graph-workflow, codex) and
+  // dev-server tools entirely.
+  if (isProjectSentinel(params.session)) {
+    const projectServer = new McpServer({
+      name: "cc-session-tools",
+      version: "1.0.0",
+    });
+    deps.registerAskUserQuestionTool(projectServer, {
+      projectPath,
+      sessionName: params.session,
+      conversationId: params.conversationId,
+    });
+    return projectServer;
   }
 
   const session = await deps.getSession(projectPath, params.session);

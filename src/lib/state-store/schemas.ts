@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import type { readConfig } from "../config/loader";
 import type { ConversationsRepo } from "./conversations-repo";
+import type { ProjectConversationsRepo } from "./project-conversations-repo";
 import type { ProjectsRepo } from "./projects-repo";
 import type { ReferenceDocumentsRepo } from "./reference-documents-repo";
 import type { SessionsRepo } from "./sessions-repo";
@@ -13,6 +14,7 @@ export interface AllRepos {
   projects: ProjectsRepo;
   sessions: SessionsRepo;
   conversations: ConversationsRepo;
+  projectConversations: ProjectConversationsRepo;
   referenceDocuments: ReferenceDocumentsRepo;
 }
 

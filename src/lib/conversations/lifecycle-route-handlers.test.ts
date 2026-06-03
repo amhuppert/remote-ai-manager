@@ -112,9 +112,12 @@ describe("POST_CREATE — conversation-created broadcast", () => {
     const parsed = conversationCreatedEventSchema.safeParse(event);
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.projectName).toBe("demo");
-      expect(parsed.data.sessionName).toBe("s1");
-      expect(parsed.data.conversation.id).toBe(conversation.id);
+      expect(parsed.data.scope).toBe("session");
+      if (parsed.data.scope === "session") {
+        expect(parsed.data.projectName).toBe("demo");
+        expect(parsed.data.sessionName).toBe("s1");
+        expect(parsed.data.conversation.id).toBe(conversation.id);
+      }
     }
   });
 

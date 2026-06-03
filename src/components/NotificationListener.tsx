@@ -164,6 +164,7 @@ export default function NotificationListener(): null {
         const result = conversationStatusEventSchema.safeParse(parsed);
         if (!result.success) return;
         const data = result.data;
+        if (data.scope !== "session") return;
 
         void queryClient.invalidateQueries({
           queryKey: conversationKeys.active(),
@@ -223,6 +224,7 @@ export default function NotificationListener(): null {
       );
       if (!parsed.success) return;
       const d = parsed.data;
+      if (d.scope !== "session") return;
       queryClient.setQueryData(
         conversationKeys.messages(
           d.projectName,
@@ -266,6 +268,7 @@ export default function NotificationListener(): null {
       );
       if (!parsed.success) return;
       const d = parsed.data;
+      if (d.scope !== "session") return;
       queryClient.setQueryData(
         conversationKeys.messages(
           d.projectName,
@@ -290,6 +293,7 @@ export default function NotificationListener(): null {
       );
       if (!parsed.success) return;
       const d = parsed.data;
+      if (d.scope !== "session") return;
       queryClient.setQueryData(
         conversationKeys.list(d.projectName, d.sessionName),
         (prev: unknown) =>
@@ -306,6 +310,7 @@ export default function NotificationListener(): null {
       );
       if (!parsed.success) return;
       const d = parsed.data;
+      if (d.scope !== "session") return;
       queryClient.setQueryData(
         conversationKeys.list(d.projectName, d.sessionName),
         (prev: unknown) => {
@@ -325,6 +330,7 @@ export default function NotificationListener(): null {
       );
       if (!parsed.success) return;
       const d = parsed.data;
+      if (d.scope !== "session") return;
       queryClient.setQueryData(
         conversationKeys.list(d.projectName, d.sessionName),
         (prev: unknown) => {
@@ -342,6 +348,7 @@ export default function NotificationListener(): null {
       const parsed = askQuestionEventSchema.safeParse(JSON.parse(event.data));
       if (!parsed.success) return;
       const d = parsed.data;
+      if (d.scope !== "session") return;
       void queryClient.invalidateQueries({
         queryKey: conversationKeys.active(),
       });

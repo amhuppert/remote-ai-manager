@@ -4,6 +4,7 @@ import { _resetForTesting, broadcast, getClientCount } from "./broadcaster";
 import type { ConversationStatusEvent } from "@/lib/conversations/schemas";
 const TEST_EVENT: ConversationStatusEvent = {
   type: "conversation-status",
+  scope: "session",
   projectName: "p",
   sessionName: "s",
   conversationId: "c",

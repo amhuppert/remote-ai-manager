@@ -189,6 +189,7 @@ export function createConversationRouteHandlers(
     try {
       const event = conversationCreatedEventSchema.parse({
         type: "conversation-created",
+        scope: "session",
         projectName,
         sessionName,
         conversation,
@@ -256,6 +257,7 @@ export function createConversationRouteHandlers(
     try {
       const event = conversationRenamedEventSchema.parse({
         type: "conversation-renamed",
+        scope: "session",
         projectName,
         sessionName,
         conversationId,
@@ -324,6 +326,7 @@ export function createConversationRouteHandlers(
     try {
       const event = conversationArchivedEventSchema.parse({
         type: "conversation-archived",
+        scope: "session",
         projectName,
         sessionName,
         conversationId,

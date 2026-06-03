@@ -9,6 +9,7 @@ import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 function makeConversation(overrides: Record<string, unknown> = {}) {
   return {
     id: "conv-1",
+    scope: "session",
     name: null,
     transcriptPath: "/tmp/transcripts/conv-1.jsonl",
     status: "awaiting" as const,

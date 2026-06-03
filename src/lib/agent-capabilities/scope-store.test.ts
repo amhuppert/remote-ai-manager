@@ -41,6 +41,7 @@ function stateWithAllScopes(): ManagerState {
             conversations: [
               {
                 id: CONVERSATION_ID,
+                scope: "session",
                 name: null,
                 transcriptPath: null,
                 status: "awaiting",

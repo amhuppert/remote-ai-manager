@@ -401,6 +401,7 @@ describe("conversation manager", () => {
 
       const conv = {
         id: "conv-1",
+        scope: "session" as const,
         name: null,
         transcriptPath: null,
         status: "new" as const,

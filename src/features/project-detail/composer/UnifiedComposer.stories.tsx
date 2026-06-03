@@ -1,0 +1,140 @@
+import type { Meta, StoryObj } from "@storybook/nextjs-vite";
+import { fn } from "storybook/test";
+import { useState } from "react";
+import UnifiedComposer from "./UnifiedComposer";
+import type { ConversationState } from "@/lib/conversations/schemas";
+import type { SessionListItem } from "@/lib/sessions/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { FilterToken } from "../components/filter-tokens";
+
+function makeConversation(
+  overrides: Partial<ConversationState> = {},
+): ConversationState {
+  return {
+    id: "plc-1",
+    scope: "project",
+    name: "Project chat",
+    transcriptPath: null,
+    status: "new",
+    promptCount: 0,
+    createdAt: "2026-01-01T00:00:00Z",
+    lastActivityAt: "2026-01-01T00:00:00Z",
+    source: "cc",
+    summary: null,
+    archived: false,
+    open: true,
+    totalCostUsd: null,
+    totalDurationMs: null,
+    totalTurns: null,
+    pendingQuestionId: null,
+    pendingQuestions: null,
+    pendingPromptText: null,
+    unread: false,
+    forkedFrom: null,
+    role: null,
+    activeTurnSource: null,
+    contextTokens: null,
+    contextWindowMax: null,
+    debugMode: null,
+    machineSnapshot: null,
+    agentBackend: "claude",
+    backendRef: null,
+    ...overrides,
+  };
+}
+
+const sessions: SessionListItem[] = [
+  {
+    sessionName: "implement-auth",
+    worktreePath: "/tmp/wt/a",
+    branchName: "csm/implement-auth",
+    targetBranch: "main",
+    parentSessionName: null,
+    createdAt: "2026-01-01T00:00:00Z",
+    lastActivityAt: "2026-01-01T00:00:00Z",
+    archived: false,
+    finished: false,
+    source: "cc",
+    creationMode: "fast",
+    tddEnabled: true,
+    objective: null,
+    derivedStatus: "running",
+    promptCount: 3,
+    derivedLastActivityAt: "2026-01-01T00:00:00Z",
+    collabContribution: null,
+    hasActiveGraphWorkflow: false,
+  },
+];
+
+function Harness({
+  initialAgent = "claude",
+  activeConversationId = "plc-1",
+  conversation,
+}: {
+  initialAgent?: AgentBackendId;
+  activeConversationId?: string | null;
+  conversation?: ConversationState;
+}) {
+  const [agent, setAgent] = useState<AgentBackendId>(initialAgent);
+  const [tokens, setTokens] = useState<FilterToken[]>([]);
+  return (
+    <div style={{ maxWidth: 720 }}>
+      <UnifiedComposer
+        projectName="command-center"
+        activeConversationId={activeConversationId}
+        activeConversation={conversation}
+        agentBackend={agent}
+        onAgentChange={(next) => {
+          setAgent(next);
+          fn()(next);
+        }}
+        tokens={tokens}
+        onTokensChange={setTokens}
+        sessions={sessions}
+        archivedCount={12}
+        onSendPrompt={fn()}
+        onRunCommand={fn()}
+        busy={false}
+      />
+      <div style={{ marginTop: 8, color: "var(--text-tertiary)" }}>
+        tokens: {tokens.map((t) => `${t.key}:${t.value}`).join(", ") || "—"}
+      </div>
+    </div>
+  );
+}
+
+const meta: Meta<typeof UnifiedComposer> = {
+  title: "Project Cockpit/Composer/UnifiedComposer",
+  component: UnifiedComposer,
+};
+export default meta;
+
+type Story = StoryObj<typeof UnifiedComposer>;
+
+/** Pre-init: no conversation yet — backend is selectable, chat create-and-sends. */
+export const FirstRunPreInit: Story = {
+  render: () => <Harness activeConversationId={null} />,
+};
+
+/** Post-init (Claude): an initialized conversation locks the backend control. */
+export const PostInitClaude: Story = {
+  render: () => <Harness conversation={makeConversation({ promptCount: 4 })} />,
+};
+
+/** Codex identity recolors the composer + chip violet; backend locked post-init. */
+export const PostInitCodex: Story = {
+  render: () => (
+    <Harness
+      initialAgent="codex"
+      conversation={makeConversation({
+        promptCount: 4,
+        agentBackend: "codex",
+      })}
+    />
+  ),
+};
+
+/** Type `/` to open the command palette, or `is:` to add a filter chip. */
+export const Interactive: Story = {
+  render: () => <Harness conversation={makeConversation({ promptCount: 1 })} />,
+};

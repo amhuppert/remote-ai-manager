@@ -32,6 +32,7 @@ function makeConversation(
 ): ConversationState {
   return {
     id: "conversation-1",
+    scope: "session",
     name: "Conversation 1",
     transcriptPath: null,
     status: "new",

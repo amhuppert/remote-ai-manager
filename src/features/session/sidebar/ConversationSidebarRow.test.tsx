@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
-import type { ActiveConversation } from "@/lib/active-conversations/schemas";
+import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
 import ConversationSidebarRow from "@/features/session/sidebar/ConversationSidebarRow";
 
-const BASE: ActiveConversation = {
+const BASE: SessionActiveConversation = {
+  scope: "session",
   id: "convo-1",
   name: "Some conversation",
   status: "running",

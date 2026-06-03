@@ -48,7 +48,9 @@ function applyArchiveSessionOptimistic(
             conversations: old.conversations.filter(
               (c) =>
                 !(
-                  c.projectName === projectName && c.sessionName === sessionName
+                  c.scope === "session" &&
+                  c.projectName === projectName &&
+                  c.sessionName === sessionName
                 ),
             ),
           },

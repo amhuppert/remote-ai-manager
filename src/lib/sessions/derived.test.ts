@@ -17,6 +17,7 @@ function makeConversation(
     createdAt: "2024-01-01T00:00:00Z",
     lastActivityAt: "2024-01-01T00:00:00Z",
     promptCount: 0,
+    scope: "session",
     role: null,
     activeTurnSource: null,
     name: null,

@@ -166,6 +166,7 @@ describe("createSessionStatusBus", () => {
 
     const featureEvent: SSEEvent = {
       type: "conversation-status",
+      scope: "session",
       projectName: "p",
       sessionName: "s",
       conversationId: "conv-1",
@@ -243,6 +244,7 @@ describe("publishScopedStatus", () => {
 
     const event: SSEEvent = {
       type: "conversation-status",
+      scope: "session",
       projectName: "p",
       sessionName: "s",
       conversationId: "conv-1",
@@ -305,6 +307,7 @@ describe("publishScopedStatus", () => {
 
     const event: SSEEvent = {
       type: "conversation-status",
+      scope: "session",
       projectName: "p",
       sessionName: "s",
       conversationId: "conv-1",

@@ -396,6 +396,7 @@ const baseSession: SessionState = {
   conversations: [
     {
       id: "conv-1",
+      scope: "session",
       name: null,
       transcriptPath: null,
       status: "new",

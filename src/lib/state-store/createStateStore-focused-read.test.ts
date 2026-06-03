@@ -263,6 +263,81 @@ describe("createStateStore — focused read DI guard", () => {
     expect(spyAggregate.diffAndCommit).not.toHaveBeenCalled();
   });
 
+  it("spawn tag/back-link setters + getSpawnedSessionStatuses bypass the aggregate", async () => {
+    const projects = createProjectsRepo(db);
+    const sessions = createSessionsRepo(db);
+    const conversations = createConversationsRepo(db);
+
+    projects.upsert({ rootPath: "/proj-a" });
+    sessions.upsert(
+      "/proj-a",
+      sessionStateSchema.parse({
+        sessionName: "alpha",
+        worktreePath: "/wt/alpha",
+        branchName: "csm/alpha",
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+    conversations.upsert(
+      "/proj-a",
+      "alpha",
+      conversationStateSchema.parse({
+        id: "alpha-conv",
+        transcriptPath: null,
+        status: "running",
+        promptCount: 1,
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+
+    const spyAggregate: StateAggregate = {
+      readAll: vi.fn(() => {
+        throw new Error(
+          "aggregate.readAll must not be reached on the spawn path",
+        );
+      }),
+      diffAndCommit: vi.fn(() => {
+        throw new Error(
+          "aggregate.diffAndCommit must not be reached on the spawn path",
+        );
+      }),
+    };
+
+    const store = createStateStore({ db, aggregate: spyAggregate });
+
+    // createProjectConversation + the two focused spawn setters are cold-path
+    // single-row writes (Pattern 2) — never the whole-state mutate*.
+    await store.createProjectConversation(
+      "/proj-a",
+      conversationStateSchema.parse({
+        id: "plc-1",
+        scope: "project",
+        transcriptPath: null,
+        status: "new",
+        promptCount: 0,
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+        open: true,
+      }),
+    );
+    await store.setSessionSpawnedFrom("/proj-a", "alpha", {
+      source: "chat",
+      projectName: "proj-a",
+      conversationId: "plc-1",
+    });
+    await store.addPlcSpawnedSessionIds("/proj-a", "plc-1", ["alpha"]);
+
+    const statuses = await store.getSpawnedSessionStatuses("/proj-a", "plc-1");
+    expect(statuses.map((s) => s.sessionName)).toEqual(["alpha"]);
+    expect(statuses[0]?.derivedStatus).toBe("running");
+    expect(statuses[0]?.spawnedFrom?.source).toBe("chat");
+
+    expect(spyAggregate.readAll).not.toHaveBeenCalled();
+    expect(spyAggregate.diffAndCommit).not.toHaveBeenCalled();
+  });
+
   it("getProjectMcpOverrides returns undefined for missing project", async () => {
     createProjectsRepo(db);
     createSessionsRepo(db);

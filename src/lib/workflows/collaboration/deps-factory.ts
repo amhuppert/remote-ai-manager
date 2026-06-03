@@ -211,6 +211,7 @@ export function createCollaborationDeps(
       );
       publishSessionStatus({
         type: "conversation-unread",
+        scope: "session",
         projectName,
         sessionName,
         conversationId,

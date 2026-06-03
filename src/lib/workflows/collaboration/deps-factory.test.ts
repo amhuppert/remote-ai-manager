@@ -197,7 +197,7 @@ describe("createCollaborationDeps", () => {
       expect(events).toHaveLength(1);
       const event = events[0]!;
       expect(event.type).toBe("message-appended");
-      if (event.type === "message-appended") {
+      if (event.type === "message-appended" && event.scope === "session") {
         expect(event.projectName).toBe("example");
         expect(event.sessionName).toBe("collab-session");
         expect(event.conversationId).toBe("conv-A");

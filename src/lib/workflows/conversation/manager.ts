@@ -36,6 +36,11 @@ import {
 import { createLogger } from "@/lib/logging";
 import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import type { ManagerState } from "@/lib/projects/schemas";
+import {
+  PROJECT_CONVERSATION_SESSION_SENTINEL,
+  conversationEventScopeFields,
+} from "@/lib/conversations/project-conversation-scope";
 import type { DebugModeState } from "@/lib/debug-log/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
@@ -283,9 +288,11 @@ function createProvidedMachine() {
             await import("@/lib/workflows/primitives/default-session-status-bus");
           const outcome = publishSessionStatus({
             type: "conversation-status",
-            projectName: context.projectName,
-            sessionName: context.sessionName,
-            conversationId: context.conversationId,
+            ...conversationEventScopeFields(
+              context.projectName,
+              context.sessionName,
+              context.conversationId,
+            ),
             status: context.status as SSEStatus,
             ...(promptError ? { error: promptError } : {}),
           });
@@ -305,9 +312,11 @@ function createProvidedMachine() {
             await import("@/lib/workflows/primitives/default-session-status-bus");
           const outcome = publishSessionStatus({
             type: "ask-question",
-            projectName: context.projectName,
-            sessionName: context.sessionName,
-            conversationId: context.conversationId,
+            ...conversationEventScopeFields(
+              context.projectName,
+              context.sessionName,
+              context.conversationId,
+            ),
             questionId: context.pendingQuestion!.questionId,
             questions: context.pendingQuestion!.questions,
           });
@@ -735,111 +744,188 @@ export function shouldRehydrateSnapshot(snapshot: Snapshot<unknown>): boolean {
 }
 
 /**
- * Rehydrate conversation actors from persisted snapshots on startup.
- * Returns the number of actors rehydrated.
+ * A conversation eligible for snapshot rehydration. Session conversations bind
+ * to their owning session's worktree; session-less project conversations key on
+ * the sentinel session name and bind to the project's repo-root worktree.
  */
-export async function rehydrateConversationActors(): Promise<number> {
-  const { readState } = await import("@/lib/state-store");
-  const { getProjectDisplayName } = await import("@/lib/projects/resolver");
-  const { validateRestoredSnapshot } = await import("./persistence");
+export interface RehydrationCandidate {
+  projectPath: string;
+  sessionName: string;
+  worktreePath: string;
+  conversation: ConversationState;
+}
 
-  const state = await readState();
-  let count = 0;
-  let skippedNonResumable = 0;
-
+/**
+ * Flatten session conversations and session-less project conversations into a
+ * single rehydration candidate list. Pure — directly unit-testable.
+ */
+export function collectRehydrationCandidates(
+  state: ManagerState,
+  projectConversations: ReadonlyArray<{
+    projectPath: string;
+    conversation: ConversationState;
+  }>,
+): RehydrationCandidate[] {
+  const candidates: RehydrationCandidate[] = [];
   for (const [projectPath, project] of Object.entries(state.projects)) {
     for (const [sessionName, session] of Object.entries(project.sessions)) {
       for (const conversation of session.conversations) {
-        if (!conversation.machineSnapshot) continue;
-
-        const snapshot = validateRestoredSnapshot(
-          conversation.machineSnapshot,
-          conversation.id,
-          1, // expected schema version
-        );
-
-        if (!snapshot) continue;
-
-        if (!shouldRehydrateSnapshot(snapshot)) {
-          skippedNonResumable++;
-          continue;
-        }
-
-        const key = conversationRuntimeKey(
+        candidates.push({
           projectPath,
           sessionName,
-          conversation.id,
-        );
+          worktreePath: session.worktreePath,
+          conversation,
+        });
+      }
+    }
+  }
+  for (const { projectPath, conversation } of projectConversations) {
+    candidates.push({
+      projectPath,
+      sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+      worktreePath: projectPath,
+      conversation,
+    });
+  }
+  return candidates;
+}
 
-        // Skip if already running
-        if (getActorRegistry().has(key)) continue;
+export interface RehydrateConversationActorsDeps {
+  readState(): Promise<ManagerState>;
+  listAllProjectConversations(): Promise<
+    { projectPath: string; conversation: ConversationState }[]
+  >;
+  getProjectDisplayName(projectPath: string): string;
+  validateRestoredSnapshot(
+    raw: unknown,
+    conversationId: string,
+    expectedSchemaVersion: number,
+  ): Snapshot<unknown> | null;
+}
 
-        try {
-          const projectName = getProjectDisplayName(projectPath);
+async function defaultRehydrateDeps(): Promise<RehydrateConversationActorsDeps> {
+  const stateMod = await import("@/lib/state-store");
+  const { getProjectDisplayName } = await import("@/lib/projects/resolver");
+  const { validateRestoredSnapshot } = await import("./persistence");
+  return {
+    readState: stateMod.readState,
+    listAllProjectConversations: stateMod.listAllProjectConversations,
+    getProjectDisplayName,
+    validateRestoredSnapshot,
+  };
+}
 
-          // Register runtime state
-          registerConversationRuntime(key, {
-            abortController: new AbortController(),
-          });
+/**
+ * Rehydrate conversation actors from persisted snapshots on startup — across
+ * both session conversations and session-less project conversations.
+ * Returns the number of actors rehydrated.
+ */
+export async function rehydrateConversationActors(
+  deps?: RehydrateConversationActorsDeps,
+): Promise<number> {
+  const resolved = deps ?? (await defaultRehydrateDeps());
+  const [state, projectConversations] = await Promise.all([
+    resolved.readState(),
+    resolved.listAllProjectConversations(),
+  ]);
 
-          const machine = getMachineFactory()();
-          // XState v5 requires `input` even when restoring from snapshot.
-          // The snapshot already contains the full context, so input is
-          // only used for type satisfaction — it won't override the snapshot.
-          const actor = createActor(machine, {
-            input: {
-              projectPath,
-              projectName,
-              sessionName,
-              worktreePath: session.worktreePath,
-              conversationId: conversation.id,
-              createdAt: conversation.createdAt,
-              forkedFrom: conversation.forkedFrom ?? null,
-              role: conversation.role ?? null,
-              transcriptPath: conversation.transcriptPath ?? null,
-              agentBackend: conversation.agentBackend ?? "claude",
-              backendRef: conversation.backendRef ?? null,
-              promptCount: conversation.promptCount ?? 0,
-            },
-            snapshot: snapshot as ReturnType<(typeof machine)["resolveState"]>,
-          });
+  let count = 0;
+  let skippedNonResumable = 0;
 
-          getActorRegistry().set(key, actor);
+  for (const {
+    projectPath,
+    sessionName,
+    worktreePath,
+    conversation,
+  } of collectRehydrationCandidates(state, projectConversations)) {
+    if (!conversation.machineSnapshot) continue;
 
-          // Wire sendToMachine
-          const runtime = getConversationRuntime(key);
-          if (runtime) {
-            runtime.sendToMachine = (event: Record<string, unknown>) => {
-              actor.send(event as unknown as ConversationEvent);
-            };
-          }
+    const snapshot = resolved.validateRestoredSnapshot(
+      conversation.machineSnapshot,
+      conversation.id,
+      1, // expected schema version
+    );
 
-          // Terminal cleanup subscription
-          actor.subscribe((snap) => {
-            if (snap.status === "done") {
-              cleanupConversationRuntime(key);
-              getActorRegistry().delete(key);
-            }
-          });
+    if (!snapshot) continue;
 
-          actor.start();
-          count++;
+    if (!shouldRehydrateSnapshot(snapshot)) {
+      skippedNonResumable++;
+      continue;
+    }
 
-          logger.info("conversation-manager.rehydrated", {
-            conversationId: conversation.id,
-            sessionName,
-            projectName,
-          });
-        } catch (err) {
-          logger.error("conversation-manager.rehydrate_failed", {
-            conversationId: conversation.id,
-            error: err instanceof Error ? err.message : String(err),
-          });
-          // Clean up partial registration
+    const key = conversationRuntimeKey(
+      projectPath,
+      sessionName,
+      conversation.id,
+    );
+
+    // Skip if already running
+    if (getActorRegistry().has(key)) continue;
+
+    try {
+      const projectName = resolved.getProjectDisplayName(projectPath);
+
+      // Register runtime state
+      registerConversationRuntime(key, {
+        abortController: new AbortController(),
+      });
+
+      const machine = getMachineFactory()();
+      // XState v5 requires `input` even when restoring from snapshot.
+      // The snapshot already contains the full context, so input is
+      // only used for type satisfaction — it won't override the snapshot.
+      const actor = createActor(machine, {
+        input: {
+          projectPath,
+          projectName,
+          sessionName,
+          worktreePath,
+          conversationId: conversation.id,
+          createdAt: conversation.createdAt,
+          forkedFrom: conversation.forkedFrom ?? null,
+          role: conversation.role ?? null,
+          transcriptPath: conversation.transcriptPath ?? null,
+          agentBackend: conversation.agentBackend ?? "claude",
+          backendRef: conversation.backendRef ?? null,
+          promptCount: conversation.promptCount ?? 0,
+        },
+        snapshot: snapshot as ReturnType<(typeof machine)["resolveState"]>,
+      });
+
+      getActorRegistry().set(key, actor);
+
+      // Wire sendToMachine
+      const runtime = getConversationRuntime(key);
+      if (runtime) {
+        runtime.sendToMachine = (event: Record<string, unknown>) => {
+          actor.send(event as unknown as ConversationEvent);
+        };
+      }
+
+      // Terminal cleanup subscription
+      actor.subscribe((snap) => {
+        if (snap.status === "done") {
           cleanupConversationRuntime(key);
           getActorRegistry().delete(key);
         }
-      }
+      });
+
+      actor.start();
+      count++;
+
+      logger.info("conversation-manager.rehydrated", {
+        conversationId: conversation.id,
+        sessionName,
+        projectName,
+      });
+    } catch (err) {
+      logger.error("conversation-manager.rehydrate_failed", {
+        conversationId: conversation.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      // Clean up partial registration
+      cleanupConversationRuntime(key);
+      getActorRegistry().delete(key);
     }
   }
 

@@ -110,6 +110,7 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
       // 1. Conversation: status running.
       const convEvent: ConversationStatusEvent = {
         type: "conversation-status",
+        scope: "session",
         projectName: "acme",
         sessionName: "session-1",
         conversationId: "conv-7-2",
@@ -230,6 +231,7 @@ describe("section 7.2 — observable parity for migrated workflows (Task 7.2)", 
       };
       const e2: ConversationStatusEvent = {
         type: "conversation-status",
+        scope: "session",
         projectName: "acme",
         sessionName: "session-1",
         conversationId: "conv-A",

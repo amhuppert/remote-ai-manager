@@ -7,7 +7,10 @@
 
 import { NextResponse } from "next/server";
 import { createLogger } from "@/lib/logging";
-import { readState as defaultReadState } from "@/lib/state-store";
+import {
+  readState as defaultReadState,
+  listAllProjectConversations as defaultListAllProjectConversations,
+} from "@/lib/state-store";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
 import { readLastAssistantContent as defaultReadLastAssistantContent } from "@/lib/prompt/transcript";
 import { createExecutionIndex } from "@/lib/workflow-graph/execution-index";
@@ -17,6 +20,7 @@ import type {
 } from "@/lib/active-conversations/schemas";
 import type {
   AskQuestionItem,
+  ConversationState,
   ConversationStatus,
   MessageContentBlock,
 } from "@/lib/conversations/schemas";
@@ -43,12 +47,16 @@ export interface ActiveConversationsRouteDeps {
   readLastAssistantContent(
     transcriptPath: string | null,
   ): Promise<MessageContentBlock[] | null>;
+  listProjectConversations(): Promise<
+    { projectPath: string; conversation: ConversationState }[]
+  >;
 }
 
 const defaultDeps: ActiveConversationsRouteDeps = {
   readState: defaultReadState,
   getProjectDisplayName: defaultGetProjectDisplayName,
   readLastAssistantContent: defaultReadLastAssistantContent,
+  listProjectConversations: defaultListAllProjectConversations,
 };
 
 // ---------------------------------------------------------------------------
@@ -363,6 +371,7 @@ export function createActiveConversationsRouteHandlers(
   async function GET(): Promise<Response> {
     try {
       const state = await deps.readState();
+      const projectConversations = await deps.listProjectConversations();
       const conversations: ActiveConversation[] = [];
       const graphWorkflowExecutions: ActiveGraphWorkflowExecution[] = [];
       const activeCollaborationExecutions: ActiveCollaborationExecution[] = [];
@@ -387,6 +396,15 @@ export function createActiveConversationsRouteHandlers(
             });
           }
         }
+      }
+      for (const { projectPath, conversation } of projectConversations) {
+        if (state.archivedProjects.includes(projectPath)) continue;
+        if (conversation.archived) continue;
+        if (conversation.status !== "running") continue;
+        transcriptTasks.push({
+          conversationId: conversation.id,
+          transcriptPath: conversation.transcriptPath,
+        });
       }
 
       const lastBlocksByConvId = new Map<
@@ -456,6 +474,7 @@ export function createActiveConversationsRouteHandlers(
             }
 
             conversations.push({
+              scope: "session",
               id: convo.id,
               name: convo.name ?? convo.summary ?? null,
               status: convo.status,
@@ -577,6 +596,53 @@ export function createActiveConversationsRouteHandlers(
             });
           }
         }
+      }
+
+      // Project-conversation pass: session-less conversations across all
+      // projects. Visibility mirrors the lifecycle rules — non-archived
+      // (including closed) conversations in an active status are listed;
+      // archived ones are excluded by default. The `open` flag is presentation
+      // metadata for the downstream rail, not a visibility gate here.
+      for (const { projectPath, conversation } of projectConversations) {
+        if (state.archivedProjects.includes(projectPath)) continue;
+        if (conversation.archived) continue;
+        if (!ACTIVE_STATUSES.has(conversation.status)) continue;
+        if (
+          conversation.role === "iteration" ||
+          conversation.role === "validator"
+        ) {
+          continue;
+        }
+
+        const lastAssistantBlocks =
+          conversation.status === "running"
+            ? (lastBlocksByConvId.get(conversation.id) ?? null)
+            : null;
+        const pendingQuestionFields = derivePendingQuestionFields(conversation);
+
+        conversations.push({
+          scope: "project",
+          id: conversation.id,
+          name: conversation.name ?? conversation.summary ?? null,
+          status: conversation.status,
+          lastActivityAt: conversation.lastActivityAt,
+          projectName: deps.getProjectDisplayName(projectPath),
+          projectPath,
+          agentBackend: conversation.agentBackend,
+          summary: conversation.summary,
+          pendingQuestion: pendingQuestionFields.pendingQuestion,
+          pendingQuestionId: pendingQuestionFields.pendingQuestionId,
+          pendingQuestions: pendingQuestionFields.pendingQuestions,
+          forkedFrom: deriveForkedFrom(conversation.forkedFrom),
+          debugActive: conversation.debugMode?.active === true,
+          role: conversation.role,
+          worktreePath: projectPath,
+          lastActivitySummary: deriveLastActivitySummary(
+            conversation,
+            lastAssistantBlocks ? { content: lastAssistantBlocks } : null,
+          ),
+          unread: conversation.unread === true,
+        });
       }
 
       conversations.sort(

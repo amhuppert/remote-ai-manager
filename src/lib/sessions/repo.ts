@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 
 /** Sanitize a session name into a valid git branch suffix */
 export function sanitizeBranchName(sessionName: string): string {
@@ -38,6 +39,9 @@ export function validateSessionName(name: string): string | null {
   }
   if (name.length > 100) {
     return "Session name must be 100 characters or less";
+  }
+  if (name === PROJECT_CONVERSATION_SESSION_SENTINEL) {
+    return `"${PROJECT_CONVERSATION_SESSION_SENTINEL}" is reserved for project conversations and cannot be used as a session name`;
   }
   if (sanitizeBranchName(name).length === 0) {
     return "Session name must contain at least one letter or number";

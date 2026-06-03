@@ -16,6 +16,7 @@ import { _resetLoggerForTesting } from "../logging/logger";
 
 const TEST_EVENT: ConversationStatusEvent = {
   type: "conversation-status",
+  scope: "session",
   projectName: "my-project",
   sessionName: "feature-x",
   conversationId: "conv-123",
@@ -415,6 +416,7 @@ describe("conversationStatusEventSchema", () => {
   it("accepts event without error", () => {
     const event = {
       type: "conversation-status",
+      scope: "session",
       projectName: "p",
       sessionName: "s",
       conversationId: "c",
@@ -426,6 +428,7 @@ describe("conversationStatusEventSchema", () => {
   it("accepts event with optional error field", () => {
     const event = {
       type: "conversation-status",
+      scope: "session",
       projectName: "p",
       sessionName: "s",
       conversationId: "c",
