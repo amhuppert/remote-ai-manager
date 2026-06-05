@@ -41,13 +41,21 @@ describe("proxyTranscribe", () => {
     delete process.env["CC_TIMING_WARN_MS"];
   });
 
-  it("emits voice.transcribe.upstream.complete with durationMs on success", async () => {
+  it("returns cleanText from the upstream serve response on success", async () => {
     _setTranscribeFetchForTesting(
       async () =>
-        new Response(JSON.stringify({ text: "hello" }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
+        new Response(
+          JSON.stringify({
+            rawText: "raw hello",
+            cleanText: "Hello.",
+            status: "ok",
+            sessionId: 42,
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ),
     );
 
     const result = await proxyTranscribe({
@@ -55,7 +63,7 @@ describe("proxyTranscribe", () => {
       projectPath: "/tmp/proj",
     });
 
-    expect(result).toEqual({ ok: true, text: "hello" });
+    expect(result).toEqual({ ok: true, text: "Hello." });
 
     const completeCalls = [
       ...logger.info.mock.calls,
@@ -68,6 +76,30 @@ describe("proxyTranscribe", () => {
     expect(typeof fields["durationMs"]).toBe("number");
     expect(fields["ok"]).toBe(true);
     expect(fields["status"]).toBe(200);
+  });
+
+  it("returns a 502 failure when the upstream success body is missing cleanText", async () => {
+    _setTranscribeFetchForTesting(
+      async () =>
+        new Response(JSON.stringify({ text: "legacy shape" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+
+    const result = await proxyTranscribe({
+      audio: makeAudioFile(),
+      projectPath: "/tmp/proj",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.status).toBe(502);
+
+    const invalidCalls = logger.warn.mock.calls.filter(
+      ([msg]) => msg === "voice.transcribe.upstream.invalid",
+    );
+    expect(invalidCalls.length).toBe(1);
   });
 
   it("emits voice.transcribe.upstream.complete with ok=false on upstream error", async () => {
