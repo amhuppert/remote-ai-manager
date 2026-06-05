@@ -4,6 +4,7 @@ import { SettingsPage } from "../components/SettingsPage";
 import { deepEqual, SEEDED_WORKFLOW_DEFAULTS } from "../form-state";
 import type { ConfigFormController } from "./types";
 import { CircuitBreakerFields } from "./workflow/CircuitBreakerFields";
+import { CollaborationFields } from "./workflow/CollaborationFields";
 import { ContextValidatorFields } from "./workflow/ContextValidatorFields";
 import { ImplementerFields } from "./workflow/ImplementerFields";
 import { IterationPolicyFields } from "./workflow/IterationPolicyFields";
@@ -63,6 +64,10 @@ function WorkflowDefaultsSubsections({
     effective.mutability,
     SEEDED_WORKFLOW_DEFAULTS.mutability,
   );
+  const collaborationIsDefault = deepEqual(
+    effective.collaboration,
+    SEEDED_WORKFLOW_DEFAULTS.collaboration,
+  );
 
   return (
     <>
@@ -74,6 +79,17 @@ function WorkflowDefaultsSubsections({
         <ImplementerFields
           value={effective.implementer}
           onChange={(v) => onChangeBlock("implementer", v)}
+        />
+      </ConfigSubsection>
+
+      <ConfigSubsection
+        id="collaboration"
+        title="Collaboration"
+        isDefault={collaborationIsDefault}
+      >
+        <CollaborationFields
+          value={effective.collaboration}
+          onChange={(v) => onChangeBlock("collaboration", v)}
         />
       </ConfigSubsection>
 

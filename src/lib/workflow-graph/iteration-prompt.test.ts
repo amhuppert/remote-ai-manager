@@ -169,6 +169,47 @@ describe("buildIterationPrompt", () => {
     expect(prompt).not.toContain("add_task");
   });
 
+  it("includes request_collaboration documentation with when-to-use guidance when allowAgentCollaboration is true", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      allowAgentCollaboration: true,
+    });
+
+    expect(prompt).toContain("request_collaboration");
+    expect(prompt).toContain("brief");
+    // Must convey WHEN to reach for it, not just what it does.
+    expect(prompt).toMatch(/ambiguous|hard-to-reverse|high-impact|trade-off/i);
+  });
+
+  it("omits request_collaboration documentation when allowAgentCollaboration is false", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      allowAgentCollaboration: false,
+    });
+
+    expect(prompt).not.toContain("request_collaboration");
+  });
+
+  it("omits request_collaboration documentation when allowAgentCollaboration is omitted", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+    });
+
+    expect(prompt).not.toContain("request_collaboration");
+  });
+
   it("instructs the agent to work through tasks in order", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),

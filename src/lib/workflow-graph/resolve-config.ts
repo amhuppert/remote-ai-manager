@@ -90,17 +90,17 @@ export function resolveWorkflowConfig(
   };
 }
 
-function mergeCollaborationOverWithDefaults(
+export function mergeCollaborationOverWithDefaults(
   override: WorkflowCollaborationConfigOverride | undefined,
-  global: WorkflowCollaborationConfig,
+  base: WorkflowCollaborationConfig,
 ): WorkflowCollaborationConfig {
-  if (!override) return global;
+  if (!override) return base;
   return {
-    secondAgent: override.secondAgent ?? global.secondAgent,
-    negotiationRounds: override.negotiationRounds ?? global.negotiationRounds,
+    secondAgent: override.secondAgent ?? base.secondAgent,
+    negotiationRounds: override.negotiationRounds ?? base.negotiationRounds,
     autonomousResolutionThreshold:
       override.autonomousResolutionThreshold ??
-      global.autonomousResolutionThreshold,
+      base.autonomousResolutionThreshold,
   };
 }
 

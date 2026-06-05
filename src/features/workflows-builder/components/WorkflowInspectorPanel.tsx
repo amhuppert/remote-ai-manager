@@ -27,14 +27,20 @@ import type {
   GraphWorkflowMutabilityPolicy,
   GraphWorkflowScriptValidatorConfig,
   GraphWorkflowTaskDefinition,
+  WorkflowCollaborationConfig,
   WorkflowConfigOverride,
   WorkflowGraphValidationError,
 } from "@/lib/workflows/schemas";
+import {
+  resolveContextCollaboration,
+  resolveWorkflowCollaboration,
+} from "./collaboration-cascade";
 import InspectorConfigBlock, {
   type InspectorConfigBlockSource,
 } from "./InspectorConfigBlock";
 import {
   CircuitBreakerEditor,
+  CollaborationEditor,
   ContextValidatorEditor,
   ImplementerEditor,
   IterationPolicyEditor,
@@ -169,6 +175,11 @@ function summarizeMutability(policy: GraphWorkflowMutabilityPolicy): string {
   return `agent-add ${policy.allowAgentTaskAdd ? "on" : "off"}`;
 }
 
+function summarizeCollaboration(config: WorkflowCollaborationConfig): string {
+  const agent = `${config.secondAgent.backend} ${config.secondAgent.model}`;
+  return `${agent} · ${config.negotiationRounds} rounds · auto ${config.autonomousResolutionThreshold}`;
+}
+
 type ResolvedContextCascade = {
   implementer: {
     value: GraphWorkflowAgentConfig;
@@ -194,6 +205,10 @@ type ResolvedContextCascade = {
   };
   mutability: {
     value: GraphWorkflowMutabilityPolicy;
+    source: InspectorConfigBlockSource;
+  };
+  collaboration: {
+    value: WorkflowCollaborationConfig;
     source: InspectorConfigBlockSource;
   };
 };
@@ -258,6 +273,11 @@ function computeContextCascade(
     iterationPolicy: resolvePlain("iterationPolicy"),
     circuitBreaker: resolvePlain("circuitBreaker"),
     mutability: resolvePlain("mutability"),
+    collaboration: resolveContextCollaboration(
+      context.collaboration,
+      workflowConfig.collaboration,
+      globalDefaults.collaboration,
+    ),
   };
 }
 
@@ -284,6 +304,10 @@ type WorkflowCascade = {
   };
   mutability: {
     value: GraphWorkflowMutabilityPolicy;
+    source: "global" | "context-override";
+  };
+  collaboration: {
+    value: WorkflowCollaborationConfig;
     source: "global" | "context-override";
   };
 };
@@ -315,6 +339,10 @@ function computeWorkflowCascade(
     iterationPolicy: resolve("iterationPolicy"),
     circuitBreaker: resolve("circuitBreaker"),
     mutability: resolve("mutability"),
+    collaboration: resolveWorkflowCollaboration(
+      workflowConfig.collaboration,
+      globalDefaults.collaboration,
+    ),
   };
 }
 
@@ -592,6 +620,22 @@ function WorkflowTabBody({
       </InspectorConfigBlock>
 
       <InspectorConfigBlock
+        label="Collaboration"
+        summary={summarizeCollaboration(cascade.collaboration.value)}
+        source={cascade.collaboration.source}
+        onOverride={() =>
+          onSetOverride("collaboration", deepClone(cascade.collaboration.value))
+        }
+        onReset={() => onClearOverride("collaboration")}
+      >
+        <CollaborationEditor
+          value={cascade.collaboration.value}
+          onChange={(next) => onSetOverride("collaboration", next)}
+          readOnly={!isWorkflowOverride(cascade.collaboration.source)}
+        />
+      </InspectorConfigBlock>
+
+      <InspectorConfigBlock
         label="Context validator"
         summary={summarizeValidator(cascade.contextValidator.value)}
         source={cascade.contextValidator.source}
@@ -680,7 +724,8 @@ type ContextBlock =
   | "scriptValidator"
   | "iterationPolicy"
   | "circuitBreaker"
-  | "mutability";
+  | "mutability"
+  | "collaboration";
 
 function ContextTabBody({
   context,
@@ -804,6 +849,25 @@ function ContextTabBody({
           value={cascade.implementer.value}
           onChange={(next) => onSetContextOverride("implementer", next)}
           readOnly={cascade.implementer.source !== "context-override"}
+        />
+      </InspectorConfigBlock>
+
+      <InspectorConfigBlock
+        label="Collaboration"
+        summary={summarizeCollaboration(cascade.collaboration.value)}
+        source={cascade.collaboration.source}
+        onOverride={() =>
+          onSetContextOverride(
+            "collaboration",
+            deepClone(cascade.collaboration.value),
+          )
+        }
+        onReset={() => onClearContextOverride("collaboration")}
+      >
+        <CollaborationEditor
+          value={cascade.collaboration.value}
+          onChange={(next) => onSetContextOverride("collaboration", next)}
+          readOnly={cascade.collaboration.source !== "context-override"}
         />
       </InspectorConfigBlock>
 

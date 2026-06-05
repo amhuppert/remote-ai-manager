@@ -2137,6 +2137,55 @@
   cursor: not-allowed;
 }
 
+.wb-editor-segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  width: 100%;
+  padding: 3px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-base);
+}
+
+.wb-editor-segmented-option {
+  flex: 1 1 auto;
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.wb-editor-segmented-option:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.wb-editor-segmented-option[data-active="true"] {
+  background: var(--cyan);
+  color: var(--text-inverse);
+  font-weight: 600;
+}
+
+.wb-editor-segmented-option:disabled {
+  cursor: not-allowed;
+}
+
+@media (max-width: 768px) {
+  .wb-editor-segmented-option {
+    min-height: 44px;
+  }
+}
+
 /* ---- Save Error Banner ---- */
 
 .wb-save-error-banner {

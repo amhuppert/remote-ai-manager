@@ -7,11 +7,12 @@ import { WorkflowSection } from "./WorkflowSection";
 import { makeController } from "./test-controller";
 
 describe("WorkflowSection", () => {
-  it("renders all six default sub-sections with DEFAULT badges when matching seed", () => {
+  it("renders all seven default sub-sections with DEFAULT badges when matching seed", () => {
     const { controller } = makeController();
     const { container } = render(<WorkflowSection controller={controller} />);
     const expected = [
       "Implementer",
+      "Collaboration",
       "Context validator",
       "Script validator",
       "Iteration policy",
@@ -22,10 +23,41 @@ describe("WorkflowSection", () => {
       expect(screen.getByText(new RegExp(`^${title}$`))).toBeVisible();
     }
     const subs = container.querySelectorAll(".config-subsection");
-    expect(subs.length).toBe(6);
+    expect(subs.length).toBe(7);
     for (const el of subs) {
       expect(el.className).toContain("config-subsection--default");
     }
+  });
+
+  it("flags the Collaboration block as MODIFIED and updates it via the controller", () => {
+    const customDefaults: WorkflowDefaults = {
+      ...structuredClone(SEEDED_WORKFLOW_DEFAULTS),
+      collaboration: {
+        ...structuredClone(SEEDED_WORKFLOW_DEFAULTS.collaboration),
+        negotiationRounds: 9,
+      },
+    };
+    const { controller, getState } = makeController({
+      workflowDefaults: customDefaults,
+    });
+    const { container } = render(<WorkflowSection controller={controller} />);
+
+    const collaboration = container.querySelector(
+      '[data-subsection="collaboration"]',
+    );
+    expect(collaboration?.className).toContain("config-subsection--modified");
+
+    const threshold = collaboration!.querySelector(
+      '[data-field="workflowDefaults.collaboration.autonomousResolutionThreshold"]',
+    )!;
+    const blockingPill = Array.from(
+      threshold.querySelectorAll(".config-pill-btn"),
+    ).find((el) => (el.textContent ?? "").trim() === "blocking") as HTMLElement;
+    fireEvent.click(blockingPill);
+
+    expect(
+      getState().workflowDefaults?.collaboration?.autonomousResolutionThreshold,
+    ).toBe("blocking");
   });
 
   it("flags a block as MODIFIED when its value differs from seeded defaults", () => {

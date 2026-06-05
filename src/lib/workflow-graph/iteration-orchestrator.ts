@@ -1615,6 +1615,11 @@ export function createGraphWorkflowIterationOrchestrator(
               taskStates: seededExecution.taskStates,
               sharedDocuments: seededExecution.sharedDocuments,
               allowAgentTaskAdd: context.mutability.allowAgentTaskAdd,
+              // Mirrors the request_collaboration registration gate in the
+              // workflow-execution MCP server, which exposes the tool to every
+              // implementer context. Keep these in lockstep if an enable toggle
+              // is ever introduced.
+              allowAgentCollaboration: true,
               contextValidationAcceptanceCriteria:
                 context.contextValidator !== null &&
                 context.contextValidator.enabled
