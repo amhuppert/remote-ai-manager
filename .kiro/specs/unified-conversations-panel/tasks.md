@@ -145,15 +145,15 @@
 
 ## PLC Additive Extension Tasks
 
-- [ ] 9. Scope-aware Active Conversation row foundation
-- [ ] 9.1 Add failing helper tests for mixed session/project active rows
+- [x] 9. Scope-aware Active Conversation row foundation
+- [x] 9.1 Add failing helper tests for mixed session/project active rows
   - Add tests that a project conversation row derives a `project / main` context, never exposes a synthetic session name, and links to the owning project with a focus intent.
   - Add tests that session rows keep their existing `project / session` grouping, search fields, and detail-route href.
   - Add tests that mixed session/project rows preserve Needs-you, unread-finished, and running grouping based on shared status/unread fields.
   - Observable completion: the new helper tests fail before the helper implementation because project rows are still filtered or treated as session rows.
   - _Requirements: 9.1, 9.2, 9.3, 9.4, 10.1, 10.2, 10.3, 10.4, 11.1, 11.2, 11.3, 12.1, 12.3_
 
-- [ ] 9.2 Implement scope-aware row descriptors and grouping
+- [x] 9.2 Implement scope-aware row descriptors and grouping
   - Widen the active-row helper model from session-only rows to the existing session/project active-conversation union.
   - Derive route hrefs, action scopes, group keys, group labels, display labels, and search fields from row scope.
   - Treat project conversations as a `main` worktree context without adding `sessionName` to the project row.

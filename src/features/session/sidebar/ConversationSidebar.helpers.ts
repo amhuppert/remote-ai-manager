@@ -1,40 +1,106 @@
-import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
+import type {
+  ActiveConversation,
+  SessionActiveConversation,
+} from "@/lib/active-conversations/schemas";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-/**
- * The shape sidebar presentation helpers operate on. The sidebar today renders
- * session-scoped conversations (project-conversation rail presentation is a
- * downstream concern), so the base is the session variant of
- * `ActiveConversation`; the enriched fields (`summary`, `branchName`) are added
- * by the backend so the sidebar can search and display them.
- */
-export type SidebarConversation = SessionActiveConversation & {
-  summary: string | null;
-  branchName: string | null;
-};
+export type ActiveSidebarConversation = ActiveConversation;
+export type SidebarConversation = SessionActiveConversation;
 
 export type NeedsTone = "question" | "finished";
+
+export type ActiveRowActionScope =
+  | {
+      scope: "session";
+      projectName: string;
+      sessionName: string;
+      conversationId: string;
+    }
+  | {
+      scope: "project";
+      projectName: string;
+      conversationId: string;
+    };
+
+export interface ActiveRowDescriptor {
+  groupKey: string;
+  groupLabel: string;
+  projectLabel: string;
+  contextLabel: string;
+  href: string;
+  actionScope: ActiveRowActionScope;
+  supportsSessionPeek: boolean;
+  searchFields: (string | null)[];
+}
+
+function contextLabel(row: ActiveSidebarConversation): string {
+  return row.scope === "session" ? row.sessionName : "main";
+}
+
+function contextKey(row: ActiveSidebarConversation): string {
+  return `${row.projectPath}::${contextLabel(row)}`;
+}
+
+function routeHref(row: ActiveSidebarConversation): string {
+  const projectName = encodeURIComponent(row.projectName);
+  const conversationId = encodeURIComponent(row.id);
+  if (row.scope === "session") {
+    return `/projects/${projectName}/${encodeURIComponent(row.sessionName)}/${conversationId}`;
+  }
+  return `/projects/${projectName}?focus=${conversationId}`;
+}
+
+function actionScope(row: ActiveSidebarConversation): ActiveRowActionScope {
+  if (row.scope === "session") {
+    return {
+      scope: "session",
+      projectName: row.projectName,
+      sessionName: row.sessionName,
+      conversationId: row.id,
+    };
+  }
+  return {
+    scope: "project",
+    projectName: row.projectName,
+    conversationId: row.id,
+  };
+}
+
+function searchFields(row: ActiveSidebarConversation): (string | null)[] {
+  return [row.name, row.summary, row.projectName, contextLabel(row)];
+}
+
+export function describeActiveRow(
+  row: ActiveSidebarConversation,
+): ActiveRowDescriptor {
+  const label = contextLabel(row);
+  return {
+    groupKey: contextKey(row),
+    groupLabel: `${row.projectName} / ${label}`,
+    projectLabel: row.projectName,
+    contextLabel: label,
+    href: routeHref(row),
+    actionScope: actionScope(row),
+    supportsSessionPeek: row.scope === "session",
+    searchFields: searchFields(row),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // filterConversations
 // ---------------------------------------------------------------------------
 
-export function filterConversations<T extends SidebarConversation>(
+export function filterConversations<T extends ActiveSidebarConversation>(
   rows: T[],
   query: string,
 ): T[] {
   const needle = query.trim().toLowerCase();
   if (needle.length === 0) return rows;
   return rows.filter((row) => {
-    const fields: (string | null)[] = [
-      row.name,
-      row.summary,
-      row.projectName,
-      row.sessionName,
-    ];
+    const fields = searchFields(row);
     return fields.some(
       (value) => value !== null && value.toLowerCase().includes(needle),
     );
@@ -45,13 +111,14 @@ export function filterConversations<T extends SidebarConversation>(
 // filterBySession
 // ---------------------------------------------------------------------------
 
-export function filterBySession<T extends SidebarConversation>(
+export function filterBySession<T extends ActiveSidebarConversation>(
   rows: T[],
   scope: { projectName: string; sessionName: string } | null,
 ): T[] {
   if (scope === null) return rows;
   return rows.filter(
     (row) =>
+      row.scope === "session" &&
       row.projectName === scope.projectName &&
       row.sessionName === scope.sessionName,
   );
@@ -61,7 +128,7 @@ export function filterBySession<T extends SidebarConversation>(
 // splitNeedsYou
 // ---------------------------------------------------------------------------
 
-export function splitNeedsYou<T extends SidebarConversation>(
+export function splitNeedsYou<T extends ActiveSidebarConversation>(
   rows: T[],
 ): { questions: T[]; finished: T[]; others: T[] } {
   const questions: T[] = [];
@@ -83,11 +150,11 @@ export function splitNeedsYou<T extends SidebarConversation>(
 // clusterBySession
 // ---------------------------------------------------------------------------
 
-function sessionKey(row: SidebarConversation): string {
-  return `${row.projectPath}::${row.sessionName}`;
+function sessionKey(row: ActiveSidebarConversation): string {
+  return contextKey(row);
 }
 
-export function clusterBySession<T extends SidebarConversation>(
+export function clusterBySession<T extends ActiveSidebarConversation>(
   rows: T[],
 ): T[] {
   const clusters = new Map<string, T[]>();
@@ -131,13 +198,14 @@ export function clusterBySession<T extends SidebarConversation>(
 
 type SessionPosition = "first" | "middle" | "last" | "only";
 
-export type AnnotatedSidebarConversation<T extends SidebarConversation> = T & {
+export type AnnotatedSidebarConversation<T extends ActiveSidebarConversation> =
+  T & {
   isFirstInSession: boolean;
   isLastInSession: boolean;
   sessionPosition: SessionPosition;
 };
 
-export function annotateSessionPos<T extends SidebarConversation>(
+export function annotateSessionPos<T extends ActiveSidebarConversation>(
   rows: T[],
 ): AnnotatedSidebarConversation<T>[] {
   return rows.map((row, idx) => {
@@ -169,7 +237,7 @@ export function annotateSessionPos<T extends SidebarConversation>(
 export type SidebarGroupBy = "session" | "project";
 export type SidebarListFilter = "all" | "needs" | "running" | "session";
 
-export interface SidebarGroup<T extends SidebarConversation> {
+export interface SidebarGroup<T extends ActiveSidebarConversation> {
   groupKey: string;
   label: string;
   projectLabel?: string;
@@ -178,7 +246,7 @@ export interface SidebarGroup<T extends SidebarConversation> {
 }
 
 function getGroupDescriptor(
-  row: SidebarConversation,
+  row: ActiveSidebarConversation,
   key: SidebarGroupBy,
 ): {
   groupKey: string;
@@ -188,18 +256,25 @@ function getGroupDescriptor(
 } {
   switch (key) {
     case "session":
+      if (row.scope === "session") {
+        return {
+          groupKey: sessionKey(row),
+          label: describeActiveRow(row).groupLabel,
+          projectLabel: row.projectName,
+          sessionLabel: row.sessionName,
+        };
+      }
       return {
         groupKey: sessionKey(row),
-        label: `${row.projectName} / ${row.sessionName}`,
+        label: describeActiveRow(row).groupLabel,
         projectLabel: row.projectName,
-        sessionLabel: row.sessionName,
       };
     case "project":
       return { groupKey: row.projectName, label: row.projectName };
   }
 }
 
-export function groupByKey<T extends SidebarConversation>(
+export function groupByKey<T extends ActiveSidebarConversation>(
   rows: T[],
   key: SidebarGroupBy,
 ): SidebarGroup<T>[] {
@@ -225,7 +300,7 @@ export function groupByKey<T extends SidebarConversation>(
   return [...groups.values()];
 }
 
-export interface SidebarSection<T extends SidebarConversation> {
+export interface SidebarSection<T extends ActiveSidebarConversation> {
   kind: "needs" | SidebarGroupBy;
   tone: NeedsTone | null;
   groupKey: string;
@@ -235,13 +310,13 @@ export interface SidebarSection<T extends SidebarConversation> {
   items: AnnotatedSidebarConversation<T>[];
 }
 
-function annotateCluster<T extends SidebarConversation>(
+function annotateCluster<T extends ActiveSidebarConversation>(
   rows: T[],
 ): AnnotatedSidebarConversation<T>[] {
   return annotateSessionPos(clusterBySession(rows));
 }
 
-function pinnedSections<T extends SidebarConversation>(
+function pinnedSections<T extends ActiveSidebarConversation>(
   questions: T[],
   finished: T[],
 ): SidebarSection<T>[] {
@@ -267,7 +342,7 @@ function pinnedSections<T extends SidebarConversation>(
   return sections;
 }
 
-export function buildConversationSidebarSections<T extends SidebarConversation>(
+export function buildConversationSidebarSections<T extends ActiveSidebarConversation>(
   rows: T[],
   options: {
     filter: SidebarListFilter;

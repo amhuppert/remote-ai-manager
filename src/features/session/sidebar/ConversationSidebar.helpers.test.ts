@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  describeActiveRow,
   filterConversations,
   filterBySession,
   splitNeedsYou,
@@ -7,6 +8,7 @@ import {
   annotateSessionPos,
   groupByKey,
   buildConversationSidebarSections,
+  type ActiveSidebarConversation,
   type SidebarConversation,
 } from "@/features/session/sidebar/ConversationSidebar.helpers";
 
@@ -41,6 +43,104 @@ function makeRow(
     ...overrides,
   };
 }
+
+function makeProjectRow(
+  overrides: Partial<Extract<ActiveSidebarConversation, { scope: "project" }>> = {},
+): Extract<ActiveSidebarConversation, { scope: "project" }> {
+  return {
+    scope: "project",
+    id: "project-id-1",
+    name: "Project Conversation One",
+    summary: null,
+    status: "running",
+    lastActivityAt: "2025-01-01T00:00:00.000Z",
+    projectName: "proj-a",
+    projectPath: "/repos/proj-a",
+    worktreePath: "/repos/proj-a",
+    agentBackend: "claude",
+    pendingQuestion: null,
+    pendingQuestionId: null,
+    pendingQuestions: null,
+    forkedFrom: null,
+    debugActive: false,
+    role: null,
+    lastActivitySummary: null,
+    unread: false,
+    ...overrides,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// describeActiveRow
+// ---------------------------------------------------------------------------
+
+describe("describeActiveRow", () => {
+  it("derives project rows as owning project / main without a synthetic session name", () => {
+    const row = makeProjectRow({
+      id: "plc-1",
+      name: "Repo health check",
+      summary: "Review root-level CI failures",
+      projectName: "remote-ai-manager",
+      projectPath: "/repos/remote-ai-manager",
+    });
+
+    const descriptor = describeActiveRow(row);
+
+    expect(descriptor).toEqual({
+      groupKey: "/repos/remote-ai-manager::main",
+      groupLabel: "remote-ai-manager / main",
+      projectLabel: "remote-ai-manager",
+      contextLabel: "main",
+      href: "/projects/remote-ai-manager?focus=plc-1",
+      actionScope: {
+        scope: "project",
+        projectName: "remote-ai-manager",
+        conversationId: "plc-1",
+      },
+      supportsSessionPeek: false,
+      searchFields: [
+        "Repo health check",
+        "Review root-level CI failures",
+        "remote-ai-manager",
+        "main",
+      ],
+    });
+    expect("sessionName" in descriptor.actionScope).toBe(false);
+    expect("sessionName" in row).toBe(false);
+  });
+
+  it("preserves session row grouping, searchable context, action scope, and detail-route href", () => {
+    const row = makeRow({
+      id: "session-convo-1",
+      name: "Session rollout",
+      summary: "Plan the session scoped release",
+      projectName: "creative-ai",
+      projectPath: "/repos/creative-ai",
+      sessionName: "feature-session",
+    });
+
+    expect(describeActiveRow(row)).toEqual({
+      groupKey: "/repos/creative-ai::feature-session",
+      groupLabel: "creative-ai / feature-session",
+      projectLabel: "creative-ai",
+      contextLabel: "feature-session",
+      href: "/projects/creative-ai/feature-session/session-convo-1",
+      actionScope: {
+        scope: "session",
+        projectName: "creative-ai",
+        sessionName: "feature-session",
+        conversationId: "session-convo-1",
+      },
+      supportsSessionPeek: true,
+      searchFields: [
+        "Session rollout",
+        "Plan the session scoped release",
+        "creative-ai",
+        "feature-session",
+      ],
+    });
+  });
+});
 
 // ---------------------------------------------------------------------------
 // filterConversations
@@ -115,6 +215,28 @@ describe("filterConversations", () => {
     ];
     expect(filterConversations(rows, "match").map((r) => r.id)).toEqual(["b"]);
   });
+
+  it("searches project rows by project/main context without requiring session fields", () => {
+    const rows: ActiveSidebarConversation[] = [
+      makeProjectRow({
+        id: "project-row",
+        projectName: "root-tools",
+        name: "Dependency audit",
+      }),
+      makeRow({
+        id: "session-row",
+        projectName: "root-tools",
+        sessionName: "feature-session",
+      }),
+    ];
+
+    expect(filterConversations(rows, "main").map((r) => r.id)).toEqual([
+      "project-row",
+    ]);
+    expect(filterConversations(rows, "feature-session").map((r) => r.id)).toEqual([
+      "session-row",
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -149,6 +271,22 @@ describe("filterBySession", () => {
     expect(
       filterBySession(rows, { projectName: "px", sessionName: "sx" }),
     ).toEqual([]);
+  });
+
+  it("does not treat project rows as members of a synthetic session", () => {
+    const projectRow = makeProjectRow({ id: "project-row", projectName: "p1" });
+    const sessionRow = makeRow({
+      id: "session-row",
+      projectName: "p1",
+      sessionName: "main",
+    });
+    const rows: ActiveSidebarConversation[] = [projectRow, sessionRow];
+
+    expect(
+      filterBySession(rows, { projectName: "p1", sessionName: "main" }).map(
+        (r) => r.id,
+      ),
+    ).toEqual(["session-row"]);
   });
 });
 
@@ -412,6 +550,39 @@ describe("groupByKey", () => {
     const groups = groupByKey(rows, "project");
     expect(groups.map((g) => g.groupKey)).toEqual(["beta", "alpha"]);
   });
+
+  it("groups project rows by projectPath::main and labels them as project / main", () => {
+    const rows: ActiveSidebarConversation[] = [
+      makeProjectRow({
+        id: "project-row",
+        projectName: "alpha",
+        projectPath: "/repos/alpha",
+      }),
+      makeRow({
+        id: "session-row",
+        projectName: "alpha",
+        projectPath: "/repos/alpha",
+        sessionName: "session-a",
+      }),
+    ];
+
+    const groups = groupByKey(rows, "session");
+
+    expect(groups.map((g) => g.groupKey)).toEqual([
+      "/repos/alpha::main",
+      "/repos/alpha::session-a",
+    ]);
+    expect(groups[0]).toMatchObject({
+      label: "alpha / main",
+      projectLabel: "alpha",
+    });
+    expect(groups[0]?.sessionLabel).toBeUndefined();
+    expect(groups[1]).toMatchObject({
+      label: "alpha / session-a",
+      projectLabel: "alpha",
+      sessionLabel: "session-a",
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -555,5 +726,74 @@ describe("buildConversationSidebarSections", () => {
     ]);
     expect(sections[0]?.items.map((row) => row.id)).toEqual(["q"]);
     expect(sections[1]?.items.map((row) => row.id)).toEqual(["f"]);
+  });
+
+  it("preserves Needs-you, unread-finished, and running grouping for mixed session/project rows", () => {
+    const rows: ActiveSidebarConversation[] = [
+      makeProjectRow({
+        id: "project-question",
+        status: "waiting_for_input",
+        projectName: "alpha",
+        projectPath: "/repos/alpha",
+      }),
+      makeRow({
+        id: "session-question",
+        status: "waiting_for_input",
+        projectName: "alpha",
+        projectPath: "/repos/alpha",
+        sessionName: "session-a",
+      }),
+      makeProjectRow({
+        id: "project-unread",
+        status: "awaiting",
+        unread: true,
+        projectName: "beta",
+        projectPath: "/repos/beta",
+      }),
+      makeRow({
+        id: "session-running",
+        status: "running",
+        projectName: "beta",
+        projectPath: "/repos/beta",
+        sessionName: "session-b",
+      }),
+      makeProjectRow({
+        id: "project-running",
+        status: "running",
+        projectName: "gamma",
+        projectPath: "/repos/gamma",
+      }),
+    ];
+
+    const allSections = buildConversationSidebarSections(rows, {
+      filter: "all",
+      groupBy: "session",
+      sessionScope: null,
+    });
+
+    expect(allSections.map((s) => `${s.kind}:${s.tone ?? s.label}`)).toEqual([
+      "needs:question",
+      "needs:finished",
+      "session:beta / session-b",
+      "session:gamma / main",
+    ]);
+    expect(allSections[0]?.items.map((row) => row.id)).toEqual([
+      "project-question",
+      "session-question",
+    ]);
+    expect(allSections[1]?.items.map((row) => row.id)).toEqual([
+      "project-unread",
+    ]);
+
+    const runningSections = buildConversationSidebarSections(rows, {
+      filter: "running",
+      groupBy: "session",
+      sessionScope: null,
+    });
+
+    expect(runningSections.map((s) => `${s.label}:${s.items[0]?.id}`)).toEqual([
+      "beta / session-b:session-running",
+      "gamma / main:project-running",
+    ]);
   });
 });
