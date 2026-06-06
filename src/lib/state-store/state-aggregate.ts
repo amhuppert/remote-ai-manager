@@ -220,7 +220,9 @@ export function createStateAggregate(repos: AllRepos): StateAggregate {
   }
 
   function diffAndCommit(snapshot: ManagerState, mutated: ManagerState): void {
-    managerStateSchema.parse(mutated);
+    if (process.env.NODE_ENV !== "production") {
+      managerStateSchema.parse(mutated);
+    }
 
     const start = performance.now();
 

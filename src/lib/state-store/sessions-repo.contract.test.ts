@@ -537,3 +537,84 @@ describe("rowToDomain quarantine: forward-incompatible workflow columns degrade 
     expect(() => repo.findByKey(PROJECT_PATH, "bad-source")).toThrow();
   });
 });
+
+describe("sessions-repo findAll caching", () => {
+  it("returns identical session references for unchanged rows across calls (cache hit)", () => {
+    repo.upsert(PROJECT_PATH, makeFullSession({ sessionName: "s-a" }));
+    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "s-b" }));
+
+    const first = repo.findAll();
+    const second = repo.findAll();
+
+    expect(second).toHaveLength(first.length);
+    for (let i = 0; i < first.length; i += 1) {
+      const a = first[i];
+      const b = second[i];
+      expect(a).toBeDefined();
+      expect(b).toBeDefined();
+      // Reference equality proves the cached parsed value was returned.
+      expect(b!.session).toBe(a!.session);
+    }
+  });
+
+  it("returns the same array reference across calls when no writes occurred", () => {
+    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "s-a" }));
+    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "s-b" }));
+
+    const first = repo.findAll();
+    const second = repo.findAll();
+
+    expect(second).toBe(first);
+  });
+
+  it("returns a new reference for a row after upsert mutates it, reusing unchanged siblings", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      makeMinimalSession({ sessionName: "s-changed", objective: "before" }),
+    );
+    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "s-stable" }));
+
+    const first = repo.findAll();
+    const firstChanged = first.find(
+      (r) => r.session.sessionName === "s-changed",
+    );
+    const firstStable = first.find((r) => r.session.sessionName === "s-stable");
+    expect(firstChanged).toBeDefined();
+    expect(firstStable).toBeDefined();
+
+    repo.upsert(
+      PROJECT_PATH,
+      makeMinimalSession({ sessionName: "s-changed", objective: "after" }),
+    );
+
+    const second = repo.findAll();
+    const secondChanged = second.find(
+      (r) => r.session.sessionName === "s-changed",
+    );
+    const secondStable = second.find(
+      (r) => r.session.sessionName === "s-stable",
+    );
+    expect(second).not.toBe(first);
+    expect(secondChanged?.session.objective).toBe("after");
+    expect(secondChanged?.session).not.toBe(firstChanged!.session);
+    // The untouched sibling is served from cache by reference.
+    expect(secondStable?.session).toBe(firstStable!.session);
+  });
+
+  it("invalidates the cache after delete and drops the removed row", () => {
+    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "s-keep" }));
+    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "s-drop" }));
+
+    const first = repo.findAll();
+    expect(first.map((r) => r.session.sessionName).sort()).toEqual([
+      "s-drop",
+      "s-keep",
+    ]);
+
+    repo.delete(PROJECT_PATH, "s-drop");
+
+    const second = repo.findAll();
+    expect(second).not.toBe(first);
+    expect(second.map((r) => r.session.sessionName)).toEqual(["s-keep"]);
+  });
+});

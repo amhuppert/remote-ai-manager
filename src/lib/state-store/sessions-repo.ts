@@ -565,7 +565,29 @@ function timed<T>(
   }
 }
 
+const SESSION_COLUMN_KEYS = Object.keys(sessionsTableRowSchema.shape) as Array<
+  keyof SessionsTableRow
+>;
+
+function rawSessionRowsEqual(
+  a: Record<string, unknown>,
+  b: Record<string, unknown>,
+): boolean {
+  for (const key of SESSION_COLUMN_KEYS) {
+    if (a[key] !== b[key]) return false;
+  }
+  return true;
+}
+
 export function createSessionsRepo(db: Db): SessionsRepo {
+  type ParsedSessionRow = { projectPath: string; session: SessionState };
+  const findAllCache = new Map<
+    string,
+    { rawRow: Record<string, unknown>; parsed: ParsedSessionRow }
+  >();
+  let cacheVersion = 0;
+  let lastFindAllVersion = -1;
+  let lastFindAllResult: ParsedSessionRow[] = [];
   const findByKeyStmt = db.prepare(
     `SELECT * FROM sessions
      WHERE project_path = ? AND session_name = ?
@@ -697,8 +719,21 @@ export function createSessionsRepo(db: Db): SessionsRepo {
     },
     findAll() {
       return timed("findAll", undefined, undefined, () => {
-        const rows = findAllStmt.all() as unknown[];
-        return rows.map((row) => {
+        if (cacheVersion === lastFindAllVersion) {
+          return lastFindAllResult;
+        }
+        const rows = findAllStmt.all() as Array<Record<string, unknown>>;
+        const out: ParsedSessionRow[] = new Array(rows.length);
+        const seenKeys = new Set<string>();
+        for (let i = 0; i < rows.length; i += 1) {
+          const row = rows[i]!;
+          const key = `${row.project_path as string}\u0000${row.session_name as string}`;
+          seenKeys.add(key);
+          const cached = findAllCache.get(key);
+          if (cached !== undefined && rawSessionRowsEqual(cached.rawRow, row)) {
+            out[i] = cached.parsed;
+            continue;
+          }
           const result = rowToDomain(row);
           if (result.graphWorkflowExecutionMigration !== null) {
             applyGraphWorkflowExecutionMigration(
@@ -707,22 +742,34 @@ export function createSessionsRepo(db: Db): SessionsRepo {
               result.graphWorkflowExecutionMigration,
             );
           }
-          return {
+          const parsed: ParsedSessionRow = {
             projectPath: result.projectPath,
             session: result.session,
           };
-        });
+          findAllCache.set(key, { rawRow: row, parsed });
+          out[i] = parsed;
+        }
+        if (findAllCache.size > seenKeys.size) {
+          for (const key of findAllCache.keys()) {
+            if (!seenKeys.has(key)) findAllCache.delete(key);
+          }
+        }
+        lastFindAllVersion = cacheVersion;
+        lastFindAllResult = out;
+        return out;
       });
     },
     upsert(projectPath, session) {
       timed("upsert", projectPath, session.sessionName, () => {
         const bind = domainToSessionRow(projectPath, session);
         upsertStmt.run(bind);
+        cacheVersion += 1;
       });
     },
     delete(projectPath, sessionName) {
       timed("delete", projectPath, sessionName, () => {
         deleteStmt.run(projectPath, sessionName);
+        cacheVersion += 1;
       });
     },
   };

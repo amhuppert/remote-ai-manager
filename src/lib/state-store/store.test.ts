@@ -219,14 +219,16 @@ describe("setConversationPendingPromptText focused write", () => {
 });
 
 describe("mutateConversation", () => {
-  it("mutates a conversation in the target session and bumps lastActivityAt on both", async () => {
+  beforeEach(async () => {
     await store.getOrCreateProject("/proj-a");
     await store.mutateState("seed", (state) => {
       const session = makeSession();
-      session.conversations.push(makeConversation());
+      session.conversations.push(makeConversation({ id: "conv-1" }));
       state.projects["/proj-a"]!.sessions["alpha"] = session;
     });
+  });
 
+  it("mutates a conversation in the target session and bumps lastActivityAt on both", async () => {
     const before = await store.getConversation("/proj-a", "alpha", "conv-1");
     expect(before?.summary).toBeNull();
 
@@ -246,6 +248,25 @@ describe("mutateConversation", () => {
 
     const session = await store.getSession("/proj-a", "alpha");
     expect(session?.lastActivityAt).not.toBe("2026-01-01T00:00:00Z");
+  });
+
+  it("returns the mutator's result", async () => {
+    const result = await store.mutateConversation(
+      "/proj-a",
+      "alpha",
+      "conv-1",
+      "read-prompt-count",
+      (conv) => conv.promptCount,
+    );
+    expect(result).toBe(0);
+  });
+
+  it("throws when the conversation does not exist", async () => {
+    await expect(
+      store.mutateConversation("/proj-a", "alpha", "missing", "set-x", (c) => {
+        c.summary = "x";
+      }),
+    ).rejects.toThrow(/missing/);
   });
 });
 
@@ -370,16 +391,16 @@ describe("mutateState clone-and-validate", () => {
     });
   });
 
-  it("skips the snapshot-clone validation under NODE_ENV=production (diffAndCommit still validates mutated)", async () => {
+  it("skips all whole-state validation under NODE_ENV=production (both cloneAndValidate and diffAndCommit)", async () => {
     vi.stubEnv("NODE_ENV", "production");
     const parseSpy = vi.spyOn(managerStateSchema, "parse");
     try {
       await store.mutateState("noop", () => {
         // no-op mutation
       });
-      // diffAndCommit always validates the mutated state; the snapshot-clone
-      // validation must be skipped — so we expect exactly one parse call.
-      expect(parseSpy).toHaveBeenCalledTimes(1);
+      // Both the snapshot-clone validation and the diffAndCommit validation
+      // are gated to non-production; in production neither runs.
+      expect(parseSpy).toHaveBeenCalledTimes(0);
     } finally {
       parseSpy.mockRestore();
       vi.unstubAllEnvs();

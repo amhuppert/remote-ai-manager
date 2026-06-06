@@ -187,6 +187,13 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     );
   }
 
+  /**
+   * Focused single-conversation mutation. Writes one row via the conversations
+   * repo, bypassing the aggregate's read-everything-validate-diff cycle. The
+   * mutator only ever sees the target `ConversationState`, so cross-entity
+   * writes are structurally impossible and no sibling-canonicalization guard is
+   * needed. Touches `lastActivityAt` on both the conversation and its session.
+   */
   async function mutateConversation<T = void>(
     projectPath: string,
     sessionName: string,
@@ -194,25 +201,34 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     label: string,
     mutate: (conversation: ConversationState) => T | Promise<T>,
   ): Promise<T> {
-    return mutateSession<T>(
-      projectPath,
-      sessionName,
-      label,
-      async (session) => {
-        const conversation = session.conversations.find(
-          (c) => c.id === conversationId,
-        );
-        if (!conversation) {
-          throw new Error(
-            `Conversation "${conversationId}" not found in session "${sessionName}" during ${label}`,
+    return writeQueue.withWriteQueue(`${label}[${sessionName}]`, async () =>
+      timed(
+        logger,
+        "state.mutate",
+        { label, projectPath, sessionName, conversationId },
+        async () => {
+          const conversation = repos.conversations.findByKey(
+            projectPath,
+            sessionName,
+            conversationId,
           );
-        }
-        const result = await mutate(conversation);
-        const now = new Date().toISOString();
-        conversation.lastActivityAt = now;
-        session.lastActivityAt = now;
-        return result;
-      },
+          if (!conversation) {
+            throw new Error(
+              `Conversation "${conversationId}" not found in session "${sessionName}" during ${label}`,
+            );
+          }
+          const result = await mutate(conversation);
+          const now = new Date().toISOString();
+          conversation.lastActivityAt = now;
+          repos.conversations.upsertWithSessionTouch(
+            projectPath,
+            sessionName,
+            conversation,
+            now,
+          );
+          return result;
+        },
+      ),
     );
   }
 

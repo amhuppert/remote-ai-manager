@@ -38,7 +38,16 @@ export function createProjectResolver(
         "project-resolver.resolve",
         { projectName },
         async () => {
-          const resolvedBaseDir = baseDir ?? (await deps.readConfig()).baseDir;
+          const resolvedBaseDir =
+            baseDir ??
+            (
+              await timed(
+                logger,
+                "project-resolver.read_config",
+                { projectName },
+                () => deps.readConfig(),
+              )
+            ).baseDir;
           const projectPath = path.join(resolvedBaseDir, projectName);
 
           if (!existsSync(projectPath)) return null;
