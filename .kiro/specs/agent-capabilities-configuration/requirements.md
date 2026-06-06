@@ -201,6 +201,56 @@ Plugin install/uninstall, marketplace browsing, and graph-workflow transient ove
 2. WHEN a user-visible error occurs (validation failure, live-apply failure, persistence failure) THEN the UI SHALL surface a clear message describing what failed and what the user can do next.
 3. Diagnostics SHALL carry enough context (cascade kind, layer, item identifier, backend) for an operator to correlate events across the override lifecycle.
 
+## PLC Additive Extension
+
+The following requirements extend the implemented capability cascade to project-level conversations (PLCs). Existing session-conversation behavior remains unchanged. A PLC is a conversation-scope context without an owning session; it inherits from global and project configuration and may have its own conversation-layer overrides.
+
+### Requirement 17: Project Conversation Capability Inheritance
+
+**Objective**: As a CC user, I want a project-level conversation to default to the project's configured capabilities, so that repo-root conversations honor the same project policy unless I override them.
+
+#### Acceptance Criteria
+
+1. WHEN a project conversation has no conversation-layer override for a capability THEN the system SHALL resolve that capability from the effective project-level configuration for the active backend. _(PLC-54)_
+2. WHEN a project conversation has a conversation-layer override for a capability THEN the system SHALL apply that override more narrowly than global and project configuration. _(PLC-54)_
+3. The system SHALL NOT require or synthesize a session layer when resolving capabilities for a project conversation. _(PLC-1, PLC-54)_
+4. The system SHALL preserve the existing global -> project -> session -> conversation cascade behavior for session conversations. _(PLC-43, PLC-54)_
+
+### Requirement 18: Project Conversation Capability Editing
+
+**Objective**: As a CC user, I want to view and edit the selected project conversation's capability overrides, so that I can tune a PLC without changing the whole project.
+
+#### Acceptance Criteria
+
+1. WHEN the user opens capability configuration for an active project conversation THEN the UI SHALL show that project conversation as the currently edited conversation layer. _(PLC-53, PLC-54)_
+2. While editing project-conversation capabilities, the UI SHALL distinguish values set directly on the project conversation from values inherited from project and global layers. _(PLC-54)_
+3. WHEN the user changes a capability for a project conversation THEN the system SHALL persist the change as a conversation-layer override for that project conversation only. _(PLC-54)_
+4. WHEN the user clears a project-conversation override THEN the effective value SHALL fall back to the inherited project/global value for the active backend. _(PLC-54)_
+5. If no project conversation is selected, the UI shall prevent applying a conversation-layer override to an unspecified project conversation. _(PLC-54)_
+
+### Requirement 19: Project Conversation Runtime Application
+
+**Objective**: As a CC user, I want capability changes on project conversations to take effect according to the active backend's existing rules, so that Claude and Codex PLCs behave consistently with session conversations.
+
+#### Acceptance Criteria
+
+1. WHEN a Claude project conversation starts THEN the system SHALL compose Claude skills, plugins, and sub-agents from global, project, and project-conversation layers. _(PLC-17, PLC-54)_
+2. WHEN a Codex project conversation starts THEN the system SHALL compose Codex skills and plugins from global, project, and project-conversation layers. _(PLC-17, PLC-54)_
+3. WHEN a user changes a live-applicable Claude capability override for an idle project conversation THEN the system SHALL apply the change using the same user-visible semantics as an idle session conversation. _(PLC-54)_
+4. WHEN a user changes a Codex capability override for a project conversation THEN the system SHALL stage the change for the next project-conversation turn using the same user-visible semantics as a Codex session conversation. _(PLC-54)_
+5. If capability composition fails for one cascade kind on a project conversation, the system shall surface the diagnostic, fall back for that cascade kind, and allow the project-conversation turn to continue. _(PLC-51, PLC-54)_
+
+### Requirement 20: Project Conversation Capability Boundaries
+
+**Objective**: As a CC maintainer, I want PLC capability support to reuse the existing capability model without adding unrelated configuration surfaces, so that the extension stays aligned with the implemented cascade.
+
+#### Acceptance Criteria
+
+1. The system SHALL NOT add a new cascade kind solely for project conversations. _(PLC-54)_
+2. The system SHALL NOT add plugin installation, marketplace browsing, graph-workflow transient overrides, or cross-backend mirroring as part of PLC capability support. _(PLC-54-boundary)_
+3. The system SHALL NOT allow changing the fixed backend of an initialized project conversation through capability configuration. _(PLC-17, PLC-54-boundary)_
+4. Where project-conversation capability configuration is opened from the project cockpit, the capability system SHALL own only the capability override behavior and SHALL NOT own the cockpit command palette, conversation tabs, or composer behavior. _(PLC-53-boundary, PLC-54)_
+
 ## Out of Scope
 
 - **Plugin and skill install/uninstall** — CC only toggles already-installed items; managing the underlying installation is left to native backend tooling.
@@ -209,3 +259,4 @@ Plugin install/uninstall, marketplace browsing, and graph-workflow transient ove
 - **Cross-backend mirroring** of capability configuration — the five cascades are intentionally independent and SHALL NOT be merged.
 - **Migrating an override between cascade layers** (e.g., promoting a conversation-layer override to the project layer) — a future ergonomics feature.
 - **Per-item parameter editing beyond enable/disable** (e.g., editing a skill's prompt template) — initial scope is the enable/disable toggle only.
+- **A separate project-conversation cascade kind** — project conversations use conversation-layer overrides without a session parent.

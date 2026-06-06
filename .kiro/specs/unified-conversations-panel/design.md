@@ -666,3 +666,276 @@ No multi-phase migration is needed. The Zod transform handles backward compatibi
 3. Any state write persists new values (`new`, `awaiting`, `running`)
 4. After all conversations have been touched at least once, all persisted values are new format
 5. The transform branch can optionally be removed in a future cleanup pass (no urgency)
+
+## PLC Additive Extension Design
+
+This section extends the implemented Active Conversations surfaces for requirements 9-13. It is additive to the original status/panel/sidebar work above.
+
+## Boundary Commitments
+
+### This Spec Owns
+
+- Rendering project-conversation rows in the existing Active Conversations surfaces: global panel, session sidebar Active tab, and cockpit-mounted rail.
+- Scope-aware row labeling, grouping, filtering, sorting, and status/attention indicators for the existing `ActiveConversation` union.
+- Scope-aware row navigation: session rows route to session conversation pages; project rows route to the owning project cockpit with a focus intent.
+- Scope-aware rename/archive row actions for project conversations where those actions are already exposed on Active Conversations rows.
+- The topbar "needs you" shortcut including project conversations without losing session behavior.
+- Minimal unresolved-focus handling for project focus routes, limited to a clear unavailable state when the target PLC cannot be reopened or focused.
+
+### Out of Boundary
+
+- Project-conversation persistence, lifecycle derivation, active-conversation API project pass, and `scope`-discriminated event schema; these are owned by `project-level-conversations`.
+- Cockpit tab rendering and general tab lifecycle behavior beyond the focus-query contract; this spec verifies the existing reopen/focus handoff and may add the minimal unavailable state required when the handoff target cannot be resolved.
+- Project-conversation notifications and query invalidation in the global SSE listener; those are owned by the notifications extension.
+- Main-worktree diff rendering, project-conversation creation, capability configuration, peek/fork/answer parity, and session spawning.
+
+### Allowed Dependencies
+
+- `src/lib/active-conversations/schemas.ts` project/session `ActiveConversation` union and `GET /api/conversations/active`.
+- `src/lib/project-conversations-client/{query-keys,mutations}.ts` for project row rename/archive/open-count invalidation.
+- Existing session conversation query keys and session row mutation routes for session rows.
+- `ProjectDetailView` focus-query behavior (`/projects/[name]?focus=[conversationId]`) as the cockpit handoff.
+- Existing design-system CSS tokens and current `ConversationSidebarRow` / Topbar presentation patterns.
+
+### Revalidation Triggers
+
+- Any change to the `ActiveConversation` project variant fields, especially `scope`, `projectName`, `status`, `agentBackend`, `unread`, `pendingQuestion`, or `worktreePath`.
+- Any change to the project cockpit focus route or removal of `ProjectDetailView` focus-query reconciliation.
+- Any change to project-conversation rename/archive route contracts or query-key factory names.
+- Any decision to add PLC peek, fork, answer, or copy-context parity to the Active Conversations surface.
+
+## PLC Extension Architecture
+
+### Existing Architecture Analysis
+
+- The active-conversations API already emits a `scope`-discriminated union. Session rows include `sessionName` and `branchName`; project rows intentionally omit both and use the project root as `worktreePath`.
+- The active-conversations API accepts `waiting_for_input` as an active row status. Needs-you logic should treat that status as the direct question state and should continue to treat unread `awaiting` rows as finished/unread attention.
+- The current sidebar, row, grouping helpers, and topbar still narrow active rows to `scope === "session"`, so the remaining work is client-side scope awareness.
+- The current global panel container (`NotificationsPanelContainer`) also maps only session-scoped active conversations into conversation notification items.
+- The project cockpit already accepts `?focus=<conversationId>` and reopens/focuses a closed PLC tab. The Active Conversations surface must use that route rather than directly managing tabs, and the project page must expose a clear unresolved-focus state when that id cannot be opened.
+- The cockpit-mounted rail is `ConversationSidebar` rendered through `ProjectCockpit`'s `rail` slot, so sidebar active-tab changes cover that surface as well.
+- The project-conversation client layer already exposes project rename/archive/open-count invalidation hooks and keys; row actions can reuse those route contracts.
+
+### Architecture Pattern & Boundary Map
+
+Selected pattern: widen the Active Conversations presentation model from `SessionActiveConversation` to the existing `ActiveConversation` union, then centralize all scope-specific decisions in pure helpers.
+
+```mermaid
+graph TB
+  ActiveAPI[active conversations API]
+  ActiveSchema[ActiveConversation union]
+  RowHelpers[scope aware row helpers]
+  GlobalPanel[global activity panel]
+  Sidebar[ConversationSidebar active tab]
+  Row[ConversationSidebarRow]
+  Topbar[Topbar needs shortcut]
+  Mutations[scope aware row mutations]
+  SessionRoutes[session conversation routes]
+  ProjectRoutes[project conversation routes]
+  ProjectCockpit[ProjectDetailView focus handler]
+
+  ActiveAPI --> ActiveSchema
+  ActiveSchema --> RowHelpers
+  RowHelpers --> GlobalPanel
+  RowHelpers --> Sidebar
+  RowHelpers --> Row
+  RowHelpers --> Topbar
+  RowHelpers --> Mutations
+  Mutations --> SessionRoutes
+  Mutations --> ProjectRoutes
+  RowHelpers --> ProjectCockpit
+```
+
+**Architecture Integration**:
+- Existing patterns preserved: React Query query keys, optimistic mutation invalidation, pure sidebar helper tests, one Active Conversations data source.
+- New components rationale: the scope-aware helper layer prevents `sessionName` assumptions from leaking into project rows.
+- Dependency direction: `ActiveConversation schema -> row helpers -> UI components -> mutations/navigation`. UI components must not mutate the API payload or synthesize session fields.
+
+## PLC Extension File Structure Plan
+
+### Modified Files
+
+- `src/features/session/sidebar/ConversationSidebar.helpers.ts` — widen `SidebarConversation` to `ActiveConversation`; add pure helpers for context key, display labels, search fields, route hrefs, and action scopes; update grouping to represent project rows as `project / main`.
+- `src/features/session/sidebar/ConversationSidebar.tsx` — stop filtering active data to session rows; render mixed session/project active rows; route project rows through the focus URL; keep session-only peek/fork/answer/copy-context behind `scope === "session"` checks.
+- `src/features/session/sidebar/ConversationSidebarRow.tsx` — accept `ActiveConversation`; display `main` breadcrumb for project rows and preserve session breadcrumb for session rows; keep badges/status/unread rendering shared.
+- `src/components/NotificationsPanelContainer.tsx` — map project active-conversation rows into global panel conversation items with project/main context and project focus actions.
+- `src/components/NotificationsPanel.tsx` — widen conversation notification item rendering where needed so project conversation items do not require `sessionName`.
+- `src/components/Topbar.tsx` — include project rows in the needs-you shortcut and derive the first target href from the same route helper.
+- `src/features/project-detail/ProjectDetailView.tsx` — verify or add the minimal unresolved-focus state for `/projects/[name]?focus=[conversationId]` when the target project conversation cannot be reopened or focused.
+- `src/lib/conversations/mutations.ts` or `src/lib/active-conversations/mutations.ts` — add scope-aware active-row rename/archive wrappers with a discriminated input type; invalidate `conversationKeys.active()` plus the relevant session or project-conversation keys.
+- `src/features/session/sidebar/*.test.tsx` and `src/components/Topbar.test.tsx` — add coverage for project rows, focus-route hrefs, grouping, labels, and row actions.
+
+### No New Files
+
+No persistent data files, API routes, or server-side schemas are added by this extension. If implementation chooses a new `src/lib/active-conversations/navigation.ts` helper file for purity, it must contain only route/label derivation and be imported by both sidebar and topbar.
+
+## PLC Extension System Flows
+
+### Project Row Selection
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant ActiveSurface as Active Conversations surface
+  participant Router
+  participant ProjectPage as ProjectDetailView
+  participant Cockpit as ProjectCockpit
+
+  User->>ActiveSurface: select project conversation row
+  ActiveSurface->>Router: navigate to project page with focus id
+  Router->>ProjectPage: render project page
+  ProjectPage->>ProjectPage: reconcile focus id against open PLCs
+  ProjectPage->>Cockpit: focus existing tab or reopen then focus
+```
+
+Session row selection remains unchanged and navigates to `/projects/[project]/[session]/[conversationId]`.
+
+### Scope-Aware Row Action
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant ActiveSurface as Active Conversations surface
+  participant Mutation as scope aware mutation
+  participant SessionRoute as session route
+  participant ProjectRoute as project route
+  participant QueryCache as React Query cache
+
+  User->>ActiveSurface: rename or archive row
+  ActiveSurface->>Mutation: submit row scope and payload
+  alt session row
+    Mutation->>SessionRoute: call session conversation endpoint
+  else project row
+    Mutation->>ProjectRoute: call project conversation endpoint
+  end
+  Mutation->>QueryCache: invalidate active and scoped list keys
+```
+
+## PLC Extension Requirements Traceability
+
+| Requirement | Summary | Components | Interfaces | Flows |
+|-------------|---------|------------|------------|-------|
+| 9.1, 9.2, 9.3, 9.4 | Show non-archived active PLCs while preserving sessions | `NotificationsPanelContainer`, `ConversationSidebar`, `ConversationSidebar.helpers`, active query usage | `ActiveConversation` union | Project row selection |
+| 10.1, 10.2, 10.3, 10.4 | Label PLC rows as project/main without synthetic sessions | `NotificationsPanel`, `ConversationSidebarRow`, row helpers | row context descriptor | — |
+| 11.1, 11.2, 11.3, 11.4, 11.5, 11.6 | Status, Needs-you, unread, backend, and activity indicators | `NotificationsPanel`, `ConversationSidebarRow`, `Topbar`, helper split/group functions | shared row props | — |
+| 12.1, 12.2, 12.3, 12.4 | Cross-page project cockpit focus routing | row route helper, `NotificationsPanelContainer`, `ConversationSidebar`, `Topbar`, `ProjectDetailView` focus handler | `/projects/[name]?focus=[id]` | Project row selection |
+| 13.1, 13.2, 13.3, 13.4 | Rename/archive parity and boundary preservation | scope-aware row mutations, sidebar action handlers | project/session mutation discriminated union | Scope-aware row action |
+
+## PLC Extension Components and Interfaces
+
+| Component | Domain/Layer | Intent | Req Coverage | Key Dependencies | Contracts |
+|-----------|--------------|--------|--------------|------------------|-----------|
+| Scope-aware row helpers | UI logic | Derive labels, grouping, hrefs, and action scopes from `ActiveConversation` | 9.x, 10.x, 12.x | `ActiveConversation` (P0) | Service |
+| Global activity panel | UI | Render project active conversations in the global panel | 9.x, 10.x, 11.x, 12.x | row helpers (P0), active query (P0) | State |
+| ConversationSidebar active tab | UI | Render mixed session/project active rows | 9.x, 11.x, 12.x, 13.x | row helpers (P0), active query (P0) | State |
+| ConversationSidebarRow | UI | Present one active row with scope-aware breadcrumbs and shared indicators | 10.x, 11.x | row helpers (P0) | State |
+| Topbar needs shortcut | UI | Count and link to first session or project row needing attention | 11.x, 12.x | row helpers (P0), active query (P0) | State |
+| ProjectDetailView focus handoff | UI routing | Reopen/focus the target PLC or show unresolved-focus feedback | 12.x | project conversation query/mutation (P0), focus route (P0) | State |
+| Scope-aware row mutations | Client data | Route rename/archive by row scope and invalidate relevant keys | 13.x | session routes (P0), project routes (P0) | Service |
+
+### Scope-Aware Row Helpers
+
+**Responsibilities & Constraints**
+- Accept `ActiveConversation`, not a session-only subtype.
+- Produce stable grouping keys: session rows group by `projectPath::sessionName`; project rows group by `projectPath::main`.
+- Produce display labels: session rows show session name; project rows show `main`.
+- Produce hrefs: session rows use the existing session conversation route; project rows use `/projects/{projectName}?focus={conversationId}`.
+- Preserve no-synthetic-session invariant: project rows never receive or display `sessionName`.
+
+**Contracts**: Service [x]
+
+```typescript
+type ActiveRowActionScope =
+  | { scope: "session"; projectName: string; sessionName: string; conversationId: string }
+  | { scope: "project"; projectName: string; conversationId: string };
+
+interface ActiveRowDescriptor {
+  groupKey: string;
+  groupLabel: string;
+  projectLabel: string;
+  contextLabel: string;
+  href: string;
+  actionScope: ActiveRowActionScope;
+  supportsSessionPeek: boolean;
+}
+```
+
+Validation hooks: pure unit tests cover both scopes, cross-project hrefs, grouping, search fields, and the absence of `sessionName` for project rows.
+
+### ConversationSidebar Active Tab
+
+**Responsibilities & Constraints**
+- Consume all `activeData.conversations`, not only session rows.
+- Render project rows in the same Needs-you / unread / running sections as session rows.
+- Keep session-only features (`PeekPopover`, answer, fork, copy session context) available only for session rows.
+- On mobile close after navigation, preserve current behavior for both scopes.
+- Because the cockpit rail is `ConversationSidebar`, this component also delivers the cockpit-mounted Active Conversations rail behavior.
+
+**Implementation Notes**
+- Project row actions use scope-aware mutation wrappers.
+- Project row context menu omits session-only actions until separate PLC equivalents are specified.
+- Existing active graph workflows and collaboration sections remain unchanged.
+
+### Global Activity Panel
+
+**Responsibilities & Constraints**
+- Consume project rows from the same active-conversations response as session rows.
+- Render project rows as conversation items with project name, conversation name, `main` context, status, unread state, backend when initialized, and last activity.
+- Route project row actions to the project focus URL and close the panel after navigation, matching existing session row navigation behavior.
+- Preserve job, persisted notification, graph workflow, and session conversation item behavior.
+
+**Implementation Notes**
+- The panel should use the same route/context helper as sidebar/topbar to avoid drift.
+- If the existing panel item type requires `sessionName`, widen it to a scope-discriminated item rather than passing a fake session name.
+
+### Scope-Aware Row Mutations
+
+**Responsibilities & Constraints**
+- Route session inputs to existing session conversation endpoints.
+- Route project inputs to existing project-conversation rename/archive endpoints.
+- Invalidate `conversationKeys.active()` for both scopes.
+- For session rows, invalidate `conversationKeys.list(projectName, sessionName)`.
+- For project rows, invalidate `projectConversationKeys.list(projectName)` and `projectConversationKeys.openCount(projectName)`.
+
+**Contracts**: Service [x]
+
+```typescript
+type RenameActiveConversationInput =
+  | { scope: "session"; projectName: string; sessionName: string; conversationId: string; name: string }
+  | { scope: "project"; projectName: string; conversationId: string; name: string };
+
+type ArchiveActiveConversationInput =
+  | { scope: "session"; projectName: string; sessionName: string; conversationId: string; archived: boolean }
+  | { scope: "project"; projectName: string; conversationId: string; archived: boolean };
+```
+
+Failure modes: mutation failure restores optimistic cache where applicable and leaves the row visible until refetch confirms removal.
+
+## PLC Extension Testing Strategy
+
+### Unit Tests
+
+- `ConversationSidebar.helpers.test.ts`: project row descriptor uses `main`, omits session route, produces `/projects/[name]?focus=[id]`, and groups by project main context.
+- `ConversationSidebar.helpers.test.ts`: mixed session/project rows split into Needs-you, finished/unread, and running sections using shared status/unread fields.
+- `active-conversation route helper tests`: project rows do not require `sessionName`; session rows preserve current href/grouping.
+
+### Component Tests
+
+- `ConversationSidebarRow.test.tsx`: project row displays project/main breadcrumb, status dot, unread state, backend badge, and last activity without a session crumb.
+- `ConversationSidebar.test.tsx`: Active tab renders project rows from `useActiveConversationsQuery`; clicking a project row navigates to the project focus URL.
+- `ConversationSidebar.test.tsx`: rename/archive on project rows call project-scoped mutations and invalidate active/project keys; session row actions still call session-scoped mutations.
+- `Topbar.test.tsx`: topbar needs count includes project `waiting_for_input` rows and unread `awaiting` rows; first project target links to the project focus URL.
+- `NotificationsPanelContainer.test.tsx`: global panel maps project active conversations into conversation items with `main` context and project focus href while preserving session item behavior.
+- `ProjectDetailView.test.tsx`: unresolved project focus ids produce a clear unavailable state and never attempt session-route navigation.
+
+### Regression Tests
+
+- Existing session Active tab tests remain green: session grouping, meta labels, row actions, peek, answer, fork, and copy context keep their current behavior.
+- Active-conversations API project-pass tests remain green; this extension should not alter the API project pass unless a contract bug is found.
+
+## PLC Extension Integration Notes
+
+- The active-conversations API already handles closed-but-not-archived PLC visibility; UI code must not re-filter project rows by open state.
+- Archived PLCs should disappear through the active query after archive mutation/invalidation; no separate UI deletion state is needed.
+- The cockpit owns reopening/focusing a closed PLC after receiving the focus URL. The Active Conversations surface does not read or mutate cockpit view state directly.
+- Structured server logging is not added by this extension because no new server route is introduced; client mutations continue to use existing mutation trace labels and server endpoints retain their existing logging.

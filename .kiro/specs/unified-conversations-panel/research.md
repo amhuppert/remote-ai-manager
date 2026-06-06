@@ -156,3 +156,57 @@
 - TanStack Query invalidation: `src/components/NotificationListener.tsx`
 - Design system: `.claude/skills/cc-design-system/SKILL.md`
 - Zustand store pattern: `src/stores/session-detail.store.ts`
+
+## PLC Additive Extension Research Update (2026-06-06)
+
+### Active Conversation Scope Integration
+
+- **Context**: PLC requirements 9-13 extend the existing Active Conversations surfaces to project conversations without creating a separate rail or data source.
+- **Sources Consulted**: `src/lib/active-conversations/schemas.ts`, `src/lib/active-conversations/route-handlers.ts`, `src/features/session/sidebar/ConversationSidebar.tsx`, `src/features/session/sidebar/ConversationSidebarRow.tsx`, `src/features/session/sidebar/ConversationSidebar.helpers.ts`, `src/components/Topbar.tsx`, `src/features/project-detail/ProjectDetailView.tsx`, `src/lib/project-conversations-client/{query-keys,queries,mutations}.ts`.
+- **Findings**:
+  - `activeConversationSchema` is already a `scope`-discriminated union with `SessionActiveConversation` and `ProjectActiveConversation`; the project variant has no `sessionName` or `branchName` and uses `worktreePath` as the project root.
+  - `GET /api/conversations/active` already has a project-conversation pass that emits `scope: "project"` rows from `listProjectConversations()`, excluding archived projects/conversations and preserving active status sorting.
+  - `ConversationSidebar` currently filters active data to `scope === "session"`, so PLC presentation is blocked in the UI rather than the data source.
+  - `NotificationsPanelContainer` is the current global panel container and also filters active conversation items to `scope === "session"`.
+  - `ConversationSidebarRow` and helper types currently require `SessionActiveConversation` and display `sessionName` in breadcrumbs; they need a scope-aware context descriptor for `project / main`.
+  - `Topbar` also filters the "needs you" pinned target to session rows and must use the same route helper as the sidebar.
+  - `ProjectDetailView` mounts `ConversationSidebar` as the cockpit rail and already consumes a `focus` query param to reopen/focus a PLC tab, which is the correct rail-to-cockpit handoff.
+  - Project-conversation client mutations exist for rename, archive, and open/reopen; generic active-row mutations need a scope-aware wrapper rather than forcing project rows through session routes.
+- **Implications**: The extension is mostly a client/UI integration over existing scope-aware data. The design should avoid changing the active-conversations API unless tests expose a contract mismatch.
+
+### Architecture Pattern Evaluation
+
+| Option | Description | Strengths | Risks / Limitations | Notes |
+|--------|-------------|-----------|---------------------|-------|
+| Separate PLC rail | Add a distinct project-conversation rail next to the active session rail | Avoids touching existing session row code | Duplicates UI, creates separate sorting/grouping logic, violates cockpit mount requirement | Rejected |
+| Scope-aware ActiveConversation row model | Widen sidebar/topbar helpers from session-only rows to the existing `ActiveConversation` union | Reuses data source, one grouping/sorting path, preserves session behavior | Requires careful type narrowing for session-only actions like peek/fork | Selected |
+| API-level synthetic session name | Add `sessionName: "main"` to project rows | Simplifies current UI assumptions | Violates PLC requirements and foundation schema; risks treating PLCs as sessions | Rejected |
+
+### Decision: Scope-aware row descriptor
+
+- **Context**: Session rows need `project / session` breadcrumbs and project rows need `project / main` context without a synthetic session.
+- **Selected Approach**: Add pure helper functions that derive a row descriptor from `ActiveConversation`: route href, context key, display project label, display scope label (`sessionName` for session, `main` for project), and action scope. Sidebar grouping/search/section helpers consume this descriptor instead of reading `sessionName` directly.
+- **Rationale**: Keeps presentation logic deterministic and testable; avoids pushing UI assumptions into the API payload.
+- **Trade-offs**: A few session-only flows (peek, answer, fork, copy session context) must remain narrowed to session rows until separate PLC equivalents exist.
+
+### Decision: Route PLC focus via project `focus` query param
+
+- **Context**: Selecting a closed PLC from the Active Conversations surface must navigate to the project cockpit and reopen/focus the tab.
+- **Selected Approach**: Project row hrefs use `/projects/{projectName}?focus={conversationId}`. The existing project page focus reconciliation reopens and focuses closed PLCs.
+- **Rationale**: Uses the cockpit's documented consumer contract and avoids having the rail own tab state.
+- **Trade-offs**: The route is a focus intent, not a permanent deep-link shape. If cockpit route semantics change, this extension must be revalidated.
+
+### Decision: Scope-aware generic row mutations
+
+- **Context**: Existing generic rename/archive hooks accept `projectName` + `sessionName`, so they cannot handle project rows without violating the no-synthetic-session boundary.
+- **Selected Approach**: Add scope-aware active-conversation mutation wrappers that route session rows through session conversation endpoints and project rows through project-conversation endpoints, then invalidate `conversationKeys.active()` and the relevant list/open-count keys.
+- **Rationale**: The UI sees one row action surface, while route choice remains explicit and type-safe.
+- **Trade-offs**: Adds a thin abstraction around existing mutations/endpoints; design must keep it narrow to rename/archive only.
+
+## PLC Extension Risks & Mitigations
+
+- **Risk**: Session-only actions accidentally appear for PLC rows — **Mitigation**: Type helpers expose session-only capabilities only after `scope === "session"` narrowing; tests cover project rows lacking `sessionName`.
+- **Risk**: Topbar or sidebar navigate PLC rows to invalid session routes — **Mitigation**: Centralize route derivation in a pure helper and test both scopes.
+- **Risk**: Project rows lose Needs-you grouping or unread semantics — **Mitigation**: `splitNeedsYou` operates on shared status/unread fields and tests include `waiting_for_input` plus unread PLC rows.
+- **Risk**: Global panel and cockpit rail coverage diverge — **Mitigation**: cover `NotificationsPanelContainer` explicitly and rely on the same `ConversationSidebar` component for the cockpit rail.
+- **Risk**: UI duplicates cockpit tab management — **Mitigation**: Rail emits only the project focus URL; `ProjectDetailView` remains the tab owner.

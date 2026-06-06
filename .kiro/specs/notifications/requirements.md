@@ -83,3 +83,53 @@ CC's notification system currently suffers from critical reliability issues: bac
 2. The CC server shall broadcast a `notification-updated` SSE event when a notification's read state changes, including the notification id and new read state.
 3. The CC client shall listen for `notification-created` and `notification-updated` events and update the UI accordingly without requiring a full page refresh.
 4. While the SSE connection is interrupted, when the connection is re-established, the CC client shall fetch the latest notification state from the server API to reconcile any missed events.
+
+## PLC Additive Extension
+
+The following requirements extend notification and client real-time refresh behavior for project-level conversations (PLCs). Existing job and session-conversation notification behavior remains unchanged. Browser/OS notification parity is limited to the readiness notification channel already defined for session conversations in the browser-notifications specification.
+
+### Requirement 9: Project Conversation Notification Parity
+
+**Objective:** As a developer, I want project-level conversations to notify me the same way session conversations do, so that repo-root work gets the same attention handling as session work.
+
+#### Acceptance Criteria
+
+1. When a project conversation reaches `awaiting` after an agent turn, the CC server shall create and deliver an equivalent readiness notification with project-conversation context. _(PLC-48)_
+2. When a project conversation reaches `waiting-for-input`, the CC server shall create and deliver an equivalent user-attention notification with project-conversation context. _(PLC-48, PLC-51)_
+3. When a project-conversation turn fails or ends with an error state, the CC server shall create and deliver an equivalent failure notification with project-conversation context. _(PLC-48, PLC-51)_
+4. The notification record for a project conversation shall identify the project and project conversation without requiring a session name. _(PLC-1, PLC-48)_
+5. The CC server shall preserve existing notification behavior for session conversations and background jobs while adding project-conversation notifications. _(PLC-43, PLC-48)_
+
+### Requirement 10: Project Conversation Notification Actions
+
+**Objective:** As a developer, I want notifications for project-level conversations to take me back to the relevant cockpit conversation, so that I can respond or review quickly.
+
+#### Acceptance Criteria
+
+1. When a toast or Activities entry represents a project-conversation notification, the CC client shall provide an action that navigates to the owning project cockpit and focuses the relevant conversation. _(PLC-48, PLC-50)_
+2. When the relevant project conversation is closed but not archived, the notification action shall reopen it as a focusable cockpit tab before focusing it. _(PLC-50)_
+3. If the relevant project conversation no longer exists or is no longer accessible, the notification action shall present a clear unavailable state rather than navigating to an invalid session route. _(PLC-50)_
+4. The toast notification for a project conversation shall include enough context for the user to identify the project and conversation. _(PLC-48)_
+
+### Requirement 11: Project Conversation Notification State and Channels
+
+**Objective:** As a developer, I want project-level conversation notifications to participate in existing notification history and delivery channels, so that they behave consistently across tabs, devices, and OS notification settings.
+
+#### Acceptance Criteria
+
+1. When a project-conversation notification is created, the CC server shall persist it with the same read/unread, timestamp, retention, and dismissal behavior as other notifications. _(PLC-48)_
+2. When a project-conversation notification is marked read or dismissed from one tab or device, the CC client shall synchronize that state across other connected tabs and subsequent devices. _(PLC-48)_
+3. Where OS-level browser notifications are enabled for session-conversation readiness, the CC client shall deliver equivalent OS-level notifications for project-conversation readiness. _(PLC-48)_
+4. If the browser cannot display OS-level notifications or permission is denied, project-conversation notifications shall degrade the same way session-conversation notifications degrade. _(PLC-48)_
+
+### Requirement 12: Project Conversation Real-Time Refresh
+
+**Objective:** As a developer, I want project-conversation surfaces to refresh when project-conversation events arrive, so that the cockpit stays current without manual refresh.
+
+#### Acceptance Criteria
+
+1. When a project-conversation change event is delivered to the client, the CC client shall refresh the project-conversation list views that depend on that event. _(PLC-46, PLC-47, cockpit Req 12.1)_
+2. When a project-conversation message event is delivered to the client, the CC client shall refresh the affected project-conversation transcript views that depend on that event. _(PLC-46, cockpit Req 12.1)_
+3. When a project-conversation open, close, archive, or restore event is delivered to the client, the CC client shall refresh the affected project open-count and conversation-list views without requiring a manual page reload. _(PLC-7, PLC-8, PLC-9, PLC-46, cockpit Req 12.1)_
+4. While the real-time connection is interrupted, when the connection is re-established, the CC client shall reconcile missed project-conversation notification and conversation state before reporting the UI as current. _(PLC-46, PLC-48, cockpit Req 12.1)_
+5. The notification extension shall consume project-conversation events defined by the project-level-conversations foundation and shall leave Active Conversations row rendering to the unified-conversations-panel extension and tab rendering to the project-conversation-cockpit spec. _(PLC-46-boundary, PLC-48-boundary, PLC-50-boundary)_

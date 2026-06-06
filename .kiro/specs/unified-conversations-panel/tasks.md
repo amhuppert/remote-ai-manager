@@ -142,3 +142,93 @@
 - [x] 8.2 Update ConversationList archive icon
   - Change archive icon from `\u2912` to `\u2913` for consistency with sidebar
   - _Requirements: 8.2_
+
+## PLC Additive Extension Tasks
+
+- [ ] 9. Scope-aware Active Conversation row foundation
+- [ ] 9.1 Add failing helper tests for mixed session/project active rows
+  - Add tests that a project conversation row derives a `project / main` context, never exposes a synthetic session name, and links to the owning project with a focus intent.
+  - Add tests that session rows keep their existing `project / session` grouping, search fields, and detail-route href.
+  - Add tests that mixed session/project rows preserve Needs-you, unread-finished, and running grouping based on shared status/unread fields.
+  - Observable completion: the new helper tests fail before the helper implementation because project rows are still filtered or treated as session rows.
+  - _Requirements: 9.1, 9.2, 9.3, 9.4, 10.1, 10.2, 10.3, 10.4, 11.1, 11.2, 11.3, 12.1, 12.3_
+
+- [ ] 9.2 Implement scope-aware row descriptors and grouping
+  - Widen the active-row helper model from session-only rows to the existing session/project active-conversation union.
+  - Derive route hrefs, action scopes, group keys, group labels, display labels, and search fields from row scope.
+  - Treat project conversations as a `main` worktree context without adding `sessionName` to the project row.
+  - Keep closed-but-not-archived project rows eligible when the active-conversations source returns them, and leave archive exclusion to the source/refetch result.
+  - Observable completion: the helper tests from 9.1 pass and existing session helper tests remain green.
+  - _Requirements: 9.1, 9.2, 9.3, 9.4, 10.1, 10.2, 10.3, 10.4, 11.1, 11.2, 11.3, 12.1, 12.3, 13.4_
+
+- [ ] 10. Scope-aware row mutations
+- [ ] 10.1 Add failing tests for project rename/archive row actions
+  - Add tests that a project row rename uses project-conversation context and does not require a session name.
+  - Add tests that a project row archive removes or refreshes the row through active/project invalidation while a session row still uses session invalidation.
+  - Add tests that mutation failures leave the row recoverable through cache restoration or refetch.
+  - Observable completion: the tests fail before mutation support because the existing generic row actions require `sessionName`.
+  - _Requirements: 13.1, 13.2, 13.3, 13.4_
+
+- [ ] 10.2 Implement scope-aware active-row rename/archive mutations
+  - Route session row rename/archive through the existing session conversation endpoints.
+  - Route project row rename/archive through the project-conversation endpoints.
+  - Invalidate the active conversations query after either scope changes.
+  - Invalidate session list keys for session rows and project conversation list/open-count keys for project rows.
+  - Observable completion: project and session row action tests pass without adding a synthetic session name to project rows.
+  - _Requirements: 13.1, 13.2, 13.3, 13.4_
+
+- [ ] 11. Active Conversations UI integration
+- [ ] 11.1 (P) Render project conversations in the sidebar Active tab
+  - Stop filtering Active tab data to session-only rows.
+  - Render project rows with `main` context, shared status/unread/backend/last-activity indicators, and project focus navigation.
+  - Cover the cockpit-mounted rail through the same sidebar component that `ProjectDetailView` passes into the cockpit rail slot.
+  - Keep session-only actions such as peek, answer, fork, and copy session context hidden or disabled for project rows unless another spec adds PLC parity.
+  - Wire rename/archive row actions through the scope-aware mutations.
+  - Observable completion: the Active tab shows mixed session/project rows, clicking a project row navigates to the project focus URL, and existing session Active tab behavior still works.
+  - _Requirements: 9.1, 9.2, 9.3, 9.4, 10.1, 10.2, 10.3, 10.4, 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 12.1, 12.2, 12.3, 12.4, 13.1, 13.2, 13.3, 13.4_
+  - _Boundary: ConversationSidebar active tab, ConversationSidebarRow_
+  - _Depends: 9.2, 10.2_
+
+- [ ] 11.2 (P) Include project conversations in the topbar Needs-you shortcut
+  - Count project rows with status `waiting_for_input` and unread `awaiting` rows using the same attention rules as session rows.
+  - Route the first project attention target to the owning project focus URL.
+  - Preserve existing badge count and href behavior when the first attention target is a session row.
+  - Observable completion: topbar tests show project attention rows contribute to the Needs-you count and session-only cases remain unchanged.
+  - _Requirements: 11.2, 11.3, 12.1, 12.3, 12.4_
+  - _Boundary: Topbar needs shortcut_
+  - _Depends: 9.2_
+
+- [ ] 11.3 (P) Render project conversations in the global activity panel
+  - Stop filtering global panel active conversation items to session-only rows.
+  - Render project conversation items with project name, conversation name, `main` context, status, unread state, initialized backend where present, and last activity.
+  - Route project conversation item actions to the project focus URL and close the panel after navigation.
+  - Preserve existing jobs, persisted notifications, graph workflow items, and session conversation item behavior.
+  - Observable completion: the global panel shows project rows from the active-conversations response and session-only panel tests remain green.
+  - _Requirements: 9.1, 9.2, 9.3, 9.4, 10.1, 10.2, 10.3, 10.4, 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 12.1, 12.3, 12.4_
+  - _Boundary: Global activity panel_
+  - _Depends: 9.2_
+
+- [ ] 12. Mixed-scope visual and interaction validation
+- [ ] 12.1 Add mixed session/project sidebar stories and regression tests
+  - Add or update stories showing session rows, project rows, mixed groups, empty state, `waiting_for_input`, unread `awaiting`, running, and archived-after-action behavior.
+  - Add component tests for project row breadcrumbs, backend badge, unread dot, status dot, activity summary, and action menu boundaries.
+  - Add global panel tests or stories showing project conversation items with `main` context and project focus navigation.
+  - Add regression assertions that session row grouping, rename/archive, peek, answer, fork, and copy-context behavior are unchanged.
+  - Observable completion: the story renders the PLC row states without visual overlap and the component regression tests pass.
+  - _Requirements: 9.1, 9.2, 9.3, 9.4, 10.1, 10.2, 10.3, 10.4, 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 13.1, 13.2, 13.3, 13.4_
+
+- [ ] 12.2 Verify cross-page routing and cockpit focus handoff
+  - Add an integration test or focused component test that clicking a project row navigates to `/projects/[name]?focus=[conversationId]`.
+  - Verify the project page focus handler reopens/focuses the tab when the target project conversation is closed but not archived.
+  - Add a failing `ProjectDetailView` focus-param test for an unavailable or inaccessible focused project conversation, then implement the minimal clear unavailable state if the current focus handler lacks one.
+  - Verify the unavailable focus path never produces or navigates to a session conversation route.
+  - Observable completion: cross-page routing tests pass for current-project, other-project, closed-but-not-archived, and unavailable PLC rows.
+  - _Requirements: 12.1, 12.2, 12.3, 12.4_
+  - _Boundary: Project focus route handoff and minimal unresolved-focus state_
+
+- [ ] 12.3 Run targeted regression checks
+  - Run the active-conversations schema/project-pass tests to confirm this extension did not alter the API project pass.
+  - Run sidebar helper, sidebar row, sidebar coordinator, and topbar tests that cover the updated surfaces.
+  - Run typecheck for the changed active-conversation union consumers.
+  - Observable completion: targeted tests and typecheck pass, or any failure is documented with the exact blocking issue.
+  - _Requirements: 9.1, 9.2, 9.3, 9.4, 10.1, 10.2, 10.3, 10.4, 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 12.1, 12.2, 12.3, 12.4, 13.1, 13.2, 13.3, 13.4_
