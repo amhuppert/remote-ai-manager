@@ -10,6 +10,7 @@ import {
   runWithTrace,
   type TraceContext,
 } from "@/lib/logging";
+import { getWaitableInFlightTaskIds } from "./background-task-tracker";
 
 // ---------------------------------------------------------------------------
 // Mock the SDK
@@ -2706,5 +2707,560 @@ describe("createQuerySession — trace context propagation", () => {
     expect(captured[0]?.traceId.length).toBeGreaterThan(0);
 
     session.close();
+  });
+});
+
+describe("QuerySession background-task tracking", () => {
+  function pushTaskStarted(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    taskId: string,
+    toolUseId?: string,
+  ) {
+    mock.pushMessage({
+      type: "system",
+      subtype: "task_started",
+      task_id: taskId,
+      ...(toolUseId ? { tool_use_id: toolUseId } : {}),
+      description: "running a build",
+      session_id: "sess-1",
+      uuid: `u-start-${taskId}`,
+    } as unknown as SDKMessage);
+  }
+
+  function pushTaskNotification(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    taskId: string,
+    status: "completed" | "failed" | "stopped",
+  ) {
+    mock.pushMessage({
+      type: "system",
+      subtype: "task_notification",
+      task_id: taskId,
+      status,
+      output_file: "/tmp/out.txt",
+      summary: "done",
+      session_id: "sess-1",
+      uuid: `u-notify-${taskId}`,
+    } as unknown as SDKMessage);
+  }
+
+  function pushResult(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    uuid: string,
+  ) {
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid,
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+  }
+
+  it("records a task_started with no matching settle as in-flight (1.1, 1.3)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    const turn = session.sendPrompt("Run the build in the background", emit);
+
+    pushTaskStarted(mock, "task-a", "tool-1");
+    // Agent yields without the task settling.
+    pushResult(mock, "u-result");
+    await turn;
+
+    expect(getWaitableInFlightTaskIds(session.backgroundTaskState)).toEqual([
+      "task-a",
+    ]);
+
+    session.close();
+  });
+
+  it("empties the in-flight set when a matching task_notification settles it (1.2)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    const turn = session.sendPrompt("Run the build in the background", emit);
+
+    pushTaskStarted(mock, "task-a", "tool-1");
+    pushResult(mock, "u-result");
+    await turn;
+
+    expect(getWaitableInFlightTaskIds(session.backgroundTaskState)).toEqual([
+      "task-a",
+    ]);
+
+    // The settlement arrives between turns (pendingTurn is null now).
+    pushTaskNotification(mock, "task-a", "completed");
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(getWaitableInFlightTaskIds(session.backgroundTaskState)).toEqual([]);
+
+    session.close();
+  });
+
+  it("tracks a task message that arrives between turns before any idle-discard (1.3)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    // No externalTurnHandler — a stray task message would normally be dropped.
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    // Complete a caller turn so pendingTurn becomes null.
+    const turn = session.sendPrompt("First", emit);
+    pushResult(mock, "u-result");
+    await turn;
+
+    expect(session.isTurnActive).toBe(false);
+
+    // A task starts while no caller turn is active — must still be recorded.
+    pushTaskStarted(mock, "task-between", "tool-9");
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(getWaitableInFlightTaskIds(session.backgroundTaskState)).toEqual([
+      "task-between",
+    ]);
+
+    session.close();
+  });
+
+  function pushAssistantToolUse(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    toolUseId: string,
+    toolName: string,
+  ) {
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-1",
+      uuid: `u-asst-${toolUseId}`,
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: toolUseId,
+            name: toolName,
+            input: {},
+          },
+        ],
+      },
+    } as unknown as SDKMessage);
+  }
+
+  it("excludes a Monitor-originated task from the waitable set (Req 2.2)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    const turn = session.sendPrompt("Watch the dev server", emit);
+
+    // The assistant invokes the Monitor tool; the pump records id -> name on the
+    // pending turn BEFORE the task_started arrives.
+    pushAssistantToolUse(mock, "tool-mon", "Monitor");
+    pushTaskStarted(mock, "watch-1", "tool-mon");
+    pushResult(mock, "u-result");
+    await turn;
+
+    expect(
+      session.backgroundTaskState.tasks.get("watch-1")?.classification,
+    ).toBe("excluded");
+    expect(getWaitableInFlightTaskIds(session.backgroundTaskState)).toEqual([]);
+
+    session.close();
+  });
+
+  it("keeps a Bash-originated task in the waitable set (Req 2.1)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    const turn = session.sendPrompt("Run the build in the background", emit);
+
+    pushAssistantToolUse(mock, "tool-bash", "Bash");
+    pushTaskStarted(mock, "shell-1", "tool-bash");
+    pushResult(mock, "u-result");
+    await turn;
+
+    expect(
+      session.backgroundTaskState.tasks.get("shell-1")?.classification,
+    ).toBe("waitable");
+    expect(getWaitableInFlightTaskIds(session.backgroundTaskState)).toEqual([
+      "shell-1",
+    ]);
+
+    session.close();
+  });
+});
+
+describe("QuerySession.awaitBackgroundTaskSettlement", () => {
+  function pushTaskStarted(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    taskId: string,
+    toolUseId?: string,
+  ) {
+    mock.pushMessage({
+      type: "system",
+      subtype: "task_started",
+      task_id: taskId,
+      ...(toolUseId ? { tool_use_id: toolUseId } : {}),
+      description: "running a build",
+      session_id: "sess-1",
+      uuid: `u-start-${taskId}`,
+    } as unknown as SDKMessage);
+  }
+
+  function pushTaskNotification(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    taskId: string,
+    status: "completed" | "failed" | "stopped",
+  ) {
+    mock.pushMessage({
+      type: "system",
+      subtype: "task_notification",
+      task_id: taskId,
+      status,
+      output_file: "/tmp/out.txt",
+      summary: "done",
+      session_id: "sess-1",
+      uuid: `u-notify-${taskId}`,
+    } as unknown as SDKMessage);
+  }
+
+  function pushResult(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    uuid: string,
+  ) {
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid,
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+  }
+
+  it("resolves almost immediately when the waitable set is already empty (3.3, 4.x)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    const turn = session.sendPrompt("Hello", emit);
+    pushResult(mock, "u-result");
+    await turn;
+
+    const outcome = await session.awaitBackgroundTaskSettlement(10_000);
+    expect(outcome.timedOut).toBe(false);
+    expect(outcome.waitedTaskIds).toEqual([]);
+    expect(outcome.settledTaskIds).toEqual([]);
+    expect(outcome.durationMs).toBeGreaterThanOrEqual(0);
+
+    session.close();
+  });
+
+  it("resolves promptly when a matching task_notification drains the set (3.3, 4.x)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    const turn = session.sendPrompt("Run the build in the background", emit);
+    pushTaskStarted(mock, "task-a", "tool-1");
+    pushResult(mock, "u-result");
+    await turn;
+
+    expect(getWaitableInFlightTaskIds(session.backgroundTaskState)).toEqual([
+      "task-a",
+    ]);
+
+    const waitPromise = session.awaitBackgroundTaskSettlement(10_000);
+
+    // Settlement arrives between turns and drives the notifier.
+    pushTaskNotification(mock, "task-a", "completed");
+
+    const outcome = await waitPromise;
+    expect(outcome.timedOut).toBe(false);
+    expect(outcome.waitedTaskIds).toEqual(["task-a"]);
+    expect(outcome.settledTaskIds).toEqual(["task-a"]);
+
+    session.close();
+  });
+
+  it("resolves with timedOut: true at the bound and never rejects (4.1, 4.2, 4.4)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    const turn = session.sendPrompt("Run the build in the background", emit);
+    pushTaskStarted(mock, "task-a", "tool-1");
+    pushResult(mock, "u-result");
+    await turn;
+
+    // Never settle the task — only the timeout can end this wait.
+    let rejected = false;
+    const outcome = await session
+      .awaitBackgroundTaskSettlement(20)
+      .catch((err) => {
+        rejected = true;
+        throw err;
+      });
+
+    expect(rejected).toBe(false);
+    expect(outcome.timedOut).toBe(true);
+    expect(outcome.waitedTaskIds).toEqual(["task-a"]);
+    expect(outcome.settledTaskIds).toEqual([]);
+    expect(outcome.durationMs).toBeGreaterThanOrEqual(0);
+
+    session.close();
+  });
+
+  it("treats a failed task_notification as settled to end the wait (4.3)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    const turn = session.sendPrompt("Run the build in the background", emit);
+    pushTaskStarted(mock, "task-a", "tool-1");
+    pushResult(mock, "u-result");
+    await turn;
+
+    const waitPromise = session.awaitBackgroundTaskSettlement(10_000);
+    pushTaskNotification(mock, "task-a", "failed");
+
+    const outcome = await waitPromise;
+    expect(outcome.timedOut).toBe(false);
+    expect(outcome.settledTaskIds).toEqual(["task-a"]);
+
+    session.close();
+  });
+
+  it("treats a stopped task_notification as settled to end the wait (4.3)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    const turn = session.sendPrompt("Run the build in the background", emit);
+    pushTaskStarted(mock, "task-a", "tool-1");
+    pushResult(mock, "u-result");
+    await turn;
+
+    const waitPromise = session.awaitBackgroundTaskSettlement(10_000);
+    pushTaskNotification(mock, "task-a", "stopped");
+
+    const outcome = await waitPromise;
+    expect(outcome.timedOut).toBe(false);
+    expect(outcome.settledTaskIds).toEqual(["task-a"]);
+
+    session.close();
+  });
+
+  it("close() resolves a pending waiter rather than leaving it hanging", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    const turn = session.sendPrompt("Run the build in the background", emit);
+    pushTaskStarted(mock, "task-a", "tool-1");
+    pushResult(mock, "u-result");
+    await turn;
+
+    const waitPromise = session.awaitBackgroundTaskSettlement(10_000);
+
+    // Subprocess dies mid-wait — the waiter must resolve, not hang.
+    session.close();
+
+    const outcome = await waitPromise;
+    expect(outcome.timedOut).toBe(false);
+    expect(outcome.settledTaskIds).toEqual([]);
+  });
+
+  it("resolves a pending waiter promptly with timedOut: false on a pump-internal death (2.2 fold-in)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    // Complete a caller turn that leaves a waitable task in flight.
+    const turn = session.sendPrompt("Run the build in the background", emit);
+    pushTaskStarted(mock, "task-a", "tool-1");
+    pushResult(mock, "u-result");
+    await turn;
+
+    expect(getWaitableInFlightTaskIds(session.backgroundTaskState)).toEqual([
+      "task-a",
+    ]);
+
+    // A long-bound wait begins, then the pump dies internally (clean exit) —
+    // NOT via close(). The waiter must resolve promptly (timedOut: false),
+    // not hang until the 10s timeout.
+    const waitPromise = session.awaitBackgroundTaskSettlement(10_000);
+    mock.endPump();
+
+    const outcome = await waitPromise;
+    expect(outcome.timedOut).toBe(false);
+    expect(outcome.waitedTaskIds).toEqual(["task-a"]);
+    expect(outcome.settledTaskIds).toEqual([]);
+    expect(session.status).toBe("dead");
+  });
+});
+
+describe("QuerySession idle-TTL suppression during waitable tasks", () => {
+  function pushTaskStarted(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    taskId: string,
+    toolUseId?: string,
+  ) {
+    mock.pushMessage({
+      type: "system",
+      subtype: "task_started",
+      task_id: taskId,
+      ...(toolUseId ? { tool_use_id: toolUseId } : {}),
+      description: "running a build",
+      session_id: "sess-1",
+      uuid: `u-start-${taskId}`,
+    } as unknown as SDKMessage);
+  }
+
+  function pushTaskNotification(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    taskId: string,
+    status: "completed" | "failed" | "stopped",
+  ) {
+    mock.pushMessage({
+      type: "system",
+      subtype: "task_notification",
+      task_id: taskId,
+      status,
+      output_file: "/tmp/out.txt",
+      summary: "done",
+      session_id: "sess-1",
+      uuid: `u-notify-${taskId}`,
+    } as unknown as SDKMessage);
+  }
+
+  it("does not arm the idle close timer while a waitable task is in flight", async () => {
+    vi.useFakeTimers();
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions({ idleTtlMs: 100 }));
+    const emit = vi.fn();
+
+    // Caller turn that starts a waitable task and yields without settling it.
+    const turn = session.sendPrompt("Run the build in the background", emit);
+    pushTaskStarted(mock, "task-a", "tool-1");
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u-result",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn;
+
+    expect(getWaitableInFlightTaskIds(session.backgroundTaskState)).toEqual([
+      "task-a",
+    ]);
+
+    // Advance well past the idle TTL — the timer must not have armed.
+    await vi.advanceTimersByTimeAsync(500);
+    expect(session.status).toBe("alive");
+
+    vi.useRealTimers();
+    session.close();
+  });
+
+  it("arms the idle close timer normally once the last waitable task settles", async () => {
+    vi.useFakeTimers();
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    // externalTurnHandler so the settling task_notification + its result are
+    // accumulated as a virtual turn (whose result re-arms the idle timer).
+    const session = createQuerySession(
+      makeDefaultOptions({
+        idleTtlMs: 100,
+        externalTurnHandler: {
+          emit: vi.fn(),
+          onComplete: vi.fn(),
+        },
+      }),
+    );
+    const emit = vi.fn();
+
+    const turn = session.sendPrompt("Run the build in the background", emit);
+    pushTaskStarted(mock, "task-a", "tool-1");
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u-result",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn;
+
+    // Still alive past the idle window because the waitable task suppresses it.
+    await vi.advanceTimersByTimeAsync(300);
+    expect(session.status).toBe("alive");
+
+    // The settlement arrives as its own virtual turn (result re-arms the timer).
+    pushTaskNotification(mock, "task-a", "completed");
+    await vi.advanceTimersByTimeAsync(0);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u-settle-result",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(getWaitableInFlightTaskIds(session.backgroundTaskState)).toEqual([]);
+
+    // Now the idle timer behaves normally and closes the session.
+    await vi.advanceTimersByTimeAsync(150);
+    expect(session.status).toBe("dead");
+
+    vi.useRealTimers();
   });
 });

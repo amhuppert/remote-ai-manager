@@ -2544,6 +2544,73 @@ describe("executePromptForMachine", () => {
   });
 
   // ---------------------------------------------------------------
+  // Background-task wait threading (Task 4.1). The opt-in flag must
+  // flow ExecutePromptInput → ConversationBackendTurnInput, and the
+  // backgroundWait summary must flow the turn result → PromptActorResult.
+  // Uses the real executeAgentCall facade so the full down/up path runs
+  // through production code rather than a mock.
+  // ---------------------------------------------------------------
+  it("threads waitForBackgroundTasks down to the turn input and the backgroundWait summary back up", async () => {
+    const capturedTurnInput: { value: ConversationBackendTurnInput | null } = {
+      value: null,
+    };
+    const backgroundWait = {
+      waitedTaskIds: ["task-a"],
+      settledTaskIds: ["task-a"],
+      timedOut: false,
+      durationMs: 1234,
+    };
+    mockSendTurn.mockImplementation(
+      async (turnInput: ConversationBackendTurnInput) => {
+        capturedTurnInput.value = turnInput;
+        return { ...defaultTurnResult, backgroundWait };
+      },
+    );
+
+    const input = makeExecutePromptInput({ waitForBackgroundTasks: true });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    const result = await executePromptForMachine(input);
+
+    expect(capturedTurnInput.value?.waitForBackgroundTasks).toBe(true);
+    expect(result.backgroundWait).toEqual(backgroundWait);
+  });
+
+  it("leaves waitForBackgroundTasks unset and omits backgroundWait for a non-opted-in turn", async () => {
+    const capturedTurnInput: { value: ConversationBackendTurnInput | null } = {
+      value: null,
+    };
+    mockSendTurn.mockImplementation(
+      async (turnInput: ConversationBackendTurnInput) => {
+        capturedTurnInput.value = turnInput;
+        return { ...defaultTurnResult };
+      },
+    );
+
+    const input = makeExecutePromptInput();
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    const result = await executePromptForMachine(input);
+
+    expect(capturedTurnInput.value?.waitForBackgroundTasks).toBeUndefined();
+    expect(result.backgroundWait).toBeUndefined();
+  });
+
+  // ---------------------------------------------------------------
   // Image flow: server-side cumulative numbering + persisted paths.
   // ---------------------------------------------------------------
   describe("image attachment flow", () => {

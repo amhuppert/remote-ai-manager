@@ -59,6 +59,24 @@ export type ConversationBackendEvent =
       result: ConversationBackendTurnResult;
     };
 
+/**
+ * Backend-agnostic summary of a bounded wait the turn-execution path performed
+ * for in-flight background tasks before reporting the turn complete. Present on
+ * a turn result only when a wait actually occurred. Structurally identical to
+ * the claude-specific `BackgroundWaitOutcome`, kept independent here so this
+ * shared file does not depend on a backend implementation.
+ */
+export interface BackgroundWaitSummary {
+  /** Waitable in-flight task ids captured when the wait began. */
+  waitedTaskIds: string[];
+  /** The `waitedTaskIds` that had settled by the time the wait resolved. */
+  settledTaskIds: string[];
+  /** True when the hard maximum wait duration elapsed before settlement. */
+  timedOut: boolean;
+  /** Wall-clock duration of the wait. */
+  durationMs: number;
+}
+
 export interface ConversationBackendTurnInput {
   promptText: string;
   imageRefs: readonly ConversationImageRef[];
@@ -70,6 +88,19 @@ export interface ConversationBackendTurnInput {
   signal: AbortSignal;
   onEvent(event: ConversationBackendEvent): Promise<void> | void;
   syntheticForkSeed?: string | null;
+  /**
+   * Opt-in: hold this turn open after the agent yields until its in-flight
+   * waitable background tasks settle (or the wait times out). Set only by the
+   * graph-workflow implementer turn; every other turn (including interactive)
+   * leaves it unset so behavior is unchanged. Backends without background-task
+   * lifecycle signals ignore it.
+   */
+  waitForBackgroundTasks?: boolean;
+  /**
+   * Hard maximum wait duration in ms applied when `waitForBackgroundTasks` is
+   * set. Falls back to the backend's default when omitted.
+   */
+  backgroundTaskWaitTimeoutMs?: number;
 }
 
 export interface ConversationBackendTurnResult {
@@ -83,6 +114,12 @@ export interface ConversationBackendTurnResult {
   structuredOutput?: unknown;
   aborted: boolean;
   error: string | null;
+  /**
+   * Summary of the bounded background-task wait this turn performed. Present
+   * only when a wait actually occurred (the turn opted in and waitable tasks
+   * were in flight); absent for every other turn.
+   */
+  backgroundWait?: BackgroundWaitSummary;
 }
 
 export interface ConversationQueuedUserInput {

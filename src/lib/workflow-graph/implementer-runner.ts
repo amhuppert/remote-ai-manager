@@ -8,6 +8,7 @@ import type {
   AgentBackendId,
   AgentSessionRef,
 } from "@/lib/agent-backends/types";
+import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import type { SessionState } from "@/lib/sessions/schemas";
@@ -47,6 +48,7 @@ interface ExecutePromptStreamFn {
       backend?: AgentBackendId;
       tooling?: { portableMcp?: PortableMcpConfig };
       executionTarget?: ExecutionTarget;
+      waitForBackgroundTasks?: boolean;
     },
   ): Promise<PromptStreamResult>;
 }
@@ -88,6 +90,7 @@ export function createGraphWorkflowImplementerRunner(
     contextTokens: number | null;
     contextWindowMax: number | null;
     sessionRef: AgentSessionRef | null;
+    backgroundWait?: BackgroundWaitSummary;
   }> {
     logger.info("graph-workflow.implementer.turn_started", {
       sessionName: input.session.sessionName,
@@ -109,6 +112,7 @@ export function createGraphWorkflowImplementerRunner(
       effort: string;
       tooling: { portableMcp: PortableMcpConfig };
       executionTarget?: ExecutionTarget;
+      waitForBackgroundTasks: boolean;
     } = {
       autonomous: true,
       backend: input.backend,
@@ -116,6 +120,9 @@ export function createGraphWorkflowImplementerRunner(
       tooling: {
         portableMcp: input.toolServer as PortableMcpConfig,
       },
+      // Deterministically opt this implementer turn into holding open for
+      // in-flight waitable background tasks. No agent involvement (Req 6.3).
+      waitForBackgroundTasks: true,
     };
     if (input.executionTarget !== undefined) {
       promptOptions.executionTarget = input.executionTarget;
@@ -183,6 +190,9 @@ export function createGraphWorkflowImplementerRunner(
       contextTokens: result.contextTokens,
       contextWindowMax: result.contextWindowMax,
       sessionRef: conversation?.backendRef ?? null,
+      ...(result.backgroundWait !== undefined
+        ? { backgroundWait: result.backgroundWait }
+        : {}),
     };
   }
 

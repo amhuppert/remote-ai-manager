@@ -1,8 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowAgentSessionState,
 } from "@/lib/workflows/schemas";
+import {
+  _resetRegistryForTesting,
+  registerExecutionLogger,
+  type ExecutionLogger,
+} from "@/lib/workflow-graph/execution-logger";
+import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
 import {
   createResolvedWorkflowDefinition,
   createWorkflowExecution,
@@ -4102,5 +4108,388 @@ describe("iteration failure with partial turn progress", () => {
     if (caught instanceof Error) {
       expect(caught.message).toContain("QuerySession is dead");
     }
+  });
+});
+
+// -- background-task wait lifecycle logging + accounting (task 4.2) ------------
+
+describe("background-task wait lifecycle (task 4.2)", () => {
+  type IterationLoggerCall = {
+    event: string;
+    data: Record<string, unknown> | undefined;
+  };
+
+  function createCapturingExecutionLogger(executionId: string): {
+    logger: ExecutionLogger;
+    iterationCalls: IterationLoggerCall[];
+  } {
+    const iterationCalls: IterationLoggerCall[] = [];
+    const logger: ExecutionLogger = {
+      executionId,
+      logDir: "/tmp/test-bg-wait",
+      writeManifest() {},
+      lifecycle() {},
+      iteration(_contextId, event, data) {
+        iterationCalls.push({ event, data });
+      },
+      task() {},
+      validation() {},
+      writePrompt() {},
+      writeValidatorResponse() {},
+      decision() {},
+    };
+    return { logger, iterationCalls };
+  }
+
+  afterEach(() => {
+    _resetRegistryForTesting();
+  });
+
+  function backgroundWaitSummary(
+    overrides: Partial<BackgroundWaitSummary> = {},
+  ): BackgroundWaitSummary {
+    return {
+      waitedTaskIds: ["bg-task-1"],
+      settledTaskIds: ["bg-task-1"],
+      timedOut: false,
+      durationMs: 1234,
+      ...overrides,
+    };
+  }
+
+  it("emits background_wait_started and background_wait_resolved entries when a non-timed-out wait occurred", async () => {
+    const repository = createRepository(
+      createExecutionWithPlanTasks({
+        "task-plan-1": "pending",
+        "task-plan-2": "pending",
+      }),
+    );
+    const { logger, iterationCalls } =
+      createCapturingExecutionLogger("execution-1");
+    registerExecutionLogger(logger);
+
+    const runAgentIteration = vi.fn(async () => {
+      const current = structuredClone(repository.read());
+      current.taskStates["task-plan-1"] = {
+        ...current.taskStates["task-plan-1"]!,
+        status: "completed",
+        summary: "Done",
+        completedAt: "2026-03-27T16:02:00.000Z",
+      };
+      current.contextStates["context-plan"] = {
+        ...current.contextStates["context-plan"]!,
+        completedTaskCount: 1,
+      };
+      await repository.mutateActive("/repo", "session-1", () => current);
+      return {
+        conversationId: "conversation-1",
+        contextTokens: null,
+        contextWindowMax: null,
+        backgroundWait: backgroundWaitSummary({
+          waitedTaskIds: ["bg-task-1", "bg-task-2"],
+          settledTaskIds: ["bg-task-1", "bg-task-2"],
+          timedOut: false,
+          durationMs: 4242,
+        }),
+      };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation: vi.fn(async () => ({ id: "conversation-1" })),
+      createToolServer: vi.fn(() => ({ server: { id: "tool-server" } })),
+      runAgentIteration,
+      now() {
+        return "2026-03-27T16:00:00.000Z";
+      },
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    const started = iterationCalls.find(
+      (call) => call.event === "iteration.background_wait_started",
+    );
+    expect(started).toBeDefined();
+    expect(started?.data).toMatchObject({
+      waitedTaskIds: ["bg-task-1", "bg-task-2"],
+    });
+
+    const resolved = iterationCalls.find(
+      (call) => call.event === "iteration.background_wait_resolved",
+    );
+    expect(resolved).toBeDefined();
+    expect(resolved?.data).toMatchObject({
+      settledTaskIds: ["bg-task-1", "bg-task-2"],
+      durationMs: 4242,
+    });
+
+    expect(
+      iterationCalls.some(
+        (call) => call.event === "iteration.background_wait_timed_out",
+      ),
+    ).toBe(false);
+  });
+
+  it("emits background_wait_started and background_wait_timed_out with still-in-flight ids when the wait timed out", async () => {
+    const repository = createRepository(
+      createExecutionWithPlanTasks({
+        "task-plan-1": "pending",
+        "task-plan-2": "pending",
+      }),
+    );
+    const { logger, iterationCalls } =
+      createCapturingExecutionLogger("execution-1");
+    registerExecutionLogger(logger);
+
+    const runAgentIteration = vi.fn(async () => {
+      const current = structuredClone(repository.read());
+      current.taskStates["task-plan-1"] = {
+        ...current.taskStates["task-plan-1"]!,
+        status: "completed",
+        summary: "Done",
+        completedAt: "2026-03-27T16:02:00.000Z",
+      };
+      current.contextStates["context-plan"] = {
+        ...current.contextStates["context-plan"]!,
+        completedTaskCount: 1,
+      };
+      await repository.mutateActive("/repo", "session-1", () => current);
+      return {
+        conversationId: "conversation-1",
+        contextTokens: null,
+        contextWindowMax: null,
+        backgroundWait: backgroundWaitSummary({
+          waitedTaskIds: ["bg-task-1", "bg-task-2"],
+          settledTaskIds: ["bg-task-1"],
+          timedOut: true,
+          durationMs: 60000,
+        }),
+      };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation: vi.fn(async () => ({ id: "conversation-1" })),
+      createToolServer: vi.fn(() => ({ server: { id: "tool-server" } })),
+      runAgentIteration,
+      now() {
+        return "2026-03-27T16:00:00.000Z";
+      },
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    const started = iterationCalls.find(
+      (call) => call.event === "iteration.background_wait_started",
+    );
+    expect(started).toBeDefined();
+    expect(started?.data).toMatchObject({
+      waitedTaskIds: ["bg-task-1", "bg-task-2"],
+    });
+
+    const timedOut = iterationCalls.find(
+      (call) => call.event === "iteration.background_wait_timed_out",
+    );
+    expect(timedOut).toBeDefined();
+    // Still-in-flight ids are waitedTaskIds minus settledTaskIds.
+    expect(timedOut?.data).toMatchObject({
+      stillInFlightTaskIds: ["bg-task-2"],
+      durationMs: 60000,
+    });
+
+    expect(
+      iterationCalls.some(
+        (call) => call.event === "iteration.background_wait_resolved",
+      ),
+    ).toBe(false);
+  });
+
+  it("does not emit any background_wait entries when no wait occurred", async () => {
+    const repository = createRepository(
+      createExecutionWithPlanTasks({
+        "task-plan-1": "pending",
+        "task-plan-2": "pending",
+      }),
+    );
+    const { logger, iterationCalls } =
+      createCapturingExecutionLogger("execution-1");
+    registerExecutionLogger(logger);
+
+    const runAgentIteration = vi.fn(async () => {
+      const current = structuredClone(repository.read());
+      current.taskStates["task-plan-1"] = {
+        ...current.taskStates["task-plan-1"]!,
+        status: "completed",
+        summary: "Done",
+        completedAt: "2026-03-27T16:02:00.000Z",
+      };
+      current.contextStates["context-plan"] = {
+        ...current.contextStates["context-plan"]!,
+        completedTaskCount: 1,
+      };
+      await repository.mutateActive("/repo", "session-1", () => current);
+      return {
+        conversationId: "conversation-1",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation: vi.fn(async () => ({ id: "conversation-1" })),
+      createToolServer: vi.fn(() => ({ server: { id: "tool-server" } })),
+      runAgentIteration,
+      now() {
+        return "2026-03-27T16:00:00.000Z";
+      },
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(
+      iterationCalls.some((call) =>
+        call.event.startsWith("iteration.background_wait"),
+      ),
+    ).toBe(false);
+  });
+
+  it("consumes exactly one iteration and sends no extra follow-up turn because a wait occurred (5.1)", async () => {
+    // All tasks complete on the first turn, so the follow-up loop has nothing
+    // to drive. A wait happening inside that single turn must not cause an
+    // additional turn nor an extra iteration to be counted.
+    const repository = createRepository(
+      createExecutionWithPlanTasks({
+        "task-plan-1": "pending",
+        "task-plan-2": "pending",
+      }),
+    );
+
+    const runAgentIteration = vi.fn(async () => {
+      const current = structuredClone(repository.read());
+      current.taskStates["task-plan-1"] = {
+        ...current.taskStates["task-plan-1"]!,
+        status: "completed",
+        summary: "Done",
+        completedAt: "2026-03-27T16:02:00.000Z",
+      };
+      current.taskStates["task-plan-2"] = {
+        ...current.taskStates["task-plan-2"]!,
+        status: "completed",
+        summary: "Done",
+        completedAt: "2026-03-27T16:02:30.000Z",
+      };
+      current.contextStates["context-plan"] = {
+        ...current.contextStates["context-plan"]!,
+        completedTaskCount: 2,
+      };
+      await repository.mutateActive("/repo", "session-1", () => current);
+      return {
+        conversationId: "conversation-1",
+        contextTokens: null,
+        contextWindowMax: null,
+        backgroundWait: backgroundWaitSummary(),
+      };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation: vi.fn(async () => ({ id: "conversation-1" })),
+      createToolServer: vi.fn(() => ({ server: { id: "tool-server" } })),
+      runAgentIteration,
+      now() {
+        return "2026-03-27T16:00:00.000Z";
+      },
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    // The wait lives inside the single agent turn — no extra turn dispatched.
+    expect(runAgentIteration).toHaveBeenCalledOnce();
+    // iterationCount incremented exactly once (seeded), not bumped by the wait.
+    expect(result.execution.contextStates["context-plan"]?.iterationCount).toBe(
+      1,
+    );
+  });
+
+  it("does not increase the consecutive-failure count or trip the circuit breaker as a result of the wait (5.2/5.3)", async () => {
+    const repository = createRepository(
+      createExecutionWithPlanTasks({
+        "task-plan-1": "pending",
+        "task-plan-2": "pending",
+      }),
+    );
+
+    const runAgentIteration = vi.fn(async () => {
+      const current = structuredClone(repository.read());
+      current.taskStates["task-plan-1"] = {
+        ...current.taskStates["task-plan-1"]!,
+        status: "completed",
+        summary: "Done",
+        completedAt: "2026-03-27T16:02:00.000Z",
+      };
+      current.taskStates["task-plan-2"] = {
+        ...current.taskStates["task-plan-2"]!,
+        status: "completed",
+        summary: "Done",
+        completedAt: "2026-03-27T16:02:30.000Z",
+      };
+      current.contextStates["context-plan"] = {
+        ...current.contextStates["context-plan"]!,
+        completedTaskCount: 2,
+      };
+      await repository.mutateActive("/repo", "session-1", () => current);
+      return {
+        conversationId: "conversation-1",
+        contextTokens: null,
+        contextWindowMax: null,
+        backgroundWait: backgroundWaitSummary({ timedOut: true }),
+      };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation: vi.fn(async () => ({ id: "conversation-1" })),
+      createToolServer: vi.fn(() => ({ server: { id: "tool-server" } })),
+      runAgentIteration,
+      now() {
+        return "2026-03-27T16:00:00.000Z";
+      },
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    // The wait (even a timed-out one) is not a failure: counter stays at 0 and
+    // the context is not halted.
+    expect(
+      result.execution.contextStates["context-plan"]?.consecutiveFailureCount,
+    ).toBe(0);
+    expect(result.execution.status).toBe("running");
+    expect(result.execution.haltReason ?? null).toBeNull();
   });
 });

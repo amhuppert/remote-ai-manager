@@ -1499,3 +1499,276 @@ describe("ClaudeConversationRuntime — rebuildSessionToolsInstance", () => {
     expect(first.closeSpy).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("ClaudeConversationRuntime — background-task wait barrier (sendTurn)", () => {
+  function pushTaskStarted(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    taskId: string,
+  ) {
+    mock.pushMessage({
+      type: "system",
+      subtype: "task_started",
+      task_id: taskId,
+      tool_use_id: `tool-${taskId}`,
+      description: "running a build",
+      session_id: "sess-1",
+      uuid: `u-start-${taskId}`,
+    } as unknown as SDKMessage);
+  }
+
+  function pushTaskNotification(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    taskId: string,
+    status: "completed" | "failed" | "stopped",
+  ) {
+    mock.pushMessage({
+      type: "system",
+      subtype: "task_notification",
+      task_id: taskId,
+      status,
+      output_file: "/tmp/out.txt",
+      summary: "done",
+      session_id: "sess-1",
+      uuid: `u-notify-${taskId}`,
+    } as unknown as SDKMessage);
+  }
+
+  function pushResult(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    uuid: string,
+  ) {
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid,
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+  }
+
+  function pushAssistantToolUse(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    toolUseId: string,
+    toolName: string,
+  ) {
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-1",
+      uuid: `u-asst-${toolUseId}`,
+      message: {
+        content: [
+          { type: "tool_use", id: toolUseId, name: toolName, input: {} },
+        ],
+      },
+    } as unknown as SDKMessage);
+  }
+
+  it("holds the turn open until a waitable task settles, then carries the wait summary (3.1, 3.2, 3.3, 3.4)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-wait-hold",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "run the build in the background",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: true,
+      waitForBackgroundTasks: true,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+
+    // Agent starts a waitable background task, then yields its caller turn.
+    pushTaskStarted(mock, "task-a");
+    pushResult(mock, "u-caller-result");
+
+    // The caller turn yielded, but a waitable task is still in flight — the
+    // wait barrier must keep sendTurn pending.
+    let settled = false;
+    void turnPromise.then(() => {
+      settled = true;
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(settled).toBe(false);
+
+    // The background task settles (arrives as its own virtual turn).
+    pushTaskNotification(mock, "task-a", "completed");
+
+    const result = await turnPromise;
+    expect(result.backgroundWait).toBeDefined();
+    expect(result.backgroundWait!.waitedTaskIds).toEqual(["task-a"]);
+    expect(result.backgroundWait!.settledTaskIds).toEqual(["task-a"]);
+    expect(result.backgroundWait!.timedOut).toBe(false);
+    expect(result.backgroundWait!.durationMs).toBeGreaterThanOrEqual(0);
+
+    runtime.close();
+  });
+
+  it("completes immediately with no summary when no waitable tasks are in flight (6.1)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-wait-none",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "do something synchronous",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: true,
+      waitForBackgroundTasks: true,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+
+    // Agent yields with no background task ever started.
+    pushResult(mock, "u-caller-result");
+
+    const result = await turnPromise;
+    expect(result.backgroundWait).toBeUndefined();
+
+    runtime.close();
+  });
+
+  it("completes immediately for a Monitor-originated watch and carries no summary (Req 2.2)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-wait-monitor",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "watch the dev server",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: true,
+      waitForBackgroundTasks: true,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+
+    // The agent invokes Monitor (long-lived watch), which starts a task, then
+    // yields. A Monitor watch is excluded, so the wait barrier must not hold.
+    pushAssistantToolUse(mock, "tool-mon", "Monitor");
+    mock.pushMessage({
+      type: "system",
+      subtype: "task_started",
+      task_id: "watch-a",
+      tool_use_id: "tool-mon",
+      description: "watching the dev server",
+      session_id: "sess-1",
+      uuid: "u-start-watch-a",
+    } as unknown as SDKMessage);
+    pushResult(mock, "u-caller-result");
+
+    const result = await turnPromise;
+    expect(result.backgroundWait).toBeUndefined();
+
+    runtime.close();
+  });
+
+  it("does not wait when the flag is unset even with a waitable task in flight (6.2)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-wait-flag-off",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    // No waitForBackgroundTasks flag — interactive/default behavior.
+    const turnPromise = runtime.sendTurn({
+      promptText: "run the build in the background",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+
+    pushTaskStarted(mock, "task-a");
+    pushResult(mock, "u-caller-result");
+
+    // Even though a waitable task is in flight, the turn must resolve without
+    // awaiting settlement because the opt-in flag is off.
+    const result = await turnPromise;
+    expect(result.backgroundWait).toBeUndefined();
+
+    runtime.close();
+  });
+
+  it("resolves with timedOut: true when a waitable task never settles within the bound (4.1, 4.2)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-wait-timeout",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "run the build in the background",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: true,
+      waitForBackgroundTasks: true,
+      backgroundTaskWaitTimeoutMs: 20,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+
+    pushTaskStarted(mock, "task-a");
+    pushResult(mock, "u-caller-result");
+
+    // Never settle the task — only the short timeout can end this wait.
+    const result = await turnPromise;
+    expect(result.backgroundWait).toBeDefined();
+    expect(result.backgroundWait!.timedOut).toBe(true);
+    expect(result.backgroundWait!.waitedTaskIds).toEqual(["task-a"]);
+    expect(result.backgroundWait!.settledTaskIds).toEqual([]);
+
+    runtime.close();
+  });
+});

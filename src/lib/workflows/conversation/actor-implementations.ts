@@ -891,6 +891,7 @@ interface DispatchTurnViaAgentCallInput {
   modelId: string | null | undefined;
   reasoningEffort: string | undefined;
   autonomous: boolean;
+  waitForBackgroundTasks: boolean;
   outputFormat: ConversationBackendTurnInput["outputFormat"];
   onEvent: ConversationBackendTurnInput["onEvent"];
   syntheticForkSeed: ConversationBackendTurnInput["syntheticForkSeed"];
@@ -990,6 +991,9 @@ async function dispatchTurnViaAgentCall(
           ? { reasoningEffort: input.reasoningEffort }
           : {}),
         autonomous: input.autonomous,
+        ...(input.waitForBackgroundTasks
+          ? { waitForBackgroundTasks: true }
+          : {}),
         sessionInstructions: [],
         ...(input.imageRefs !== undefined
           ? { imageRefs: input.imageRefs }
@@ -1701,6 +1705,7 @@ export async function executePromptForMachine(
       modelId: effectiveModel,
       reasoningEffort: effectiveEffort,
       autonomous: input.autonomous ?? false,
+      waitForBackgroundTasks: input.waitForBackgroundTasks ?? false,
       outputFormat: input.outputFormat,
       onEvent,
       syntheticForkSeed,
@@ -1859,6 +1864,9 @@ export async function executePromptForMachine(
     structuredOutput: effectiveStructuredOutput,
     aborted: turnResult?.aborted ?? false,
     error: effectiveError,
+    ...(turnResult?.backgroundWait !== undefined
+      ? { backgroundWait: turnResult.backgroundWait }
+      : {}),
   };
 
   // Emit done on the SSE stream

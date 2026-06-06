@@ -277,6 +277,116 @@ describe("graph workflow implementer runner", () => {
     );
   });
 
+  it("requests background-task waiting deterministically on every implementer turn", async () => {
+    const executePromptStream = vi.fn(async () => ({
+      conversationId: "conversation-1",
+      contextTokens: null,
+      contextWindowMax: null,
+    }));
+    const getConversation = vi.fn(async () => makeConversation());
+
+    const runner = createGraphWorkflowImplementerRunner({
+      executePromptStream,
+      getConversation,
+    });
+
+    await runner.runIteration({
+      projectPath: "/repo",
+      session: makeSession(),
+      prompt: "Inspect the codebase",
+      conversationId: "conversation-1",
+      contextId: "context-plan",
+      backend: "claude",
+      model: "opus",
+      reasoningEffort: "high",
+      toolServer: { servers: [] },
+    });
+
+    expect(executePromptStream).toHaveBeenCalledWith(
+      "/repo",
+      expect.objectContaining({ sessionName: "session-1" }),
+      "Inspect the codebase",
+      expect.any(Function),
+      "conversation-1",
+      "opus",
+      undefined,
+      expect.objectContaining({ waitForBackgroundTasks: true }),
+    );
+  });
+
+  it("surfaces the backgroundWait summary in the return value when a wait occurred", async () => {
+    const backgroundWait = {
+      waitedTaskIds: ["task-a"],
+      settledTaskIds: ["task-a"],
+      timedOut: false,
+      durationMs: 4200,
+    };
+    const executePromptStream = vi.fn(async () => ({
+      conversationId: "conversation-1",
+      contextTokens: 100,
+      contextWindowMax: 200_000,
+      backgroundWait,
+    }));
+    const getConversation = vi.fn(async () =>
+      makeConversation({
+        backendRef: { backend: "claude" as const, sessionId: "sdk-session-1" },
+      }),
+    );
+
+    const runner = createGraphWorkflowImplementerRunner({
+      executePromptStream,
+      getConversation,
+    });
+
+    const result = await runner.runIteration({
+      projectPath: "/repo",
+      session: makeSession(),
+      prompt: "Implement feature",
+      conversationId: "conversation-1",
+      contextId: "context-plan",
+      backend: "claude",
+      model: "opus",
+      reasoningEffort: "high",
+      toolServer: { servers: [] },
+    });
+
+    expect(result).toEqual({
+      conversationId: "conversation-1",
+      contextTokens: 100,
+      contextWindowMax: 200_000,
+      sessionRef: { backend: "claude", sessionId: "sdk-session-1" },
+      backgroundWait,
+    });
+  });
+
+  it("omits backgroundWait from the return value when no wait occurred", async () => {
+    const executePromptStream = vi.fn(async () => ({
+      conversationId: "conversation-1",
+      contextTokens: null,
+      contextWindowMax: null,
+    }));
+    const getConversation = vi.fn(async () => makeConversation());
+
+    const runner = createGraphWorkflowImplementerRunner({
+      executePromptStream,
+      getConversation,
+    });
+
+    const result = await runner.runIteration({
+      projectPath: "/repo",
+      session: makeSession(),
+      prompt: "Implement feature",
+      conversationId: "conversation-1",
+      contextId: "context-plan",
+      backend: "claude",
+      model: "opus",
+      reasoningEffort: "high",
+      toolServer: { servers: [] },
+    });
+
+    expect(result).not.toHaveProperty("backgroundWait");
+  });
+
   it("throws when prompt execution returns an SDK error", async () => {
     const executePromptStream = vi.fn(async () => ({
       conversationId: "conversation-1",

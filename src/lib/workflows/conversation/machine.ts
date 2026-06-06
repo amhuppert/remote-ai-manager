@@ -239,6 +239,9 @@ export const conversationMachine = setup({
               startedAt: new Date().toISOString(),
               streamId: event.streamId,
               outputFormat: event.outputFormat,
+              ...(event.waitForBackgroundTasks
+                ? { waitForBackgroundTasks: true }
+                : {}),
             }),
             lastError: null,
           }),
@@ -467,6 +470,9 @@ export const conversationMachine = setup({
                 autonomous: activeTurn.autonomous,
                 debugMode: context.debugMode,
                 outputFormat,
+                ...(activeTurn.waitForBackgroundTasks
+                  ? { waitForBackgroundTasks: true }
+                  : {}),
               };
             },
             onDone: {
@@ -951,6 +957,9 @@ export const conversationMachine = setup({
               startedAt: new Date().toISOString(),
               streamId: event.streamId,
               outputFormat: event.outputFormat,
+              ...(event.waitForBackgroundTasks
+                ? { waitForBackgroundTasks: true }
+                : {}),
             }),
             lastError: null,
           }),

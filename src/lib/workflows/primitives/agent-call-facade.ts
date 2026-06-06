@@ -52,6 +52,7 @@ export interface ConversationRuntimeResolution {
   modelId?: string;
   reasoningEffort?: string;
   autonomous?: boolean;
+  waitForBackgroundTasks?: boolean;
   sessionInstructions?: string[];
   imageRefs?: readonly ConversationImageRef[];
   onEvent?: (event: ConversationBackendEvent) => Promise<void> | void;
@@ -153,6 +154,9 @@ async function executeConversationTurn(
       : {}),
     ...(resolution.autonomous !== undefined
       ? { autonomous: resolution.autonomous }
+      : {}),
+    ...(resolution.waitForBackgroundTasks !== undefined
+      ? { waitForBackgroundTasks: resolution.waitForBackgroundTasks }
       : {}),
     ...(resolution.sessionInstructions !== undefined
       ? { sessionInstructions: [...resolution.sessionInstructions] }

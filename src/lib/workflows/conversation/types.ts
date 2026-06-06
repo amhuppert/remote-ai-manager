@@ -6,6 +6,7 @@
  */
 
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
+import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
 import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
 import type {
   ConversationStatus,
@@ -50,6 +51,12 @@ export interface ConversationTurnActive {
   startedAt: string | null;
   streamId: string | null;
   outputFormat?: StructuredOutputFormat;
+  /**
+   * Opt-in: hold this turn open until its in-flight waitable background tasks
+   * settle (or the wait times out). Set only by the graph-workflow implementer
+   * runner; unset for every other turn so behavior is unchanged.
+   */
+  waitForBackgroundTasks?: boolean;
 }
 
 /** Single-shot task run: a non-streaming, structured-output execution invoked
@@ -158,6 +165,7 @@ export type ConversationEvent =
       autonomous?: boolean;
       streamId: string;
       outputFormat?: StructuredOutputFormat;
+      waitForBackgroundTasks?: boolean;
     }
   | {
       type: "SUBMIT_TASK_RUN";
@@ -252,6 +260,11 @@ export interface PromptActorResult {
   structuredOutput?: unknown;
   aborted: boolean;
   error: string | null;
+  /**
+   * Summary of the bounded background-task wait this turn performed. Present
+   * only when a wait actually occurred; absent for every other turn.
+   */
+  backgroundWait?: BackgroundWaitSummary;
 }
 
 /** Input for the executePrompt actor. */
@@ -273,6 +286,12 @@ export interface ExecutePromptInput {
   autonomous: boolean;
   debugMode: ConversationContext["debugMode"];
   outputFormat?: StructuredOutputFormat;
+  /**
+   * Opt-in: hold this turn open until its in-flight waitable background tasks
+   * settle (or the wait times out). Forwarded to the backend turn input. Set
+   * only by the graph-workflow implementer runner.
+   */
+  waitForBackgroundTasks?: boolean;
 }
 
 /** Input for the prepareTurn actor (resource acquisition). */
