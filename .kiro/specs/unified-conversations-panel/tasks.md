@@ -161,15 +161,15 @@
   - Observable completion: the helper tests from 9.1 pass and existing session helper tests remain green.
   - _Requirements: 9.1, 9.2, 9.3, 9.4, 10.1, 10.2, 10.3, 10.4, 11.1, 11.2, 11.3, 12.1, 12.3, 13.4_
 
-- [ ] 10. Scope-aware row mutations
-- [ ] 10.1 Add failing tests for project rename/archive row actions
+- [x] 10. Scope-aware row mutations
+- [x] 10.1 Add failing tests for project rename/archive row actions
   - Add tests that a project row rename uses project-conversation context and does not require a session name.
   - Add tests that a project row archive removes or refreshes the row through active/project invalidation while a session row still uses session invalidation.
   - Add tests that mutation failures leave the row recoverable through cache restoration or refetch.
   - Observable completion: the tests fail before mutation support because the existing generic row actions require `sessionName`.
   - _Requirements: 13.1, 13.2, 13.3, 13.4_
 
-- [ ] 10.2 Implement scope-aware active-row rename/archive mutations
+- [x] 10.2 Implement scope-aware active-row rename/archive mutations
   - Route session row rename/archive through the existing session conversation endpoints.
   - Route project row rename/archive through the project-conversation endpoints.
   - Invalidate the active conversations query after either scope changes.

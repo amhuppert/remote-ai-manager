@@ -4,6 +4,7 @@ import {
   type QueryClient,
 } from "@tanstack/react-query";
 import { conversationKeys } from "./query-keys";
+import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import {
   conversationStateSchema,
@@ -61,6 +62,119 @@ function restoreActiveCache(
   if (previous !== undefined) {
     client.setQueryData(conversationKeys.active(), previous);
   }
+}
+
+type GenericSessionMutationScope = {
+  scope?: "session";
+  projectName: string;
+  sessionName: string;
+  conversationId: string;
+};
+
+type GenericProjectMutationScope = {
+  scope: "project";
+  projectName: string;
+  conversationId: string;
+};
+
+type GenericSessionRenameConversationVariables = GenericSessionMutationScope & {
+  name: string;
+};
+
+type GenericProjectRenameConversationVariables = GenericProjectMutationScope & {
+  name: string;
+};
+
+type GenericRenameConversationVariables =
+  | GenericSessionRenameConversationVariables
+  | GenericProjectRenameConversationVariables;
+
+type GenericSessionArchiveConversationVariables = GenericSessionMutationScope & {
+  archived: boolean;
+};
+
+type GenericProjectArchiveConversationVariables = GenericProjectMutationScope & {
+  archived: boolean;
+};
+
+type GenericArchiveConversationVariables =
+  | GenericSessionArchiveConversationVariables
+  | GenericProjectArchiveConversationVariables;
+
+type GenericConversationMutationVariables =
+  | GenericRenameConversationVariables
+  | GenericArchiveConversationVariables;
+
+type GenericSessionMutationContext = {
+  scope: "session";
+  listKey: ReturnType<typeof conversationKeys.list>;
+  previousList: ConversationState[] | undefined;
+  previousActive: ActiveConversationsResponse | undefined;
+};
+
+type GenericProjectMutationContext = {
+  scope: "project";
+  projectListKey: ReturnType<typeof projectConversationKeys.list>;
+  openCountKey: ReturnType<typeof projectConversationKeys.openCount>;
+  previousActive: ActiveConversationsResponse | undefined;
+};
+
+type GenericConversationMutationContext =
+  | GenericSessionMutationContext
+  | GenericProjectMutationContext;
+
+function isProjectMutationScope(
+  variables: GenericConversationMutationVariables,
+): variables is
+  | GenericProjectRenameConversationVariables
+  | GenericProjectArchiveConversationVariables {
+  return variables.scope === "project";
+}
+
+function genericConversationMutationPath(
+  variables: GenericConversationMutationVariables,
+  action: "archive" | "rename",
+): string {
+  const projectName = encodeURIComponent(variables.projectName);
+  const conversationId = encodeURIComponent(variables.conversationId);
+  if (isProjectMutationScope(variables)) {
+    return `/api/projects/${projectName}/conversations/${conversationId}/${action}`;
+  }
+
+  return `/api/projects/${projectName}/sessions/${encodeURIComponent(variables.sessionName)}/conversations/${conversationId}/${action}`;
+}
+
+function restoreGenericConversationMutationCache(
+  client: QueryClient,
+  context: GenericConversationMutationContext | undefined,
+): void {
+  if (context?.scope === "session" && context.previousList !== undefined) {
+    client.setQueryData(context.listKey, context.previousList);
+  }
+  restoreActiveCache(client, context?.previousActive);
+}
+
+function invalidateGenericConversationMutationQueries(
+  client: QueryClient,
+  variables: GenericConversationMutationVariables,
+): void {
+  void client.invalidateQueries({
+    queryKey: conversationKeys.active(),
+  });
+
+  if (isProjectMutationScope(variables)) {
+    void client.invalidateQueries({
+      queryKey: projectConversationKeys.list(variables.projectName),
+    });
+    void client.invalidateQueries({
+      queryKey: projectConversationKeys.openCount(variables.projectName),
+    });
+    return;
+  }
+
+  void client.invalidateQueries({
+    queryKey: conversationKeys.list(variables.projectName, variables.sessionName),
+  });
 }
 
 export function useCreateConversationMutation(
@@ -304,63 +418,67 @@ export function useGenericArchiveConversationMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({
-      projectName,
-      sessionName,
-      conversationId,
-      archived,
-    }: {
-      projectName: string;
-      sessionName: string;
-      conversationId: string;
-      archived: boolean;
-    }) =>
+    mutationFn: (variables: GenericArchiveConversationVariables) =>
       mutationFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/archive`,
+        genericConversationMutationPath(variables, "archive"),
         "archive-conversation",
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ archived }),
+          body: JSON.stringify({ archived: variables.archived }),
         },
       ),
-    onMutate: async ({
-      projectName,
-      sessionName,
-      conversationId,
-      archived,
-    }) => {
-      const listKey = conversationKeys.list(projectName, sessionName);
-      await queryClient.cancelQueries({ queryKey: listKey });
+    onMutate: async (variables): Promise<GenericConversationMutationContext> => {
       await queryClient.cancelQueries({ queryKey: conversationKeys.active() });
+
+      if (isProjectMutationScope(variables)) {
+        const projectListKey = projectConversationKeys.list(
+          variables.projectName,
+        );
+        const openCountKey = projectConversationKeys.openCount(
+          variables.projectName,
+        );
+        await queryClient.cancelQueries({ queryKey: projectListKey });
+        await queryClient.cancelQueries({ queryKey: openCountKey });
+        const previousActive = removeFromActiveCacheIfArchived(
+          queryClient,
+          variables.conversationId,
+          variables.archived,
+        );
+        return {
+          scope: "project",
+          projectListKey,
+          openCountKey,
+          previousActive,
+        };
+      }
+
+      const listKey = conversationKeys.list(
+        variables.projectName,
+        variables.sessionName,
+      );
+      await queryClient.cancelQueries({ queryKey: listKey });
       const previousList =
         queryClient.getQueryData<ConversationState[]>(listKey);
       queryClient.setQueryData<ConversationState[]>(listKey, (old) =>
-        old?.map((c) => (c.id === conversationId ? { ...c, archived } : c)),
+        old?.map((c) =>
+          c.id === variables.conversationId
+            ? { ...c, archived: variables.archived }
+            : c,
+        ),
       );
       const previousActive = removeFromActiveCacheIfArchived(
         queryClient,
-        conversationId,
-        archived,
+        variables.conversationId,
+        variables.archived,
       );
-      return { previousList, previousActive, listKey };
+      return { scope: "session", previousList, previousActive, listKey };
     },
     onError: (_err, _vars, context) => {
-      if (
-        context?.previousList !== undefined &&
-        context.listKey !== undefined
-      ) {
-        queryClient.setQueryData(context.listKey, context.previousList);
-      }
-      restoreActiveCache(queryClient, context?.previousActive);
+      restoreGenericConversationMutationCache(queryClient, context);
     },
-    onSettled: (_data, _err, { projectName, sessionName }) => {
-      void queryClient.invalidateQueries({
-        queryKey: conversationKeys.list(projectName, sessionName),
-      });
-      void queryClient.invalidateQueries({
-        queryKey: conversationKeys.active(),
-      });
+    onSettled: (_data, _err, variables) => {
+      invalidateGenericConversationMutationQueries(queryClient, variables);
     },
   });
 }
@@ -405,58 +523,67 @@ export function useGenericRenameConversationMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({
-      projectName,
-      sessionName,
-      conversationId,
-      name,
-    }: {
-      projectName: string;
-      sessionName: string;
-      conversationId: string;
-      name: string;
-    }) =>
+    mutationFn: (variables: GenericRenameConversationVariables) =>
       mutationFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/rename`,
+        genericConversationMutationPath(variables, "rename"),
         "rename-conversation",
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name }),
+          body: JSON.stringify({ name: variables.name }),
         },
       ),
-    onMutate: async ({ projectName, sessionName, conversationId, name }) => {
-      const listKey = conversationKeys.list(projectName, sessionName);
-      await queryClient.cancelQueries({ queryKey: listKey });
+    onMutate: async (variables): Promise<GenericConversationMutationContext> => {
       await queryClient.cancelQueries({ queryKey: conversationKeys.active() });
+
+      if (isProjectMutationScope(variables)) {
+        const projectListKey = projectConversationKeys.list(
+          variables.projectName,
+        );
+        const openCountKey = projectConversationKeys.openCount(
+          variables.projectName,
+        );
+        await queryClient.cancelQueries({ queryKey: projectListKey });
+        await queryClient.cancelQueries({ queryKey: openCountKey });
+        const previousActive = renameInActiveCache(
+          queryClient,
+          variables.conversationId,
+          variables.name,
+        );
+        return {
+          scope: "project",
+          projectListKey,
+          openCountKey,
+          previousActive,
+        };
+      }
+
+      const listKey = conversationKeys.list(
+        variables.projectName,
+        variables.sessionName,
+      );
+      await queryClient.cancelQueries({ queryKey: listKey });
       const previousList =
         queryClient.getQueryData<ConversationState[]>(listKey);
       queryClient.setQueryData<ConversationState[]>(listKey, (old) =>
-        old?.map((c) => (c.id === conversationId ? { ...c, name } : c)),
+        old?.map((c) =>
+          c.id === variables.conversationId
+            ? { ...c, name: variables.name }
+            : c,
+        ),
       );
       const previousActive = renameInActiveCache(
         queryClient,
-        conversationId,
-        name,
+        variables.conversationId,
+        variables.name,
       );
-      return { previousList, previousActive, listKey };
+      return { scope: "session", previousList, previousActive, listKey };
     },
     onError: (_err, _vars, context) => {
-      if (
-        context?.previousList !== undefined &&
-        context.listKey !== undefined
-      ) {
-        queryClient.setQueryData(context.listKey, context.previousList);
-      }
-      restoreActiveCache(queryClient, context?.previousActive);
+      restoreGenericConversationMutationCache(queryClient, context);
     },
-    onSettled: (_data, _err, { projectName, sessionName }) => {
-      void queryClient.invalidateQueries({
-        queryKey: conversationKeys.list(projectName, sessionName),
-      });
-      void queryClient.invalidateQueries({
-        queryKey: conversationKeys.active(),
-      });
+    onSettled: (_data, _err, variables) => {
+      invalidateGenericConversationMutationQueries(queryClient, variables);
     },
   });
 }

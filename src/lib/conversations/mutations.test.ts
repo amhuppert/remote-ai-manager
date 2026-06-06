@@ -12,9 +12,12 @@ import {
   useGenericArchiveConversationMutation,
 } from "@/lib/conversations/mutations";
 import { conversationKeys } from "@/lib/conversations/query-keys";
+import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type {
+  ActiveConversation,
+  ProjectActiveConversation,
   SessionActiveConversation,
   ActiveConversationsResponse,
 } from "@/lib/active-conversations/schemas";
@@ -46,8 +49,33 @@ function activeConvo(
   };
 }
 
+function activeProjectConvo(
+  overrides: Partial<ProjectActiveConversation> & { id: string },
+): ProjectActiveConversation {
+  return {
+    id: overrides.id,
+    scope: "project",
+    name: overrides.name ?? null,
+    status: overrides.status ?? "new",
+    lastActivityAt: overrides.lastActivityAt ?? "2025-01-01T00:00:00.000Z",
+    projectName: overrides.projectName ?? "p",
+    projectPath: overrides.projectPath ?? "/p",
+    agentBackend: overrides.agentBackend ?? "claude",
+    summary: overrides.summary ?? null,
+    pendingQuestion: overrides.pendingQuestion ?? null,
+    pendingQuestionId: overrides.pendingQuestionId ?? null,
+    pendingQuestions: overrides.pendingQuestions ?? null,
+    forkedFrom: overrides.forkedFrom ?? null,
+    debugActive: overrides.debugActive ?? false,
+    role: overrides.role ?? null,
+    worktreePath: overrides.worktreePath ?? "/p",
+    lastActivitySummary: overrides.lastActivitySummary ?? null,
+    unread: overrides.unread ?? false,
+  };
+}
+
 function activeResponse(
-  conversations: SessionActiveConversation[],
+  conversations: ActiveConversation[],
 ): ActiveConversationsResponse {
   return {
     conversations,
@@ -452,6 +480,114 @@ describe("useGenericRenameConversationMutation", () => {
     expect(listData?.[0]?.name).toBe("old");
     expect(activeData?.conversations[0]?.name).toBe("old");
   });
+
+  it("routes project row rename to the project conversation endpoint without a session name", async () => {
+    const client = makeClient();
+    const activeKey = conversationKeys.active();
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([activeProjectConvo({ id: "pc1", name: "old" })]),
+    );
+    fetchSpy.mockResolvedValue(jsonResponse({ ok: true }));
+
+    const { result } = renderHook(
+      () => useGenericRenameConversationMutation(),
+      { wrapper: wrapperFor(client) },
+    );
+
+    await result.current.mutateAsync({
+      scope: "project",
+      projectName: "p",
+      conversationId: "pc1",
+      name: "new",
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/projects/p/conversations/pc1/rename",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ name: "new" }),
+      }),
+    );
+    expect(fetchSpy.mock.calls[0]?.[0]).not.toContain("/sessions/");
+  });
+
+  it("invalidates active and project conversation queries after project row rename", async () => {
+    const client = makeClient();
+    const activeKey = conversationKeys.active();
+    const projectListKey = projectConversationKeys.list("p");
+    const openCountKey = projectConversationKeys.openCount("p");
+    const sessionListKey = conversationKeys.list("p", "s");
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([activeProjectConvo({ id: "pc1", name: "old" })]),
+    );
+    client.setQueryData(projectListKey, []);
+    client.setQueryData(openCountKey, { count: 1 });
+    client.setQueryData(sessionListKey, []);
+    fetchSpy.mockResolvedValue(jsonResponse({ ok: true }));
+
+    const { result } = renderHook(
+      () => useGenericRenameConversationMutation(),
+      { wrapper: wrapperFor(client) },
+    );
+
+    await result.current.mutateAsync({
+      scope: "project",
+      projectName: "p",
+      conversationId: "pc1",
+      name: "new",
+    });
+
+    await waitFor(() => {
+      expect(client.getQueryState(activeKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(projectListKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(openCountKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(sessionListKey)?.isInvalidated).toBe(false);
+    });
+  });
+
+  it("keeps session row rename on session invalidation", async () => {
+    const client = makeClient();
+    const activeKey = conversationKeys.active();
+    const sessionListKey = conversationKeys.list("p", "s");
+    const projectListKey = projectConversationKeys.list("p");
+    const openCountKey = projectConversationKeys.openCount("p");
+    client.setQueryData<ConversationState[]>(sessionListKey, [
+      conversation({ id: "c1", name: "old" }),
+    ]);
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([activeConvo({ id: "c1", name: "old" })]),
+    );
+    client.setQueryData(projectListKey, []);
+    client.setQueryData(openCountKey, { count: 1 });
+    fetchSpy.mockResolvedValue(jsonResponse({ ok: true }));
+
+    const { result } = renderHook(
+      () => useGenericRenameConversationMutation(),
+      { wrapper: wrapperFor(client) },
+    );
+
+    await result.current.mutateAsync({
+      scope: "session",
+      projectName: "p",
+      sessionName: "s",
+      conversationId: "c1",
+      name: "new",
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/projects/p/sessions/s/conversations/c1/rename",
+      expect.objectContaining({ method: "PATCH" }),
+    );
+    await waitFor(() => {
+      expect(client.getQueryState(activeKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(sessionListKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(projectListKey)?.isInvalidated).toBe(false);
+      expect(client.getQueryState(openCountKey)?.isInvalidated).toBe(false);
+    });
+  });
 });
 
 describe("useGenericArchiveConversationMutation", () => {
@@ -540,6 +676,167 @@ describe("useGenericArchiveConversationMutation", () => {
       client.getQueryData<ActiveConversationsResponse>(activeKey);
     expect(listData?.[0]?.archived).toBe(false);
     expect(activeData?.conversations.map((c) => c.id)).toEqual(["c1", "c2"]);
+  });
+
+  it("routes project row archive to the project conversation endpoint without a session name", async () => {
+    const client = makeClient();
+    const activeKey = conversationKeys.active();
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([
+        activeProjectConvo({ id: "pc1" }),
+        activeProjectConvo({ id: "pc2" }),
+      ]),
+    );
+    fetchSpy.mockResolvedValue(jsonResponse({ ok: true }));
+
+    const { result } = renderHook(
+      () => useGenericArchiveConversationMutation(),
+      { wrapper: wrapperFor(client) },
+    );
+
+    await result.current.mutateAsync({
+      scope: "project",
+      projectName: "p",
+      conversationId: "pc1",
+      archived: true,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/projects/p/conversations/pc1/archive",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ archived: true }),
+      }),
+    );
+    expect(fetchSpy.mock.calls[0]?.[0]).not.toContain("/sessions/");
+  });
+
+  it("removes project rows from active cache and invalidates active plus project queries after archive", async () => {
+    const client = makeClient();
+    const activeKey = conversationKeys.active();
+    const projectListKey = projectConversationKeys.list("p");
+    const openCountKey = projectConversationKeys.openCount("p");
+    const sessionListKey = conversationKeys.list("p", "s");
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([
+        activeProjectConvo({ id: "pc1" }),
+        activeProjectConvo({ id: "pc2" }),
+      ]),
+    );
+    client.setQueryData(projectListKey, []);
+    client.setQueryData(openCountKey, { count: 2 });
+    client.setQueryData(sessionListKey, []);
+
+    let resolveFetch: (res: Response) => void = () => {};
+    fetchSpy.mockImplementation(
+      () => new Promise<Response>((r) => (resolveFetch = r)),
+    );
+
+    const { result } = renderHook(
+      () => useGenericArchiveConversationMutation(),
+      { wrapper: wrapperFor(client) },
+    );
+
+    result.current.mutate({
+      scope: "project",
+      projectName: "p",
+      conversationId: "pc1",
+      archived: true,
+    });
+
+    await waitFor(() => {
+      const activeData =
+        client.getQueryData<ActiveConversationsResponse>(activeKey);
+      expect(activeData?.conversations.map((c) => c.id)).toEqual(["pc2"]);
+    });
+
+    resolveFetch(jsonResponse({ ok: true }));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    await waitFor(() => {
+      expect(client.getQueryState(activeKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(projectListKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(openCountKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(sessionListKey)?.isInvalidated).toBe(false);
+    });
+  });
+
+  it("keeps session row archive on session invalidation", async () => {
+    const client = makeClient();
+    const activeKey = conversationKeys.active();
+    const sessionListKey = conversationKeys.list("p", "s");
+    const projectListKey = projectConversationKeys.list("p");
+    const openCountKey = projectConversationKeys.openCount("p");
+    client.setQueryData<ConversationState[]>(sessionListKey, [
+      conversation({ id: "c1", archived: false }),
+    ]);
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([activeConvo({ id: "c1" })]),
+    );
+    client.setQueryData(projectListKey, []);
+    client.setQueryData(openCountKey, { count: 1 });
+    fetchSpy.mockResolvedValue(jsonResponse({ ok: true }));
+
+    const { result } = renderHook(
+      () => useGenericArchiveConversationMutation(),
+      { wrapper: wrapperFor(client) },
+    );
+
+    await result.current.mutateAsync({
+      scope: "session",
+      projectName: "p",
+      sessionName: "s",
+      conversationId: "c1",
+      archived: true,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/projects/p/sessions/s/conversations/c1/archive",
+      expect.objectContaining({ method: "PATCH" }),
+    );
+    await waitFor(() => {
+      expect(client.getQueryState(activeKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(sessionListKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(projectListKey)?.isInvalidated).toBe(false);
+      expect(client.getQueryState(openCountKey)?.isInvalidated).toBe(false);
+    });
+  });
+
+  it("restores a project row to the active cache when project archive fails", async () => {
+    const client = makeClient();
+    const activeKey = conversationKeys.active();
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([
+        activeProjectConvo({ id: "pc1" }),
+        activeProjectConvo({ id: "pc2" }),
+      ]),
+    );
+    fetchSpy.mockResolvedValue(jsonResponse({ error: "boom" }, 500));
+
+    const { result } = renderHook(
+      () => useGenericArchiveConversationMutation(),
+      { wrapper: wrapperFor(client) },
+    );
+
+    result.current.mutate({
+      scope: "project",
+      projectName: "p",
+      conversationId: "pc1",
+      archived: true,
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const activeData = client.getQueryData<ActiveConversationsResponse>(
+      activeKey,
+    );
+    expect(activeData?.conversations.map((c) => c.id)).toEqual([
+      "pc1",
+      "pc2",
+    ]);
   });
 });
 
