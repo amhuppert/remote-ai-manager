@@ -6,6 +6,7 @@
 - **Key Findings**:
   - The existing MCP configuration subsystem is the correct architectural precedent for cascade stores, atomic patches, resolved view models, runtime apply tracking, SSE invalidation, and UI interaction patterns.
   - Agent capabilities need a separate domain model because skills, plugins, and sub-agents are backend-native resources with backend-specific discovery, identity, parent-child ownership, and apply behavior.
+  - Project-level conversations reuse the existing `conversation` capability layer while omitting the session layer. They must not introduce a new cascade kind or expose the internal project-conversation sentinel through public capability APIs or UI state.
   - Claude Agent SDK exposes the strongest capability controls through `Settings.skillOverrides`, `Settings.enabledPlugins`, `Query.applyFlagSettings()`, `Query.reloadPlugins()`, `Query.supportedCommands()`, and `Query.supportedAgents()`.
   - Codex SDK exposes a generic `CodexOptions.config` pass-through but no typed skill or plugin API in the installed SDK. Codex runtime support must stay behind a translator seam and report diagnostics when a specific native toggle cannot be emitted.
   - Plugin-disable semantics should be modeled as first-class resolver behavior, not as destructive edits to child skill or agent override records.
@@ -110,6 +111,30 @@
   - Add a capability composer beside MCP composition and call it at conversation start or runtime creation.
   - Add a separate runtime apply service so capability pending/apply state does not overload `mcpRuntime`.
 
+### Project-Level Conversation Foundation
+- **Context**: The PLC additive requirements extend the already-implemented capability cascade to session-less project conversations described in `.kiro/specs/project-level-conversations/brief.md`.
+- **Sources Consulted**:
+  - `.kiro/specs/project-level-conversations/brief.md`
+  - `src/lib/conversations/project-conversation-scope.ts`
+  - `src/lib/state-store/store.ts`
+  - `src/lib/project-conversations/prompt-entry.ts`
+  - `src/lib/project-conversations/route-handlers.ts`
+  - `src/lib/project-conversations-client/query-keys.ts`
+  - `src/features/project-detail/ProjectDetailView.tsx`
+  - `src/features/project-detail/cockpit/ProjectCockpit.tsx`
+  - `src/features/project-detail/cockpit/ConversationPane.tsx`
+- **Findings**:
+  - PLCs are durable session-less conversations that run in the repository root main worktree and keep their fixed `agentBackend` on the conversation record after initialization.
+  - The PLC foundation uses `PROJECT_CONVERSATION_SESSION_SENTINEL = "__project__"` only to adapt otherwise session-keyed state and runtime boundaries. Public project-conversation routes use `/api/projects/[name]/conversations/[conversationId]`.
+  - `stateManager.mutateConversation()` already routes the sentinel to `mutateProjectConversation()`, so storage can reuse the existing `ConversationState.agentCapabilityOverrides` and `agentCapabilitiesRuntime` fields if the capability adapter supplies the project-conversation identity correctly.
+  - The current capability read chain, mutation scope, runtime composer, fanout enumeration, route handlers, hooks, query keys, and drawer component require `sessionName` for every conversation scope.
+  - The project cockpit owns active tab selection, command dispatch, composer behavior, and backend locking. Capability support should add a narrow entry for the selected active PLC and should prevent conversation-layer edits when no PLC is selected.
+- **Implications**:
+  - Extend capability scope models with a discriminated project-conversation target that uses layer `conversation` but has no session layer.
+  - Add project-conversation capability API routes that mirror PLC route shape instead of routing through `/sessions/__project__`.
+  - In storage and runtime adapters, use the sentinel only as an internal bridge to existing state-manager APIs; never persist it as a user-facing session identity and never show it in query keys or route params.
+  - Runtime fanout must enumerate active project conversations from the project-conversation repository and runtime registry, using repo-root `worktreePath` and the fixed `ConversationState.agentBackend`.
+
 ### API, State, SSE, and UI Patterns
 - **Context**: New storage and UI must fit the existing Next.js and TanStack Query architecture.
 - **Sources Consulted**:
@@ -137,6 +162,8 @@
 | Extend MCP modules | Generalize MCP stores, patching, resolver, route handlers, runtime apply, and UI for capabilities | Reuses mature code quickly | MCP server/tool semantics differ from backend-native capabilities; high regression risk to MCP | Rejected as primary pattern |
 | Backend-specific implementations | Separate Claude and Codex routes, stores, UI, and runtime flows | Simple local reasoning per backend | Duplicates cascade behavior and scatters backend conditionals | Rejected |
 | Dedicated capability domain with reused infrastructure | New `agent-capabilities` domain using MCP patterns and shared low-level infrastructure | Clean boundaries, testable pure core, preserves MCP | More new files and careful naming required | Selected |
+| New project-conversation cascade kind | Add a sixth cascade kind for PLC-specific settings | Simple label for PLC-only state | Violates Requirement 20.1 and duplicates conversation-layer behavior | Rejected |
+| Project-conversation discriminator on conversation layer | Keep the five cascade kinds and add a session vs project conversation identity where a conversation scope is needed | Preserves existing cascade model, supports PLCs without synthesizing a session layer | Requires careful route, query-key, and fanout updates | Selected for PLC extension |
 | Native file mutation | Toggle by editing Claude and Codex native config files | Mirrors backend tooling directly | Violates read-only requirement and risks corrupting user-owned config | Rejected |
 | Runtime-only suppression | Do not persist cascades; deny capabilities only at runtime | Smallest storage footprint | Fails persistence, inheritance, discovery, and UI requirements | Rejected |
 
@@ -208,6 +235,28 @@
 - **Trade-offs**: More component files than direct MCP reuse.
 - **Follow-up**: Add Storybook stories for all five panels before page integration.
 
+### Decision: Represent PLC Overrides as Conversation-Layer Overrides Without a Session Layer
+- **Context**: PLCs need per-conversation capability overrides but have no owning session. Existing session conversations must keep the current global -> project -> session -> conversation cascade.
+- **Alternatives Considered**:
+  1. Add a project-conversation cascade kind.
+  2. Synthesize a fake session layer in the capability resolver.
+  3. Add a conversation-scope discriminator and resolve PLCs as global -> project -> conversation.
+- **Selected Approach**: Use a discriminated conversation scope for session conversations and project conversations. PLCs use the existing `conversation` layer and skip `session`.
+- **Rationale**: This satisfies Requirements 17 and 20 while preserving the five cascade stores and avoiding hidden session policy.
+- **Trade-offs**: Route handlers, query keys, runtime fanout, and UI layer options must carry conversation identity explicitly.
+- **Follow-up**: Add tests proving PLC resolution excludes session overrides and session conversation resolution remains unchanged.
+
+### Decision: Keep the PLC Sentinel Private to State and Runtime Adapters
+- **Context**: The PLC foundation uses `PROJECT_CONVERSATION_SESSION_SENTINEL` to bridge APIs that are still session-keyed internally.
+- **Alternatives Considered**:
+  1. Reuse session-conversation capability routes with `session="__project__"`.
+  2. Store project conversations under a synthetic session aggregate.
+  3. Add project-conversation capability routes and adapt to sentinel only inside persistence/runtime ports.
+- **Selected Approach**: Public capability API, React Query keys, UI labels, and diagnostics use project conversation identity without a session name; storage/runtime adapters may use the sentinel only at the boundary where existing state-manager functions require it.
+- **Rationale**: This keeps user-facing behavior aligned with PLC routes and prevents accidental policy inheritance from a non-existent session.
+- **Trade-offs**: The adapter layer needs explicit tests around sentinel routing.
+- **Follow-up**: Add validation that a real session named `__project__` cannot be treated as a normal session-conversation capability scope.
+
 ## Risks & Mitigations
 - Claude sub-agent disable does not have a typed settings override in the installed SDK. Mitigation: metadata marks direct agent suppression as deferred or permission-gated until a verified SDK path exists; plugin-level disables still remove plugin-contributed agents after reload.
 - Codex skill/plugin config keys are not typed in the installed SDK. Mitigation: isolate emission in `CodexCapabilityTranslator`, add verification tests, and surface unsupported diagnostics per cascade kind instead of blocking conversation start.
@@ -215,6 +264,8 @@
 - Plugin contribution mapping may be incomplete for nonstandard plugins. Mitigation: show source-only and stale states, preserve existing overrides, and surface discovery diagnostics.
 - Discovery can read malformed native files. Mitigation: use Zod/permissive parser boundaries, return diagnostics, and keep conversations startable with native defaults for the failed cascade kind.
 - Cross-client edits can race. Mitigation: reuse MCP-style effective hashes, checked mutations, write queues, and SSE invalidation.
+- Project-conversation support could accidentally inherit session overrides if the sentinel is treated as a real session. Mitigation: model PLC as a discriminated conversation target, skip the session layer in the resolver, and use the sentinel only inside state/runtime adapter calls.
+- Capability routes could expose `/sessions/__project__` as a public API shortcut. Mitigation: add first-class project-conversation capability routes and tests that hook URLs never include the sentinel.
 
 ## References
 - `src/lib/mcp/resolver.ts` - Existing pure cascade merge and view assembly precedent.
@@ -224,6 +275,11 @@
 - `src/lib/commands.ts` - Existing Claude and Codex command/skill discovery code.
 - `src/lib/agent-backends/conversation.ts` - Backend-neutral runtime interface.
 - `src/lib/workflows/conversation/actor-implementations.ts` - Conversation runtime creation and turn-start integration point.
+- `src/lib/conversations/project-conversation-scope.ts` - PLC sentinel and scope helper used only at internal adapter boundaries.
+- `src/lib/project-conversations/prompt-entry.ts` - Project-conversation prompt execution path and repo-root runtime target.
+- `src/lib/project-conversations/route-handlers.ts` - Session-less project conversation route precedent.
+- `src/lib/project-conversations-client/query-keys.ts` - Project-conversation React Query key precedent.
+- `src/features/project-detail/cockpit/ProjectCockpit.tsx` - Active PLC selection, backend locking, composer, and command ownership boundary.
 - `src/lib/agent-backends/claude/query-session.ts` - Claude SDK options wrapper.
 - `src/lib/agent-backends/codex/conversation-runtime.ts` - Codex next-turn staging precedent.
 - `src/lib/agent-capabilities/schemas.ts` - Zod schema and SSE event home.
