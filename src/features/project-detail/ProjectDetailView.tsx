@@ -284,8 +284,10 @@ export default function ProjectDetailView({
             />
 
             <ScopedAgentCapabilitiesConfig
-              level="project"
+              level="conversation"
+              conversationScope="project"
               projectName={projectName}
+              conversationId={activeTabId ?? undefined}
               open={capabilitiesOpen}
               onOpenChange={setCapabilitiesOpen}
               renderTrigger={false}

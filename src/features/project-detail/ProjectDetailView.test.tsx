@@ -43,8 +43,18 @@ vi.mock(
   "@/components/agent-capabilities/ScopedAgentCapabilitiesConfig",
   () => ({
     __esModule: true,
-    default: ({ open }: { open?: boolean }) =>
-      open ? <div data-testid="capabilities-drawer-stub" /> : null,
+    default: (props: Record<string, unknown>) => (
+      <div
+        data-testid="capabilities-drawer-stub"
+        data-open={props.open ? "true" : "false"}
+        data-level={String(props.level ?? "")}
+        data-conversation-scope={String(props.conversationScope ?? "")}
+        data-conversation-id={String(props.conversationId ?? "")}
+        data-session-name={String(props.sessionName ?? "")}
+        data-project-name={String(props.projectName ?? "")}
+        data-prop-keys={Object.keys(props).sort().join("|")}
+      />
+    ),
   }),
 );
 
@@ -431,5 +441,50 @@ describe("ProjectDetailView", () => {
     expect(routerPushMock).not.toHaveBeenCalledWith(
       expect.stringMatching(/^\/projects\/my-project\/[^?]+\/missing-convo$/),
     );
+  });
+});
+
+// ===========================================================================
+// Project conversation capability drawer wiring (Req 18.1, 18.5, 20.3, 20.4)
+// ===========================================================================
+
+describe("ProjectDetailView — capability drawer PLC wiring", () => {
+  it("targets the active PLC at the conversation layer (Req 18.1)", () => {
+    _useCockpitViewStore.getState().focusTab("project-convo-1");
+
+    renderProjectWithConversations([
+      makeProjectConversation({ id: "project-convo-1" }),
+    ]);
+
+    const drawer = screen.getByTestId("capabilities-drawer-stub");
+    expect(drawer).toHaveAttribute("data-level", "conversation");
+    expect(drawer).toHaveAttribute("data-conversation-scope", "project");
+    expect(drawer).toHaveAttribute("data-conversation-id", "project-convo-1");
+    expect(drawer).toHaveAttribute("data-project-name", "my-project");
+  });
+
+  it("does not leak a conversationId when no PLC is active (Req 18.5)", () => {
+    renderProjectWithConversations([]);
+
+    const drawer = screen.getByTestId("capabilities-drawer-stub");
+    expect(_useCockpitViewStore.getState().activeTabId).toBeNull();
+    expect(drawer).toHaveAttribute("data-level", "conversation");
+    expect(drawer).toHaveAttribute("data-conversation-scope", "project");
+    expect(drawer).toHaveAttribute("data-conversation-id", "");
+  });
+
+  it("threads no backend-change control through the drawer (Req 20.3)", () => {
+    _useCockpitViewStore.getState().focusTab("project-convo-1");
+
+    renderProjectWithConversations([
+      makeProjectConversation({ id: "project-convo-1" }),
+    ]);
+
+    const drawer = screen.getByTestId("capabilities-drawer-stub");
+    const propKeys = (drawer.getAttribute("data-prop-keys") ?? "").split("|");
+    expect(propKeys).not.toContain("agentBackend");
+    expect(propKeys).not.toContain("selectedBackend");
+    expect(propKeys).not.toContain("onSelectedBackendChange");
+    expect(propKeys).not.toContain("onBackendChange");
   });
 });

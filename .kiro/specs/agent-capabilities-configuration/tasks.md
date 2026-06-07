@@ -360,7 +360,7 @@ Implementation follows red-green-refactor by default. Each task should add focus
   - _Depends: 13.1_
   - _Requirements: 4.4, 11.2, 11.4, 18.1, 18.2, 18.5, 20.3_
 
-- [ ] 13.3 Integrate the capability entry in the project cockpit
+- [x] 13.3 Integrate the capability entry in the project cockpit
   - Pass active project conversation identity and backend from cockpit state into the scoped capability drawer.
   - Open project-conversation capability configuration for the selected active PLC.
   - Keep command palette routing, tab reconciliation, transcript rendering, composer submission, and backend selection behavior owned by the cockpit.
