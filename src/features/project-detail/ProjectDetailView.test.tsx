@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, waitFor, render } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderWithQuery } from "@/test/component-mocks";
 import ProjectDetailView from "./ProjectDetailView";
 import type { SessionListItem } from "@/lib/sessions/schemas";
+import type { ConversationState } from "@/lib/conversations/schemas";
+import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
+import { _useCockpitViewStore } from "./cockpit/use-cockpit-view-state";
 // Shared mocks
 vi.mock(
   "next/link",
@@ -94,6 +98,10 @@ vi.mock("@/lib/sessions/mutations", () => ({
     isPending: false,
   }),
   useArchiveSessionMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useGenericArchiveSessionMutation: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+  }),
   useTddToggleMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useBulkSessionsMutation: () => ({ mutate: vi.fn(), isPending: false }),
 }));
@@ -123,6 +131,8 @@ beforeEach(() => {
   storeDeleteTarget = null;
   mockSessionsData.data = undefined;
   mockSessionsData.isPending = false;
+  mockSearchParams.delete("focus");
+  _useCockpitViewStore.getState()._reset();
 });
 
 // ---------------------------------------------------------------------------
@@ -152,6 +162,75 @@ const makeSessions = (count: number): SessionListItem[] =>
     collabContribution: null,
     hasActiveGraphWorkflow: false,
   }));
+
+const makeProjectConversation = (
+  overrides: Partial<ConversationState> = {},
+): ConversationState => ({
+  id: "project-convo-1",
+  scope: "project",
+  name: "Project conversation",
+  transcriptPath: null,
+  status: "awaiting",
+  promptCount: 0,
+  createdAt: now,
+  lastActivityAt: now,
+  source: "cc",
+  summary: null,
+  archived: false,
+  open: true,
+  totalCostUsd: null,
+  totalDurationMs: null,
+  totalTurns: null,
+  pendingQuestionId: null,
+  pendingQuestions: null,
+  pendingPromptText: null,
+  unread: false,
+  forkedFrom: null,
+  role: null,
+  activeTurnSource: null,
+  contextTokens: null,
+  contextWindowMax: null,
+  debugMode: null,
+  machineSnapshot: null,
+  agentBackend: "claude",
+  backendRef: null,
+  ...overrides,
+});
+
+function renderProjectWithConversations(
+  conversations: ConversationState[],
+): QueryClient {
+  mockSessionsData.data = [];
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  queryClient.setQueryData(
+    projectConversationKeys.list("my-project"),
+    conversations,
+  );
+
+  render(
+    <QueryClientProvider client={queryClient}>
+      <ProjectDetailView projectName="my-project" />
+    </QueryClientProvider>,
+  );
+
+  return queryClient;
+}
+
+function stubProjectFetch(
+  handler?: (url: string) => Response | Promise<Response>,
+): ReturnType<typeof vi.fn<(input: RequestInfo | URL) => Promise<Response>>> {
+  const fetchMock = vi.fn<(input: RequestInfo | URL) => Promise<Response>>(
+    async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (handler !== undefined) return handler(url);
+      return new Response(null, { status: 404 });
+    },
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
 
 // ===========================================================================
 // ProjectDetailView Tests
@@ -261,5 +340,96 @@ describe("ProjectDetailView", () => {
     );
     const dot = container.querySelector('.s-mode-dot[data-mode="optimistic"]');
     expect(dot).not.toBeNull();
+  });
+
+  it("focuses an already-open project conversation from the focus query param (Req 12.1)", async () => {
+    mockSearchParams.set("focus", "open-convo");
+    const fetchMock = stubProjectFetch();
+
+    renderProjectWithConversations([
+      makeProjectConversation({
+        id: "open-convo",
+        name: "Open project focus",
+        open: true,
+      }),
+    ]);
+
+    await waitFor(() =>
+      expect(_useCockpitViewStore.getState().activeTabId).toBe("open-convo"),
+    );
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/projects/my-project/conversations/open-convo/open",
+      expect.objectContaining({ method: "PATCH" }),
+    );
+  });
+
+  it("reopens and focuses a closed but unarchived project conversation from the focus query param (Req 12.2)", async () => {
+    mockSearchParams.set("focus", "closed-convo");
+    let reopened = false;
+    const fetchMock = stubProjectFetch((url) => {
+      if (url === "/api/projects/my-project/conversations/closed-convo/open") {
+        reopened = true;
+        return new Response(JSON.stringify({}), { status: 200 });
+      }
+      if (url === "/api/projects/my-project/conversations") {
+        return new Response(
+          JSON.stringify([
+            makeProjectConversation({
+              id: "closed-convo",
+              name: "Closed project focus",
+              open: reopened,
+            }),
+          ]),
+          { status: 200 },
+        );
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    renderProjectWithConversations([
+      makeProjectConversation({
+        id: "closed-convo",
+        name: "Closed project focus",
+        open: false,
+      }),
+    ]);
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/projects/my-project/conversations/closed-convo/open",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({ open: true }),
+        }),
+      ),
+    );
+    await waitFor(() =>
+      expect(_useCockpitViewStore.getState().activeTabId).toBe("closed-convo"),
+    );
+  });
+
+  it("shows an unavailable focus state without navigating to a session conversation route when the focused project conversation cannot be opened (Req 12.4)", async () => {
+    mockSearchParams.set("focus", "missing-convo");
+    stubProjectFetch((url) => {
+      if (url === "/api/projects/my-project/conversations/missing-convo/open") {
+        return new Response(JSON.stringify({ error: "Not found" }), {
+          status: 404,
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+
+    renderProjectWithConversations([]);
+
+    expect(
+      await screen.findByText("Project conversation unavailable"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("missing-convo")).toBeInTheDocument();
+    expect(_useCockpitViewStore.getState().activeTabId).not.toBe(
+      "missing-convo",
+    );
+    expect(routerPushMock).not.toHaveBeenCalledWith(
+      expect.stringMatching(/^\/projects\/my-project\/[^?]+\/missing-convo$/),
+    );
   });
 });

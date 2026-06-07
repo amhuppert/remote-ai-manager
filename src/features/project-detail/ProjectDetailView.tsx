@@ -68,6 +68,9 @@ export default function ProjectDetailView({
   const focusTab = useFocusTab();
   const { mutate: reopenConversation } =
     useReopenProjectConversation(projectName);
+  const [unavailableFocusId, setUnavailableFocusId] = useState<string | null>(
+    null,
+  );
 
   const sessions = useMemo(
     () => sessionsQuery.data ?? [],
@@ -110,22 +113,42 @@ export default function ProjectDetailView({
     [openCreateModal],
   );
 
-  // Rail PLC-focus intent (13.4): the unified-conversations-panel extension
-  // signals "focus this project's conversation" via a `focus` route param.
-  // Reconcile it into the active tab, reopening the PLC if it was closed.
+  // Active Conversations surfaces signal PLC focus through the `focus` route
+  // param; the project page reconciles it into an open, focused cockpit tab.
   const focusId = searchParams.get("focus");
   const handledFocusRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!focusId || handledFocusRef.current === focusId) return;
+    if (!focusId) {
+      handledFocusRef.current = null;
+      setUnavailableFocusId(null);
+      return;
+    }
+    if (conversationsQuery.isPending) return;
+    if (handledFocusRef.current === focusId) return;
     handledFocusRef.current = focusId;
+    setUnavailableFocusId(null);
     const isOpen = openConversations.some((c) => c.id === focusId);
     if (isOpen) {
       setActiveTab(focusId);
     } else {
-      reopenConversation(focusId);
-      focusTab(focusId);
+      reopenConversation(focusId, {
+        onSuccess: () => {
+          setUnavailableFocusId(null);
+          focusTab(focusId);
+        },
+        onError: () => {
+          setUnavailableFocusId(focusId);
+        },
+      });
     }
-  }, [focusId, openConversations, setActiveTab, focusTab, reopenConversation]);
+  }, [
+    conversationsQuery.isPending,
+    focusId,
+    openConversations,
+    setActiveTab,
+    focusTab,
+    reopenConversation,
+  ]);
 
   useAppHotkey("newSession", () => openCreateModal());
 
@@ -232,6 +255,17 @@ export default function ProjectDetailView({
                   onSelectedBackendChange={setSelectedBackend}
                   onBranch={handleBranch}
                 />
+              )}
+              {unavailableFocusId !== null && (
+                <div className="empty-state" role="status" aria-live="polite">
+                  <div className="empty-state-title">
+                    Project conversation unavailable
+                  </div>
+                  <div className="empty-state-desc">
+                    Could not open project conversation{" "}
+                    <code>{unavailableFocusId}</code>.
+                  </div>
+                </div>
               )}
             </div>
 

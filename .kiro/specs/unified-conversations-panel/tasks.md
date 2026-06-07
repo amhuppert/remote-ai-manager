@@ -217,7 +217,7 @@
   - Observable completion: the story renders the PLC row states without visual overlap and the component regression tests pass.
   - _Requirements: 9.1, 9.2, 9.3, 9.4, 10.1, 10.2, 10.3, 10.4, 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 13.1, 13.2, 13.3, 13.4_
 
-- [ ] 12.2 Verify cross-page routing and cockpit focus handoff
+- [x] 12.2 Verify cross-page routing and cockpit focus handoff
   - Add an integration test or focused component test that clicking a project row navigates to `/projects/[name]?focus=[conversationId]`.
   - Verify the project page focus handler reopens/focuses the tab when the target project conversation is closed but not archived.
   - Add a failing `ProjectDetailView` focus-param test for an unavailable or inaccessible focused project conversation, then implement the minimal clear unavailable state if the current focus handler lacks one.
