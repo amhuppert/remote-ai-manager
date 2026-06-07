@@ -122,17 +122,19 @@ export default function ProjectDetailView({
   // Active Conversations surfaces signal PLC focus through the `focus` route
   // param; the project page reconciles it into an open, focused cockpit tab.
   const focusId = searchParams.get("focus");
+  const visibleUnavailableFocusId =
+    focusId !== null && unavailableFocusId === focusId
+      ? unavailableFocusId
+      : null;
   const handledFocusRef = useRef<string | null>(null);
   useEffect(() => {
     if (!focusId) {
       handledFocusRef.current = null;
-      setUnavailableFocusId(null);
       return;
     }
     if (conversationsQuery.isPending) return;
     if (handledFocusRef.current === focusId) return;
     handledFocusRef.current = focusId;
-    setUnavailableFocusId(null);
     const isOpen = openConversations.some((c) => c.id === focusId);
     if (isOpen) {
       setActiveTab(focusId);
@@ -262,14 +264,14 @@ export default function ProjectDetailView({
                   onBranch={handleBranch}
                 />
               )}
-              {unavailableFocusId !== null && (
+              {visibleUnavailableFocusId !== null && (
                 <div className="empty-state" role="status" aria-live="polite">
                   <div className="empty-state-title">
                     Project conversation unavailable
                   </div>
                   <div className="empty-state-desc">
                     Could not open project conversation{" "}
-                    <code>{unavailableFocusId}</code>.
+                    <code>{visibleUnavailableFocusId}</code>.
                   </div>
                 </div>
               )}
