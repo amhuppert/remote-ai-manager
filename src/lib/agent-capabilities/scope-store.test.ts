@@ -587,6 +587,76 @@ describe("agent-capabilities / scope-store / project conversation", () => {
     }
   });
 
+  it("restores a PLC override and PLC runtime apply state after state manager recreation (Req 14.1, 14.2, 18.4)", async () => {
+    const { db, state, store } = createSqlHarness();
+    try {
+      await state.createProjectConversation(
+        PROJECT_PATH,
+        projectConversation("plc-1"),
+      );
+
+      await store.patchProjectConversation(PROJECT_PATH, "plc-1", {
+        cascadeKind: "claude-skills",
+        operations: [
+          { type: "set-item-enabled", itemId: "skill:a", enabled: false },
+        ],
+      });
+      await state.mutateProjectConversation(
+        PROJECT_PATH,
+        "plc-1",
+        "test.seed-runtime",
+        (conversation) => {
+          conversation.agentCapabilitiesRuntime = {
+            cascades: {
+              "claude-skills": {
+                appliedHash: "plc-applied-hash",
+                pendingHash: "plc-pending-hash",
+                pendingItemIds: ["skill:a"],
+                lastApplyStatus: "staged-idle",
+              },
+            },
+          };
+        },
+      );
+
+      // Simulate restart: a fresh state manager over the same persisted db has
+      // no in-memory caches/write-queue carried over, so a successful read here
+      // proves the override AND runtime apply state survived to disk.
+      const restarted = createStateManager({ db });
+      const restored = await restarted.getProjectConversation(
+        PROJECT_PATH,
+        "plc-1",
+      );
+
+      expect(
+        restored?.agentCapabilityOverrides?.cascades["claude-skills"]?.items[
+          "skill:a"
+        ]?.enabled,
+      ).toBe(false);
+      const restoredRuntime =
+        restored?.agentCapabilitiesRuntime?.cascades["claude-skills"];
+      expect(restoredRuntime?.appliedHash).toBe("plc-applied-hash");
+      expect(restoredRuntime?.pendingHash).toBe("plc-pending-hash");
+      expect(restoredRuntime?.pendingItemIds).toEqual(["skill:a"]);
+      expect(restoredRuntime?.lastApplyStatus).toBe("staged-idle");
+
+      // The restored PLC must not have synthesized a session row.
+      expect(
+        (db.prepare(`SELECT COUNT(*) AS n FROM sessions`).get() as { n: number })
+          .n,
+      ).toBe(0);
+      expect(
+        (
+          db.prepare(`SELECT COUNT(*) AS n FROM conversations`).get() as {
+            n: number;
+          }
+        ).n,
+      ).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+
   it("keeps project conversations separate from same-id session conversations", async () => {
     const { db, state, store } = createSqlHarness();
     try {

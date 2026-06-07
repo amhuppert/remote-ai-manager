@@ -248,6 +248,72 @@ describe("agent-capabilities/default-deps fanout filtering", () => {
     ]);
   });
 
+  it("enumerates an active PLC alongside a session conversation for a global override change (Req 15.3, 17.4)", async () => {
+    const lister = createAffectedConversationLister({
+      readState: async () =>
+        ({
+          projects: {
+            "/repo": {
+              rootPath: "/repo",
+              sessions: {
+                "session-a": {
+                  sessionName: "session-a",
+                  worktreePath: "/repo/.worktrees/session-a",
+                  branchName: "session-a",
+                  createdAt: NOW,
+                  lastActivityAt: NOW,
+                  conversations: [
+                    makeConversation({
+                      id: "session-conv",
+                      scope: "session",
+                      agentBackend: "claude",
+                    }),
+                  ],
+                },
+              },
+            },
+          },
+          archivedProjects: [],
+          pinnedProjects: [],
+        }) as never,
+      readGlobalOverrides: async () => overrides({ alpha: false }),
+      listAllProjectConversations: async () => [
+        {
+          projectPath: "/repo",
+          conversation: makeConversation({
+            id: "plc-1",
+            agentBackend: "claude",
+          }),
+        },
+      ],
+      getRuntime: () => ({ status: "alive", backend: "claude" }),
+      getProjectDisplayName: () => "Repo",
+    });
+
+    const affected = await lister({
+      scope: { level: "global" },
+      cascadeKind: "claude-skills",
+      changedItemIds: ["alpha"],
+    });
+
+    // Global fanout must reach both the session conversation and the PLC.
+    expect(affected).toEqual([
+      expect.objectContaining({
+        conversationScope: "session",
+        sessionName: "session-a",
+        conversationId: "session-conv",
+      }),
+      expect.objectContaining({
+        conversationScope: "project",
+        conversationId: "plc-1",
+        worktreePath: "/repo",
+      }),
+    ]);
+    // The PLC target carries no synthetic session identity.
+    const plc = affected.find((conv) => conv.conversationId === "plc-1")!;
+    expect("sessionName" in plc).toBe(false);
+  });
+
   it("does not read PLC records for session-scoped override changes", async () => {
     const lister = createAffectedConversationLister({
       readState: async () =>

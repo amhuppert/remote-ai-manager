@@ -370,7 +370,7 @@ Implementation follows red-green-refactor by default. Each task should add focus
 
 - [ ] 14. Validate PLC capability behavior and regressions
 
-- [ ] 14.1 Add PLC resolver, persistence, route, and runtime regression coverage
+- [x] 14.1 Add PLC resolver, persistence, route, and runtime regression coverage
   - Cover project-conversation inheritance without a session layer, conversation override precedence, clear fallback, and session-conversation cascade preservation.
   - Cover restart persistence for project-conversation overrides and runtime apply state.
   - Cover project-conversation route behavior and runtime fanout against active PLCs.

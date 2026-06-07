@@ -441,6 +441,41 @@ describe("resolveCascadeView — project-conversation inheritance (task 11.2)", 
       originLayer: "session",
     });
   });
+
+  it("falls a cleared PLC override back to global when the project has no override (Req 17.1, 18.4)", () => {
+    // No project override + a cleared PLC conversation layer must resolve from
+    // global, not from the conflicting session layer present in the chain.
+    const view = resolveCascadeView(
+      baseInput({
+        cascadeKind: "claude-skills",
+        scope: {
+          level: "conversation",
+          projectName: "repo",
+          conversationScope: "project",
+          conversationId: "plc-1",
+        },
+        overrideChain: [
+          { layer: "global", overrides: override({ "skill:a": false }) },
+          { layer: "project", overrides: undefined },
+          { layer: "session", overrides: override({ "skill:a": true }) },
+          { layer: "conversation", overrides: undefined },
+        ],
+        discoveredItems: [discoveredSkill("skill:a", true)],
+      }),
+    );
+
+    const row = view.items[0]!;
+    expect(row.effectiveState).toEqual({
+      enabled: false,
+      originLayer: "global",
+    });
+    expect(row.originLayer).toBe("global");
+    expect(row.inheritedEffectiveState).toEqual({
+      enabled: false,
+      originLayer: "global",
+    });
+    expect(row.currentLayerValue).toBeUndefined();
+  });
 });
 
 describe("resolveCascadeView — stale override preservation (task 4.2)", () => {

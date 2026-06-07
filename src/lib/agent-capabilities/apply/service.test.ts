@@ -376,6 +376,54 @@ describe("apply-after-mutation", () => {
     });
   });
 
+  it("routes each write to its own identity when a PLC and a session conversation are both affected (Req 17.4, 18.3)", async () => {
+    const port = vi.fn<
+      (input: ClaudeApplyPortInput) => Promise<ClaudeApplyPortResult>
+    >(async () => ({ status: "applied" }));
+    const { deps, writes } = buildDeps({
+      affected: [
+        projectConversation({ conversationId: "plc-1" }),
+        claudeConversation({
+          conversationId: "session-conv",
+          sessionName: "session-a",
+        }),
+      ],
+      isTurnActive: () => false,
+      applyClaudeRuntime: port,
+    });
+
+    const result = await createCapabilityRuntimeApplyService(
+      deps,
+    ).applyAfterOverrideChange({
+      scope: { level: "global" },
+      cascadeKind: "claude-skills",
+      changedItemIds: ["alpha"],
+    });
+
+    expect(result.conversations).toHaveLength(2);
+    expect(writes).toHaveLength(2);
+
+    const plcWrite = writes.find((w) => w.conversationId === "plc-1")!;
+    const sessionWrite = writes.find(
+      (w) => w.conversationId === "session-conv",
+    )!;
+
+    // The PLC write is keyed by its project-conversation identity and never
+    // borrows the session conversation's session identity.
+    expect(plcWrite.conversationScope).toBe("project");
+    expect(plcWrite.sessionName).toBeUndefined();
+    // The session conversation's write stays keyed to its own session, proving
+    // the PLC apply did not redirect onto the session-conversation record.
+    expect(sessionWrite.sessionName).toBe("session-a");
+    expect(sessionWrite.conversationScope).not.toBe("project");
+
+    const plcOutcome = result.conversations.find(
+      (c) => c.conversationId === "plc-1",
+    )!;
+    expect(plcOutcome.conversationScope).toBe("project");
+    expect(plcOutcome.sessionName).toBeUndefined();
+  });
+
   it("Claude PLC with turn active records staged-idle", async () => {
     const port = vi.fn<
       (input: ClaudeApplyPortInput) => Promise<ClaudeApplyPortResult>
