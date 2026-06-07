@@ -58,6 +58,7 @@ export function rejectForDiscoveryFailure(input: {
   const sanitized = sanitizeApplyError(reason);
   logger.error("apply.discovery_failed", {
     cascadeKind,
+    conversationScope: conversationScopeOf(conversation),
     conversationId: conversation.conversationId,
     backend: conversation.backend,
   });

@@ -831,6 +831,145 @@ describe("agent capability route handlers", () => {
     expect(deps.events).toEqual([]);
   });
 
+  it("returns an actionable, redacted not-found body for an unresolvable project conversation that never introduces a session identity (Req 13.3, 16.2, 20.2)", async () => {
+    const deps = baseDeps({
+      async resolveView() {
+        // A realistic resolver not-found: it carries the project-conversation
+        // identity plus an internal path/secret, never the PLC sentinel.
+        throw new Error(
+          'Conversation "plc-missing" not found in project "/Users/alex/github/proj" with token abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN',
+        );
+      },
+    });
+    const handlers = createProjectConversationCapabilityHandlers(deps);
+
+    const response = await handlers.GET(
+      request(
+        "http://cc.test/api/projects/proj/conversations/plc-missing/agent-capabilities?cascadeKind=codex-skills",
+      ),
+      {
+        params: Promise.resolve({
+          name: "proj",
+          conversationId: "plc-missing",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(404);
+    const body = await response.json();
+    expect(body.error.code).toBe("not_found");
+    expect(typeof body.error.message).toBe("string");
+    expect(body.error.message.length).toBeGreaterThan(0);
+    const serialized = JSON.stringify(body);
+    // The route never synthesizes a session identity for a PLC failure, and the
+    // internal home path + opaque token are redacted out of the user-visible body.
+    expect(serialized).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
+    expect(serialized).not.toContain("sessionName");
+    expect(serialized).not.toContain("/Users/alex");
+    expect(serialized).not.toContain(
+      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN",
+    );
+    expect(deps.events).toEqual([]);
+  });
+
+  it("redacts a raw native payload from a project-conversation persistence error body and never introduces a session identity (Req 16.2, 20.2)", async () => {
+    const deps = baseDeps({
+      async mutate() {
+        throw new CapabilityRoutePersistenceError(
+          'Failed writing project conversation overrides under /Users/alex/github/proj enabledPlugins {"token":"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN"}',
+        );
+      },
+    });
+    const handlers = createProjectConversationCapabilityHandlers(deps);
+
+    const response = await handlers.PATCH(
+      jsonRequest(
+        "PATCH",
+        "http://cc.test/api/projects/proj/conversations/plc-1/agent-capabilities",
+        {
+          cascadeKind: "codex-skills",
+          operations: [
+            { type: "set-item-enabled", itemId: "skill:a", enabled: false },
+          ],
+        },
+      ),
+      {
+        params: Promise.resolve({
+          name: "proj",
+          conversationId: "plc-1",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(500);
+    const body = await response.json();
+    expect(body.error.code).toBe("persistence_error");
+    expect(typeof body.error.message).toBe("string");
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
+    expect(serialized).not.toContain("sessionName");
+    expect(serialized).not.toContain("/Users/alex");
+    expect(serialized).not.toContain(
+      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN",
+    );
+    expect(deps.events).toEqual([]);
+  });
+
+  it("keeps the PLC sentinel out of the response body and the SSE event for a successful PLC mutation (Req 3.2, 16.3, 20.2)", async () => {
+    const deps = baseDeps({
+      async mutate(input) {
+        return {
+          status: "applied",
+          scope: input.scope,
+          cascadeKind: input.request.cascadeKind,
+          changedItemIds: ["skill:a"],
+          effectiveHash: "hash-plc-next",
+          view: {
+            ...view(input.request.cascadeKind, "hash-plc-next", "conversation"),
+            projectName: "proj",
+            conversationScope: "project",
+            conversationId: "plc-1",
+          },
+          operationId: "cap-op-plc-sentinel",
+        };
+      },
+    });
+    const handlers = createProjectConversationCapabilityHandlers(deps);
+
+    const response = await handlers.PATCH(
+      jsonRequest(
+        "PATCH",
+        "http://cc.test/api/projects/proj/conversations/plc-1/agent-capabilities",
+        {
+          cascadeKind: "codex-skills",
+          operations: [
+            { type: "set-item-enabled", itemId: "skill:a", enabled: false },
+          ],
+        },
+      ),
+      {
+        params: Promise.resolve({
+          name: "proj",
+          conversationId: "plc-1",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+
+    const serializedBody = JSON.stringify(body);
+    const serializedEvents = JSON.stringify(deps.events);
+    for (const surface of [serializedBody, serializedEvents]) {
+      expect(surface).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
+      expect(surface).not.toContain("sessionName");
+    }
+    // The PLC identity is still present so clients can target the conversation.
+    expect(serializedBody).toContain("plc-1");
+    expect(serializedEvents).toContain("plc-1");
+    expect(deps.events).toHaveLength(1);
+  });
+
   it("rejects the project-conversation sentinel as a public session capability route", async () => {
     const resolveView = vi.fn();
     const handlers = createSessionCapabilityHandlers(

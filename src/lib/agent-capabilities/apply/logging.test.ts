@@ -28,6 +28,16 @@ import type { ClaudeRuntimeCapabilityConfig } from "../claude-runtime-translator
 import { CLAUDE_AGENT_SUPPRESSION_STRATEGY } from "../claude-agent-suppression";
 import { computeCascadeRuntimeHash } from "../runtime-hashes";
 import type { ComposeConversationStartResult } from "../runtime-composer";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
+
+function allLoggedArgs(): string {
+  return JSON.stringify([
+    logger.debug.mock.calls,
+    logger.info.mock.calls,
+    logger.warn.mock.calls,
+    logger.error.mock.calls,
+  ]);
+}
 
 const claudeConversation = (
   overrides: Partial<AffectedConversation> = {},
@@ -41,6 +51,20 @@ const claudeConversation = (
   isTurnActive: false,
   ...overrides,
 });
+
+const projectConversation = (
+  overrides: Partial<AffectedConversation> = {},
+): AffectedConversation =>
+  ({
+    conversationScope: "project",
+    projectPath: "/repo",
+    projectName: "repo",
+    conversationId: "plc-1",
+    worktreePath: "/repo",
+    backend: "claude",
+    isTurnActive: false,
+    ...overrides,
+  }) as AffectedConversation;
 
 const claudeRuntime = (): ClaudeRuntimeCapabilityConfig => ({
   enabledPlugins: {},
@@ -208,5 +232,129 @@ describe("capability runtime apply logging", () => {
         operationId: "cap-op-apply",
       }),
     );
+  });
+
+  it("tags PLC apply plan and outcome logs with project conversation scope and id (Req 16.1, 16.3)", async () => {
+    const service = createCapabilityRuntimeApplyService(
+      buildDeps({
+        affected: [projectConversation({ conversationId: "plc-1" })],
+        applyClaudeRuntime: vi.fn(
+          async (): Promise<ClaudeApplyPortResult> => ({ status: "applied" }),
+        ),
+      }),
+    );
+
+    await service.applyAfterOverrideChange({
+      scope: { level: "project", projectPath: "/repo" },
+      cascadeKind: "claude-skills",
+      changedItemIds: ["alpha"],
+      operationId: "cap-op-plc",
+    });
+
+    expect(logger.info).toHaveBeenCalledWith(
+      "apply.cascade_planned",
+      expect.objectContaining({
+        trigger: "after-mutation",
+        cascadeKind: "claude-skills",
+        conversationScope: "project",
+        conversationId: "plc-1",
+        backend: "claude",
+      }),
+    );
+    expect(logger.info).toHaveBeenCalledWith(
+      "apply.cascade_outcome",
+      expect.objectContaining({
+        trigger: "after-mutation",
+        cascadeKind: "claude-skills",
+        conversationScope: "project",
+        conversationId: "plc-1",
+        disposition: "applied",
+      }),
+    );
+  });
+
+  it("tags PLC discovery-failure logs with project conversation scope (Req 16.1)", async () => {
+    const service = createCapabilityRuntimeApplyService(
+      buildDeps({
+        affected: [projectConversation({ conversationId: "plc-1" })],
+        composeForConversation: async () => ({
+          backend: "claude",
+          claudeRuntime: claudeRuntime(),
+          diagnostics: [],
+          runtimeState: { cascades: {} },
+          views: {},
+          failedCascadeKinds: ["claude-skills"],
+        }),
+        applyClaudeRuntime: vi.fn(
+          async (): Promise<ClaudeApplyPortResult> => ({ status: "applied" }),
+        ),
+      }),
+    );
+
+    await service.applyAfterOverrideChange({
+      scope: { level: "project", projectPath: "/repo" },
+      cascadeKind: "claude-skills",
+      changedItemIds: ["alpha"],
+      operationId: "cap-op-plc-disc",
+    });
+
+    expect(logger.error).toHaveBeenCalledWith(
+      "apply.discovery_failed",
+      expect.objectContaining({
+        cascadeKind: "claude-skills",
+        conversationScope: "project",
+        conversationId: "plc-1",
+        backend: "claude",
+      }),
+    );
+  });
+
+  it("tags PLC compose-failure logs with project conversation scope (Req 16.1, 19.5)", async () => {
+    const service = createCapabilityRuntimeApplyService(
+      buildDeps({
+        affected: [projectConversation({ conversationId: "plc-1" })],
+        composeForConversation: async () => {
+          throw new Error("compose blew up for the project conversation");
+        },
+      }),
+    );
+
+    await service.applyAfterOverrideChange({
+      scope: { level: "project", projectPath: "/repo" },
+      cascadeKind: "claude-skills",
+      changedItemIds: ["alpha"],
+      operationId: "cap-op-plc-compose",
+    });
+
+    expect(logger.error).toHaveBeenCalledWith(
+      "apply.compose_failed",
+      expect.objectContaining({
+        conversationScope: "project",
+        conversationId: "plc-1",
+        backend: "claude",
+        trigger: "after-mutation",
+      }),
+    );
+  });
+
+  it("never leaks the PLC sentinel into any captured apply log argument (Req 3.2, 16.3, 20.2)", async () => {
+    const service = createCapabilityRuntimeApplyService(
+      buildDeps({
+        affected: [projectConversation({ conversationId: "plc-1" })],
+        applyClaudeRuntime: vi.fn(async () => {
+          throw new Error("reload failed mid project conversation apply");
+        }),
+      }),
+    );
+
+    await service.applyAfterOverrideChange({
+      scope: { level: "project", projectPath: "/repo" },
+      cascadeKind: "claude-skills",
+      changedItemIds: ["alpha"],
+      operationId: "cap-op-plc-sentinel",
+    });
+
+    expect(allLoggedArgs()).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
+    expect(allLoggedArgs()).not.toContain("sessionName");
   });
 });

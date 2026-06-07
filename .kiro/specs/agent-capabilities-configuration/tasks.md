@@ -378,7 +378,7 @@ Implementation follows red-green-refactor by default. Each task should add focus
   - _Depends: 11.1, 11.2, 11.3, 12.2_
   - _Requirements: 14.1, 14.2, 15.3, 17.1, 17.2, 17.3, 17.4, 18.2, 18.3, 18.4_
 
-- [ ] 14.2 Add PLC diagnostics, logging, and redaction coverage
+- [x] 14.2 Add PLC diagnostics, logging, and redaction coverage
   - Log PLC capability mutation, discovery, composition, and apply events with cascade kind, layer, item id, backend, project name, conversation scope, and conversation id.
   - Surface project-conversation validation, not-found, persistence, composition, and apply failures with user-visible diagnostics.
   - Prove the PLC sentinel and native backend payloads are redacted from public API responses, SSE payloads, UI diagnostics, and logs.
@@ -394,3 +394,8 @@ Implementation follows red-green-refactor by default. Each task should add focus
   - Observable completion: the relevant focused tests plus the repository validation command pass with PLC acceptance coverage included.
   - _Depends: 13.3, 14.1, 14.2_
   - _Requirements: 17.1, 17.2, 17.3, 17.4, 18.1, 18.2, 18.3, 18.4, 18.5, 19.1, 19.2, 19.3, 19.4, 19.5, 20.1, 20.2, 20.3, 20.4_
+
+## Implementation Notes
+
+- 14.2: PLC sentinel (`__project__`) absence on public surfaces is currently guaranteed by non-injection (the routes/SSE/diagnostics never write it), not by defense-in-depth — `redactAgentCapabilityText` does not strip the literal sentinel. Tests prove absence-by-non-injection; if a sentinel-bearing internal message ever bubbled into a route error body it would pass through. Adding the sentinel to the redaction denylist is a possible follow-up, deferred (out of 14.2's authorized boundary).
+- 14.2: Apply-failure diagnostic objects carry `backend`/`cascadeKind` but not `conversationScope`/`conversationId`; conversation-scope correlation lives on the apply outcome envelope and the structured logs (both asserted). If diagnostics-as-objects must also carry conversation scope, that is a separate production change.

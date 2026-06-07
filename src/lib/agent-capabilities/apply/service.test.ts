@@ -10,6 +10,7 @@ import type { AgentCapabilityMetadataRegistry } from "../metadata";
 import {
   createCapabilityRuntimeApplyService,
   type AffectedConversation,
+  type ApplyConversationIdentity,
   type ApplyServiceDeps,
   type ClaudeApplyPortInput,
   type ClaudeApplyPortResult,
@@ -908,6 +909,135 @@ describe("apply-after-mutation", () => {
     });
     expect(writes[0]?.state.cascades["claude-skills"]?.lastApplyStatus).toBe(
       "staged-idle",
+    );
+  });
+
+  it("surfaces a retryable, sanitized apply-failure diagnostic on a PLC outcome tagged project scope (Req 19.3, 16.2, 9.5)", async () => {
+    const previousAppliedHash = "previous-live-hash";
+    const port = vi.fn(async () => {
+      throw new Error(
+        "reload failed in /home/alex/projects/repo with token abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN",
+      );
+    });
+    const { deps, writes } = buildDeps({
+      affected: [projectConversation({ conversationId: "plc-1" })],
+      applyClaudeRuntime: port,
+      readRuntimeState: async () => ({
+        cascades: {
+          "claude-skills": {
+            appliedHash: previousAppliedHash,
+            lastApplyStatus: "applied",
+          },
+        },
+      }),
+    });
+
+    const result = await createCapabilityRuntimeApplyService(
+      deps,
+    ).applyAfterOverrideChange({
+      scope: { level: "project", projectPath: "/repo" },
+      cascadeKind: "claude-skills",
+      changedItemIds: ["alpha"],
+    });
+
+    const plcOutcome = result.conversations[0];
+    expect(plcOutcome?.conversationScope).toBe("project");
+    expect(plcOutcome?.conversationId).toBe("plc-1");
+    expect(plcOutcome).not.toHaveProperty("sessionName");
+    expect(plcOutcome?.cascades[0]).toMatchObject({
+      cascadeKind: "claude-skills",
+      disposition: "rejected",
+    });
+    const message = plcOutcome?.diagnostics[0]?.message ?? "";
+    expect(message).toContain("<redacted>");
+    expect(message).not.toContain("/home/alex");
+    expect(message).not.toContain(
+      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN",
+    );
+    // Retryable: the previously-applied hash is preserved and re-staged so a
+    // later idle-drain can retry without losing operator intent.
+    const state = writes[0]?.state.cascades["claude-skills"];
+    expect(state?.appliedHash).toBe(previousAppliedHash);
+    expect(state?.pendingHash).toBeDefined();
+    expect(state?.lastApplyStatus).toBe("rejected");
+    expect(state?.lastApplyError).not.toContain("/home/alex");
+  });
+
+  it("falls back for only the failed cascade on a PLC and does not block the healthy cascade (Req 19.5, 8.3)", async () => {
+    const composedPluginHash = computeCascadeRuntimeHash({
+      cascadeKind: "claude-plugins",
+      rows: [{ itemId: "plugin:p", enabled: false }],
+    });
+    const port = vi.fn<
+      (input: ClaudeApplyPortInput) => Promise<ClaudeApplyPortResult>
+    >(async () => ({ status: "applied" }));
+    const { deps, writes } = buildDeps({
+      affected: [projectConversation({ conversationId: "plc-1" })],
+      applyClaudeRuntime: port,
+      // claude-skills discovery failed for this composition; claude-plugins
+      // composed cleanly. Only the failed cascade should fall back.
+      composeForConversation: async () =>
+        buildClaudeComposition({
+          cascades: {
+            "claude-plugins": {
+              rows: [{ itemId: "plugin:p", enabled: false }],
+            },
+          },
+          failedCascadeKinds: ["claude-skills"],
+        }),
+      readRuntimeState: async () => ({
+        cascades: {
+          "claude-skills": {
+            appliedHash: "skills-applied",
+            lastApplyStatus: "applied",
+          },
+          "claude-plugins": {
+            pendingHash: composedPluginHash,
+            pendingItemIds: ["plugin:p"],
+            lastApplyStatus: "staged-idle",
+          },
+        },
+      }),
+    });
+
+    const plcIdentity: ApplyConversationIdentity = {
+      conversationScope: "project",
+      projectPath: "/repo",
+      projectName: "repo",
+      conversationId: "plc-1",
+      worktreePath: "/repo",
+      backend: "claude",
+    };
+    const result = await createCapabilityRuntimeApplyService(
+      deps,
+    ).applyWhenConversationBecomesIdle(plcIdentity);
+
+    expect(result.conversationScope).toBe("project");
+    expect(result).not.toHaveProperty("sessionName");
+
+    const skillsCascade = result.cascades.find(
+      (c) => c.cascadeKind === "claude-skills",
+    );
+    const pluginsCascade = result.cascades.find(
+      (c) => c.cascadeKind === "claude-plugins",
+    );
+    // The failed cascade is rejected and surfaces a user-visible diagnostic.
+    expect(skillsCascade?.disposition).toBe("rejected");
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: "error",
+        code: "agent-capability-apply-failed",
+        cascadeKind: "claude-skills",
+      }),
+    );
+    // The healthy cascade is NOT blocked by the failed one: it still applies.
+    expect(pluginsCascade?.disposition).toBe("applied");
+    expect(port).toHaveBeenCalledTimes(1);
+    expect(writes[0]?.state.cascades["claude-plugins"]?.lastApplyStatus).toBe(
+      "applied",
+    );
+    expect(writes[0]?.state.cascades["claude-skills"]?.lastApplyStatus).toBe(
+      "rejected",
     );
   });
 });
