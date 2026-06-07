@@ -6,6 +6,12 @@ export function activeConversationNeedsAttention(
   return row.status === "waiting_for_input" || row.unread;
 }
 
+export function activeConversationContextLabel(
+  row: ActiveConversation,
+): string {
+  return row.scope === "session" ? row.sessionName : "main";
+}
+
 export function activeConversationHref(row: ActiveConversation): string {
   const projectName = encodeURIComponent(row.projectName);
   const conversationId = encodeURIComponent(row.id);

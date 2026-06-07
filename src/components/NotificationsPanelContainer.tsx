@@ -21,6 +21,40 @@ import {
   useUnifiedPanelOpen,
   useCloseUnifiedPanel,
 } from "@/stores/unified-panel.store";
+import type { ActiveConversation } from "@/lib/active-conversations/schemas";
+import { activeConversationHref } from "@/lib/active-conversations/row-helpers";
+
+export function mapActiveConversationsToNotifications(
+  activeConversations: ActiveConversation[],
+): ConversationNotification[] {
+  return activeConversations.map((conv): ConversationNotification => {
+    const base = {
+      type: "conversation" as const,
+      id: conv.id,
+      timestamp: conv.lastActivityAt,
+      projectName: conv.projectName,
+      name: conv.name,
+      status: conv.status,
+      backend: conv.agentBackend,
+      read: !conv.unread,
+    };
+
+    if (conv.scope === "session") {
+      return {
+        ...base,
+        scope: "session",
+        sessionName: conv.sessionName,
+      };
+    }
+
+    return {
+      ...base,
+      scope: "project",
+      contextLabel: "main",
+      href: activeConversationHref(conv),
+    };
+  });
+}
 
 export default function NotificationsPanelContainer() {
   const panelOpen = useUnifiedPanelOpen();
@@ -73,22 +107,7 @@ export default function NotificationsPanelContainer() {
 
     // Map active conversations
     if (activeConversations) {
-      for (const conv of activeConversations) {
-        if (conv.scope !== "session") continue;
-        result.push({
-          type: "conversation",
-          id: conv.id,
-          timestamp: conv.lastActivityAt,
-          projectName: conv.projectName,
-          sessionName: conv.sessionName,
-          name: conv.name,
-          status: conv.status as
-            | "new"
-            | "running"
-            | "awaiting"
-            | "waiting_for_input",
-        } satisfies ConversationNotification);
-      }
+      result.push(...mapActiveConversationsToNotifications(activeConversations));
     }
 
     // Map currently running jobs from Zustand store

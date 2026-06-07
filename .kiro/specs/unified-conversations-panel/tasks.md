@@ -177,7 +177,7 @@
   - Observable completion: project and session row action tests pass without adding a synthetic session name to project rows.
   - _Requirements: 13.1, 13.2, 13.3, 13.4_
 
-- [ ] 11. Active Conversations UI integration
+- [x] 11. Active Conversations UI integration
 - [x] 11.1 (P) Render project conversations in the sidebar Active tab
   - Stop filtering Active tab data to session-only rows.
   - Render project rows with `main` context, shared status/unread/backend/last-activity indicators, and project focus navigation.
@@ -198,7 +198,7 @@
   - _Boundary: Topbar needs shortcut_
   - _Depends: 9.2_
 
-- [ ] 11.3 (P) Render project conversations in the global activity panel
+- [x] 11.3 (P) Render project conversations in the global activity panel
   - Stop filtering global panel active conversation items to session-only rows.
   - Render project conversation items with project name, conversation name, `main` context, status, unread state, initialized backend where present, and last activity.
   - Route project conversation item actions to the project focus URL and close the panel after navigation.

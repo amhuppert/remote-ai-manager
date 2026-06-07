@@ -7,6 +7,7 @@ import { getItemLabel } from "./notification-helpers";
 import { CloseIcon } from "@/components/icons";
 import LandPreparedMergeButton from "./LandPreparedMergeButton";
 import type { BackgroundJob } from "@/lib/jobs/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -14,16 +15,42 @@ interface BaseNotification {
   id: string;
   timestamp: string;
   projectName: string;
+}
+
+type ConversationNotificationStatus =
+  | "new"
+  | "running"
+  | "awaiting"
+  | "waiting_for_input";
+
+interface ConversationNotificationBase extends BaseNotification {
+  type: "conversation";
+  name: string | null;
+  status: ConversationNotificationStatus;
+  backend?: AgentBackendId;
+  read?: boolean;
+}
+
+export interface SessionConversationNotification
+  extends ConversationNotificationBase {
+  scope: "session";
   sessionName: string;
 }
 
-export interface ConversationNotification extends BaseNotification {
-  type: "conversation";
-  name: string | null;
-  status: "new" | "running" | "awaiting" | "waiting_for_input";
+export interface ProjectConversationNotification
+  extends ConversationNotificationBase {
+  scope: "project";
+  contextLabel: "main";
+  href: string;
+  sessionName?: never;
 }
 
+export type ConversationNotification =
+  | SessionConversationNotification
+  | ProjectConversationNotification;
+
 interface ServerNotificationBase extends BaseNotification {
+  sessionName: string;
   branchName: string;
   read?: boolean;
 }
@@ -62,6 +89,7 @@ export interface ResolveConflictsNotification extends ServerNotificationBase {
 
 export interface GraphWorkflowNotification extends BaseNotification {
   type: "graph-workflow";
+  sessionName: string;
   status: string;
   activeContextTitles: string[];
   completedContexts: number;
@@ -142,19 +170,34 @@ function formatRelativeTime(isoDate: string): string {
 }
 
 function getItemHref(item: NotificationItem): string {
-  const base = `/projects/${encodeURIComponent(item.projectName)}/${encodeURIComponent(item.sessionName)}`;
   switch (item.type) {
-    case "conversation":
-      return `${base}/${item.id}`;
-    case "merge":
+    case "conversation": {
+      switch (item.scope) {
+        case "session":
+          return `/projects/${encodeURIComponent(item.projectName)}/${encodeURIComponent(item.sessionName)}/${encodeURIComponent(item.id)}`;
+        case "project":
+          return item.href;
+        default:
+          return assertNever(item);
+      }
+    }
+    case "merge": {
+      const base = `/projects/${encodeURIComponent(item.projectName)}/${encodeURIComponent(item.sessionName)}`;
       if (item.status === "conflicts") return `${base}/conflicts`;
       return base;
-    case "commit":
+    }
+    case "commit": {
+      const base = `/projects/${encodeURIComponent(item.projectName)}/${encodeURIComponent(item.sessionName)}`;
       return base;
-    case "resolve-conflicts":
+    }
+    case "resolve-conflicts": {
+      const base = `/projects/${encodeURIComponent(item.projectName)}/${encodeURIComponent(item.sessionName)}`;
       return base;
-    case "graph-workflow":
+    }
+    case "graph-workflow": {
+      const base = `/projects/${encodeURIComponent(item.projectName)}/${encodeURIComponent(item.sessionName)}`;
       return `${base}/workflow`;
+    }
     default:
       return assertNever(item);
   }
@@ -241,9 +284,23 @@ function getItemStatusClass(item: NotificationItem): string {
 }
 
 function isUnread(item: NotificationItem): boolean {
-  if (item.type === "conversation" || item.type === "graph-workflow")
-    return false;
+  if (item.type === "conversation") return item.read === false;
+  if (item.type === "graph-workflow") return false;
   return item.read === false;
+}
+
+function getItemContextLabel(item: NotificationItem): string {
+  if (item.type === "conversation") {
+    switch (item.scope) {
+      case "session":
+        return `${item.projectName} / ${item.sessionName}`;
+      case "project":
+        return `${item.projectName} / ${item.contextLabel}`;
+      default:
+        return assertNever(item);
+    }
+  }
+  return `${item.projectName} / ${item.sessionName}`;
 }
 
 // ── Icons ──────────────────────────────────────────────────────
@@ -418,7 +475,19 @@ function NotificationRow({
         <div className="np-item-body">
           <div className="np-item-title">{getItemTitle(item)}</div>
           <div className="np-item-meta">
-            {item.projectName} / {item.sessionName}
+            {getItemContextLabel(item)}
+            {item.type === "conversation" && item.backend && (
+              <>
+                {" "}
+                <span
+                  className="cc-badge cc-badge--subtle"
+                  data-backend={item.backend}
+                  aria-label={`agent: ${item.backend}`}
+                >
+                  {item.backend}
+                </span>
+              </>
+            )}
           </div>
           {getErrorMessage(item) && (
             <div className="np-item-error" title={getErrorMessage(item)}>

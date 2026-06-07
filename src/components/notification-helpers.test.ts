@@ -11,6 +11,7 @@ function makeConversation(
 ): ConversationNotification {
   return {
     type: "conversation",
+    scope: "session",
     id: "conv-001",
     name: "Test conversation",
     status,
