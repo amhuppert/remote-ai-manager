@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { z } from "zod";
 import {
   activeConversationsResponseSchema,
+  type ActiveConversation,
+  type ProjectActiveConversation,
   type SessionActiveConversation,
 } from "@/lib/active-conversations/schemas";
 import { conversationKeys } from "@/lib/conversations/query-keys";
@@ -30,7 +32,7 @@ const now = new Date();
 const minutesAgo = (m: number) =>
   new Date(now.getTime() - m * 60_000).toISOString();
 
-function makeActive(
+function makeSessionActive(
   overrides: Partial<SessionActiveConversation> &
     Pick<SessionActiveConversation, "id">,
 ): SessionActiveConversation {
@@ -61,8 +63,36 @@ function makeActive(
   };
 }
 
-const mixedActive: SessionActiveConversation[] = [
-  makeActive({
+function makeProjectActive(
+  overrides: Partial<ProjectActiveConversation> &
+    Pick<ProjectActiveConversation, "id">,
+): ProjectActiveConversation {
+  return {
+    scope: "project",
+    id: overrides.id,
+    name: overrides.name ?? "Project-level conversation",
+    status: overrides.status ?? "running",
+    lastActivityAt: overrides.lastActivityAt ?? minutesAgo(5),
+    projectName: overrides.projectName ?? "remote-ai-manager",
+    projectPath: overrides.projectPath ?? "/home/alex/github/remote-ai-manager",
+    agentBackend: overrides.agentBackend ?? "claude",
+    summary: overrides.summary ?? null,
+    pendingQuestion: overrides.pendingQuestion ?? null,
+    pendingQuestionId: overrides.pendingQuestionId ?? null,
+    pendingQuestions: overrides.pendingQuestions ?? null,
+    forkedFrom: overrides.forkedFrom ?? null,
+    debugActive: overrides.debugActive ?? false,
+    role: overrides.role ?? null,
+    worktreePath:
+      overrides.worktreePath ??
+      `/home/alex/github/${overrides.projectName ?? "remote-ai-manager"}`,
+    lastActivitySummary: overrides.lastActivitySummary ?? null,
+    unread: overrides.unread ?? false,
+  };
+}
+
+const mixedActive: ActiveConversation[] = [
+  makeSessionActive({
     id: "conv-new",
     name: "Draft outline for spec",
     status: "new",
@@ -70,7 +100,7 @@ const mixedActive: SessionActiveConversation[] = [
     sessionName: "conversation-ui-overhaul",
     lastActivitySummary: "No prompts yet.",
   }),
-  makeActive({
+  makeSessionActive({
     id: "conv-running",
     name: "Implement sidebar pipeline",
     status: "running",
@@ -79,7 +109,7 @@ const mixedActive: SessionActiveConversation[] = [
     lastActivitySummary: "Iterating on annotateSessionPos.",
     debugActive: true,
   }),
-  makeActive({
+  makeSessionActive({
     id: "conv-awaiting",
     name: "Validate impl",
     status: "awaiting",
@@ -89,7 +119,7 @@ const mixedActive: SessionActiveConversation[] = [
     role: "validator",
     lastActivitySummary: "Validator awaiting next instruction.",
   }),
-  makeActive({
+  makeSessionActive({
     id: "conv-wfi",
     name: "Plan refactor",
     status: "waiting_for_input",
@@ -98,7 +128,34 @@ const mixedActive: SessionActiveConversation[] = [
     pendingQuestion: "Should we collapse the prompt panel by default?",
     lastActivitySummary: "Agent asked a clarifying question.",
   }),
-  makeActive({
+  makeProjectActive({
+    id: "project-running",
+    name: "Review project-level transcript flow",
+    status: "running",
+    lastActivityAt: minutesAgo(14),
+    projectName: "remote-ai-manager",
+    lastActivitySummary: "Checking root-level active conversation routing.",
+  }),
+  makeProjectActive({
+    id: "project-wfi",
+    name: "Resolve project prompt",
+    status: "waiting_for_input",
+    lastActivityAt: minutesAgo(16),
+    projectName: "remote-ai-manager",
+    pendingQuestion: "Should the main project transcript keep focus?",
+    lastActivitySummary: "Asking for project-level routing confirmation.",
+  }),
+  makeProjectActive({
+    id: "project-unread-awaiting",
+    name: "Summarize project outcome",
+    status: "awaiting",
+    unread: true,
+    lastActivityAt: minutesAgo(17),
+    projectName: "remote-ai-manager",
+    agentBackend: "codex",
+    lastActivitySummary: "Finished the project summary and is ready.",
+  }),
+  makeSessionActive({
     id: "conv-codex",
     name: "Codex investigation",
     status: "running",
@@ -115,7 +172,7 @@ const mixedActive: SessionActiveConversation[] = [
     },
     lastActivitySummary: "Synthetic fork from earlier conversation.",
   }),
-  makeActive({
+  makeSessionActive({
     id: "conv-init",
     name: "Graph init scaffolding",
     status: "running",
@@ -128,8 +185,8 @@ const mixedActive: SessionActiveConversation[] = [
   }),
 ];
 
-const needsYouActive: SessionActiveConversation[] = [
-  makeActive({
+const needsYouActive: ActiveConversation[] = [
+  makeSessionActive({
     id: "conv-wfi-1",
     name: "Plan refactor",
     status: "waiting_for_input",
@@ -138,7 +195,16 @@ const needsYouActive: SessionActiveConversation[] = [
     pendingQuestion: "Should we collapse the prompt panel by default?",
     lastActivitySummary: "Agent asked a clarifying question.",
   }),
-  makeActive({
+  makeProjectActive({
+    id: "project-wfi-1",
+    name: "Confirm project scope",
+    status: "waiting_for_input",
+    lastActivityAt: minutesAgo(3),
+    projectName: "remote-ai-manager",
+    pendingQuestion: "Keep the project row in the global Active tab?",
+    lastActivitySummary: "Asking whether the PLC row should stay visible.",
+  }),
+  makeSessionActive({
     id: "conv-wfi-2",
     name: "Confirm rollout plan",
     status: "waiting_for_input",
@@ -149,7 +215,7 @@ const needsYouActive: SessionActiveConversation[] = [
     pendingQuestion: "Roll out to all users or behind a flag?",
     lastActivitySummary: "Asking about rollout strategy.",
   }),
-  makeActive({
+  makeSessionActive({
     id: "conv-finished-1",
     name: "Built hotkeys help modal",
     status: "awaiting",
@@ -159,7 +225,17 @@ const needsYouActive: SessionActiveConversation[] = [
     lastActivitySummary:
       "Built hotkeys help modal \u00b7 +88 / \u22124 \u00b7 ready for review",
   }),
-  makeActive({
+  makeProjectActive({
+    id: "project-finished-1",
+    name: "Project-level summary ready",
+    status: "awaiting",
+    unread: true,
+    lastActivityAt: minutesAgo(10),
+    projectName: "remote-ai-manager",
+    agentBackend: "codex",
+    lastActivitySummary: "Project-level summary ready for review.",
+  }),
+  makeSessionActive({
     id: "conv-finished-2",
     name: "Refactored validator pipeline",
     status: "awaiting",
@@ -170,7 +246,7 @@ const needsYouActive: SessionActiveConversation[] = [
     sessionName: "graph-init",
     lastActivitySummary: "Refactored validator pipeline \u00b7 ready to merge.",
   }),
-  makeActive({
+  makeSessionActive({
     id: "conv-running-bg",
     name: "Background indexing",
     status: "running",
@@ -180,10 +256,43 @@ const needsYouActive: SessionActiveConversation[] = [
   }),
 ];
 
-const needsYouQuestionsOnly: SessionActiveConversation[] =
-  needsYouActive.filter((c) => c.status === "waiting_for_input" || !c.unread);
+const projectRowsOnly: ActiveConversation[] = [
+  makeProjectActive({
+    id: "project-running",
+    name: "Review project-level transcript flow",
+    status: "running",
+    lastActivityAt: minutesAgo(2),
+    projectName: "remote-ai-manager",
+    lastActivitySummary: "Checking root-level active conversation routing.",
+  }),
+  makeProjectActive({
+    id: "project-wfi",
+    name: "Resolve project prompt",
+    status: "waiting_for_input",
+    lastActivityAt: minutesAgo(6),
+    projectName: "remote-ai-manager",
+    pendingQuestion: "Should the main project transcript keep focus?",
+    lastActivitySummary: "Asking for project-level routing confirmation.",
+  }),
+  makeProjectActive({
+    id: "project-unread-awaiting",
+    name: "Summarize project outcome",
+    status: "awaiting",
+    unread: true,
+    lastActivityAt: minutesAgo(9),
+    projectName: "creative-ai",
+    projectPath: "/home/alex/github/creative-ai",
+    agentBackend: "codex",
+    worktreePath: "/home/alex/github/creative-ai",
+    lastActivitySummary: "Project-level summary ready for review.",
+  }),
+];
 
-const needsYouFinishedOnly: SessionActiveConversation[] = needsYouActive.filter(
+const needsYouQuestionsOnly: ActiveConversation[] = needsYouActive.filter(
+  (c) => c.status === "waiting_for_input" || !c.unread,
+);
+
+const needsYouFinishedOnly: ActiveConversation[] = needsYouActive.filter(
   (c) => c.status !== "waiting_for_input",
 );
 
@@ -205,6 +314,12 @@ const needsYouResponse: ActiveConversationsResponse = {
   activeCollaborationExecutions: [],
 };
 
+const projectRowsOnlyResponse: ActiveConversationsResponse = {
+  conversations: projectRowsOnly,
+  graphWorkflowExecutions: [],
+  activeCollaborationExecutions: [],
+};
+
 const needsYouQuestionsResponse: ActiveConversationsResponse = {
   conversations: needsYouQuestionsOnly,
   graphWorkflowExecutions: [],
@@ -216,6 +331,32 @@ const needsYouFinishedResponse: ActiveConversationsResponse = {
   graphWorkflowExecutions: [],
   activeCollaborationExecutions: [],
 };
+
+const archivedAfterActionResponse = {
+  conversations: [
+    makeSessionActive({
+      id: "conv-archive-control",
+      name: "Session row remains visible",
+      status: "running",
+      lastActivityAt: minutesAgo(4),
+      lastActivitySummary: "Unaffected session row.",
+    }),
+    {
+      ...makeProjectActive({
+        id: "project-archived",
+        name: "Archived project conversation",
+        status: "awaiting",
+        unread: true,
+        lastActivityAt: minutesAgo(9),
+        projectName: "remote-ai-manager",
+        lastActivitySummary: "Archived after a project-level action.",
+      }),
+      archived: true,
+    },
+  ],
+  graphWorkflowExecutions: [],
+  activeCollaborationExecutions: [],
+} as ActiveConversationsResponse;
 
 // ---------------------------------------------------------------------------
 // Story harness
@@ -368,6 +509,14 @@ export const MixedStatuses = {
   },
 } satisfies Story;
 
+export const ProjectRowsOnly = {
+  args: {
+    active: projectRowsOnlyResponse,
+    initialGroupBy: "session",
+    activeConversationId: "project-running",
+  },
+} satisfies Story;
+
 export const GroupBySession = {
   args: {
     active: mixedResponse,
@@ -440,5 +589,12 @@ export const NeedsYouFilter = {
     active: needsYouResponse,
     initialActiveListFilter: "needs",
     activeConversationId: "conv-running-bg",
+  },
+} satisfies Story;
+
+export const ArchivedAfterAction = {
+  args: {
+    active: archivedAfterActionResponse,
+    activeConversationId: "conv-archive-control",
   },
 } satisfies Story;

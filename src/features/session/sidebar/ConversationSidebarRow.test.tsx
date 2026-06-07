@@ -290,6 +290,28 @@ describe("ConversationSidebarRow", () => {
     expect(screen.getByText(/Done/)).toBeDefined();
   });
 
+  it("renders project row breadcrumbs and activity without a synthetic session crumb", () => {
+    render(
+      <ConversationSidebarRow
+        conversation={{
+          ...PROJECT_BASE,
+          projectName: "root-tools",
+          lastActivitySummary: "Checked repo root health",
+        }}
+        href="/projects/root-tools?focus=project-convo-1"
+      />,
+    );
+
+    const breadcrumb = document.querySelector(
+      ".conversation-sidebar-row__breadcrumb",
+    );
+    expect(breadcrumb).not.toBeNull();
+    expect(breadcrumb?.textContent).toContain("root-tools");
+    expect(breadcrumb?.textContent).toContain("main");
+    expect(breadcrumb?.textContent).not.toContain("my-session");
+    expect(screen.getByText("Checked repo root health")).toBeDefined();
+  });
+
   it("does not invoke session peek behavior for project rows", () => {
     const onPeek = vi.fn();
     const onClick = vi.fn();

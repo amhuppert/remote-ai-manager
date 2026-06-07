@@ -209,7 +209,7 @@
   - _Depends: 9.2_
 
 - [ ] 12. Mixed-scope visual and interaction validation
-- [ ] 12.1 Add mixed session/project sidebar stories and regression tests
+- [x] 12.1 Add mixed session/project sidebar stories and regression tests
   - Add or update stories showing session rows, project rows, mixed groups, empty state, `waiting_for_input`, unread `awaiting`, running, and archived-after-action behavior.
   - Add component tests for project row breadcrumbs, backend badge, unread dot, status dot, activity summary, and action menu boundaries.
   - Add global panel tests or stories showing project conversation items with `main` context and project focus navigation.

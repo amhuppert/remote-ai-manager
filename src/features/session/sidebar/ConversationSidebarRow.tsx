@@ -100,6 +100,10 @@ export default function ConversationSidebarRow({
 
   const contextLabel =
     conversation.scope === "session" ? conversation.sessionName : "main";
+  const breadcrumbLabels =
+    conversation.scope === "project"
+      ? [conversation.projectName, contextLabel]
+      : [contextLabel];
   const title = name ?? summary ?? "Unnamed conversation";
   const activityText = pendingQuestion ?? lastActivitySummary;
   const showActivity =
@@ -148,7 +152,13 @@ export default function ConversationSidebarRow({
 
       onClick?.();
     },
-    [conversation.id, conversation.scope, isCurrentConversation, onClick, onPeek],
+    [
+      conversation.id,
+      conversation.scope,
+      isCurrentConversation,
+      onClick,
+      onPeek,
+    ],
   );
 
   const handleContextMenu = useCallback(
@@ -240,9 +250,14 @@ export default function ConversationSidebarRow({
           </span>
 
           <span className="conversation-sidebar-row__breadcrumb">
-            <span className="conversation-sidebar-row__crumb">
-              {contextLabel}
-            </span>
+            {breadcrumbLabels.map((label, index) => (
+              <span key={`${index}-${label}`}>
+                {index > 0 && (
+                  <span className="conversation-sidebar-row__crumb-sep">/</span>
+                )}
+                <span className="conversation-sidebar-row__crumb">{label}</span>
+              </span>
+            ))}
           </span>
         </span>
 

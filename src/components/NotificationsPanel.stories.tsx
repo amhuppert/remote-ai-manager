@@ -45,6 +45,34 @@ const sampleConversations: NotificationItem[] = [
   },
 ];
 
+const projectConversations: NotificationItem[] = [
+  {
+    type: "conversation",
+    scope: "project",
+    id: "project-convo-wfi",
+    name: "Project-level prompt needs review",
+    status: "waiting_for_input",
+    timestamp: minutesAgo(3),
+    projectName: "api-server",
+    contextLabel: "main",
+    href: "/projects/api-server?focus=project-convo-wfi",
+    backend: "codex",
+    read: false,
+  },
+  {
+    type: "conversation",
+    scope: "project",
+    id: "project-convo-running",
+    name: "Root workflow is running",
+    status: "running",
+    timestamp: minutesAgo(7),
+    projectName: "my-app",
+    contextLabel: "main",
+    href: "/projects/my-app?focus=project-convo-running",
+    backend: "claude",
+  },
+];
+
 const sampleJobs: NotificationItem[] = [
   {
     type: "merge",
@@ -126,6 +154,12 @@ export const MixedActivity = {
 export const ConversationsOnly = {
   args: {
     items: sampleConversations,
+  },
+} satisfies Story;
+
+export const ProjectConversations = {
+  args: {
+    items: projectConversations,
   },
 } satisfies Story;
 

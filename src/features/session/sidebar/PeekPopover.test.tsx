@@ -255,6 +255,34 @@ describe("PeekPopover", () => {
     expect(screen.queryByText("Yes, proceed")).toBeNull();
   });
 
+  it("submits structured pending-question answers through the peek answer handler", () => {
+    const onAnswerQuestion = vi.fn();
+
+    renderPeek({
+      onAnswerQuestion,
+      conversation: {
+        ...BASE_CONVERSATION,
+        status: "waiting_for_input",
+        pendingQuestion: "Which path should I take?",
+        pendingQuestionId: "question-1",
+        pendingQuestions: [
+          {
+            question: "Which path should I take?",
+            options: [{ label: "A" }, { label: "B" }],
+            multiSelect: false,
+          },
+        ],
+      },
+    });
+
+    fireEvent.click(screen.getByLabelText("A"));
+    fireEvent.click(screen.getByRole("button", { name: "Submit Answer" }));
+
+    expect(onAnswerQuestion).toHaveBeenCalledWith({
+      "Which path should I take?": "A",
+    });
+  });
+
   it("closes from Escape and backdrop clicks but not panel clicks", () => {
     const onClose = vi.fn();
     renderPeek({ onClose });
