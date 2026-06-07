@@ -21,6 +21,7 @@ import {
   type AgentCapabilityApplyStatus,
   type AgentCapabilityCascadeKind,
   type AgentCapabilityCascadeLayer,
+  type AgentCapabilityConversationScope,
   type AgentCapabilityOverrideOperation,
   type AgentCapabilityPatchRequest,
   type AgentCapabilityViewResponse,
@@ -33,8 +34,16 @@ export type AgentCapabilityScope =
   | {
       level: "conversation";
       projectName: string;
+      conversationScope?: "session";
       sessionName: string;
       conversationId: string;
+    }
+  | {
+      level: "conversation";
+      projectName: string;
+      conversationScope: "project";
+      conversationId: string;
+      sessionName?: never;
     };
 
 interface QueryOptions {
@@ -87,6 +96,13 @@ export function agentCapabilityScopeQueryKey(
         cascadeKind,
       );
     case "conversation":
+      if (scope.conversationScope === "project") {
+        return agentCapabilityKeys.projectConversation(
+          scope.projectName,
+          scope.conversationId,
+          cascadeKind,
+        );
+      }
       return agentCapabilityKeys.conversation(
         scope.projectName,
         scope.sessionName,
@@ -105,6 +121,9 @@ function agentCapabilityScopeUrl(scope: AgentCapabilityScope): string {
     case "session":
       return `/api/projects/${encodeURIComponent(scope.projectName)}/sessions/${encodeURIComponent(scope.sessionName)}/agent-capabilities`;
     case "conversation":
+      if (scope.conversationScope === "project") {
+        return `/api/projects/${encodeURIComponent(scope.projectName)}/conversations/${encodeURIComponent(scope.conversationId)}/agent-capabilities`;
+      }
       return `/api/projects/${encodeURIComponent(scope.projectName)}/sessions/${encodeURIComponent(scope.sessionName)}/conversations/${encodeURIComponent(scope.conversationId)}/agent-capabilities`;
   }
 }
@@ -342,6 +361,7 @@ function invalidateCapabilityScope(
 
 function scopeNames(scope: AgentCapabilityScope): {
   projectName?: string;
+  conversationScope?: AgentCapabilityConversationScope;
   sessionName?: string;
   conversationId?: string;
 } {
@@ -355,8 +375,16 @@ function scopeNames(scope: AgentCapabilityScope): {
       sessionName: scope.sessionName,
     };
   }
+  if (scope.conversationScope === "project") {
+    return {
+      projectName: scope.projectName,
+      conversationScope: "project",
+      conversationId: scope.conversationId,
+    };
+  }
   return {
     projectName: scope.projectName,
+    conversationScope: scope.conversationScope ?? "session",
     sessionName: scope.sessionName,
     conversationId: scope.conversationId,
   };

@@ -21,6 +21,14 @@ interface McpCapabilityPanelContainerProps {
   selectedScope: AgentCapabilityScope;
 }
 
+type McpSupportedAgentCapabilityScope = Exclude<
+  AgentCapabilityScope,
+  {
+    level: "conversation";
+    conversationScope: "project";
+  }
+>;
+
 type McpFilter = "all" | "overridden" | "enabled" | "disabled";
 
 const MCP_FILTERS: Array<{
@@ -44,48 +52,51 @@ export function McpCapabilityPanelContainer({
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<McpFilter>("all");
   const [expandedServerId, setExpandedServerId] = useState<string | null>(null);
+  const mcpScope = useMemo(
+    () => toMcpSupportedScope(selectedScope),
+    [selectedScope],
+  );
 
   const globalQuery = useGlobalMcpConfigQuery({
-    enabled: selectedScope.level === "global",
+    enabled: mcpScope.level === "global",
   });
-  const projectName =
-    selectedScope.level === "global" ? "" : selectedScope.projectName;
+  const projectName = mcpScope.level === "global" ? "" : mcpScope.projectName;
   const sessionName =
-    selectedScope.level === "session" || selectedScope.level === "conversation"
-      ? selectedScope.sessionName
+    mcpScope.level === "session" || mcpScope.level === "conversation"
+      ? mcpScope.sessionName
       : "";
   const conversationId =
-    selectedScope.level === "conversation" ? selectedScope.conversationId : "";
+    mcpScope.level === "conversation" ? mcpScope.conversationId : "";
   const projectQuery = useProjectMcpConfigQuery(projectName, {
-    enabled: selectedScope.level === "project",
+    enabled: mcpScope.level === "project",
   });
   const sessionQuery = useSessionMcpConfigQuery(projectName, sessionName, {
-    enabled: selectedScope.level === "session",
+    enabled: mcpScope.level === "session",
   });
   const conversationQuery = useConversationMcpConfigQuery(
     projectName,
     sessionName,
     conversationId,
-    { enabled: selectedScope.level === "conversation" },
+    { enabled: mcpScope.level === "conversation" },
   );
 
   const activeQuery =
-    selectedScope.level === "global"
+    mcpScope.level === "global"
       ? globalQuery
-      : selectedScope.level === "project"
+      : mcpScope.level === "project"
         ? projectQuery
-        : selectedScope.level === "session"
+        : mcpScope.level === "session"
           ? sessionQuery
           : conversationQuery;
 
   const servers = useMemo(() => {
     if (!activeQuery.data) return [];
-    return adaptServerViewsForLevel(activeQuery.data, selectedScope.level);
-  }, [activeQuery.data, selectedScope.level]);
+    return adaptServerViewsForLevel(activeQuery.data, mcpScope.level);
+  }, [activeQuery.data, mcpScope.level]);
 
   const mutationScope = useMemo<McpMutationScope>(
-    () => toMcpMutationScope(selectedScope),
-    [selectedScope],
+    () => toMcpMutationScope(mcpScope),
+    [mcpScope],
   );
   const actions = useMcpActions(mutationScope, servers);
 
@@ -127,7 +138,7 @@ export function McpCapabilityPanelContainer({
           ))}
         </div>
         <div className="agent-capability-panel__scope-note">
-          {scopeLabel(selectedScope)}
+          {scopeLabel(mcpScope)}
         </div>
       </div>
 
@@ -148,7 +159,7 @@ export function McpCapabilityPanelContainer({
           <McpCapabilityRow
             key={server.id}
             server={server}
-            scopeName={scopeLabel(selectedScope)}
+            scopeName={scopeLabel(mcpScope)}
             expanded={expandedServerId === server.id}
             onExpand={() => {
               setExpandedServerId((current) =>
@@ -417,7 +428,18 @@ function McpInheritanceChip({
   );
 }
 
-function toMcpMutationScope(scope: AgentCapabilityScope): McpMutationScope {
+function toMcpSupportedScope(
+  scope: AgentCapabilityScope,
+): McpSupportedAgentCapabilityScope {
+  if (scope.level === "conversation" && scope.conversationScope === "project") {
+    return { level: "project", projectName: scope.projectName };
+  }
+  return scope;
+}
+
+function toMcpMutationScope(
+  scope: McpSupportedAgentCapabilityScope,
+): McpMutationScope {
   if (scope.level === "global") return { level: "global" };
   if (scope.level === "project") {
     return { level: "project", projectName: scope.projectName };
@@ -437,7 +459,7 @@ function toMcpMutationScope(scope: AgentCapabilityScope): McpMutationScope {
   };
 }
 
-function scopeLabel(scope: AgentCapabilityScope): string {
+function scopeLabel(scope: McpSupportedAgentCapabilityScope): string {
   if (scope.level === "global") return "Global";
   if (scope.level === "project") return "Project";
   if (scope.level === "session") return "Session";

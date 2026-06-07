@@ -9,6 +9,7 @@ import { mcpConfigKeys, mcpToolsKeys } from "@/lib/mcp/query-keys";
 import { agentCapabilityKeys } from "@/lib/agent-capabilities/query-keys";
 import { collaborationKeys } from "@/lib/workflows/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 
 vi.mock("@/stores/notification.store", () => ({
   useAddOrUpdateJob: () => vi.fn(),
@@ -155,6 +156,54 @@ describe("NotificationListener", () => {
         "sess",
       ],
     });
+  });
+
+  it("invalidates project-conversation capability queries on override update events without the sentinel", async () => {
+    const client = makeClient();
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) {
+      throw new Error("expected EventSource instance");
+    }
+
+    es.emit("agent-capabilities-updated", {
+      type: "agent-capabilities-updated",
+      level: "conversation",
+      projectName: "proj",
+      conversationScope: "project",
+      conversationId: "plc-1",
+      cascadeKind: "claude-skills",
+      backend: "claude",
+      changedItemIds: ["skill:a"],
+      effectiveHash: "hash-2",
+      invalidationHints: {
+        level: "conversation",
+        projectName: "proj",
+        conversationScope: "project",
+        conversationId: "plc-1",
+        cascadeKind: "claude-skills",
+        itemIds: ["skill:a"],
+        effectiveHash: "hash-2",
+      },
+    });
+
+    const expectedKey = [
+      "agent-capabilities",
+      "conversation",
+      "proj",
+      "claude-skills",
+      "project",
+      "plc-1",
+    ];
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: expectedKey,
+      }),
+    );
+    expect(expectedKey).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
   });
 
   it("invalidates affected capability queries on discovery refresh events", async () => {

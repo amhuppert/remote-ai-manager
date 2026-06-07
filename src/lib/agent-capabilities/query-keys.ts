@@ -26,4 +26,17 @@ export const agentCapabilityKeys = {
       sessionName,
       conversationId,
     ] as const,
+  projectConversation: (
+    projectName: string,
+    conversationId: string,
+    cascadeKind: string,
+  ) =>
+    [
+      ...agentCapabilityKeys.all,
+      "conversation",
+      projectName,
+      cascadeKind,
+      "project",
+      conversationId,
+    ] as const,
 };

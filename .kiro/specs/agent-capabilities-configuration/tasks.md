@@ -343,7 +343,7 @@ Implementation follows red-green-refactor by default. Each task should add focus
 
 - [ ] 13. Wire project-conversation capability editing in the frontend
 
-- [ ] 13.1 Add project-conversation query keys, URLs, and SSE invalidation
+- [x] 13.1 Add project-conversation query keys, URLs, and SSE invalidation
   - Extend capability hooks and query keys with project-conversation scope.
   - Build GET, PATCH, and refresh URLs from project name and project conversation id without using the PLC sentinel.
   - Invalidate project-conversation capability queries from project-conversation capability SSE events.
