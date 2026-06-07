@@ -830,13 +830,9 @@ describe("useGenericArchiveConversationMutation", () => {
 
     await waitFor(() => expect(result.current.isError).toBe(true));
 
-    const activeData = client.getQueryData<ActiveConversationsResponse>(
-      activeKey,
-    );
-    expect(activeData?.conversations.map((c) => c.id)).toEqual([
-      "pc1",
-      "pc2",
-    ]);
+    const activeData =
+      client.getQueryData<ActiveConversationsResponse>(activeKey);
+    expect(activeData?.conversations.map((c) => c.id)).toEqual(["pc1", "pc2"]);
   });
 });
 

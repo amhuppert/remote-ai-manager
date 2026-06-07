@@ -46,4 +46,19 @@ describe("cockpit design-system compliance", () => {
   it("gates the entry animation behind prefers-reduced-motion", () => {
     expect(cockpitCss).toContain("prefers-reduced-motion");
   });
+
+  it("keeps the cockpit visible once its entry animation ends", () => {
+    // The cockpit mounts as a `.stagger-in > *` child, which sets a resting
+    // `opacity: 0` (globals.css). The `.plc-enter` entry animation must
+    // therefore *settle* on opacity 1 — via `forwards` when it runs, and via an
+    // explicit opacity when reduced motion disables it — or the whole cockpit
+    // reverts to that inherited `opacity: 0` and renders invisible.
+    const baseEnter = cockpitCss.match(/\.plc-enter\s*\{([^}]*)\}/);
+    expect(baseEnter?.[1]).toMatch(/animation:[^;]*\bforwards\b/);
+
+    const reducedEnter = cockpitCss.match(
+      /prefers-reduced-motion[^{]*\{[\s\S]*?\.plc-enter\s*\{([^}]*)\}/,
+    );
+    expect(reducedEnter?.[1]).toMatch(/opacity:\s*1/);
+  });
 });

@@ -42,9 +42,12 @@
   gap: var(--space-lg);
 }
 
-/* Entry animation — 8px rise + fade over .2s ease (entries). */
+/* Entry animation — 8px rise + fade over .2s ease (entries).
+ * `forwards` is required because this element is also a `.stagger-in > *`
+ * child, which sets a resting `opacity: 0`; without it the cockpit reverts to
+ * invisible once this animation ends. */
 .plc-enter {
-  animation: plc-rise-fade 0.2s ease;
+  animation: plc-rise-fade 0.2s ease forwards;
 }
 @keyframes plc-rise-fade {
   from {
@@ -59,6 +62,7 @@
 @media (prefers-reduced-motion: reduce) {
   .plc-enter {
     animation: none;
+    opacity: 1;
   }
 }
 
@@ -419,4 +423,145 @@
   align-items: center;
   justify-content: center;
   padding: var(--space-2xl);
+}
+
+/* ── main · worktree review chip (opens the read-only diff slide-over) ──── */
+
+.plc-worktree-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-2xs) var(--space-sm);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease;
+}
+.plc-worktree-btn:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+.plc-worktree-stat {
+  display: inline-flex;
+  gap: var(--space-2xs);
+  margin-left: var(--space-2xs);
+  padding-left: var(--space-xs);
+  border-left: 1px solid var(--border-subtle);
+}
+.plc-worktree-stat .add {
+  color: var(--green);
+}
+.plc-worktree-stat .del {
+  color: var(--red);
+}
+.plc-worktree-view {
+  display: inline-flex;
+  color: var(--text-tertiary);
+}
+.plc-worktree-btn:hover .plc-worktree-view {
+  color: var(--cyan);
+}
+
+/* ── Diff slide-over (right-anchored, read-only review overlay) ─────────── */
+
+.plc-diff-overlay {
+  position: fixed;
+  inset: var(--topbar-height) 0 0 0;
+  z-index: 90;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(0, 0, 0, 0.5);
+  animation: plc-diff-scrim-in 0.2s ease;
+}
+@keyframes plc-diff-scrim-in {
+  from {
+    background: rgba(0, 0, 0, 0);
+  }
+}
+.plc-diff-slideover {
+  width: clamp(480px, 56vw, 780px);
+  max-width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border-default);
+  box-shadow: -18px 0 48px -16px rgba(0, 0, 0, 0.7);
+  transform: translateX(0);
+  animation: plc-diff-slide-in 0.2s ease;
+}
+@keyframes plc-diff-slide-in {
+  from {
+    transform: translateX(100%);
+  }
+}
+.plc-diff-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-lg);
+  border-bottom: 1px solid var(--border-default);
+  background: var(--bg-base);
+  flex-shrink: 0;
+}
+.plc-diff-ctx {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 0.76rem;
+  color: var(--text-primary);
+}
+.plc-diff-ctx-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--green);
+}
+.plc-diff-sub {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  color: var(--text-tertiary);
+}
+.plc-diff-close {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+.plc-diff-close:hover {
+  border-color: var(--red);
+  color: var(--red);
+}
+.plc-diff-slideover-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plc-diff-overlay,
+  .plc-diff-slideover {
+    animation: none;
+  }
 }

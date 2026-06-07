@@ -31,14 +31,12 @@ interface ConversationNotificationBase extends BaseNotification {
   read?: boolean;
 }
 
-export interface SessionConversationNotification
-  extends ConversationNotificationBase {
+export interface SessionConversationNotification extends ConversationNotificationBase {
   scope: "session";
   sessionName: string;
 }
 
-export interface ProjectConversationNotification
-  extends ConversationNotificationBase {
+export interface ProjectConversationNotification extends ConversationNotificationBase {
   scope: "project";
   contextLabel: "main";
   href: string;

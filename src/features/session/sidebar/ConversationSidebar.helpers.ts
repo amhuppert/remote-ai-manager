@@ -196,10 +196,10 @@ type SessionPosition = "first" | "middle" | "last" | "only";
 
 export type AnnotatedSidebarConversation<T extends ActiveSidebarConversation> =
   T & {
-  isFirstInSession: boolean;
-  isLastInSession: boolean;
-  sessionPosition: SessionPosition;
-};
+    isFirstInSession: boolean;
+    isLastInSession: boolean;
+    sessionPosition: SessionPosition;
+  };
 
 export function annotateSessionPos<T extends ActiveSidebarConversation>(
   rows: T[],
@@ -338,7 +338,9 @@ function pinnedSections<T extends ActiveSidebarConversation>(
   return sections;
 }
 
-export function buildConversationSidebarSections<T extends ActiveSidebarConversation>(
+export function buildConversationSidebarSections<
+  T extends ActiveSidebarConversation,
+>(
   rows: T[],
   options: {
     filter: SidebarListFilter;

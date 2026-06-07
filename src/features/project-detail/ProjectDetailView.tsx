@@ -4,6 +4,7 @@ import "./styles/project-detail.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSessionsQuery } from "@/lib/sessions/queries";
+import { useProjectsQuery } from "@/lib/projects/queries";
 import { useDeleteSessionMutation } from "@/lib/sessions/mutations";
 import {
   useShowCreateModal,
@@ -44,6 +45,7 @@ export default function ProjectDetailView({
   projectName,
 }: ProjectDetailViewProps): React.JSX.Element {
   const sessionsQuery = useSessionsQuery(projectName);
+  const projectsQuery = useProjectsQuery();
   const openCountQuery = useProjectOpenCountQuery(projectName);
   const conversationsQuery = useProjectConversationsQuery(projectName);
   useRefetchProjectConversationsOnFocus(projectName);
@@ -85,6 +87,10 @@ export default function ProjectDetailView({
     [conversationsQuery.data],
   );
   const openCount = openCountQuery.data ?? 0;
+  const projectPath = useMemo(
+    () => projectsQuery.data?.find((p) => p.name === projectName)?.path,
+    [projectsQuery.data, projectName],
+  );
 
   const handleDeleteConfirm = useCallback(() => {
     if (deleteTarget) deleteMutation.mutate(deleteTarget.sessionName);
@@ -196,7 +202,7 @@ export default function ProjectDetailView({
                     {projectName} <span className="accent">·</span>
                   </div>
                   <div className="cc-page-sub">
-                    <span className="path">~/code/{projectName}</span>
+                    <span className="path">{projectPath ?? projectName}</span>
                     {runningCount > 0 && (
                       <span className="pill">
                         <span className="live-dot" />

@@ -89,13 +89,15 @@ type GenericRenameConversationVariables =
   | GenericSessionRenameConversationVariables
   | GenericProjectRenameConversationVariables;
 
-type GenericSessionArchiveConversationVariables = GenericSessionMutationScope & {
-  archived: boolean;
-};
+type GenericSessionArchiveConversationVariables =
+  GenericSessionMutationScope & {
+    archived: boolean;
+  };
 
-type GenericProjectArchiveConversationVariables = GenericProjectMutationScope & {
-  archived: boolean;
-};
+type GenericProjectArchiveConversationVariables =
+  GenericProjectMutationScope & {
+    archived: boolean;
+  };
 
 type GenericArchiveConversationVariables =
   | GenericSessionArchiveConversationVariables
@@ -173,7 +175,10 @@ function invalidateGenericConversationMutationQueries(
   }
 
   void client.invalidateQueries({
-    queryKey: conversationKeys.list(variables.projectName, variables.sessionName),
+    queryKey: conversationKeys.list(
+      variables.projectName,
+      variables.sessionName,
+    ),
   });
 }
 
@@ -428,7 +433,9 @@ export function useGenericArchiveConversationMutation() {
           body: JSON.stringify({ archived: variables.archived }),
         },
       ),
-    onMutate: async (variables): Promise<GenericConversationMutationContext> => {
+    onMutate: async (
+      variables,
+    ): Promise<GenericConversationMutationContext> => {
       await queryClient.cancelQueries({ queryKey: conversationKeys.active() });
 
       if (isProjectMutationScope(variables)) {
@@ -533,7 +540,9 @@ export function useGenericRenameConversationMutation() {
           body: JSON.stringify({ name: variables.name }),
         },
       ),
-    onMutate: async (variables): Promise<GenericConversationMutationContext> => {
+    onMutate: async (
+      variables,
+    ): Promise<GenericConversationMutationContext> => {
       await queryClient.cancelQueries({ queryKey: conversationKeys.active() });
 
       if (isProjectMutationScope(variables)) {

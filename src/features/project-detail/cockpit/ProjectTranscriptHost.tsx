@@ -9,6 +9,7 @@ import type {
   TranscriptMessage,
 } from "@/lib/conversations/schemas";
 import { useProjectConversationMessagesQuery } from "@/lib/project-conversations-client/queries";
+import { stripProposalFencesFromContent } from "@/features/_root/spawn-card/derive-spawn-cards";
 import {
   buildProjectTranscriptRows,
   projectRowKey,
@@ -50,8 +51,14 @@ function ProjectMessageRow({
   msg: TranscriptMessage;
   selectedBackend: AgentBackendId;
   worktreePath: string | undefined;
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   const isUser = msg.role === "user";
+  // Drop the raw `spawn-proposal` fence from the rendered text — the inline
+  // spawn card renders the proposal; the JSON block must not show alongside it.
+  // A turn that was nothing but the proposal renders no bubble (the card carries
+  // it).
+  const content = stripProposalFencesFromContent(msg.content);
+  if (content.length === 0) return null;
   return (
     <div className={`message ${msg.role}`}>
       <div className="message-role">
@@ -72,7 +79,7 @@ function ProjectMessageRow({
         )}
       </div>
       <div className="message-content">
-        <MessageContent content={msg.content} worktreePath={worktreePath} />
+        <MessageContent content={content} worktreePath={worktreePath} />
       </div>
     </div>
   );

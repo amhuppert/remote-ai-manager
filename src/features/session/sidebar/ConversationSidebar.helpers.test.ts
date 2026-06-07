@@ -45,7 +45,9 @@ function makeRow(
 }
 
 function makeProjectRow(
-  overrides: Partial<Extract<ActiveSidebarConversation, { scope: "project" }>> = {},
+  overrides: Partial<
+    Extract<ActiveSidebarConversation, { scope: "project" }>
+  > = {},
 ): Extract<ActiveSidebarConversation, { scope: "project" }> {
   return {
     scope: "project",
@@ -233,9 +235,9 @@ describe("filterConversations", () => {
     expect(filterConversations(rows, "main").map((r) => r.id)).toEqual([
       "project-row",
     ]);
-    expect(filterConversations(rows, "feature-session").map((r) => r.id)).toEqual([
-      "session-row",
-    ]);
+    expect(
+      filterConversations(rows, "feature-session").map((r) => r.id),
+    ).toEqual(["session-row"]);
   });
 });
 

@@ -107,7 +107,9 @@ export default function NotificationsPanelContainer() {
 
     // Map active conversations
     if (activeConversations) {
-      result.push(...mapActiveConversationsToNotifications(activeConversations));
+      result.push(
+        ...mapActiveConversationsToNotifications(activeConversations),
+      );
     }
 
     // Map currently running jobs from Zustand store

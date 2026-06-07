@@ -66,7 +66,10 @@ import {
 import { isUndeliveredQuerySessionError } from "@/lib/agent-backends/claude/query-session-errors";
 import { buildSyntheticForkSeed } from "@/lib/sessions/synthetic-fork-seed";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
-import { PROJECT_CC_CONTEXT } from "@/lib/project-conversations/system-prompt";
+import {
+  PROJECT_CC_CONTEXT,
+  PROJECT_SPAWN_INSTRUCTIONS,
+} from "@/lib/project-conversations/system-prompt";
 import { createExternalTurnHandler } from "./external-turn-handler";
 import { createArtifactRegistry } from "@/lib/workflows/primitives/artifact-registry";
 import { executeAgentCall as defaultExecuteAgentCall } from "@/lib/workflows/primitives/agent-call-facade";
@@ -1343,6 +1346,9 @@ export async function executePromptForMachine(
     const ccContext = isProjectConversation ? PROJECT_CC_CONTEXT : CC_CONTEXT;
     const sessionInstructions = [
       ccContext,
+      // Spawn-proposal convention is a project-conversation-only capability:
+      // session agents cannot propose sibling sessions from a conversation.
+      isProjectConversation ? PROJECT_SPAWN_INSTRUCTIONS : null,
       sessionState?.objective
         ? `<objective>${sessionState.objective}</objective>`
         : null,

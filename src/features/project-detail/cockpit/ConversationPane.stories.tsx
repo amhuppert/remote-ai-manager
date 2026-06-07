@@ -61,15 +61,29 @@ type Story = StoryObj<typeof ConversationPane>;
 export const Default: Story = {
   args: {
     agentBackend: "claude",
+    projectName: "cc-app",
     transcript: <FakeTranscript />,
     composer: <FakeComposer />,
     diffSurface: <FakeDiff />,
   },
 };
 
+/** Dirty main worktree: the review chip carries a live +/− stat. */
+export const DirtyWorktree: Story = {
+  args: {
+    agentBackend: "claude",
+    projectName: "cc-app",
+    transcript: <FakeTranscript />,
+    composer: <FakeComposer />,
+    diffSurface: <FakeDiff />,
+    diffStat: { additions: 128, deletions: 34, fileCount: 6 },
+  },
+};
+
 export const Codex: Story = {
   args: {
     agentBackend: "codex",
+    projectName: "cc-app",
     transcript: <FakeTranscript />,
     composer: <FakeComposer />,
     diffSurface: <FakeDiff />,

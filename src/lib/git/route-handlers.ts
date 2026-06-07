@@ -74,6 +74,38 @@ export const getSessionDiff = withTracing(
   },
 );
 
+/**
+ * GET /api/projects/[name]/diff — read-only uncommitted diff of the project's
+ * main (repo-root) worktree, consumed by the project-conversation cockpit. The
+ * main worktree is the project path itself (no session branch); the diff is the
+ * same working-tree-vs-HEAD computation the session surface uses. Read-only:
+ * this route exposes no commit/discard/reset — those live on the session path.
+ */
+export const getMainWorktreeDiff = withTracing(
+  async (_request, { params }: RouteContext) => {
+    const { name } = await params;
+
+    const projectPath = await resolveProjectPath(name ?? "");
+    if (!projectPath) {
+      return NextResponse.json(
+        { error: "Project not found" } satisfies ApiError,
+        { status: 404 },
+      );
+    }
+
+    try {
+      const diff = await computeDiff(projectPath);
+      return NextResponse.json(diff);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to compute diff";
+      return NextResponse.json({ error: message } satisfies ApiError, {
+        status: 500,
+      });
+    }
+  },
+);
+
 /** GET /api/projects/[name]/sessions/[session]/commits — list commits since divergence */
 export const listSessionCommits = withTracing(
   async (_request, { params }: RouteContext) => {

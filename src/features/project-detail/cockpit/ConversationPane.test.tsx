@@ -44,10 +44,28 @@ describe("ConversationPane", () => {
     expect(screen.queryByText(/Awaiting|Waiting/)).toBeNull();
   });
 
-  it("toggles between the transcript and the diff surface", () => {
+  it("opens the read-only diff slide-over from the main · worktree chip", () => {
     renderPane();
     expect(screen.getByText("transcript")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Diff / review" }));
+    // The diff is not mounted until the chip is clicked.
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /worktree/i }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(screen.getByText("diff")).toBeInTheDocument();
+    // The transcript stays mounted underneath — the diff is an overlay.
+    expect(screen.getByText("transcript")).toBeInTheDocument();
+  });
+
+  it("shows the live +/− stat on the chip when the worktree is dirty", () => {
+    renderPane({ diffStat: { additions: 12, deletions: 3, fileCount: 2 } });
+    const chip = screen.getByRole("button", { name: /worktree/i });
+    expect(chip).toHaveTextContent("+12");
+    expect(chip).toHaveTextContent("−3");
+  });
+
+  it("renders worktree context as plain text (no chip) without a diff surface", () => {
+    renderPane({ diffSurface: undefined });
+    expect(screen.getByText("worktree")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /worktree/i })).toBeNull();
   });
 });

@@ -292,7 +292,8 @@ function ConversationSidebar({
       }
       const isCurrentSession =
         scope.scope === "session" &&
-        scope.projectName === projectName && scope.sessionName === sessionName;
+        scope.projectName === projectName &&
+        scope.sessionName === sessionName;
       const onSettled = () => setEditingId(null);
       if (isCurrentSession) {
         renameConvoMutation.mutate(
@@ -300,7 +301,10 @@ function ConversationSidebar({
           { onSettled },
         );
       } else {
-        genericRenameMutation.mutate({ ...scope, name: trimmed }, { onSettled });
+        genericRenameMutation.mutate(
+          { ...scope, name: trimmed },
+          { onSettled },
+        );
       }
     },
     [
@@ -316,7 +320,8 @@ function ConversationSidebar({
     (id: string, archived: boolean, scope: ActiveRowActionScope) => {
       const isCurrentSession =
         scope.scope === "session" &&
-        scope.projectName === projectName && scope.sessionName === sessionName;
+        scope.projectName === projectName &&
+        scope.sessionName === sessionName;
       if (isCurrentSession) {
         archiveConvoMutation.mutate({ conversationId: id, archived });
       } else {
@@ -667,11 +672,7 @@ function ConversationSidebar({
         kind: "item",
         label: "Rename\u2026",
         onSelect: () => {
-          handleRenameStart(
-            row.id,
-            row.name ?? row.summary ?? "",
-            actionScope,
-          );
+          handleRenameStart(row.id, row.name ?? row.summary ?? "", actionScope);
         },
       },
       {
