@@ -1506,6 +1506,41 @@ describe("executePromptForMachine", () => {
     expect(result.aborted).toBe(true);
   });
 
+  it("uses a fresh abort controller when a previous turn left the runtime controller aborted", async () => {
+    const staleAbortController = new AbortController();
+    staleAbortController.abort();
+
+    let capturedSignal: AbortSignal | undefined;
+    mockSendTurn.mockImplementation(
+      async (turnInput: ConversationBackendTurnInput) => {
+        capturedSignal = turnInput.signal;
+        return defaultTurnResult;
+      },
+    );
+
+    const input = makeExecutePromptInput();
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: staleAbortController,
+    });
+
+    const result = await executePromptForMachine(input);
+    const runtime = getConversationRuntime(key);
+
+    expect(result.aborted).toBe(false);
+    expect(capturedSignal?.aborted).toBe(false);
+    expect(runtime?.abortController).not.toBe(staleAbortController);
+    expect(runtime?.abortController.signal.aborted).toBe(false);
+    expect(mockDeps.registerAbortController).toHaveBeenCalledWith(
+      input.conversationId,
+      runtime?.abortController,
+    );
+  });
+
   it("aborts the controller before closing the runtime when the safety-net timeout fires", async () => {
     vi.mocked(mockDeps.readConfig).mockResolvedValue({
       claudeTimeoutMs: 30,

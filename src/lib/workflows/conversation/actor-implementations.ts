@@ -1453,6 +1453,14 @@ export async function executePromptForMachine(
   // ---------------------------------------------------------------
   // Safety-net timeout
   // ---------------------------------------------------------------
+  if (runtimeState.abortController.signal.aborted) {
+    logger.info("prompt.abort_controller_refreshed", {
+      sessionName: input.sessionName,
+      backend: input.agentBackend,
+      conversationId: input.conversationId,
+    });
+    runtimeState.abortController = new AbortController();
+  }
   const abortController = runtimeState.abortController;
   deps.registerAbortController(input.conversationId, abortController);
 
