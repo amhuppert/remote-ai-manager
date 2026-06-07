@@ -27,6 +27,7 @@ import type { ManagerState } from "@/lib/projects/schemas";
 import type {
   AgentCapabilityCascadeKind,
   AgentCapabilityCascadeLayer,
+  AgentCapabilityDiagnostic,
   AgentCapabilityOverrides,
   AgentCapabilityRuntimeApplicationState,
   AgentCapabilityScopeContext,
@@ -893,6 +894,7 @@ async function defaultApplyCodexRuntime(
 /** @public Referenced via `import("...").ComposedClaudeCapabilitySeed` in actor-implementations. */
 export interface ComposedClaudeCapabilitySeed {
   config: ClaudeRuntimeCapabilityConfig;
+  diagnostics?: readonly AgentCapabilityDiagnostic[];
   /**
    * Initial capability runtime apply state for the new conversation. Each
    * cascade the composer emitted is recorded as `applied` because the Claude
@@ -906,7 +908,14 @@ export interface ComposedClaudeCapabilitySeed {
 /** @public Referenced via `import("...").ComposedCodexCapabilitySeed` in actor-implementations. */
 export interface ComposedCodexCapabilitySeed {
   config: CodexRuntimeCapabilityConfig;
+  diagnostics?: readonly AgentCapabilityDiagnostic[];
   runtimeState: AgentCapabilityRuntimeApplicationState;
+}
+
+export interface ComposedProjectConversationDiagnosticsSeed {
+  kind: "diagnostics-only";
+  backend: AgentBackendId;
+  diagnostics: readonly AgentCapabilityDiagnostic[];
 }
 
 /**
@@ -935,11 +944,26 @@ function promoteClaudeSeededRuntimeState(
 
 export type ComposedProjectConversationCapabilitySeed =
   | ({
+      kind?: "runtime";
       backend: "claude";
     } & ComposedClaudeCapabilitySeed)
   | ({
+      kind?: "runtime";
       backend: "codex";
-    } & ComposedCodexCapabilitySeed);
+    } & ComposedCodexCapabilitySeed)
+  | ComposedProjectConversationDiagnosticsSeed;
+
+function projectConversationDiagnosticsSeed(
+  backend: AgentBackendId,
+  result: ComposeConversationStartResult,
+): ComposedProjectConversationDiagnosticsSeed | undefined {
+  if (result.diagnostics.length === 0) return undefined;
+  return {
+    kind: "diagnostics-only",
+    backend,
+    diagnostics: result.diagnostics,
+  };
+}
 
 export interface ProjectConversationCapabilityConfigComposerDeps {
   getProjectConversation(
@@ -995,18 +1019,24 @@ export function createProjectConversationCapabilityConfigComposer(
     });
 
     if (backend === "claude") {
-      if (!result.claudeRuntime) return undefined;
+      if (!result.claudeRuntime) {
+        return projectConversationDiagnosticsSeed(backend, result);
+      }
       return {
         backend: "claude",
         config: result.claudeRuntime,
+        diagnostics: result.diagnostics,
         runtimeState: promoteClaudeSeededRuntimeState(result.runtimeState),
       };
     }
 
-    if (!result.codexRuntime) return undefined;
+    if (!result.codexRuntime) {
+      return projectConversationDiagnosticsSeed(backend, result);
+    }
     return {
       backend: "codex",
       config: { config: result.codexRuntime.config },
+      diagnostics: result.diagnostics,
       runtimeState: result.runtimeState,
     };
   };
@@ -1046,6 +1076,7 @@ export async function composeClaudeCapabilityConfigForConversation(input: {
   if (!result.claudeRuntime) return undefined;
   return {
     config: result.claudeRuntime,
+    diagnostics: result.diagnostics,
     runtimeState: promoteClaudeSeededRuntimeState(result.runtimeState),
   };
 }
@@ -1070,6 +1101,7 @@ export async function composeCodexCapabilityConfigForConversation(input: {
   if (!result.codexRuntime) return undefined;
   return {
     config: { config: result.codexRuntime.config },
+    diagnostics: result.diagnostics,
     runtimeState: result.runtimeState,
   };
 }

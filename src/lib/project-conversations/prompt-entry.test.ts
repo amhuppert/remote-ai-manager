@@ -201,6 +201,24 @@ describe("executeProjectPromptStream", () => {
     // main worktree (there is no clean check); the turn simply proceeds.
   });
 
+  it("marks actor input as project scope and keeps backend out of prompt options", async () => {
+    const h = harness({
+      seed: [makeConv({ id: "c1", promptCount: 1, agentBackend: "codex" })],
+    });
+    await h.executeProjectPromptStream({
+      projectPath: "/repo",
+      conversationId: "c1",
+      promptText: "next",
+      emit: () => {},
+    });
+
+    expect(h.calls[0]?.options?.actorInput?.conversationScope).toBe("project");
+    expect(h.calls[0]?.options?.actorInput?.conversation.agentBackend).toBe(
+      "codex",
+    );
+    expect(h.calls[0]?.options).not.toHaveProperty("backend");
+  });
+
   it("rejects a backend change after the first turn with BackendMismatchError", async () => {
     const h = harness({
       seed: [makeConv({ id: "c1", promptCount: 2, agentBackend: "claude" })],

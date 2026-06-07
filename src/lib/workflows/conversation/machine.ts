@@ -148,6 +148,7 @@ export const conversationMachine = setup({
 
   context: ({ input }): ConversationContext => ({
     _schemaVersion: 1,
+    conversationScope: input.conversationScope ?? "session",
     projectPath: input.projectPath,
     projectName: input.projectName,
     sessionName: input.sessionName,
@@ -450,6 +451,7 @@ export const conversationMachine = setup({
                 );
 
               return {
+                conversationScope: context.conversationScope,
                 projectPath: context.projectPath,
                 projectName: context.projectName,
                 sessionName: context.sessionName,

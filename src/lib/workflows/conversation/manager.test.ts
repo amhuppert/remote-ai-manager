@@ -371,6 +371,7 @@ describe("conversation manager", () => {
     it("syncs contextTokens and contextWindowMax from machine context", () => {
       const context = {
         _schemaVersion: 1 as const,
+        conversationScope: "session" as const,
         projectPath: "/repo",
         projectName: "proj",
         sessionName: "sess",

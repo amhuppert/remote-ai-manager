@@ -53,6 +53,7 @@ import type { ActiveTurn } from "./types";
 const logger = createLogger("conversation-manager");
 
 export interface EnsureActorInputData {
+  conversationScope?: "session" | "project";
   projectName: string;
   sessionWorktreePath: string;
   conversation: {
@@ -108,6 +109,7 @@ async function defaultLoadActorInput(
   }
 
   return {
+    conversationScope: "session",
     projectName: getProjectDisplayName(projectPath),
     sessionWorktreePath: session.worktreePath,
     conversation: {
@@ -616,6 +618,7 @@ export async function ensureConversationActor(
   const worktreePath = requestedWorktreePath ?? data.sessionWorktreePath;
 
   return startConversationActor({
+    conversationScope: data.conversationScope ?? "session",
     projectPath,
     projectName: data.projectName,
     sessionName,

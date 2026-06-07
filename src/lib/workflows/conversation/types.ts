@@ -88,6 +88,7 @@ export interface ConversationContext {
   _schemaVersion: 1;
 
   // Identity
+  conversationScope: "session" | "project";
   projectPath: string;
   projectName: string;
   sessionName: string;
@@ -198,6 +199,7 @@ export type ConversationEvent =
 // ============================================================
 
 export interface ConversationInput {
+  conversationScope?: "session" | "project";
   projectPath: string;
   projectName: string;
   sessionName: string;
@@ -256,6 +258,7 @@ export interface PromptActorResult {
 
 /** Input for the executePrompt actor. */
 export interface ExecutePromptInput {
+  conversationScope?: "session" | "project";
   projectPath: string;
   projectName: string;
   sessionName: string;

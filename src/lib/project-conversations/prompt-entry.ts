@@ -170,6 +170,7 @@ export function createProjectPromptExecutor(
     });
 
     const actorInput: EnsureActorInputData = {
+      conversationScope: "project",
       projectName: deps.getProjectDisplayName(projectPath),
       sessionWorktreePath: projectPath,
       conversation: {

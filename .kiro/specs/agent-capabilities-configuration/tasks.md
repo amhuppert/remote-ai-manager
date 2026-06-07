@@ -332,7 +332,7 @@ Implementation follows red-green-refactor by default. Each task should add focus
   - _Depends: 12.1_
   - _Requirements: 6.3, 9.1, 9.2, 9.4, 10.1, 10.2, 10.3, 14.3, 16.1, 17.1, 18.3, 19.3, 19.4_
 
-- [ ] 12.3 Integrate project-conversation runtime composition with prompt execution
+- [x] 12.3 Integrate project-conversation runtime composition with prompt execution
   - Compose and seed capability runtime state when a project conversation runtime starts.
   - Promote or stage capability runtime state at project-conversation turn boundaries according to the active backend's existing semantics.
   - Preserve the initialized project conversation backend; capability configuration must not expose or invoke a backend-change path.

@@ -635,7 +635,15 @@ describe("agent-capabilities/default-deps project conversation composition", () 
         config: { plugins: { "codex-owner": { enabled: false } } },
         applySemantics: "next-turn",
       },
-      diagnostics: [],
+      diagnostics: [
+        {
+          severity: "warning",
+          code: "codex-skill-discovery-warning",
+          message: "Codex skill discovery warning",
+          cascadeKind: "codex-skills",
+          backend: "codex",
+        },
+      ],
       runtimeState,
       views: {},
       failedCascadeKinds: [],
@@ -671,7 +679,46 @@ describe("agent-capabilities/default-deps project conversation composition", () 
     expect(result).toEqual({
       backend: "codex",
       config: { config: resultForCodex.codexRuntime?.config },
+      diagnostics: resultForCodex.diagnostics,
       runtimeState,
+    });
+  });
+
+  it("returns diagnostics-only PLC composition results when Codex has no runtime emission", async () => {
+    const diagnostics: AgentCapabilityDiagnostic[] = [
+      {
+        severity: "error",
+        code: "codex-skill-discovery-failed",
+        message: "Codex skill discovery failed",
+        cascadeKind: "codex-skills",
+        backend: "codex",
+      },
+    ];
+    const resultForCodex: ComposeConversationStartResult = {
+      backend: "codex",
+      diagnostics,
+      runtimeState: { cascades: {} },
+      views: {},
+      failedCascadeKinds: ["codex-skills"],
+    };
+    const composer = createProjectConversationCapabilityConfigComposer({
+      getProjectConversation: async () =>
+        makeConversation({ id: "plc-1", agentBackend: "codex" }),
+      getProjectDisplayName: () => "Repo",
+      async composeForConversation() {
+        return resultForCodex;
+      },
+    });
+
+    const result = await composer({
+      projectPath: "/repo",
+      conversationId: "plc-1",
+    });
+
+    expect(result).toEqual({
+      kind: "diagnostics-only",
+      backend: "codex",
+      diagnostics,
     });
   });
 });

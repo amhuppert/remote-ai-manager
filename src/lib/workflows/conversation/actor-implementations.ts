@@ -28,7 +28,11 @@ import type {
   ConversationImageRef,
 } from "@/lib/agent-backends/conversation";
 import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
-import type { AgentCapabilityRuntimeApplicationState } from "@/lib/agent-capabilities/schemas";
+import type {
+  AgentCapabilityDiagnostic,
+  AgentCapabilityRuntimeApplicationState,
+} from "@/lib/agent-capabilities/schemas";
+import type { ApplyConversationIdentity } from "@/lib/agent-capabilities/apply";
 import type {
   MessageContentBlock,
   ConversationState,
@@ -90,6 +94,19 @@ const logger = createLogger("conversation-actor");
 
 const FOCUS_MEMORY_DESCRIPTION =
   "Current work-in-progress and remaining tasks for this session";
+
+type ProjectCapabilitySeed =
+  import("@/lib/agent-capabilities/default-deps").ComposedProjectConversationCapabilitySeed;
+type RuntimeProjectCapabilitySeed = Exclude<
+  ProjectCapabilitySeed,
+  { kind: "diagnostics-only" }
+>;
+
+function isRuntimeProjectCapabilitySeed(
+  seed: ProjectCapabilitySeed | undefined,
+): seed is RuntimeProjectCapabilitySeed {
+  return seed !== undefined && seed.kind !== "diagnostics-only";
+}
 
 export interface RegisterFocusMemoryIfPresentInput {
   worktreePath: string;
@@ -293,14 +310,9 @@ export interface ActorImplementationDeps {
    * rebuilds its options each turn, and Claude's seeded state from
    * conversation start needs promotion on the first turn boundary.
    */
-  applyCapabilityAtTurnStart(input: {
-    projectPath: string;
-    projectName: string;
-    sessionName: string;
-    conversationId: string;
-    worktreePath: string;
-    backend: AgentBackendId;
-  }): Promise<unknown>;
+  applyCapabilityAtTurnStart(
+    input: ApplyConversationIdentity,
+  ): Promise<unknown>;
 
   /**
    * Drain any `staged-idle` Claude capability cascades after a turn completes
@@ -309,14 +321,7 @@ export interface ActorImplementationDeps {
    * cascade and surfaced via diagnostics; the previously applied hash is
    * preserved so retries can proceed.
    */
-  applyCapabilityWhenIdle(input: {
-    projectPath: string;
-    projectName: string;
-    sessionName: string;
-    conversationId: string;
-    worktreePath: string;
-    backend: AgentBackendId;
-  }): Promise<unknown>;
+  applyCapabilityWhenIdle(input: ApplyConversationIdentity): Promise<unknown>;
 
   /**
    * Compose the Claude capability runtime config + initial apply state for a
@@ -351,6 +356,20 @@ export interface ActorImplementationDeps {
     worktreePath: string;
   }): Promise<
     | import("@/lib/agent-capabilities/default-deps").ComposedCodexCapabilitySeed
+    | undefined
+  >;
+
+  /**
+   * Compose capability runtime config for a project conversation. Uses the
+   * fixed backend persisted on the project-conversation record and omits any
+   * session layer from the cascade.
+   */
+  composeCapabilityConfigForProjectConversation(input: {
+    projectPath: string;
+    projectName: string;
+    conversationId: string;
+  }): Promise<
+    | import("@/lib/agent-capabilities/default-deps").ComposedProjectConversationCapabilitySeed
     | undefined
   >;
 
@@ -505,6 +524,8 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
       capabilitiesDepsMod.composeClaudeCapabilityConfigForConversation,
     composeCodexCapabilityConfigForConversation:
       capabilitiesDepsMod.composeCodexCapabilityConfigForConversation,
+    composeCapabilityConfigForProjectConversation:
+      capabilitiesDepsMod.composeCapabilityConfigForProjectConversation,
     executeAgentCall: defaultExecuteAgentCall,
     getTaskRunner: registryMod.getTaskRunner,
   } as unknown as ActorImplementationDeps;
@@ -1101,6 +1122,9 @@ export async function executePromptForMachine(
   const config = await deps.readConfig();
   const projectName =
     input.projectName || deps.getProjectDisplayName(input.projectPath);
+  const isProjectConversation =
+    input.conversationScope === "project" ||
+    isProjectSentinel(input.sessionName);
 
   const broadcastMeta: TranscriptBroadcastMeta = {
     projectName,
@@ -1272,6 +1296,75 @@ export async function executePromptForMachine(
     });
   }
 
+  function buildCapabilityApplyInput(): ApplyConversationIdentity {
+    if (isProjectConversation) {
+      return {
+        conversationScope: "project",
+        projectPath: input.projectPath,
+        projectName,
+        conversationId: input.conversationId,
+        worktreePath: input.worktreePath,
+        backend: input.agentBackend,
+      };
+    }
+
+    return {
+      projectPath: input.projectPath,
+      projectName,
+      sessionName: input.sessionName,
+      conversationId: input.conversationId,
+      worktreePath: input.worktreePath,
+      backend: input.agentBackend,
+    };
+  }
+
+  async function composeProjectConversationCapabilitySeed(): Promise<
+    ProjectCapabilitySeed | undefined
+  > {
+    try {
+      return await deps.composeCapabilityConfigForProjectConversation({
+        projectPath: input.projectPath,
+        projectName,
+        conversationId: input.conversationId,
+      });
+    } catch (err) {
+      const error = getErrorMessage(err);
+      logger.warn("prompt.project_conversation_capability_compose_failed", {
+        sessionName: input.sessionName,
+        conversationScope: "project",
+        backend: input.agentBackend,
+        conversationId: input.conversationId,
+        error,
+      });
+      runtimeState.streamEmit?.("error", {
+        message: `Project conversation capability configuration could not be fully composed: ${error}`,
+      });
+      return undefined;
+    }
+  }
+
+  function emitProjectCapabilityDiagnostics(
+    diagnostics: readonly AgentCapabilityDiagnostic[] | undefined,
+  ): void {
+    if (!diagnostics || diagnostics.length === 0) return;
+
+    for (const diagnostic of diagnostics) {
+      logger.warn("prompt.project_conversation_capability_diagnostic", {
+        sessionName: input.sessionName,
+        conversationScope: "project",
+        backend: diagnostic.backend ?? input.agentBackend,
+        cascadeKind: diagnostic.cascadeKind,
+        code: diagnostic.code,
+        severity: diagnostic.severity,
+        conversationId: input.conversationId,
+        message: diagnostic.message,
+      });
+      runtimeState.streamEmit?.("error", {
+        message: `Project conversation capability configuration issue: ${diagnostic.message}`,
+      });
+    }
+  }
+
   // Close existing runtime if model, effort, or outputFormat changed
   if (
     backendRuntime &&
@@ -1312,7 +1405,6 @@ export async function executePromptForMachine(
     // would fail because `__project__` is not a real session). Skip both for a
     // project turn so a repo-root with `memory-bank/focus.md` does not break
     // turn startup.
-    const isProjectConversation = isProjectSentinel(input.sessionName);
     if (!isProjectConversation) {
       await registerFocusMemoryIfPresent({
         worktreePath: input.worktreePath,
@@ -1368,27 +1460,58 @@ export async function executePromptForMachine(
         : {}),
     });
 
+    const projectCapabilitySeed = isProjectConversation
+      ? await composeProjectConversationCapabilitySeed()
+      : undefined;
+    emitProjectCapabilityDiagnostics(projectCapabilitySeed?.diagnostics);
+    const projectRuntimeCapabilitySeed = isRuntimeProjectCapabilitySeed(
+      projectCapabilitySeed,
+    )
+      ? projectCapabilitySeed
+      : undefined;
+
     const claudeCapabilitySeed =
       input.agentBackend === "claude"
-        ? await deps.composeClaudeCapabilityConfigForConversation({
-            projectPath: input.projectPath,
-            projectName,
-            sessionName: input.sessionName,
-            conversationId: input.conversationId,
-            worktreePath: input.worktreePath,
-          })
+        ? projectRuntimeCapabilitySeed?.backend === "claude"
+          ? projectRuntimeCapabilitySeed
+          : !isProjectConversation
+            ? await deps.composeClaudeCapabilityConfigForConversation({
+                projectPath: input.projectPath,
+                projectName,
+                sessionName: input.sessionName,
+                conversationId: input.conversationId,
+                worktreePath: input.worktreePath,
+              })
+            : undefined
         : undefined;
 
     const codexCapabilitySeed =
       input.agentBackend === "codex"
-        ? await deps.composeCodexCapabilityConfigForConversation({
-            projectPath: input.projectPath,
-            projectName,
-            sessionName: input.sessionName,
-            conversationId: input.conversationId,
-            worktreePath: input.worktreePath,
-          })
+        ? projectRuntimeCapabilitySeed?.backend === "codex"
+          ? projectRuntimeCapabilitySeed
+          : !isProjectConversation
+            ? await deps.composeCodexCapabilityConfigForConversation({
+                projectPath: input.projectPath,
+                projectName,
+                sessionName: input.sessionName,
+                conversationId: input.conversationId,
+                worktreePath: input.worktreePath,
+              })
+            : undefined
         : undefined;
+
+    if (
+      projectCapabilitySeed &&
+      projectCapabilitySeed.backend !== input.agentBackend
+    ) {
+      logger.warn("prompt.project_conversation_capability_backend_mismatch", {
+        sessionName: input.sessionName,
+        conversationScope: "project",
+        conversationId: input.conversationId,
+        actorBackend: input.agentBackend,
+        composedBackend: projectCapabilitySeed.backend,
+      });
+    }
 
     const claudeCapabilityConfig = claudeCapabilitySeed?.config;
     const codexCapabilityConfig = codexCapabilitySeed?.config;
@@ -1418,7 +1541,7 @@ export async function executePromptForMachine(
         safeAppendTranscriptEntry: safeAppendWithMeta,
         applyCapabilityWhenIdle:
           input.agentBackend === "claude"
-            ? (port) => deps.applyCapabilityWhenIdle(port)
+            ? () => deps.applyCapabilityWhenIdle(buildCapabilityApplyInput())
             : undefined,
       },
     );
@@ -1607,14 +1730,7 @@ export async function executePromptForMachine(
     if (input.agentBackend !== "claude") return;
 
     try {
-      await deps.applyCapabilityWhenIdle({
-        projectPath: input.projectPath,
-        projectName,
-        sessionName: input.sessionName,
-        conversationId: input.conversationId,
-        worktreePath: input.worktreePath,
-        backend: input.agentBackend,
-      });
+      await deps.applyCapabilityWhenIdle(buildCapabilityApplyInput());
     } catch (err) {
       logger.error("prompt.capability_idle_drain_failed", {
         sessionName: input.sessionName,
@@ -1679,14 +1795,7 @@ export async function executePromptForMachine(
         conversationId: input.conversationId,
         isNewRuntime,
       });
-      await deps.applyCapabilityAtTurnStart({
-        projectPath: input.projectPath,
-        projectName,
-        sessionName: input.sessionName,
-        conversationId: input.conversationId,
-        worktreePath: input.worktreePath,
-        backend: input.agentBackend,
-      });
+      await deps.applyCapabilityAtTurnStart(buildCapabilityApplyInput());
     } catch (err) {
       logger.error("prompt.capability_turn_start_failed", {
         sessionName: input.sessionName,
