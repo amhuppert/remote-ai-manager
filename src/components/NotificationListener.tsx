@@ -131,6 +131,7 @@ export default function NotificationListener(): null {
     const invalidateAgentCapabilityViews = (data: {
       level: "global" | "project" | "session" | "conversation";
       projectName?: string;
+      conversationScope?: "session" | "project";
       sessionName?: string;
       conversationId?: string;
       cascadeKind:
@@ -145,6 +146,9 @@ export default function NotificationListener(): null {
         cascadeKind: data.cascadeKind,
         ...(data.projectName !== undefined && {
           projectName: data.projectName,
+        }),
+        ...(data.conversationScope !== undefined && {
+          conversationScope: data.conversationScope,
         }),
         ...(data.sessionName !== undefined && {
           sessionName: data.sessionName,

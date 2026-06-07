@@ -1,10 +1,10 @@
 # Implementation Plan
 
-This plan delivers configurable agent capabilities end to end: five backend-specific cascades, native default discovery, sparse overrides, plugin parent-child disable behavior, conversation-start composition, runtime apply/staging, five UI panels, diagnostics, and cross-client synchronization.
+This plan delivers configurable agent capabilities end to end: five backend-specific cascades, native default discovery, sparse overrides, plugin parent-child disable behavior, conversation-start composition, runtime apply/staging, five UI panels, diagnostics, cross-client synchronization, and project-level conversation support.
 
 Implementation follows red-green-refactor by default. Each task should add focused failing coverage first unless the work is a narrow wiring change or Storybook prototype.
 
-- [ ] 1. Verify backend capability gates
+- [x] 1. Verify backend capability gates
 
 - [x] 1.1 (P) Verify Codex skill and plugin runtime emission
   - Prove that Codex skill and plugin overrides can be translated into next-turn runtime configuration before editable runtime behavior is enabled.
@@ -29,7 +29,7 @@ Implementation follows red-green-refactor by default. Each task should add focus
   - This can run in parallel with the other gate tasks because it is isolated to Claude plugin translation behavior.
   - _Requirements: 3.1, 3.2, 4.2, 8.1, 9.1, 16.3_
 
-- [ ] 2. Establish schemas and metadata
+- [x] 2. Establish schemas and metadata
 
 - [x] 2.1 Add persistent capability override and runtime state schemas
   - Define the five cascade kinds and sparse item override records with required enabled values when an item key exists.
@@ -52,7 +52,7 @@ Implementation follows red-green-refactor by default. Each task should add focus
   - Add tests proving future backend support can be added through metadata records without scattering backend checks.
   - _Requirements: 1.3, 1.4, 10.4, 12.1, 12.2, 12.3, 12.4_
 
-- [ ] 3. Implement patching and persistence
+- [x] 3. Implement patching and persistence
 
 - [x] 3.1 Implement pure override patch behavior
   - Apply set and reset operations without mutating the input override state.
@@ -85,7 +85,7 @@ Implementation follows red-green-refactor by default. Each task should add focus
   - Log accepted, rejected, and failed mutations with structured context and sanitized errors.
   - _Requirements: 6.2, 6.3, 6.4, 15.1, 15.2, 15.3, 16.1, 16.2_
 
-- [ ] 4. Implement cascade resolution
+- [x] 4. Implement cascade resolution
 
 - [x] 4.1 Resolve four-layer inheritance and native defaults
   - Resolve global, project, session, and conversation layers in order with the narrowest explicit item value winning.
@@ -117,7 +117,7 @@ Implementation follows red-green-refactor by default. Each task should add focus
   - Add tests for Claude idle staging, Codex next-turn staging, unsupported apply paths, and failed apply diagnostics.
   - _Requirements: 7.3, 9.4, 10.3, 11.2, 12.3, 16.2_
 
-- [ ] 5. Implement native discovery
+- [x] 5. Implement native discovery
 
 - [x] 5.1 (P) Add Claude capability discovery
   - Discover Claude skills, plugins, and sub-agents from native read-only sources and runtime-visible SDK methods when available.
@@ -143,7 +143,7 @@ Implementation follows red-green-refactor by default. Each task should add focus
   - Log discovery refresh and failure events with correlation context.
   - _Requirements: 3.3, 3.4, 7.2, 7.4, 15.1, 16.1, 16.2, 16.3_
 
-- [ ] 6. Compose runtime capability configuration
+- [x] 6. Compose runtime capability configuration
 
 - [x] 6.1 Build backend-scoped conversation-start composition
   - Resolve only the cascades owned by the active conversation backend.
@@ -176,7 +176,7 @@ Implementation follows red-green-refactor by default. Each task should add focus
   - Expose sanitized apply errors for UI diagnostics and retry.
   - _Requirements: 2.5, 8.4, 9.4, 9.5, 10.3, 14.2, 16.2, 16.3_
 
-- [ ] 7. Apply capability changes to active conversations
+- [x] 7. Apply capability changes to active conversations
 
 - [x] 7.1 Apply or stage changes after override mutation
   - Fan out successful persisted changes to active conversations affected by the edited layer.
@@ -206,7 +206,7 @@ Implementation follows red-green-refactor by default. Each task should add focus
   - Keep failures scoped to affected cascade kinds.
   - _Requirements: 6.3, 8.3, 9.5, 13.3, 15.1, 16.1, 16.2, 16.3_
 
-- [ ] 8. Expose API routes and synchronization
+- [x] 8. Expose API routes and synchronization
 
 - [x] 8.1 Add capability view, patch, and refresh endpoints for every scope
   - Serve resolved views for global, project, session, and conversation layers.
@@ -259,7 +259,7 @@ Implementation follows red-green-refactor by default. Each task should add focus
   - Verify text fits in compact panel rows and status badges across expected viewport sizes.
   - _Requirements: 11.1, 11.2, 11.3, 11.4, 16.2_
 
-- [ ] 10. Harden diagnostics, security, and reliability
+- [x] 10. Harden diagnostics, security, and reliability
 
 - [x] 10.1 Add structured logging and user-visible diagnostics across the lifecycle
   - Log discovery, mutation, resolution, composition, apply, and SSE events with cascade, layer, item, backend, project, session, and conversation context when available.
@@ -287,3 +287,110 @@ Implementation follows red-green-refactor by default. Each task should add focus
   - Verify conversation start remains non-blocking when one cascade has diagnostics.
   - Run typecheck, lint, and focused test suites needed for the feature before marking implementation complete.
   - _Requirements: 1.3, 1.4, 2.4, 5.1, 5.3, 6.3, 8.1, 8.2, 8.3, 9.1, 9.2, 10.1, 10.2, 15.1, 16.1_
+
+- [ ] 11. Extend capability scope and persistence for project conversations
+
+- [x] 11.1 Add project-conversation capability scope schemas and invalidation identity
+  - Extend capability scope, event, and invalidation identity so session conversations and project conversations are distinct targets while both keep using the `conversation` layer.
+  - Preserve the five existing cascade kinds and reject any project-conversation-specific cascade kind.
+  - Keep the PLC sentinel out of public route params, API payloads, SSE payloads, query keys, and diagnostics.
+  - Observable completion: schema and invalidation tests pass for project-conversation scope, session-conversation scope, no sixth cascade kind, and no public sentinel leakage.
+  - _Requirements: 17.3, 17.4, 20.1_
+
+- [ ] 11.2 Add project-conversation override chain read and patch persistence
+  - Read project-conversation override chains as global, project, conversation, with no session layer.
+  - Persist project-conversation conversation-layer overrides on the selected project conversation only, including reset/prune behavior that falls back to inherited project or global values.
+  - Use the PLC sentinel only inside the state-manager adapter boundary where an existing API still requires a session name.
+  - Preserve existing session-conversation global, project, session, conversation behavior unchanged.
+  - Observable completion: persistence and resolver tests pass for project inheritance, conversation override precedence, reset fallback, selected-PLC-only writes, and session-conversation regression cases.
+  - _Requirements: 17.1, 17.2, 17.3, 17.4, 18.3, 18.4_
+
+- [ ] 11.3 Expose project-conversation capability routes and refresh
+  - Add public project-conversation capability GET, PATCH, and refresh endpoints under the project-conversation route shape.
+  - Return structured validation, conflict, persistence, discovery, and not-found errors for project-conversation capability requests.
+  - Broadcast capability update and discovery events with project-conversation invalidation hints and without a sentinel session name.
+  - Observable completion: route tests pass for GET, PATCH, refresh, malformed request, hash conflict, unknown conversation 404, SSE hints, and absence of `/sessions/__project__` as a public capability route.
+  - _Depends: 11.1, 11.2_
+  - _Requirements: 6.1, 6.4, 7.4, 15.1, 15.2, 18.3, 18.4, 20.1, 20.2_
+
+- [ ] 12. Extend project-conversation runtime composition and apply
+
+- [ ] 12.1 Compose Claude and Codex capability config for project conversation starts
+  - Let runtime composition accept project-conversation targets with repo-root worktree paths and fixed conversation backend identity.
+  - Resolve Claude project conversations from global, project, and project-conversation layers for skills, plugins, and sub-agents.
+  - Resolve Codex project conversations from global, project, and project-conversation layers for skills and plugins.
+  - Keep per-cascade composition failures diagnostic and non-blocking so native defaults are used only for the failed cascade.
+  - Observable completion: composer tests pass for Claude PLCs, Codex PLCs, no session layer, fixed backend identity, deterministic hashes, and per-cascade fallback.
+  - _Requirements: 1.3, 8.1, 8.2, 8.3, 13.3, 17.1, 17.2, 17.3, 19.1, 19.2, 19.5, 20.3_
+
+- [ ] 12.2 Fan out override changes to active project-conversation runtimes
+  - Include active project conversations affected by global, project, or project-conversation override changes.
+  - Exclude unrelated sessions and unrelated project conversations when a project-conversation override changes.
+  - Read and write capability runtime state on the project-conversation record, not on a synthetic session record.
+  - Apply idle Claude PLC changes and stage running Claude or Codex PLC changes with the same user-visible semantics as session conversations.
+  - Observable completion: runtime apply tests pass for idle Claude PLC apply, running Claude PLC staged-idle, Codex PLC staged-next-turn, project-level fanout to PLCs, and PLC-only fanout isolation.
+  - _Depends: 12.1_
+  - _Requirements: 6.3, 9.1, 9.2, 9.4, 10.1, 10.2, 10.3, 14.3, 16.1, 17.1, 18.3, 19.3, 19.4_
+
+- [ ] 12.3 Integrate project-conversation runtime composition with prompt execution
+  - Compose and seed capability runtime state when a project conversation runtime starts.
+  - Promote or stage capability runtime state at project-conversation turn boundaries according to the active backend's existing semantics.
+  - Preserve the initialized project conversation backend; capability configuration must not expose or invoke a backend-change path.
+  - Surface project-conversation composition diagnostics without blocking the turn.
+  - Observable completion: project prompt execution tests pass for seeded Claude PLC config, seeded Codex PLC config, next-turn staging, fixed backend behavior, and non-blocking failed cascade diagnostics.
+  - _Depends: 12.1, 12.2_
+  - _Requirements: 8.1, 8.2, 8.3, 10.1, 13.3, 19.1, 19.2, 19.5, 20.3_
+
+- [ ] 13. Wire project-conversation capability editing in the frontend
+
+- [ ] 13.1 Add project-conversation query keys, URLs, and SSE invalidation
+  - Extend capability hooks and query keys with project-conversation scope.
+  - Build GET, PATCH, and refresh URLs from project name and project conversation id without using the PLC sentinel.
+  - Invalidate project-conversation capability queries from project-conversation capability SSE events.
+  - Observable completion: hook and invalidation tests pass for PLC view, patch, refresh, mutation rollback, SSE invalidation, and no sentinel in generated keys or URLs.
+  - _Depends: 11.3_
+  - _Requirements: 15.1, 15.2, 18.1, 18.3, 18.4, 20.1_
+
+- [ ] 13.2 Extend scoped capability drawer for project-conversation layer options
+  - Add project-conversation layer options that show Global, Project, and Conversation scopes for the selected active PLC.
+  - Show direct project-conversation values separately from inherited project and global values through the existing panel view model.
+  - Prevent conversation-layer edits when no project conversation is selected.
+  - Treat the initialized PLC backend as read-only in capability configuration.
+  - Observable completion: component tests pass for active PLC initial scope, direct versus inherited labels, no-selected guard, disabled conversation edits, and absence of any backend-change control.
+  - _Depends: 13.1_
+  - _Requirements: 4.4, 11.2, 11.4, 18.1, 18.2, 18.5, 20.3_
+
+- [ ] 13.3 Integrate the capability entry in the project cockpit
+  - Pass active project conversation identity and backend from cockpit state into the scoped capability drawer.
+  - Open project-conversation capability configuration for the selected active PLC.
+  - Keep command palette routing, tab reconciliation, transcript rendering, composer submission, and backend selection behavior owned by the cockpit.
+  - Observable completion: cockpit tests pass for selected PLC drawer opening, no-selected PLC guard, fixed backend display, and unchanged command, tab, and composer behavior.
+  - _Depends: 13.2_
+  - _Requirements: 18.1, 18.5, 20.3, 20.4_
+
+- [ ] 14. Validate PLC capability behavior and regressions
+
+- [ ] 14.1 Add PLC resolver, persistence, route, and runtime regression coverage
+  - Cover project-conversation inheritance without a session layer, conversation override precedence, clear fallback, and session-conversation cascade preservation.
+  - Cover restart persistence for project-conversation overrides and runtime apply state.
+  - Cover project-conversation route behavior and runtime fanout against active PLCs.
+  - Observable completion: focused unit and integration suites fail if a session layer is synthesized for PLCs, if PLC writes affect a session conversation, or if session-conversation behavior regresses.
+  - _Depends: 11.1, 11.2, 11.3, 12.2_
+  - _Requirements: 14.1, 14.2, 15.3, 17.1, 17.2, 17.3, 17.4, 18.2, 18.3, 18.4_
+
+- [ ] 14.2 Add PLC diagnostics, logging, and redaction coverage
+  - Log PLC capability mutation, discovery, composition, and apply events with cascade kind, layer, item id, backend, project name, conversation scope, and conversation id.
+  - Surface project-conversation validation, not-found, persistence, composition, and apply failures with user-visible diagnostics.
+  - Prove the PLC sentinel and native backend payloads are redacted from public API responses, SSE payloads, UI diagnostics, and logs.
+  - Observable completion: diagnostics and redaction tests pass for PLC route failures, compose failures, apply failures, and sentinel isolation.
+  - _Depends: 11.3, 12.3, 13.2_
+  - _Requirements: 3.2, 13.3, 16.1, 16.2, 16.3, 19.5, 20.2_
+
+- [ ] 14.3 Run end-to-end PLC acceptance validation
+  - Exercise a complete PLC flow: open selected PLC capability config, inherit project capability state, set a conversation override, clear it, and observe fallback.
+  - Verify Claude PLC idle apply and Codex PLC next-turn staging match session-conversation user-visible semantics.
+  - Verify cross-client invalidation and convergence after project-conversation capability edits.
+  - Verify no project-conversation cascade kind, plugin installation, marketplace browsing, graph transient override, cross-backend mirroring, or backend-change surface was added.
+  - Observable completion: the relevant focused tests plus the repository validation command pass with PLC acceptance coverage included.
+  - _Depends: 13.3, 14.1, 14.2_
+  - _Requirements: 17.1, 17.2, 17.3, 17.4, 18.1, 18.2, 18.3, 18.4, 18.5, 19.1, 19.2, 19.3, 19.4, 19.5, 20.1, 20.2, 20.3, 20.4_

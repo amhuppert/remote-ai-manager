@@ -172,6 +172,7 @@ describe("NotificationListener", () => {
       type: "agent-capabilities-discovery-updated",
       level: "conversation",
       projectName: "proj",
+      conversationScope: "session",
       sessionName: "sess",
       conversationId: "conv",
       cascadeKind: "claude-skills",
@@ -181,6 +182,7 @@ describe("NotificationListener", () => {
       invalidationHints: {
         level: "conversation",
         projectName: "proj",
+        conversationScope: "session",
         sessionName: "sess",
         conversationId: "conv",
         cascadeKind: "claude-skills",

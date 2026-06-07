@@ -68,6 +68,7 @@ describe("computeAgentCapabilityInvalidations", () => {
       computeAgentCapabilityInvalidations({
         level: "conversation",
         projectName: "proj",
+        conversationScope: "session",
         sessionName: "sess",
         conversationId: "conv",
         cascadeKind: "claude-skills",
@@ -82,6 +83,42 @@ describe("computeAgentCapabilityInvalidations", () => {
         ),
       },
     ]);
+  });
+
+  it("project conversation events invalidate by project conversation identity without the sentinel", () => {
+    expect(
+      computeAgentCapabilityInvalidations({
+        level: "conversation",
+        projectName: "proj",
+        conversationScope: "project",
+        conversationId: "conv",
+        cascadeKind: "claude-skills",
+      }),
+    ).toEqual([
+      {
+        queryKey: [
+          "agent-capabilities",
+          "conversation",
+          "proj",
+          "claude-skills",
+          "project",
+          "conv",
+        ],
+      },
+    ]);
+  });
+
+  it("returns no invalidations when a project conversation event leaks the sentinel", () => {
+    expect(
+      computeAgentCapabilityInvalidations({
+        level: "conversation",
+        projectName: "proj",
+        conversationScope: "project",
+        sessionName: "__project__",
+        conversationId: "conv",
+        cascadeKind: "claude-skills",
+      }),
+    ).toEqual([]);
   });
 
   it("returns no invalidations when scoped identifiers are incomplete", () => {

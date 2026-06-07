@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import { agentBackendSchema, type AgentBackendId } from "@/lib/shared/schemas";
 
 // ============================================================
@@ -59,6 +60,83 @@ function requireAgentCapabilityCascadeBackendOwnership(
   }
 }
 
+function validatePublicSessionName(
+  value: { sessionName?: string },
+  ctx: z.RefinementCtx,
+): void {
+  if (value.sessionName !== PROJECT_CONVERSATION_SESSION_SENTINEL) return;
+  ctx.addIssue({
+    code: "custom",
+    message:
+      "reserved internal project-conversation identity cannot be used as a public session name",
+    path: ["sessionName"],
+  });
+}
+
+function validateAgentCapabilityScopeIdentity(
+  value: {
+    level?: AgentCapabilityCascadeLayer;
+    projectName?: string;
+    conversationScope?: AgentCapabilityConversationScope;
+    sessionName?: string;
+    conversationId?: string;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  validatePublicSessionName(value, ctx);
+
+  if (value.level === "conversation" && value.conversationScope === undefined) {
+    ctx.addIssue({
+      code: "custom",
+      message: "conversation scope requires conversationScope",
+      path: ["conversationScope"],
+    });
+  }
+
+  if (value.conversationScope === undefined) return;
+
+  if (value.level !== "conversation") {
+    ctx.addIssue({
+      code: "custom",
+      message: "conversationScope is only valid for conversation scope",
+      path: ["conversationScope"],
+    });
+    return;
+  }
+
+  if (!value.projectName) {
+    ctx.addIssue({
+      code: "custom",
+      message: "conversation scope requires projectName",
+      path: ["projectName"],
+    });
+  }
+
+  if (!value.conversationId) {
+    ctx.addIssue({
+      code: "custom",
+      message: "conversation scope requires conversationId",
+      path: ["conversationId"],
+    });
+  }
+
+  if (value.conversationScope === "session" && !value.sessionName) {
+    ctx.addIssue({
+      code: "custom",
+      message: "session conversation scope requires sessionName",
+      path: ["sessionName"],
+    });
+  }
+
+  if (value.conversationScope === "project" && value.sessionName) {
+    ctx.addIssue({
+      code: "custom",
+      message: "project conversation scope must not include sessionName",
+      path: ["sessionName"],
+    });
+  }
+}
+
 const agentCapabilityCapabilityKindSchema = z.enum([
   "skill",
   "plugin",
@@ -76,6 +154,14 @@ export const agentCapabilityCascadeLayerSchema = z.enum([
 ]);
 export type AgentCapabilityCascadeLayer = z.infer<
   typeof agentCapabilityCascadeLayerSchema
+>;
+
+export const agentCapabilityConversationScopeSchema = z.enum([
+  "session",
+  "project",
+]);
+export type AgentCapabilityConversationScope = z.infer<
+  typeof agentCapabilityConversationScopeSchema
 >;
 
 export const agentCapabilityOriginLayerSchema = z.enum([
@@ -208,12 +294,15 @@ export type AgentCapabilityRuntimeApplicationState = z.infer<
 // API view model — resolved view rows shared across discovery, resolver, API
 // ---------------------------------------------------------------------------
 
-export const agentCapabilityScopeContextSchema = z.object({
-  level: agentCapabilityCascadeLayerSchema,
-  projectName: z.string().optional(),
-  sessionName: z.string().optional(),
-  conversationId: z.string().optional(),
-});
+export const agentCapabilityScopeContextSchema = z
+  .object({
+    level: agentCapabilityCascadeLayerSchema,
+    projectName: z.string().optional(),
+    conversationScope: agentCapabilityConversationScopeSchema.optional(),
+    sessionName: z.string().optional(),
+    conversationId: z.string().optional(),
+  })
+  .superRefine(validateAgentCapabilityScopeIdentity);
 export type AgentCapabilityScopeContext = z.infer<
   typeof agentCapabilityScopeContextSchema
 >;
@@ -286,11 +375,13 @@ export const agentCapabilityDiagnosticSchema = z
     itemId: z.string().optional(),
     backend: agentBackendSchema.optional(),
     projectName: z.string().optional(),
+    conversationScope: agentCapabilityConversationScopeSchema.optional(),
     sessionName: z.string().optional(),
     conversationId: z.string().optional(),
     sourceRef: agentCapabilitySourceRefSchema.optional(),
   })
   .strict()
+  .superRefine(validateAgentCapabilityScopeIdentity)
   .superRefine((value, ctx) => {
     if (value.cascadeKind === undefined || value.backend === undefined) return;
     requireAgentCapabilityCascadeBackendOwnership(
@@ -329,6 +420,7 @@ export const agentCapabilityViewRowSchema = z
     inheritedEffectiveState: agentCapabilityEffectiveStateSchema.optional(),
     effectiveState: agentCapabilityEffectiveStateSchema,
     originLayer: agentCapabilityOriginLayerSchema,
+    conversationScope: agentCapabilityConversationScopeSchema.optional(),
     owningPluginId: z.string().optional(),
     inheritedDisableReason:
       agentCapabilityInheritedDisableReasonSchema.optional(),
@@ -368,6 +460,7 @@ export const agentCapabilityViewResponseSchema = z
   .object({
     level: agentCapabilityCascadeLayerSchema,
     projectName: z.string().optional(),
+    conversationScope: agentCapabilityConversationScopeSchema.optional(),
     sessionName: z.string().optional(),
     conversationId: z.string().optional(),
     cascadeKind: agentCapabilityCascadeKindSchema,
@@ -377,6 +470,7 @@ export const agentCapabilityViewResponseSchema = z
     effectiveHash: z.string(),
     metadata: agentCapabilityMetadataSchema.optional(),
   })
+  .superRefine(validateAgentCapabilityScopeIdentity)
   .superRefine(requireAgentCapabilityCascadeBackendOwnership)
   .superRefine((value, ctx) => {
     if (!value.metadata) return;
@@ -441,6 +535,7 @@ export const agentCapabilityInvalidationHintsSchema = z
   .object({
     level: agentCapabilityCascadeLayerSchema,
     projectName: z.string().optional(),
+    conversationScope: agentCapabilityConversationScopeSchema.optional(),
     sessionName: z.string().optional(),
     conversationId: z.string().optional(),
     cascadeKind: agentCapabilityCascadeKindSchema,
@@ -450,7 +545,8 @@ export const agentCapabilityInvalidationHintsSchema = z
     sourceSignature: z.string().optional(),
     operationId: z.string().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine(validateAgentCapabilityScopeIdentity);
 export type AgentCapabilityInvalidationHints = z.infer<
   typeof agentCapabilityInvalidationHintsSchema
 >;
@@ -465,6 +561,7 @@ export const agentCapabilitiesUpdatedEventSchema = z
     type: z.literal("agent-capabilities-updated"),
     level: agentCapabilityCascadeLayerSchema,
     projectName: z.string().optional(),
+    conversationScope: agentCapabilityConversationScopeSchema.optional(),
     sessionName: z.string().optional(),
     conversationId: z.string().optional(),
     cascadeKind: agentCapabilityCascadeKindSchema,
@@ -475,6 +572,7 @@ export const agentCapabilitiesUpdatedEventSchema = z
     invalidationHints: agentCapabilityInvalidationHintsSchema,
   })
   .strict()
+  .superRefine(validateAgentCapabilityScopeIdentity)
   .superRefine(requireAgentCapabilityCascadeBackendOwnership)
   .superRefine((value, ctx) => {
     validateAgentCapabilityInvalidationHintsMatch(
@@ -492,6 +590,7 @@ export const agentCapabilitiesDiscoveryUpdatedEventSchema = z
     type: z.literal("agent-capabilities-discovery-updated"),
     level: agentCapabilityCascadeLayerSchema,
     projectName: z.string().optional(),
+    conversationScope: agentCapabilityConversationScopeSchema.optional(),
     sessionName: z.string().optional(),
     conversationId: z.string().optional(),
     cascadeKind: agentCapabilityCascadeKindSchema,
@@ -501,6 +600,7 @@ export const agentCapabilitiesDiscoveryUpdatedEventSchema = z
     invalidationHints: agentCapabilityInvalidationHintsSchema,
   })
   .strict()
+  .superRefine(validateAgentCapabilityScopeIdentity)
   .superRefine(requireAgentCapabilityCascadeBackendOwnership)
   .superRefine((value, ctx) => {
     validateAgentCapabilityInvalidationHintsMatch(
@@ -517,6 +617,7 @@ function validateAgentCapabilityInvalidationHintsMatch(
   value: {
     level: AgentCapabilityCascadeLayer;
     projectName?: string;
+    conversationScope?: AgentCapabilityConversationScope;
     sessionName?: string;
     conversationId?: string;
     cascadeKind: AgentCapabilityCascadeKind;
@@ -527,6 +628,7 @@ function validateAgentCapabilityInvalidationHintsMatch(
   const fields = [
     "level",
     "projectName",
+    "conversationScope",
     "sessionName",
     "conversationId",
     "cascadeKind",

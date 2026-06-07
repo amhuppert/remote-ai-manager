@@ -319,6 +319,7 @@ export function resolveCascadeView(
   return {
     level: input.scope.level,
     projectName: input.scope.projectName,
+    conversationScope: input.scope.conversationScope,
     sessionName: input.scope.sessionName,
     conversationId: input.scope.conversationId,
     cascadeKind: input.cascadeKind,

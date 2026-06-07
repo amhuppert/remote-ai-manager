@@ -299,12 +299,44 @@ describe("resolveCascadeView — four-layer inheritance (task 4.1)", () => {
     const view = resolveCascadeView(
       baseInput({
         cascadeKind: "claude-skills",
+        scope: {
+          level: "conversation",
+          projectName: "repo",
+          conversationScope: "session",
+          sessionName: "main",
+          conversationId: "c1",
+        },
         overrideChain: [],
         discoveredItems: [discoveredSkill("skill:a", true)],
       }),
     );
     const parsed = agentCapabilityViewResponseSchema.safeParse(view);
     expect(parsed.success).toBe(true);
+  });
+
+  it("preserves explicit session conversation scope on the canonical view envelope", () => {
+    const view = resolveCascadeView(
+      baseInput({
+        cascadeKind: "claude-skills",
+        scope: {
+          level: "conversation",
+          projectName: "repo",
+          conversationScope: "session",
+          sessionName: "main",
+          conversationId: "c1",
+        },
+        overrideChain: [],
+        discoveredItems: [discoveredSkill("skill:a", true)],
+      }),
+    );
+
+    expect(view).toMatchObject({
+      level: "conversation",
+      projectName: "repo",
+      conversationScope: "session",
+      sessionName: "main",
+      conversationId: "c1",
+    });
   });
 });
 

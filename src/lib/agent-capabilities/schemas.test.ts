@@ -47,6 +47,15 @@ describe("agentCapabilityCascadeKindSchema", () => {
     expect(
       agentCapabilityCascadeKindSchema.safeParse("codex-agents").success,
     ).toBe(false);
+    expect(
+      agentCapabilityCascadeKindSchema.safeParse("project-conversation")
+        .success,
+    ).toBe(false);
+    expect(
+      agentCapabilityCascadeKindSchema.safeParse(
+        "project-conversation-capabilities",
+      ).success,
+    ).toBe(false);
     expect(agentCapabilityCascadeKindSchema.safeParse("plugins").success).toBe(
       false,
     );
@@ -497,14 +506,76 @@ describe("agentCapabilityScopeContextSchema", () => {
     ).toBe(true);
   });
 
-  it("accepts a project, session, conversation scope with identifiers", () => {
+  it("accepts a session conversation scope with identifiers", () => {
+    const result = agentCapabilityScopeContextSchema.safeParse({
+      level: "conversation",
+      projectName: "repo",
+      conversationScope: "session",
+      sessionName: "main",
+      conversationId: "c1",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a project conversation scope without a session name", () => {
+    const result = agentCapabilityScopeContextSchema.safeParse({
+      level: "conversation",
+      projectName: "repo",
+      conversationScope: "project",
+      conversationId: "c1",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.sessionName).toBeUndefined();
+    }
+  });
+
+  it("rejects conversation scope without an explicit conversationScope discriminator", () => {
     const result = agentCapabilityScopeContextSchema.safeParse({
       level: "conversation",
       projectName: "repo",
       sessionName: "main",
       conversationId: "c1",
     });
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects the project conversation sentinel as a public session name", () => {
+    const result = agentCapabilityScopeContextSchema.safeParse({
+      level: "conversation",
+      projectName: "repo",
+      conversationScope: "session",
+      sessionName: "__project__",
+      conversationId: "c1",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("does not leak the project conversation sentinel in validation messages", () => {
+    const result = agentCapabilityScopeContextSchema.safeParse({
+      level: "conversation",
+      projectName: "repo",
+      conversationScope: "session",
+      sessionName: "__project__",
+      conversationId: "c1",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.error.issues.map((issue) => issue.message).join("\n"),
+      ).not.toContain("__project__");
+    }
+  });
+
+  it("rejects project conversation scope with a session name", () => {
+    const result = agentCapabilityScopeContextSchema.safeParse({
+      level: "conversation",
+      projectName: "repo",
+      conversationScope: "project",
+      sessionName: "main",
+      conversationId: "c1",
+    });
+    expect(result.success).toBe(false);
   });
 });
 
@@ -696,6 +767,7 @@ describe("agentCapabilityViewResponseSchema", () => {
     const result = agentCapabilityViewResponseSchema.safeParse({
       level: "conversation",
       projectName: "repo",
+      conversationScope: "session",
       sessionName: "main",
       conversationId: "c1",
       cascadeKind: "claude-skills",
@@ -797,6 +869,7 @@ describe("agentCapabilitiesUpdatedEventSchema (SSE)", () => {
       type: "agent-capabilities-updated",
       level: "conversation",
       projectName: "repo",
+      conversationScope: "session",
       sessionName: "main",
       conversationId: "c1",
       cascadeKind: "claude-skills",
@@ -806,6 +879,7 @@ describe("agentCapabilitiesUpdatedEventSchema (SSE)", () => {
       invalidationHints: {
         level: "conversation",
         projectName: "repo",
+        conversationScope: "session",
         sessionName: "main",
         conversationId: "c1",
         cascadeKind: "claude-skills",
@@ -814,6 +888,60 @@ describe("agentCapabilitiesUpdatedEventSchema (SSE)", () => {
       },
     });
     expect(result.success).toBe(true);
+  });
+
+  it("accepts a project-conversation event without a session name", () => {
+    const result = agentCapabilitiesUpdatedEventSchema.safeParse({
+      type: "agent-capabilities-updated",
+      level: "conversation",
+      projectName: "repo",
+      conversationScope: "project",
+      conversationId: "c1",
+      cascadeKind: "claude-skills",
+      backend: "claude",
+      changedItemIds: ["skill:x"],
+      effectiveHash: "h-2",
+      invalidationHints: {
+        level: "conversation",
+        projectName: "repo",
+        conversationScope: "project",
+        conversationId: "c1",
+        cascadeKind: "claude-skills",
+        itemIds: ["skill:x"],
+        effectiveHash: "h-2",
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.sessionName).toBeUndefined();
+      expect(result.data.invalidationHints.sessionName).toBeUndefined();
+    }
+  });
+
+  it("rejects project-conversation events that leak the sentinel as a session name", () => {
+    const result = agentCapabilitiesUpdatedEventSchema.safeParse({
+      type: "agent-capabilities-updated",
+      level: "conversation",
+      projectName: "repo",
+      conversationScope: "project",
+      sessionName: "__project__",
+      conversationId: "c1",
+      cascadeKind: "claude-skills",
+      backend: "claude",
+      changedItemIds: ["skill:x"],
+      effectiveHash: "h-2",
+      invalidationHints: {
+        level: "conversation",
+        projectName: "repo",
+        conversationScope: "project",
+        sessionName: "__project__",
+        conversationId: "c1",
+        cascadeKind: "claude-skills",
+        itemIds: ["skill:x"],
+        effectiveHash: "h-2",
+      },
+    });
+    expect(result.success).toBe(false);
   });
 
   it("rejects events missing structured invalidation hints", () => {

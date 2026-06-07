@@ -1,11 +1,14 @@
 import type {
   AgentCapabilityCascadeKind,
   AgentCapabilityCascadeLayer,
+  AgentCapabilityConversationScope,
 } from "./schemas";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 
 export interface AgentCapabilityEventIdentifiers {
   level: AgentCapabilityCascadeLayer;
   projectName?: string;
+  conversationScope?: AgentCapabilityConversationScope;
   sessionName?: string;
   conversationId?: string;
   cascadeKind: AgentCapabilityCascadeKind;
@@ -45,7 +48,13 @@ export function computeAgentCapabilityInvalidations(
   }
 
   if (event.level === "session") {
-    if (!event.projectName || !event.sessionName) return [];
+    if (
+      !event.projectName ||
+      !event.sessionName ||
+      event.sessionName === PROJECT_CONVERSATION_SESSION_SENTINEL
+    ) {
+      return [];
+    }
     return [
       {
         queryKey: [
@@ -68,7 +77,30 @@ export function computeAgentCapabilityInvalidations(
     ];
   }
 
-  if (!event.projectName || !event.sessionName || !event.conversationId) {
+  if (!event.projectName || !event.conversationId) {
+    return [];
+  }
+
+  if (event.conversationScope === "project") {
+    if (event.sessionName) return [];
+    return [
+      {
+        queryKey: [
+          ...root,
+          "conversation",
+          event.projectName,
+          event.cascadeKind,
+          "project",
+          event.conversationId,
+        ],
+      },
+    ];
+  }
+
+  if (
+    !event.sessionName ||
+    event.sessionName === PROJECT_CONVERSATION_SESSION_SENTINEL
+  ) {
     return [];
   }
 
