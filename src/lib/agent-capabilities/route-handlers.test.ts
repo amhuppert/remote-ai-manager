@@ -9,13 +9,16 @@ import type {
 } from "./schemas";
 
 import {
+  CapabilityRouteDiscoveryError,
   CapabilityRoutePersistenceError,
   createConversationCapabilityHandlers,
   createGlobalCapabilityHandlers,
+  createProjectConversationCapabilityHandlers,
   createProjectCapabilityHandlers,
   createSessionCapabilityHandlers,
   type CapabilityRouteDeps,
 } from "./route-handlers";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 
 function view(
   cascadeKind: AgentCapabilityCascadeKind,
@@ -430,5 +433,442 @@ describe("agent capability route handlers", () => {
       sessionName: "s",
       conversationId: "c",
     });
+  });
+
+  it("serves project-conversation capability views through the public project route shape", async () => {
+    const resolveView = vi.fn(async (input) => {
+      return {
+        ...view(input.cascadeKind, "hash-plc", input.scope.level),
+        projectName: "proj",
+        conversationScope: "project" as const,
+        conversationId: "plc-1",
+      };
+    });
+    const deps = baseDeps({
+      resolveView: resolveView as CapabilityRouteDeps["resolveView"],
+    });
+    const handlers = createProjectConversationCapabilityHandlers(deps);
+
+    const response = await handlers.GET(
+      request(
+        "http://cc.test/api/projects/proj/conversations/plc-1/agent-capabilities?cascadeKind=codex-skills",
+      ),
+      {
+        params: Promise.resolve({
+          name: "proj",
+          conversationId: "plc-1",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      view: {
+        level: "conversation",
+        projectName: "proj",
+        conversationScope: "project",
+        conversationId: "plc-1",
+        cascadeKind: "codex-skills",
+        effectiveHash: "hash-plc",
+      },
+    });
+    expect(resolveView).toHaveBeenCalledWith({
+      scope: {
+        level: "conversation",
+        projectName: "proj",
+        projectPath: "/projects/proj",
+        conversationScope: "project",
+        conversationId: "plc-1",
+      },
+      cascadeKind: "codex-skills",
+    });
+  });
+
+  it("returns structured validation errors for malformed project-conversation patch bodies", async () => {
+    const mutate = vi.fn();
+    const handlers = createProjectConversationCapabilityHandlers(
+      baseDeps({ mutate: mutate as CapabilityRouteDeps["mutate"] }),
+    );
+
+    const response = await handlers.PATCH(
+      jsonRequest(
+        "PATCH",
+        "http://cc.test/api/projects/proj/conversations/plc-1/agent-capabilities",
+        {
+          cascadeKind: "codex-skills",
+          operations: [{ type: "set-item-enabled", itemId: "skill:a" }],
+        },
+      ),
+      {
+        params: Promise.resolve({
+          name: "proj",
+          conversationId: "plc-1",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "validation_error" },
+    });
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it("returns project-conversation conflict errors with direct invalidation identity", async () => {
+    const deps = baseDeps({
+      async mutate(input) {
+        return {
+          status: "conflict",
+          scope: input.scope,
+          cascadeKind: input.request.cascadeKind,
+          expectedHash: "hash-stale",
+          actualHash: "hash-current",
+          latestView: {
+            ...view(input.request.cascadeKind, "hash-current", "conversation"),
+            projectName: "proj",
+            conversationScope: "project",
+            conversationId: "plc-1",
+          },
+          operationId: "cap-op-plc-conflict",
+        };
+      },
+    });
+    const handlers = createProjectConversationCapabilityHandlers(deps);
+
+    const response = await handlers.PATCH(
+      jsonRequest(
+        "PATCH",
+        "http://cc.test/api/projects/proj/conversations/plc-1/agent-capabilities",
+        {
+          cascadeKind: "codex-skills",
+          expectedHash: "hash-stale",
+          operations: [
+            { type: "set-item-enabled", itemId: "skill:a", enabled: false },
+          ],
+        },
+      ),
+      {
+        params: Promise.resolve({
+          name: "proj",
+          conversationId: "plc-1",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body).toMatchObject({
+      error: { code: "conflict" },
+      expectedHash: "hash-stale",
+      actualHash: "hash-current",
+      latestView: {
+        level: "conversation",
+        conversationScope: "project",
+        conversationId: "plc-1",
+        effectiveHash: "hash-current",
+      },
+      invalidationHints: {
+        level: "conversation",
+        projectName: "proj",
+        conversationScope: "project",
+        conversationId: "plc-1",
+        cascadeKind: "codex-skills",
+        effectiveHash: "hash-current",
+        operationId: "cap-op-plc-conflict",
+      },
+      operationId: "cap-op-plc-conflict",
+    });
+    expect(body.invalidationHints).not.toHaveProperty("sessionName");
+    expect(body.latestView).not.toHaveProperty("sessionName");
+    expect(deps.events).toEqual([]);
+  });
+
+  it("broadcasts project-conversation update events without a sentinel session name", async () => {
+    const deps = baseDeps({
+      async mutate(input) {
+        return {
+          status: "applied",
+          scope: input.scope,
+          cascadeKind: input.request.cascadeKind,
+          changedItemIds: ["skill:a"],
+          effectiveHash: "hash-plc-next",
+          view: {
+            ...view(
+              input.request.cascadeKind,
+              "hash-plc-next",
+              input.scope.level,
+            ),
+            projectName: "proj",
+            conversationScope: "project",
+            conversationId: "plc-1",
+          },
+          operationId: "cap-op-plc-update",
+        };
+      },
+    });
+    const handlers = createProjectConversationCapabilityHandlers(deps);
+
+    const response = await handlers.PATCH(
+      jsonRequest(
+        "PATCH",
+        "http://cc.test/api/projects/proj/conversations/plc-1/agent-capabilities",
+        {
+          cascadeKind: "codex-skills",
+          expectedHash: "hash-plc",
+          operations: [
+            { type: "set-item-enabled", itemId: "skill:a", enabled: false },
+          ],
+        },
+      ),
+      {
+        params: Promise.resolve({
+          name: "proj",
+          conversationId: "plc-1",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({
+      view: {
+        level: "conversation",
+        conversationScope: "project",
+        conversationId: "plc-1",
+        effectiveHash: "hash-plc-next",
+      },
+      changedItemIds: ["skill:a"],
+      invalidationHints: {
+        level: "conversation",
+        projectName: "proj",
+        conversationScope: "project",
+        conversationId: "plc-1",
+        cascadeKind: "codex-skills",
+        itemIds: ["skill:a"],
+        effectiveHash: "hash-plc-next",
+        operationId: "cap-op-plc-update",
+      },
+      operationId: "cap-op-plc-update",
+    });
+    expect(body.invalidationHints).not.toHaveProperty("sessionName");
+    expect(deps.events).toHaveLength(1);
+    const [event] = deps.events;
+    if (!event) throw new Error("Expected project-conversation update event");
+    expect(event).toMatchObject({
+      type: "agent-capabilities-updated",
+      level: "conversation",
+      projectName: "proj",
+      conversationScope: "project",
+      conversationId: "plc-1",
+      cascadeKind: "codex-skills",
+      changedItemIds: ["skill:a"],
+      effectiveHash: "hash-plc-next",
+      operationId: "cap-op-plc-update",
+      invalidationHints: {
+        conversationScope: "project",
+        conversationId: "plc-1",
+      },
+    });
+    expect(event).not.toHaveProperty("sessionName");
+    expect(event.invalidationHints).not.toHaveProperty("sessionName");
+  });
+
+  it("refreshes project-conversation discovery and broadcasts direct invalidation hints", async () => {
+    const deps = baseDeps();
+    const handlers = createProjectConversationCapabilityHandlers(deps);
+
+    const response = await handlers.POST(
+      jsonRequest(
+        "POST",
+        "http://cc.test/api/projects/proj/conversations/plc-1/agent-capabilities/refresh",
+        { cascadeKind: "codex-skills" },
+      ),
+      {
+        params: Promise.resolve({
+          name: "proj",
+          conversationId: "plc-1",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({
+      inventory: {
+        cascadeKind: "codex-skills",
+        sourceSignature: "codex-skills:sig",
+      },
+      view: {
+        level: "conversation",
+        cascadeKind: "codex-skills",
+        effectiveHash: "hash-refresh",
+      },
+      invalidationHints: {
+        level: "conversation",
+        projectName: "proj",
+        conversationScope: "project",
+        conversationId: "plc-1",
+        cascadeKind: "codex-skills",
+        refreshDiscovery: true,
+        sourceSignature: "codex-skills:sig",
+      },
+    });
+    expect(body.invalidationHints).not.toHaveProperty("sessionName");
+    expect(deps.events).toHaveLength(1);
+    const [event] = deps.events;
+    if (!event)
+      throw new Error("Expected project-conversation discovery event");
+    expect(event).toMatchObject({
+      type: "agent-capabilities-discovery-updated",
+      level: "conversation",
+      projectName: "proj",
+      conversationScope: "project",
+      conversationId: "plc-1",
+      cascadeKind: "codex-skills",
+      sourceSignature: "codex-skills:sig",
+      invalidationHints: {
+        conversationScope: "project",
+        conversationId: "plc-1",
+      },
+    });
+    expect(event).not.toHaveProperty("sessionName");
+    expect(event.invalidationHints).not.toHaveProperty("sessionName");
+  });
+
+  it("returns structured project-conversation persistence errors without broadcasting", async () => {
+    const deps = baseDeps({
+      async mutate() {
+        throw new CapabilityRoutePersistenceError(
+          "project conversation write failed",
+        );
+      },
+    });
+    const handlers = createProjectConversationCapabilityHandlers(deps);
+
+    const response = await handlers.PATCH(
+      jsonRequest(
+        "PATCH",
+        "http://cc.test/api/projects/proj/conversations/plc-1/agent-capabilities",
+        {
+          cascadeKind: "codex-skills",
+          operations: [
+            { type: "set-item-enabled", itemId: "skill:a", enabled: false },
+          ],
+        },
+      ),
+      {
+        params: Promise.resolve({
+          name: "proj",
+          conversationId: "plc-1",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "persistence_error" },
+    });
+    expect(deps.events).toEqual([]);
+  });
+
+  it("returns structured project-conversation discovery errors without broadcasting", async () => {
+    const deps = baseDeps({
+      async refreshDiscovery() {
+        throw new CapabilityRouteDiscoveryError(
+          "project conversation discovery failed",
+        );
+      },
+    });
+    const handlers = createProjectConversationCapabilityHandlers(deps);
+
+    const response = await handlers.POST(
+      jsonRequest(
+        "POST",
+        "http://cc.test/api/projects/proj/conversations/plc-1/agent-capabilities/refresh",
+        { cascadeKind: "codex-skills" },
+      ),
+      {
+        params: Promise.resolve({
+          name: "proj",
+          conversationId: "plc-1",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "discovery_error" },
+    });
+    expect(deps.events).toEqual([]);
+  });
+
+  it("returns structured not-found errors for unknown project conversations", async () => {
+    const deps = baseDeps({
+      async resolveView() {
+        throw new Error(
+          'Conversation "plc-missing" not found in project "/projects/proj"',
+        );
+      },
+    });
+    const handlers = createProjectConversationCapabilityHandlers(deps);
+
+    const response = await handlers.GET(
+      request(
+        "http://cc.test/api/projects/proj/conversations/plc-missing/agent-capabilities?cascadeKind=codex-skills",
+      ),
+      {
+        params: Promise.resolve({
+          name: "proj",
+          conversationId: "plc-missing",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "not_found" },
+    });
+    expect(deps.events).toEqual([]);
+  });
+
+  it("rejects the project-conversation sentinel as a public session capability route", async () => {
+    const resolveView = vi.fn();
+    const handlers = createSessionCapabilityHandlers(
+      baseDeps({
+        resolveView: resolveView as CapabilityRouteDeps["resolveView"],
+      }),
+    );
+
+    const response = await handlers.GET(
+      request(
+        `http://cc.test/api/projects/proj/sessions/${PROJECT_CONVERSATION_SESSION_SENTINEL}/agent-capabilities?cascadeKind=codex-skills`,
+      ),
+      {
+        params: Promise.resolve({
+          name: "proj",
+          session: PROJECT_CONVERSATION_SESSION_SENTINEL,
+        }),
+      },
+    );
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "not_found" },
+    });
+    expect(resolveView).not.toHaveBeenCalled();
+  });
+
+  it("exports public project-conversation Next route handlers", async () => {
+    const route =
+      await import("@/app/api/projects/[name]/conversations/[conversationId]/agent-capabilities/route");
+    const refreshRoute =
+      await import("@/app/api/projects/[name]/conversations/[conversationId]/agent-capabilities/refresh/route");
+
+    expect(route.dynamic).toBe("force-dynamic");
+    expect(route.GET).toBeTypeOf("function");
+    expect(route.PATCH).toBeTypeOf("function");
+    expect(route.POST).toBeTypeOf("function");
+    expect(refreshRoute.dynamic).toBe("force-dynamic");
+    expect(refreshRoute.POST).toBeTypeOf("function");
   });
 });

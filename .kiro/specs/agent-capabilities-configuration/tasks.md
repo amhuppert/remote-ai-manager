@@ -305,7 +305,7 @@ Implementation follows red-green-refactor by default. Each task should add focus
   - Observable completion: persistence and resolver tests pass for project inheritance, conversation override precedence, reset fallback, selected-PLC-only writes, and session-conversation regression cases.
   - _Requirements: 17.1, 17.2, 17.3, 17.4, 18.3, 18.4_
 
-- [ ] 11.3 Expose project-conversation capability routes and refresh
+- [x] 11.3 Expose project-conversation capability routes and refresh
   - Add public project-conversation capability GET, PATCH, and refresh endpoints under the project-conversation route shape.
   - Return structured validation, conflict, persistence, discovery, and not-found errors for project-conversation capability requests.
   - Broadcast capability update and discovery events with project-conversation invalidation hints and without a sentinel session name.

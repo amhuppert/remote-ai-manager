@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 
+import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import { createLogger } from "@/lib/logging";
 import { getErrorMessage } from "@/lib/shared/errors";
 import {
@@ -117,7 +118,7 @@ export function createSessionCapabilityHandlers(deps: CapabilityRouteDeps) {
   return createHandlers(deps, async (ctx) => {
     const params = await ctx.params;
     const projectName = requireParam(params, "name");
-    const sessionName = requireParam(params, "session");
+    const sessionName = requirePublicSessionParam(params, "session");
     const projectPath = await resolveProjectPathOrThrow(deps, projectName);
     return { level: "session", projectName, projectPath, sessionName };
   });
@@ -129,7 +130,7 @@ export function createConversationCapabilityHandlers(
   return createHandlers(deps, async (ctx) => {
     const params = await ctx.params;
     const projectName = requireParam(params, "name");
-    const sessionName = requireParam(params, "session");
+    const sessionName = requirePublicSessionParam(params, "session");
     const conversationId = requireParam(params, "conversationId");
     const projectPath = await resolveProjectPathOrThrow(deps, projectName);
     return {
@@ -138,6 +139,24 @@ export function createConversationCapabilityHandlers(
       projectPath,
       conversationScope: "session",
       sessionName,
+      conversationId,
+    };
+  });
+}
+
+export function createProjectConversationCapabilityHandlers(
+  deps: CapabilityRouteDeps,
+) {
+  return createHandlers(deps, async (ctx) => {
+    const params = await ctx.params;
+    const projectName = requireParam(params, "name");
+    const conversationId = requireParam(params, "conversationId");
+    const projectPath = await resolveProjectPathOrThrow(deps, projectName);
+    return {
+      level: "conversation",
+      projectName,
+      projectPath,
+      conversationScope: "project",
       conversationId,
     };
   });
@@ -312,6 +331,19 @@ function requireParam(params: Record<string, string>, key: string): string {
   const value = params[key];
   if (!value) {
     throw new CapabilityRouteNotFoundError(`Missing route parameter: ${key}`);
+  }
+  return value;
+}
+
+function requirePublicSessionParam(
+  params: Record<string, string>,
+  key: string,
+): string {
+  const value = requireParam(params, key);
+  if (isProjectSentinel(value)) {
+    throw new CapabilityRouteNotFoundError(
+      "Project conversation capability routes use the project conversation route shape",
+    );
   }
   return value;
 }
