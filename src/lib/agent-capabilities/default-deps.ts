@@ -52,6 +52,7 @@ import {
 import {
   createCapabilityRuntimeApplyService,
   type AffectedConversation,
+  type ApplyConversationIdentity,
   type CapabilityRuntimeApplyService,
   type ClaudeApplyPortInput,
   type ClaudeApplyPortResult,
@@ -408,87 +409,310 @@ const defaultComposeForConversation = createConversationStartCapabilityComposer(
   },
 );
 
-async function defaultListAffectedConversations(input: {
+interface RuntimeSnapshot {
+  status: "alive" | "dead";
+  backend: AgentBackendId;
+  isTurnActive?: unknown;
+}
+
+export interface AffectedConversationListerDeps {
+  readState(): Promise<ManagerState>;
+  readGlobalOverrides(): Promise<AgentCapabilityOverrides | undefined>;
+  listAllProjectConversations(): Promise<
+    readonly { projectPath: string; conversation: ConversationState }[]
+  >;
+  getRuntime(conversationId: string): RuntimeSnapshot | undefined;
+  getProjectDisplayName(projectPath: string): string;
+}
+
+export function createAffectedConversationLister(
+  deps: AffectedConversationListerDeps,
+): (input: {
   scope: MutationScope;
   cascadeKind: AgentCapabilityCascadeKind;
   changedItemIds: readonly string[];
-}): Promise<readonly AffectedConversation[]> {
-  const [state, globalOverrides] = await Promise.all([
-    stateManager.readState(),
-    defaultGlobalCapabilityOverrideStore.read(),
-  ]);
-  const affected: AffectedConversation[] = [];
+}) => Promise<readonly AffectedConversation[]> {
+  return async function listAffectedConversations(input) {
+    const [state, globalOverrides] = await Promise.all([
+      deps.readState(),
+      deps.readGlobalOverrides(),
+    ]);
+    const affected: AffectedConversation[] = [];
 
-  for (const [projectPath, project] of Object.entries(state.projects)) {
-    if (
-      input.scope.level === "project" &&
-      input.scope.projectPath !== projectPath
-    ) {
-      continue;
-    }
-    if (
-      (input.scope.level === "session" ||
-        input.scope.level === "conversation") &&
-      input.scope.projectPath !== projectPath
-    ) {
-      continue;
+    for (const [projectPath, project] of Object.entries(state.projects)) {
+      if (!scopeCanAffectProject(input.scope, projectPath)) continue;
+
+      const projectName = deps.getProjectDisplayName(projectPath);
+      if (!isProjectConversationMutationScope(input.scope)) {
+        for (const session of Object.values(project.sessions)) {
+          if (!scopeCanAffectSessionConversation(input.scope, session)) {
+            continue;
+          }
+
+          for (const conv of session.conversations) {
+            if (!scopeCanAffectSessionConversationRecord(input.scope, conv)) {
+              continue;
+            }
+
+            const runtime = deps.getRuntime(conv.id);
+            if (!isLiveRuntimeForCascade(runtime, input.cascadeKind)) continue;
+            if (
+              !mutationAffectsConversationRuntime({
+                scope: input.scope,
+                cascadeKind: input.cascadeKind,
+                changedItemIds: input.changedItemIds,
+                overrideChain: {
+                  global: globalOverrides,
+                  project: project.agentCapabilityOverrides,
+                  session: session.agentCapabilityOverrides,
+                  conversation: conv.agentCapabilityOverrides,
+                },
+              })
+            ) {
+              continue;
+            }
+
+            affected.push({
+              conversationScope: "session",
+              projectPath,
+              projectName,
+              sessionName: session.sessionName,
+              conversationId: conv.id,
+              worktreePath: session.worktreePath,
+              backend: runtime.backend,
+              isTurnActive: isClaudeTurnActive(runtime),
+            });
+          }
+        }
+      }
     }
 
-    const projectName = getProjectDisplayName(projectPath);
-    if (isProjectConversationMutationScope(input.scope)) {
-      continue;
+    if (
+      input.scope.level === "session" ||
+      isSessionConversationMutationScope(input.scope)
+    ) {
+      return affected;
     }
-    for (const session of Object.values(project.sessions)) {
+
+    let projectConversations: readonly {
+      projectPath: string;
+      conversation: ConversationState;
+    }[];
+    try {
+      projectConversations = await deps.listAllProjectConversations();
+    } catch (err) {
+      logger.error("fanout.project_conversations_list_failed", {
+        cascadeKind: input.cascadeKind,
+        changedCount: input.changedItemIds.length,
+        error: redactAgentCapabilityText(getErrorMessage(err)),
+        ...fanoutScopeLogFields(input.scope),
+      });
+      if (input.scope.level === "global" || input.scope.level === "project") {
+        return affected;
+      }
+      throw err;
+    }
+
+    for (const { projectPath, conversation } of projectConversations) {
+      if (!scopeCanAffectProject(input.scope, projectPath)) continue;
       if (
-        (input.scope.level === "session" ||
-          isSessionConversationMutationScope(input.scope)) &&
-        input.scope.sessionName !== session.sessionName
+        isProjectConversationMutationScope(input.scope) &&
+        input.scope.conversationId !== conversation.id
       ) {
         continue;
       }
 
-      for (const conv of session.conversations) {
-        if (
-          isSessionConversationMutationScope(input.scope) &&
-          input.scope.conversationId !== conv.id
-        ) {
-          continue;
-        }
-
-        const runtime = getRuntime(conv.id);
-        if (!runtime || runtime.status !== "alive") continue;
-        if (cascadeBackend(input.cascadeKind) !== runtime.backend) continue;
-        if (
-          !mutationAffectsConversationRuntime({
-            scope: input.scope,
-            cascadeKind: input.cascadeKind,
-            changedItemIds: input.changedItemIds,
-            overrideChain: {
-              global: globalOverrides,
-              project: project.agentCapabilityOverrides,
-              session: session.agentCapabilityOverrides,
-              conversation: conv.agentCapabilityOverrides,
-            },
-          })
-        ) {
-          continue;
-        }
-
-        affected.push({
-          projectPath,
-          projectName,
-          sessionName: session.sessionName,
-          conversationId: conv.id,
-          worktreePath: session.worktreePath,
-          backend: runtime.backend,
-          isTurnActive: isClaudeTurnActive(runtime),
-        });
+      const runtime = deps.getRuntime(conversation.id);
+      if (!isLiveRuntimeForCascade(runtime, input.cascadeKind)) continue;
+      const project = state.projects[projectPath];
+      if (
+        !mutationAffectsConversationRuntime({
+          scope: input.scope,
+          cascadeKind: input.cascadeKind,
+          changedItemIds: input.changedItemIds,
+          overrideChain: {
+            global: globalOverrides,
+            project: project?.agentCapabilityOverrides,
+            conversation: conversation.agentCapabilityOverrides,
+          },
+        })
+      ) {
+        continue;
       }
-    }
-  }
 
-  return affected;
+      affected.push({
+        conversationScope: "project",
+        projectPath,
+        projectName: deps.getProjectDisplayName(projectPath),
+        conversationId: conversation.id,
+        worktreePath: projectPath,
+        backend: runtime.backend,
+        isTurnActive: isClaudeTurnActive(runtime),
+      });
+    }
+
+    return affected;
+  };
 }
+
+function fanoutScopeLogFields(scope: MutationScope): Record<string, string> {
+  if (scope.level === "global") {
+    return { level: "global" };
+  }
+  if (scope.level === "project") {
+    return { level: "project", projectPath: scope.projectPath };
+  }
+  if (scope.level === "session") {
+    return {
+      level: "session",
+      projectPath: scope.projectPath,
+      sessionName: scope.sessionName,
+    };
+  }
+  if (scope.conversationScope === "project") {
+    return {
+      level: "conversation",
+      projectPath: scope.projectPath,
+      conversationScope: "project",
+      conversationId: scope.conversationId,
+    };
+  }
+  return {
+    level: "conversation",
+    projectPath: scope.projectPath,
+    conversationScope: "session",
+    sessionName: scope.sessionName,
+    conversationId: scope.conversationId,
+  };
+}
+
+function scopeCanAffectProject(
+  scope: MutationScope,
+  projectPath: string,
+): boolean {
+  if (scope.level === "global") return true;
+  return scope.projectPath === projectPath;
+}
+
+function scopeCanAffectSessionConversation(
+  scope: MutationScope,
+  session: { sessionName: string },
+): boolean {
+  if (scope.level === "session" || isSessionConversationMutationScope(scope)) {
+    return scope.sessionName === session.sessionName;
+  }
+  return true;
+}
+
+function scopeCanAffectSessionConversationRecord(
+  scope: MutationScope,
+  conversation: { id: string },
+): boolean {
+  if (!isSessionConversationMutationScope(scope)) return true;
+  return scope.conversationId === conversation.id;
+}
+
+function isLiveRuntimeForCascade(
+  runtime: RuntimeSnapshot | undefined,
+  cascadeKind: AgentCapabilityCascadeKind,
+): runtime is RuntimeSnapshot & { status: "alive" } {
+  if (!runtime || runtime.status !== "alive") return false;
+  return cascadeBackend(cascadeKind) === runtime.backend;
+}
+
+const defaultListAffectedConversations = createAffectedConversationLister({
+  readState: () => stateManager.readState(),
+  readGlobalOverrides: () => defaultGlobalCapabilityOverrideStore.read(),
+  listAllProjectConversations: () => stateManager.listAllProjectConversations(),
+  getRuntime,
+  getProjectDisplayName,
+});
+
+export interface RuntimeStateAccessorDeps {
+  getSession(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<{ conversations: readonly ConversationState[] } | null>;
+  getProjectConversation(
+    projectPath: string,
+    conversationId: string,
+  ): Promise<ConversationState | null>;
+  mutateConversation<T = void>(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    label: string,
+    mutate: (conversation: ConversationState) => T | Promise<T>,
+  ): Promise<T>;
+  mutateProjectConversation<T = void>(
+    projectPath: string,
+    conversationId: string,
+    label: string,
+    mutate: (conversation: ConversationState) => T | Promise<T>,
+  ): Promise<T>;
+}
+
+export function createRuntimeStateAccessors(deps: RuntimeStateAccessorDeps): {
+  readRuntimeState(
+    conversation: ApplyConversationIdentity,
+  ): Promise<AgentCapabilityRuntimeApplicationState | undefined>;
+  writeRuntimeState(
+    conversation: ApplyConversationIdentity & {
+      state: AgentCapabilityRuntimeApplicationState;
+    },
+  ): Promise<void>;
+} {
+  return {
+    async readRuntimeState(conv) {
+      if (conv.conversationScope === "project") {
+        const conversation = await deps.getProjectConversation(
+          conv.projectPath,
+          conv.conversationId,
+        );
+        return conversation?.agentCapabilitiesRuntime;
+      }
+
+      const session = await deps.getSession(conv.projectPath, conv.sessionName);
+      const conversation = session?.conversations.find(
+        (c) => c.id === conv.conversationId,
+      );
+      return conversation?.agentCapabilitiesRuntime;
+    },
+    async writeRuntimeState(input) {
+      if (input.conversationScope === "project") {
+        await deps.mutateProjectConversation(
+          input.projectPath,
+          input.conversationId,
+          "agent-capabilities.writeRuntimeState",
+          (conversation) => {
+            conversation.agentCapabilitiesRuntime = input.state;
+          },
+        );
+        return;
+      }
+
+      await deps.mutateConversation(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+        "agent-capabilities.writeRuntimeState",
+        (conversation) => {
+          conversation.agentCapabilitiesRuntime = input.state;
+        },
+      );
+    },
+  };
+}
+
+const defaultRuntimeStateAccessors = createRuntimeStateAccessors({
+  getSession: (projectPath, sessionName) =>
+    stateManager.getSession(projectPath, sessionName),
+  getProjectConversation: (projectPath, conversationId) =>
+    stateManager.getProjectConversation(projectPath, conversationId),
+  mutateConversation: (...args) => stateManager.mutateConversation(...args),
+  mutateProjectConversation: (...args) =>
+    stateManager.mutateProjectConversation(...args),
+});
 
 function isProjectConversationMutationScope(
   scope: MutationScope,
@@ -616,27 +840,8 @@ export const defaultCapabilityRuntimeApplyService: CapabilityRuntimeApplyService
       return isClaudeTurnActive(runtime);
     },
     composeForConversation: defaultComposeForConversation,
-    async readRuntimeState(conv) {
-      const session = await stateManager.getSession(
-        conv.projectPath,
-        conv.sessionName,
-      );
-      const conversation = session?.conversations.find(
-        (c) => c.id === conv.conversationId,
-      );
-      return conversation?.agentCapabilitiesRuntime;
-    },
-    async writeRuntimeState(input) {
-      await stateManager.mutateConversation(
-        input.projectPath,
-        input.sessionName,
-        input.conversationId,
-        "agent-capabilities.writeRuntimeState",
-        (conversation) => {
-          conversation.agentCapabilitiesRuntime = input.state;
-        },
-      );
-    },
+    readRuntimeState: defaultRuntimeStateAccessors.readRuntimeState,
+    writeRuntimeState: defaultRuntimeStateAccessors.writeRuntimeState,
     applyClaudeRuntime: defaultApplyClaudeRuntime,
     applyCodexRuntime: defaultApplyCodexRuntime,
   });

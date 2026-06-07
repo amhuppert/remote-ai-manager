@@ -12,18 +12,35 @@ import type { CodexRuntimeCapabilityConfig } from "../codex-runtime-translator";
 import type { ComposeConversationStartResult } from "../runtime-composer";
 import type { MutationScope } from "../mutation-service";
 
-export interface AffectedConversation {
+export type ApplyConversationIdentity =
+  | SessionApplyConversationIdentity
+  | ProjectApplyConversationIdentity;
+
+export interface SessionApplyConversationIdentity {
+  conversationScope?: "session";
   projectPath: string;
   projectName: string;
   sessionName: string;
   conversationId: string;
   worktreePath: string;
   backend: AgentBackendId;
+}
+
+export interface ProjectApplyConversationIdentity {
+  conversationScope: "project";
+  projectPath: string;
+  projectName: string;
+  conversationId: string;
+  worktreePath: string;
+  backend: AgentBackendId;
+}
+
+export type AffectedConversation = ApplyConversationIdentity & {
   /** Snapshot taken when the service enumerated the conversation. Re-checked
    * before live-apply so a turn that started between enumeration and apply
    * does not get interrupted. */
   isTurnActive: boolean;
-}
+};
 
 export interface ClaudeApplyPortInput {
   conversationId: string;
@@ -58,35 +75,23 @@ export interface ApplyServiceDeps {
   }): Promise<readonly AffectedConversation[]>;
   /** Re-check a conversation's runtime turn-active flag immediately before
    * live-apply. */
-  isTurnActive(conversation: {
-    projectPath: string;
-    sessionName: string;
-    conversationId: string;
-  }): boolean;
+  isTurnActive(conversation: ApplyConversationIdentity): boolean;
   /** Produce a fresh conversation-start runtime composition that reflects the
    * current persisted overrides + discovery. */
-  composeForConversation(conversation: {
-    projectPath: string;
-    projectName: string;
-    sessionName: string;
-    conversationId: string;
-    worktreePath: string;
-    backend: AgentBackendId;
-  }): Promise<ComposeConversationStartResult>;
+  composeForConversation(
+    conversation: ApplyConversationIdentity,
+  ): Promise<ComposeConversationStartResult>;
   /** Read the conversation's stored runtime apply state. */
-  readRuntimeState(conversation: {
-    projectPath: string;
-    sessionName: string;
-    conversationId: string;
-  }): Promise<AgentCapabilityRuntimeApplicationState | undefined>;
+  readRuntimeState(
+    conversation: ApplyConversationIdentity,
+  ): Promise<AgentCapabilityRuntimeApplicationState | undefined>;
   /** Persist a new runtime apply state for the conversation; the apply service
    * writes the entire state object atomically via this port. */
-  writeRuntimeState(conversation: {
-    projectPath: string;
-    sessionName: string;
-    conversationId: string;
-    state: AgentCapabilityRuntimeApplicationState;
-  }): Promise<void>;
+  writeRuntimeState(
+    conversation: ApplyConversationIdentity & {
+      state: AgentCapabilityRuntimeApplicationState;
+    },
+  ): Promise<void>;
   /** Live-apply Claude config for one conversation. Returns the disposition;
    * the apply service is responsible for storing the result via
    * `recordApplyOutcome`. */
@@ -120,7 +125,8 @@ export interface CascadeApplyOutcome {
 
 export interface ConversationApplyOutcome {
   projectPath: string;
-  sessionName: string;
+  conversationScope?: "session" | "project";
+  sessionName?: string;
   conversationId: string;
   backend: AgentBackendId;
   cascades: readonly CascadeApplyOutcome[];
@@ -138,14 +144,7 @@ export interface ApplyAfterMutationResult {
   conversations: readonly ConversationApplyOutcome[];
 }
 
-export interface ApplyAtConversationInput {
-  projectPath: string;
-  projectName: string;
-  sessionName: string;
-  conversationId: string;
-  worktreePath: string;
-  backend: AgentBackendId;
-}
+export type ApplyAtConversationInput = ApplyConversationIdentity;
 
 export interface CapabilityRuntimeApplyService {
   applyAfterOverrideChange(
@@ -190,6 +189,69 @@ export function mutated(
     if (before.cascades[k] !== after.cascades[k]) return true;
   }
   return false;
+}
+
+export function conversationScopeOf(
+  conversation: Pick<ApplyConversationIdentity, "conversationScope">,
+): "session" | "project" {
+  return conversation.conversationScope === "project" ? "project" : "session";
+}
+
+export function isProjectApplyConversation(
+  conversation: ApplyConversationIdentity,
+): conversation is ProjectApplyConversationIdentity {
+  return conversation.conversationScope === "project";
+}
+
+export function conversationIdentityForPorts(
+  conversation: ApplyConversationIdentity,
+): ApplyConversationIdentity {
+  if (isProjectApplyConversation(conversation)) {
+    return {
+      conversationScope: "project",
+      projectPath: conversation.projectPath,
+      projectName: conversation.projectName,
+      conversationId: conversation.conversationId,
+      worktreePath: conversation.worktreePath,
+      backend: conversation.backend,
+    };
+  }
+  return {
+    conversationScope: conversation.conversationScope,
+    projectPath: conversation.projectPath,
+    projectName: conversation.projectName,
+    sessionName: conversation.sessionName,
+    conversationId: conversation.conversationId,
+    worktreePath: conversation.worktreePath,
+    backend: conversation.backend,
+  };
+}
+
+export function conversationOutcomeIdentity(
+  conversation: ApplyConversationIdentity,
+): Pick<
+  ConversationApplyOutcome,
+  | "projectPath"
+  | "conversationScope"
+  | "sessionName"
+  | "conversationId"
+  | "backend"
+> {
+  if (isProjectApplyConversation(conversation)) {
+    return {
+      projectPath: conversation.projectPath,
+      conversationScope: "project",
+      conversationId: conversation.conversationId,
+      backend: conversation.backend,
+    };
+  }
+  return {
+    projectPath: conversation.projectPath,
+    conversationScope: conversation.conversationScope,
+    sessionName: conversation.sessionName,
+    conversationId: conversation.conversationId,
+    backend: conversation.backend,
+  };
 }
 
 export function composeFailureDiagnostic(input: {

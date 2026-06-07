@@ -48,6 +48,20 @@ const codexConversation = (
   ...overrides,
 });
 
+const projectConversation = (
+  overrides: Partial<AffectedConversation> = {},
+): AffectedConversation =>
+  ({
+    conversationScope: "project",
+    projectPath: "/repo",
+    projectName: "repo",
+    conversationId: "plc-1",
+    worktreePath: "/repo",
+    backend: "claude",
+    isTurnActive: false,
+    ...overrides,
+  }) as AffectedConversation;
+
 const defaultClaudeRuntime = (): ClaudeRuntimeCapabilityConfig => ({
   enabledPlugins: {},
   skillOverrides: { alpha: "off" },
@@ -133,13 +147,16 @@ interface FakeDepsOptions {
   metadataRegistry?: AgentCapabilityMetadataRegistry;
   affected?: readonly AffectedConversation[];
   isTurnActive?: (input: {
+    conversationScope?: "session" | "project";
     projectPath: string;
-    sessionName: string;
+    sessionName?: string;
     conversationId: string;
   }) => boolean;
   composeForConversation?: (input: {
+    conversationScope?: "session" | "project";
     backend: AgentBackendId;
     conversationId: string;
+    sessionName?: string;
   }) => Promise<ComposeConversationStartResult>;
   readRuntimeState?: () => Promise<
     AgentCapabilityRuntimeApplicationState | undefined
@@ -155,35 +172,57 @@ interface FakeDepsOptions {
 interface FakeDepsHandles {
   deps: ApplyServiceDeps;
   writes: {
+    conversationScope?: "session" | "project";
     conversationId: string;
+    sessionName?: string;
     state: AgentCapabilityRuntimeApplicationState;
   }[];
+  composeCalls: unknown[];
+  readCalls: unknown[];
+  writeCalls: unknown[];
+  turnActiveCalls: unknown[];
 }
 
 const buildDeps = (opts: FakeDepsOptions = {}): FakeDepsHandles => {
   const writes: FakeDepsHandles["writes"] = [];
+  const composeCalls: unknown[] = [];
+  const readCalls: unknown[] = [];
+  const writeCalls: unknown[] = [];
+  const turnActiveCalls: unknown[] = [];
   return {
     deps: {
       listAffectedConversations: vi.fn(async () => opts.affected ?? []),
-      isTurnActive: opts.isTurnActive ?? (() => false),
-      composeForConversation:
-        opts.composeForConversation ??
-        (async (input) =>
-          input.backend === "claude"
-            ? buildClaudeComposition({
-                cascades: {
-                  "claude-skills": {
-                    rows: [{ itemId: "alpha", enabled: false }],
-                  },
+      isTurnActive(input) {
+        turnActiveCalls.push(input);
+        return opts.isTurnActive?.(input) ?? false;
+      },
+      async composeForConversation(input) {
+        composeCalls.push(input);
+        if (opts.composeForConversation) {
+          return opts.composeForConversation(input);
+        }
+        return input.backend === "claude"
+          ? buildClaudeComposition({
+              cascades: {
+                "claude-skills": {
+                  rows: [{ itemId: "alpha", enabled: false }],
                 },
-              })
-            : buildCodexComposition({
-                cascades: { "codex-skills": { rows: [] } },
-              })),
-      readRuntimeState: opts.readRuntimeState ?? (async () => undefined),
+              },
+            })
+          : buildCodexComposition({
+              cascades: { "codex-skills": { rows: [] } },
+            });
+      },
+      readRuntimeState: vi.fn(async (input) => {
+        readCalls.push(input);
+        return opts.readRuntimeState?.() ?? undefined;
+      }),
       writeRuntimeState: vi.fn(async (input) => {
+        writeCalls.push(input);
         writes.push({
+          conversationScope: input.conversationScope,
           conversationId: input.conversationId,
+          sessionName: input.sessionName,
           state: input.state,
         });
       }),
@@ -192,6 +231,10 @@ const buildDeps = (opts: FakeDepsOptions = {}): FakeDepsHandles => {
       metadataRegistry: opts.metadataRegistry,
     },
     writes,
+    composeCalls,
+    readCalls,
+    writeCalls,
+    turnActiveCalls,
   };
 };
 
@@ -271,6 +314,141 @@ describe("apply-after-mutation", () => {
       appliedHash: expect.any(String),
       lastApplyStatus: "applied",
     });
+  });
+
+  it("Claude PLC live-applies when idle without synthetic session runtime state", async () => {
+    const port = vi.fn<
+      (input: ClaudeApplyPortInput) => Promise<ClaudeApplyPortResult>
+    >(async () => ({ status: "applied" }));
+    const {
+      deps,
+      writes,
+      composeCalls,
+      readCalls,
+      writeCalls,
+      turnActiveCalls,
+    } = buildDeps({
+      affected: [projectConversation()],
+      isTurnActive: () => false,
+      applyClaudeRuntime: port,
+    });
+
+    const result = await createCapabilityRuntimeApplyService(
+      deps,
+    ).applyAfterOverrideChange({
+      scope: { level: "project", projectPath: "/repo" },
+      cascadeKind: "claude-skills",
+      changedItemIds: ["alpha"],
+    });
+
+    expect(result.conversations[0]).toMatchObject({
+      conversationScope: "project",
+      conversationId: "plc-1",
+    });
+    expect(result.conversations[0]?.cascades[0]).toMatchObject({
+      cascadeKind: "claude-skills",
+      disposition: "applied",
+    });
+    expect(port).toHaveBeenCalledTimes(1);
+    for (const call of [
+      composeCalls[0],
+      readCalls[0],
+      writeCalls[0],
+      turnActiveCalls[0],
+    ] as Record<string, unknown>[]) {
+      expect(call).toMatchObject({
+        conversationScope: "project",
+        projectPath: "/repo",
+        conversationId: "plc-1",
+      });
+      expect("sessionName" in call).toBe(false);
+    }
+    expect(writes[0]).toMatchObject({
+      conversationScope: "project",
+      conversationId: "plc-1",
+      state: {
+        cascades: {
+          "claude-skills": expect.objectContaining({
+            lastApplyStatus: "applied",
+          }),
+        },
+      },
+    });
+  });
+
+  it("Claude PLC with turn active records staged-idle", async () => {
+    const port = vi.fn<
+      (input: ClaudeApplyPortInput) => Promise<ClaudeApplyPortResult>
+    >(async () => ({ status: "applied" }));
+    const { deps, writes } = buildDeps({
+      affected: [projectConversation({ isTurnActive: true })],
+      isTurnActive: () => true,
+      applyClaudeRuntime: port,
+    });
+
+    const result = await createCapabilityRuntimeApplyService(
+      deps,
+    ).applyAfterOverrideChange({
+      scope: { level: "project", projectPath: "/repo" },
+      cascadeKind: "claude-skills",
+      changedItemIds: ["alpha"],
+    });
+
+    expect(result.conversations[0]?.cascades[0]).toMatchObject({
+      cascadeKind: "claude-skills",
+      disposition: "staged-idle",
+    });
+    expect(port).not.toHaveBeenCalled();
+    expect(writes[0]?.conversationScope).toBe("project");
+    expect(writes[0]?.state.cascades["claude-skills"]).toMatchObject({
+      lastApplyStatus: "staged-idle",
+      pendingItemIds: ["alpha"],
+    });
+  });
+
+  it("Codex PLC stages cascade changes for next turn", async () => {
+    const port = vi.fn<
+      (input: CodexApplyPortInput) => Promise<CodexApplyPortResult>
+    >(async () => ({ status: "applied" }));
+    const { deps, writes } = buildDeps({
+      affected: [
+        projectConversation({
+          conversationId: "plc-codex",
+          backend: "codex",
+        }),
+      ],
+      applyCodexRuntime: port,
+      composeForConversation: async () =>
+        buildCodexComposition({
+          cascades: {
+            "codex-skills": {
+              rows: [{ itemId: "spec-init", enabled: false }],
+            },
+          },
+        }),
+    });
+
+    const result = await createCapabilityRuntimeApplyService(
+      deps,
+    ).applyAfterOverrideChange({
+      scope: { level: "project", projectPath: "/repo" },
+      cascadeKind: "codex-skills",
+      changedItemIds: ["spec-init"],
+    });
+
+    expect(result.conversations[0]).toMatchObject({
+      conversationScope: "project",
+      conversationId: "plc-codex",
+    });
+    expect(result.conversations[0]?.cascades[0]).toMatchObject({
+      cascadeKind: "codex-skills",
+      disposition: "staged-next-turn",
+    });
+    expect(port).not.toHaveBeenCalled();
+    expect(writes[0]?.conversationScope).toBe("project");
+    expect(writes[0]?.state.cascades["codex-skills"]?.lastApplyStatus).toBe(
+      "staged-next-turn",
+    );
   });
 
   it("does not live-apply or write when the recomposed runtime hash is already applied", async () => {

@@ -11,8 +11,10 @@ import type {
 } from "./schemas";
 
 import {
+  createAffectedConversationLister,
   createConversationStartCapabilityComposer,
   createProjectConversationCapabilityConfigComposer,
+  createRuntimeStateAccessors,
   mutationAffectsConversationRuntime,
 } from "./default-deps";
 import {
@@ -129,6 +131,398 @@ describe("agent-capabilities/default-deps fanout filtering", () => {
         },
       }),
     ).toBe(true);
+  });
+
+  it("includes active PLCs affected by project-level override changes", async () => {
+    const lister = createAffectedConversationLister({
+      readState: async () =>
+        ({
+          projects: {
+            "/repo": {
+              rootPath: "/repo",
+              sessions: {
+                "session-a": {
+                  sessionName: "session-a",
+                  worktreePath: "/repo/.worktrees/session-a",
+                  branchName: "session-a",
+                  createdAt: NOW,
+                  lastActivityAt: NOW,
+                  conversations: [
+                    makeConversation({
+                      id: "session-conv",
+                      scope: "session",
+                      agentBackend: "claude",
+                    }),
+                  ],
+                },
+              },
+            },
+          },
+          archivedProjects: [],
+          pinnedProjects: [],
+        }) as never,
+      readGlobalOverrides: async () => undefined,
+      listAllProjectConversations: async () => [
+        {
+          projectPath: "/repo",
+          conversation: makeConversation({
+            id: "plc-1",
+            agentBackend: "claude",
+          }),
+        },
+      ],
+      getRuntime: (conversationId) =>
+        ({
+          "session-conv": { status: "alive", backend: "claude" },
+          "plc-1": { status: "alive", backend: "claude" },
+        })[conversationId] as
+          | { status: "alive"; backend: "claude" }
+          | undefined,
+      getProjectDisplayName: () => "Repo",
+    });
+
+    const affected = await lister({
+      scope: { level: "project", projectPath: "/repo" },
+      cascadeKind: "claude-skills",
+      changedItemIds: ["alpha"],
+    });
+
+    expect(affected).toEqual([
+      expect.objectContaining({
+        conversationScope: "session",
+        sessionName: "session-a",
+        conversationId: "session-conv",
+        worktreePath: "/repo/.worktrees/session-a",
+      }),
+      expect.objectContaining({
+        conversationScope: "project",
+        conversationId: "plc-1",
+        worktreePath: "/repo",
+      }),
+    ]);
+    expect(
+      "sessionName" in
+        affected.find((conv) => conv.conversationId === "plc-1")!,
+    ).toBe(false);
+  });
+
+  it("includes active PLCs affected by global override changes", async () => {
+    const lister = createAffectedConversationLister({
+      readState: async () =>
+        ({
+          projects: {
+            "/repo": {
+              rootPath: "/repo",
+              sessions: {},
+            },
+          },
+          archivedProjects: [],
+          pinnedProjects: [],
+        }) as never,
+      readGlobalOverrides: async () => overrides({ alpha: false }),
+      listAllProjectConversations: async () => [
+        {
+          projectPath: "/repo",
+          conversation: makeConversation({
+            id: "plc-1",
+            agentBackend: "claude",
+          }),
+        },
+      ],
+      getRuntime: () => ({ status: "alive", backend: "claude" }),
+      getProjectDisplayName: () => "Repo",
+    });
+
+    const affected = await lister({
+      scope: { level: "global" },
+      cascadeKind: "claude-skills",
+      changedItemIds: ["alpha"],
+    });
+
+    expect(affected).toEqual([
+      expect.objectContaining({
+        conversationScope: "project",
+        projectPath: "/repo",
+        conversationId: "plc-1",
+      }),
+    ]);
+  });
+
+  it("does not read PLC records for session-scoped override changes", async () => {
+    const lister = createAffectedConversationLister({
+      readState: async () =>
+        ({
+          projects: {
+            "/repo": {
+              rootPath: "/repo",
+              sessions: {
+                "session-a": {
+                  sessionName: "session-a",
+                  worktreePath: "/repo/.worktrees/session-a",
+                  branchName: "session-a",
+                  createdAt: NOW,
+                  lastActivityAt: NOW,
+                  conversations: [
+                    makeConversation({
+                      id: "session-conv",
+                      scope: "session",
+                      agentBackend: "claude",
+                    }),
+                  ],
+                },
+              },
+            },
+          },
+          archivedProjects: [],
+          pinnedProjects: [],
+        }) as never,
+      readGlobalOverrides: async () => undefined,
+      listAllProjectConversations: async () => {
+        throw new Error("session fanout must not read PLC records");
+      },
+      getRuntime: () => ({ status: "alive", backend: "claude" }),
+      getProjectDisplayName: () => "Repo",
+    });
+
+    const affected = await lister({
+      scope: {
+        level: "session",
+        projectPath: "/repo",
+        sessionName: "session-a",
+      },
+      cascadeKind: "claude-skills",
+      changedItemIds: ["alpha"],
+    });
+
+    expect(affected).toEqual([
+      expect.objectContaining({
+        conversationScope: "session",
+        sessionName: "session-a",
+        conversationId: "session-conv",
+      }),
+    ]);
+  });
+
+  it("keeps global session fanout when PLC enumeration fails", async () => {
+    const lister = createAffectedConversationLister({
+      readState: async () =>
+        ({
+          projects: {
+            "/repo": {
+              rootPath: "/repo",
+              sessions: {
+                "session-a": {
+                  sessionName: "session-a",
+                  worktreePath: "/repo/.worktrees/session-a",
+                  branchName: "session-a",
+                  createdAt: NOW,
+                  lastActivityAt: NOW,
+                  conversations: [
+                    makeConversation({
+                      id: "session-conv",
+                      scope: "session",
+                      agentBackend: "claude",
+                    }),
+                  ],
+                },
+              },
+            },
+          },
+          archivedProjects: [],
+          pinnedProjects: [],
+        }) as never,
+      readGlobalOverrides: async () => undefined,
+      listAllProjectConversations: async () => {
+        throw new Error("project conversation repo unavailable");
+      },
+      getRuntime: () => ({ status: "alive", backend: "claude" }),
+      getProjectDisplayName: () => "Repo",
+    });
+
+    const affected = await lister({
+      scope: { level: "global" },
+      cascadeKind: "claude-skills",
+      changedItemIds: ["alpha"],
+    });
+
+    expect(affected).toEqual([
+      expect.objectContaining({
+        conversationScope: "session",
+        sessionName: "session-a",
+        conversationId: "session-conv",
+      }),
+    ]);
+  });
+
+  it("isolates project-conversation override fanout to the selected active PLC", async () => {
+    const lister = createAffectedConversationLister({
+      readState: async () =>
+        ({
+          projects: {
+            "/repo": {
+              rootPath: "/repo",
+              sessions: {
+                "session-a": {
+                  sessionName: "session-a",
+                  worktreePath: "/repo/.worktrees/session-a",
+                  branchName: "session-a",
+                  createdAt: NOW,
+                  lastActivityAt: NOW,
+                  conversations: [
+                    makeConversation({
+                      id: "session-conv",
+                      scope: "session",
+                      agentBackend: "claude",
+                    }),
+                  ],
+                },
+              },
+            },
+            "/other": {
+              rootPath: "/other",
+              sessions: {},
+            },
+          },
+          archivedProjects: [],
+          pinnedProjects: [],
+        }) as never,
+      readGlobalOverrides: async () => undefined,
+      listAllProjectConversations: async () => [
+        {
+          projectPath: "/repo",
+          conversation: makeConversation({
+            id: "plc-1",
+            agentBackend: "claude",
+            agentCapabilityOverrides: overrides({ alpha: false }),
+          }),
+        },
+        {
+          projectPath: "/repo",
+          conversation: makeConversation({
+            id: "plc-2",
+            agentBackend: "claude",
+            agentCapabilityOverrides: overrides({ alpha: false }),
+          }),
+        },
+        {
+          projectPath: "/other",
+          conversation: makeConversation({
+            id: "other-plc",
+            agentBackend: "claude",
+            agentCapabilityOverrides: overrides({ alpha: false }),
+          }),
+        },
+      ],
+      getRuntime: () => ({ status: "alive", backend: "claude" }),
+      getProjectDisplayName: (projectPath) =>
+        projectPath === "/repo" ? "Repo" : "Other",
+    });
+
+    const affected = await lister({
+      scope: {
+        level: "conversation",
+        conversationScope: "project",
+        projectPath: "/repo",
+        conversationId: "plc-1",
+      },
+      cascadeKind: "claude-skills",
+      changedItemIds: ["alpha"],
+    });
+
+    expect(affected).toEqual([
+      expect.objectContaining({
+        conversationScope: "project",
+        projectPath: "/repo",
+        conversationId: "plc-1",
+      }),
+    ]);
+  });
+});
+
+describe("agent-capabilities/default-deps runtime state accessors", () => {
+  it("reads and writes PLC runtime state on the project-conversation record", async () => {
+    const writes: AgentCapabilityRuntimeApplicationState[] = [];
+    const accessors = createRuntimeStateAccessors({
+      getSession: async () => {
+        throw new Error("session state must not be read for PLC runtime state");
+      },
+      mutateConversation: async () => {
+        throw new Error(
+          "session state must not be written for PLC runtime state",
+        );
+      },
+      getProjectConversation: async () =>
+        makeConversation({
+          id: "plc-1",
+          agentCapabilitiesRuntime: {
+            cascades: {
+              "claude-skills": {
+                appliedHash: "applied",
+                lastApplyStatus: "applied",
+              },
+            },
+          },
+        }),
+      mutateProjectConversation: async (
+        _projectPath,
+        _conversationId,
+        _label,
+        mutate,
+      ) => {
+        const conversation = makeConversation({ id: "plc-1" });
+        const result = await mutate(conversation);
+        writes.push(conversation.agentCapabilitiesRuntime!);
+        return result;
+      },
+    });
+
+    await expect(
+      accessors.readRuntimeState({
+        conversationScope: "project",
+        projectPath: "/repo",
+        projectName: "Repo",
+        conversationId: "plc-1",
+        worktreePath: "/repo",
+        backend: "claude",
+      }),
+    ).resolves.toEqual({
+      cascades: {
+        "claude-skills": {
+          appliedHash: "applied",
+          lastApplyStatus: "applied",
+        },
+      },
+    });
+
+    await accessors.writeRuntimeState({
+      conversationScope: "project",
+      projectPath: "/repo",
+      projectName: "Repo",
+      conversationId: "plc-1",
+      worktreePath: "/repo",
+      backend: "claude",
+      state: {
+        cascades: {
+          "claude-skills": {
+            pendingHash: "pending",
+            pendingItemIds: ["alpha"],
+            lastApplyStatus: "staged-idle",
+          },
+        },
+      },
+    });
+
+    expect(writes).toEqual([
+      {
+        cascades: {
+          "claude-skills": {
+            pendingHash: "pending",
+            pendingItemIds: ["alpha"],
+            lastApplyStatus: "staged-idle",
+          },
+        },
+      },
+    ]);
   });
 });
 

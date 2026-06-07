@@ -16,6 +16,9 @@ import type { AgentCapabilityMetadataRegistry } from "../metadata";
 
 import {
   composeFailureDiagnostic,
+  conversationIdentityForPorts,
+  conversationOutcomeIdentity,
+  conversationScopeOf,
   mutated,
   verificationGatedDiagnostic,
   type AffectedConversation,
@@ -179,7 +182,10 @@ export async function handleComposeThrow(input: {
   const sanitized = sanitizeApplyError(rawMessage);
   logger.error("apply.compose_failed", {
     projectPath: conversation.projectPath,
-    sessionName: conversation.sessionName,
+    conversationScope: conversationScopeOf(conversation),
+    ...("sessionName" in conversation
+      ? { sessionName: conversation.sessionName }
+      : {}),
     conversationId: conversation.conversationId,
     backend: conversation.backend,
     trigger,
@@ -190,10 +196,7 @@ export async function handleComposeThrow(input: {
   if (trigger === "after-mutation") {
     if (targetCascade === undefined) {
       return {
-        projectPath: conversation.projectPath,
-        sessionName: conversation.sessionName,
-        conversationId: conversation.conversationId,
-        backend: conversation.backend,
+        ...conversationOutcomeIdentity(conversation),
         cascades: [],
         diagnostics: [composeFailureDiagnostic({ conversation, sanitized })],
       };
@@ -244,11 +247,9 @@ async function persistLifecycleComposeFailure(input: {
 }): Promise<ConversationApplyOutcome> {
   const { context, conversation, trigger, rawMessage, sanitized } = input;
   const { deps, metadataRegistry } = context;
-  const existingState = (await deps.readRuntimeState({
-    projectPath: conversation.projectPath,
-    sessionName: conversation.sessionName,
-    conversationId: conversation.conversationId,
-  })) ?? { cascades: {} };
+  const existingState = (await deps.readRuntimeState(
+    conversationIdentityForPorts(conversation),
+  )) ?? { cascades: {} };
 
   const nextState: AgentCapabilityRuntimeApplicationState = {
     cascades: { ...existingState.cascades },
@@ -345,6 +346,7 @@ async function persistLifecycleComposeFailure(input: {
     logCascadeOutcome({ trigger, conversation, previous, outcome });
     logger.error("apply.lifecycle_compose_failure_persisted", {
       trigger,
+      conversationScope: conversationScopeOf(conversation),
       cascadeKind,
       conversationId: conversation.conversationId,
       backend: conversation.backend,
@@ -356,10 +358,7 @@ async function persistLifecycleComposeFailure(input: {
 
   if (cascades.length === 0) {
     return {
-      projectPath: conversation.projectPath,
-      sessionName: conversation.sessionName,
-      conversationId: conversation.conversationId,
-      backend: conversation.backend,
+      ...conversationOutcomeIdentity(conversation),
       cascades: [],
       diagnostics: [composeFailureDiagnostic({ conversation, sanitized })],
     };
@@ -367,18 +366,13 @@ async function persistLifecycleComposeFailure(input: {
 
   if (mutated(existingState, nextState)) {
     await deps.writeRuntimeState({
-      projectPath: conversation.projectPath,
-      sessionName: conversation.sessionName,
-      conversationId: conversation.conversationId,
+      ...conversationIdentityForPorts(conversation),
       state: nextState,
     });
   }
 
   return {
-    projectPath: conversation.projectPath,
-    sessionName: conversation.sessionName,
-    conversationId: conversation.conversationId,
-    backend: conversation.backend,
+    ...conversationOutcomeIdentity(conversation),
     cascades,
     diagnostics,
   };
@@ -417,10 +411,7 @@ async function persistTargetComposeFailure(input: {
       outcome: { cascadeKind: targetCascade, disposition: "unsupported" },
     });
     return {
-      projectPath: conversation.projectPath,
-      sessionName: conversation.sessionName,
-      conversationId: conversation.conversationId,
-      backend: conversation.backend,
+      ...conversationOutcomeIdentity(conversation),
       cascades: [
         {
           cascadeKind: targetCascade,
@@ -451,10 +442,7 @@ async function persistTargetComposeFailure(input: {
       outcome: { cascadeKind: targetCascade, disposition: "unsupported" },
     });
     return {
-      projectPath: conversation.projectPath,
-      sessionName: conversation.sessionName,
-      conversationId: conversation.conversationId,
-      backend: conversation.backend,
+      ...conversationOutcomeIdentity(conversation),
       cascades: [
         {
           cascadeKind: targetCascade,
@@ -470,11 +458,9 @@ async function persistTargetComposeFailure(input: {
     };
   }
 
-  const existingState = (await deps.readRuntimeState({
-    projectPath: conversation.projectPath,
-    sessionName: conversation.sessionName,
-    conversationId: conversation.conversationId,
-  })) ?? { cascades: {} };
+  const existingState = (await deps.readRuntimeState(
+    conversationIdentityForPorts(conversation),
+  )) ?? { cascades: {} };
   const previous = existingState.cascades[targetCascade];
   const plan = planCascadeFailure({
     metadata,
@@ -496,10 +482,7 @@ async function persistTargetComposeFailure(input: {
       outcome: { cascadeKind: targetCascade, disposition: "unsupported" },
     });
     return {
-      projectPath: conversation.projectPath,
-      sessionName: conversation.sessionName,
-      conversationId: conversation.conversationId,
-      backend: conversation.backend,
+      ...conversationOutcomeIdentity(conversation),
       cascades: [
         {
           cascadeKind: targetCascade,
@@ -529,9 +512,7 @@ async function persistTargetComposeFailure(input: {
   };
   if (previous !== nextCascadeState) {
     await deps.writeRuntimeState({
-      projectPath: conversation.projectPath,
-      sessionName: conversation.sessionName,
-      conversationId: conversation.conversationId,
+      ...conversationIdentityForPorts(conversation),
       state: nextState,
     });
   }
@@ -560,10 +541,7 @@ async function persistTargetComposeFailure(input: {
   });
 
   return {
-    projectPath: conversation.projectPath,
-    sessionName: conversation.sessionName,
-    conversationId: conversation.conversationId,
-    backend: conversation.backend,
+    ...conversationOutcomeIdentity(conversation),
     cascades: [outcome],
     diagnostics,
   };

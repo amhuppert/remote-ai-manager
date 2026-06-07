@@ -25,6 +25,7 @@ import type {
   CodexApplyPortResult,
   ComposedCascadeInfo,
 } from "./helpers";
+import { conversationIdentityForPorts } from "./helpers";
 import { logCascadePlan } from "./logging";
 import {
   handleMissingTargetCascadeAfterMutation,
@@ -147,11 +148,9 @@ export async function applyOneCascade(input: {
     });
   }
 
-  const liveTurnActive = deps.isTurnActive({
-    projectPath: conversation.projectPath,
-    sessionName: conversation.sessionName,
-    conversationId: conversation.conversationId,
-  });
+  const liveTurnActive = deps.isTurnActive(
+    conversationIdentityForPorts(conversation),
+  );
   const triggerMode: ApplyTriggerMode = liveTurnActive ? "turn-active" : "idle";
 
   const plan = planCascadeApply({

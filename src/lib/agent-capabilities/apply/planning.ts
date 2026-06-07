@@ -56,6 +56,9 @@ import { computeCascadeRuntimeHash } from "../runtime-hashes";
 import type { ComposeConversationStartResult } from "../runtime-composer";
 
 import {
+  conversationIdentityForPorts,
+  conversationOutcomeIdentity,
+  conversationScopeOf,
   mutated,
   type AffectedConversation,
   type ApplyAfterMutationInput,
@@ -160,14 +163,9 @@ async function applyToConversation(input: {
   const diagnostics: AgentCapabilityDiagnostic[] = [];
   let composition: ComposeConversationStartResult;
   try {
-    composition = await deps.composeForConversation({
-      projectPath: conversation.projectPath,
-      projectName: conversation.projectName,
-      sessionName: conversation.sessionName,
-      conversationId: conversation.conversationId,
-      worktreePath: conversation.worktreePath,
-      backend: conversation.backend,
-    });
+    composition = await deps.composeForConversation(
+      conversationIdentityForPorts(conversation),
+    );
   } catch (err) {
     return handleComposeThrow({
       context,
@@ -181,11 +179,9 @@ async function applyToConversation(input: {
 
   diagnostics.push(...composition.diagnostics);
 
-  const existingState = (await deps.readRuntimeState({
-    projectPath: conversation.projectPath,
-    sessionName: conversation.sessionName,
-    conversationId: conversation.conversationId,
-  })) ?? { cascades: {} };
+  const existingState = (await deps.readRuntimeState(
+    conversationIdentityForPorts(conversation),
+  )) ?? { cascades: {} };
 
   const nextState: AgentCapabilityRuntimeApplicationState = {
     cascades: { ...existingState.cascades },
@@ -206,7 +202,10 @@ async function applyToConversation(input: {
   logger.info("apply.conversation_planned", {
     trigger,
     projectPath: conversation.projectPath,
-    sessionName: conversation.sessionName,
+    conversationScope: conversationScopeOf(conversation),
+    ...("sessionName" in conversation
+      ? { sessionName: conversation.sessionName }
+      : {}),
     conversationId: conversation.conversationId,
     backend: conversation.backend,
     targetCascade,
@@ -251,18 +250,13 @@ async function applyToConversation(input: {
 
   if (mutated(existingState, nextState)) {
     await deps.writeRuntimeState({
-      projectPath: conversation.projectPath,
-      sessionName: conversation.sessionName,
-      conversationId: conversation.conversationId,
+      ...conversationIdentityForPorts(conversation),
       state: nextState,
     });
   }
 
   return {
-    projectPath: conversation.projectPath,
-    sessionName: conversation.sessionName,
-    conversationId: conversation.conversationId,
-    backend: conversation.backend,
+    ...conversationOutcomeIdentity(conversation),
     cascades: outcomes,
     diagnostics,
   };

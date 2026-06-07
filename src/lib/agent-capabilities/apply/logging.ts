@@ -9,6 +9,7 @@ import type {
   ApplyTrigger,
   CascadeApplyOutcome,
 } from "./helpers";
+import { conversationScopeOf } from "./helpers";
 
 const logger = createLogger("agent-capabilities.apply.logging");
 
@@ -26,6 +27,7 @@ export function logCascadePlan(input: {
   logger.info("apply.cascade_planned", {
     trigger: input.trigger,
     cascadeKind: input.cascadeKind,
+    conversationScope: conversationScopeOf(input.conversation),
     conversationId: input.conversation.conversationId,
     backend: input.conversation.backend,
     operationId: input.operationId,
@@ -47,6 +49,7 @@ export function logCascadeOutcome(input: {
   const fields = {
     trigger: input.trigger,
     cascadeKind: input.outcome.cascadeKind,
+    conversationScope: conversationScopeOf(input.conversation),
     conversationId: input.conversation.conversationId,
     backend: input.conversation.backend,
     operationId: input.operationId,

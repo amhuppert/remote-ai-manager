@@ -323,7 +323,7 @@ Implementation follows red-green-refactor by default. Each task should add focus
   - Observable completion: composer tests pass for Claude PLCs, Codex PLCs, no session layer, fixed backend identity, deterministic hashes, and per-cascade fallback.
   - _Requirements: 1.3, 8.1, 8.2, 8.3, 13.3, 17.1, 17.2, 17.3, 19.1, 19.2, 19.5, 20.3_
 
-- [ ] 12.2 Fan out override changes to active project-conversation runtimes
+- [x] 12.2 Fan out override changes to active project-conversation runtimes
   - Include active project conversations affected by global, project, or project-conversation override changes.
   - Exclude unrelated sessions and unrelated project conversations when a project-conversation override changes.
   - Read and write capability runtime state on the project-conversation record, not on a synthetic session record.
