@@ -226,7 +226,7 @@
   - _Requirements: 12.1, 12.2, 12.3, 12.4_
   - _Boundary: Project focus route handoff and minimal unresolved-focus state_
 
-- [ ] 12.3 Run targeted regression checks
+- [x] 12.3 Run targeted regression checks
   - Run the active-conversations schema/project-pass tests to confirm this extension did not alter the API project pass.
   - Run sidebar helper, sidebar row, sidebar coordinator, and topbar tests that cover the updated surfaces.
   - Run typecheck for the changed active-conversation union consumers.
