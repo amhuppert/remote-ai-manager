@@ -165,6 +165,7 @@ export function resolveCascadeView(
   input: ResolveCascadeViewInput,
 ): AgentCapabilityViewResponse {
   const backend = AGENT_CAPABILITY_CASCADE_BACKEND_OWNERSHIP[input.cascadeKind];
+  const overrideChain = overrideChainForScope(input.scope, input.overrideChain);
 
   const cascadeIsVerificationGated =
     input.metadata.compositionSupport === "verification-gated";
@@ -176,7 +177,11 @@ export function resolveCascadeView(
     discoveredById.set(item.itemId, item);
   }
 
-  const allItemIds = collectKnownItemIds(input, discoveredById);
+  const allItemIds = collectKnownItemIds(
+    input.cascadeKind,
+    overrideChain,
+    discoveredById,
+  );
 
   const rows: AgentCapabilityViewRow[] = [];
   const diagnostics: AgentCapabilityDiagnostic[] = [
@@ -190,20 +195,20 @@ export function resolveCascadeView(
     const resolved = resolveItemEffective(
       itemId,
       input.cascadeKind,
-      input.overrideChain,
+      overrideChain,
       discovered?.nativeDefault.enabled ?? false,
     );
     const currentLayerValue = resolveCurrentLayerValue(
       itemId,
       input.cascadeKind,
       input.scope.level,
-      input.overrideChain,
+      overrideChain,
     );
     const inheritedEffectiveState = resolveInheritedEffective(
       itemId,
       input.cascadeKind,
       input.scope.level,
-      input.overrideChain,
+      overrideChain,
       discovered?.nativeDefault.enabled ?? false,
     );
 
@@ -331,13 +336,24 @@ export function resolveCascadeView(
   };
 }
 
+function overrideChainForScope(
+  scope: AgentCapabilityScopeContext,
+  overrideChain: ResolveCascadeViewInput["overrideChain"],
+): ResolveCascadeViewInput["overrideChain"] {
+  if (scope.level !== "conversation" || scope.conversationScope !== "project") {
+    return overrideChain;
+  }
+  return overrideChain.filter((entry) => entry.layer !== "session");
+}
+
 function collectKnownItemIds(
-  input: ResolveCascadeViewInput,
+  cascadeKind: AgentCapabilityCascadeKind,
+  overrideChain: ResolveCascadeViewInput["overrideChain"],
   discoveredById: ReadonlyMap<string, AgentCapabilityDiscoveredItem>,
 ): readonly string[] {
   const set = new Set<string>(discoveredById.keys());
-  for (const entry of input.overrideChain) {
-    const cascade = entry.overrides?.cascades[input.cascadeKind];
+  for (const entry of overrideChain) {
+    const cascade = entry.overrides?.cascades[cascadeKind];
     if (!cascade) continue;
     for (const id of Object.keys(cascade.items)) {
       set.add(id);

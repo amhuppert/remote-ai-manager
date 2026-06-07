@@ -46,7 +46,15 @@ export type CapabilityRouteScope =
       level: "conversation";
       projectName: string;
       projectPath: string;
+      conversationScope: "session";
       sessionName: string;
+      conversationId: string;
+    }
+  | {
+      level: "conversation";
+      projectName: string;
+      projectPath: string;
+      conversationScope: "project";
       conversationId: string;
     };
 
@@ -128,6 +136,7 @@ export function createConversationCapabilityHandlers(
       level: "conversation",
       projectName,
       projectPath,
+      conversationScope: "session",
       sessionName,
       conversationId,
     };
@@ -397,6 +406,14 @@ function toMutationScope(scope: CapabilityRouteScope): MutationScope {
         sessionName: scope.sessionName,
       };
     case "conversation":
+      if (scope.conversationScope === "project") {
+        return {
+          level: "conversation",
+          projectPath: scope.projectPath,
+          conversationScope: "project",
+          conversationId: scope.conversationId,
+        };
+      }
       return {
         level: "conversation",
         projectPath: scope.projectPath,
@@ -479,6 +496,7 @@ function buildDiscoveryEvent(input: {
 
 function scopeNames(scope: CapabilityRouteScope): {
   projectName?: string;
+  conversationScope?: "session" | "project";
   sessionName?: string;
   conversationId?: string;
 } {
@@ -489,7 +507,10 @@ function scopeNames(scope: CapabilityRouteScope): {
   }
   return {
     projectName: scope.projectName,
-    sessionName: scope.sessionName,
+    conversationScope: scope.conversationScope,
+    ...(scope.conversationScope === "session"
+      ? { sessionName: scope.sessionName }
+      : {}),
     conversationId: scope.conversationId,
   };
 }
@@ -515,7 +536,10 @@ function scopeLogContext(scope: CapabilityRouteScope): Record<string, string> {
     level: "conversation",
     projectName: scope.projectName,
     projectPath: scope.projectPath,
-    sessionName: scope.sessionName,
+    conversationScope: scope.conversationScope,
+    ...(scope.conversationScope === "session"
+      ? { sessionName: scope.sessionName }
+      : {}),
     conversationId: scope.conversationId,
   };
 }

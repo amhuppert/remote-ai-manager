@@ -2,9 +2,11 @@
  * Scoped agent-capability override persistence.
  *
  * Project, session, and conversation overrides are additive optional fields on
- * the existing state hierarchy (`agentCapabilityOverrides` on `ProjectState`,
- * `SessionState`, `ConversationState`). This store exposes per-layer patch
- * methods that:
+ * existing state records (`agentCapabilityOverrides` on `ProjectState`,
+ * `SessionState`, `ConversationState`). Project conversations use the
+ * project-conversation state boundary while session conversations use the
+ * session conversation boundary. This store exposes per-layer patch methods
+ * that:
  *
  *   - Apply patch batches through `applyCapabilityOperations()` so the same
  *     set/reset/prune semantics used at the global layer are reused here.
@@ -17,8 +19,9 @@
  *     has been reset away, keeping the persisted state slim.
  */
 
-import { createLogger } from "@/lib/logging";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { createLogger } from "@/lib/logging";
 import type {
   AgentCapabilityCascadeKind,
   AgentCapabilityOverrideOperation,
@@ -71,6 +74,11 @@ export interface ScopeCapabilityOverrideStore {
   patchConversation(
     projectPath: string,
     sessionName: string,
+    conversationId: string,
+    input: ScopeCapabilityPatchInput,
+  ): Promise<ScopeCapabilityPatchResult>;
+  patchProjectConversation(
+    projectPath: string,
     conversationId: string,
     input: ScopeCapabilityPatchInput,
   ): Promise<ScopeCapabilityPatchResult>;
@@ -165,7 +173,42 @@ export function createScopeCapabilityOverrideStore(
     );
   }
 
-  return { patchProject, patchSession, patchConversation };
+  async function patchProjectConversation(
+    projectPath: string,
+    conversationId: string,
+    input: ScopeCapabilityPatchInput,
+  ): Promise<ScopeCapabilityPatchResult> {
+    return stateManager.mutateConversation(
+      projectPath,
+      PROJECT_CONVERSATION_SESSION_SENTINEL,
+      conversationId,
+      "agent-capabilities.patchProjectConversation",
+      async (conversation) => {
+        if (input.precondition) {
+          await input.precondition(conversation.agentCapabilityOverrides);
+        }
+        const result = patchAndPrune(
+          conversation.agentCapabilityOverrides,
+          input,
+        );
+        writeOrDelete(conversation, result.overrides);
+        logPatch(
+          "project-conversation",
+          `${projectPath}/${conversationId}`,
+          input.cascadeKind,
+          result.changedItemIds,
+        );
+        return result;
+      },
+    );
+  }
+
+  return {
+    patchProject,
+    patchSession,
+    patchConversation,
+    patchProjectConversation,
+  };
 }
 
 function patchAndPrune(
@@ -194,7 +237,7 @@ function writeOrDelete(
 }
 
 function logPatch(
-  scope: "project" | "session" | "conversation",
+  scope: "project" | "session" | "conversation" | "project-conversation",
   id: string,
   cascadeKind: AgentCapabilityCascadeKind,
   changedItemIds: readonly string[],

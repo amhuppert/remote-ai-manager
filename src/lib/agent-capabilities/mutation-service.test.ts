@@ -109,6 +109,7 @@ function createFakeScopeStore(initial?: {
   projectCalls: number;
   sessionCalls: number;
   conversationCalls: number;
+  projectConversationCalls: number;
   preconditionCalls: number;
   lastArgs?: Record<string, unknown>;
 } {
@@ -116,6 +117,7 @@ function createFakeScopeStore(initial?: {
     projectCalls: 0,
     sessionCalls: 0,
     conversationCalls: 0,
+    projectConversationCalls: 0,
     preconditionCalls: 0,
     lastArgs: undefined as Record<string, unknown> | undefined,
   };
@@ -162,6 +164,20 @@ function createFakeScopeStore(initial?: {
       await runPrecondition(input);
       return defaultResult;
     },
+    async patchProjectConversation(
+      projectPath: string,
+      conversationId: string,
+      input: ScopeCapabilityPatchInput,
+    ) {
+      state.projectConversationCalls += 1;
+      state.lastArgs = {
+        projectPath,
+        conversationId,
+        ...input,
+      };
+      await runPrecondition(input);
+      return defaultResult;
+    },
     get projectCalls() {
       return state.projectCalls;
     },
@@ -170,6 +186,9 @@ function createFakeScopeStore(initial?: {
     },
     get conversationCalls() {
       return state.conversationCalls;
+    },
+    get projectConversationCalls() {
+      return state.projectConversationCalls;
     },
     get preconditionCalls() {
       return state.preconditionCalls;
@@ -392,6 +411,32 @@ describe("agent-capabilities/mutation-service", () => {
       });
       expect(scope.conversationCalls).toBe(1);
       expect(scope.lastArgs?.conversationId).toBe("conv-1");
+    });
+
+    it("routes a project-conversation mutation without a session name", async () => {
+      const scope = createFakeScopeStore({
+        patchResult: { overrides: emptyOverrides(), changedItemIds: ["plc"] },
+      });
+      const { service } = makeService(undefined, scope);
+      await service.mutate({
+        scope: {
+          level: "conversation",
+          projectPath: "/repo",
+          conversationScope: "project",
+          conversationId: "plc-1",
+        },
+        request: {
+          cascadeKind: "claude-skills",
+          operations: [{ type: "reset-item", itemId: "plc" }],
+        },
+      });
+      expect(scope.projectConversationCalls).toBe(1);
+      expect(scope.conversationCalls).toBe(0);
+      expect(scope.lastArgs).toMatchObject({
+        projectPath: "/repo",
+        conversationId: "plc-1",
+      });
+      expect(scope.lastArgs).not.toHaveProperty("sessionName");
     });
   });
 

@@ -297,7 +297,7 @@ Implementation follows red-green-refactor by default. Each task should add focus
   - Observable completion: schema and invalidation tests pass for project-conversation scope, session-conversation scope, no sixth cascade kind, and no public sentinel leakage.
   - _Requirements: 17.3, 17.4, 20.1_
 
-- [ ] 11.2 Add project-conversation override chain read and patch persistence
+- [x] 11.2 Add project-conversation override chain read and patch persistence
   - Read project-conversation override chains as global, project, conversation, with no session layer.
   - Persist project-conversation conversation-layer overrides on the selected project conversation only, including reset/prune behavior that falls back to inherited project or global values.
   - Use the PLC sentinel only inside the state-manager adapter boundary where an existing API still requires a session name.

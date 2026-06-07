@@ -1,10 +1,13 @@
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
+import type Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createConfigReader } from "@/lib/config/loader";
+import type { ConversationState } from "@/lib/conversations/schemas";
 import type { ManagerState } from "@/lib/projects/schemas";
 import { createStateManager } from "@/lib/state-store";
+import { _createTestDb } from "@/lib/state-store/state-db";
 import { _resetForTesting as resetMutex } from "@/lib/state-store/write-queue";
 
 import { createScopeCapabilityOverrideStore } from "./scope-store";
@@ -22,6 +25,46 @@ function createTestHarness() {
   });
   const store = createScopeCapabilityOverrideStore({ stateManager: state });
   return { state, store };
+}
+
+function createSqlHarness() {
+  const db: InstanceType<typeof Database> = _createTestDb({ inMemory: true });
+  const state = createStateManager({ db });
+  const store = createScopeCapabilityOverrideStore({ stateManager: state });
+  return { db, state, store };
+}
+
+function projectConversation(id: string): ConversationState {
+  return {
+    id,
+    scope: "project",
+    name: null,
+    transcriptPath: null,
+    status: "awaiting",
+    promptCount: 0,
+    createdAt: "2026-04-21T00:00:00.000Z",
+    lastActivityAt: "2026-04-21T00:00:00.000Z",
+    source: "cc",
+    summary: null,
+    archived: false,
+    open: true,
+    totalCostUsd: null,
+    totalDurationMs: null,
+    totalTurns: null,
+    pendingQuestionId: null,
+    pendingQuestions: null,
+    pendingPromptText: null,
+    forkedFrom: null,
+    role: null,
+    activeTurnSource: null,
+    contextTokens: null,
+    contextWindowMax: null,
+    debugMode: null,
+    machineSnapshot: null,
+    agentBackend: "claude",
+    backendRef: null,
+    unread: false,
+  };
 }
 
 function stateWithAllScopes(): ManagerState {
@@ -459,6 +502,151 @@ describe("agent-capabilities / scope-store / conversation", () => {
         ],
       }),
     ).rejects.toThrow(/not found/i);
+  });
+});
+
+describe("agent-capabilities / scope-store / project conversation", () => {
+  it("patches only the selected project conversation and prunes reset overrides", async () => {
+    const { db, state, store } = createSqlHarness();
+    try {
+      await state.createProjectConversation(
+        PROJECT_PATH,
+        projectConversation("plc-1"),
+      );
+      await state.createProjectConversation(
+        PROJECT_PATH,
+        projectConversation("plc-2"),
+      );
+      await store.patchProject(PROJECT_PATH, {
+        cascadeKind: "claude-skills",
+        operations: [
+          { type: "set-item-enabled", itemId: "skill:a", enabled: true },
+        ],
+      });
+
+      const result = await store.patchProjectConversation(
+        PROJECT_PATH,
+        "plc-1",
+        {
+          cascadeKind: "claude-skills",
+          operations: [
+            { type: "set-item-enabled", itemId: "skill:a", enabled: false },
+          ],
+        },
+      );
+
+      expect(result.changedItemIds).toEqual(["skill:a"]);
+      const selected = await state.getProjectConversation(
+        PROJECT_PATH,
+        "plc-1",
+      );
+      const other = await state.getProjectConversation(PROJECT_PATH, "plc-2");
+      expect(
+        selected?.agentCapabilityOverrides?.cascades["claude-skills"]?.items[
+          "skill:a"
+        ]?.enabled,
+      ).toBe(false);
+      expect(other?.agentCapabilityOverrides).toBeUndefined();
+
+      const reset = await store.patchProjectConversation(
+        PROJECT_PATH,
+        "plc-1",
+        {
+          cascadeKind: "claude-skills",
+          operations: [{ type: "reset-item", itemId: "skill:a" }],
+        },
+      );
+
+      expect(reset.changedItemIds).toEqual(["skill:a"]);
+      expect(
+        (await state.getProjectConversation(PROJECT_PATH, "plc-1"))
+          ?.agentCapabilityOverrides,
+      ).toBeUndefined();
+      expect(
+        (await state.readState()).projects[PROJECT_PATH]
+          ?.agentCapabilityOverrides?.cascades["claude-skills"]?.items[
+          "skill:a"
+        ]?.enabled,
+      ).toBe(true);
+      expect(
+        (
+          db.prepare(`SELECT COUNT(*) AS n FROM sessions`).get() as {
+            n: number;
+          }
+        ).n,
+      ).toBe(0);
+      expect(
+        (
+          db.prepare(`SELECT COUNT(*) AS n FROM conversations`).get() as {
+            n: number;
+          }
+        ).n,
+      ).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("keeps project conversations separate from same-id session conversations", async () => {
+    const { db, state, store } = createSqlHarness();
+    try {
+      await state.writeState(stateWithAllScopes());
+      await state.createProjectConversation(
+        PROJECT_PATH,
+        projectConversation(CONVERSATION_ID),
+      );
+
+      await store.patchConversation(
+        PROJECT_PATH,
+        SESSION_NAME,
+        CONVERSATION_ID,
+        {
+          cascadeKind: "claude-skills",
+          operations: [
+            {
+              type: "set-item-enabled",
+              itemId: "skill:session",
+              enabled: false,
+            },
+          ],
+        },
+      );
+      await store.patchProjectConversation(PROJECT_PATH, CONVERSATION_ID, {
+        cascadeKind: "claude-skills",
+        operations: [
+          { type: "set-item-enabled", itemId: "skill:project", enabled: true },
+        ],
+      });
+
+      const sessionConversation = (await state.readState()).projects[
+        PROJECT_PATH
+      ]?.sessions[SESSION_NAME]?.conversations[0];
+      const projectConversationRecord = await state.getProjectConversation(
+        PROJECT_PATH,
+        CONVERSATION_ID,
+      );
+
+      expect(
+        sessionConversation?.agentCapabilityOverrides?.cascades["claude-skills"]
+          ?.items["skill:session"]?.enabled,
+      ).toBe(false);
+      expect(
+        sessionConversation?.agentCapabilityOverrides?.cascades["claude-skills"]
+          ?.items["skill:project"],
+      ).toBeUndefined();
+      expect(
+        projectConversationRecord?.agentCapabilityOverrides?.cascades[
+          "claude-skills"
+        ]?.items["skill:project"]?.enabled,
+      ).toBe(true);
+      expect(
+        projectConversationRecord?.agentCapabilityOverrides?.cascades[
+          "claude-skills"
+        ]?.items["skill:session"],
+      ).toBeUndefined();
+    } finally {
+      db.close();
+    }
   });
 });
 

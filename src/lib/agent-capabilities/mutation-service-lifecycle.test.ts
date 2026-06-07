@@ -46,6 +46,9 @@ const scopeStore: ScopeCapabilityOverrideStore = {
   async patchConversation() {
     throw new Error("not used");
   },
+  async patchProjectConversation() {
+    throw new Error("not used");
+  },
 };
 
 function view(): AgentCapabilityViewResponse {

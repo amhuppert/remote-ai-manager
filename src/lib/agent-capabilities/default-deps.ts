@@ -282,10 +282,13 @@ async function defaultListAffectedConversations(input: {
     }
 
     const projectName = getProjectDisplayName(projectPath);
+    if (isProjectConversationMutationScope(input.scope)) {
+      continue;
+    }
     for (const session of Object.values(project.sessions)) {
       if (
         (input.scope.level === "session" ||
-          input.scope.level === "conversation") &&
+          isSessionConversationMutationScope(input.scope)) &&
         input.scope.sessionName !== session.sessionName
       ) {
         continue;
@@ -293,7 +296,7 @@ async function defaultListAffectedConversations(input: {
 
       for (const conv of session.conversations) {
         if (
-          input.scope.level === "conversation" &&
+          isSessionConversationMutationScope(input.scope) &&
           input.scope.conversationId !== conv.id
         ) {
           continue;
@@ -332,6 +335,28 @@ async function defaultListAffectedConversations(input: {
   }
 
   return affected;
+}
+
+function isProjectConversationMutationScope(
+  scope: MutationScope,
+): scope is Extract<
+  MutationScope,
+  { level: "conversation"; conversationScope: "project" }
+> {
+  return (
+    scope.level === "conversation" && scope.conversationScope === "project"
+  );
+}
+
+function isSessionConversationMutationScope(
+  scope: MutationScope,
+): scope is Extract<
+  MutationScope,
+  { level: "conversation"; sessionName: string }
+> {
+  return (
+    scope.level === "conversation" && scope.conversationScope !== "project"
+  );
 }
 
 interface MutationFanoutOverrideChain {

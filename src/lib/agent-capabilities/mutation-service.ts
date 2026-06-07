@@ -58,7 +58,14 @@ export type MutationScope =
   | {
       level: "conversation";
       projectPath: string;
+      conversationScope?: "session";
       sessionName: string;
+      conversationId: string;
+    }
+  | {
+      level: "conversation";
+      projectPath: string;
+      conversationScope: "project";
       conversationId: string;
     };
 
@@ -280,12 +287,19 @@ export function createCapabilityMutationService(
         return result.changedItemIds;
       }
       case "conversation": {
-        const result = await scopeStore.patchConversation(
-          scope.projectPath,
-          scope.sessionName,
-          scope.conversationId,
-          { cascadeKind, operations, precondition },
-        );
+        const result =
+          scope.conversationScope === "project"
+            ? await scopeStore.patchProjectConversation(
+                scope.projectPath,
+                scope.conversationId,
+                { cascadeKind, operations, precondition },
+              )
+            : await scopeStore.patchConversation(
+                scope.projectPath,
+                scope.sessionName,
+                scope.conversationId,
+                { cascadeKind, operations, precondition },
+              );
         return result.changedItemIds;
       }
       default: {
@@ -313,6 +327,14 @@ function describeScope(scope: MutationScope): Record<string, string> {
         sessionName: scope.sessionName,
       };
     case "conversation":
+      if (scope.conversationScope === "project") {
+        return {
+          level: "conversation",
+          projectPath: scope.projectPath,
+          conversationScope: "project",
+          conversationId: scope.conversationId,
+        };
+      }
       return {
         level: "conversation",
         projectPath: scope.projectPath,

@@ -340,6 +340,109 @@ describe("resolveCascadeView — four-layer inheritance (task 4.1)", () => {
   });
 });
 
+describe("resolveCascadeView — project-conversation inheritance (task 11.2)", () => {
+  it("resolves a project conversation from project overrides without requiring a session layer", () => {
+    const view = resolveCascadeView(
+      baseInput({
+        cascadeKind: "claude-skills",
+        scope: {
+          level: "conversation",
+          projectName: "repo",
+          conversationScope: "project",
+          conversationId: "plc-1",
+        },
+        overrideChain: [
+          { layer: "global", overrides: override({ "skill:a": false }) },
+          { layer: "project", overrides: override({ "skill:a": true }) },
+          { layer: "session", overrides: override({ "skill:a": false }) },
+          { layer: "conversation", overrides: undefined },
+        ],
+        discoveredItems: [discoveredSkill("skill:a", false)],
+      }),
+    );
+
+    const row = view.items[0]!;
+    expect(row.effectiveState).toEqual({
+      enabled: true,
+      originLayer: "project",
+    });
+    expect(row.inheritedEffectiveState).toEqual({
+      enabled: true,
+      originLayer: "project",
+    });
+    expect(row.currentLayerValue).toBeUndefined();
+    expect(view).toMatchObject({
+      level: "conversation",
+      projectName: "repo",
+      conversationScope: "project",
+      conversationId: "plc-1",
+    });
+    expect(view.sessionName).toBeUndefined();
+  });
+
+  it("applies a project-conversation override more narrowly than global and project", () => {
+    const view = resolveCascadeView(
+      baseInput({
+        cascadeKind: "claude-skills",
+        scope: {
+          level: "conversation",
+          projectName: "repo",
+          conversationScope: "project",
+          conversationId: "plc-1",
+        },
+        overrideChain: [
+          { layer: "global", overrides: override({ "skill:a": true }) },
+          { layer: "project", overrides: override({ "skill:a": true }) },
+          { layer: "session", overrides: override({ "skill:a": true }) },
+          { layer: "conversation", overrides: override({ "skill:a": false }) },
+        ],
+        discoveredItems: [discoveredSkill("skill:a", true)],
+      }),
+    );
+
+    const row = view.items[0]!;
+    expect(row.effectiveState).toEqual({
+      enabled: false,
+      originLayer: "conversation",
+    });
+    expect(row.currentLayerValue).toEqual({
+      enabled: false,
+      originLayer: "conversation",
+    });
+    expect(row.inheritedEffectiveState).toEqual({
+      enabled: true,
+      originLayer: "project",
+    });
+  });
+
+  it("preserves session-conversation session-layer precedence", () => {
+    const view = resolveCascadeView(
+      baseInput({
+        cascadeKind: "claude-skills",
+        scope: {
+          level: "conversation",
+          projectName: "repo",
+          conversationScope: "session",
+          sessionName: "feat",
+          conversationId: "conv-1",
+        },
+        overrideChain: [
+          { layer: "global", overrides: override({ "skill:a": true }) },
+          { layer: "project", overrides: override({ "skill:a": true }) },
+          { layer: "session", overrides: override({ "skill:a": false }) },
+          { layer: "conversation", overrides: undefined },
+        ],
+        discoveredItems: [discoveredSkill("skill:a", true)],
+      }),
+    );
+
+    expect(view.items[0]!.effectiveState).toEqual({
+      enabled: false,
+      originLayer: "session",
+    });
+  });
+});
+
 describe("resolveCascadeView — stale override preservation (task 4.2)", () => {
   it("includes a stale row for an override id missing from discovery", () => {
     const view = resolveCascadeView(

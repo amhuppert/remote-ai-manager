@@ -186,6 +186,9 @@ describe("agent capability end-to-end acceptance", () => {
         async patchConversation() {
           throw new Error("not used");
         },
+        async patchProjectConversation() {
+          throw new Error("not used");
+        },
       },
       computeEffectiveHash: async (
         _scope: MutationScope,

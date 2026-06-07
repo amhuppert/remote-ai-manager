@@ -183,6 +183,33 @@ async function buildResolutionContext(
     };
   }
 
+  if (scope.level === "conversation" && scope.conversationScope === "project") {
+    const conversation = await stateManager.getProjectConversation(
+      scope.projectPath,
+      scope.conversationId,
+    );
+    if (!conversation) {
+      throw new CapabilityRouteNotFoundError(
+        `Project conversation "${scope.conversationId}" not found`,
+      );
+    }
+    chain.push({
+      layer: "conversation",
+      overrides: conversation.agentCapabilityOverrides,
+    });
+    return {
+      scopeContext: {
+        level: "conversation",
+        projectName: scope.projectName,
+        conversationScope: "project",
+        conversationId: scope.conversationId,
+      },
+      worktreePath: project.rootPath,
+      overrideChain: chain,
+      runtimeApplyState: conversation.agentCapabilitiesRuntime,
+    };
+  }
+
   const session = project.sessions[scope.sessionName];
   if (!session) {
     throw new CapabilityRouteNotFoundError(
@@ -220,6 +247,7 @@ async function buildResolutionContext(
     scopeContext: {
       level: "conversation",
       projectName: scope.projectName,
+      conversationScope: "session",
       sessionName: scope.sessionName,
       conversationId: scope.conversationId,
     },
@@ -392,10 +420,20 @@ function mutationScopeToRouteScope(scope: MutationScope): CapabilityRouteScope {
         sessionName: scope.sessionName,
       };
     case "conversation":
+      if (scope.conversationScope === "project") {
+        return {
+          level: "conversation",
+          projectPath: scope.projectPath,
+          projectName: getProjectDisplayName(scope.projectPath),
+          conversationScope: "project",
+          conversationId: scope.conversationId,
+        };
+      }
       return {
         level: "conversation",
         projectPath: scope.projectPath,
         projectName: getProjectDisplayName(scope.projectPath),
+        conversationScope: "session",
         sessionName: scope.sessionName,
         conversationId: scope.conversationId,
       };
