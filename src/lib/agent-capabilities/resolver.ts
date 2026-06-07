@@ -165,7 +165,10 @@ export function resolveCascadeView(
   input: ResolveCascadeViewInput,
 ): AgentCapabilityViewResponse {
   const backend = AGENT_CAPABILITY_CASCADE_BACKEND_OWNERSHIP[input.cascadeKind];
-  const overrideChain = overrideChainForScope(input.scope, input.overrideChain);
+  const overrideChain = filterOverrideChainForScope(
+    input.scope,
+    input.overrideChain,
+  );
 
   const cascadeIsVerificationGated =
     input.metadata.compositionSupport === "verification-gated";
@@ -336,7 +339,7 @@ export function resolveCascadeView(
   };
 }
 
-function overrideChainForScope(
+export function filterOverrideChainForScope(
   scope: AgentCapabilityScopeContext,
   overrideChain: ResolveCascadeViewInput["overrideChain"],
 ): ResolveCascadeViewInput["overrideChain"] {

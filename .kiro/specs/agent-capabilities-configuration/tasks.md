@@ -315,7 +315,7 @@ Implementation follows red-green-refactor by default. Each task should add focus
 
 - [ ] 12. Extend project-conversation runtime composition and apply
 
-- [ ] 12.1 Compose Claude and Codex capability config for project conversation starts
+- [x] 12.1 Compose Claude and Codex capability config for project conversation starts
   - Let runtime composition accept project-conversation targets with repo-root worktree paths and fixed conversation backend identity.
   - Resolve Claude project conversations from global, project, and project-conversation layers for skills, plugins, and sub-agents.
   - Resolve Codex project conversations from global, project, and project-conversation layers for skills and plugins.

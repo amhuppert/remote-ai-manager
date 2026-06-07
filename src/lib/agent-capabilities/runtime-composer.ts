@@ -36,6 +36,7 @@ import {
   type AgentCapabilityMetadataRegistry,
 } from "./metadata";
 import {
+  filterOverrideChainForScope,
   resolveCascadeView,
   resolvePluginEnablement,
   type PluginEnablementMap,
@@ -159,6 +160,10 @@ export function composeConversationStartRuntime(
   const failed = new Set<AgentCapabilityCascadeKind>(
     input.failedCascadeKinds ?? [],
   );
+  const overrideChain = filterOverrideChainForScope(
+    input.scope,
+    input.overrideChain,
+  );
 
   const ownedCascades = BACKEND_CASCADES[input.backend];
   const pluginCascadeKind = PLUGIN_CASCADE_FOR_BACKEND[input.backend];
@@ -179,7 +184,7 @@ export function composeConversationStartRuntime(
       views[pluginCascadeKind] = resolveCascadeView({
         cascadeKind: pluginCascadeKind,
         scope: input.scope,
-        overrideChain: input.overrideChain,
+        overrideChain,
         discoveredItems: pluginCascade.items,
         metadata: metadataRegistry.get(pluginCascadeKind),
         discoveryDiagnostics: pluginCascade.diagnostics,
@@ -187,7 +192,7 @@ export function composeConversationStartRuntime(
       pluginResolution = resolvePluginEnablement({
         pluginCascadeKind,
         discoveredPlugins: pluginCascade.items,
-        overrideChain: input.overrideChain,
+        overrideChain,
       });
     }
   }
@@ -200,7 +205,7 @@ export function composeConversationStartRuntime(
     views[cascadeKind] = resolveCascadeView({
       cascadeKind,
       scope: input.scope,
-      overrideChain: input.overrideChain,
+      overrideChain,
       discoveredItems: cascade.items,
       metadata: metadataRegistry.get(cascadeKind),
       discoveryDiagnostics: cascade.diagnostics,

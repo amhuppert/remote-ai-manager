@@ -22,11 +22,14 @@ import { getProjectDisplayName } from "@/lib/projects/resolver";
 import { createStateManager } from "@/lib/state-store";
 
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { ConversationState } from "@/lib/conversations/schemas";
+import type { ManagerState } from "@/lib/projects/schemas";
 import type {
   AgentCapabilityCascadeKind,
   AgentCapabilityCascadeLayer,
   AgentCapabilityOverrides,
   AgentCapabilityRuntimeApplicationState,
+  AgentCapabilityScopeContext,
 } from "./schemas";
 
 import { defaultGlobalCapabilityOverrideStore } from "./global-store";
@@ -43,6 +46,7 @@ import {
 import {
   composeConversationStartRuntime,
   type ComposeConversationStartCascadeInput,
+  type ComposeConversationStartInput,
   type ComposeConversationStartResult,
 } from "./runtime-composer";
 import {
@@ -67,8 +71,71 @@ import { defaultScopeCapabilityOverrideStore } from "./scope-store";
 const logger = createLogger("agent-capabilities.default-deps");
 const stateManager = createStateManager();
 
+export type ConversationStartCapabilityComposerInput =
+  | SessionConversationStartCapabilityComposerInput
+  | ProjectConversationStartCapabilityComposerInput;
+
+export interface SessionConversationStartCapabilityComposerInput {
+  conversationScope?: "session";
+  projectPath: string;
+  projectName: string;
+  sessionName: string;
+  conversationId: string;
+  worktreePath: string;
+  backend: AgentBackendId;
+}
+
+export interface ProjectConversationStartCapabilityComposerInput {
+  conversationScope: "project";
+  projectPath: string;
+  projectName: string;
+  conversationId: string;
+  worktreePath: string;
+  backend: AgentBackendId;
+}
+
+export interface ConversationStartCapabilityComposerDeps {
+  readGlobalOverrides(): Promise<AgentCapabilityOverrides | undefined>;
+  readState(): Promise<ManagerState>;
+  getProjectConversation(
+    projectPath: string,
+    conversationId: string,
+  ): Promise<ConversationState | null>;
+  discoverClaudeSkills(
+    input: Parameters<typeof discoverClaudeSkills>[0],
+  ): ReturnType<typeof discoverClaudeSkills>;
+  discoverClaudePlugins(
+    input: Parameters<typeof discoverClaudePlugins>[0],
+  ): ReturnType<typeof discoverClaudePlugins>;
+  discoverClaudeAgents(
+    input: Parameters<typeof discoverClaudeAgents>[0],
+  ): ReturnType<typeof discoverClaudeAgents>;
+  discoverCodexSkillsCanonical(
+    input: Parameters<typeof discoverCodexSkillsCanonical>[0],
+  ): ReturnType<typeof discoverCodexSkillsCanonical>;
+  discoverCodexPluginsCanonical(
+    input: Parameters<typeof discoverCodexPluginsCanonical>[0],
+  ): ReturnType<typeof discoverCodexPluginsCanonical>;
+  composeRuntime(
+    input: ComposeConversationStartInput,
+  ): ComposeConversationStartResult;
+  homeDir(): string;
+  getClaudeRuntimeProbe(conversationId: string): ClaudeRuntimeProbe | undefined;
+  logDiscoveryFailure(input: DiscoveryFailureLogInput): void;
+}
+
+interface DiscoveryFailureLogInput {
+  event: string;
+  backend: AgentBackendId;
+  cascadeKind: AgentCapabilityCascadeKind;
+  conversationScope: "session" | "project";
+  worktreePath: string;
+  error: string;
+}
+
 async function readOverrideChain(
-  scope: AgentCapabilityScopeContextInput,
+  scope: ConversationStartCapabilityComposerInput,
+  deps: ConversationStartCapabilityComposerDeps,
 ): Promise<
   ReadonlyArray<{
     layer: AgentCapabilityCascadeLayer;
@@ -81,17 +148,31 @@ async function readOverrideChain(
   }> = [
     {
       layer: "global",
-      overrides: await defaultGlobalCapabilityOverrideStore.read(),
+      overrides: await deps.readGlobalOverrides(),
     },
   ];
 
-  const state = await stateManager.readState();
+  const state = await deps.readState();
   const project = state.projects[scope.projectPath];
   if (project) {
     chain.push({
       layer: "project",
       overrides: project.agentCapabilityOverrides,
     });
+    if (isProjectConversationComposeInput(scope)) {
+      const conversation = await deps.getProjectConversation(
+        scope.projectPath,
+        scope.conversationId,
+      );
+      if (conversation) {
+        chain.push({
+          layer: "conversation",
+          overrides: conversation.agentCapabilityOverrides,
+        });
+      }
+      return chain;
+    }
+
     const session = project.sessions[scope.sessionName];
     if (session) {
       chain.push({
@@ -113,147 +194,219 @@ async function readOverrideChain(
   return chain;
 }
 
-interface AgentCapabilityScopeContextInput {
-  projectPath: string;
-  sessionName: string;
-  conversationId: string;
-}
+export function createConversationStartCapabilityComposer(
+  deps: ConversationStartCapabilityComposerDeps,
+): (
+  input: ConversationStartCapabilityComposerInput,
+) => Promise<ComposeConversationStartResult> {
+  return async function composeForConversation(input) {
+    const overrideChain = await readOverrideChain(input, deps);
+    const home = deps.homeDir();
+    const discoveryByCascade: Partial<
+      Record<AgentCapabilityCascadeKind, ComposeConversationStartCascadeInput>
+    > = {};
+    const failedCascadeKinds: AgentCapabilityCascadeKind[] = [];
+    const conversationScope = conversationScopeForComposeInput(input);
 
-async function defaultComposeForConversation(input: {
-  projectPath: string;
-  projectName: string;
-  sessionName: string;
-  conversationId: string;
-  worktreePath: string;
-  backend: AgentBackendId;
-}): Promise<ComposeConversationStartResult> {
-  const overrideChain = await readOverrideChain(input);
-  const home = os.homedir();
-  const discoveryByCascade: Partial<
-    Record<AgentCapabilityCascadeKind, ComposeConversationStartCascadeInput>
-  > = {};
-  const failedCascadeKinds: AgentCapabilityCascadeKind[] = [];
+    if (input.backend === "claude") {
+      try {
+        const skills = await deps.discoverClaudeSkills({
+          worktreePath: input.worktreePath,
+          home,
+          runtimeProbe: deps.getClaudeRuntimeProbe(input.conversationId),
+        });
+        discoveryByCascade["claude-skills"] = {
+          items: skills.items,
+          diagnostics: skills.diagnostics,
+        };
+      } catch (err) {
+        logDiscoveryFailure(deps, {
+          event: "discovery.claude_skills_failed",
+          backend: "claude",
+          cascadeKind: "claude-skills",
+          conversationScope,
+          worktreePath: input.worktreePath,
+          error: getErrorMessage(err),
+        });
+        failedCascadeKinds.push("claude-skills");
+      }
 
-  if (input.backend === "claude") {
+      let nativePluginRecords:
+        | Awaited<ReturnType<typeof discoverClaudePlugins>>["nativeRecords"]
+        | undefined;
+      try {
+        const plugins = await deps.discoverClaudePlugins({
+          worktreePath: input.worktreePath,
+          home,
+        });
+        discoveryByCascade["claude-plugins"] = {
+          items: plugins.items,
+          diagnostics: plugins.diagnostics,
+        };
+        nativePluginRecords = plugins.nativeRecords;
+      } catch (err) {
+        logDiscoveryFailure(deps, {
+          event: "discovery.claude_plugins_failed",
+          backend: "claude",
+          cascadeKind: "claude-plugins",
+          conversationScope,
+          worktreePath: input.worktreePath,
+          error: getErrorMessage(err),
+        });
+        failedCascadeKinds.push("claude-plugins");
+      }
+
+      try {
+        const agents = await deps.discoverClaudeAgents({
+          worktreePath: input.worktreePath,
+          home,
+          runtimeProbe: deps.getClaudeRuntimeProbe(input.conversationId),
+        });
+        discoveryByCascade["claude-agents"] = {
+          items: agents.items,
+          diagnostics: agents.diagnostics,
+        };
+      } catch (err) {
+        logDiscoveryFailure(deps, {
+          event: "discovery.claude_agents_failed",
+          backend: "claude",
+          cascadeKind: "claude-agents",
+          conversationScope,
+          worktreePath: input.worktreePath,
+          error: getErrorMessage(err),
+        });
+        failedCascadeKinds.push("claude-agents");
+      }
+
+      return deps.composeRuntime({
+        backend: "claude",
+        scope: scopeContextForComposeInput(input),
+        overrideChain,
+        discoveryByCascade,
+        failedCascadeKinds,
+        nativePluginRecords: nativePluginRecords ?? [],
+      });
+    }
+
     try {
-      const skills = await discoverClaudeSkills({
+      const skills = await deps.discoverCodexSkillsCanonical({
         worktreePath: input.worktreePath,
         home,
-        runtimeProbe: getClaudeRuntimeProbe(input.conversationId),
       });
-      discoveryByCascade["claude-skills"] = {
+      discoveryByCascade["codex-skills"] = {
         items: skills.items,
         diagnostics: skills.diagnostics,
       };
     } catch (err) {
-      logger.error("discovery.claude_skills_failed", {
+      logDiscoveryFailure(deps, {
+        event: "discovery.codex_skills_failed",
+        backend: "codex",
+        cascadeKind: "codex-skills",
+        conversationScope,
         worktreePath: input.worktreePath,
-        error: redactAgentCapabilityText(getErrorMessage(err)),
+        error: getErrorMessage(err),
       });
-      failedCascadeKinds.push("claude-skills");
+      failedCascadeKinds.push("codex-skills");
     }
 
-    let nativePluginRecords:
-      | Awaited<ReturnType<typeof discoverClaudePlugins>>["nativeRecords"]
-      | undefined;
     try {
-      const plugins = await discoverClaudePlugins({
+      const plugins = await deps.discoverCodexPluginsCanonical({
         worktreePath: input.worktreePath,
         home,
       });
-      discoveryByCascade["claude-plugins"] = {
+      discoveryByCascade["codex-plugins"] = {
         items: plugins.items,
         diagnostics: plugins.diagnostics,
       };
-      nativePluginRecords = plugins.nativeRecords;
     } catch (err) {
-      logger.error("discovery.claude_plugins_failed", {
+      logDiscoveryFailure(deps, {
+        event: "discovery.codex_plugins_failed",
+        backend: "codex",
+        cascadeKind: "codex-plugins",
+        conversationScope,
         worktreePath: input.worktreePath,
-        error: redactAgentCapabilityText(getErrorMessage(err)),
+        error: getErrorMessage(err),
       });
-      failedCascadeKinds.push("claude-plugins");
+      failedCascadeKinds.push("codex-plugins");
     }
 
-    try {
-      const agents = await discoverClaudeAgents({
-        worktreePath: input.worktreePath,
-        home,
-        runtimeProbe: getClaudeRuntimeProbe(input.conversationId),
-      });
-      discoveryByCascade["claude-agents"] = {
-        items: agents.items,
-        diagnostics: agents.diagnostics,
-      };
-    } catch (err) {
-      logger.error("discovery.claude_agents_failed", {
-        worktreePath: input.worktreePath,
-        error: redactAgentCapabilityText(getErrorMessage(err)),
-      });
-      failedCascadeKinds.push("claude-agents");
-    }
-
-    return composeConversationStartRuntime({
-      backend: "claude",
-      scope: {
-        level: "conversation",
-        projectName: input.projectName,
-        sessionName: input.sessionName,
-        conversationId: input.conversationId,
-      },
+    return deps.composeRuntime({
+      backend: "codex",
+      scope: scopeContextForComposeInput(input),
       overrideChain,
       discoveryByCascade,
       failedCascadeKinds,
-      nativePluginRecords: nativePluginRecords ?? [],
     });
-  }
+  };
+}
 
-  try {
-    const skills = await discoverCodexSkillsCanonical({
-      worktreePath: input.worktreePath,
-      home,
-    });
-    discoveryByCascade["codex-skills"] = {
-      items: skills.items,
-      diagnostics: skills.diagnostics,
-    };
-  } catch (err) {
-    logger.error("discovery.codex_skills_failed", {
-      worktreePath: input.worktreePath,
-      error: redactAgentCapabilityText(getErrorMessage(err)),
-    });
-    failedCascadeKinds.push("codex-skills");
-  }
+function isProjectConversationComposeInput(
+  input: ConversationStartCapabilityComposerInput,
+): input is ProjectConversationStartCapabilityComposerInput {
+  return input.conversationScope === "project";
+}
 
-  try {
-    const plugins = await discoverCodexPluginsCanonical({
-      worktreePath: input.worktreePath,
-      home,
-    });
-    discoveryByCascade["codex-plugins"] = {
-      items: plugins.items,
-      diagnostics: plugins.diagnostics,
-    };
-  } catch (err) {
-    logger.error("discovery.codex_plugins_failed", {
-      worktreePath: input.worktreePath,
-      error: redactAgentCapabilityText(getErrorMessage(err)),
-    });
-    failedCascadeKinds.push("codex-plugins");
-  }
+function conversationScopeForComposeInput(
+  input: ConversationStartCapabilityComposerInput,
+): "session" | "project" {
+  return isProjectConversationComposeInput(input) ? "project" : "session";
+}
 
-  return composeConversationStartRuntime({
-    backend: "codex",
-    scope: {
+function scopeContextForComposeInput(
+  input: ConversationStartCapabilityComposerInput,
+): AgentCapabilityScopeContext {
+  if (isProjectConversationComposeInput(input)) {
+    return {
       level: "conversation",
       projectName: input.projectName,
-      sessionName: input.sessionName,
+      conversationScope: "project",
       conversationId: input.conversationId,
-    },
-    overrideChain,
-    discoveryByCascade,
-    failedCascadeKinds,
+    };
+  }
+  return {
+    level: "conversation",
+    projectName: input.projectName,
+    conversationScope: "session",
+    sessionName: input.sessionName,
+    conversationId: input.conversationId,
+  };
+}
+
+function logDiscoveryFailure(
+  deps: ConversationStartCapabilityComposerDeps,
+  input: DiscoveryFailureLogInput,
+): void {
+  deps.logDiscoveryFailure({
+    ...input,
+    error: redactAgentCapabilityText(input.error),
   });
 }
+
+const defaultComposeForConversation = createConversationStartCapabilityComposer(
+  {
+    readGlobalOverrides: () => defaultGlobalCapabilityOverrideStore.read(),
+    readState: () => stateManager.readState(),
+    getProjectConversation: (projectPath, conversationId) =>
+      stateManager.getProjectConversation(projectPath, conversationId),
+    discoverClaudeSkills,
+    discoverClaudePlugins,
+    discoverClaudeAgents,
+    discoverCodexSkillsCanonical,
+    discoverCodexPluginsCanonical,
+    composeRuntime: composeConversationStartRuntime,
+    homeDir: () => os.homedir(),
+    getClaudeRuntimeProbe,
+    logDiscoveryFailure(input) {
+      logger.error(input.event, {
+        backend: input.backend,
+        cascadeKind: input.cascadeKind,
+        conversationScope: input.conversationScope,
+        worktreePath: input.worktreePath,
+        error: input.error,
+      });
+    },
+  },
+);
 
 async function defaultListAffectedConversations(input: {
   scope: MutationScope;
@@ -574,6 +727,97 @@ function promoteClaudeSeededRuntimeState(
   }
   return out;
 }
+
+export type ComposedProjectConversationCapabilitySeed =
+  | ({
+      backend: "claude";
+    } & ComposedClaudeCapabilitySeed)
+  | ({
+      backend: "codex";
+    } & ComposedCodexCapabilitySeed);
+
+export interface ProjectConversationCapabilityConfigComposerDeps {
+  getProjectConversation(
+    projectPath: string,
+    conversationId: string,
+  ): Promise<ConversationState | null>;
+  getProjectDisplayName(projectPath: string): string;
+  composeForConversation(
+    input: ConversationStartCapabilityComposerInput,
+  ): Promise<ComposeConversationStartResult>;
+}
+
+export function createProjectConversationCapabilityConfigComposer(
+  deps: ProjectConversationCapabilityConfigComposerDeps,
+): (input: {
+  projectPath: string;
+  projectName?: string;
+  conversationId: string;
+}) => Promise<ComposedProjectConversationCapabilitySeed | undefined> {
+  return async function composeProjectConversationCapabilityConfig(input) {
+    const conversation = await deps.getProjectConversation(
+      input.projectPath,
+      input.conversationId,
+    );
+    if (!conversation) {
+      logger.error("project-conversation.compose_missing", {
+        projectPath: input.projectPath,
+        conversationId: input.conversationId,
+      });
+      throw new Error(
+        `Project conversation "${input.conversationId}" not found in project "${input.projectPath}"`,
+      );
+    }
+
+    const backend = conversation.agentBackend;
+    const projectName =
+      input.projectName ?? deps.getProjectDisplayName(input.projectPath);
+    logger.info("project-conversation.compose_start", {
+      projectPath: input.projectPath,
+      projectName,
+      conversationId: input.conversationId,
+      backend,
+      worktreePath: input.projectPath,
+    });
+
+    const result = await deps.composeForConversation({
+      conversationScope: "project",
+      projectPath: input.projectPath,
+      projectName,
+      conversationId: input.conversationId,
+      worktreePath: input.projectPath,
+      backend,
+    });
+
+    if (backend === "claude") {
+      if (!result.claudeRuntime) return undefined;
+      return {
+        backend: "claude",
+        config: result.claudeRuntime,
+        runtimeState: promoteClaudeSeededRuntimeState(result.runtimeState),
+      };
+    }
+
+    if (!result.codexRuntime) return undefined;
+    return {
+      backend: "codex",
+      config: { config: result.codexRuntime.config },
+      runtimeState: result.runtimeState,
+    };
+  };
+}
+
+const defaultProjectConversationCapabilityConfigComposer =
+  createProjectConversationCapabilityConfigComposer({
+    getProjectConversation: (projectPath, conversationId) =>
+      stateManager.getProjectConversation(projectPath, conversationId),
+    getProjectDisplayName,
+    composeForConversation: defaultComposeForConversation,
+  });
+
+/** @public Accessed by project-conversation prompt runtime wiring. */
+export const composeCapabilityConfigForProjectConversation =
+  defaultProjectConversationCapabilityConfigComposer;
 
 /**
  * Compose the Claude capability runtime config + initial apply state for a new

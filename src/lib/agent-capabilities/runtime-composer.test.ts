@@ -52,13 +52,31 @@ function claudeAgent(
   };
 }
 
-function codexSkill(itemId: string): AgentCapabilityDiscoveredItem {
+function codexSkill(
+  itemId: string,
+  opts: { owningPluginId?: string } = {},
+): AgentCapabilityDiscoveredItem {
   return {
     itemId,
     displayName: itemId,
     capabilityKind: "skill",
     source: { kind: "user-file", path: `/codex-skills/${itemId}/SKILL.md` },
     nativeDefault: { enabled: true },
+    owningPluginId: opts.owningPluginId,
+    runtimeVisibility: "source-only",
+  };
+}
+
+function codexPlugin(
+  itemId: string,
+  nativeEnabled: boolean,
+): AgentCapabilityDiscoveredItem {
+  return {
+    itemId,
+    displayName: itemId,
+    capabilityKind: "plugin",
+    source: { kind: "plugin", pluginId: itemId },
+    nativeDefault: { enabled: nativeEnabled },
     runtimeVisibility: "source-only",
   };
 }
@@ -266,6 +284,145 @@ describe("composeConversationStartRuntime — Claude composition", () => {
         backend: "claude",
       }),
     );
+  });
+});
+
+describe("composeConversationStartRuntime — project conversations", () => {
+  it("composes Claude PLCs from global, project, and conversation layers without session plugin overrides", () => {
+    const result = composeConversationStartRuntime({
+      backend: "claude",
+      scope: {
+        level: "conversation",
+        projectName: "Repo",
+        conversationScope: "project",
+        conversationId: "plc-1",
+      },
+      overrideChain: [
+        {
+          layer: "global",
+          overrides: mergeOverrides(
+            override("claude-skills", { alpha: false }),
+            override("claude-plugins", { "owner@m": true }),
+          ),
+        },
+        {
+          layer: "project",
+          overrides: mergeOverrides(
+            override("claude-skills", { alpha: true }),
+            override("claude-plugins", { "owner@m": true }),
+          ),
+        },
+        {
+          layer: "session",
+          overrides: mergeOverrides(
+            override("claude-skills", { alpha: false }),
+            override("claude-plugins", { "owner@m": false }),
+          ),
+        },
+        {
+          layer: "conversation",
+          overrides: override("claude-agents", { reviewer: false }),
+        },
+      ],
+      discoveryByCascade: {
+        "claude-skills": {
+          items: [
+            claudeSkill("alpha"),
+            claudeSkill("child", { owningPluginId: "owner@m" }),
+          ],
+        },
+        "claude-plugins": { items: [claudePlugin("owner@m", true)] },
+        "claude-agents": {
+          items: [claudeAgent("reviewer", true), claudeAgent("helper", true)],
+        },
+      },
+      nativePluginRecords: [
+        { pluginId: "owner@m", nativeEnabled: true, nativeRawValue: true },
+      ],
+    });
+
+    const alpha = result.views["claude-skills"]?.items.find(
+      (row) => row.itemId === "alpha",
+    );
+    const child = result.views["claude-skills"]?.items.find(
+      (row) => row.itemId === "child",
+    );
+
+    expect(result.views["claude-skills"]?.conversationScope).toBe("project");
+    expect(result.views["claude-skills"]?.sessionName).toBeUndefined();
+    expect(alpha?.effectiveState).toEqual({
+      enabled: true,
+      originLayer: "project",
+    });
+    expect(child?.effectiveState.enabled).toBe(true);
+    expect(child?.inheritedDisableReason).toBeUndefined();
+    expect(result.claudeRuntime?.skillOverrides).toEqual({ alpha: "on" });
+    expect(result.claudeRuntime?.disabledAgentNames).toEqual(["reviewer"]);
+    expect(result.runtimeState.cascades["claude-skills"]?.pendingHash).toMatch(
+      /^[0-9a-f]{64}$/,
+    );
+  });
+
+  it("composes Codex PLCs from global, project, and conversation layers without session plugin overrides", () => {
+    const result = composeConversationStartRuntime({
+      backend: "codex",
+      scope: {
+        level: "conversation",
+        projectName: "Repo",
+        conversationScope: "project",
+        conversationId: "plc-2",
+      },
+      overrideChain: [
+        {
+          layer: "global",
+          overrides: override("codex-skills", { alpha: true }),
+        },
+        {
+          layer: "project",
+          overrides: override("codex-plugins", { "codex-owner": true }),
+        },
+        {
+          layer: "session",
+          overrides: mergeOverrides(
+            override("codex-skills", { alpha: true }),
+            override("codex-plugins", { "codex-owner": false }),
+          ),
+        },
+        {
+          layer: "conversation",
+          overrides: override("codex-skills", { alpha: false }),
+        },
+      ],
+      discoveryByCascade: {
+        "codex-skills": {
+          items: [
+            codexSkill("alpha"),
+            codexSkill("child", { owningPluginId: "codex-owner" }),
+          ],
+        },
+        "codex-plugins": { items: [codexPlugin("codex-owner", true)] },
+        "claude-skills": { items: [claudeSkill("alpha")] },
+      },
+    });
+
+    const child = result.views["codex-skills"]?.items.find(
+      (row) => row.itemId === "child",
+    );
+
+    expect(result.views["codex-skills"]?.conversationScope).toBe("project");
+    expect(result.views["codex-skills"]?.sessionName).toBeUndefined();
+    expect(result.views["claude-skills"]).toBeUndefined();
+    expect(child?.effectiveState.enabled).toBe(true);
+    expect(child?.inheritedDisableReason).toBeUndefined();
+    expect(result.codexRuntime?.config).toEqual({
+      skills: {
+        config: [
+          { enabled: false, name: "alpha" },
+          { enabled: true, name: "child" },
+        ],
+      },
+      plugins: { "codex-owner": { enabled: true } },
+    });
   });
 });
 
