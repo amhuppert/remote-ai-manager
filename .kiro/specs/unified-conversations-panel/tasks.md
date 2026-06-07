@@ -178,7 +178,7 @@
   - _Requirements: 13.1, 13.2, 13.3, 13.4_
 
 - [ ] 11. Active Conversations UI integration
-- [ ] 11.1 (P) Render project conversations in the sidebar Active tab
+- [x] 11.1 (P) Render project conversations in the sidebar Active tab
   - Stop filtering Active tab data to session-only rows.
   - Render project rows with `main` context, shared status/unread/backend/last-activity indicators, and project focus navigation.
   - Cover the cockpit-mounted rail through the same sidebar component that `ProjectDetailView` passes into the cockpit rail slot.

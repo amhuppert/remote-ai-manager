@@ -9,7 +9,10 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
+import type {
+  ActiveConversation,
+  SessionActiveConversation,
+} from "@/lib/active-conversations/schemas";
 import { useActiveConversationsQuery } from "@/lib/active-conversations/queries";
 import { PlusIcon } from "@/components/icons";
 import {
@@ -55,7 +58,9 @@ import {
   filterConversations,
   splitNeedsYou,
   buildConversationSidebarSections,
-  type SidebarConversation,
+  describeActiveRow,
+  type ActiveRowActionScope,
+  type ActiveSidebarConversation,
   type SidebarListFilter,
   type AnnotatedSidebarConversation,
   type SidebarSection,
@@ -82,16 +87,16 @@ function formatRelativeTime(isoDate: string): string {
 
 interface SidebarRowItemProps {
   row: AnnotatedSidebarConversation<
-    SidebarConversation & Partial<{ archived: boolean }>
+    ActiveSidebarConversation & Partial<{ archived: boolean }>
   >;
-  conversation: SessionActiveConversation;
+  conversation: ActiveConversation;
   href: string;
   isActive: boolean;
   activeConversationId: string;
   archived: boolean;
   onOpenMenu: (point: { x: number; y: number }) => void;
   onNavigate: () => void;
-  onPeek: (anchorEl: HTMLElement, conversationId: string) => void;
+  onPeek?: (anchorEl: HTMLElement, conversationId: string) => void;
   onAcknowledge?: () => void;
 }
 
@@ -169,8 +174,7 @@ function ConversationSidebar({
   // --- Active conversations query ---
   const { data: activeData } = useActiveConversationsQuery();
   const activeConvoList = useMemo(
-    () =>
-      (activeData?.conversations ?? []).filter((c) => c.scope === "session"),
+    () => activeData?.conversations ?? [],
     [activeData],
   );
   const activeGraphWorkflows = useMemo(
@@ -206,8 +210,8 @@ function ConversationSidebar({
   const [editValue, setEditValue] = useState("");
   const editInputRef = useRef<HTMLInputElement>(null);
   const [ctxMenu, setCtxMenu] = useState<{
-    row: SidebarConversation & { archived?: boolean };
-    scope: { projectName: string; sessionName: string };
+    row: ActiveSidebarConversation & { archived?: boolean };
+    actionScope: ActiveRowActionScope;
     x: number;
     y: number;
   } | null>(null);
@@ -220,8 +224,7 @@ function ConversationSidebar({
     conversationId: string;
   } | null>(null);
   const editScopeRef = useRef<{
-    projectName: string;
-    sessionName: string;
+    scope: ActiveRowActionScope;
   } | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -271,14 +274,10 @@ function ConversationSidebar({
   }, [createConvoMutation, projectName, sessionName, router]);
 
   const handleRenameStart = useCallback(
-    (
-      id: string,
-      name: string,
-      scope: { projectName: string; sessionName: string },
-    ) => {
+    (id: string, name: string, scope: ActiveRowActionScope) => {
       setEditingId(id);
       setEditValue(name);
-      editScopeRef.current = scope;
+      editScopeRef.current = { scope };
     },
     [],
   );
@@ -286,12 +285,13 @@ function ConversationSidebar({
   const handleRenameSubmit = useCallback(
     (id: string) => {
       const trimmed = editValue.trim();
-      const scope = editScopeRef.current;
-      if (!trimmed || !scope) {
+      const scope = editScopeRef.current?.scope;
+      if (!trimmed || scope === undefined) {
         setEditingId(null);
         return;
       }
       const isCurrentSession =
+        scope.scope === "session" &&
         scope.projectName === projectName && scope.sessionName === sessionName;
       const onSettled = () => setEditingId(null);
       if (isCurrentSession) {
@@ -300,15 +300,7 @@ function ConversationSidebar({
           { onSettled },
         );
       } else {
-        genericRenameMutation.mutate(
-          {
-            projectName: scope.projectName,
-            sessionName: scope.sessionName,
-            conversationId: id,
-            name: trimmed,
-          },
-          { onSettled },
-        );
+        genericRenameMutation.mutate({ ...scope, name: trimmed }, { onSettled });
       }
     },
     [
@@ -321,29 +313,21 @@ function ConversationSidebar({
   );
 
   const handleArchive = useCallback(
-    (
-      id: string,
-      archived: boolean,
-      scope: { projectName: string; sessionName: string },
-    ) => {
+    (id: string, archived: boolean, scope: ActiveRowActionScope) => {
       const isCurrentSession =
+        scope.scope === "session" &&
         scope.projectName === projectName && scope.sessionName === sessionName;
       if (isCurrentSession) {
         archiveConvoMutation.mutate({ conversationId: id, archived });
       } else {
-        genericArchiveMutation.mutate({
-          projectName: scope.projectName,
-          sessionName: scope.sessionName,
-          conversationId: id,
-          archived,
-        });
+        genericArchiveMutation.mutate({ ...scope, archived });
       }
     },
     [archiveConvoMutation, genericArchiveMutation, projectName, sessionName],
   );
 
   const handleCopyContext = useCallback(
-    async (row: SidebarConversation): Promise<void> => {
+    async (row: SessionActiveConversation): Promise<void> => {
       const session = await apiFetch(
         `/api/projects/${encodeURIComponent(row.projectName)}/sessions/${encodeURIComponent(row.sessionName)}`,
         sessionStateSchema,
@@ -359,14 +343,13 @@ function ConversationSidebar({
     [],
   );
 
-  const activeRows: SidebarConversation[] = activeConvoList;
-  const peekConversation = useMemo(() => {
+  const activeRows: ActiveSidebarConversation[] = activeConvoList;
+  const peekConversation = useMemo((): SessionActiveConversation | null => {
     if (peek === null) return null;
-    return (
-      activeConvoList.find(
-        (conversation) => conversation.id === peek.conversationId,
-      ) ?? null
+    const conversation = activeConvoList.find(
+      (candidate) => candidate.id === peek.conversationId,
     );
+    return conversation?.scope === "session" ? conversation : null;
   }, [activeConvoList, peek]);
   const peekProjectName = peekConversation?.projectName ?? projectName;
   const peekSessionName = peekConversation?.sessionName ?? sessionName;
@@ -428,6 +411,7 @@ function ConversationSidebar({
       running: activeRows.filter((row) => row.status === "running").length,
       session: activeRows.filter(
         (row) =>
+          row.scope === "session" &&
           row.projectName === sessionScope.projectName &&
           row.sessionName === sessionScope.sessionName,
       ).length,
@@ -452,39 +436,14 @@ function ConversationSidebar({
   );
 
   const renderRow = useCallback(
-    <T extends SidebarConversation & Partial<{ archived: boolean }>>(
+    <T extends ActiveSidebarConversation & Partial<{ archived: boolean }>>(
       row: AnnotatedSidebarConversation<T>,
     ) => {
       const isEditing = editingId === row.id;
       const isActive = row.id === activeConversationId;
       const archived = row.archived === true;
-      const conversation: SessionActiveConversation = {
-        scope: "session",
-        id: row.id,
-        name: row.name,
-        status: row.status,
-        lastActivityAt: row.lastActivityAt,
-        projectName: row.projectName,
-        projectPath: row.projectPath,
-        sessionName: row.sessionName,
-        agentBackend: row.agentBackend,
-        summary: row.summary,
-        pendingQuestion: row.pendingQuestion,
-        pendingQuestionId: row.pendingQuestionId,
-        pendingQuestions: row.pendingQuestions,
-        forkedFrom: row.forkedFrom,
-        debugActive: row.debugActive,
-        role: row.role,
-        branchName: row.branchName,
-        worktreePath: row.worktreePath,
-        lastActivitySummary: row.lastActivitySummary,
-        unread: row.unread,
-      };
-      const scope = {
-        projectName: row.projectName,
-        sessionName: row.sessionName,
-      };
-      const href = `/projects/${encodeURIComponent(row.projectName)}/${encodeURIComponent(row.sessionName)}/${row.id}`;
+      const descriptor = describeActiveRow(row);
+      const href = descriptor.href;
 
       if (isEditing) {
         return (
@@ -525,7 +484,7 @@ function ConversationSidebar({
         <SidebarRowItem
           key={row.id}
           row={row}
-          conversation={conversation}
+          conversation={row}
           href={href}
           isActive={isActive}
           activeConversationId={activeConversationId}
@@ -534,17 +493,26 @@ function ConversationSidebar({
             router.push(href);
             if (onMobileClose) onMobileClose();
           }}
-          onPeek={openPeek}
+          onPeek={descriptor.supportsSessionPeek ? openPeek : undefined}
           onOpenMenu={(point) => {
-            setCtxMenu({ row, scope, x: point.x, y: point.y });
-          }}
-          onAcknowledge={() => {
-            markReadMutation.mutate({
-              projectName: row.projectName,
-              sessionName: row.sessionName,
-              conversationId: row.id,
+            setCtxMenu({
+              row,
+              actionScope: descriptor.actionScope,
+              x: point.x,
+              y: point.y,
             });
           }}
+          onAcknowledge={
+            row.scope === "session"
+              ? () => {
+                  markReadMutation.mutate({
+                    projectName: row.projectName,
+                    sessionName: row.sessionName,
+                    conversationId: row.id,
+                  });
+                }
+              : undefined
+          }
         />
       );
     },
@@ -561,7 +529,7 @@ function ConversationSidebar({
   );
 
   const renderSections = useCallback(
-    <T extends SidebarConversation & Partial<{ archived: boolean }>>(
+    <T extends ActiveSidebarConversation & Partial<{ archived: boolean }>>(
       sections: SidebarSection<T>[],
     ) => {
       return sections.map((section) => {
@@ -618,14 +586,11 @@ function ConversationSidebar({
 
   const ctxMenuItems: ContextMenuItem[] = useMemo(() => {
     if (ctxMenu === null) return [];
-    const { row, scope } = ctxMenu;
+    const { row, actionScope } = ctxMenu;
     const archived = row.archived === true;
-    const href = `/projects/${encodeURIComponent(row.projectName)}/${encodeURIComponent(row.sessionName)}/${row.id}`;
+    const descriptor = describeActiveRow(row);
+    const href = descriptor.href;
     const projectHref = `/projects/${encodeURIComponent(row.projectName)}`;
-    const filterAlreadyApplied =
-      activeListFilter === "session" &&
-      sessionScope.projectName === row.projectName &&
-      sessionScope.sessionName === row.sessionName;
     const items: ContextMenuItem[] = [
       {
         kind: "item",
@@ -639,35 +604,45 @@ function ConversationSidebar({
       { kind: "divider" },
       {
         kind: "item",
-        label: filterAlreadyApplied
-          ? `Filtered to ${row.sessionName}`
-          : `Filter sidebar to session: ${row.sessionName}`,
-        disabled: filterAlreadyApplied,
-        onSelect: () => {
-          setSidebarSessionFilter({
-            projectName: row.projectName,
-            sessionName: row.sessionName,
-          });
-          setActiveListFilter("session");
-        },
-      },
-      {
-        kind: "item",
         label: "Open project page",
         onSelect: () => {
           router.push(projectHref);
           if (onMobileClose) onMobileClose();
         },
       },
-      {
-        kind: "item",
-        label: "Copy branch name",
-        disabled: row.branchName === null,
-        onSelect: () => {
-          if (row.branchName === null) return;
-          void navigator.clipboard.writeText(row.branchName);
-        },
-      },
+      ...(row.scope === "session"
+        ? [
+            {
+              kind: "item" as const,
+              label:
+                activeListFilter === "session" &&
+                sessionScope.projectName === row.projectName &&
+                sessionScope.sessionName === row.sessionName
+                  ? `Filtered to ${row.sessionName}`
+                  : `Filter sidebar to session: ${row.sessionName}`,
+              disabled:
+                activeListFilter === "session" &&
+                sessionScope.projectName === row.projectName &&
+                sessionScope.sessionName === row.sessionName,
+              onSelect: () => {
+                setSidebarSessionFilter({
+                  projectName: row.projectName,
+                  sessionName: row.sessionName,
+                });
+                setActiveListFilter("session");
+              },
+            },
+            {
+              kind: "item" as const,
+              label: "Copy branch name",
+              disabled: row.branchName === null,
+              onSelect: () => {
+                if (row.branchName === null) return;
+                void navigator.clipboard.writeText(row.branchName);
+              },
+            },
+          ]
+        : []),
       {
         kind: "item",
         label: "Copy worktree path",
@@ -675,39 +650,51 @@ function ConversationSidebar({
           void navigator.clipboard.writeText(row.worktreePath);
         },
       },
-      {
-        kind: "item",
-        label: "Copy context",
-        hotkey: "\u2318\u21E7C",
-        onSelect: () => {
-          void handleCopyContext(row);
-        },
-      },
+      ...(row.scope === "session"
+        ? [
+            {
+              kind: "item" as const,
+              label: "Copy context",
+              hotkey: "\u2318\u21E7C",
+              onSelect: () => {
+                void handleCopyContext(row);
+              },
+            },
+          ]
+        : []),
       { kind: "divider" },
       {
         kind: "item",
         label: "Rename\u2026",
         onSelect: () => {
-          handleRenameStart(row.id, row.name ?? row.summary ?? "", scope);
+          handleRenameStart(
+            row.id,
+            row.name ?? row.summary ?? "",
+            actionScope,
+          );
         },
       },
       {
         kind: "item",
         label: archived ? "Unarchive conversation" : "Archive conversation",
         onSelect: () => {
-          handleArchive(row.id, !archived, scope);
+          handleArchive(row.id, !archived, actionScope);
         },
       },
-      {
-        kind: "item",
-        label: "Archive session",
-        onSelect: () => {
-          setPendingArchiveSession({
-            projectName: row.projectName,
-            sessionName: row.sessionName,
-          });
-        },
-      },
+      ...(row.scope === "session"
+        ? [
+            {
+              kind: "item" as const,
+              label: "Archive session",
+              onSelect: () => {
+                setPendingArchiveSession({
+                  projectName: row.projectName,
+                  sessionName: row.sessionName,
+                });
+              },
+            },
+          ]
+        : []),
     ];
     return items;
   }, [

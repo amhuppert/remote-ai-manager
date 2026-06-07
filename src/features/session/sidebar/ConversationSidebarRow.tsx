@@ -1,13 +1,10 @@
 "use client";
 
 import { useCallback, useRef } from "react";
-import type {
-  ActiveConversation,
-  SessionActiveConversation,
-} from "@/lib/active-conversations/schemas";
+import type { ActiveConversation } from "@/lib/active-conversations/schemas";
 
 interface Props {
-  conversation: SessionActiveConversation;
+  conversation: ActiveConversation;
   href?: string;
   isActive?: boolean;
   isFirstInSession?: boolean;
@@ -93,7 +90,6 @@ export default function ConversationSidebarRow({
     summary,
     lastActivitySummary,
     status,
-    sessionName,
     agentBackend,
     forkedFrom,
     debugActive,
@@ -102,6 +98,8 @@ export default function ConversationSidebarRow({
     unread,
   } = conversation;
 
+  const contextLabel =
+    conversation.scope === "session" ? conversation.sessionName : "main";
   const title = name ?? summary ?? "Unnamed conversation";
   const activityText = pendingQuestion ?? lastActivitySummary;
   const showActivity =
@@ -142,7 +140,7 @@ export default function ConversationSidebarRow({
         return;
       }
 
-      if (onPeek !== undefined) {
+      if (conversation.scope === "session" && onPeek !== undefined) {
         event.preventDefault();
         onPeek(rowRef.current ?? event.currentTarget, conversation.id);
         return;
@@ -150,7 +148,7 @@ export default function ConversationSidebarRow({
 
       onClick?.();
     },
-    [conversation.id, isCurrentConversation, onClick, onPeek],
+    [conversation.id, conversation.scope, isCurrentConversation, onClick, onPeek],
   );
 
   const handleContextMenu = useCallback(
@@ -243,7 +241,7 @@ export default function ConversationSidebarRow({
 
           <span className="conversation-sidebar-row__breadcrumb">
             <span className="conversation-sidebar-row__crumb">
-              {sessionName}
+              {contextLabel}
             </span>
           </span>
         </span>

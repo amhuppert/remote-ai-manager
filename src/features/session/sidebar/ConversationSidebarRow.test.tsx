@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
-import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
+import type {
+  ProjectActiveConversation,
+  SessionActiveConversation,
+} from "@/lib/active-conversations/schemas";
 import ConversationSidebarRow from "@/features/session/sidebar/ConversationSidebarRow";
 
 const BASE: SessionActiveConversation = {
@@ -25,6 +28,27 @@ const BASE: SessionActiveConversation = {
   worktreePath: "/home/user/my-project/.worktrees/my-session",
   lastActivitySummary: null,
   unread: false,
+};
+
+const PROJECT_BASE: ProjectActiveConversation = {
+  scope: "project",
+  id: "project-convo-1",
+  name: "Project conversation",
+  status: "awaiting",
+  lastActivityAt: "2026-05-15T12:36:00.000Z",
+  projectName: "my-project",
+  projectPath: "/home/user/my-project",
+  agentBackend: "claude",
+  summary: null,
+  pendingQuestion: null,
+  pendingQuestionId: null,
+  pendingQuestions: null,
+  forkedFrom: null,
+  debugActive: false,
+  role: null,
+  worktreePath: "/home/user/my-project",
+  lastActivitySummary: "Checked repo root health",
+  unread: true,
 };
 
 describe("ConversationSidebarRow", () => {
@@ -238,5 +262,51 @@ describe("ConversationSidebarRow", () => {
     expect(onAcknowledge).toHaveBeenCalledTimes(1);
     expect(onClick).not.toHaveBeenCalled();
     expect(onPeek).not.toHaveBeenCalled();
+  });
+
+  it("renders project rows with main context, backend, status, unread, and focus href", () => {
+    const { container } = render(
+      <ConversationSidebarRow
+        conversation={PROJECT_BASE}
+        href="/projects/my-project?focus=project-convo-1"
+      />,
+    );
+
+    const row = screen.getByLabelText("Project conversation — awaiting");
+    expect(row.getAttribute("href")).toBe(
+      "/projects/my-project?focus=project-convo-1",
+    );
+    expect(screen.getByText("main")).toBeDefined();
+    expect(screen.queryByText("my-session")).toBeNull();
+    expect(screen.getByLabelText("agent: claude")).toBeDefined();
+    expect(
+      container.querySelector(
+        '.conversation-sidebar-row__dot[data-status="awaiting"]',
+      ),
+    ).not.toBeNull();
+    expect(
+      container.querySelector(".conversation-sidebar-row__unread-dot"),
+    ).not.toBeNull();
+    expect(screen.getByText(/Done/)).toBeDefined();
+  });
+
+  it("does not invoke session peek behavior for project rows", () => {
+    const onPeek = vi.fn();
+    const onClick = vi.fn();
+
+    render(
+      <ConversationSidebarRow
+        conversation={PROJECT_BASE}
+        href="/projects/my-project?focus=project-convo-1"
+        currentConversationId="other-convo"
+        onPeek={onPeek}
+        onClick={onClick}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Project conversation — awaiting"));
+
+    expect(onPeek).not.toHaveBeenCalled();
+    expect(onClick).toHaveBeenCalledTimes(1);
   });
 });
