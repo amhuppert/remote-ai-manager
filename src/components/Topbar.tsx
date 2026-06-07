@@ -9,7 +9,10 @@ import {
 import { useNotificationsQuery } from "@/lib/notifications/queries";
 import { useActiveJobs } from "@/stores/notification.store";
 import { useActiveConversationsQuery } from "@/lib/active-conversations/queries";
-import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
+import {
+  activeConversationHref,
+  activeConversationNeedsAttention,
+} from "@/lib/active-conversations/row-helpers";
 
 interface BreadcrumbSegment {
   label: string;
@@ -43,15 +46,12 @@ export default function Topbar({
   const unreadCount = notificationsData?.unreadCount ?? 0;
   const badgeCount = unreadCount + activeJobs.length;
   const pinnedConversations = (activeConvosData?.conversations ?? []).filter(
-    (c): c is SessionActiveConversation =>
-      c.scope === "session" && (c.status === "waiting_for_input" || c.unread),
+    activeConversationNeedsAttention,
   );
   const needsCount = pinnedConversations.length;
   const firstPinned = pinnedConversations[0] ?? null;
   const needsHref =
-    firstPinned !== null
-      ? `/projects/${encodeURIComponent(firstPinned.projectName)}/${encodeURIComponent(firstPinned.sessionName)}/${firstPinned.id}`
-      : null;
+    firstPinned !== null ? activeConversationHref(firstPinned) : null;
 
   return (
     <header className="topbar">

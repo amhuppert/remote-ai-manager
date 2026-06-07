@@ -189,7 +189,7 @@
   - _Boundary: ConversationSidebar active tab, ConversationSidebarRow_
   - _Depends: 9.2, 10.2_
 
-- [ ] 11.2 (P) Include project conversations in the topbar Needs-you shortcut
+- [x] 11.2 (P) Include project conversations in the topbar Needs-you shortcut
   - Count project rows with status `waiting_for_input` and unread `awaiting` rows using the same attention rules as session rows.
   - Route the first project attention target to the owning project focus URL.
   - Preserve existing badge count and href behavior when the first attention target is a session row.

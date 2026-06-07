@@ -2,6 +2,7 @@ import type {
   ActiveConversation,
   SessionActiveConversation,
 } from "@/lib/active-conversations/schemas";
+import { activeConversationHref } from "@/lib/active-conversations/row-helpers";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -45,12 +46,7 @@ function contextKey(row: ActiveSidebarConversation): string {
 }
 
 function routeHref(row: ActiveSidebarConversation): string {
-  const projectName = encodeURIComponent(row.projectName);
-  const conversationId = encodeURIComponent(row.id);
-  if (row.scope === "session") {
-    return `/projects/${projectName}/${encodeURIComponent(row.sessionName)}/${conversationId}`;
-  }
-  return `/projects/${projectName}?focus=${conversationId}`;
+  return activeConversationHref(row);
 }
 
 function actionScope(row: ActiveSidebarConversation): ActiveRowActionScope {
