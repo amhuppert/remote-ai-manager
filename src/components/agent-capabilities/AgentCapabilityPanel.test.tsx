@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import * as matchers from "@testing-library/jest-dom/matchers";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 
@@ -9,6 +10,8 @@ import {
   ClaudeSkillsPanel,
   CodexPluginsPanel,
 } from "./AgentCapabilityPanel";
+
+expect.extend(matchers);
 
 function baseView(
   overrides: Partial<AgentCapabilityViewResponse> = {},
@@ -346,6 +349,72 @@ describe("AgentCapabilityPanel", () => {
         onScopeChange={onScopeChange}
       />,
     );
+
+    fireEvent.change(screen.getByLabelText("Edited layer"), {
+      target: { value: "project:remote-ai-manager" },
+    });
+    expect(onScopeChange).toHaveBeenCalledWith({
+      level: "project",
+      projectName: "remote-ai-manager",
+    });
+  });
+
+  it("renders project-conversation layer selection without a session layer and preserves direct versus inherited labels", () => {
+    const onScopeChange = vi.fn();
+    render(
+      <AgentCapabilityPanel
+        title="Claude Skills"
+        view={baseView({
+          conversationScope: "project",
+          sessionName: undefined,
+          conversationId: "plc-1",
+        })}
+        layerOptions={[
+          { label: "Global", scope: { level: "global" } },
+          {
+            label: "Project",
+            scope: { level: "project", projectName: "remote-ai-manager" },
+          },
+          {
+            label: "Conversation",
+            scope: {
+              level: "conversation",
+              projectName: "remote-ai-manager",
+              conversationScope: "project",
+              conversationId: "plc-1",
+            },
+          },
+        ]}
+        selectedScope={{
+          level: "conversation",
+          projectName: "remote-ai-manager",
+          conversationScope: "project",
+          conversationId: "plc-1",
+        }}
+        onScopeChange={onScopeChange}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /Conversation/i })).toHaveClass(
+      "agent-capability-level--active",
+    );
+    expect(screen.queryByRole("button", { name: /Session/i })).toBeNull();
+    expect(screen.getByLabelText("Edited layer")).toHaveValue(
+      "project-conversation:remote-ai-manager:plc-1",
+    );
+    expect(screen.getByLabelText("Edited layer")).not.toHaveValue(
+      expect.stringContaining("undefined"),
+    );
+    expect(
+      within(screen.getByTestId("capability-row-reviewer")).getByText(
+        "Set off at Conversation",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("capability-row-planner")).getByText(
+        "Inherits on from Global",
+      ),
+    ).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Edited layer"), {
       target: { value: "project:remote-ai-manager" },

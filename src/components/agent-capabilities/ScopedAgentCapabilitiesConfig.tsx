@@ -10,10 +10,12 @@ import { AgentCapabilitiesConfigurator } from "./AgentCapabilitiesConfigurator";
 import type { AgentCapabilityLayerOption } from "./AgentCapabilityPanel";
 
 type ScopedCapabilityLevel = "project" | "session" | "conversation";
+type ScopedConversationScope = "session" | "project";
 
 interface ScopedAgentCapabilitiesConfigProps {
   level: ScopedCapabilityLevel;
   projectName: string;
+  conversationScope?: ScopedConversationScope;
   sessionName?: string;
   conversationId?: string;
   disabled?: boolean;
@@ -27,6 +29,7 @@ interface ScopedAgentCapabilitiesConfigProps {
 export default function ScopedAgentCapabilitiesConfig({
   level,
   projectName,
+  conversationScope,
   sessionName,
   conversationId,
   disabled,
@@ -52,20 +55,22 @@ export default function ScopedAgentCapabilitiesConfig({
       buildInitialScope({
         level,
         projectName,
+        conversationScope,
         sessionName,
         conversationId,
       }),
-    [conversationId, level, projectName, sessionName],
+    [conversationId, conversationScope, level, projectName, sessionName],
   );
   const layerOptions = useMemo<readonly AgentCapabilityLayerOption[]>(
     () =>
       buildLayerOptions({
         level,
         projectName,
+        conversationScope,
         sessionName,
         conversationId,
       }),
-    [conversationId, level, projectName, sessionName],
+    [conversationId, conversationScope, level, projectName, sessionName],
   );
 
   const title = disabled
@@ -139,11 +144,13 @@ function ScopedAgentCapabilitiesDrawer({
 function buildInitialScope({
   level,
   projectName,
+  conversationScope,
   sessionName,
   conversationId,
 }: {
   level: ScopedCapabilityLevel;
   projectName: string;
+  conversationScope?: ScopedConversationScope;
   sessionName?: string;
   conversationId?: string;
 }): AgentCapabilityScope {
@@ -151,6 +158,15 @@ function buildInitialScope({
   if (level === "session") {
     if (!sessionName) throw new Error("sessionName is required");
     return { level: "session", projectName, sessionName };
+  }
+  if (conversationScope === "project") {
+    if (!conversationId) return { level: "project", projectName };
+    return {
+      level: "conversation",
+      projectName,
+      conversationScope: "project",
+      conversationId,
+    };
   }
   if (!sessionName || !conversationId) {
     throw new Error("sessionName and conversationId are required");
@@ -166,11 +182,13 @@ function buildInitialScope({
 function buildLayerOptions({
   level,
   projectName,
+  conversationScope,
   sessionName,
   conversationId,
 }: {
   level: ScopedCapabilityLevel;
   projectName: string;
+  conversationScope?: ScopedConversationScope;
   sessionName?: string;
   conversationId?: string;
 }): readonly AgentCapabilityLayerOption[] {
@@ -180,6 +198,27 @@ function buildLayerOptions({
   ];
 
   if (level === "project") return options;
+  if (level === "conversation" && conversationScope === "project") {
+    options.push(
+      conversationId
+        ? {
+            label: "Conversation",
+            scope: {
+              level: "conversation",
+              projectName,
+              conversationScope: "project",
+              conversationId,
+            },
+          }
+        : {
+            label: "Conversation",
+            disabled: true,
+            value: `project-conversation:${projectName}:unselected`,
+            detail: "No conversation selected",
+          },
+    );
+    return options;
+  }
   if (!sessionName) throw new Error("sessionName is required");
 
   options.push({

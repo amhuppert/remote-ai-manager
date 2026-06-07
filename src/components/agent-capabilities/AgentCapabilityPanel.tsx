@@ -14,8 +14,10 @@ import type { AgentCapabilityScope } from "@/hooks/use-agent-capabilities";
 
 export interface AgentCapabilityLayerOption {
   label: string;
-  scope: AgentCapabilityScope;
+  scope?: AgentCapabilityScope;
   disabled?: boolean;
+  value?: string;
+  detail?: string;
 }
 
 export interface AgentCapabilityPanelProps {
@@ -85,7 +87,7 @@ export function AgentCapabilityPanel({
   const optionByValue = useMemo(() => {
     const out = new Map<string, AgentCapabilityLayerOption>();
     for (const option of layerOptions) {
-      out.set(scopeValue(option.scope), option);
+      if (option.scope) out.set(scopeValue(option.scope), option);
     }
     return out;
   }, [layerOptions]);
@@ -236,7 +238,9 @@ export function AgentCapabilityLevelSwitcher({
 }): React.JSX.Element {
   const selectedValue = scopeValue(selectedScope);
   const optionByValue = new Map(
-    layerOptions.map((option) => [scopeValue(option.scope), option] as const),
+    layerOptions.flatMap((option) =>
+      option.scope ? ([[scopeValue(option.scope), option]] as const) : [],
+    ),
   );
 
   return (
@@ -244,22 +248,27 @@ export function AgentCapabilityLevelSwitcher({
       <span className="agent-capability-levels__label">Editing at</span>
       <div className="agent-capability-levels__stones">
         {layerOptions.map((option) => {
-          const value = scopeValue(option.scope);
-          const active = value === selectedValue;
+          const value = layerOptionValue(option);
+          const active = option.scope
+            ? scopeValue(option.scope) === selectedValue
+            : false;
           return (
             <button
               key={value}
               type="button"
               className={`agent-capability-level${active ? " agent-capability-level--active" : ""}`}
-              disabled={option.disabled}
+              disabled={option.disabled || !option.scope}
               aria-pressed={active}
-              onClick={() => onScopeChange(option.scope)}
+              onClick={() => {
+                if (option.scope) onScopeChange(option.scope);
+              }}
             >
               <span className="agent-capability-level__name">
-                {levelLabel(option.scope.level)}
+                {option.label}
               </span>
               <span className="agent-capability-level__detail">
-                {scopeDetail(option.scope)}
+                {option.detail ??
+                  (option.scope ? scopeDetail(option.scope) : "")}
               </span>
             </button>
           );
@@ -272,14 +281,14 @@ export function AgentCapabilityLevelSwitcher({
           value={selectedValue}
           onChange={(event) => {
             const option = optionByValue.get(event.target.value);
-            if (option) onScopeChange(option.scope);
+            if (option?.scope) onScopeChange(option.scope);
           }}
         >
           {layerOptions.map((option) => (
             <option
-              key={scopeValue(option.scope)}
-              value={scopeValue(option.scope)}
-              disabled={option.disabled}
+              key={layerOptionValue(option)}
+              value={layerOptionValue(option)}
+              disabled={option.disabled || !option.scope}
             >
               {option.label}
             </option>
@@ -549,7 +558,15 @@ function scopeValue(scope: AgentCapabilityScope): string {
   if (scope.level === "session") {
     return `session:${scope.projectName}:${scope.sessionName}`;
   }
+  if (scope.conversationScope === "project") {
+    return `project-conversation:${scope.projectName}:${scope.conversationId}`;
+  }
   return `conversation:${scope.projectName}:${scope.sessionName}:${scope.conversationId}`;
+}
+
+function layerOptionValue(option: AgentCapabilityLayerOption): string {
+  if (option.scope) return scopeValue(option.scope);
+  return option.value ?? `disabled:${option.label}`;
 }
 
 function levelLabel(level: AgentCapabilityScope["level"]): string {

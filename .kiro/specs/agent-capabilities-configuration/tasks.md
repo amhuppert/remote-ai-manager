@@ -351,7 +351,7 @@ Implementation follows red-green-refactor by default. Each task should add focus
   - _Depends: 11.3_
   - _Requirements: 15.1, 15.2, 18.1, 18.3, 18.4, 20.1_
 
-- [ ] 13.2 Extend scoped capability drawer for project-conversation layer options
+- [x] 13.2 Extend scoped capability drawer for project-conversation layer options
   - Add project-conversation layer options that show Global, Project, and Conversation scopes for the selected active PLC.
   - Show direct project-conversation values separately from inherited project and global values through the existing panel view model.
   - Prevent conversation-layer edits when no project conversation is selected.
