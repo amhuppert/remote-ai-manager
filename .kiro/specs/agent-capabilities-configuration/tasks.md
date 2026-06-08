@@ -288,7 +288,7 @@ Implementation follows red-green-refactor by default. Each task should add focus
   - Run typecheck, lint, and focused test suites needed for the feature before marking implementation complete.
   - _Requirements: 1.3, 1.4, 2.4, 5.1, 5.3, 6.3, 8.1, 8.2, 8.3, 9.1, 9.2, 10.1, 10.2, 15.1, 16.1_
 
-- [ ] 11. Extend capability scope and persistence for project conversations
+- [x] 11. Extend capability scope and persistence for project conversations
 
 - [x] 11.1 Add project-conversation capability scope schemas and invalidation identity
   - Extend capability scope, event, and invalidation identity so session conversations and project conversations are distinct targets while both keep using the `conversation` layer.
@@ -313,7 +313,7 @@ Implementation follows red-green-refactor by default. Each task should add focus
   - _Depends: 11.1, 11.2_
   - _Requirements: 6.1, 6.4, 7.4, 15.1, 15.2, 18.3, 18.4, 20.1, 20.2_
 
-- [ ] 12. Extend project-conversation runtime composition and apply
+- [x] 12. Extend project-conversation runtime composition and apply
 
 - [x] 12.1 Compose Claude and Codex capability config for project conversation starts
   - Let runtime composition accept project-conversation targets with repo-root worktree paths and fixed conversation backend identity.
@@ -341,7 +341,7 @@ Implementation follows red-green-refactor by default. Each task should add focus
   - _Depends: 12.1, 12.2_
   - _Requirements: 8.1, 8.2, 8.3, 10.1, 13.3, 19.1, 19.2, 19.5, 20.3_
 
-- [ ] 13. Wire project-conversation capability editing in the frontend
+- [x] 13. Wire project-conversation capability editing in the frontend
 
 - [x] 13.1 Add project-conversation query keys, URLs, and SSE invalidation
   - Extend capability hooks and query keys with project-conversation scope.
@@ -368,7 +368,7 @@ Implementation follows red-green-refactor by default. Each task should add focus
   - _Depends: 13.2_
   - _Requirements: 18.1, 18.5, 20.3, 20.4_
 
-- [ ] 14. Validate PLC capability behavior and regressions
+- [x] 14. Validate PLC capability behavior and regressions
 
 - [x] 14.1 Add PLC resolver, persistence, route, and runtime regression coverage
   - Cover project-conversation inheritance without a session layer, conversation override precedence, clear fallback, and session-conversation cascade preservation.
@@ -386,7 +386,7 @@ Implementation follows red-green-refactor by default. Each task should add focus
   - _Depends: 11.3, 12.3, 13.2_
   - _Requirements: 3.2, 13.3, 16.1, 16.2, 16.3, 19.5, 20.2_
 
-- [ ] 14.3 Run end-to-end PLC acceptance validation
+- [x] 14.3 Run end-to-end PLC acceptance validation
   - Exercise a complete PLC flow: open selected PLC capability config, inherit project capability state, set a conversation override, clear it, and observe fallback.
   - Verify Claude PLC idle apply and Codex PLC next-turn staging match session-conversation user-visible semantics.
   - Verify cross-client invalidation and convergence after project-conversation capability edits.
