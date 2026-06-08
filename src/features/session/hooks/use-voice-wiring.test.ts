@@ -14,6 +14,7 @@ vi.mock(
 
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
+import { useToastStoreForTesting } from "@/stores/toast.store";
 import { useVoiceWiring } from "./use-voice-wiring";
 
 describe("useVoiceWiring", () => {
@@ -141,6 +142,45 @@ describe("useVoiceWiring", () => {
     });
 
     expect(handleSendPrompt).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces a voice error as a toast so dropped recordings are not lost silently", async () => {
+    useToastStoreForTesting.setState({ toasts: [] });
+
+    let capturedOnError: ((error: string) => void) | undefined;
+    vi.mocked(useVoiceRecorder).mockImplementation(((opts: {
+      onError: (error: string) => void;
+    }) => {
+      capturedOnError = opts.onError;
+      return {
+        isRecording: false,
+        isProcessing: false,
+        elapsedTime: 0,
+        isAvailable: true,
+        toggleRecording: vi.fn(),
+        stopRecording: vi.fn(),
+      };
+    }) as typeof useVoiceRecorder);
+
+    renderHook(() => {
+      const promptTextRef = useRef("");
+      const editorRef = useRef(null);
+      const fireAndForgetRef = useRef(true);
+      return useVoiceWiring({
+        projectName: "p",
+        promptTextRef,
+        editorRef,
+        fireAndForgetRef,
+        handleSendPrompt: async () => {},
+      });
+    });
+
+    await act(async () => {
+      capturedOnError!("No audio recorded");
+    });
+
+    const { toasts } = useToastStoreForTesting.getState();
+    expect(toasts.map((t) => t.message)).toContain("No audio recorded");
   });
 
   it("stopAndSubmit is a no-op when not recording", () => {
