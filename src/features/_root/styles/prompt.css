@@ -63,6 +63,54 @@
 }
 
 /* ============================================================
+   Queued-message Cancel Strip — pending entries awaiting delivery
+   ============================================================ */
+
+.queued-cancel-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-sm);
+}
+
+.queued-cancel-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  max-width: 100%;
+  padding: var(--space-2xs) var(--space-sm);
+  border: 1px solid var(--border-subtle);
+  border-radius: 9999px;
+  background: var(--bg-raised);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+.queued-cancel-chip__preview {
+  overflow: hidden;
+  max-width: 220px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.queued-cancel-chip__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.queued-cancel-chip__remove:hover {
+  color: var(--red);
+}
+
+/* ============================================================
    Mobile Prompt Toolbar — compact toolbar + bottom-sheet menus
    ============================================================ */
 

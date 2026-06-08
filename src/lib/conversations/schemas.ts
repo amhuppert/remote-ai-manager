@@ -10,6 +10,23 @@ import {
   agentCapabilityRuntimeApplicationStateSchema,
 } from "@/lib/agent-capabilities/schemas";
 import { debugModeStateSchema } from "@/lib/debug-log/schemas";
+import {
+  messageContentBlockSchema,
+  toolResultMetricsSchema,
+  type MessageContentBlock,
+  type ToolResultMetrics,
+} from "./message-content-schemas";
+import {
+  pendingQueuedMessageSchema,
+  queuedMessageViewSchema,
+} from "./message-queue-schemas";
+
+export {
+  messageContentBlockSchema,
+  toolResultMetricsSchema,
+  type MessageContentBlock,
+  type ToolResultMetrics,
+};
 
 export const conversationStatusSchema = z
   .enum(["new", "awaiting", "running", "waiting_for_input"])
@@ -25,74 +42,6 @@ export type ConversationStatus =
   | "awaiting"
   | "running"
   | "waiting_for_input";
-
-export const toolResultMetricsSchema = z.object({
-  lineCount: z.number().int().nonnegative().optional(),
-  fileCount: z.number().int().nonnegative().optional(),
-  matchCount: z.number().int().nonnegative().optional(),
-  byteCount: z.number().int().nonnegative().optional(),
-  exitCode: z.number().int().optional(),
-});
-export type ToolResultMetrics = z.infer<typeof toolResultMetricsSchema>;
-
-// Forward reference: debugModePhaseSchema is defined in @/lib/debug-log/schemas.
-// We inline its values here so messageContentBlockSchema can be defined first
-// without a hoisting cycle.
-const debugModePhaseLiterals = z.enum([
-  "hypothesizing",
-  "awaiting_reproduction",
-  "analyzing_evidence",
-  "awaiting_verification",
-  "cleanup_instrumentation",
-]);
-
-export const messageContentBlockSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("text"), text: z.string() }),
-  z.object({
-    type: z.literal("tool_use"),
-    id: z.string().optional(),
-    name: z.string(),
-    input: z.record(z.string(), z.unknown()).optional(),
-  }),
-  z.object({
-    type: z.literal("tool_result"),
-    tool_use_id: z.string(),
-    content: z.string().optional(),
-    isError: z.boolean().optional(),
-    metrics: toolResultMetricsSchema.optional(),
-  }),
-  z.object({
-    type: z.literal("command"),
-    name: z.string(),
-    args: z.string().nullable(),
-  }),
-  z.object({
-    type: z.literal("image"),
-    mediaType: z.string(),
-    base64Data: z.string(),
-  }),
-  z.object({
-    type: z.literal("image_ref"),
-    mediaType: z.string(),
-    imagePath: z.string(),
-  }),
-  z.object({
-    type: z.literal("image_marker"),
-    index: z.number().int().positive(),
-    mediaType: z.string(),
-    imagePath: z.string(),
-  }),
-  // Structured debug-mode output (hypothesis list, evidence analysis, fix
-  // result, cleanup result). The payload shape varies per phase; the renderer
-  // dispatches on `phase` and gracefully degrades when fields are missing
-  // (e.g., Codex schema-divergent reply).
-  z.object({
-    type: z.literal("debug_structured"),
-    phase: debugModePhaseLiterals,
-    payload: z.unknown(),
-  }),
-]);
-export type MessageContentBlock = z.infer<typeof messageContentBlockSchema>;
 
 export const transcriptMessageOriginSchema = z.object({
   source: z.enum(["user", "workflow"]),
@@ -230,6 +179,10 @@ export const conversationStateSchema = z.object({
   agentCapabilityOverrides: agentCapabilityOverridesSchema.optional(),
   agentCapabilitiesRuntime:
     agentCapabilityRuntimeApplicationStateSchema.optional(),
+  // Durable per-conversation queue of follow-up messages awaiting delivery.
+  // `.default([])` migrates conversations stored before this field existed,
+  // so no data backfill is required.
+  pendingQueue: z.array(pendingQueuedMessageSchema).default([]),
 });
 export type ConversationState = z.infer<typeof conversationStateSchema>;
 
@@ -405,5 +358,19 @@ export const messageQueuedEventSchema = z.object({
   sessionName: z.string(),
   conversationId: z.string(),
   text: z.string(),
+  // The durable queued message projection. Optional so the legacy producer in
+  // prompt/queue.ts (rewritten in a later task) still validates without it.
+  message: queuedMessageViewSchema.optional(),
 });
 export type MessageQueuedEvent = z.infer<typeof messageQueuedEventSchema>;
+
+export const messageQueueUpdatedEventSchema = z.object({
+  type: z.literal("message-queue-updated"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  conversationId: z.string(),
+  message: queuedMessageViewSchema,
+});
+export type MessageQueueUpdatedEvent = z.infer<
+  typeof messageQueueUpdatedEventSchema
+>;

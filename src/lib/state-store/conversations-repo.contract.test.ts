@@ -679,3 +679,31 @@ describe("conversations-repo findAll caching", () => {
     expect(thirdDrop?.conversation).not.toBe(firstDrop!.conversation);
   });
 });
+
+describe("conversations-repo pendingQueue durability", () => {
+  it("round-trips a pending queued message through upsert/findByKey", () => {
+    const entry = {
+      id: "q1",
+      content: [{ type: "text" as const, text: "queued follow-up" }],
+      status: "pending" as const,
+      enqueuedAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      deliveryStartedAt: null,
+      deliveredAt: null,
+      cancelledAt: null,
+      failedAt: null,
+      deliveryAttemptId: null,
+      attemptCount: 0,
+      error: null,
+    };
+
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-queue", pendingQueue: [entry] }),
+    );
+
+    const loaded = repo.findByKey(PROJECT_PATH, SESSION_NAME, "c-queue");
+    expect(loaded?.pendingQueue.map((e) => e.id)).toEqual(["q1"]);
+  });
+});

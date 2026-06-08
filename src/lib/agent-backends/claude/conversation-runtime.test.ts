@@ -15,6 +15,7 @@ import {
   type ClaudeFactoryDeps,
 } from "./conversation-runtime";
 import { CLAUDE_AGENT_SUPPRESSION_STRATEGY } from "@/lib/agent-capabilities/claude-agent-suppression";
+import { backendCapabilities } from "../capabilities-descriptor";
 import type { ConversationBackendEvent } from "../conversation";
 import {
   isUndeliveredQuerySessionError,
@@ -1768,6 +1769,329 @@ describe("ClaudeConversationRuntime — background-task wait barrier (sendTurn)"
     expect(result.backgroundWait!.timedOut).toBe(true);
     expect(result.backgroundWait!.waitedTaskIds).toEqual(["task-a"]);
     expect(result.backgroundWait!.settledTaskIds).toEqual([]);
+
+    runtime.close();
+  });
+});
+
+describe("ClaudeConversationRuntime — sendTurn input acceptance", () => {
+  it("emits input_accepted on the first raw message, before the first provider_event and any content", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-accept-order",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const eventTypes: ConversationBackendEvent["type"][] = [];
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "hello",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: (event: ConversationBackendEvent) => {
+        eventTypes.push(event.type);
+      },
+    });
+
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-1",
+      uuid: "u-asst",
+      message: { content: [{ type: "text", text: "answer" }] },
+    } as unknown as SDKMessage);
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u-result",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 1,
+      result: "answer",
+      is_error: false,
+    } as unknown as SDKMessage);
+
+    await turnPromise;
+
+    const acceptedIdx = eventTypes.indexOf("input_accepted");
+    const firstProviderIdx = eventTypes.indexOf("provider_event");
+    const firstContentIdx = eventTypes.indexOf("content");
+
+    expect(acceptedIdx).toBeGreaterThanOrEqual(0);
+    expect(firstProviderIdx).toBeGreaterThanOrEqual(0);
+    expect(acceptedIdx).toBeLessThan(firstProviderIdx);
+    expect(firstContentIdx).toBeGreaterThan(acceptedIdx);
+
+    runtime.close();
+  });
+
+  it("emits input_accepted exactly once even when many raw messages arrive", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-accept-once",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const acceptedEvents: ConversationBackendEvent[] = [];
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "hello",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: (event: ConversationBackendEvent) => {
+        if (event.type === "input_accepted") acceptedEvents.push(event);
+      },
+    });
+
+    mock.pushMessage({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-1",
+      uuid: "u-init",
+      tools: [],
+      mcp_servers: [],
+      model: "claude",
+    } as unknown as SDKMessage);
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-1",
+      uuid: "u-asst-1",
+      message: { content: [{ type: "text", text: "first" }] },
+    } as unknown as SDKMessage);
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-1",
+      uuid: "u-asst-2",
+      message: { content: [{ type: "text", text: "second" }] },
+    } as unknown as SDKMessage);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u-result",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 1,
+      result: "second",
+      is_error: false,
+    } as unknown as SDKMessage);
+
+    await turnPromise;
+
+    expect(acceptedEvents).toHaveLength(1);
+
+    runtime.close();
+  });
+
+  it("does not emit input_accepted when dispatch fails before any raw message", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-accept-dispatch-fail",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    // Complete a first turn so the session moves past first-prompt state.
+    const turn1 = runtime.sendTurn({
+      promptText: "first",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn1;
+
+    // Dispatch of the second turn rejects before any raw message is delivered.
+    mock.query.streamInput.mockRejectedValue(
+      tagQuerySessionError(
+        new Error("ProcessTransport is not ready for writing"),
+        QUERY_SESSION_ERROR_CODES.promptNotDelivered,
+      ),
+    );
+
+    const acceptedEvents: ConversationBackendEvent[] = [];
+
+    try {
+      await runtime.sendTurn({
+        promptText: "second",
+        imageRefs: [],
+        sessionInstructions: [],
+        autonomous: false,
+        signal: new AbortController().signal,
+        onEvent: (event: ConversationBackendEvent) => {
+          if (event.type === "input_accepted") acceptedEvents.push(event);
+        },
+      });
+    } catch {
+      // The retryable dispatch error is re-thrown; acceptance must not fire.
+    }
+
+    expect(acceptedEvents).toHaveLength(0);
+
+    runtime.close();
+  });
+});
+
+describe("ClaudeConversationRuntime — queueUserInput live acceptance", () => {
+  const textBlock = { type: "text" as const, text: "queued follow-up" };
+
+  it("sources capabilities from the descriptor", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-queue-caps",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    expect(runtime.capabilities).toEqual(backendCapabilities("claude"));
+    expect(runtime.capabilities.queueWhileRunning).toBe(true);
+
+    runtime.close();
+  });
+
+  it("resolves queueUserInput only after streamInput accepts the input (the observable)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-queue-pending",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    let acceptInput: (() => void) | null = null;
+    const streamInputGate = new Promise<void>((resolve) => {
+      acceptInput = resolve;
+    });
+    mock.query.streamInput.mockReturnValue(streamInputGate);
+
+    let resolved = false;
+    const queuePromise = runtime.queueUserInput!({ content: [textBlock] }).then(
+      () => {
+        resolved = true;
+      },
+    );
+
+    // Give the microtask queue a chance to settle: queueUserInput must still be
+    // pending because streamInput has not yet accepted the input.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(resolved).toBe(false);
+    expect(mock.query.streamInput).toHaveBeenCalledTimes(1);
+
+    // Acceptance: streamInput resolves, so queueUserInput must now resolve.
+    acceptInput!();
+    await queuePromise;
+    expect(resolved).toBe(true);
+
+    runtime.close();
+  });
+
+  it("rejects without calling streamInput when the runtime is dead", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-queue-dead",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    runtime.close();
+    expect(runtime.status).toBe("dead");
+
+    await expect(
+      runtime.queueUserInput!({ content: [textBlock] }),
+    ).rejects.toThrow();
+    expect(mock.query.streamInput).not.toHaveBeenCalled();
+  });
+
+  it("propagates a streamInput rejection so the caller can leave the row pending", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-queue-reject",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const rejection = tagQuerySessionError(
+      new Error("ProcessTransport is not ready for writing"),
+      QUERY_SESSION_ERROR_CODES.promptNotDelivered,
+    );
+    mock.query.streamInput.mockRejectedValue(rejection);
+
+    let caught: unknown;
+    try {
+      await runtime.queueUserInput!({ content: [textBlock] });
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBe(rejection);
+    expect(isUndeliveredQuerySessionError(caught)).toBe(true);
 
     runtime.close();
   });

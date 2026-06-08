@@ -155,6 +155,7 @@ function makeTestMachine(overrides?: {
   prepareTurn?: any;
   executePrompt?: any;
   verifyCleanup?: any;
+  drainPendingQueue?: () => void;
 }) {
   /* eslint-enable @typescript-eslint/no-explicit-any */
   return conversationMachine.provide({
@@ -171,6 +172,9 @@ function makeTestMachine(overrides?: {
       broadcastDebugModeStatus: () => {},
       releaseResources: () => {},
       dispatchPushNotification: () => {},
+      ...(overrides?.drainPendingQueue
+        ? { drainPendingQueue: overrides.drainPendingQueue }
+        : {}),
     },
   });
 }
@@ -2284,6 +2288,131 @@ describe("conversationMachine", () => {
       expect(snap.context.promptCount).toBe(2);
       expect(snap.context.totals.totalCostUsd).toBeCloseTo(0.03, 5);
       expect(snap.context.totals.totalTurns).toBe(2);
+    });
+  });
+
+  describe("pending-queue drain at settled points", () => {
+    it("invokes drainPendingQueue on idle entry at startup", () => {
+      const drainPendingQueue = vi.fn();
+      const machine = makeTestMachine({ drainPendingQueue });
+      const actor = createActor(machine, { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
+
+      // idle is the initial state, so entering it at startup fires the drain.
+      expect(actor.getSnapshot().value).toBe("idle");
+      expect(drainPendingQueue).toHaveBeenCalledTimes(1);
+    });
+
+    it("invokes drainPendingQueue again when a turn settles back to idle", async () => {
+      const drainPendingQueue = vi.fn();
+      const machine = makeTestMachine({ drainPendingQueue });
+      const actor = createActor(machine, { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
+
+      expect(drainPendingQueue).toHaveBeenCalledTimes(1);
+
+      // Drive a full turn: idle → acquiringResources → executing →
+      // finalizingTurn → idle. The transient finalizingTurn resolves to idle,
+      // re-entering idle and firing the drain a second time.
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Hello",
+        streamId: "s1",
+      });
+      await waitForState(actor, "idle");
+
+      expect(actor.getSnapshot().value).toBe("idle");
+      expect(drainPendingQueue).toHaveBeenCalledTimes(2);
+    });
+
+    it("accepts EXTERNAL_TURN_STARTED at the settle boundary and routes to externalExecuting without dropping it", async () => {
+      const machine = makeTestMachine();
+      const actor = createActor(machine, { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
+
+      // Drive a turn to completion so the transient finalizingTurn settles into
+      // idle. A live-delivery continuation arriving "as the turn settles" is
+      // handled in idle (the resting state), not dropped.
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Hello",
+        streamId: "s1",
+      });
+      await waitForState(actor, "idle");
+      expect(actor.getSnapshot().value).toBe("idle");
+
+      actor.send({ type: "EXTERNAL_TURN_STARTED" });
+
+      expect(actor.getSnapshot().value).toBe("externalExecuting");
+      expect(actor.getSnapshot().context.status).toBe("running");
+    });
+  });
+
+  describe("queuedDelivery threading", () => {
+    it("threads SUBMIT_PROMPT.queuedDelivery into executePrompt input", async () => {
+      let capturedInput: ExecutePromptInput | null = null;
+      const executePrompt = fromPromise<PromptActorResult, ExecutePromptInput>(
+        async ({ input }) => {
+          capturedInput = input;
+          return successResult();
+        },
+      );
+
+      const machine = makeTestMachine({ executePrompt });
+      const actor = createActor(machine, { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
+      await waitForState(actor, "idle");
+
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "drained",
+        streamId: "internal-1",
+        queuedDelivery: {
+          messageIds: ["m1", "m2"],
+          deliveryAttemptId: "att-7",
+        },
+      });
+
+      await waitForState(actor, "executing");
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(capturedInput).not.toBeNull();
+      expect(capturedInput!.queuedDelivery).toEqual({
+        messageIds: ["m1", "m2"],
+        deliveryAttemptId: "att-7",
+      });
+    });
+
+    it("leaves executePrompt input.queuedDelivery undefined for a normal turn", async () => {
+      let capturedInput: ExecutePromptInput | null = null;
+      const executePrompt = fromPromise<PromptActorResult, ExecutePromptInput>(
+        async ({ input }) => {
+          capturedInput = input;
+          return successResult();
+        },
+      );
+
+      const machine = makeTestMachine({ executePrompt });
+      const actor = createActor(machine, { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
+      await waitForState(actor, "idle");
+
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "normal",
+        streamId: "internal-2",
+      });
+
+      await waitForState(actor, "executing");
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(capturedInput).not.toBeNull();
+      expect(capturedInput!.queuedDelivery).toBeUndefined();
     });
   });
 });

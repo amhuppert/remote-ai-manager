@@ -28,6 +28,8 @@ import {
   conversationRenamedEventSchema,
   conversationArchivedEventSchema,
   askQuestionEventSchema,
+  messageQueuedEventSchema,
+  messageQueueUpdatedEventSchema,
 } from "@/lib/conversations/schemas";
 import {
   debugLogReceivedEventSchema,
@@ -340,6 +342,37 @@ export default function NotificationListener(): null {
 
     es.addEventListener("ask-question", (event) => {
       const parsed = askQuestionEventSchema.safeParse(JSON.parse(event.data));
+      if (!parsed.success) return;
+      const d = parsed.data;
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.active(),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(d.projectName, d.sessionName),
+      });
+    });
+
+    es.addEventListener("message-queued", (event) => {
+      const parsed = messageQueuedEventSchema.safeParse(JSON.parse(event.data));
+      if (!parsed.success) return;
+      const d = parsed.data;
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.active(),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(d.projectName, d.sessionName),
+      });
+      // Queue pending events refresh ConversationState.pendingQueue via the
+      // session-detail cache; they must NOT touch conversationKeys.messages —
+      // a queued message is not yet a transcript row (req 7.3). The transcript
+      // cache is written only by the message-appended handler once delivery
+      // produces a real message.
+    });
+
+    es.addEventListener("message-queue-updated", (event) => {
+      const parsed = messageQueueUpdatedEventSchema.safeParse(
+        JSON.parse(event.data),
+      );
       if (!parsed.success) return;
       const d = parsed.data;
       void queryClient.invalidateQueries({

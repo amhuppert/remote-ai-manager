@@ -157,7 +157,8 @@ export function resolveSessionStatusScope(
         status: "paused",
       };
     }
-    case "message-queued": {
+    case "message-queued":
+    case "message-queue-updated": {
       return {
         scope: "conversation",
         scopeId: pickString(e.conversationId) ?? FALLBACK_SCOPE_ID,

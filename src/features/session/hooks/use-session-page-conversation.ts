@@ -61,7 +61,10 @@ export function useSessionPageConversation(
     collab,
   } = args;
 
-  const displayMessages = useDisplayMessages(messages);
+  const displayMessages = useDisplayMessages(
+    messages,
+    activeConversation?.pendingQueue,
+  );
   const { hiddenMessageIndex } = collab;
 
   const rows = useMemo(

@@ -58,6 +58,7 @@ import {
   type SessionMcpServerParams,
 } from "@/lib/mcp-gateway/session-server";
 import { composeClaudeAgentCanUseTool } from "@/lib/agent-capabilities/claude-agent-suppression";
+import { backendCapabilities } from "@/lib/agent-backends/capabilities-descriptor";
 
 const logger = createLogger("claude:conversation-runtime");
 
@@ -87,14 +88,8 @@ const KNOWN_EFFORT_LEVELS = claudeEffortLevelSchema.options;
 
 class ClaudeConversationRuntime implements ConversationBackendRuntime {
   readonly backend: AgentBackendId = "claude";
-  readonly capabilities: ConversationBackendCapabilities = {
-    queueWhileRunning: true,
-    askUserQuestion: true,
-    preciseFork: true,
-    portableMcpAtStart: true,
-    portableMcpBetweenTurns: true,
-    contextWindowMetrics: true,
-  };
+  readonly capabilities: ConversationBackendCapabilities =
+    backendCapabilities("claude");
 
   readonly modelId: string | undefined;
   readonly reasoningEffort: string | undefined;
@@ -262,8 +257,25 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
     // can still surface the live SDK session for the next turn's `resume:`.
     let lastKnownSessionId: string | null = null;
 
+    // Emit `input_accepted` exactly once, on the first raw provider message and
+    // before the first provider_event. Claude writes assistant transcript via
+    // the actor's provider_event path DURING sendPrompt, so the queued-delivery
+    // user transcript entry must be appended before any assistant content —
+    // hence acceptance precedes the first provider_event rather than firing
+    // after sendPrompt resolves. A dispatch failure delivers no raw message, so
+    // the flag stays false and acceptance never fires (the actor returns the
+    // queue row to pending for retry).
+    let inputAcceptedEmitted = false;
+
     const emit = (event: string, data: unknown) => {
       if (event === "__raw_message") {
+        if (!inputAcceptedEmitted) {
+          inputAcceptedEmitted = true;
+          input.onEvent({ type: "input_accepted" });
+          logger.debug("claude-runtime.input_accepted", {
+            conversationId: this.querySession.conversationId,
+          });
+        }
         const msg = data as { session_id?: string } | null;
         if (msg && typeof msg.session_id === "string" && msg.session_id) {
           lastKnownSessionId = msg.session_id;
@@ -364,10 +376,26 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
   }
 
   async queueUserInput(input: ConversationQueuedUserInput): Promise<void> {
+    const conversationId = this.querySession.conversationId;
+
+    // Gate live delivery on the session being able to accept input. A dead
+    // session cannot accept a streamInput, so reject (rather than silently
+    // resolve) — the caller leaves the queue row pending for next-turn drain.
+    if (this._status === "dead" || this.querySession.status === "dead") {
+      logger.warn("claude-runtime.queue_input_rejected_dead", {
+        conversationId,
+      });
+      throw new Error("Cannot queue input: Claude runtime is closed");
+    }
+
     logger.debug("claude-runtime.queue_input", {
-      conversationId: this.querySession.conversationId,
+      conversationId,
       blockCount: input.content.length,
     });
+
+    // Resolution is gated on streamInput resolving: that is the live
+    // input-acceptance signal. A streamInput rejection (e.g. tagged
+    // promptNotDelivered) propagates so the caller leaves the row pending.
     await this.querySession.query.streamInput(wrapAsUserMessage(input.content));
   }
 

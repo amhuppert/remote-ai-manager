@@ -14,7 +14,7 @@
  *     preserved).
  *
  * Concretely, this file verifies:
- *  - `queueMessage` (message-queued) publishes through the shared bus.
+ *  - the message queue service `enqueue` (message-queued) publishes through the shared bus.
  *  - `createGraphWorkflowExecutionEventPublisher` publishes graph workflow
  *    status events through the shared bus when no `broadcast` override is
  *    given.
@@ -51,7 +51,14 @@ import type {
 } from "./artifact-registry";
 import { ArtifactRequiredFailure } from "./artifact-registry";
 import type { SSEEvent } from "@/lib/api/sse-events";
-import { queueMessage, type QueueMessageDeps } from "@/lib/prompt/queue";
+import {
+  createMessageQueueService,
+  type MessageQueueServiceDeps,
+} from "@/lib/conversations/message-queue-service";
+import {
+  conversationStateSchema,
+  type ConversationState,
+} from "@/lib/conversations/schemas";
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import { createScriptValidatorRunner } from "@/lib/workflow-graph/script-validator-runner";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
@@ -115,7 +122,7 @@ describe("section 4 production paths — migrated publishers go through the shar
     await fs.rm(workingDir, { recursive: true, force: true });
   });
 
-  it("queueMessage broadcasts its message-queued event through the shared default session status bus (envelope to subscribers, payload to wire)", async () => {
+  it("the queue service enqueue broadcasts its message-queued event through the shared default session status bus (envelope to subscribers, payload to wire)", async () => {
     const wire = vi.fn<(event: SSEEvent) => void>();
     setDefaultSessionStatusBusBroadcastForTesting(wire);
 
@@ -124,39 +131,78 @@ describe("section 4 production paths — migrated publishers go through the shar
       envelopes.push(envelope);
     });
 
-    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
-    const productionDeps: Partial<QueueMessageDeps> = {
-      getRuntime: vi
-        .fn()
-        .mockReturnValue({ queueUserInput: queueUserInputMock }),
-      appendTranscriptEntry: vi.fn().mockResolvedValue(undefined),
+    // In-memory conversation backing the real enqueue transform — no DB.
+    const conversation: ConversationState = conversationStateSchema.parse({
+      id: "conv-prod-1",
+      transcriptPath: null,
+      status: "running",
+      promptCount: 0,
+      createdAt: "2026-04-28T00:00:00.000Z",
+      lastActivityAt: "2026-04-28T00:00:00.000Z",
+    });
+
+    const serviceDeps: MessageQueueServiceDeps = {
+      async mutateConversation(
+        _projectPath,
+        _sessionName,
+        _conversationId,
+        _label,
+        mutate,
+      ) {
+        // Apply the real production mutate to the backing object so the test
+        // exercises the production enqueue path, not a mock of it.
+        return mutate(conversation);
+      },
+      async getConversation() {
+        return conversation;
+      },
+      getProjectDisplayName() {
+        return "p";
+      },
+      // Route this production broadcast through the REAL shared default bus.
+      broadcast: (event) => {
+        publishSessionStatus(event);
+      },
+      now() {
+        return "2026-04-28T00:00:00.000Z";
+      },
+      newId() {
+        return "queued-1";
+      },
     };
 
-    await queueMessage({
-      conversationId: "conv-prod-1",
-      projectName: "p",
+    const service = createMessageQueueService(serviceDeps);
+
+    const entry = await service.enqueue({
+      projectPath: "/proj/p",
       sessionName: "s",
-      text: "hello",
-      deps: productionDeps,
+      conversationId: "conv-prod-1",
+      content: [{ type: "text", text: "hello" }],
     });
 
     unsubscribe();
 
+    expect(entry.id).toBe("queued-1");
+
     expect(wire).toHaveBeenCalledTimes(1);
-    expect(wire.mock.calls[0]?.[0]).toEqual({
-      type: "message-queued",
-      projectName: "p",
-      sessionName: "s",
-      conversationId: "conv-prod-1",
-      text: "hello",
-    });
+    const wireEvent = wire.mock.calls[0]?.[0];
+    if (wireEvent?.type !== "message-queued") {
+      throw new Error("expected a message-queued event on the wire");
+    }
+    expect(wireEvent.projectName).toBe("p");
+    expect(wireEvent.sessionName).toBe("s");
+    expect(wireEvent.conversationId).toBe("conv-prod-1");
+    // The expanded payload carries both the structured view and the text.
+    expect(wireEvent.text).toBe("hello");
+    expect(wireEvent.message?.id).toBe("queued-1");
+    expect(wireEvent.message?.status).toBe("pending");
 
     expect(envelopes).toHaveLength(1);
     const envelope = envelopes[0];
     expect(envelope?.scope).toBe("conversation");
     expect(envelope?.scopeId).toBe("conv-prod-1");
     expect(envelope?.status).toBe("running");
-    expect(envelope?.payload).toEqual(wire.mock.calls[0]?.[0]);
+    expect(envelope?.payload).toEqual(wireEvent);
   });
 
   it("graph workflow execution event publisher routes its events through the shared default session status bus when no broadcast override is supplied", () => {

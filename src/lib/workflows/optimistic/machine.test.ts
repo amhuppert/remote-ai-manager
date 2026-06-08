@@ -49,6 +49,7 @@ const testSession: SessionState = {
       agentBackend: "claude" as const,
       backendRef: null,
       unread: false,
+      pendingQueue: [],
     },
   ],
   source: "cc",

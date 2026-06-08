@@ -41,6 +41,34 @@ describe("resolveSessionStatusScope", () => {
     expect(
       resolveSessionStatusScope({ type: "notification-created" }).scope,
     ).toBe("notification");
+    expect(resolveSessionStatusScope({ type: "message-queued" }).scope).toBe(
+      "conversation",
+    );
+    expect(
+      resolveSessionStatusScope({ type: "message-queue-updated" }).scope,
+    ).toBe("conversation");
+  });
+
+  it("routes both queue events to the conversation scope using conversationId", () => {
+    const queued = resolveSessionStatusScope({
+      type: "message-queued",
+      conversationId: "c1",
+    });
+    expect(queued).toEqual({
+      scope: "conversation",
+      scopeId: "c1",
+      status: "running",
+    });
+
+    const updated = resolveSessionStatusScope({
+      type: "message-queue-updated",
+      conversationId: "c1",
+    });
+    expect(updated).toEqual({
+      scope: "conversation",
+      scopeId: "c1",
+      status: "running",
+    });
   });
 
   it("passes scope, scopeId, and status through directly for scoped-status events (collaboration scope)", () => {

@@ -8,6 +8,10 @@ import {
   type SetStateAction,
 } from "react";
 import { findBusyOtherConversations } from "@/lib/sessions/derived";
+import {
+  queueCapabilityForBackend as defaultQueueCapabilityForBackend,
+  type QueueCapability,
+} from "@/lib/agent-backends/capabilities-descriptor";
 import type { PromptEditorHandle } from "@/features/session/prompt/PromptEditor";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { ImageAttachment } from "@/hooks/use-image-attachments";
@@ -61,7 +65,8 @@ export interface UsePromptSubmissionArgs {
     effort: EffortLevel | undefined,
     backend: AgentBackendId,
   ) => Promise<void>;
-  queueMessage: (text: string) => Promise<void>;
+  queueMessage: (text: string, images?: ImagePayload[]) => Promise<void>;
+  queueCapabilityForBackend?: (backend: AgentBackendId) => QueueCapability;
   collaborationStartMutation: {
     mutate: (
       input: {
@@ -118,6 +123,7 @@ export function usePromptSubmission({
   selectedBackend,
   sendPrompt,
   queueMessage,
+  queueCapabilityForBackend = defaultQueueCapabilityForBackend,
   collaborationStartMutation,
   enqueuePromptErrorToast,
 }: UsePromptSubmissionArgs): UsePromptSubmissionResult {
@@ -211,18 +217,28 @@ export function usePromptSubmission({
       return;
     }
 
+    const imagePayloads: ImagePayload[] = hasImages ? serialized.images : [];
+
     // Queue into running conversation instead of starting a new prompt
     if (sending && conversationId) {
+      const capability = queueCapabilityForBackend(selectedBackend);
+      // The backend can't accept a queued message. Preserve the user's input
+      // rather than dropping it into a queue that won't deliver (req 6.2/10.2);
+      // the composer gates this case so it is normally unreachable.
+      if (!capability.acceptsWhileRunning) return;
+
       clearPersistedPendingPromptOnSubmit();
       editorRef.current?.clear();
       setPromptText("");
-      await queueMessage(trimmedPrompt);
+      clearImages();
+      await queueMessage(
+        trimmedPrompt,
+        imagePayloads.length > 0 ? imagePayloads : undefined,
+      );
       return;
     }
 
     if (sending) return;
-
-    const imagePayloads: ImagePayload[] = hasImages ? serialized.images : [];
 
     // Warn — but do not block — when other conversations in this session are
     // actively running. Trust the user; concurrent edits in the same worktree
@@ -245,6 +261,8 @@ export function usePromptSubmission({
     sending,
     conversationId,
     queueMessage,
+    queueCapabilityForBackend,
+    clearImages,
     pendingImages,
     promptTextRef,
     editorRef,

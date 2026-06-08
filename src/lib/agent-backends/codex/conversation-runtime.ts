@@ -30,6 +30,7 @@ import type {
 import type { PortableMcpConfig, McpApplyResult } from "../portable-mcp";
 import type { PortableMcpToCodexResult } from "../mcp-translation";
 import { registerConversationBackendFactory } from "../registry-core";
+import { backendCapabilities } from "@/lib/agent-backends/capabilities-descriptor";
 import {
   codexReasoningEffortSchema,
   getCodexReasoningLevelsForModel,
@@ -96,14 +97,8 @@ const defaultDeps: CodexConversationRuntimeDeps = {
 
 export class CodexConversationRuntime implements ConversationBackendRuntime {
   readonly backend: AgentBackendId = "codex";
-  readonly capabilities: ConversationBackendCapabilities = {
-    queueWhileRunning: false,
-    askUserQuestion: true,
-    preciseFork: false,
-    portableMcpAtStart: true,
-    portableMcpBetweenTurns: true,
-    contextWindowMetrics: false,
-  };
+  readonly capabilities: ConversationBackendCapabilities =
+    backendCapabilities("codex");
 
   readonly modelId: string | undefined;
   readonly reasoningEffort: string | undefined;
@@ -208,6 +203,15 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
         ...(this.outputFormat
           ? { outputSchema: this.outputFormat.schema }
           : {}),
+      });
+
+      // The prompt has been handed to the Codex process; signal acceptance
+      // before any assistant content so queued next-turn delivery can confirm.
+      input.onEvent({ type: "input_accepted" });
+      logger.debug("codex-runtime.input_accepted", {
+        conversationId: this.conversationId,
+        isResume,
+        threadId: this.threadId,
       });
 
       // Process events

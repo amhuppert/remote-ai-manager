@@ -25,6 +25,17 @@ interface SpecBrowserSelection {
   file: string | null;
 }
 
+type OptimisticQueueStatus = "pending" | "accepted" | "failed";
+
+interface OptimisticQueueEntry {
+  /** Client-generated id, stable from optimistic add through rollback. */
+  tempId: string;
+  /** Server-assigned queue id, set once the enqueue is accepted. */
+  queueId: string | null;
+  content: MessageContentBlock[];
+  status: OptimisticQueueStatus;
+}
+
 interface SessionDetailState {
   layout: LayoutMode;
   mobilePanel: MobilePanel;
@@ -35,6 +46,7 @@ interface SessionDetailState {
   promptError: string | null;
   promptCancelled: boolean;
   optimisticMessages: TranscriptMessage[];
+  optimisticQueue: OptimisticQueueEntry[];
   messageCountBeforeSubmit: number;
   showDeleteConfirm: boolean;
   showCommitDialog: boolean;
@@ -64,7 +76,13 @@ interface SessionDetailActions {
   ) => void;
   completePrompt: () => void;
   failPrompt: (error: string) => void;
+  setQueueError: (error: string) => void;
   queueMessage: (userContent: MessageContentBlock[]) => void;
+  addOptimisticQueueEntry(tempId: string, content: MessageContentBlock[]): void;
+  acceptOptimisticQueueEntry(tempId: string, queueId: string): void;
+  failOptimisticQueueEntry(tempId: string): void;
+  cancelOptimisticQueueEntry(idOrTempId: string): void;
+  rollbackOptimisticQueueEntry(tempId: string): void;
   dismissError: () => void;
   markCancelled: () => void;
   dismissCancelled: () => void;
@@ -116,6 +134,7 @@ const initialState: SessionDetailState = {
   promptError: null,
   promptCancelled: false,
   optimisticMessages: [],
+  optimisticQueue: [],
   messageCountBeforeSubmit: 0,
   showDeleteConfirm: false,
   showCommitDialog: false,
@@ -219,6 +238,15 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
         state.sending = false;
       }),
 
+    // Surface a queue failure to the user WITHOUT clearing `sending`: a queue
+    // POST failing must leave the still-running turn shown as running (req 5.2)
+    // while the error is visible (req 5.1). Distinct from `failPrompt`, which
+    // also stops the running indicator.
+    setQueueError: (error) =>
+      set((state) => {
+        state.promptError = error;
+      }),
+
     queueMessage: (userContent) =>
       set((state) => {
         state.optimisticMessages.push({
@@ -226,6 +254,50 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
           content: userContent,
           timestamp: new Date().toISOString(),
         });
+      }),
+
+    // -- Optimistic queue --
+    // Mutate ONLY optimisticQueue. The running/sending flag must never change
+    // here: a queue failure must leave a still-running turn shown as running
+    // (req 5.2) while removing the optimistic entry (req 5.3).
+
+    addOptimisticQueueEntry: (tempId, content) =>
+      set((state) => {
+        state.optimisticQueue.push({
+          tempId,
+          queueId: null,
+          content,
+          status: "pending",
+        });
+      }),
+
+    acceptOptimisticQueueEntry: (tempId, queueId) =>
+      set((state) => {
+        const entry = state.optimisticQueue.find((e) => e.tempId === tempId);
+        if (!entry) return;
+        entry.queueId = queueId;
+        entry.status = "accepted";
+      }),
+
+    failOptimisticQueueEntry: (tempId) =>
+      set((state) => {
+        state.optimisticQueue = state.optimisticQueue.filter(
+          (e) => e.tempId !== tempId,
+        );
+      }),
+
+    cancelOptimisticQueueEntry: (idOrTempId) =>
+      set((state) => {
+        state.optimisticQueue = state.optimisticQueue.filter(
+          (e) => e.tempId !== idOrTempId && e.queueId !== idOrTempId,
+        );
+      }),
+
+    rollbackOptimisticQueueEntry: (tempId) =>
+      set((state) => {
+        state.optimisticQueue = state.optimisticQueue.filter(
+          (e) => e.tempId !== tempId,
+        );
       }),
 
     dismissError: () =>
@@ -435,6 +507,8 @@ export const usePromptCancelled = () =>
   useSessionDetailStore((s) => s.promptCancelled);
 export const useOptimisticMessages = () =>
   useSessionDetailStore((s) => s.optimisticMessages);
+export const useOptimisticQueue = () =>
+  useSessionDetailStore((s) => s.optimisticQueue);
 export const useMessageCountBeforeSubmit = () =>
   useSessionDetailStore((s) => s.messageCountBeforeSubmit);
 export const useShowDeleteConfirm = () =>
@@ -475,8 +549,20 @@ export const useReceiveStreamContent = () =>
 export const useCompletePrompt = () =>
   useSessionDetailStore((s) => s.completePrompt);
 export const useFailPrompt = () => useSessionDetailStore((s) => s.failPrompt);
+export const useSetQueueError = () =>
+  useSessionDetailStore((s) => s.setQueueError);
 export const useQueueMessage = () =>
   useSessionDetailStore((s) => s.queueMessage);
+export const useAddOptimisticQueueEntry = () =>
+  useSessionDetailStore((s) => s.addOptimisticQueueEntry);
+export const useAcceptOptimisticQueueEntry = () =>
+  useSessionDetailStore((s) => s.acceptOptimisticQueueEntry);
+export const useFailOptimisticQueueEntry = () =>
+  useSessionDetailStore((s) => s.failOptimisticQueueEntry);
+export const useCancelOptimisticQueueEntry = () =>
+  useSessionDetailStore((s) => s.cancelOptimisticQueueEntry);
+export const useRollbackOptimisticQueueEntry = () =>
+  useSessionDetailStore((s) => s.rollbackOptimisticQueueEntry);
 export const useDismissError = () =>
   useSessionDetailStore((s) => s.dismissError);
 export const useMarkCancelled = () =>

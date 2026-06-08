@@ -66,6 +66,7 @@ function stateWithAllScopes(): ManagerState {
                 agentBackend: "claude",
                 backendRef: null,
                 unread: false,
+                pendingQueue: [],
               },
             ],
             source: "cc",

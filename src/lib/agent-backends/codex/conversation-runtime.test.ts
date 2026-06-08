@@ -37,9 +37,11 @@ import {
 import type {
   ConversationBackendCreateInput,
   ConversationBackendTurnInput,
+  ConversationBackendRuntime,
 } from "../conversation";
 import type { PortableMcpConfig } from "../portable-mcp";
 import { getDefaultCodexModel } from "@/lib/agent-backends/schemas";
+import { backendCapabilities } from "../capabilities-descriptor";
 
 // ============================================================
 // Helpers
@@ -1454,6 +1456,62 @@ describe("CodexConversationRuntime", () => {
     it("has backend set to codex", () => {
       const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
       expect(runtime.backend).toBe("codex");
+    });
+
+    it("sources capabilities from the backend descriptor", () => {
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+      expect(runtime.capabilities).toEqual(backendCapabilities("codex"));
+      expect(runtime.capabilities.queueWhileRunning).toBe(false);
+    });
+
+    it("exposes no in-turn queue path", () => {
+      const runtime: ConversationBackendRuntime = new CodexConversationRuntime(
+        makeCreateInput(),
+        deps,
+      );
+      expect(runtime.queueUserInput).toBeUndefined();
+    });
+  });
+
+  // --------------------------------------------------------
+  // sendTurn — input acceptance
+  // --------------------------------------------------------
+
+  describe("sendTurn — input acceptance", () => {
+    it("emits input_accepted on dispatch before any content", async () => {
+      setupThread([
+        threadStarted(),
+        agentMessageCompleted("Response text"),
+        turnCompleted(),
+      ]);
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+      const onEvent = vi.fn();
+      await runtime.sendTurn(makeTurnInput({ onEvent }));
+
+      // input_accepted fires before the event loop, so it is the first onEvent call.
+      expect(onEvent.mock.calls[0]![0]).toEqual({ type: "input_accepted" });
+
+      const acceptedIdx = onEvent.mock.calls.findIndex(
+        (c) => c[0]?.type === "input_accepted",
+      );
+      const firstContentIdx = onEvent.mock.calls.findIndex(
+        (c) => c[0]?.type === "content",
+      );
+      expect(acceptedIdx).toBeGreaterThanOrEqual(0);
+      expect(firstContentIdx).toBeGreaterThan(acceptedIdx);
+    });
+
+    it("does not emit input_accepted when runStreamed throws on dispatch", async () => {
+      const thread = makeThread([], {
+        runStreamedThrows: new Error("Spawn failed"),
+      });
+      startThreadFn.mockReturnValue(thread);
+
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+      const onEvent = vi.fn();
+      await runtime.sendTurn(makeTurnInput({ onEvent }));
+
+      expect(onEvent).not.toHaveBeenCalledWith({ type: "input_accepted" });
     });
   });
 });

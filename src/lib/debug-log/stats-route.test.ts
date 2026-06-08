@@ -48,6 +48,7 @@ const BASE_CONVERSATION: ConversationState = {
   agentBackend: "claude" as const,
   backendRef: null,
   unread: false,
+  pendingQueue: [],
 };
 
 const BASE_SESSION: SessionState = {

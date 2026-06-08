@@ -9,8 +9,11 @@ import {
   useCompletePrompt,
   useFailPrompt,
   useShowQuestions,
-  useQueueMessage,
   useSending,
+  useAddOptimisticQueueEntry,
+  useAcceptOptimisticQueueEntry,
+  useRollbackOptimisticQueueEntry,
+  useSetQueueError,
 } from "@/stores/session-detail.store";
 import { tracedFetch } from "@/lib/shared/traced-fetch";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
@@ -19,6 +22,7 @@ import type {
   AskQuestionItem,
 } from "@/lib/conversations/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
+import type { QueueEnqueueResponse } from "@/lib/prompt/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 /**
  * Hook that coordinates prompt submission with:
@@ -36,7 +40,7 @@ export interface SendPromptHandle {
     backend?: AgentBackendId,
   ) => Promise<void>;
   /** Queue a message into a running conversation. */
-  queue: (text: string) => Promise<void>;
+  queue: (text: string, images?: ImagePayload[]) => Promise<void>;
   /** Abort the in-flight SSE stream (client-side only). */
   abortClient: () => void;
 }
@@ -52,8 +56,11 @@ export function useSendPrompt(
   const completePrompt = useCompletePrompt();
   const failPrompt = useFailPrompt();
   const showQuestions = useShowQuestions();
-  const queueMessageStore = useQueueMessage();
   const sending = useSending();
+  const addOptimisticQueueEntry = useAddOptimisticQueueEntry();
+  const acceptOptimisticQueueEntry = useAcceptOptimisticQueueEntry();
+  const rollbackOptimisticQueueEntry = useRollbackOptimisticQueueEntry();
+  const setQueueError = useSetQueueError();
 
   // Abort in-flight streams when session context changes or on unmount
   const abortRef = useRef<AbortController | null>(null);
@@ -270,31 +277,67 @@ export function useSendPrompt(
   );
 
   const queue = useCallback(
-    async (text: string) => {
+    async (text: string, images?: ImagePayload[]) => {
       if (!conversationId || !sending) return;
 
       const trimmed = text.trim();
-      if (!trimmed) return;
+      const hasImages = images !== undefined && images.length > 0;
+      if (!trimmed && !hasImages) return;
 
-      // Show optimistic user message immediately
-      queueMessageStore([{ type: "text" as const, text: trimmed }]);
+      // Build the same user content blocks the normal send path builds so the
+      // pending entry renders identically once queued.
+      const content: MessageContentBlock[] = [
+        ...(trimmed ? [{ type: "text" as const, text: trimmed }] : []),
+        ...(images ?? []).map((img) => ({
+          type: "image" as const,
+          mediaType: img.mediaType,
+          base64Data: img.base64Data,
+        })),
+      ];
 
-      // Fire-and-forget POST to queue endpoint
+      // Optimistically add the pending entry. This never touches `sending`, so a
+      // later failure leaves the running turn shown as running (req 5.2).
+      const tempId = crypto.randomUUID();
+      addOptimisticQueueEntry(tempId, content);
+
       const queueUrl = `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/queue`;
+
+      let res: Response;
       try {
-        const res = await tracedFetch(queueUrl, "queue-message", {
+        res = await tracedFetch(queueUrl, "queue-message", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: trimmed }),
+          body: JSON.stringify({
+            text: trimmed || undefined,
+            images: hasImages ? images : undefined,
+          }),
         });
-        if (!res.ok) {
-          const data = (await res.json().catch(() => ({}))) as {
-            error?: string;
-          };
-          failPrompt(data.error ?? "Failed to queue message");
-        }
-      } catch {
-        failPrompt("Failed to queue message");
+      } catch (e) {
+        if (e instanceof DOMException && e.name === "AbortError") return;
+        // Roll back ONLY this failed entry (req 5.3) and surface the error
+        // (req 5.1) without clearing `sending` (req 5.2).
+        rollbackOptimisticQueueEntry(tempId);
+        setQueueError("Failed to queue message");
+        return;
+      }
+
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        rollbackOptimisticQueueEntry(tempId);
+        setQueueError(data.error ?? "Failed to queue message");
+        return;
+      }
+
+      const data = (await res
+        .json()
+        .catch(() => null)) as QueueEnqueueResponse | null;
+      // Track the server-assigned queue id so cancellation and reconciliation
+      // can target this entry. A malformed success body leaves the entry pending
+      // optimistically rather than crashing.
+      if (data && data.queued) {
+        acceptOptimisticQueueEntry(tempId, data.message.id);
       }
     },
     [
@@ -302,8 +345,10 @@ export function useSendPrompt(
       sessionName,
       conversationId,
       sending,
-      queueMessageStore,
-      failPrompt,
+      addOptimisticQueueEntry,
+      acceptOptimisticQueueEntry,
+      rollbackOptimisticQueueEntry,
+      setQueueError,
     ],
   );
 

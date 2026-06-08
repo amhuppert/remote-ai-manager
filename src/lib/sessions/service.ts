@@ -273,6 +273,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       agentBackend: "claude",
       backendRef: null,
       unread: false,
+      pendingQueue: [],
     };
     const session: SessionState = {
       sessionName,

@@ -108,6 +108,7 @@ const SCHEMA_DDL = `
     agent_capability_overrides TEXT,
     agent_capabilities_runtime TEXT,
     unread                INTEGER NOT NULL DEFAULT 0,
+    pending_queue         TEXT,
     FOREIGN KEY (project_path, session_name)
       REFERENCES sessions(project_path, session_name) ON DELETE CASCADE
   );
@@ -241,6 +242,7 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
     column: "unread",
     type: "INTEGER NOT NULL DEFAULT 0",
   },
+  { table: "conversations", column: "pending_queue", type: "TEXT" },
 ];
 
 function ensureAdditiveColumns(db: Db): void {

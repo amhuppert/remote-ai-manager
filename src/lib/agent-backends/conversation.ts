@@ -53,6 +53,7 @@ export type ConversationBackendEvent =
   | { type: "content"; block: MessageContentBlock }
   | { type: "provider_event"; payload: unknown }
   | { type: "error"; message: string }
+  | { type: "input_accepted" }
   | { type: "external_turn_started" }
   | {
       type: "external_turn_completed";

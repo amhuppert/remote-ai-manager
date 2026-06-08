@@ -106,6 +106,7 @@ function conversation(
     agentBackend: overrides.agentBackend ?? "claude",
     backendRef: overrides.backendRef ?? null,
     unread: overrides.unread ?? false,
+    pendingQueue: overrides.pendingQueue ?? [],
     mcpOverrides: overrides.mcpOverrides,
     mcpRuntime: overrides.mcpRuntime,
   };

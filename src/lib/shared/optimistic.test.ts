@@ -43,6 +43,7 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
         agentBackend: "claude" as const,
         backendRef: null,
         unread: false,
+        pendingQueue: [],
       },
     ],
     source: "cc",

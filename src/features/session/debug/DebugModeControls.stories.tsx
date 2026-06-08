@@ -40,6 +40,7 @@ function makeConversation(
     agentBackend: "claude" as const,
     backendRef: null,
     unread: false,
+    pendingQueue: [],
     ...overrides,
   };
 }

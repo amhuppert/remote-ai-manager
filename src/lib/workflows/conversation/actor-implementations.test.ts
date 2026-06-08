@@ -180,6 +180,9 @@ function createMockDeps(
       }),
     ),
     executeAgentCall: defaultExecuteAgentCall,
+    markQueuedDelivered: vi.fn(async () => {}),
+    markQueuedPending: vi.fn(async () => {}),
+    markQueuedFailed: vi.fn(async () => {}),
     ...overrides,
   } as ActorImplementationDeps;
 }
@@ -2818,6 +2821,237 @@ describe("executePromptForMachine", () => {
       const sendTurnCall = mockSendTurn.mock.calls[0]! as unknown[];
       const turnInput = sendTurnCall[0] as ConversationBackendTurnInput;
       expect(turnInput.imageRefs).toEqual([]);
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // Queued-delivery transcript policy: for queued turns the single
+  // coalesced user transcript entry is appended only AFTER backend
+  // acceptance (`input_accepted`), and the claimed queue rows are
+  // marked delivered only after that append succeeds. If acceptance
+  // never happens, no user entry is appended and the rows return to
+  // pending. (Requirements 2.4, 4.1, 4.2, 7.2, 7.3, 8.2)
+  // ---------------------------------------------------------------
+  describe("queued-delivery transcript policy", () => {
+    function userAppendCalls() {
+      return vi
+        .mocked(mockDeps.safeAppendTranscriptEntry)
+        .mock.calls.filter(
+          ([, entry]) => (entry as { role?: string }).role === "user",
+        );
+    }
+
+    it("appends exactly one user transcript entry after backend acceptance and marks rows delivered", async () => {
+      const appendOrder: string[] = [];
+      mockDeps = createMockDeps({
+        safeAppendTranscriptEntry: vi.fn(async (_id, entry) => {
+          if ((entry as { role?: string }).role === "user") {
+            appendOrder.push("append");
+          }
+        }),
+        markQueuedDelivered: vi.fn(async () => {
+          appendOrder.push("markDelivered");
+        }),
+      });
+      setActorDeps(mockDeps);
+
+      mockSendTurn.mockImplementation(
+        async (turnInput: ConversationBackendTurnInput) => {
+          await turnInput.onEvent({ type: "input_accepted" });
+          return defaultTurnResult;
+        },
+      );
+
+      const input = makeExecutePromptInput({
+        promptText: "queued follow-up",
+        queuedDelivery: {
+          messageIds: ["m1", "m2"],
+          deliveryAttemptId: "att-1",
+        },
+      });
+      const key = conversationRuntimeKey(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+      );
+      registerConversationRuntime(key, {
+        abortController: new AbortController(),
+      });
+
+      await executePromptForMachine(input);
+
+      const userCalls = userAppendCalls();
+      expect(userCalls).toHaveLength(1);
+      expect((userCalls[0]![1] as { content: unknown }).content).toEqual([
+        { type: "text", text: "queued follow-up" },
+      ]);
+
+      expect(mockDeps.markQueuedDelivered).toHaveBeenCalledTimes(1);
+      expect(mockDeps.markQueuedDelivered).toHaveBeenCalledWith({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        conversationId: input.conversationId,
+        ids: ["m1", "m2"],
+        deliveryAttemptId: "att-1",
+      });
+      expect(mockDeps.markQueuedPending).not.toHaveBeenCalled();
+      expect(mockDeps.markQueuedFailed).not.toHaveBeenCalled();
+
+      // Append must happen before the rows are marked delivered.
+      expect(appendOrder).toEqual(["append", "markDelivered"]);
+    });
+
+    it("does not append a second user entry when input_accepted fires more than once", async () => {
+      mockSendTurn.mockImplementation(
+        async (turnInput: ConversationBackendTurnInput) => {
+          await turnInput.onEvent({ type: "input_accepted" });
+          await turnInput.onEvent({ type: "input_accepted" });
+          return defaultTurnResult;
+        },
+      );
+
+      const input = makeExecutePromptInput({
+        promptText: "queued follow-up",
+        queuedDelivery: {
+          messageIds: ["m1"],
+          deliveryAttemptId: "att-1",
+        },
+      });
+      const key = conversationRuntimeKey(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+      );
+      registerConversationRuntime(key, {
+        abortController: new AbortController(),
+      });
+
+      await executePromptForMachine(input);
+
+      expect(userAppendCalls()).toHaveLength(1);
+      expect(mockDeps.markQueuedDelivered).toHaveBeenCalledTimes(1);
+    });
+
+    it("appends nothing and returns rows to pending when acceptance never happens (turn completes without input_accepted)", async () => {
+      mockSendTurn.mockResolvedValue(defaultTurnResult);
+
+      const input = makeExecutePromptInput({
+        promptText: "queued follow-up",
+        queuedDelivery: {
+          messageIds: ["m1", "m2"],
+          deliveryAttemptId: "att-1",
+        },
+      });
+      const key = conversationRuntimeKey(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+      );
+      registerConversationRuntime(key, {
+        abortController: new AbortController(),
+      });
+
+      await executePromptForMachine(input);
+
+      expect(userAppendCalls()).toHaveLength(0);
+      expect(mockDeps.markQueuedDelivered).not.toHaveBeenCalled();
+      expect(mockDeps.markQueuedPending).toHaveBeenCalledTimes(1);
+      expect(mockDeps.markQueuedPending).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          conversationId: input.conversationId,
+          ids: ["m1", "m2"],
+          deliveryAttemptId: "att-1",
+        }),
+      );
+    });
+
+    it("appends nothing and returns rows to pending when the turn throws before acceptance", async () => {
+      mockSendTurn.mockRejectedValue(new Error("backend dispatch failed"));
+
+      const input = makeExecutePromptInput({
+        promptText: "queued follow-up",
+        queuedDelivery: {
+          messageIds: ["m1"],
+          deliveryAttemptId: "att-1",
+        },
+      });
+      const key = conversationRuntimeKey(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+      );
+      registerConversationRuntime(key, {
+        abortController: new AbortController(),
+      });
+
+      await executePromptForMachine(input);
+
+      expect(userAppendCalls()).toHaveLength(0);
+      expect(mockDeps.markQueuedDelivered).not.toHaveBeenCalled();
+      expect(mockDeps.markQueuedPending).toHaveBeenCalledTimes(1);
+      expect(mockDeps.markQueuedPending).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ids: ["m1"],
+          deliveryAttemptId: "att-1",
+        }),
+      );
+    });
+
+    it("does not return rows to pending after a successful delivery", async () => {
+      mockSendTurn.mockImplementation(
+        async (turnInput: ConversationBackendTurnInput) => {
+          await turnInput.onEvent({ type: "input_accepted" });
+          return defaultTurnResult;
+        },
+      );
+
+      const input = makeExecutePromptInput({
+        promptText: "queued follow-up",
+        queuedDelivery: {
+          messageIds: ["m1"],
+          deliveryAttemptId: "att-1",
+        },
+      });
+      const key = conversationRuntimeKey(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+      );
+      registerConversationRuntime(key, {
+        abortController: new AbortController(),
+      });
+
+      await executePromptForMachine(input);
+
+      expect(mockDeps.markQueuedDelivered).toHaveBeenCalledTimes(1);
+      expect(mockDeps.markQueuedPending).not.toHaveBeenCalled();
+    });
+
+    it("normal (non-queued) turns append exactly one user entry at dispatch and never touch queue marks", async () => {
+      mockSendTurn.mockResolvedValue(defaultTurnResult);
+
+      const input = makeExecutePromptInput({ promptText: "normal prompt" });
+      const key = conversationRuntimeKey(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+      );
+      registerConversationRuntime(key, {
+        abortController: new AbortController(),
+      });
+
+      await executePromptForMachine(input);
+
+      const userCalls = userAppendCalls();
+      expect(userCalls).toHaveLength(1);
+      expect((userCalls[0]![1] as { content: unknown }).content).toEqual([
+        { type: "text", text: "normal prompt" },
+      ]);
+      expect(mockDeps.markQueuedDelivered).not.toHaveBeenCalled();
+      expect(mockDeps.markQueuedPending).not.toHaveBeenCalled();
+      expect(mockDeps.markQueuedFailed).not.toHaveBeenCalled();
     });
   });
 });

@@ -14,6 +14,7 @@ import type {
 import {
   startConversationActor,
   getConversationActor,
+  hasLiveConversationActor,
   sendConversationEvent,
   stopConversationActor,
   setMachineFactory,
@@ -25,9 +26,19 @@ import {
   ensureConversationActor,
   setEnsureConversationActorDeps,
   _resetEnsureConversationActorDepsForTesting,
+  setConversationQueueDeps,
+  _resetConversationQueueDepsForTesting,
+  drainConversationQueue,
+  queuedBatchToSubmitPrompt,
+  rehydrateOneConversationActor,
   type EnsureActorInputData,
+  type ConversationQueueDeps,
+  type DrainSelf,
 } from "./manager";
 import type { Snapshot } from "xstate";
+import type { ConversationEvent } from "./types";
+import type { MessageContentBlock } from "@/lib/conversations/schemas";
+import type { ClaimedQueuedBatch } from "@/lib/conversations/message-queue-service";
 import { _resetForTesting as resetRuntime } from "./runtime-state";
 
 // Infrastructure mock — createLogger is called at module level
@@ -426,6 +437,7 @@ describe("conversation manager", () => {
         agentBackend: "claude" as const,
         backendRef: null,
         unread: false,
+        pendingQueue: [],
       };
 
       applySyncDerivedFields(context, conv);
@@ -760,6 +772,428 @@ describe("conversation manager", () => {
           snap({ status: "active", value: "acquiringResources", context: {} }),
         ),
       ).toBe(false);
+    });
+  });
+
+  // ==========================================================================
+  // Task 4.4: drain action + startup recovery
+  // ==========================================================================
+
+  const DRAIN_CONTEXT = {
+    projectPath: "/test/project",
+    projectName: "test-project",
+    sessionName: "test-session",
+    conversationId: "conv-drain",
+  };
+
+  function makeQueueDeps(
+    overrides: Partial<ConversationQueueDeps> = {},
+  ): ConversationQueueDeps {
+    return {
+      claimNextTurnBatch: vi.fn(async () => null),
+      markPending: vi.fn(async () => {}),
+      recoverAbandonedDeliveries: vi.fn(async () => 0),
+      ...overrides,
+    };
+  }
+
+  function makeDrainSelf(canAccept: boolean): {
+    self: DrainSelf;
+    send: ReturnType<typeof vi.fn>;
+  } {
+    const send = vi.fn();
+    const self: DrainSelf = {
+      getSnapshot: () => ({ can: () => canAccept }),
+      send: send as unknown as DrainSelf["send"],
+    };
+    return { self, send };
+  }
+
+  describe("queuedBatchToSubmitPrompt", () => {
+    it("joins text blocks and yields no images for text-only content", () => {
+      const content: MessageContentBlock[] = [
+        { type: "text", text: "first" },
+        { type: "text", text: "second" },
+      ];
+      const result = queuedBatchToSubmitPrompt(content);
+      expect(result.promptText).toBe("first\nsecond");
+      expect(result.images).toEqual([]);
+    });
+
+    it("returns empty promptText when there are no text blocks", () => {
+      const content: MessageContentBlock[] = [
+        { type: "image", mediaType: "image/png", base64Data: "abc" },
+      ];
+      expect(queuedBatchToSubmitPrompt(content).promptText).toBe("");
+    });
+
+    it("maps an image block to one ImagePayload with a synthetic attachmentId", () => {
+      const content: MessageContentBlock[] = [
+        { type: "image", mediaType: "image/png", base64Data: "PNGDATA" },
+      ];
+      const { images } = queuedBatchToSubmitPrompt(content);
+      expect(images).toHaveLength(1);
+      expect(images[0]).toEqual({
+        attachmentId: "queued-0",
+        mediaType: "image/png",
+        base64Data: "PNGDATA",
+      });
+      // Queued images deliver as appended strip images, never inline markers.
+      expect(images[0]?.inlineMarkerIndex).toBeUndefined();
+    });
+
+    it("preserves mixed text+image order and gives each image a unique id", () => {
+      const content: MessageContentBlock[] = [
+        { type: "text", text: "look" },
+        { type: "image", mediaType: "image/png", base64Data: "A" },
+        { type: "text", text: "here" },
+        { type: "image", mediaType: "image/jpeg", base64Data: "B" },
+      ];
+      const { promptText, images } = queuedBatchToSubmitPrompt(content);
+      expect(promptText).toBe("look\nhere");
+      expect(images.map((img) => img.attachmentId)).toEqual([
+        "queued-0",
+        "queued-1",
+      ]);
+      expect(images.map((img) => img.mediaType)).toEqual([
+        "image/png",
+        "image/jpeg",
+      ]);
+      expect(images.map((img) => img.base64Data)).toEqual(["A", "B"]);
+    });
+
+    it("skips non-text, non-image blocks", () => {
+      const content: MessageContentBlock[] = [
+        { type: "text", text: "hi" },
+        { type: "tool_use", name: "Read" },
+        { type: "image", mediaType: "image/webp", base64Data: "W" },
+      ];
+      const { promptText, images } = queuedBatchToSubmitPrompt(content);
+      expect(promptText).toBe("hi");
+      expect(images).toHaveLength(1);
+    });
+  });
+
+  describe("drainConversationQueue", () => {
+    const BATCH: ClaimedQueuedBatch = {
+      deliveryAttemptId: "att-9",
+      messageIds: ["m1", "m2"],
+      content: [{ type: "text", text: "hello" }],
+    };
+
+    it("dispatches exactly one SUBMIT_PROMPT carrying the claimed delivery metadata", async () => {
+      const claimNextTurnBatch = vi.fn(async () => BATCH);
+      const deps = makeQueueDeps({ claimNextTurnBatch });
+      const { self, send } = makeDrainSelf(true);
+
+      await drainConversationQueue(self, DRAIN_CONTEXT, deps);
+
+      expect(claimNextTurnBatch).toHaveBeenCalledWith({
+        projectPath: DRAIN_CONTEXT.projectPath,
+        sessionName: DRAIN_CONTEXT.sessionName,
+        conversationId: DRAIN_CONTEXT.conversationId,
+      });
+      expect(send).toHaveBeenCalledTimes(1);
+      const event = send.mock.calls[0]?.[0] as ConversationEvent;
+      expect(event.type).toBe("SUBMIT_PROMPT");
+      if (event.type !== "SUBMIT_PROMPT") throw new Error("wrong event");
+      expect(event.promptText).toBe("hello");
+      expect(event.queuedDelivery).toEqual({
+        messageIds: ["m1", "m2"],
+        deliveryAttemptId: "att-9",
+      });
+      expect(deps.markPending).not.toHaveBeenCalled();
+    });
+
+    it("returns the batch to pending when the actor cannot accept the prompt", async () => {
+      const claimNextTurnBatch = vi.fn(async () => BATCH);
+      const markPending = vi.fn(async () => {});
+      const deps = makeQueueDeps({ claimNextTurnBatch, markPending });
+      const { self, send } = makeDrainSelf(false);
+
+      await drainConversationQueue(self, DRAIN_CONTEXT, deps);
+
+      expect(send).not.toHaveBeenCalled();
+      expect(markPending).toHaveBeenCalledTimes(1);
+      expect(markPending).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ids: ["m1", "m2"],
+          deliveryAttemptId: "att-9",
+        }),
+      );
+    });
+
+    it("no-ops on an empty queue: neither dispatches nor returns to pending", async () => {
+      const claimNextTurnBatch = vi.fn(async () => null);
+      const markPending = vi.fn(async () => {});
+      const deps = makeQueueDeps({ claimNextTurnBatch, markPending });
+      const { self, send } = makeDrainSelf(true);
+
+      await drainConversationQueue(self, DRAIN_CONTEXT, deps);
+
+      expect(send).not.toHaveBeenCalled();
+      expect(markPending).not.toHaveBeenCalled();
+    });
+
+    it("returns the batch to pending when an unexpected claim handler error occurs after claim", async () => {
+      // Claim succeeds, then send throws — exercises the catch path that must
+      // not let the fire-and-forget action reject and must reclaim the rows.
+      const claimNextTurnBatch = vi.fn(async () => BATCH);
+      const markPending = vi.fn(async () => {});
+      const deps = makeQueueDeps({ claimNextTurnBatch, markPending });
+      const send = vi.fn(() => {
+        throw new Error("send boom");
+      });
+      const self: DrainSelf = {
+        getSnapshot: () => ({ can: () => true }),
+        send: send as unknown as DrainSelf["send"],
+      };
+
+      await expect(
+        drainConversationQueue(self, DRAIN_CONTEXT, deps),
+      ).resolves.toBeUndefined();
+
+      expect(markPending).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ids: ["m1", "m2"],
+          deliveryAttemptId: "att-9",
+        }),
+      );
+    });
+  });
+
+  describe("drainPendingQueue provided action", () => {
+    beforeEach(() => {
+      _resetConversationQueueDepsForTesting();
+    });
+
+    afterEach(() => {
+      _resetConversationQueueDepsForTesting();
+    });
+
+    it("no-ops for workflow-role conversations: claimNextTurnBatch is never called", async () => {
+      // Use the real provided machine (not the no-op test machine) so the
+      // production drainPendingQueue action runs. The role gate must skip the
+      // queue entirely for a non-null (workflow) role.
+      _resetMachineFactoryForTesting();
+      const claimNextTurnBatch = vi.fn(async () => null);
+      setConversationQueueDeps(makeQueueDeps({ claimNextTurnBatch }));
+
+      const actor = startConversationActor({
+        ...DEFAULT_INPUT,
+        conversationId: "conv-workflow",
+        role: "iteration",
+      });
+      // idle entry fires the drain action at startup.
+      expect(actor.getSnapshot().value).toBe("idle");
+      await Promise.resolve();
+
+      expect(claimNextTurnBatch).not.toHaveBeenCalled();
+    });
+
+    it("invokes the queue claim for a user-interactive (null-role) conversation", async () => {
+      _resetMachineFactoryForTesting();
+      const claimNextTurnBatch = vi.fn(async () => null);
+      setConversationQueueDeps(makeQueueDeps({ claimNextTurnBatch }));
+
+      startConversationActor({
+        ...DEFAULT_INPUT,
+        conversationId: "conv-user",
+        role: null,
+      });
+      await Promise.resolve();
+
+      expect(claimNextTurnBatch).toHaveBeenCalledTimes(1);
+      expect(claimNextTurnBatch).toHaveBeenCalledWith({
+        projectPath: DEFAULT_INPUT.projectPath,
+        sessionName: DEFAULT_INPUT.sessionName,
+        conversationId: "conv-user",
+      });
+    });
+  });
+
+  describe("hasLiveConversationActor", () => {
+    it("is false before start, true after start, false after stop", () => {
+      expect(
+        hasLiveConversationActor(
+          DEFAULT_INPUT.projectPath,
+          DEFAULT_INPUT.sessionName,
+          DEFAULT_INPUT.conversationId,
+        ),
+      ).toBe(false);
+
+      startConversationActor(DEFAULT_INPUT);
+      expect(
+        hasLiveConversationActor(
+          DEFAULT_INPUT.projectPath,
+          DEFAULT_INPUT.sessionName,
+          DEFAULT_INPUT.conversationId,
+        ),
+      ).toBe(true);
+
+      stopConversationActor(
+        DEFAULT_INPUT.projectPath,
+        DEFAULT_INPUT.sessionName,
+        DEFAULT_INPUT.conversationId,
+        "test",
+      );
+      expect(
+        hasLiveConversationActor(
+          DEFAULT_INPUT.projectPath,
+          DEFAULT_INPUT.sessionName,
+          DEFAULT_INPUT.conversationId,
+        ),
+      ).toBe(false);
+    });
+  });
+
+  describe("rehydrateOneConversationActor startup recovery", () => {
+    const CONV_ID = "conv-rehydrate";
+    const KEY = `${DEFAULT_INPUT.projectPath}::${DEFAULT_INPUT.sessionName}::${CONV_ID}`;
+
+    afterEach(() => {
+      _resetConversationQueueDepsForTesting();
+    });
+
+    // A resumable snapshot: active + pendingQuestion (the only shape the
+    // manager rehydrates). `idle` resolves cleanly without re-invoking the
+    // executePrompt actor; the createTestMachine drainPendingQueue stub no-ops
+    // on idle entry so it does not interfere with the recovery assertions.
+    function makeResumableSnapshot(): Snapshot<unknown> {
+      return {
+        status: "active",
+        value: "idle",
+        context: {
+          _schemaVersion: 1,
+          projectPath: DEFAULT_INPUT.projectPath,
+          projectName: DEFAULT_INPUT.projectName,
+          sessionName: DEFAULT_INPUT.sessionName,
+          worktreePath: DEFAULT_INPUT.worktreePath,
+          conversationId: CONV_ID,
+          createdAt: DEFAULT_INPUT.createdAt,
+          lastActivityAt: DEFAULT_INPUT.createdAt,
+          status: "waiting_for_input",
+          promptCount: 1,
+          transcriptPath: "/t.jsonl",
+          agentBackend: "claude",
+          backendRef: null,
+          forkedFrom: null,
+          role: null,
+          activeTurn: null,
+          pendingQuestion: {
+            questionId: "q1",
+            questions: [{ question: "?", options: [] }],
+          },
+          debugMode: null,
+          totals: {
+            totalCostUsd: null,
+            totalDurationMs: null,
+            totalTurns: null,
+            contextTokens: null,
+            contextWindowMax: null,
+          },
+          lastResult: null,
+          lastError: null,
+        },
+        children: {},
+        historyValue: {},
+      } as unknown as Snapshot<unknown>;
+    }
+
+    function rehydrateArgs(snapshot: Snapshot<unknown>) {
+      return {
+        key: KEY,
+        projectPath: DEFAULT_INPUT.projectPath,
+        projectName: DEFAULT_INPUT.projectName,
+        sessionName: DEFAULT_INPUT.sessionName,
+        worktreePath: DEFAULT_INPUT.worktreePath,
+        conversation: {
+          id: CONV_ID,
+          createdAt: DEFAULT_INPUT.createdAt,
+          forkedFrom: null,
+          role: null,
+          transcriptPath: "/t.jsonl",
+          agentBackend: "claude" as const,
+          backendRef: null,
+          promptCount: 1,
+        },
+        snapshot,
+      };
+    }
+
+    it("awaits recoverAbandonedDeliveries before starting the actor", async () => {
+      setMachineFactory(createTestMachine);
+
+      // Gate recovery on a deferred. `actor.start()` is the statement after the
+      // awaited recovery, so while the gate is unresolved the actor cannot have
+      // been started and rehydrate cannot have resolved. Resolving the gate is
+      // what unblocks both — the load-bearing ordering proof.
+      const order: string[] = [];
+      let resolveRecovery!: () => void;
+      const recoveryGate = new Promise<void>((resolve) => {
+        resolveRecovery = resolve;
+      });
+      const recoverAbandonedDeliveries = vi.fn(async () => {
+        order.push("recover-called");
+        await recoveryGate;
+        return 1;
+      });
+      setConversationQueueDeps(makeQueueDeps({ recoverAbandonedDeliveries }));
+
+      const rehydratePromise = rehydrateOneConversationActor(
+        rehydrateArgs(makeResumableSnapshot()),
+      ).then((started) => {
+        order.push("rehydrate-resolved");
+        return started;
+      });
+
+      // Let microtasks flush. Recovery has been called but the gate is still
+      // pending, so the actor is not started and rehydrate has not resolved.
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(recoverAbandonedDeliveries).toHaveBeenCalledWith({
+        projectPath: DEFAULT_INPUT.projectPath,
+        sessionName: DEFAULT_INPUT.sessionName,
+        conversationId: CONV_ID,
+      });
+      expect(order).toEqual(["recover-called"]);
+
+      resolveRecovery();
+      const started = await rehydratePromise;
+
+      expect(started).toBe(true);
+      expect(order).toEqual(["recover-called", "rehydrate-resolved"]);
+      // The actor became live only after recovery resolved.
+      expect(
+        getConversationActor(
+          DEFAULT_INPUT.projectPath,
+          DEFAULT_INPUT.sessionName,
+          CONV_ID,
+        ),
+      ).toBeDefined();
+    });
+
+    it("still starts the actor when recovery throws (recovery failure does not abort rehydrate)", async () => {
+      setMachineFactory(createTestMachine);
+
+      const recoverAbandonedDeliveries = vi.fn(async () => {
+        throw new Error("recover boom");
+      });
+      setConversationQueueDeps(makeQueueDeps({ recoverAbandonedDeliveries }));
+
+      const started = await rehydrateOneConversationActor(
+        rehydrateArgs(makeResumableSnapshot()),
+      );
+
+      expect(recoverAbandonedDeliveries).toHaveBeenCalledTimes(1);
+      expect(started).toBe(true);
+      expect(
+        getConversationActor(
+          DEFAULT_INPUT.projectPath,
+          DEFAULT_INPUT.sessionName,
+          CONV_ID,
+        )?.getSnapshot().status,
+      ).toBe("active");
     });
   });
 });

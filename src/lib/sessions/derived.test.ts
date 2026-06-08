@@ -38,6 +38,7 @@ function makeConversation(
     debugMode: null,
     machineSnapshot: null,
     archived: false,
+    pendingQueue: [],
     ...overrides,
   };
 }
