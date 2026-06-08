@@ -1,13 +1,15 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { debugLogKeys } from "@/lib/debug-log/query-keys";
 import { mcpConfigKeys, mcpToolsKeys } from "@/lib/mcp/query-keys";
 import { collaborationKeys } from "@/lib/workflows/query-keys";
 import { devServerKeys } from "@/lib/dev-server/query-keys";
 import { notificationKeys } from "@/lib/notifications/query-keys";
+import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
+import { projectConversationFocusHref } from "@/lib/project-conversations-client/routes";
 import { projectKeys } from "@/lib/projects/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import { computeAgentCapabilityInvalidations } from "@/lib/agent-capabilities/sse-invalidation";
@@ -27,6 +29,8 @@ import {
   conversationCreatedEventSchema,
   conversationRenamedEventSchema,
   conversationArchivedEventSchema,
+  conversationUnreadEventSchema,
+  conversationOpenEventSchema,
   askQuestionEventSchema,
 } from "@/lib/conversations/schemas";
 import {
@@ -162,13 +166,159 @@ export default function NotificationListener(): null {
       }
     };
 
+    const appendMessageToQuery = (
+      queryKey: QueryKey,
+      entry: Record<string, unknown> & {
+        role: unknown;
+        content: unknown[];
+        seq: number;
+      },
+    ) => {
+      queryClient.setQueryData(queryKey, (prev: unknown) => {
+        if (!Array.isArray(prev)) return [entry];
+        // Mirror server-side `readConversationMessagesWithSeq` merging:
+        // consecutive same-role entries collapse into one TranscriptMessage
+        // so the MessageContent grouping logic sees them as a single turn.
+        const lastIdx = prev.length - 1;
+        const last = prev[lastIdx];
+        if (
+          last &&
+          typeof last === "object" &&
+          "role" in last &&
+          "content" in last &&
+          Array.isArray((last as { content: unknown }).content) &&
+          (last as { role: unknown }).role === entry.role
+        ) {
+          const merged = {
+            ...(last as object),
+            content: [
+              ...(last as { content: unknown[] }).content,
+              ...entry.content,
+            ],
+            seq: entry.seq,
+          };
+          return [...prev.slice(0, lastIdx), merged];
+        }
+        return [...prev, entry];
+      });
+    };
+
+    const replaceMessageInQuery = (
+      queryKey: QueryKey,
+      replacement: Record<string, unknown> & { seq: number },
+    ) => {
+      queryClient.setQueryData(queryKey, (prev: unknown) => {
+        if (!Array.isArray(prev)) return prev;
+        return prev.map((m) =>
+          m && typeof m === "object" && "seq" in m && m.seq === replacement.seq
+            ? replacement
+            : m,
+        );
+      });
+    };
+
+    const invalidateProjectConversationListViews = (projectName: string) => {
+      void queryClient.invalidateQueries({
+        queryKey: projectConversationKeys.list(projectName),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: projectConversationKeys.openCount(projectName),
+      });
+    };
+
+    const invalidateProjectConversationActivity = (projectName: string) => {
+      invalidateProjectConversationListViews(projectName);
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.active(),
+      });
+    };
+
+    const updateProjectConversationListEntry = (
+      projectName: string,
+      conversationId: string,
+      patch: Partial<ConversationState>,
+    ) => {
+      queryClient.setQueryData(
+        projectConversationKeys.list(projectName),
+        (prev: unknown) => {
+          if (!Array.isArray(prev)) return prev;
+          return prev.map((c) =>
+            c && typeof c === "object" && "id" in c && c.id === conversationId
+              ? { ...(c as ConversationState), ...patch }
+              : c,
+          );
+        },
+      );
+    };
+
+    const showBrowserNotification = (input: {
+      title: string;
+      body: string;
+      tag: string;
+    }) => {
+      if (!document.hidden || !("Notification" in window)) return;
+      if (Notification.permission === "granted") {
+        const n = new Notification(input.title, {
+          body: input.body,
+          tag: input.tag,
+        });
+        n.onclick = () => {
+          window.focus();
+          n.close();
+        };
+        return;
+      }
+      if (Notification.permission !== "denied") {
+        void Notification.requestPermission();
+      }
+    };
+
     es.addEventListener("conversation-status", (event) => {
       try {
         const parsed = JSON.parse(event.data);
         const result = conversationStatusEventSchema.safeParse(parsed);
         if (!result.success) return;
         const data = result.data;
-        if (data.scope !== "session") return;
+        if (data.scope === "project") {
+          invalidateProjectConversationActivity(data.projectName);
+          void queryClient.invalidateQueries({
+            queryKey: projectConversationKeys.messages(
+              data.projectName,
+              data.conversationId,
+            ),
+          });
+          const href = projectConversationFocusHref(
+            data.projectName,
+            data.conversationId,
+          );
+          if (data.status === "waiting_for_input") {
+            actionsRef.current.enqueueInputToast({
+              scope: "project",
+              projectName: data.projectName,
+              conversationId: data.conversationId,
+              displayContext: "main",
+              href,
+            });
+          }
+          if (data.error) {
+            actionsRef.current.enqueuePromptErrorToast({
+              scope: "project",
+              projectName: data.projectName,
+              conversationId: data.conversationId,
+              displayContext: "main",
+              href,
+              error: data.error,
+            });
+          }
+          if (data.status === "awaiting" && !data.error) {
+            showBrowserNotification({
+              title: "Project conversation ready",
+              body: `${data.projectName} / ${data.conversationId}`,
+              tag: `project-conversation-ready-${data.conversationId}`,
+            });
+          }
+          return;
+        }
 
         void queryClient.invalidateQueries({
           queryKey: conversationKeys.active(),
@@ -192,21 +342,11 @@ export default function NotificationListener(): null {
             conversationId: data.conversationId,
           });
 
-          // Browser notification (only when tab is not focused)
-          if (document.hidden && "Notification" in window) {
-            if (Notification.permission === "granted") {
-              const n = new Notification("Session needs input", {
-                body: `${data.projectName} / ${data.sessionName}`,
-                tag: `input-${data.conversationId}`,
-              });
-              n.onclick = () => {
-                window.focus();
-                n.close();
-              };
-            } else if (Notification.permission !== "denied") {
-              void Notification.requestPermission();
-            }
-          }
+          showBrowserNotification({
+            title: "Session needs input",
+            body: `${data.projectName} / ${data.sessionName}`,
+            tag: `input-${data.conversationId}`,
+          });
         }
 
         if (data.error) {
@@ -228,42 +368,15 @@ export default function NotificationListener(): null {
       );
       if (!parsed.success) return;
       const d = parsed.data;
-      if (d.scope !== "session") return;
-      queryClient.setQueryData(
-        conversationKeys.messages(
-          d.projectName,
-          d.sessionName,
-          d.conversationId,
-        ),
-        (prev: unknown) => {
-          const entry = { ...d.message, seq: d.seq };
-          if (!Array.isArray(prev)) return [entry];
-          // Mirror server-side `readConversationMessagesWithSeq` merging:
-          // consecutive same-role entries collapse into one TranscriptMessage
-          // so the MessageContent grouping logic sees them as a single turn.
-          const lastIdx = prev.length - 1;
-          const last = prev[lastIdx];
-          if (
-            last &&
-            typeof last === "object" &&
-            "role" in last &&
-            "content" in last &&
-            Array.isArray((last as { content: unknown }).content) &&
-            (last as { role: unknown }).role === entry.role
-          ) {
-            const merged = {
-              ...(last as object),
-              content: [
-                ...(last as { content: unknown[] }).content,
-                ...entry.content,
-              ],
-              seq: entry.seq,
-            };
-            return [...prev.slice(0, lastIdx), merged];
-          }
-          return [...prev, entry];
-        },
-      );
+      const queryKey =
+        d.scope === "project"
+          ? projectConversationKeys.messages(d.projectName, d.conversationId)
+          : conversationKeys.messages(
+              d.projectName,
+              d.sessionName,
+              d.conversationId,
+            );
+      appendMessageToQuery(queryKey, { ...d.message, seq: d.seq });
     });
 
     es.addEventListener("message-updated", (event) => {
@@ -272,23 +385,15 @@ export default function NotificationListener(): null {
       );
       if (!parsed.success) return;
       const d = parsed.data;
-      if (d.scope !== "session") return;
-      queryClient.setQueryData(
-        conversationKeys.messages(
-          d.projectName,
-          d.sessionName,
-          d.conversationId,
-        ),
-        (prev: unknown) => {
-          if (!Array.isArray(prev)) return prev;
-          const replacement = { ...d.message, seq: d.seq };
-          return prev.map((m) =>
-            m && typeof m === "object" && "seq" in m && m.seq === d.seq
-              ? replacement
-              : m,
-          );
-        },
-      );
+      const queryKey =
+        d.scope === "project"
+          ? projectConversationKeys.messages(d.projectName, d.conversationId)
+          : conversationKeys.messages(
+              d.projectName,
+              d.sessionName,
+              d.conversationId,
+            );
+      replaceMessageInQuery(queryKey, { ...d.message, seq: d.seq });
     });
 
     es.addEventListener("conversation-created", (event) => {
@@ -297,7 +402,15 @@ export default function NotificationListener(): null {
       );
       if (!parsed.success) return;
       const d = parsed.data;
-      if (d.scope !== "session") return;
+      if (d.scope === "project") {
+        queryClient.setQueryData(
+          projectConversationKeys.list(d.projectName),
+          (prev: unknown) =>
+            Array.isArray(prev) ? [...prev, d.conversation] : [d.conversation],
+        );
+        invalidateProjectConversationActivity(d.projectName);
+        return;
+      }
       queryClient.setQueryData(
         conversationKeys.list(d.projectName, d.sessionName),
         (prev: unknown) =>
@@ -314,7 +427,13 @@ export default function NotificationListener(): null {
       );
       if (!parsed.success) return;
       const d = parsed.data;
-      if (d.scope !== "session") return;
+      if (d.scope === "project") {
+        updateProjectConversationListEntry(d.projectName, d.conversationId, {
+          name: d.name,
+        });
+        invalidateProjectConversationActivity(d.projectName);
+        return;
+      }
       queryClient.setQueryData(
         conversationKeys.list(d.projectName, d.sessionName),
         (prev: unknown) => {
@@ -334,7 +453,13 @@ export default function NotificationListener(): null {
       );
       if (!parsed.success) return;
       const d = parsed.data;
-      if (d.scope !== "session") return;
+      if (d.scope === "project") {
+        updateProjectConversationListEntry(d.projectName, d.conversationId, {
+          archived: d.archived,
+        });
+        invalidateProjectConversationActivity(d.projectName);
+        return;
+      }
       queryClient.setQueryData(
         conversationKeys.list(d.projectName, d.sessionName),
         (prev: unknown) => {
@@ -348,11 +473,45 @@ export default function NotificationListener(): null {
       );
     });
 
+    es.addEventListener("conversation-open", (event) => {
+      const parsed = conversationOpenEventSchema.safeParse(
+        JSON.parse(event.data),
+      );
+      if (!parsed.success) return;
+      const d = parsed.data;
+      updateProjectConversationListEntry(d.projectName, d.conversationId, {
+        open: d.open,
+      });
+      invalidateProjectConversationActivity(d.projectName);
+    });
+
+    es.addEventListener("conversation-unread", (event) => {
+      const parsed = conversationUnreadEventSchema.safeParse(
+        JSON.parse(event.data),
+      );
+      if (!parsed.success) return;
+      const d = parsed.data;
+      if (d.scope !== "project") return;
+      updateProjectConversationListEntry(d.projectName, d.conversationId, {
+        unread: d.unread,
+      });
+      invalidateProjectConversationActivity(d.projectName);
+    });
+
     es.addEventListener("ask-question", (event) => {
       const parsed = askQuestionEventSchema.safeParse(JSON.parse(event.data));
       if (!parsed.success) return;
       const d = parsed.data;
-      if (d.scope !== "session") return;
+      if (d.scope === "project") {
+        invalidateProjectConversationActivity(d.projectName);
+        void queryClient.invalidateQueries({
+          queryKey: projectConversationKeys.messages(
+            d.projectName,
+            d.conversationId,
+          ),
+        });
+        return;
+      }
       void queryClient.invalidateQueries({
         queryKey: conversationKeys.active(),
       });

@@ -1,7 +1,15 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { enableMapSet } from "immer";
-import { useNotificationStore } from "./notification.store";
+import {
+  useNotificationStore,
+  type InputNeededItem,
+  type PromptErrorItem,
+} from "./notification.store";
 import type { JobStatusEvent } from "@/lib/jobs/schemas";
+import type {
+  JobNotification,
+  ProjectConversationNotification,
+} from "@/lib/notifications/schemas";
 enableMapSet();
 
 // ============================================================
@@ -14,6 +22,7 @@ function resetStore() {
     jobs: new Map(),
     toastQueue: [],
     inputToastQueue: [],
+    promptErrorQueue: [],
   });
 }
 
@@ -29,6 +38,42 @@ function makeRunningEvent(
     jobId: "job-123",
     branchName: "csm/my-session",
     ...overrides,
+  };
+}
+
+function makeJobNotification(
+  overrides: Partial<JobNotification> = {},
+): JobNotification {
+  return {
+    id: "notification-1",
+    source: "job",
+    type: "merge-completed",
+    title: "Merge completed",
+    message: "Merged",
+    read: false,
+    projectName: "my-project",
+    sessionName: "my-session",
+    branchName: "csm/my-session",
+    jobId: "job-123",
+    jobType: "merge",
+    createdAt: "2026-06-07 12:00:00",
+    ...overrides,
+  };
+}
+
+function makeProjectConversationNotification(): ProjectConversationNotification {
+  return {
+    id: "plc-notification-1",
+    source: "project-conversation",
+    type: "project-conversation-ready",
+    title: "Agent finished",
+    message: "Project conversation is ready",
+    read: false,
+    projectName: "my-project",
+    conversationId: "conversation-1",
+    conversationName: "Planning",
+    status: "awaiting",
+    createdAt: "2026-06-07 12:00:00",
   };
 }
 
@@ -260,6 +305,54 @@ describe("notification.store — optimistic job addition", () => {
   });
 });
 
+describe("notification.store — job notification toast queue", () => {
+  beforeEach(resetStore);
+
+  it("enqueues job-variant merge, commit, resolve-conflicts, ready-to-land, and discarded notifications", () => {
+    const notifications: JobNotification[] = [
+      makeJobNotification({
+        id: "merge",
+        type: "merge-completed",
+        jobType: "merge",
+      }),
+      makeJobNotification({
+        id: "commit",
+        type: "commit-completed",
+        jobType: "commit",
+      }),
+      makeJobNotification({
+        id: "resolve",
+        type: "resolve-completed",
+        jobType: "resolve-conflicts",
+      }),
+      makeJobNotification({
+        id: "ready",
+        type: "merge-ready-to-land",
+        jobType: "merge",
+      }),
+      makeJobNotification({
+        id: "discarded",
+        type: "merge-discarded",
+        jobType: "merge",
+      }),
+    ];
+
+    for (const notification of notifications) {
+      useNotificationStore.getState().enqueueToast(notification);
+    }
+
+    expect(useNotificationStore.getState().toastQueue).toEqual(notifications);
+  });
+
+  it("does not enqueue project-conversation notifications on the job toast queue", () => {
+    useNotificationStore
+      .getState()
+      .enqueueToast(makeProjectConversationNotification());
+
+    expect(useNotificationStore.getState().toastQueue).toEqual([]);
+  });
+});
+
 // ============================================================
 // Input Toast Queue Tests
 // ============================================================
@@ -285,6 +378,22 @@ describe("notification.store — input toast queue", () => {
       sessionName: "my-session",
       conversationId: "conv-1",
     });
+  });
+
+  it("enqueues a project-scoped input toast without a session name", () => {
+    const item = {
+      scope: "project",
+      projectName: "my-project",
+      conversationId: "project-convo-1",
+      displayContext: "main",
+      href: "/projects/my-project?focus=project-convo-1",
+    } satisfies InputNeededItem;
+
+    useNotificationStore.getState().enqueueInputToast(item);
+
+    const queue = useNotificationStore.getState().inputToastQueue;
+    expect(queue).toEqual([item]);
+    expect("sessionName" in queue[0]!).toBe(false);
   });
 
   it("enqueues multiple items in FIFO order", () => {
@@ -329,6 +438,27 @@ describe("notification.store — input toast queue", () => {
   it("dismissing from an empty queue is a no-op", () => {
     useNotificationStore.getState().dismissInputToast();
     expect(useNotificationStore.getState().inputToastQueue).toEqual([]);
+  });
+});
+
+describe("notification.store — prompt error toast queue", () => {
+  beforeEach(resetStore);
+
+  it("enqueues a project-scoped prompt error toast without a session name", () => {
+    const item = {
+      scope: "project",
+      projectName: "my-project",
+      conversationId: "project-convo-1",
+      displayContext: "main",
+      href: "/projects/my-project?focus=project-convo-1",
+      error: "Tool failed",
+    } satisfies PromptErrorItem;
+
+    useNotificationStore.getState().enqueuePromptErrorToast(item);
+
+    const queue = useNotificationStore.getState().promptErrorQueue;
+    expect(queue).toEqual([item]);
+    expect("sessionName" in queue[0]!).toBe(false);
   });
 });
 

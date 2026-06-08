@@ -46,15 +46,49 @@ export async function pushForNotification(
 ): Promise<void> {
   if (!config) return;
 
-  const event: PushEvent = {
-    trigger: "job-completed",
-    title: notification.title,
-    message: notification.message,
-    projectName: notification.projectName,
-    sessionName: notification.sessionName,
-  };
+  const event = pushEventFromNotification(notification);
 
   await sendPushNotification(config, event);
+}
+
+function pushEventFromNotification(notification: Notification): PushEvent {
+  switch (notification.source) {
+    case "job":
+      return {
+        trigger: "job-completed",
+        title: notification.title,
+        message: notification.message,
+        projectName: notification.projectName,
+        sessionName: notification.sessionName,
+      };
+    case "project-conversation":
+      return {
+        trigger: projectConversationPushTrigger(notification.type),
+        title: notification.title,
+        message: notification.message,
+        projectName: notification.projectName,
+        contextName:
+          notification.conversationName?.trim() ||
+          `Conversation ${notification.conversationId}`,
+      };
+    default:
+      assertNever(notification);
+  }
+}
+
+function projectConversationPushTrigger(
+  type: Extract<Notification, { source: "project-conversation" }>["type"],
+): PushEvent["trigger"] {
+  switch (type) {
+    case "project-conversation-ready":
+      return "conversation-idle";
+    case "project-conversation-input-needed":
+      return "waiting-for-input";
+    case "project-conversation-failed":
+      return "workflow-halted";
+    default:
+      assertNever(type);
+  }
 }
 
 // ============================================================

@@ -7,6 +7,7 @@ import { collaborationKeys } from "../workflows/query-keys";
 import { devServerKeys } from "../dev-server/query-keys";
 import { notificationKeys } from "../notifications/query-keys";
 import { sessionKeys } from "../sessions/query-keys";
+import { projectConversationKeys } from "../project-conversations-client/query-keys";
 
 type StampedMessage = {
   role: "user" | "assistant";
@@ -149,6 +150,28 @@ describe("reconnectReconcile", () => {
         mcpToolsKeys.inventory("proj", "sess-a", "conv-a", "calc"),
       )?.isInvalidated,
     ).toBe(true);
+  });
+
+  it("marks mounted project-conversation list, message, and open-count caches stale after reconciling", async () => {
+    const client = makeClient();
+    const listKey = projectConversationKeys.list("proj");
+    const openCountKey = projectConversationKeys.openCount("proj");
+    const messagesKey = projectConversationKeys.messages("proj", "pc-1");
+    client.setQueryData(listKey, []);
+    client.setQueryData(openCountKey, 1);
+    client.setQueryData(messagesKey, [makeMsg(0, "cached")]);
+
+    const fetchFn = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "/api/jobs") return jsonResponse({ jobs: [] });
+      return jsonResponse([]);
+    });
+
+    await reconnectReconcile(client, vi.fn(), fetchFn);
+
+    expect(client.getQueryState(listKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(openCountKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(messagesKey)?.isInvalidated).toBe(true);
   });
 
   it("calls reconcileJobs with the jobs array returned by /api/jobs", async () => {

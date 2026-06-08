@@ -4,12 +4,12 @@ import { getStateDb } from "../state-store/store";
 import { createLogger } from "../logging";
 import { timedSync } from "../logging/timed";
 import { PersistenceError } from "../shared/errors";
-import { notificationSchema } from "../notifications/schemas";
+import { jobNotificationSchema } from "../notifications/schemas";
 import { backgroundJobSchema, jobStatusSchema } from "./schemas";
 import type { BackgroundJob, JobType, JobStatus } from "./schemas";
 import type {
-  Notification,
-  NotificationType,
+  JobNotification,
+  JobNotificationType,
 } from "@/lib/notifications/schemas";
 const jobRecordLogger = createLogger("state-store.job-records");
 
@@ -263,7 +263,7 @@ export function deleteJobRecordsForProject(projectName: string): number {
 export function deriveNotificationType(
   jobType: JobType,
   status: JobStatus,
-): NotificationType {
+): JobNotificationType {
   switch (jobType) {
     case "merge":
       if (status === "completed") return "merge-completed";
@@ -283,7 +283,7 @@ export function deriveNotificationType(
 /**
  * Derive human-readable title from notification type.
  */
-export function deriveNotificationTitle(type: NotificationType): string {
+export function deriveNotificationTitle(type: JobNotificationType): string {
   switch (type) {
     case "merge-completed":
       return "Merge completed";
@@ -333,8 +333,8 @@ function recoverStaleJobsImpl(): number {
   const errorMsg = "Job interrupted by server restart";
 
   const insertNotification = db.prepare(`
-    INSERT INTO notifications (id, type, title, message, project_name, session_name, branch_name, job_id, job_type, error_message)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO notifications (id, source, type, title, message, project_name, session_name, branch_name, job_id, job_type, error_message)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const recoverAll = db.transaction(() => {
@@ -342,8 +342,9 @@ function recoverStaleJobsImpl(): number {
       updateStmt.run(errorMsg, job.jobId);
       const notifType = deriveNotificationType(job.jobType, "failed");
       const candidateId = randomUUID();
-      const candidate: Notification = notificationSchema.parse({
+      const candidate: JobNotification = jobNotificationSchema.parse({
         id: candidateId,
+        source: "job",
         type: notifType,
         title: deriveNotificationTitle(notifType),
         message: `${job.jobType} job on ${job.branchName} was interrupted by server restart`,
@@ -358,6 +359,7 @@ function recoverStaleJobsImpl(): number {
       });
       insertNotification.run(
         candidate.id,
+        candidate.source,
         candidate.type,
         candidate.title,
         candidate.message,

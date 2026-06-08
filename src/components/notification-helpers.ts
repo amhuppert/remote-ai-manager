@@ -14,6 +14,8 @@ export function getItemLabel(item: NotificationItem): string {
           return "New";
         case "waiting_for_input":
           return "Needs input";
+        case "failed":
+          return "Failed";
         default:
           return assertNever(status);
       }

@@ -6,8 +6,9 @@ import {
   pushForCollaborationEvent,
 } from "./dispatcher";
 import type {
+  JobNotification,
+  ProjectConversationNotification,
   PushNotificationConfig,
-  Notification,
 } from "@/lib/notifications/schemas";
 import * as pushMod from "../notifications/push";
 
@@ -31,9 +32,12 @@ const pushConfig: PushNotificationConfig = {
   },
 };
 
-function makeNotification(overrides: Partial<Notification> = {}): Notification {
+function makeNotification(
+  overrides: Partial<JobNotification> = {},
+): JobNotification {
   return {
     id: "test-id",
+    source: "job",
     type: "merge-completed",
     title: "Merge completed",
     message: "Branch csm/feature merged",
@@ -43,6 +47,25 @@ function makeNotification(overrides: Partial<Notification> = {}): Notification {
     branchName: "csm/feature",
     jobId: "job-1",
     jobType: "merge",
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+function makeProjectConversationNotification(
+  overrides: Partial<ProjectConversationNotification> = {},
+): ProjectConversationNotification {
+  return {
+    id: "project-notification-1",
+    source: "project-conversation",
+    type: "project-conversation-ready",
+    title: "Project conversation ready",
+    message: "Project chat in my-project is ready.",
+    read: false,
+    projectName: "my-project",
+    conversationId: "conversation-1",
+    conversationName: "Project chat",
+    status: "awaiting",
     createdAt: new Date().toISOString(),
     ...overrides,
   };
@@ -81,6 +104,95 @@ describe("pushForNotification", () => {
   it("does nothing when config is undefined", async () => {
     await pushForNotification(undefined, makeNotification());
     expect(sendPushNotification).not.toHaveBeenCalled();
+  });
+
+  it("does nothing for project-conversation notifications when config is undefined", async () => {
+    await pushForNotification(undefined, makeProjectConversationNotification());
+    expect(sendPushNotification).not.toHaveBeenCalled();
+  });
+
+  it("sends conversation-idle push for a project-conversation readiness notification without a session name", async () => {
+    await pushForNotification(
+      pushConfig,
+      makeProjectConversationNotification({
+        type: "project-conversation-ready",
+        title: "Project conversation ready",
+        message: "Project chat in my-project is ready.",
+        status: "awaiting",
+      }),
+    );
+
+    expect(sendPushNotification).toHaveBeenCalledOnce();
+    expect(sendPushNotification).toHaveBeenCalledWith(pushConfig, {
+      trigger: "conversation-idle",
+      title: "Project conversation ready",
+      message: "Project chat in my-project is ready.",
+      projectName: "my-project",
+      contextName: "Project chat",
+    });
+  });
+
+  it("sends waiting-for-input push for a project-conversation input-needed notification without a session name", async () => {
+    await pushForNotification(
+      pushConfig,
+      makeProjectConversationNotification({
+        type: "project-conversation-input-needed",
+        title: "Project conversation needs input",
+        message: "Conversation conversation-2 in my-project needs input.",
+        conversationId: "conversation-2",
+        conversationName: null,
+        status: "waiting_for_input",
+      }),
+    );
+
+    expect(sendPushNotification).toHaveBeenCalledOnce();
+    expect(sendPushNotification).toHaveBeenCalledWith(pushConfig, {
+      trigger: "waiting-for-input",
+      title: "Project conversation needs input",
+      message: "Conversation conversation-2 in my-project needs input.",
+      projectName: "my-project",
+      contextName: "Conversation conversation-2",
+    });
+  });
+
+  it("sends workflow-halted push for a project-conversation failure notification without a session name", async () => {
+    await pushForNotification(
+      pushConfig,
+      makeProjectConversationNotification({
+        type: "project-conversation-failed",
+        title: "Project conversation failed",
+        message: "Project chat in my-project failed: Tool call timed out",
+        status: "failed",
+        errorMessage: "Tool call timed out",
+      }),
+    );
+
+    expect(sendPushNotification).toHaveBeenCalledOnce();
+    expect(sendPushNotification).toHaveBeenCalledWith(pushConfig, {
+      trigger: "workflow-halted",
+      title: "Project conversation failed",
+      message: "Project chat in my-project failed: Tool call timed out",
+      projectName: "my-project",
+      contextName: "Project chat",
+    });
+  });
+
+  it("uses the existing conversation-idle trigger gate for project-conversation readiness notifications", async () => {
+    await pushForNotification(
+      {
+        ...pushConfig,
+        triggers: {
+          ...pushConfig.triggers,
+          conversationIdle: false,
+        },
+      },
+      makeProjectConversationNotification(),
+    );
+
+    expect(sendPushNotification).toHaveBeenCalledOnce();
+    expect(sendPushNotification.mock.calls[0]?.[1].trigger).toBe(
+      "conversation-idle",
+    );
   });
 });
 

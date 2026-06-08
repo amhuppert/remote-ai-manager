@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 
 interface InputNeededToastProps {
-  sessionName: string;
+  sessionName?: string;
+  contextLabel?: string;
   projectName: string;
   onAction?: () => void;
   onDismiss?: () => void;
@@ -43,6 +44,7 @@ function CloseIcon() {
 
 export default function InputNeededToast({
   sessionName,
+  contextLabel,
   projectName,
   onAction,
   onDismiss,
@@ -67,6 +69,8 @@ export default function InputNeededToast({
 
   if (!visible) return null;
 
+  const detailContext = contextLabel ?? sessionName ?? "";
+
   return (
     <div
       className={`merge-toast merge-toast-conflicts${exiting ? " merge-toast-exit" : ""}`}
@@ -77,7 +81,7 @@ export default function InputNeededToast({
       <div className="merge-toast-content">
         <span className="merge-toast-title">Needs input</span>
         <span className="merge-toast-detail">
-          {projectName} / {sessionName}
+          {projectName} / {detailContext}
         </span>
       </div>
       {onAction && (

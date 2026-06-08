@@ -50,7 +50,7 @@ export const rawPushNotificationConfigSchema = z.object({
 // Notification Entity
 // ============================================================
 
-const notificationTypeSchema = z.enum([
+const jobNotificationTypeSchema = z.enum([
   "merge-completed",
   "merge-failed",
   "merge-conflicts",
@@ -61,15 +61,33 @@ const notificationTypeSchema = z.enum([
   "resolve-completed",
   "resolve-failed",
 ]);
-export type NotificationType = z.infer<typeof notificationTypeSchema>;
+export type JobNotificationType = z.infer<typeof jobNotificationTypeSchema>;
 
-export const notificationSchema = z.object({
+const projectConversationNotificationTypeSchema = z.enum([
+  "project-conversation-ready",
+  "project-conversation-input-needed",
+  "project-conversation-failed",
+]);
+export type ProjectConversationNotificationType = z.infer<
+  typeof projectConversationNotificationTypeSchema
+>;
+
+export type NotificationType =
+  | JobNotificationType
+  | ProjectConversationNotificationType;
+
+const notificationBaseSchema = z.object({
   id: z.string(),
-  type: notificationTypeSchema,
   title: z.string(),
   message: z.string(),
   read: z.boolean(),
   projectName: z.string(),
+  createdAt: z.string(),
+});
+
+export const jobNotificationSchema = notificationBaseSchema.extend({
+  source: z.literal("job"),
+  type: jobNotificationTypeSchema,
   sessionName: z.string(),
   branchName: z.string(),
   jobId: z.string(),
@@ -80,9 +98,27 @@ export const notificationSchema = z.object({
   conflictFiles: z.array(z.string()).optional(),
   targetBranch: z.string().optional(),
   errorMessage: z.string().optional(),
-  createdAt: z.string(),
 });
+
+export const projectConversationNotificationSchema =
+  notificationBaseSchema.extend({
+    source: z.literal("project-conversation"),
+    type: projectConversationNotificationTypeSchema,
+    conversationId: z.string(),
+    conversationName: z.string().nullable(),
+    status: z.enum(["awaiting", "waiting_for_input", "failed"]),
+    errorMessage: z.string().optional(),
+  });
+
+export const notificationSchema = z.discriminatedUnion("source", [
+  jobNotificationSchema,
+  projectConversationNotificationSchema,
+]);
 export type Notification = z.infer<typeof notificationSchema>;
+export type JobNotification = z.infer<typeof jobNotificationSchema>;
+export type ProjectConversationNotification = z.infer<
+  typeof projectConversationNotificationSchema
+>;
 
 // ============================================================
 // SSE Events

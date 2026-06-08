@@ -238,6 +238,18 @@ describe("deriveNotificationType", () => {
     expect(deriveNotificationType("merge", "failed")).toBe("merge-failed");
   });
 
+  it("maps merge + ready-to-land to merge-ready-to-land", () => {
+    expect(deriveNotificationType("merge", "ready-to-land")).toBe(
+      "merge-ready-to-land",
+    );
+  });
+
+  it("maps merge + discarded to merge-discarded", () => {
+    expect(deriveNotificationType("merge", "discarded")).toBe(
+      "merge-discarded",
+    );
+  });
+
   it("maps commit + completed to commit-completed", () => {
     expect(deriveNotificationType("commit", "completed")).toBe(
       "commit-completed",
@@ -266,6 +278,12 @@ describe("deriveNotificationTitle", () => {
     expect(deriveNotificationTitle("merge-completed")).toBe("Merge completed");
     expect(deriveNotificationTitle("merge-failed")).toBe("Merge failed");
     expect(deriveNotificationTitle("merge-conflicts")).toBe("Merge conflicts");
+    expect(deriveNotificationTitle("merge-ready-to-land")).toBe(
+      "Merge ready to land",
+    );
+    expect(deriveNotificationTitle("merge-discarded")).toBe(
+      "Prepared merge discarded",
+    );
     expect(deriveNotificationTitle("commit-completed")).toBe(
       "Commit completed",
     );

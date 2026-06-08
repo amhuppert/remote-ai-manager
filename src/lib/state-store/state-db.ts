@@ -26,6 +26,62 @@ const DB_FILE_NAME = "command-center.db";
  */
 export const KNOWN_SCHEMA_VERSION = 0;
 
+const NOTIFICATIONS_TABLE_DDL = `
+  CREATE TABLE IF NOT EXISTS notifications (
+    id                    TEXT PRIMARY KEY,
+    source                TEXT NOT NULL DEFAULT 'job',
+    type                  TEXT NOT NULL,
+    title                 TEXT NOT NULL,
+    message               TEXT NOT NULL,
+    read                  INTEGER NOT NULL DEFAULT 0,
+    project_name          TEXT NOT NULL,
+    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    session_name          TEXT,
+    branch_name           TEXT,
+    job_id                TEXT,
+    job_type              TEXT,
+    merge_hash            TEXT,
+    commit_hash           TEXT,
+    conflict_count        INTEGER,
+    conflict_files        TEXT,
+    target_branch         TEXT,
+    conversation_id       TEXT,
+    conversation_name     TEXT,
+    conversation_status   TEXT,
+    dedupe_key            TEXT,
+    error_message         TEXT,
+    CHECK (
+      (source = 'job'
+        AND session_name IS NOT NULL
+        AND branch_name IS NOT NULL
+        AND job_id IS NOT NULL
+        AND job_type IS NOT NULL
+        AND conversation_id IS NULL)
+      OR
+      (source = 'project-conversation'
+        AND conversation_id IS NOT NULL
+        AND conversation_status IS NOT NULL
+        AND session_name IS NULL
+        AND branch_name IS NULL
+        AND job_id IS NULL
+        AND job_type IS NULL)
+    )
+  );
+`;
+
+const NOTIFICATIONS_INDEX_DDL = `
+  CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read);
+  CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at);
+  CREATE INDEX IF NOT EXISTS idx_notifications_project_session
+    ON notifications(project_name, session_name);
+  CREATE INDEX IF NOT EXISTS idx_notifications_project_conversation
+    ON notifications(project_name, conversation_id)
+    WHERE source = 'project-conversation';
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_dedupe
+    ON notifications(dedupe_key)
+    WHERE dedupe_key IS NOT NULL;
+`;
+
 const SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
     version     INTEGER PRIMARY KEY,
@@ -171,30 +227,7 @@ const SCHEMA_DDL = `
     UNIQUE (project_path, session_name, file_path)
   );
 
-  CREATE TABLE IF NOT EXISTS notifications (
-    id             TEXT PRIMARY KEY,
-    type           TEXT NOT NULL,
-    title          TEXT NOT NULL,
-    message        TEXT NOT NULL,
-    read           INTEGER NOT NULL DEFAULT 0,
-    project_name   TEXT NOT NULL,
-    session_name   TEXT NOT NULL,
-    branch_name    TEXT NOT NULL,
-    job_id         TEXT NOT NULL,
-    job_type       TEXT NOT NULL,
-    merge_hash     TEXT,
-    commit_hash    TEXT,
-    conflict_count INTEGER,
-    conflict_files TEXT,
-    target_branch  TEXT,
-    error_message  TEXT,
-    created_at     TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read);
-  CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at);
-  CREATE INDEX IF NOT EXISTS idx_notifications_project_session
-    ON notifications(project_name, session_name);
+  ${NOTIFICATIONS_TABLE_DDL}
 
   CREATE TABLE IF NOT EXISTS job_records (
     job_id         TEXT PRIMARY KEY,
@@ -306,8 +339,152 @@ function ensureAdditiveColumns(db: Db): void {
   }
 }
 
+interface TableColumnInfo {
+  name: string;
+  notnull: 0 | 1;
+}
+
+function getTableColumns(db: Db, table: string): TableColumnInfo[] {
+  return db.pragma(`table_info(${table})`) as TableColumnInfo[];
+}
+
+function notificationColumnExpression(
+  existingColumnNames: Set<string>,
+  column: string,
+  fallback: string,
+): string {
+  if (existingColumnNames.has(column)) return column;
+  return fallback;
+}
+
+function migrateNotificationsTable(db: Db): void {
+  const columns = getTableColumns(db, "notifications");
+  if (columns.length === 0) return;
+
+  const columnNames = new Set(columns.map((column) => column.name));
+  const requiredColumns = [
+    "source",
+    "conversation_id",
+    "conversation_name",
+    "conversation_status",
+    "dedupe_key",
+  ];
+  const missingRequiredColumns = requiredColumns.some(
+    (column) => !columnNames.has(column),
+  );
+  const jobContextIsStrict = columns.some(
+    (column) =>
+      ["session_name", "branch_name", "job_id", "job_type"].includes(
+        column.name,
+      ) && column.notnull === 1,
+  );
+
+  if (!missingRequiredColumns && !jobContextIsStrict) return;
+
+  db.exec(`
+    DROP INDEX IF EXISTS idx_notifications_read;
+    DROP INDEX IF EXISTS idx_notifications_created_at;
+    DROP INDEX IF EXISTS idx_notifications_project_session;
+    DROP INDEX IF EXISTS idx_notifications_project_conversation;
+    DROP INDEX IF EXISTS idx_notifications_dedupe;
+    ALTER TABLE notifications RENAME TO notifications_legacy_migration;
+  `);
+  db.exec(NOTIFICATIONS_TABLE_DDL);
+
+  const legacyColumns = getTableColumns(db, "notifications_legacy_migration");
+  const legacyColumnNames = new Set(legacyColumns.map((column) => column.name));
+
+  db.exec(`
+    INSERT INTO notifications (
+      id,
+      source,
+      type,
+      title,
+      message,
+      read,
+      project_name,
+      created_at,
+      session_name,
+      branch_name,
+      job_id,
+      job_type,
+      merge_hash,
+      commit_hash,
+      conflict_count,
+      conflict_files,
+      target_branch,
+      conversation_id,
+      conversation_name,
+      conversation_status,
+      dedupe_key,
+      error_message
+    )
+    SELECT
+      id,
+      ${notificationColumnExpression(legacyColumnNames, "source", "'job'")},
+      type,
+      title,
+      message,
+      read,
+      project_name,
+      ${notificationColumnExpression(
+        legacyColumnNames,
+        "created_at",
+        "datetime('now')",
+      )},
+      session_name,
+      branch_name,
+      job_id,
+      job_type,
+      ${notificationColumnExpression(legacyColumnNames, "merge_hash", "NULL")},
+      ${notificationColumnExpression(legacyColumnNames, "commit_hash", "NULL")},
+      ${notificationColumnExpression(
+        legacyColumnNames,
+        "conflict_count",
+        "NULL",
+      )},
+      ${notificationColumnExpression(
+        legacyColumnNames,
+        "conflict_files",
+        "NULL",
+      )},
+      ${notificationColumnExpression(
+        legacyColumnNames,
+        "target_branch",
+        "NULL",
+      )},
+      ${notificationColumnExpression(
+        legacyColumnNames,
+        "conversation_id",
+        "NULL",
+      )},
+      ${notificationColumnExpression(
+        legacyColumnNames,
+        "conversation_name",
+        "NULL",
+      )},
+      ${notificationColumnExpression(
+        legacyColumnNames,
+        "conversation_status",
+        "NULL",
+      )},
+      ${notificationColumnExpression(legacyColumnNames, "dedupe_key", "NULL")},
+      ${notificationColumnExpression(
+        legacyColumnNames,
+        "error_message",
+        "NULL",
+      )}
+    FROM notifications_legacy_migration;
+
+    DROP TABLE notifications_legacy_migration;
+  `);
+  db.exec(NOTIFICATIONS_INDEX_DDL);
+}
+
 function initializeSchema(db: Db, dbPath: string): void {
   db.exec(SCHEMA_DDL);
+  migrateNotificationsTable(db);
+  db.exec(NOTIFICATIONS_INDEX_DDL);
   ensureAdditiveColumns(db);
   enforceForwardOnlyVersion(db, dbPath);
 }

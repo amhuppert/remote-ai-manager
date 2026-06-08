@@ -17,6 +17,11 @@ export default function InputNeededToastContainer() {
 
   const handleAction = useCallback(() => {
     if (!current) return;
+    if (current.scope === "project") {
+      router.push(current.href);
+      dismissToast();
+      return;
+    }
     const basePath = `/projects/${encodeURIComponent(current.projectName)}/${encodeURIComponent(current.sessionName)}`;
     router.push(`${basePath}/${current.conversationId}`);
     dismissToast();
@@ -30,7 +35,14 @@ export default function InputNeededToastContainer() {
 
   return (
     <InputNeededToast
-      sessionName={current.sessionName}
+      sessionName={
+        current.scope === "project" ? undefined : current.sessionName
+      }
+      contextLabel={
+        current.scope === "project"
+          ? current.displayContext
+          : current.sessionName
+      }
       projectName={current.projectName}
       onAction={handleAction}
       onDismiss={handleDismiss}

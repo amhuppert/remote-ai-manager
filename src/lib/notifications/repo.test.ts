@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import Database from "better-sqlite3";
+import { mkdtempSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   createNotification,
+  createProjectConversationNotification,
   getNotifications,
   deleteNotification,
   markAsRead,
@@ -17,9 +22,12 @@ import {
 import { recoverStaleJobs } from "@/lib/jobs/repo";
 import {
   _createTestDb as createSharedStateDb,
+  _createTestDbAtPath as createSharedStateDbAtPath,
   getDb as getSharedStateDb,
 } from "@/lib/state-store/state-db";
 import { PersistenceError } from "@/lib/shared/errors";
+import { notificationSchema } from "@/lib/notifications/schemas";
+import { dispatchPushForNotification } from "@/lib/push-notification/dispatcher";
 import { randomUUID } from "node:crypto";
 
 // Prevent tests from sending real push notifications to ntfy
@@ -85,6 +93,7 @@ describe("createNotification", () => {
     const notification = createTestNotification();
 
     expect(notification.id).toBeDefined();
+    expect(notification.source).toBe("job");
     expect(notification.type).toBe("merge-completed");
     expect(notification.title).toBe("Merge completed");
     expect(notification.message).toBe("Branch csm/feature merged successfully");
@@ -129,6 +138,215 @@ describe("createNotification", () => {
   it("defaults read to false", () => {
     const notification = createTestNotification();
     expect(notification.read).toBe(false);
+  });
+});
+
+describe("job notification variant regressions", () => {
+  it("persists terminal job notification rows as the job variant without project-conversation fields", () => {
+    const inputs = [
+      {
+        type: "merge-completed" as const,
+        title: "Merge completed",
+        message: "Merged",
+        jobType: "merge" as const,
+        jobId: "job-merge",
+        mergeHash: "merge123",
+      },
+      {
+        type: "commit-completed" as const,
+        title: "Commit completed",
+        message: "Committed",
+        jobType: "commit" as const,
+        jobId: "job-commit",
+        commitHash: "commit123",
+      },
+      {
+        type: "resolve-completed" as const,
+        title: "Conflicts resolved",
+        message: "Resolved",
+        jobType: "resolve-conflicts" as const,
+        jobId: "job-resolve",
+        mergeHash: "resolve123",
+      },
+      {
+        type: "merge-ready-to-land" as const,
+        title: "Merge ready to land",
+        message: "Ready",
+        jobType: "merge" as const,
+        jobId: "job-ready",
+        targetBranch: "main",
+      },
+      {
+        type: "merge-discarded" as const,
+        title: "Prepared merge discarded",
+        message: "Discarded",
+        jobType: "merge" as const,
+        jobId: "job-discarded",
+      },
+    ];
+
+    const created = inputs.map((input) =>
+      createTestNotification({
+        ...input,
+        projectName: "my-project",
+        sessionName: "feature",
+        branchName: "csm/feature",
+      }),
+    );
+
+    for (const notification of created) {
+      expect(notification.source).toBe("job");
+      expect(notification.sessionName).toBe("feature");
+      expect(notification.branchName).toBe("csm/feature");
+      expect(notification.jobId).toMatch(/^job-/);
+      expect("conversationId" in notification).toBe(false);
+      expect("conversationName" in notification).toBe(false);
+      expect("status" in notification).toBe(false);
+    }
+
+    const queried = getNotifications({ limit: 10 });
+    expect(queried.total).toBe(inputs.length);
+    expect(queried.unreadCount).toBe(inputs.length);
+    expect(queried.notifications.every((n) => n.source === "job")).toBe(true);
+
+    const db = getSharedStateDb();
+    const rows = db
+      .prepare(
+        "SELECT source, conversation_id, conversation_status, dedupe_key FROM notifications ORDER BY job_id",
+      )
+      .all() as Array<{
+      source: string;
+      conversation_id: string | null;
+      conversation_status: string | null;
+      dedupe_key: string | null;
+    }>;
+
+    expect(rows).toHaveLength(inputs.length);
+    for (const row of rows) {
+      expect(row.source).toBe("job");
+      expect(row.conversation_id).toBeNull();
+      expect(row.conversation_status).toBeNull();
+      expect(row.dedupe_key).toBeNull();
+    }
+
+    const readCount = markAllAsRead(mockBroadcast);
+    expect(readCount).toBe(inputs.length);
+    expect(getUnreadCount()).toBe(0);
+  });
+});
+
+describe("project-conversation notifications", () => {
+  it("parses a project-conversation variant without session or job fields", () => {
+    const parsed = notificationSchema.parse({
+      id: "plc-notification-1",
+      source: "project-conversation",
+      type: "project-conversation-ready",
+      title: "Agent finished",
+      message: "Project conversation is ready",
+      read: false,
+      projectName: "my-project",
+      conversationId: "conversation-1",
+      conversationName: "Architecture pass",
+      status: "awaiting",
+      createdAt: "2026-06-07 12:00:00",
+    });
+
+    expect(parsed.source).toBe("project-conversation");
+    if (parsed.source !== "project-conversation") {
+      throw new Error("Expected project-conversation notification");
+    }
+    expect(parsed.projectName).toBe("my-project");
+    expect(parsed.conversationId).toBe("conversation-1");
+    expect("sessionName" in parsed).toBe(false);
+    expect("branchName" in parsed).toBe(false);
+    expect("jobId" in parsed).toBe(false);
+    expect("jobType" in parsed).toBe(false);
+  });
+
+  it("creates, queries, marks read, and dismisses without session fields", () => {
+    const notification = createProjectConversationNotification(
+      {
+        type: "project-conversation-ready",
+        title: "Agent finished",
+        message: "Project conversation is ready",
+        projectName: "my-project",
+        conversationId: "conversation-1",
+        conversationName: "Architecture pass",
+        status: "awaiting",
+        dedupeKey: "my-project:conversation-1:ready:turn-1",
+      },
+      mockBroadcast,
+    );
+
+    expect(notification.source).toBe("project-conversation");
+    expect(notification.read).toBe(false);
+    expect(notification.projectName).toBe("my-project");
+    expect(notification.conversationId).toBe("conversation-1");
+    expect(notification.conversationName).toBe("Architecture pass");
+    expect(notification.status).toBe("awaiting");
+    expect("sessionName" in notification).toBe(false);
+    expect("branchName" in notification).toBe(false);
+    expect("jobId" in notification).toBe(false);
+    expect("jobType" in notification).toBe(false);
+
+    const queried = getNotifications();
+    expect(queried.total).toBe(1);
+    expect(queried.unreadCount).toBe(1);
+    expect(queried.notifications[0]).toEqual(notification);
+
+    expect(markAsRead(notification.id, mockBroadcast)).toBe(true);
+    expect(getNotifications().notifications[0]!.read).toBe(true);
+
+    expect(deleteNotification(notification.id)).toBe(true);
+    expect(getNotifications().total).toBe(0);
+  });
+
+  it("dispatches configured push handling for a new project-conversation notification", () => {
+    const notification = createProjectConversationNotification(
+      {
+        type: "project-conversation-ready",
+        title: "Agent finished",
+        message: "Project conversation is ready",
+        projectName: "my-project",
+        conversationId: "conversation-1",
+        conversationName: "Architecture pass",
+        status: "awaiting",
+        dedupeKey: "my-project:conversation-1:ready:turn-1",
+      },
+      mockBroadcast,
+    );
+
+    expect(dispatchPushForNotification).toHaveBeenCalledWith(notification);
+  });
+
+  it("returns the existing project-conversation row for a duplicate transition key", () => {
+    const input = {
+      type: "project-conversation-input-needed" as const,
+      title: "Input needed",
+      message: "Project conversation needs input",
+      projectName: "my-project",
+      conversationId: "conversation-1",
+      conversationName: null,
+      status: "waiting_for_input" as const,
+      dedupeKey: "my-project:conversation-1:input:turn-2",
+    };
+
+    const first = createProjectConversationNotification(input, mockBroadcast);
+    mockBroadcast.mockClear();
+    vi.mocked(dispatchPushForNotification).mockClear();
+    const duplicate = createProjectConversationNotification(
+      {
+        ...input,
+        title: "Input still needed",
+        message: "Duplicate transition",
+      },
+      mockBroadcast,
+    );
+
+    expect(duplicate).toEqual(first);
+    expect(getNotifications().total).toBe(1);
+    expect(mockBroadcast).not.toHaveBeenCalled();
+    expect(dispatchPushForNotification).not.toHaveBeenCalled();
   });
 });
 
@@ -356,7 +574,9 @@ describe("deleteNotificationsForSession", () => {
     const deleted = deleteNotificationsForSession("proj-a", "doomed");
 
     expect(deleted).toBe(2);
-    const remaining = getNotifications().notifications.map((n) => n.jobId);
+    const remaining = getNotifications()
+      .notifications.filter((n) => n.source === "job")
+      .map((n) => n.jobId);
     expect(remaining.sort()).toEqual(["job-keep", "job-other-project"]);
   });
 
@@ -388,7 +608,9 @@ describe("deleteNotificationsForProject", () => {
     const deleted = deleteNotificationsForProject("proj-a");
 
     expect(deleted).toBe(2);
-    const remaining = getNotifications().notifications.map((n) => n.jobId);
+    const remaining = getNotifications()
+      .notifications.filter((n) => n.source === "job")
+      .map((n) => n.jobId);
     expect(remaining).toEqual(["b1"]);
   });
 });
@@ -427,6 +649,79 @@ describe("schema validation at the persistence boundary", () => {
     if (failure.kind === "validation") {
       expect(failure.entity).toBe("notification");
     }
+  });
+});
+
+describe("notification table migration", () => {
+  it("preserves legacy job rows while allowing project-conversation rows without session columns", () => {
+    _resetForTesting();
+    const dbPath = path.join(
+      mkdtempSync(path.join(os.tmpdir(), "cc-notification-migration-")),
+      "command-center.db",
+    );
+    const legacyDb = new Database(dbPath);
+    legacyDb.exec(`
+      CREATE TABLE notifications (
+        id             TEXT PRIMARY KEY,
+        type           TEXT NOT NULL,
+        title          TEXT NOT NULL,
+        message        TEXT NOT NULL,
+        read           INTEGER NOT NULL DEFAULT 0,
+        project_name   TEXT NOT NULL,
+        session_name   TEXT NOT NULL,
+        branch_name    TEXT NOT NULL,
+        job_id         TEXT NOT NULL,
+        job_type       TEXT NOT NULL,
+        merge_hash     TEXT,
+        commit_hash    TEXT,
+        conflict_count INTEGER,
+        conflict_files TEXT,
+        target_branch  TEXT,
+        error_message  TEXT,
+        created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO notifications (
+        id, type, title, message, project_name, session_name, branch_name, job_id, job_type, created_at
+      ) VALUES (
+        'legacy-job-notification', 'merge-completed', 'Merge completed', 'ok', 'my-project', 'feature', 'csm/feature', 'job-1', 'merge', '2026-06-07 12:00:00'
+      );
+    `);
+    legacyDb.close();
+
+    const migratedDb = createSharedStateDbAtPath(dbPath);
+    _installTestDb(migratedDb);
+
+    const projectNotification = createProjectConversationNotification(
+      {
+        type: "project-conversation-ready",
+        title: "Agent finished",
+        message: "Project conversation is ready",
+        projectName: "my-project",
+        conversationId: "conversation-1",
+        conversationName: null,
+        status: "awaiting",
+        dedupeKey: "my-project:conversation-1:ready:turn-1",
+      },
+      mockBroadcast,
+    );
+
+    const result = getNotifications();
+    expect(result.total).toBe(2);
+    expect(result.notifications).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "legacy-job-notification",
+          source: "job",
+          sessionName: "feature",
+          jobId: "job-1",
+        }),
+        expect.objectContaining({
+          id: projectNotification.id,
+          source: "project-conversation",
+          conversationId: "conversation-1",
+        }),
+      ]),
+    );
   });
 });
 

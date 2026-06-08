@@ -3,31 +3,57 @@ import { enableMapSet } from "immer";
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import type { BackgroundJob, JobStatusEvent } from "@/lib/jobs/schemas";
-import type { Notification } from "@/lib/notifications/schemas";
+import type {
+  JobNotification,
+  Notification,
+} from "@/lib/notifications/schemas";
 enableMapSet();
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export interface InputNeededItem {
+export interface SessionInputNeededItem {
+  scope?: "session";
   projectName: string;
   sessionName: string;
   conversationId: string;
 }
 
-export interface PromptErrorItem {
+export interface ProjectInputNeededItem {
+  scope: "project";
+  projectName: string;
+  conversationId: string;
+  displayContext: string;
+  href: string;
+}
+
+export type InputNeededItem = SessionInputNeededItem | ProjectInputNeededItem;
+
+export interface SessionPromptErrorItem {
+  scope?: "session";
   projectName: string;
   sessionName: string;
   conversationId: string;
   error: string;
 }
 
+export interface ProjectPromptErrorItem {
+  scope: "project";
+  projectName: string;
+  conversationId: string;
+  displayContext: string;
+  href: string;
+  error: string;
+}
+
+export type PromptErrorItem = SessionPromptErrorItem | ProjectPromptErrorItem;
+
 interface NotificationState {
   /** Running jobs only — removed on terminal state */
   jobs: Map<string, BackgroundJob>;
   /** Toast queue fed exclusively by notification-created SSE events */
-  toastQueue: Notification[];
+  toastQueue: JobNotification[];
   /** Toast queue for "waiting for input" conversation events */
   inputToastQueue: InputNeededItem[];
   /** Toast queue for prompt execution errors */
@@ -127,6 +153,7 @@ export const useNotificationStore = create<NotificationStore>()(
 
     enqueueToast: (notification: Notification) =>
       set((state) => {
+        if (notification.source !== "job") return;
         state.toastQueue.push(notification);
       }),
 

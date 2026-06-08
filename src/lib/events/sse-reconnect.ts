@@ -6,6 +6,7 @@ import { agentCapabilityKeys } from "@/lib/agent-capabilities/query-keys";
 import { collaborationKeys } from "@/lib/workflows/query-keys";
 import { devServerKeys } from "@/lib/dev-server/query-keys";
 import { notificationKeys } from "@/lib/notifications/query-keys";
+import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import { stampedTranscriptMessageSchema } from "@/lib/conversations/queries";
 const stampedMessagesResponseSchema = z.array(stampedTranscriptMessageSchema);
@@ -83,6 +84,7 @@ export async function reconnectReconcile(
   void queryClient.invalidateQueries({ queryKey: conversationKeys.active() });
   void queryClient.invalidateQueries({ queryKey: collaborationKeys.all });
   void queryClient.invalidateQueries({ queryKey: notificationKeys.all });
+  void queryClient.invalidateQueries({ queryKey: projectConversationKeys.all });
   void queryClient.invalidateQueries({ queryKey: devServerKeys.all });
   void queryClient.invalidateQueries({ queryKey: mcpConfigKeys.all });
   void queryClient.invalidateQueries({ queryKey: mcpToolsKeys.all });

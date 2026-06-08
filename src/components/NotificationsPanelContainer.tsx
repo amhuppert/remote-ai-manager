@@ -23,6 +23,8 @@ import {
 } from "@/stores/unified-panel.store";
 import type { ActiveConversation } from "@/lib/active-conversations/schemas";
 import { activeConversationHref } from "@/lib/active-conversations/row-helpers";
+import type { Notification } from "@/lib/notifications/schemas";
+import { projectConversationFocusHref } from "@/lib/project-conversations-client/routes";
 
 export function mapActiveConversationsToNotifications(
   activeConversations: ActiveConversation[],
@@ -54,6 +56,82 @@ export function mapActiveConversationsToNotifications(
       href: activeConversationHref(conv),
     };
   });
+}
+
+export function mapPersistedNotificationsToNotifications(
+  notifications: Notification[],
+): NotificationItem[] {
+  const result: NotificationItem[] = [];
+
+  for (const notif of notifications) {
+    if (notif.source === "project-conversation") {
+      result.push({
+        type: "conversation",
+        scope: "project",
+        id: notif.id,
+        timestamp: notif.createdAt,
+        projectName: notif.projectName,
+        contextLabel: "main",
+        href: projectConversationFocusHref(
+          notif.projectName,
+          notif.conversationId,
+        ),
+        name: notif.conversationName ?? notif.conversationId,
+        status: notif.status,
+        read: notif.read,
+        persisted: true,
+      } satisfies ConversationNotification);
+      continue;
+    }
+
+    const base = {
+      id: notif.id,
+      timestamp: notif.createdAt,
+      projectName: notif.projectName,
+      sessionName: notif.sessionName,
+      branchName: notif.branchName,
+      read: notif.read,
+    };
+
+    if (notif.jobType === "merge") {
+      const statusMap: Record<
+        string,
+        "success" | "conflicts" | "error" | "ready-to-land" | "discarded"
+      > = {
+        "merge-completed": "success",
+        "merge-failed": "error",
+        "merge-conflicts": "conflicts",
+        "merge-ready-to-land": "ready-to-land",
+        "merge-discarded": "discarded",
+      };
+      result.push({
+        ...base,
+        type: "merge",
+        status: statusMap[notif.type] ?? "error",
+        mergeHash: notif.mergeHash,
+        conflictCount: notif.conflictCount,
+        errorMessage: notif.errorMessage,
+      } satisfies MergeNotification);
+    } else if (notif.jobType === "commit") {
+      result.push({
+        ...base,
+        type: "commit",
+        status: notif.type === "commit-completed" ? "success" : "error",
+        commitHash: notif.commitHash,
+        errorMessage: notif.errorMessage,
+      } satisfies CommitNotification);
+    } else if (notif.jobType === "resolve-conflicts") {
+      result.push({
+        ...base,
+        type: "resolve-conflicts",
+        status: notif.type === "resolve-completed" ? "success" : "error",
+        mergeHash: notif.mergeHash,
+        errorMessage: notif.errorMessage,
+      } satisfies ResolveConflictsNotification);
+    }
+  }
+
+  return result;
 }
 
 export default function NotificationsPanelContainer() {
@@ -157,53 +235,11 @@ export default function NotificationsPanelContainer() {
 
     // Map server-persisted notifications
     if (notificationsData) {
-      for (const notif of notificationsData.notifications) {
-        const base = {
-          id: notif.id,
-          timestamp: notif.createdAt,
-          projectName: notif.projectName,
-          sessionName: notif.sessionName,
-          branchName: notif.branchName,
-          read: notif.read,
-        };
-
-        if (notif.jobType === "merge") {
-          const statusMap: Record<
-            string,
-            "success" | "conflicts" | "error" | "ready-to-land" | "discarded"
-          > = {
-            "merge-completed": "success",
-            "merge-failed": "error",
-            "merge-conflicts": "conflicts",
-            "merge-ready-to-land": "ready-to-land",
-            "merge-discarded": "discarded",
-          };
-          result.push({
-            ...base,
-            type: "merge",
-            status: statusMap[notif.type] ?? "error",
-            mergeHash: notif.mergeHash,
-            conflictCount: notif.conflictCount,
-            errorMessage: notif.errorMessage,
-          } satisfies MergeNotification);
-        } else if (notif.jobType === "commit") {
-          result.push({
-            ...base,
-            type: "commit",
-            status: notif.type === "commit-completed" ? "success" : "error",
-            commitHash: notif.commitHash,
-            errorMessage: notif.errorMessage,
-          } satisfies CommitNotification);
-        } else if (notif.jobType === "resolve-conflicts") {
-          result.push({
-            ...base,
-            type: "resolve-conflicts",
-            status: notif.type === "resolve-completed" ? "success" : "error",
-            mergeHash: notif.mergeHash,
-            errorMessage: notif.errorMessage,
-          } satisfies ResolveConflictsNotification);
-        }
-      }
+      result.push(
+        ...mapPersistedNotificationsToNotifications(
+          notificationsData.notifications,
+        ),
+      );
     }
 
     // Sort by timestamp descending

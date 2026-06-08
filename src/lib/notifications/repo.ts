@@ -11,12 +11,18 @@ import type { BroadcastFn } from "@/lib/events/broadcaster";
 import { publishSessionStatus } from "@/lib/workflows/primitives/default-session-status-bus";
 import { createLogger } from "@/lib/logging";
 import { timedSync } from "@/lib/logging/timed";
-import { notificationSchema } from "@/lib/notifications/schemas";
+import {
+  jobNotificationSchema,
+  notificationSchema,
+} from "@/lib/notifications/schemas";
 import { recoverStaleJobs } from "@/lib/jobs/repo";
 import type { JobType } from "@/lib/jobs/schemas";
 import type {
+  JobNotification,
+  JobNotificationType,
   Notification,
-  NotificationType,
+  ProjectConversationNotification,
+  ProjectConversationNotificationType,
 } from "@/lib/notifications/schemas";
 import { PersistenceError } from "@/lib/shared/errors";
 import { dispatchPushForNotification } from "@/lib/push-notification/dispatcher";
@@ -35,20 +41,25 @@ const notificationLogger = createLogger("state-store.notifications");
 
 const notificationRowSchema = z.object({
   id: z.string(),
+  source: z.enum(["job", "project-conversation"]),
   type: z.string(),
   title: z.string(),
   message: z.string(),
   read: z.union([z.literal(0), z.literal(1)]),
   project_name: z.string(),
-  session_name: z.string(),
-  branch_name: z.string(),
-  job_id: z.string(),
-  job_type: z.string(),
+  session_name: z.string().nullable(),
+  branch_name: z.string().nullable(),
+  job_id: z.string().nullable(),
+  job_type: z.string().nullable(),
   merge_hash: z.string().nullable(),
   commit_hash: z.string().nullable(),
   conflict_count: z.number().int().nullable(),
   conflict_files: z.string().nullable(),
   target_branch: z.string().nullable(),
+  conversation_id: z.string().nullable(),
+  conversation_name: z.string().nullable(),
+  conversation_status: z.string().nullable(),
+  dedupe_key: z.string().nullable(),
   error_message: z.string().nullable(),
   created_at: z.string(),
 });
@@ -81,6 +92,20 @@ function parseNotificationOrFail(
   identifier: string | undefined,
 ): Notification {
   const result = notificationSchema.safeParse(candidate);
+  if (!result.success) {
+    return logAndThrowNotificationValidationFailure(
+      identifier,
+      result.error.issues,
+    );
+  }
+  return result.data;
+}
+
+function parseJobNotificationOrFail(
+  candidate: unknown,
+  identifier: string | undefined,
+): JobNotification {
+  const result = jobNotificationSchema.safeParse(candidate);
   if (!result.success) {
     return logAndThrowNotificationValidationFailure(
       identifier,
@@ -158,23 +183,33 @@ function rowToNotification(rawRow: unknown): Notification {
 
   const candidate: Record<string, unknown> = {
     id: row.id,
+    source: row.source,
     type: row.type,
     title: row.title,
     message: row.message,
     read: row.read === 1,
     projectName: row.project_name,
-    sessionName: row.session_name,
-    branchName: row.branch_name,
-    jobId: row.job_id,
-    jobType: row.job_type,
     createdAt: row.created_at,
   };
-  if (row.merge_hash !== null) candidate.mergeHash = row.merge_hash;
-  if (row.commit_hash !== null) candidate.commitHash = row.commit_hash;
-  if (row.conflict_count !== null) candidate.conflictCount = row.conflict_count;
-  if (conflictFilesResult.value !== undefined)
-    candidate.conflictFiles = conflictFilesResult.value;
-  if (row.target_branch !== null) candidate.targetBranch = row.target_branch;
+
+  if (row.source === "job") {
+    candidate.sessionName = row.session_name;
+    candidate.branchName = row.branch_name;
+    candidate.jobId = row.job_id;
+    candidate.jobType = row.job_type;
+    if (row.merge_hash !== null) candidate.mergeHash = row.merge_hash;
+    if (row.commit_hash !== null) candidate.commitHash = row.commit_hash;
+    if (row.conflict_count !== null)
+      candidate.conflictCount = row.conflict_count;
+    if (conflictFilesResult.value !== undefined)
+      candidate.conflictFiles = conflictFilesResult.value;
+    if (row.target_branch !== null) candidate.targetBranch = row.target_branch;
+  } else {
+    candidate.conversationId = row.conversation_id;
+    candidate.conversationName = row.conversation_name;
+    candidate.status = row.conversation_status;
+  }
+
   if (row.error_message !== null) candidate.errorMessage = row.error_message;
 
   return parseNotificationOrFail(candidate, row.id);
@@ -185,7 +220,7 @@ function rowToNotification(rawRow: unknown): Notification {
 // ============================================================
 
 export interface CreateNotificationInput {
-  type: NotificationType;
+  type: JobNotificationType;
   title: string;
   message: string;
   projectName: string;
@@ -204,7 +239,7 @@ export interface CreateNotificationInput {
 export function createNotification(
   input: CreateNotificationInput,
   broadcast: BroadcastFn = defaultBroadcast,
-): Notification {
+): JobNotification {
   const id = randomUUID();
   return timedSync(
     notificationLogger,
@@ -220,6 +255,7 @@ export function createNotification(
 
       const candidate: Record<string, unknown> = {
         id,
+        source: "job",
         type: input.type,
         title: input.title,
         message: input.message,
@@ -243,14 +279,15 @@ export function createNotification(
       if (input.errorMessage !== undefined)
         candidate.errorMessage = input.errorMessage;
 
-      const validated = parseNotificationOrFail(candidate, id);
+      const validated = parseJobNotificationOrFail(candidate, id);
 
       const db = getStateDb();
       db.prepare(
-        `INSERT INTO notifications (id, type, title, message, read, project_name, session_name, branch_name, job_id, job_type, merge_hash, commit_hash, conflict_count, conflict_files, target_branch, error_message, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO notifications (id, source, type, title, message, read, project_name, session_name, branch_name, job_id, job_type, merge_hash, commit_hash, conflict_count, conflict_files, target_branch, error_message, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         validated.id,
+        validated.source,
         validated.type,
         validated.title,
         validated.message,
@@ -275,6 +312,122 @@ export function createNotification(
 
       dispatchPushForNotification(validated);
 
+      return validated;
+    },
+  );
+}
+
+export interface CreateProjectConversationNotificationInput {
+  type: ProjectConversationNotificationType;
+  title: string;
+  message: string;
+  projectName: string;
+  conversationId: string;
+  conversationName?: string | null;
+  status: ProjectConversationNotification["status"];
+  errorMessage?: string;
+  dedupeKey: string;
+}
+
+function getProjectConversationNotificationByDedupeKey(
+  dedupeKey: string,
+): ProjectConversationNotification | undefined {
+  const db = getStateDb();
+  const row = db
+    .prepare(
+      "SELECT * FROM notifications WHERE source = 'project-conversation' AND dedupe_key = ?",
+    )
+    .get(dedupeKey) as unknown;
+  if (row === undefined) return undefined;
+  const notification = rowToNotification(row);
+  if (notification.source === "project-conversation") return notification;
+  return logAndThrowNotificationValidationFailure(notification.id, [
+    {
+      code: "invalid_source",
+      message: "Expected project-conversation notification for dedupe key",
+    },
+  ]);
+}
+
+export function createProjectConversationNotification(
+  input: CreateProjectConversationNotificationInput,
+  broadcast: BroadcastFn = defaultBroadcast,
+): ProjectConversationNotification {
+  const existing = getProjectConversationNotificationByDedupeKey(
+    input.dedupeKey,
+  );
+  if (existing !== undefined) return existing;
+
+  const id = randomUUID();
+  return timedSync(
+    notificationLogger,
+    "state-db.createProjectConversationNotification",
+    {
+      notificationId: id,
+      notificationType: input.type,
+      projectName: input.projectName,
+      conversationId: input.conversationId,
+    },
+    () => {
+      const createdAt = sqliteUtcNow();
+      const candidate: Record<string, unknown> = {
+        id,
+        source: "project-conversation",
+        type: input.type,
+        title: input.title,
+        message: input.message,
+        read: false,
+        projectName: input.projectName,
+        conversationId: input.conversationId,
+        conversationName: input.conversationName ?? null,
+        status: input.status,
+        createdAt,
+      };
+      if (input.errorMessage !== undefined) {
+        candidate.errorMessage = input.errorMessage;
+      }
+
+      const validated = parseNotificationOrFail(candidate, id);
+      if (validated.source !== "project-conversation") {
+        return logAndThrowNotificationValidationFailure(id, [
+          {
+            code: "invalid_source",
+            message: "Expected project-conversation notification",
+          },
+        ]);
+      }
+
+      const db = getStateDb();
+      const result = db
+        .prepare(
+          `INSERT OR IGNORE INTO notifications (id, source, type, title, message, read, project_name, conversation_id, conversation_name, conversation_status, dedupe_key, error_message, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          validated.id,
+          validated.source,
+          validated.type,
+          validated.title,
+          validated.message,
+          validated.read ? 1 : 0,
+          validated.projectName,
+          validated.conversationId,
+          validated.conversationName,
+          validated.status,
+          input.dedupeKey,
+          validated.errorMessage ?? null,
+          validated.createdAt,
+        );
+
+      if (result.changes === 0) {
+        const duplicate = getProjectConversationNotificationByDedupeKey(
+          input.dedupeKey,
+        );
+        if (duplicate !== undefined) return duplicate;
+      }
+
+      broadcast({ type: "notification-created", notification: validated });
+      dispatchPushForNotification(validated);
       return validated;
     },
   );

@@ -18,7 +18,8 @@ export interface PushEvent {
   title: string;
   message: string;
   projectName: string;
-  sessionName: string;
+  sessionName?: string;
+  contextName?: string;
 }
 
 interface FormattedPush {

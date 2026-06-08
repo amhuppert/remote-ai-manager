@@ -3,7 +3,9 @@
 import { useState, useEffect, useCallback } from "react";
 
 interface PromptErrorToastProps {
-  sessionName: string;
+  sessionName?: string;
+  projectName?: string;
+  contextLabel?: string;
   error: string;
   onAction?: () => void;
   onDismiss?: () => void;
@@ -39,6 +41,8 @@ function CloseIcon() {
 
 export default function PromptErrorToast({
   sessionName,
+  projectName,
+  contextLabel,
   error,
   onAction,
   onDismiss,
@@ -63,6 +67,11 @@ export default function PromptErrorToast({
 
   if (!visible) return null;
 
+  const detailContext = contextLabel ?? sessionName ?? "";
+  const detail = projectName
+    ? `${projectName} / ${detailContext}: ${error}`
+    : `${detailContext}: ${error}`;
+
   return (
     <div
       className={`merge-toast merge-toast-error${exiting ? " merge-toast-exit" : ""}`}
@@ -72,9 +81,7 @@ export default function PromptErrorToast({
       </div>
       <div className="merge-toast-content">
         <span className="merge-toast-title">Prompt failed</span>
-        <span className="merge-toast-detail">
-          {sessionName}: {error}
-        </span>
+        <span className="merge-toast-detail">{detail}</span>
       </div>
       {onAction && (
         <button className="merge-toast-action" onClick={onAction}>

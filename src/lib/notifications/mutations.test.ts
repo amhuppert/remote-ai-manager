@@ -6,7 +6,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { useMarkNotificationAsReadMutation } from "./mutations";
 import { notificationKeys } from "./query-keys";
-import type { Notification } from "@/lib/notifications/schemas";
+import type {
+  JobNotification,
+  Notification,
+} from "@/lib/notifications/schemas";
 function makeClient() {
   return new QueryClient({
     defaultOptions: {
@@ -30,10 +33,11 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 function notification(
-  overrides: Partial<Notification> & { id: string },
-): Notification {
+  overrides: Partial<JobNotification> & { id: string },
+): JobNotification {
   return {
     id: overrides.id,
+    source: "job",
     type: overrides.type ?? "merge-completed",
     title: overrides.title ?? "Title",
     message: overrides.message ?? "Message",

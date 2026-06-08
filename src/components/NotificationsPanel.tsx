@@ -21,7 +21,8 @@ type ConversationNotificationStatus =
   | "new"
   | "running"
   | "awaiting"
-  | "waiting_for_input";
+  | "waiting_for_input"
+  | "failed";
 
 interface ConversationNotificationBase extends BaseNotification {
   type: "conversation";
@@ -29,6 +30,7 @@ interface ConversationNotificationBase extends BaseNotification {
   status: ConversationNotificationStatus;
   backend?: AgentBackendId;
   read?: boolean;
+  persisted?: true;
 }
 
 export interface SessionConversationNotification extends ConversationNotificationBase {
@@ -240,7 +242,7 @@ function getItemCategory(item: NotificationItem): string {
 function getItemStatusClass(item: NotificationItem): string {
   switch (item.type) {
     case "conversation":
-      return item.status;
+      return item.status === "failed" ? "error" : item.status;
     case "merge": {
       const status = item.status;
       switch (status) {
@@ -437,13 +439,17 @@ function NotificationRow({
   const statusClass = getItemStatusClass(item);
   const category = getItemCategory(item);
   const unread = isUnread(item);
+  const persistedConversation =
+    item.type === "conversation" && item.persisted === true;
+  const canUseNotificationActions =
+    item.type !== "conversation" || persistedConversation;
 
   const handleClick = useCallback(() => {
-    if (unread && onMarkAsRead) {
+    if (unread && canUseNotificationActions && onMarkAsRead) {
       onMarkAsRead(item.id);
     }
     onClose();
-  }, [item.id, unread, onMarkAsRead, onClose]);
+  }, [canUseNotificationActions, item.id, unread, onMarkAsRead, onClose]);
 
   const handleDismiss = useCallback(
     (e: React.MouseEvent) => {
@@ -509,7 +515,7 @@ function NotificationRow({
             {formatRelativeTime(item.timestamp)}
           </span>
         </div>
-        {item.type !== "conversation" && onDismiss && (
+        {canUseNotificationActions && onDismiss && (
           <button
             className="np-item-dismiss"
             onClick={handleDismiss}
@@ -609,6 +615,8 @@ export default function NotificationsPanel({
                         key={item.id}
                         item={item}
                         onClose={onClose}
+                        onMarkAsRead={onMarkAsRead}
+                        onDismiss={onDismiss}
                       />
                     ))}
                   </ul>

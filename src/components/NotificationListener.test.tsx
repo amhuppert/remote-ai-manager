@@ -9,14 +9,24 @@ import { mcpConfigKeys, mcpToolsKeys } from "@/lib/mcp/query-keys";
 import { agentCapabilityKeys } from "@/lib/agent-capabilities/query-keys";
 import { collaborationKeys } from "@/lib/workflows/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
+import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 
+const notificationStoreMocks = vi.hoisted(() => ({
+  addOrUpdateJob: vi.fn(),
+  reconcileJobs: vi.fn(),
+  enqueueToast: vi.fn(),
+  enqueueInputToast: vi.fn(),
+  enqueuePromptErrorToast: vi.fn(),
+}));
+
 vi.mock("@/stores/notification.store", () => ({
-  useAddOrUpdateJob: () => vi.fn(),
-  useReconcileJobs: () => vi.fn(),
-  useEnqueueToast: () => vi.fn(),
-  useEnqueueInputToast: () => vi.fn(),
-  useEnqueuePromptErrorToast: () => vi.fn(),
+  useAddOrUpdateJob: () => notificationStoreMocks.addOrUpdateJob,
+  useReconcileJobs: () => notificationStoreMocks.reconcileJobs,
+  useEnqueueToast: () => notificationStoreMocks.enqueueToast,
+  useEnqueueInputToast: () => notificationStoreMocks.enqueueInputToast,
+  useEnqueuePromptErrorToast: () =>
+    notificationStoreMocks.enqueuePromptErrorToast,
 }));
 
 class FakeEventSource {
@@ -55,6 +65,27 @@ class FakeEventSource {
   }
 }
 
+class FakeBrowserNotification {
+  static instances: FakeBrowserNotification[] = [];
+  static permission: NotificationPermission = "default";
+  static requestPermission = vi.fn<() => Promise<NotificationPermission>>();
+
+  title: string;
+  options: NotificationOptions | undefined;
+  onclick: (() => void) | null = null;
+  closed = false;
+
+  constructor(title: string, options?: NotificationOptions) {
+    this.title = title;
+    this.options = options;
+    FakeBrowserNotification.instances.push(this);
+  }
+
+  close() {
+    this.closed = true;
+  }
+}
+
 function makeClient() {
   return new QueryClient({
     defaultOptions: {
@@ -72,14 +103,67 @@ function renderWithClient(client: QueryClient) {
   );
 }
 
+function stubHiddenDocument(hidden: boolean) {
+  Object.defineProperty(document, "hidden", {
+    configurable: true,
+    value: hidden,
+  });
+}
+
+function stubBrowserNotifications(permission: NotificationPermission) {
+  FakeBrowserNotification.instances = [];
+  FakeBrowserNotification.permission = permission;
+  FakeBrowserNotification.requestPermission = vi.fn(() =>
+    Promise.resolve(permission),
+  );
+  vi.stubGlobal("Notification", FakeBrowserNotification);
+}
+
+function makeProjectConversation(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "pc-1",
+    scope: "project",
+    name: null,
+    transcriptPath: null,
+    status: "awaiting",
+    promptCount: 0,
+    createdAt: "2026-04-28T00:00:00.000Z",
+    lastActivityAt: "2026-04-28T00:00:00.000Z",
+    source: "cc",
+    summary: null,
+    archived: false,
+    open: true,
+    spawnedSessionIds: [],
+    totalCostUsd: null,
+    totalDurationMs: null,
+    totalTurns: null,
+    pendingQuestionId: null,
+    pendingQuestions: null,
+    pendingPromptText: null,
+    unread: false,
+    forkedFrom: null,
+    role: null,
+    activeTurnSource: null,
+    contextTokens: null,
+    contextWindowMax: null,
+    debugMode: null,
+    machineSnapshot: null,
+    agentBackend: "claude",
+    backendRef: null,
+    ...overrides,
+  };
+}
+
 describe("NotificationListener", () => {
   beforeEach(() => {
     FakeEventSource.instances = [];
     vi.stubGlobal("EventSource", FakeEventSource);
+    vi.clearAllMocks();
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    stubHiddenDocument(false);
   });
 
   it("invalidates MCP config queries when tools are refreshed", async () => {
@@ -725,6 +809,393 @@ describe("NotificationListener", () => {
         client.getQueryData<Array<{ id: string; archived: boolean }>>(listKey);
       expect(cached?.find((c) => c.id === "conv-2")?.archived).toBe(true);
       expect(cached?.find((c) => c.id === "conv-1")?.archived).toBe(false);
+    });
+  });
+
+  it("invalidates project conversation caches on project-scoped conversation-status", async () => {
+    const client = makeClient();
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("conversation-status", {
+      type: "conversation-status",
+      scope: "project",
+      projectName: "proj",
+      conversationId: "pc-1",
+      status: "awaiting",
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: projectConversationKeys.messages("proj", "pc-1"),
+      }),
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: projectConversationKeys.list("proj"),
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: projectConversationKeys.openCount("proj"),
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: conversationKeys.active(),
+    });
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: sessionKeys.detail("proj", "sess"),
+    });
+  });
+
+  it("enqueues a project-scoped input toast on project conversation waiting_for_input", async () => {
+    const client = makeClient();
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("conversation-status", {
+      type: "conversation-status",
+      scope: "project",
+      projectName: "proj",
+      conversationId: "project-convo-1",
+      status: "waiting_for_input",
+    });
+
+    await waitFor(() =>
+      expect(notificationStoreMocks.enqueueInputToast).toHaveBeenCalledWith({
+        scope: "project",
+        projectName: "proj",
+        conversationId: "project-convo-1",
+        displayContext: "main",
+        href: "/projects/proj?focus=project-convo-1",
+      }),
+    );
+  });
+
+  it("enqueues a project-scoped prompt error toast on project conversation errors", async () => {
+    const client = makeClient();
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("conversation-status", {
+      type: "conversation-status",
+      scope: "project",
+      projectName: "proj",
+      conversationId: "project-convo-1",
+      status: "awaiting",
+      error: "Tool failed",
+    });
+
+    await waitFor(() =>
+      expect(
+        notificationStoreMocks.enqueuePromptErrorToast,
+      ).toHaveBeenCalledWith({
+        scope: "project",
+        projectName: "proj",
+        conversationId: "project-convo-1",
+        displayContext: "main",
+        href: "/projects/proj?focus=project-convo-1",
+        error: "Tool failed",
+      }),
+    );
+  });
+
+  it("shows a browser notification for hidden project readiness events when permission is granted", async () => {
+    const client = makeClient();
+    stubHiddenDocument(true);
+    stubBrowserNotifications("granted");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("conversation-status", {
+      type: "conversation-status",
+      scope: "project",
+      projectName: "proj",
+      conversationId: "pc-1",
+      status: "awaiting",
+    });
+
+    await waitFor(() =>
+      expect(FakeBrowserNotification.instances).toHaveLength(1),
+    );
+    expect(FakeBrowserNotification.instances[0]).toMatchObject({
+      title: "Project conversation ready",
+      options: {
+        body: "proj / pc-1",
+        tag: "project-conversation-ready-pc-1",
+      },
+    });
+    expect(FakeBrowserNotification.requestPermission).not.toHaveBeenCalled();
+  });
+
+  it("requests browser notification permission for hidden project readiness events when permission is default", async () => {
+    const client = makeClient();
+    stubHiddenDocument(true);
+    stubBrowserNotifications("default");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("conversation-status", {
+      type: "conversation-status",
+      scope: "project",
+      projectName: "proj",
+      conversationId: "pc-1",
+      status: "awaiting",
+    });
+
+    await waitFor(() =>
+      expect(FakeBrowserNotification.requestPermission).toHaveBeenCalledTimes(
+        1,
+      ),
+    );
+    expect(FakeBrowserNotification.instances).toHaveLength(0);
+  });
+
+  it("does not request permission or show a browser notification for denied project readiness events", async () => {
+    const client = makeClient();
+    stubHiddenDocument(true);
+    stubBrowserNotifications("denied");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("conversation-status", {
+      type: "conversation-status",
+      scope: "project",
+      projectName: "proj",
+      conversationId: "pc-1",
+      status: "awaiting",
+    });
+
+    expect(FakeBrowserNotification.requestPermission).not.toHaveBeenCalled();
+    expect(FakeBrowserNotification.instances).toHaveLength(0);
+  });
+
+  it("updates project-scoped message caches on message-appended and message-updated", async () => {
+    const client = makeClient();
+    const key = projectConversationKeys.messages("proj", "pc-1");
+    client.setQueryData(key, [
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "partial" }],
+        timestamp: null,
+        seq: 0,
+      },
+    ]);
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("message-appended", {
+      type: "message-appended",
+      scope: "project",
+      projectName: "proj",
+      conversationId: "pc-1",
+      seq: 1,
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "go" }],
+        timestamp: null,
+      },
+    });
+    es.emit("message-updated", {
+      type: "message-updated",
+      scope: "project",
+      projectName: "proj",
+      conversationId: "pc-1",
+      seq: 1,
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "go now" }],
+        timestamp: null,
+      },
+    });
+
+    await waitFor(() => {
+      const cached =
+        client.getQueryData<
+          Array<{ seq: number; content: Array<{ text: string }> }>
+        >(key);
+      expect(cached?.[1]?.content[0]?.text).toBe("go now");
+    });
+    expect(invalidateQueries).not.toHaveBeenCalledWith({ queryKey: key });
+  });
+
+  it("refreshes project list, open count, and active data on project conversation-created", async () => {
+    const client = makeClient();
+    const listKey = projectConversationKeys.list("proj");
+    client.setQueryData(listKey, [makeProjectConversation({ id: "pc-1" })]);
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("conversation-created", {
+      type: "conversation-created",
+      scope: "project",
+      projectName: "proj",
+      conversation: makeProjectConversation({ id: "pc-2" }),
+    });
+
+    await waitFor(() => {
+      const cached = client.getQueryData<Array<{ id: string }>>(listKey);
+      expect(cached?.map((c) => c.id)).toEqual(["pc-1", "pc-2"]);
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: listKey });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: projectConversationKeys.openCount("proj"),
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: conversationKeys.active(),
+    });
+  });
+
+  it("refreshes project caches on project conversation-renamed and conversation-archived", async () => {
+    const client = makeClient();
+    const listKey = projectConversationKeys.list("proj");
+    client.setQueryData(listKey, [
+      { id: "pc-1", name: null, archived: false },
+      { id: "pc-2", name: "keep", archived: false },
+    ]);
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("conversation-renamed", {
+      type: "conversation-renamed",
+      scope: "project",
+      projectName: "proj",
+      conversationId: "pc-1",
+      name: "renamed",
+    });
+    es.emit("conversation-archived", {
+      type: "conversation-archived",
+      scope: "project",
+      projectName: "proj",
+      conversationId: "pc-2",
+      archived: true,
+    });
+
+    await waitFor(() => {
+      const cached =
+        client.getQueryData<
+          Array<{ id: string; name: string | null; archived: boolean }>
+        >(listKey);
+      expect(cached?.find((c) => c.id === "pc-1")?.name).toBe("renamed");
+      expect(cached?.find((c) => c.id === "pc-2")?.archived).toBe(true);
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: listKey });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: projectConversationKeys.openCount("proj"),
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: conversationKeys.active(),
+    });
+  });
+
+  it("refreshes project caches on project conversation-open and conversation-unread", async () => {
+    const client = makeClient();
+    const listKey = projectConversationKeys.list("proj");
+    client.setQueryData(listKey, [
+      { id: "pc-1", open: true, unread: false, archived: false },
+    ]);
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("conversation-open", {
+      type: "conversation-open",
+      scope: "project",
+      projectName: "proj",
+      conversationId: "pc-1",
+      open: false,
+    });
+    es.emit("conversation-unread", {
+      type: "conversation-unread",
+      scope: "project",
+      projectName: "proj",
+      conversationId: "pc-1",
+      unread: true,
+    });
+
+    await waitFor(() => {
+      const cached =
+        client.getQueryData<
+          Array<{ id: string; open: boolean; unread: boolean }>
+        >(listKey);
+      expect(cached?.[0]?.open).toBe(false);
+      expect(cached?.[0]?.unread).toBe(true);
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: listKey });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: projectConversationKeys.openCount("proj"),
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: conversationKeys.active(),
+    });
+  });
+
+  it("refreshes project caches on project ask-question events", async () => {
+    const client = makeClient();
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("ask-question", {
+      type: "ask-question",
+      scope: "project",
+      projectName: "proj",
+      conversationId: "pc-1",
+      questionId: "q1",
+      questions: [
+        {
+          question: "Continue?",
+          options: [{ label: "Yes" }],
+        },
+      ],
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: projectConversationKeys.messages("proj", "pc-1"),
+      }),
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: projectConversationKeys.list("proj"),
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: projectConversationKeys.openCount("proj"),
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: conversationKeys.active(),
     });
   });
 });
