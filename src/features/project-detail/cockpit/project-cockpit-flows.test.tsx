@@ -8,11 +8,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  cleanup,
+  waitFor,
+} from "@testing-library/react";
 import ProjectCockpit from "./ProjectCockpit";
-import ProjectFirstRun from "./ProjectFirstRun";
-import UnifiedComposer from "../composer/UnifiedComposer";
 import SessionsPanel from "./SessionsPanel";
+import { resolveProjectComposerSubmit } from "../composer/UnifiedComposer";
 import { _useCockpitViewStore } from "./use-cockpit-view-state";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionListItem } from "@/lib/sessions/schemas";
@@ -90,6 +95,26 @@ const runningSession: SessionListItem = {
 };
 
 beforeEach(() => {
+  if (typeof Range !== "undefined") {
+    Range.prototype.getClientRects = () =>
+      ({
+        length: 0,
+        item: () => null,
+        [Symbol.iterator]: function* () {},
+      }) as unknown as DOMRectList;
+    Range.prototype.getBoundingClientRect = () =>
+      ({
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        width: 0,
+        height: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+  }
   _useCockpitViewStore.getState()._reset();
   vi.stubGlobal(
     "fetch",
@@ -107,7 +132,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-/** Mirrors ProjectDetailView's first-run↔cockpit branch by open-count. */
+/** Mirrors ProjectDetailView: the cockpit shell (rail + composer) is always
+ * mounted; the open-conversation list only decides whether the pane shows tabs
+ * or the empty create-a-conversation composer. */
 function PageHarness({
   openConversations,
 }: {
@@ -115,37 +142,35 @@ function PageHarness({
 }) {
   const [tokens, setTokens] = useState<FilterToken[]>([]);
   const [backend, setBackend] = useState<AgentBackendId>("claude");
-  const shared = {
-    projectName: "proj",
-    sessions: [runningSession],
-    archivedCount: 0,
-    tokens,
-    onTokensChange: setTokens,
-    onRunCommand: vi.fn(),
-    selectedBackend: backend,
-    onSelectedBackendChange: setBackend,
-  };
-  return openConversations.length > 0 ? (
+  return (
     <ProjectCockpit
-      {...shared}
+      projectName="proj"
+      sessions={[runningSession]}
+      archivedCount={0}
+      tokens={tokens}
+      onTokensChange={setTokens}
+      onRunCommand={vi.fn()}
+      selectedBackend={backend}
+      onSelectedBackendChange={setBackend}
       openConversations={openConversations}
       rail={<div data-testid="rail-stub" />}
     />
-  ) : (
-    <ProjectFirstRun {...shared} />
   );
 }
 
-describe("project page: first-run ↔ cockpit transition", () => {
-  it("renders first-run (no tabs) with zero open conversations, then the cockpit with the entry animation once one is open", () => {
+describe("project page: empty ↔ populated cockpit transition", () => {
+  it("keeps the rail and composer mounted with zero open conversations (no tabs), then shows the tab strip with the entry animation once one is open", async () => {
     const { container, rerender } = render(
       withClient(<PageHarness openConversations={[]} />),
     );
-    // First-run: the composer is present; no conversation tabs.
-    expect(screen.getByLabelText("Project composer")).toBeInTheDocument();
+    // Empty cockpit: the rail and composer are present; no conversation tabs.
+    expect(screen.getByTestId("rail-stub")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(document.querySelector(".prompt-input-area")).not.toBeNull(),
+    );
     expect(screen.queryByRole("tablist")).toBeNull();
 
-    // The foundation reports the first open conversation → cockpit.
+    // The foundation reports the first open conversation → tab strip appears.
     rerender(
       withClient(<PageHarness openConversations={[makeConversation("c1")]} />),
     );
@@ -155,7 +180,7 @@ describe("project page: first-run ↔ cockpit transition", () => {
     expect(container.querySelector(".plc-enter")).not.toBeNull();
   });
 
-  it("returns to first-run when the last open conversation closes", () => {
+  it("keeps the rail and composer mounted (and drops the tab strip) when the last open conversation closes", async () => {
     const { rerender } = render(
       withClient(<PageHarness openConversations={[makeConversation("c1")]} />),
     );
@@ -163,7 +188,11 @@ describe("project page: first-run ↔ cockpit transition", () => {
 
     rerender(withClient(<PageHarness openConversations={[]} />));
     expect(screen.queryByRole("tablist")).toBeNull();
-    expect(screen.getByLabelText("Project composer")).toBeInTheDocument();
+    // The rail stays reachable — the whole point of always mounting the shell.
+    expect(screen.getByTestId("rail-stub")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(document.querySelector(".prompt-input-area")).not.toBeNull(),
+    );
   });
 });
 
@@ -199,62 +228,51 @@ describe("project page: pre-init backend selection in the cockpit", () => {
     // When the page reflects the new selection, the composer recolors to Codex
     // (the composer value tracks the pre-init selection, not the conv's backend).
     rerender(withClient(<ProjectCockpit {...props("codex")} />));
-    expect(document.querySelector(".plc-uc")?.getAttribute("data-agent")).toBe(
-      "codex",
-    );
+    expect(
+      document.querySelector('[data-backend="codex"]')?.className,
+    ).toContain("active");
   });
 });
 
 describe("project page: command palette", () => {
-  it("opens the palette on `/` and runs the highlighted command", () => {
-    const onRunCommand = vi.fn();
-    render(
-      withClient(
-        <UnifiedComposer
-          projectName="proj"
-          activeConversationId="c1"
-          activeConversation={makeConversation("c1")}
-          agentBackend="claude"
-          onAgentChange={vi.fn()}
-          tokens={[]}
-          onTokensChange={vi.fn()}
-          sessions={[runningSession]}
-          archivedCount={0}
-          onSendPrompt={vi.fn()}
-          onRunCommand={onRunCommand}
-          busy={false}
-        />,
-      ),
-    );
-    const ta = screen.getByLabelText("Project composer");
-    fireEvent.focus(ta);
-    fireEvent.change(ta, { target: { value: "/" } });
-    expect(screen.getByRole("listbox")).toBeInTheDocument();
-    fireEvent.keyDown(ta, { key: "Enter" });
-    expect(onRunCommand).toHaveBeenCalledWith("new");
+  it("keeps slash-command routing at the project adapter boundary", () => {
+    expect(
+      resolveProjectComposerSubmit({
+        draft: "/workflow-builder",
+        pendingImages: [],
+        tokens: [],
+        backend: "claude",
+        modelId: "claude-sonnet-4-5-20250929",
+        effort: "high",
+        effortSupported: true,
+      }),
+    ).toEqual({ kind: "command", id: "workflow-builder" });
   });
 });
 
 describe("project page: shared filter state", () => {
-  it("a filter typed in the composer appears as a chip in the sessions panel", () => {
+  it("a filter routed by the composer appears as a chip in the sessions panel", () => {
     function FilterHarness() {
       const [tokens, setTokens] = useState<FilterToken[]>([]);
+      const nextTokens = resolveProjectComposerSubmit({
+        draft: "is:running",
+        pendingImages: [],
+        tokens,
+        backend: "claude",
+        modelId: "claude-sonnet-4-5-20250929",
+        effort: "high",
+        effortSupported: true,
+      });
       return (
         <>
-          <UnifiedComposer
-            projectName="proj"
-            activeConversationId="c1"
-            activeConversation={makeConversation("c1")}
-            agentBackend="claude"
-            onAgentChange={vi.fn()}
-            tokens={tokens}
-            onTokensChange={setTokens}
-            sessions={[runningSession]}
-            archivedCount={0}
-            onSendPrompt={vi.fn()}
-            onRunCommand={vi.fn()}
-            busy={false}
-          />
+          <button
+            type="button"
+            onClick={() => {
+              if (nextTokens.kind === "tokens") setTokens(nextTokens.tokens);
+            }}
+          >
+            Apply composer filter
+          </button>
           <SessionsPanel
             projectName="proj"
             sessions={[runningSession]}
@@ -265,10 +283,7 @@ describe("project page: shared filter state", () => {
       );
     }
     render(withClient(<FilterHarness />));
-    const ta = screen.getByLabelText("Project composer");
-    fireEvent.focus(ta);
-    fireEvent.change(ta, { target: { value: "is:running" } });
-    fireEvent.keyDown(ta, { key: "Enter" });
+    fireEvent.click(screen.getByText("Apply composer filter"));
     // The shared token surfaces as a chip in the sessions panel.
     expect(screen.getByText("is:running")).toBeInTheDocument();
   });

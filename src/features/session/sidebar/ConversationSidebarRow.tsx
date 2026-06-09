@@ -10,6 +10,7 @@ interface Props {
   isFirstInSession?: boolean;
   isLastInSession?: boolean;
   currentConversationId?: string | null;
+  isClosed?: boolean;
   onPeek?: (anchorEl: HTMLElement, conversationId: string) => void;
   onOpenMenu?: (point: { x: number; y: number }) => void;
   onClick?: () => void;
@@ -72,6 +73,32 @@ function ForkIcon(): React.JSX.Element {
   );
 }
 
+function ReopenIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 12 12"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M9.5 5.5A3.5 3.5 0 1 1 8 2.6"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+      />
+      <path
+        d="M8.2 1.4H10v1.8"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export default function ConversationSidebarRow({
   conversation,
   href,
@@ -79,6 +106,7 @@ export default function ConversationSidebarRow({
   isFirstInSession,
   isLastInSession,
   currentConversationId,
+  isClosed = false,
   onPeek,
   onOpenMenu,
   onClick,
@@ -111,9 +139,11 @@ export default function ConversationSidebarRow({
     activityText.trim() !== "" &&
     activityText.trim() !== title.trim();
   const timeLabel = formatSidebarTime(conversation.lastActivityAt);
-  const isUnreadFinished = unread && status !== "waiting_for_input";
-  const statusPrefix =
-    status === "waiting_for_input"
+  const isUnreadFinished =
+    !isClosed && unread && status !== "waiting_for_input";
+  const statusPrefix = isClosed
+    ? null
+    : status === "waiting_for_input"
       ? "Asks"
       : isUnreadFinished
         ? "Done"
@@ -125,9 +155,10 @@ export default function ConversationSidebarRow({
   const classNames = [
     "conversation-sidebar-row",
     isActive ? "is-active" : null,
+    isClosed ? "is-closed" : null,
     isFirstInSession ? "is-first-in-session" : null,
     isLastInSession ? "is-last-in-session" : null,
-    pendingQuestion !== null ? "has-pending-question" : null,
+    !isClosed && pendingQuestion !== null ? "has-pending-question" : null,
     isUnreadFinished ? "is-unread" : null,
   ]
     .filter(Boolean)
@@ -150,6 +181,22 @@ export default function ConversationSidebarRow({
         return;
       }
 
+      // Let modifier/non-primary clicks fall through to the native anchor so
+      // cmd/ctrl/middle-click still open the conversation in a new tab.
+      if (
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return;
+      }
+
+      // Plain click: intercept the anchor's full-page navigation and let the
+      // parent route client-side (router.push), so only the transcript pane
+      // re-renders rather than the whole page reloading.
+      event.preventDefault();
       onClick?.();
     },
     [
@@ -178,7 +225,7 @@ export default function ConversationSidebarRow({
       data-status={status}
       onClick={handleClick}
       onContextMenu={handleContextMenu}
-      aria-label={`${title} — ${STATUS_LABEL[status]}`}
+      aria-label={`${title} — ${isClosed ? "closed, click to reopen" : STATUS_LABEL[status]}`}
       aria-current={isActive ? "page" : undefined}
     >
       <span className="conversation-sidebar-row__main">
@@ -190,6 +237,15 @@ export default function ConversationSidebarRow({
             aria-hidden="true"
           />
           <span className="conversation-sidebar-row__title">{title}</span>
+          {isClosed && (
+            <span
+              className="conversation-sidebar-row__reopen"
+              data-tooltip="Click to reopen"
+              aria-label="reopens when selected"
+            >
+              <ReopenIcon />
+            </span>
+          )}
           {isUnreadFinished && (
             <span
               className="conversation-sidebar-row__unread-dot"

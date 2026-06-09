@@ -87,6 +87,10 @@ function harness(overrides?: Partial<ProjectConversationRouteDeps>) {
       const c = store.get(id);
       if (c) c.open = open;
     },
+    markProjectConversationRead: async (_p, id) => {
+      const c = store.get(id);
+      if (c) c.unread = false;
+    },
     executeProjectPromptStream: async (input) => {
       input.emit("status", { status: "running" });
       return {
@@ -270,5 +274,36 @@ describe("project conversation route handlers", () => {
       false,
     );
     expect((h.broadcasts[0] as { scope?: string }).scope).toBe("project");
+  });
+
+  it("markReadPOST clears unread and broadcasts a scope=project conversation-unread event", async () => {
+    const h = harness();
+    h.store.set("c1", makeConv({ id: "c1", unread: true }));
+
+    const res = await h.handlers.markReadPOST(
+      new Request("http://test/", { method: "POST" }),
+      ctx({ name: "demo", conversationId: "c1" }),
+    );
+
+    expect(await res.json()).toEqual({ ok: true });
+    expect(h.store.get("c1")?.unread).toBe(false);
+    expect(h.broadcasts[0]?.type).toBe("conversation-unread");
+    expect((h.broadcasts[0] as { unread?: boolean }).unread).toBe(false);
+    expect((h.broadcasts[0] as { scope?: string }).scope).toBe("project");
+  });
+
+  it("markReadPOST returns 404 for an unknown project or conversation", async () => {
+    const h = harness();
+    const unknownProject = await h.handlers.markReadPOST(
+      new Request("http://test/", { method: "POST" }),
+      ctx({ name: "ghost", conversationId: "c1" }),
+    );
+    expect(unknownProject.status).toBe(404);
+
+    const unknownConvo = await h.handlers.markReadPOST(
+      new Request("http://test/", { method: "POST" }),
+      ctx({ name: "demo", conversationId: "missing" }),
+    );
+    expect(unknownConvo.status).toBe(404);
   });
 });

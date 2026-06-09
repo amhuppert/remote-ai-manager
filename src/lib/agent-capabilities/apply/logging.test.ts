@@ -354,7 +354,9 @@ describe("capability runtime apply logging", () => {
       operationId: "cap-op-plc-sentinel",
     });
 
-    expect(allLoggedArgs()).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
+    expect(allLoggedArgs()).not.toContain(
+      PROJECT_CONVERSATION_SESSION_SENTINEL,
+    );
     expect(allLoggedArgs()).not.toContain("sessionName");
   });
 });

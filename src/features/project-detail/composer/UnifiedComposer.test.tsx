@@ -1,7 +1,17 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
-import UnifiedComposer, { type UnifiedComposerProps } from "./UnifiedComposer";
+import {
+  render,
+  screen,
+  fireEvent,
+  cleanup,
+  waitFor,
+} from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import UnifiedComposer, {
+  resolveProjectComposerSubmit,
+  type UnifiedComposerProps,
+} from "./UnifiedComposer";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 
@@ -63,6 +73,9 @@ const runningSession: SessionListItem = {
 };
 
 function renderComposer(overrides: Partial<UnifiedComposerProps> = {}) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+  });
   const props: UnifiedComposerProps = {
     projectName: "proj",
     activeConversationId: "plc-1",
@@ -78,15 +91,35 @@ function renderComposer(overrides: Partial<UnifiedComposerProps> = {}) {
     busy: false,
     ...overrides,
   };
-  render(<UnifiedComposer {...props} />);
+  render(
+    <QueryClientProvider client={client}>
+      <UnifiedComposer {...props} />
+    </QueryClientProvider>,
+  );
   return props;
 }
 
-function field(): HTMLTextAreaElement {
-  return screen.getByLabelText("Project composer") as HTMLTextAreaElement;
-}
-
 beforeEach(() => {
+  if (typeof Range !== "undefined") {
+    Range.prototype.getClientRects = () =>
+      ({
+        length: 0,
+        item: () => null,
+        [Symbol.iterator]: function* () {},
+      }) as unknown as DOMRectList;
+    Range.prototype.getBoundingClientRect = () =>
+      ({
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        width: 0,
+        height: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+  }
   // useVoiceRecorder pings /api/voice/health on mount.
   vi.stubGlobal(
     "fetch",
@@ -104,92 +137,26 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("UnifiedComposer mode routing", () => {
-  it("chat: Enter sends the prompt to the active conversation", () => {
-    const props = renderComposer();
-    const ta = field();
-    fireEvent.focus(ta);
-    fireEvent.change(ta, { target: { value: "fix the bug" } });
-    fireEvent.keyDown(ta, { key: "Enter" });
-    expect(props.onSendPrompt).toHaveBeenCalledTimes(1);
-    expect(props.onSendPrompt).toHaveBeenCalledWith(
-      expect.objectContaining({ text: "fix the bug", backend: "claude" }),
+describe("UnifiedComposer shared prompt input", () => {
+  it("renders the session PromptComposer chrome instead of project-specific input controls", async () => {
+    renderComposer();
+    await waitFor(() =>
+      expect(document.querySelector(".prompt-input-area")).not.toBeNull(),
     );
-  });
-
-  it("chat: Shift+Enter does not send (inserts a newline)", () => {
-    const props = renderComposer();
-    const ta = field();
-    fireEvent.change(ta, { target: { value: "line one" } });
-    fireEvent.keyDown(ta, { key: "Enter", shiftKey: true });
-    expect(props.onSendPrompt).not.toHaveBeenCalled();
-  });
-
-  it("command: Enter runs the highlighted command and clears the field", () => {
-    const props = renderComposer();
-    const ta = field();
-    fireEvent.focus(ta);
-    fireEvent.change(ta, { target: { value: "/" } });
-    expect(screen.getByRole("listbox")).toBeInTheDocument();
-    fireEvent.keyDown(ta, { key: "Enter" });
-    expect(props.onRunCommand).toHaveBeenCalledWith("new");
-    expect(props.onSendPrompt).not.toHaveBeenCalled();
-    expect(field().value).toBe("");
-  });
-
-  it("filter: applying a suggestion adds a token via onTokensChange", () => {
-    const props = renderComposer();
-    const ta = field();
-    fireEvent.focus(ta);
-    fireEvent.change(ta, { target: { value: "is:running" } });
-    expect(screen.getByRole("listbox")).toBeInTheDocument();
-    fireEvent.keyDown(ta, { key: "Enter" });
-    expect(props.onTokensChange).toHaveBeenCalledTimes(1);
-    const next = (props.onTokensChange as ReturnType<typeof vi.fn>).mock
-      .calls[0]![0];
-    expect(next.some((t: { cat: string }) => t.cat === "status")).toBe(true);
-    expect(props.onSendPrompt).not.toHaveBeenCalled();
-  });
-});
-
-describe("UnifiedComposer mode chip", () => {
-  it("shows the chat chip with the agent name for prose", () => {
-    renderComposer();
-    fireEvent.change(field(), { target: { value: "hello" } });
-    expect(screen.getByLabelText("Chat mode — Claude")).toBeInTheDocument();
-  });
-
-  it("shows the command chip for a leading slash", () => {
-    renderComposer();
-    fireEvent.change(field(), { target: { value: "/cap" } });
-    expect(screen.getByLabelText("Command mode")).toBeInTheDocument();
-  });
-
-  it("shows the filter chip for a key:value", () => {
-    renderComposer();
-    fireEvent.change(field(), { target: { value: "is:" } });
-    expect(screen.getByLabelText("Filter mode")).toBeInTheDocument();
-  });
-});
-
-describe("UnifiedComposer field recolor", () => {
-  it("exposes data-focused/data-mode/data-agent on the field root so the field recolors", () => {
-    renderComposer({ agentBackend: "codex" });
-    const root = document.querySelector(".plc-uc")!;
-    // Unfocused initially.
-    expect(root.getAttribute("data-focused")).toBe("false");
-    const ta = field();
-    fireEvent.focus(ta);
-    fireEvent.change(ta, { target: { value: "hello" } });
-    expect(root.getAttribute("data-focused")).toBe("true");
-    expect(root.getAttribute("data-mode")).toBe("chat");
-    expect(root.getAttribute("data-agent")).toBe("codex");
-    // Command mode recolors via data-mode.
-    fireEvent.change(ta, { target: { value: "/new" } });
-    expect(root.getAttribute("data-mode")).toBe("command");
-    // Filter mode recolors via data-mode.
-    fireEvent.change(ta, { target: { value: "is:" } });
-    expect(root.getAttribute("data-mode")).toBe("filter");
+    expect(document.querySelector(".prompt-toolbar")).not.toBeNull();
+    expect(document.querySelector(".send-btn")?.textContent).toBe("▶");
+    expect(document.querySelector(".plc-uc")).toBeNull();
+    expect(document.querySelector(".plc-uc-field")).toBeNull();
+    expect(document.querySelector(".plc-uc-send")).toBeNull();
+    expect(screen.queryByLabelText("Project composer")).toBeNull();
+    await waitFor(() =>
+      expect(
+        document.querySelector(".prompt-editor__content .ProseMirror"),
+      ).not.toBeNull(),
+    );
+    expect(
+      document.querySelector('textarea[placeholder^="Message the"]'),
+    ).toBeNull();
   });
 });
 
@@ -210,5 +177,71 @@ describe("UnifiedComposer backend lock", () => {
     });
     expect(document.querySelector(".backend-toggle-badge")).not.toBeNull();
     expect(document.querySelector('[data-backend="codex"]')).toBeNull();
+  });
+});
+
+describe("resolveProjectComposerSubmit", () => {
+  it("routes prose as a send envelope", () => {
+    const result = resolveProjectComposerSubmit({
+      draft: " fix the bug ",
+      pendingImages: [],
+      tokens: [],
+      backend: "claude",
+      modelId: "claude-sonnet-4-5-20250929",
+      effort: "high",
+      effortSupported: true,
+    });
+    expect(result).toEqual({
+      kind: "send",
+      input: {
+        text: "fix the bug",
+        images: [],
+        backend: "claude",
+        modelId: "claude-sonnet-4-5-20250929",
+        effort: "high",
+      },
+    });
+  });
+
+  it("routes slash commands without sending a prompt", () => {
+    expect(
+      resolveProjectComposerSubmit({
+        draft: "/capabilities",
+        pendingImages: [],
+        tokens: [],
+        backend: "claude",
+        modelId: "claude-sonnet-4-5-20250929",
+        effort: "high",
+        effortSupported: true,
+      }),
+    ).toEqual({ kind: "command", id: "capabilities" });
+    expect(
+      resolveProjectComposerSubmit({
+        draft: "/",
+        pendingImages: [],
+        tokens: [],
+        backend: "claude",
+        modelId: "claude-sonnet-4-5-20250929",
+        effort: "high",
+        effortSupported: true,
+      }),
+    ).toEqual({ kind: "command", id: "new" });
+  });
+
+  it("routes key:value filters into shared tokens", () => {
+    const result = resolveProjectComposerSubmit({
+      draft: "is:running",
+      pendingImages: [],
+      tokens: [],
+      backend: "claude",
+      modelId: "claude-sonnet-4-5-20250929",
+      effort: "high",
+      effortSupported: true,
+    });
+    expect(result.kind).toBe("tokens");
+    if (result.kind !== "tokens") return;
+    expect(result.tokens).toEqual([
+      { cat: "status", key: "is", value: "running" },
+    ]);
   });
 });

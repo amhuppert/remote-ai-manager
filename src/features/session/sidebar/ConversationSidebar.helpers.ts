@@ -142,6 +142,27 @@ export function splitNeedsYou<T extends ActiveSidebarConversation>(
   return { questions, finished, others };
 }
 
+export function isClosedProjectConversation(
+  row: ActiveSidebarConversation,
+): boolean {
+  return row.scope === "project" && row.open === false;
+}
+
+function splitClosedProjectConversations<T extends ActiveSidebarConversation>(
+  rows: T[],
+): { openRows: T[]; closedRows: T[] } {
+  const openRows: T[] = [];
+  const closedRows: T[] = [];
+  for (const row of rows) {
+    if (isClosedProjectConversation(row)) {
+      closedRows.push(row);
+    } else {
+      openRows.push(row);
+    }
+  }
+  return { openRows, closedRows };
+}
+
 // ---------------------------------------------------------------------------
 // clusterBySession
 // ---------------------------------------------------------------------------
@@ -297,7 +318,7 @@ export function groupByKey<T extends ActiveSidebarConversation>(
 }
 
 export interface SidebarSection<T extends ActiveSidebarConversation> {
-  kind: "needs" | SidebarGroupBy;
+  kind: "needs" | "closed" | SidebarGroupBy;
   tone: NeedsTone | null;
   groupKey: string;
   label: string;
@@ -352,16 +373,17 @@ export function buildConversationSidebarSections<
     options.filter === "session"
       ? filterBySession(rows, options.sessionScope)
       : rows;
+  const { openRows, closedRows } = splitClosedProjectConversations(scopedRows);
 
   if (options.filter === "needs") {
-    const { questions, finished } = splitNeedsYou(scopedRows);
+    const { questions, finished } = splitNeedsYou(openRows);
     return pinnedSections(questions, finished);
   }
 
   if (options.filter === "running") {
     const sections: SidebarSection<T>[] = [];
     for (const group of groupByKey(
-      scopedRows.filter((row) => row.status === "running"),
+      openRows.filter((row) => row.status === "running"),
       options.groupBy,
     )) {
       sections.push({
@@ -377,7 +399,7 @@ export function buildConversationSidebarSections<
     return sections;
   }
 
-  const { questions, finished, others } = splitNeedsYou(scopedRows);
+  const { questions, finished, others } = splitNeedsYou(openRows);
   const sections: SidebarSection<T>[] = pinnedSections(questions, finished);
   for (const group of groupByKey(others, options.groupBy)) {
     sections.push({
@@ -388,6 +410,15 @@ export function buildConversationSidebarSections<
       projectLabel: group.projectLabel,
       sessionLabel: group.sessionLabel,
       items: annotateCluster(group.items),
+    });
+  }
+  if (closedRows.length > 0) {
+    sections.push({
+      kind: "closed",
+      tone: null,
+      groupKey: "closed-project-conversations",
+      label: "Closed",
+      items: annotateCluster(closedRows),
     });
   }
   return sections;

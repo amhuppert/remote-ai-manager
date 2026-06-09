@@ -309,11 +309,16 @@ describe("ProjectDetailView", () => {
     expect(primary?.textContent).toContain("New session");
   });
 
-  it("renders the unified composer in place of the legacy command console", () => {
+  it("renders the shared prompt composer in place of the legacy command console", async () => {
     mockSessionsData.data = [];
-    renderWithQuery(<ProjectDetailView projectName="my-project" />);
-    // The legacy CommandConsole is gone; the unified composer replaces it.
-    expect(screen.getByLabelText("Project composer")).toBeInTheDocument();
+    const { container } = renderWithQuery(
+      <ProjectDetailView projectName="my-project" />,
+    );
+    await waitFor(() =>
+      expect(container.querySelector(".prompt-input-area")).not.toBeNull(),
+    );
+    expect(container.querySelector(".console-bar")).toBeNull();
+    expect(screen.queryByLabelText("Project composer")).toBeNull();
   });
 
   it("renders table with all column headers (Req 2.1)", () => {

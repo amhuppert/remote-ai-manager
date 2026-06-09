@@ -11,6 +11,7 @@ import {
 } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
+import { conversationKeys } from "@/lib/conversations/query-keys";
 import { projectConversationKeys } from "./query-keys";
 
 function invalidateProjectLifecycle(
@@ -91,6 +92,39 @@ export function useReopenProjectConversation(
     true,
     "reopen-project-conversation",
   );
+}
+
+/**
+ * Mark a project conversation as read — clears the `unread` flag set when a turn
+ * finishes, so it drops out of the Active Conversations "Finished — unread"
+ * slot. Mirrors the session `useMarkConversationReadMutation`; invalidates the
+ * shared active-conversations query that feeds the rail.
+ */
+export function useMarkProjectConversationReadMutation(): UseMutationResult<
+  unknown,
+  Error,
+  { projectName: string; conversationId: string }
+> {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      projectName,
+      conversationId,
+    }: {
+      projectName: string;
+      conversationId: string;
+    }) =>
+      mutationFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/conversations/${encodeURIComponent(conversationId)}/mark-read`,
+        "mark-project-conversation-read",
+        { method: "POST" },
+      ),
+    onSettled: () => {
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.active(),
+      });
+    },
+  });
 }
 
 /** Rename a project conversation. */

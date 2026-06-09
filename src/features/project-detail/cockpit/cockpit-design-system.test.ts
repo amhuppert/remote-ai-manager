@@ -15,6 +15,7 @@ function readCss(rel: string): string {
 
 const cockpitCss = readCss("styles/cockpit.css");
 const composerCss = readCss("../composer/styles/composer.css");
+const projectDetailCss = readCss("../styles/project-detail.css");
 const allCss = `${cockpitCss}\n${composerCss}`;
 
 describe("cockpit design-system compliance", () => {
@@ -60,5 +61,47 @@ describe("cockpit design-system compliance", () => {
       /prefers-reduced-motion[^{]*\{[\s\S]*?\.plc-enter\s*\{([^}]*)\}/,
     );
     expect(reducedEnter?.[1]).toMatch(/opacity:\s*1/);
+  });
+
+  it("stacks the conversation pane above the sessions panel, splitting height 50/50", () => {
+    const cockpit = cockpitCss.match(/\.plc-cockpit\s*\{([^}]*)\}/)?.[1] ?? "";
+    // Two equal-height rows.
+    expect(cockpit).toMatch(/grid-template-rows:\s*1fr\s+1fr/);
+    // Conversation stacks above sessions in the right column.
+    const areas =
+      cockpit.match(/grid-template-areas:\s*([\s\S]*?);/)?.[1] ?? "";
+    const convoRow = areas.indexOf("conversation");
+    const sessionsRow = areas.indexOf("sessions");
+    expect(convoRow).toBeGreaterThanOrEqual(0);
+    expect(sessionsRow).toBeGreaterThan(convoRow);
+  });
+
+  it("removes the inter-pane gaps (flush panes)", () => {
+    const cockpit = cockpitCss.match(/\.plc-cockpit\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(cockpit).not.toMatch(/gap:\s*var\(--space/);
+  });
+
+  it("uses no rounded borders on the rail, conversation, or sessions panes", () => {
+    for (const sel of ["\\.plc-rail", "\\.plc-pane", "\\.plc-sessions"]) {
+      const rule =
+        cockpitCss.match(new RegExp(`${sel}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
+      expect(rule).not.toMatch(/border-radius/);
+    }
+  });
+
+  it("fills the remaining project-page viewport height through the cockpit columns", () => {
+    expect(projectDetailCss).toMatch(
+      /\.app\[data-page="sessions"\]\[data-page-variant="project-detail"\]\s+\.main\s*\{[^}]*display:\s*flex/s,
+    );
+    expect(projectDetailCss).toMatch(
+      /\.project-detail-shell\s*\{[^}]*flex:\s*1/s,
+    );
+    expect(projectDetailCss).toMatch(
+      /\.project-detail-shell\s*\{[^}]*min-height:\s*0/s,
+    );
+    expect(cockpitCss).toMatch(/\.plc-cockpit\s*\{[^}]*flex:\s*1/s);
+    expect(cockpitCss).toMatch(/\.plc-rail\s*\{[^}]*height:\s*100%/s);
+    expect(cockpitCss).toMatch(/\.plc-pane\s*\{[^}]*height:\s*100%/s);
+    expect(cockpitCss).toMatch(/\.plc-sessions\s*\{[^}]*height:\s*100%/s);
   });
 });

@@ -951,9 +951,7 @@ describe("apply-after-mutation", () => {
     const message = plcOutcome?.diagnostics[0]?.message ?? "";
     expect(message).toContain("<redacted>");
     expect(message).not.toContain("/home/alex");
-    expect(message).not.toContain(
-      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN",
-    );
+    expect(message).not.toContain("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN");
     // Retryable: the previously-applied hash is preserved and re-staged so a
     // later idle-drain can retry without losing operator intent.
     const state = writes[0]?.state.cascades["claude-skills"];
@@ -1008,9 +1006,10 @@ describe("apply-after-mutation", () => {
       worktreePath: "/repo",
       backend: "claude",
     };
-    const result = await createCapabilityRuntimeApplyService(
-      deps,
-    ).applyWhenConversationBecomesIdle(plcIdentity);
+    const result =
+      await createCapabilityRuntimeApplyService(
+        deps,
+      ).applyWhenConversationBecomesIdle(plcIdentity);
 
     expect(result.conversationScope).toBe("project");
     expect(result).not.toHaveProperty("sessionName");

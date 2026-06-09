@@ -24,12 +24,10 @@ import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/proje
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
   useProjectConversationsQuery,
-  useProjectOpenCountQuery,
   useRefetchProjectConversationsOnFocus,
 } from "@/lib/project-conversations-client/queries";
 import { useReopenProjectConversation } from "@/lib/project-conversations-client/mutations";
 import { useSessionFilters } from "./hooks/use-session-filters";
-import ProjectFirstRun from "./cockpit/ProjectFirstRun";
 import ProjectCockpit from "./cockpit/ProjectCockpit";
 import {
   useActiveTabId,
@@ -46,7 +44,6 @@ export default function ProjectDetailView({
 }: ProjectDetailViewProps): React.JSX.Element {
   const sessionsQuery = useSessionsQuery(projectName);
   const projectsQuery = useProjectsQuery();
-  const openCountQuery = useProjectOpenCountQuery(projectName);
   const conversationsQuery = useProjectConversationsQuery(projectName);
   useRefetchProjectConversationsOnFocus(projectName);
 
@@ -86,7 +83,6 @@ export default function ProjectDetailView({
     () => conversationsQuery.data ?? [],
     [conversationsQuery.data],
   );
-  const openCount = openCountQuery.data ?? 0;
   const projectPath = useMemo(
     () => projectsQuery.data?.find((p) => p.name === projectName)?.path,
     [projectsQuery.data, projectName],
@@ -165,10 +161,14 @@ export default function ProjectDetailView({
   ).length;
 
   const isLoading = sessionsQuery.isPending;
-  const showCockpit = openCount > 0;
 
   return (
-    <div className="app" data-page="sessions" data-density="regular">
+    <div
+      className="app"
+      data-page="sessions"
+      data-page-variant="project-detail"
+      data-density="regular"
+    >
       <Topbar
         page="sessions"
         breadcrumbs={[
@@ -194,7 +194,7 @@ export default function ProjectDetailView({
           </div>
         ) : (
           <>
-            <div className="stagger-in">
+            <div className="stagger-in project-detail-shell">
               <div
                 className="cc-page-header"
                 style={{ paddingBottom: "var(--space-sm)" }}
@@ -231,39 +231,27 @@ export default function ProjectDetailView({
                 </button>
               </div>
 
-              {showCockpit ? (
-                <ProjectCockpit
-                  projectName={projectName}
-                  openConversations={openConversations}
-                  sessions={sessions}
-                  archivedCount={archivedCount}
-                  tokens={tokens}
-                  onTokensChange={setTokens}
-                  onRunCommand={handleRunCommand}
-                  selectedBackend={selectedBackend}
-                  onSelectedBackendChange={setSelectedBackend}
-                  onBranch={handleBranch}
-                  rail={
-                    <ConversationSidebar
-                      projectName={projectName}
-                      sessionName={PROJECT_CONVERSATION_SESSION_SENTINEL}
-                      activeConversationId={activeTabId ?? ""}
-                    />
-                  }
-                />
-              ) : (
-                <ProjectFirstRun
-                  projectName={projectName}
-                  sessions={sessions}
-                  archivedCount={archivedCount}
-                  tokens={tokens}
-                  onTokensChange={setTokens}
-                  onRunCommand={handleRunCommand}
-                  selectedBackend={selectedBackend}
-                  onSelectedBackendChange={setSelectedBackend}
-                  onBranch={handleBranch}
-                />
-              )}
+              <ProjectCockpit
+                projectName={projectName}
+                openConversations={openConversations}
+                sessions={sessions}
+                archivedCount={archivedCount}
+                tokens={tokens}
+                onTokensChange={setTokens}
+                onRunCommand={handleRunCommand}
+                selectedBackend={selectedBackend}
+                onSelectedBackendChange={setSelectedBackend}
+                onBranch={handleBranch}
+                rail={
+                  <ConversationSidebar
+                    projectName={projectName}
+                    sessionName={PROJECT_CONVERSATION_SESSION_SENTINEL}
+                    activeConversationId={activeTabId ?? ""}
+                    showNewConversationButton={false}
+                    showCollapseControl={false}
+                  />
+                }
+              />
               {visibleUnavailableFocusId !== null && (
                 <div className="empty-state" role="status" aria-live="polite">
                   <div className="empty-state-title">

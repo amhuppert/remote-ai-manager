@@ -642,8 +642,11 @@ describe("agent-capabilities / scope-store / project conversation", () => {
 
       // The restored PLC must not have synthesized a session row.
       expect(
-        (db.prepare(`SELECT COUNT(*) AS n FROM sessions`).get() as { n: number })
-          .n,
+        (
+          db.prepare(`SELECT COUNT(*) AS n FROM sessions`).get() as {
+            n: number;
+          }
+        ).n,
       ).toBe(0);
       expect(
         (

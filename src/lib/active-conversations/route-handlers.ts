@@ -603,16 +603,34 @@ export function createActiveConversationsRouteHandlers(
       // (including closed) conversations in an active status are listed;
       // archived ones are excluded by default. The `open` flag is presentation
       // metadata for the downstream rail, not a visibility gate here.
+      let includedProjectConversationCount = 0;
+      let closedProjectConversationCount = 0;
+      let excludedProjectConversationCount = 0;
+
       for (const { projectPath, conversation } of projectConversations) {
-        if (state.archivedProjects.includes(projectPath)) continue;
-        if (conversation.archived) continue;
-        if (!ACTIVE_STATUSES.has(conversation.status)) continue;
+        if (state.archivedProjects.includes(projectPath)) {
+          excludedProjectConversationCount += 1;
+          continue;
+        }
+        if (conversation.archived) {
+          excludedProjectConversationCount += 1;
+          continue;
+        }
+        if (!ACTIVE_STATUSES.has(conversation.status)) {
+          excludedProjectConversationCount += 1;
+          continue;
+        }
         if (
           conversation.role === "iteration" ||
           conversation.role === "validator"
         ) {
+          excludedProjectConversationCount += 1;
           continue;
         }
+
+        const open = conversation.open !== false;
+        includedProjectConversationCount += 1;
+        if (!open) closedProjectConversationCount += 1;
 
         const lastAssistantBlocks =
           conversation.status === "running"
@@ -625,6 +643,7 @@ export function createActiveConversationsRouteHandlers(
           id: conversation.id,
           name: conversation.name ?? conversation.summary ?? null,
           status: conversation.status,
+          open,
           lastActivityAt: conversation.lastActivityAt,
           projectName: deps.getProjectDisplayName(projectPath),
           projectPath,
@@ -644,6 +663,12 @@ export function createActiveConversationsRouteHandlers(
           unread: conversation.unread === true,
         });
       }
+
+      logger.debug("project_conversations.active_pass.complete", {
+        includedProjectConversationCount,
+        closedProjectConversationCount,
+        excludedProjectConversationCount,
+      });
 
       conversations.sort(
         (a, b) =>

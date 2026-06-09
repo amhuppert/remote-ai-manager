@@ -61,8 +61,8 @@ describe("ProjectTranscriptHost", () => {
     expect(container.querySelector(".plc-transcript")).not.toBeNull();
   });
 
-  it("shows a working indicator instead of the empty state while running with no messages", () => {
-    renderSeeded(
+  it("shows the shared typing indicator (not a bespoke text status) while running with no messages", () => {
+    const { container } = renderSeeded(
       <ProjectTranscriptHost
         projectName="proj"
         conversationId="c1"
@@ -71,11 +71,12 @@ describe("ProjectTranscriptHost", () => {
       />,
       [[projectConversationKeys.messages("proj", "c1"), []]],
     );
-    expect(screen.getByText("Working…")).toBeInTheDocument();
+    expect(container.querySelector(".typing-indicator")).not.toBeNull();
+    expect(screen.queryByText("Working…")).toBeNull();
     expect(screen.queryByText("No messages yet")).toBeNull();
   });
 
-  it("shows an awaiting indicator when waiting for input with no messages", () => {
+  it("does not render an 'Awaiting your input' transcript footer (the pane-header badge conveys awaiting, matching the session page)", () => {
     renderSeeded(
       <ProjectTranscriptHost
         projectName="proj"
@@ -83,9 +84,9 @@ describe("ProjectTranscriptHost", () => {
         selectedBackend="claude"
         status="waiting_for_input"
       />,
-      [[projectConversationKeys.messages("proj", "c1"), []]],
+      [[projectConversationKeys.messages("proj", "c1"), [...messages]]],
     );
-    expect(screen.getByText("Awaiting your input")).toBeInTheDocument();
+    expect(screen.queryByText("Awaiting your input")).toBeNull();
   });
 
   it("does not show the empty state when only spawn cards are present", () => {

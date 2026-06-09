@@ -47,8 +47,10 @@ function makeRow(
 function makeProjectRow(
   overrides: Partial<
     Extract<ActiveSidebarConversation, { scope: "project" }>
-  > = {},
-): Extract<ActiveSidebarConversation, { scope: "project" }> {
+  > & { open?: boolean } = {},
+): Extract<ActiveSidebarConversation, { scope: "project" }> & {
+  open: boolean;
+} {
   return {
     scope: "project",
     id: "project-id-1",
@@ -68,6 +70,7 @@ function makeProjectRow(
     role: null,
     lastActivitySummary: null,
     unread: false,
+    open: true,
     ...overrides,
   };
 }
@@ -797,5 +800,72 @@ describe("buildConversationSidebarSections", () => {
       "beta / session-b:session-running",
       "gamma / main:project-running",
     ]);
+  });
+
+  it("keeps closed project conversations in a bottom Closed section and out of Needs/Run filters", () => {
+    const rows: ActiveSidebarConversation[] = [
+      makeProjectRow({
+        id: "open-question",
+        status: "waiting_for_input",
+        projectName: "alpha",
+        projectPath: "/repos/alpha",
+        open: true,
+      }),
+      makeProjectRow({
+        id: "closed-question",
+        status: "waiting_for_input",
+        unread: true,
+        projectName: "alpha",
+        projectPath: "/repos/alpha",
+        open: false,
+      }),
+      makeProjectRow({
+        id: "closed-running",
+        status: "running",
+        projectName: "beta",
+        projectPath: "/repos/beta",
+        open: false,
+      }),
+      makeRow({
+        id: "session-running",
+        status: "running",
+        projectName: "beta",
+        projectPath: "/repos/beta",
+      }),
+    ];
+
+    const allSections = buildConversationSidebarSections(rows, {
+      filter: "all",
+      groupBy: "project",
+      sessionScope: null,
+    });
+
+    expect(allSections.map((s) => `${s.kind}:${s.label}`)).toEqual([
+      "needs:Needs you",
+      "project:beta",
+      "closed:Closed",
+    ]);
+    expect(allSections.at(-1)?.items.map((row) => row.id)).toEqual([
+      "closed-question",
+      "closed-running",
+    ]);
+
+    const needsSections = buildConversationSidebarSections(rows, {
+      filter: "needs",
+      groupBy: "project",
+      sessionScope: null,
+    });
+    expect(
+      needsSections.flatMap((section) => section.items.map((row) => row.id)),
+    ).toEqual(["open-question"]);
+
+    const runningSections = buildConversationSidebarSections(rows, {
+      filter: "running",
+      groupBy: "project",
+      sessionScope: null,
+    });
+    expect(
+      runningSections.flatMap((section) => section.items.map((row) => row.id)),
+    ).toEqual(["session-running"]);
   });
 });

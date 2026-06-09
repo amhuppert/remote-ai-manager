@@ -970,6 +970,10 @@
   color: var(--green-dim);
 }
 
+.convo-sidebar-section-header--closed {
+  color: var(--text-tertiary);
+}
+
 .conversation-sidebar-row-wrapper {
   margin: 1px 8px;
 }
@@ -993,6 +997,15 @@
 .conversation-sidebar-row.is-active {
   background: var(--bg-surface);
   border-color: var(--border-strong);
+}
+
+.conversation-sidebar-row.is-closed {
+  border-style: dashed;
+  opacity: 0.72;
+}
+
+.conversation-sidebar-row.is-closed:hover {
+  opacity: 0.92;
 }
 
 .conversation-sidebar-row.is-active::before {
@@ -1034,6 +1047,14 @@
   background: var(--amber);
   box-shadow: 0 0 6px var(--amber);
   flex-shrink: 0;
+}
+
+.conversation-sidebar-row__reopen {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
 }
 
 .conversation-sidebar-row__dot[data-unread="true"] {
@@ -1193,6 +1214,10 @@
 
 .conversation-sidebar-row.is-unread .conversation-sidebar-row__activity {
   color: var(--green-dim);
+}
+
+.conversation-sidebar-row.is-closed .conversation-sidebar-row__activity {
+  color: var(--text-tertiary);
 }
 
 /* Secondary controls row (Needs you + density). Class-based display so the

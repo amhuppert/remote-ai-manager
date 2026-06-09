@@ -127,6 +127,48 @@ describe("MessageRow", () => {
     expect(screen.getByText("sonnet")).toBeInTheDocument();
   });
 
+  it("always renders the copy action, and shows the fork action only when onFork is provided", () => {
+    const withFork = renderWithQuery(
+      <MessageRow
+        msg={makeMessage({ role: "assistant", model: "sonnet" })}
+        messageIndex={1}
+        isLast={false}
+        selectedBackend="claude"
+        worktreePath="/tmp/proj"
+        onFork={vi.fn()}
+        lastMessageExtras={null}
+      />,
+    );
+    expect(
+      withFork.container.querySelector('[title="Copy message as Markdown"]'),
+    ).not.toBeNull();
+    expect(
+      withFork.container.querySelector(
+        '[title="Fork conversation from this message"]',
+      ),
+    ).not.toBeNull();
+
+    const noFork = renderWithQuery(
+      <MessageRow
+        msg={makeMessage({ role: "assistant", model: "sonnet" })}
+        messageIndex={1}
+        isLast={false}
+        selectedBackend="claude"
+        worktreePath="/tmp/proj"
+        lastMessageExtras={null}
+      />,
+    );
+    // Copy is always available; fork is hidden when no handler is wired.
+    expect(
+      noFork.container.querySelector('[title="Copy message as Markdown"]'),
+    ).not.toBeNull();
+    expect(
+      noFork.container.querySelector(
+        '[title="Fork conversation from this message"]',
+      ),
+    ).toBeNull();
+  });
+
   it("renders DebugActionCard for the last assistant message when lastMessageExtras is supplied", () => {
     const { container } = renderWithQuery(
       <MessageRow

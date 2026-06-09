@@ -71,6 +71,7 @@ function activeProjectConvo(
     worktreePath: overrides.worktreePath ?? "/p",
     lastActivitySummary: overrides.lastActivitySummary ?? null,
     unread: overrides.unread ?? false,
+    open: overrides.open ?? true,
   };
 }
 

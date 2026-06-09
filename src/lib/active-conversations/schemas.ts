@@ -54,6 +54,7 @@ export const activeConversationSchema = z.discriminatedUnion("scope", [
   z.object({
     scope: z.literal("project"),
     ...activeConversationSharedFields,
+    open: z.boolean(),
   }),
 ]);
 export type ActiveConversation = z.infer<typeof activeConversationSchema>;

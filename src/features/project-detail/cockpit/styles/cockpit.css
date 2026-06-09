@@ -1,16 +1,22 @@
 /*
- * Project-conversation cockpit — first-run ↔ three-column cockpit. Production
- * naming under the `.plc-*` namespace; every visual value references a
- * design-system token. Layout defaults are locked (composer bottom, tabs
- * switcher, comfy density, ~60% pane width) — no tweak controls.
+ * Project-conversation cockpit. Production naming under the `.plc-*` namespace;
+ * every visual value references a design-system token. Layout: a full-height
+ * Active Conversations rail on the left, and a right column split 50/50 in
+ * height — the conversation pane on top, the sessions panel below. Panes sit
+ * flush (no gaps, no rounded borders), separated by single-pixel dividers, to
+ * match the session conversation page.
  */
 
 /* ── Shell layout ──────────────────────────────────────────────────────── */
 
 .plc-cockpit {
+  flex: 1;
   display: grid;
-  grid-template-columns: var(--plc-rail-w, 308px) minmax(0, 1fr) 360px;
-  gap: var(--space-md);
+  grid-template-columns: var(--plc-rail-w, 308px) minmax(0, 1fr);
+  grid-template-rows: 1fr 1fr;
+  grid-template-areas:
+    "rail conversation"
+    "rail sessions";
   align-items: stretch;
   min-height: 0;
   height: 100%;
@@ -21,11 +27,12 @@
 }
 
 .plc-rail {
+  grid-area: rail;
   min-width: 0;
   min-height: 0;
+  height: 100%;
   overflow: hidden;
-  border: 1px solid var(--border-dim);
-  border-radius: var(--radius-lg);
+  border-right: 1px solid var(--border-subtle);
   background: var(--bg-base);
 }
 
@@ -34,12 +41,6 @@
   flex-direction: column;
   align-items: center;
   padding: var(--space-sm) 0;
-}
-
-.plc-firstrun {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-lg);
 }
 
 /* Entry animation — 8px rise + fade over .2s ease (entries).
@@ -69,18 +70,19 @@
 /* ── Conversation pane ─────────────────────────────────────────────────── */
 
 .plc-pane {
+  grid-area: conversation;
   display: flex;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
+  height: 100%;
+  border-bottom: 1px solid var(--border-subtle);
   background: var(--bg-surface);
   overflow: hidden;
 }
 
 .plc-pane[data-agent="codex"] {
-  border-color: var(--violet-glow);
+  border-bottom-color: var(--violet-glow);
 }
 
 .plc-pane-header {
@@ -121,6 +123,35 @@
   padding: var(--space-md);
   border-top: 1px solid var(--border-dim);
   background: var(--bg-base);
+}
+
+/* Empty state: no open conversations. The composer stays docked at the bottom;
+ * the body carries a centered prompt to create or reopen one. */
+.plc-pane-empty {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  padding: var(--space-xl) var(--space-lg);
+  text-align: center;
+}
+
+.plc-pane-empty-title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.plc-pane-empty-hint {
+  margin: 0;
+  max-width: 42ch;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-tertiary);
 }
 
 /* ── Tabs ──────────────────────────────────────────────────────────────── */
@@ -236,6 +267,9 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+  /* Match the session transcript body (.panel-body) so message inset is
+   * identical; per-message spacing comes from .conversation-virtuoso-item. */
+  padding: var(--space-lg);
 }
 
 .plc-transcript-empty {
@@ -246,24 +280,6 @@
   padding: var(--space-2xl);
 }
 
-/* Running / awaiting indicator in the transcript (footer or empty placeholder). */
-.plc-transcript-status {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  padding: var(--space-sm) var(--space-md);
-  font-family: var(--font-mono);
-  font-size: 0.74rem;
-  color: var(--text-secondary);
-}
-.plc-transcript-status[data-status="running"] {
-  color: var(--cyan);
-}
-.plc-transcript-status[data-status="awaiting"],
-.plc-transcript-status[data-status="waiting_for_input"] {
-  color: var(--amber);
-}
-
 .plc-pane-status {
   margin-left: var(--space-sm);
 }
@@ -271,12 +287,12 @@
 /* ── Sessions panel ────────────────────────────────────────────────────── */
 
 .plc-sessions {
+  grid-area: sessions;
   display: flex;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
+  height: 100%;
   background: var(--bg-base);
   overflow: hidden;
 }

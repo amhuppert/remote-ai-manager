@@ -73,6 +73,10 @@ export interface ProjectConversationService {
     conversationId: string,
     open: boolean,
   ): Promise<void>;
+  markProjectConversationRead(
+    projectPath: string,
+    conversationId: string,
+  ): Promise<void>;
   getOpenProjectConversationCount(projectPath: string): Promise<number>;
 }
 
@@ -159,6 +163,20 @@ export function createProjectConversationService(
     );
   }
 
+  async function markProjectConversationRead(
+    projectPath: string,
+    conversationId: string,
+  ): Promise<void> {
+    await deps.mutateProjectConversation(
+      projectPath,
+      conversationId,
+      "markProjectConversationRead",
+      (conversation) => {
+        conversation.unread = false;
+      },
+    );
+  }
+
   async function getOpenProjectConversationCount(
     projectPath: string,
   ): Promise<number> {
@@ -183,6 +201,7 @@ export function createProjectConversationService(
       ),
     setProjectConversationOpen: (projectPath, conversationId, open) =>
       deps.setProjectConversationOpen(projectPath, conversationId, open),
+    markProjectConversationRead,
     getOpenProjectConversationCount,
   };
 }

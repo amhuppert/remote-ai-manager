@@ -619,9 +619,9 @@ describe("project-level conversation capability end-to-end acceptance", () => {
     });
     expect(setBody.view).not.toHaveProperty("sessionName");
     // Persistence landed on the PLC store ONLY (project untouched).
-    expect(projectOverrides.cascades["claude-skills"]?.items).not.toHaveProperty(
-      "beta-skill",
-    );
+    expect(
+      projectOverrides.cascades["claude-skills"]?.items,
+    ).not.toHaveProperty("beta-skill");
 
     const afterSetView = resolvePlcView("claude-skills");
     const betaAfterSet = afterSetView.items.find(
@@ -686,16 +686,18 @@ describe("project-level conversation capability end-to-end acceptance", () => {
     // synthetic session identity and disposition "applied").
     applyClaudeRuntime.mockClear();
     claudeRuntimeWrites.length = 0;
-    const claudeApplyResult = await claudeApplyService.applyAfterOverrideChange({
-      scope: {
-        level: "conversation",
-        projectPath: PLC_PROJECT_PATH,
-        conversationScope: "project",
-        conversationId: PLC_CONVERSATION_ID,
+    const claudeApplyResult = await claudeApplyService.applyAfterOverrideChange(
+      {
+        scope: {
+          level: "conversation",
+          projectPath: PLC_PROJECT_PATH,
+          conversationScope: "project",
+          conversationId: PLC_CONVERSATION_ID,
+        },
+        cascadeKind: "claude-skills",
+        changedItemIds: ["alpha-skill"],
       },
-      cascadeKind: "claude-skills",
-      changedItemIds: ["alpha-skill"],
-    });
+    );
     expect(claudeApplyResult.conversations).toHaveLength(1);
     const claudeOutcome = claudeApplyResult.conversations[0]!;
     expect(claudeOutcome).toMatchObject({
@@ -859,9 +861,14 @@ describe("project-level conversation capability end-to-end acceptance", () => {
     const serializedSurface = JSON.stringify({
       events,
       setBody,
-      clearBody: await clearResponse.clone().json().catch(() => undefined),
+      clearBody: await clearResponse
+        .clone()
+        .json()
+        .catch(() => undefined),
     });
-    expect(serializedSurface).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
+    expect(serializedSurface).not.toContain(
+      PROJECT_CONVERSATION_SESSION_SENTINEL,
+    );
     expect(serializedSurface).not.toContain("sessionName");
 
     // ===== Step 6 — Backend isolation + five-cascade boundary (Req 20.1, 20.3). =====
@@ -910,8 +917,7 @@ describe("project-level conversation capability end-to-end acceptance", () => {
       ].sort(),
     );
     for (const cascadeKind of AGENT_CAPABILITY_CASCADE_KINDS) {
-      const metadata =
-        defaultAgentCapabilityMetadataRegistry.get(cascadeKind);
+      const metadata = defaultAgentCapabilityMetadataRegistry.get(cascadeKind);
       expect(metadata.cascadeKind).toBe(cascadeKind);
     }
     // Claude registry omits Codex cascades and vice versa (no cross-backend
@@ -925,9 +931,7 @@ describe("project-level conversation capability end-to-end acceptance", () => {
     expect(claudeKinds.sort()).toEqual(
       ["claude-agents", "claude-plugins", "claude-skills"].sort(),
     );
-    expect(codexKinds.sort()).toEqual(
-      ["codex-plugins", "codex-skills"].sort(),
-    );
+    expect(codexKinds.sort()).toEqual(["codex-plugins", "codex-skills"].sort());
 
     // Guard: nothing in this PLC flow ever routed through a session-keyed store
     // method (those throw), and no PLC write borrowed a session identity.

@@ -2,12 +2,11 @@
 
 import { useMemo } from "react";
 import { Virtuoso } from "react-virtuoso";
-import MessageContent from "@/components/MessageContent";
+import MessageRow from "@/components/conversation/MessageRow";
+import { ConversationVirtuosoItem } from "@/components/conversation/ConversationVirtuosoList";
+import TypingIndicator from "@/components/conversation/TypingIndicator";
 import type { AgentBackendId } from "@/lib/shared/schemas";
-import type {
-  ConversationStatus,
-  TranscriptMessage,
-} from "@/lib/conversations/schemas";
+import type { ConversationStatus } from "@/lib/conversations/schemas";
 import { useProjectConversationMessagesQuery } from "@/lib/project-conversations-client/queries";
 import { stripProposalFencesFromContent } from "@/features/_root/spawn-card/derive-spawn-cards";
 import {
@@ -27,7 +26,7 @@ export interface ProjectTranscriptHostProps {
   conversationId: string;
   selectedBackend: AgentBackendId;
   worktreePath?: string;
-  /** Active turn status — drives the running/awaiting indicator (Req 12.2). */
+  /** Active turn status — drives the running typing indicator (Req 12.2). */
   status?: ConversationStatus;
   /** Supplied by chat-session-spawning; empty until spawning lands. */
   spawnCards?: SpawnCardRowData[];
@@ -35,63 +34,16 @@ export interface ProjectTranscriptHostProps {
   renderSpawnCardRow?: RenderSpawnCardRow;
 }
 
-function awaitingLabel(status: ConversationStatus | undefined): string | null {
-  if (status === "running") return "Working…";
-  if (status === "awaiting" || status === "waiting_for_input") {
-    return "Awaiting your input";
-  }
-  return null;
-}
-
-function ProjectMessageRow({
-  msg,
-  selectedBackend,
-  worktreePath,
-}: {
-  msg: TranscriptMessage;
-  selectedBackend: AgentBackendId;
-  worktreePath: string | undefined;
-}): React.JSX.Element | null {
-  const isUser = msg.role === "user";
-  // Drop the raw `spawn-proposal` fence from the rendered text — the inline
-  // spawn card renders the proposal; the JSON block must not show alongside it.
-  // A turn that was nothing but the proposal renders no bubble (the card carries
-  // it).
-  const content = stripProposalFencesFromContent(msg.content);
-  if (content.length === 0) return null;
-  return (
-    <div className={`message ${msg.role}`}>
-      <div className="message-role">
-        {isUser ? "You" : selectedBackend === "codex" ? "Codex" : "Claude"}
-        {!isUser && (msg.model || msg.effort) && (
-          <span className="message-meta">
-            {msg.model && (
-              <span className="message-meta-model">{msg.model}</span>
-            )}
-            {msg.effort && (
-              <span
-                className={`message-meta-effort${msg.effort === "max" || msg.effort === "xhigh" ? " cc-rainbow-text" : ""}`}
-              >
-                {msg.effort}
-              </span>
-            )}
-          </span>
-        )}
-      </div>
-      <div className="message-content">
-        <MessageContent content={content} worktreePath={worktreePath} />
-      </div>
-    </div>
-  );
-}
-
 /**
  * Virtualized transcript for the active project conversation. It fetches the
  * conversation's messages, interleaves chat-session-spawning's inline cards via
  * `buildProjectTranscriptRows`, and renders through react-virtuoso (the same
  * primitive the session transcript uses) so messages are never rendered eagerly.
- * The spawn-card slot defaults to a no-op renderer so the cockpit ships before
- * spawning lands.
+ * Message rows reuse the shared `MessageRow` (same layout, model/effort meta,
+ * and copy action as the session transcript) wrapped in the shared
+ * `ConversationVirtuosoItem` so spacing matches; Fork is omitted because project
+ * conversations have no fork backend. The spawn-card slot defaults to a no-op
+ * renderer so the cockpit ships before spawning lands.
  */
 export default function ProjectTranscriptHost({
   projectName,
@@ -117,36 +69,47 @@ export default function ProjectTranscriptHost({
     [messages, cards],
   );
 
-  const awaiting = awaitingLabel(status);
+  // Strip each message's raw `spawn-proposal` fence once — the inline spawn
+  // card renders the proposal, so the JSON block must not show in the bubble. A
+  // turn that was nothing but the proposal strips to empty and renders no row.
+  const strippedByIndex = useMemo(() => {
+    const map = new Map<
+      number,
+      ReturnType<typeof stripProposalFencesFromContent>
+    >();
+    messages.forEach((msg, index) =>
+      map.set(index, stripProposalFencesFromContent(msg.content)),
+    );
+    return map;
+  }, [messages]);
+  const lastMessageIndex = messages.length - 1;
+
   const running = status === "running";
 
-  const StatusFooter = awaiting
+  // Reuse the session transcript's working indicator (animated dots) while a
+  // turn runs; awaiting is conveyed by the pane-header status badge, not a
+  // transcript footer — matching the session conversation page. The project
+  // page does not use the session-detail optimistic store, so the override is
+  // pinned to `false`.
+  const Footer = running
     ? () => (
-        <div
-          className="plc-transcript-status"
-          data-status={status}
-          role="status"
-        >
-          {running && <span className="status-dot cyan" aria-hidden />}
-          {awaiting}
-        </div>
+        <TypingIndicator
+          selectedBackend={selectedBackend}
+          visible
+          hasAssistantOptimistic={false}
+        />
       )
     : undefined;
 
   if (!messagesQuery.isPending && messages.length === 0 && cards.length === 0) {
     return (
       <div className="plc-transcript">
-        {awaiting ? (
-          <div className="plc-transcript-empty">
-            <div
-              className="plc-transcript-status"
-              data-status={status}
-              role="status"
-            >
-              {running && <span className="status-dot cyan" aria-hidden />}
-              {awaiting}
-            </div>
-          </div>
+        {running ? (
+          <TypingIndicator
+            selectedBackend={selectedBackend}
+            visible
+            hasAssistantOptimistic={false}
+          />
         ) : (
           <div className="plc-transcript-empty empty-state">
             <div className="empty-state-title">No messages yet</div>
@@ -169,19 +132,29 @@ export default function ProjectTranscriptHost({
           align: "end",
         }}
         computeItemKey={(_i, row) => projectRowKey(row)}
-        itemContent={(_i, row) =>
-          row.kind === "message" ? (
-            <ProjectMessageRow
-              msg={row.msg}
+        itemContent={(_i, row) => {
+          if (row.kind !== "message") return renderSpawnCardRow(row);
+          const content =
+            strippedByIndex.get(row.messageIndex) ?? row.msg.content;
+          if (content.length === 0) return null;
+          return (
+            <MessageRow
+              msg={
+                content === row.msg.content ? row.msg : { ...row.msg, content }
+              }
+              messageIndex={row.messageIndex}
+              isLast={row.messageIndex === lastMessageIndex}
               selectedBackend={selectedBackend}
               worktreePath={worktreePath}
+              lastMessageExtras={null}
             />
-          ) : (
-            renderSpawnCardRow(row)
-          )
-        }
+          );
+        }}
         followOutput={() => "smooth"}
-        {...(StatusFooter ? { components: { Footer: StatusFooter } } : {})}
+        components={{
+          Item: ConversationVirtuosoItem,
+          ...(Footer ? { Footer } : {}),
+        }}
         style={{ height: "100%", flex: 1, minHeight: 0 }}
       />
     </div>

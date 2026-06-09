@@ -9,12 +9,16 @@ interface MessageActionsProps {
   messageIndex: number;
   /** Content blocks of the message — used for the Copy action */
   content: MessageContentBlock[];
-  /** Called when user clicks Fork — forks conversation from this message */
-  onFork: (messageIndex: number) => void;
+  /**
+   * Called when user clicks Fork — forks the conversation from this message.
+   * Omit to hide the Fork action (e.g. surfaces with no fork backend).
+   */
+  onFork?: (messageIndex: number) => void;
 }
 
 /**
- * Hover action bar shown beneath every message. Renders Copy + Fork.
+ * Hover action bar shown beneath every message. Always renders Copy; renders
+ * Fork only when an `onFork` handler is wired.
  *
  * Render inside a `.message` element — the parent must have
  * `position: relative` (already set by `.message` class).
@@ -25,54 +29,56 @@ function MessageActions({
   onFork,
 }: MessageActionsProps) {
   const handleFork = useCallback(() => {
-    onFork(messageIndex);
+    onFork?.(messageIndex);
   }, [messageIndex, onFork]);
 
   return (
     <div className="msg-actions">
       <CopyMessageButton content={content} />
-      <button
-        className="msg-action-btn"
-        onClick={handleFork}
-        data-tooltip="Fork"
-        title="Fork conversation from this message"
-      >
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 12 12"
-          fill="none"
-          aria-hidden="true"
+      {onFork && (
+        <button
+          className="msg-action-btn"
+          onClick={handleFork}
+          data-tooltip="Fork"
+          title="Fork conversation from this message"
         >
-          <circle
-            cx="3"
-            cy="2.5"
-            r="1.5"
-            stroke="currentColor"
-            strokeWidth="1.2"
-          />
-          <circle
-            cx="3"
-            cy="9.5"
-            r="1.5"
-            stroke="currentColor"
-            strokeWidth="1.2"
-          />
-          <circle
-            cx="9"
-            cy="4.5"
-            r="1.5"
-            stroke="currentColor"
-            strokeWidth="1.2"
-          />
-          <path
-            d="M3 4V8M3 5.5C3 5.5 3 4.5 5.5 4.5H7.5"
-            stroke="currentColor"
-            strokeWidth="1.2"
-            strokeLinecap="round"
-          />
-        </svg>
-      </button>
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 12 12"
+            fill="none"
+            aria-hidden="true"
+          >
+            <circle
+              cx="3"
+              cy="2.5"
+              r="1.5"
+              stroke="currentColor"
+              strokeWidth="1.2"
+            />
+            <circle
+              cx="3"
+              cy="9.5"
+              r="1.5"
+              stroke="currentColor"
+              strokeWidth="1.2"
+            />
+            <circle
+              cx="9"
+              cy="4.5"
+              r="1.5"
+              stroke="currentColor"
+              strokeWidth="1.2"
+            />
+            <path
+              d="M3 4V8M3 5.5C3 5.5 3 4.5 5.5 4.5H7.5"
+              stroke="currentColor"
+              strokeWidth="1.2"
+              strokeLinecap="round"
+            />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }

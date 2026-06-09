@@ -16,7 +16,8 @@ export interface MessageRowProps {
   isLast: boolean;
   selectedBackend: AgentBackendId;
   worktreePath: string | undefined;
-  onFork: (messageIndex: number) => void;
+  /** Fork handler; omit to hide the Fork action where forking isn't supported. */
+  onFork?: (messageIndex: number) => void;
   /**
    * Per-render extras consumed only by the final-message decorations
    * (`DebugActionCard`). Non-last rows receive `null`, which is stable across

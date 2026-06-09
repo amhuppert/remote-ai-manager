@@ -149,7 +149,9 @@ describe("agent-capabilities/mutation-service lifecycle correlation", () => {
         operationId: "cap-op-plc",
       }),
     );
-    expect(allLoggedArgs()).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
+    expect(allLoggedArgs()).not.toContain(
+      PROJECT_CONVERSATION_SESSION_SENTINEL,
+    );
     expect(allLoggedArgs()).not.toContain("sessionName");
   });
 
@@ -199,7 +201,9 @@ describe("agent-capabilities/mutation-service lifecycle correlation", () => {
         operationId: "cap-op-plc-conflict",
       }),
     );
-    expect(allLoggedArgs()).not.toContain(PROJECT_CONVERSATION_SESSION_SENTINEL);
+    expect(allLoggedArgs()).not.toContain(
+      PROJECT_CONVERSATION_SESSION_SENTINEL,
+    );
     expect(allLoggedArgs()).not.toContain("sessionName");
   });
 

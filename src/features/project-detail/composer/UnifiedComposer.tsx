@@ -1,31 +1,23 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import BackendToggle from "@/components/BackendToggle";
-import ModelSelector, { getModelsForBackend } from "@/components/ModelSelector";
-import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
-import { VoiceRecordButton } from "@/components/VoiceRecordButton";
-import ImageAttachmentPreview from "@/components/ImageAttachmentPreview";
+import PromptComposer from "@/features/session/prompt/PromptComposer";
+import type { PromptEditorHandle } from "@/features/session/prompt/PromptEditor";
+import { getModelsForBackend } from "@/components/ModelSelector";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import {
   getEffortLevelsForBackend,
   type EffortLevel,
 } from "@/lib/agent-backends/schemas";
-import type { AgentBackendId } from "@/lib/shared/schemas";
 import { imagePayloadSchema, type ImagePayload } from "@/lib/images/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { ProjectPromptError } from "@/lib/project-conversations-client/mutations";
-import {
-  computeSuggestions,
-  type Suggestion,
-} from "../components/command-suggestions";
 import type { FilterToken } from "../components/filter-tokens";
 import { detectComposerMode } from "./detect-composer-mode";
 import { parseFilterDraft, replaceTokenByCat } from "./parse-filter-draft";
-import ComposerModeChip from "./ComposerModeChip";
-import ComposerSuggestions from "./ComposerSuggestions";
 import "./styles/composer.css";
 
 export interface UnifiedComposerSendInput {
@@ -38,7 +30,7 @@ export interface UnifiedComposerSendInput {
 
 export interface UnifiedComposerProps {
   projectName: string;
-  /** `null` ⇒ first-run; a chat send issues create-and-send (PLC-5). */
+  /** `null` => first-run; a chat send issues create-and-send (PLC-5). */
   activeConversationId: string | null;
   activeConversation: ConversationState | undefined;
   agentBackend: AgentBackendId;
@@ -56,57 +48,72 @@ export interface UnifiedComposerProps {
   onDismissError?: () => void;
 }
 
+type ProjectCommandId = "new" | "capabilities" | "workflow-builder";
+
+export type ProjectComposerSubmitResult =
+  | { kind: "noop" }
+  | { kind: "command"; id: ProjectCommandId }
+  | { kind: "tokens"; tokens: FilterToken[] }
+  | { kind: "send"; input: UnifiedComposerSendInput };
+
 const DEFAULT_EFFORT: EffortLevel = "high";
-
-function PaperclipGlyph(): React.JSX.Element {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-    </svg>
-  );
-}
-
-function SendGlyph(): React.JSX.Element {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M22 2 11 13" />
-      <path d="M22 2 15 22l-4-9-9-4 20-7z" />
-    </svg>
-  );
-}
 
 function defaultModelFor(backend: AgentBackendId): string {
   return getModelsForBackend(backend)[0]?.id ?? "";
 }
 
-function addFilterToken(tokens: FilterToken[], s: Suggestion): FilterToken[] {
-  if (s.kind !== "filter") return tokens;
-  return replaceTokenByCat(tokens, {
-    cat: s.cat,
-    key: s.key,
-    value: s.value,
-    ...(s.exclusive !== undefined ? { exclusive: s.exclusive } : {}),
-  });
+function parseCommandDraft(draft: string): ProjectCommandId | null {
+  const command = draft.trim();
+  if (command === "/") return "new";
+  if (command === "/new") return "new";
+  if (command === "/capabilities") return "capabilities";
+  if (command === "/workflow-builder") return "workflow-builder";
+  return null;
+}
+
+export function resolveProjectComposerSubmit({
+  draft,
+  pendingImages,
+  tokens,
+  backend,
+  modelId,
+  effort,
+  effortSupported,
+}: {
+  draft: string;
+  pendingImages: ImagePayload[];
+  tokens: FilterToken[];
+  backend: AgentBackendId;
+  modelId: string;
+  effort: EffortLevel;
+  effortSupported: boolean;
+}): ProjectComposerSubmitResult {
+  const trimmed = draft.trim();
+  if (!trimmed && pendingImages.length === 0) return { kind: "noop" };
+
+  const mode = detectComposerMode(trimmed);
+  if (mode === "command") {
+    const id = parseCommandDraft(trimmed);
+    if (id) return { kind: "command", id };
+  }
+
+  if (mode === "filter") {
+    const token = parseFilterDraft(trimmed);
+    if (token) {
+      return { kind: "tokens", tokens: replaceTokenByCat(tokens, token) };
+    }
+  }
+
+  return {
+    kind: "send",
+    input: {
+      text: trimmed,
+      images: pendingImages,
+      backend,
+      modelId,
+      ...(effortSupported ? { effort } : {}),
+    },
+  };
 }
 
 export default function UnifiedComposer({
@@ -117,8 +124,6 @@ export default function UnifiedComposer({
   onAgentChange,
   tokens,
   onTokensChange,
-  sessions,
-  archivedCount,
   onSendPrompt,
   onRunCommand,
   busy,
@@ -126,20 +131,19 @@ export default function UnifiedComposer({
   onDismissError,
 }: UnifiedComposerProps): React.JSX.Element {
   const [draft, setDraft] = useState("");
-  const [focused, setFocused] = useState(false);
-  const [activeIndex, setActiveIndex] = useState(0);
   const [modelPref, setModelPref] = useState(() =>
     defaultModelFor(agentBackend),
   );
   const [effortPref, setEffortPref] = useState<EffortLevel>(DEFAULT_EFFORT);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [inlineMarkerIds, setInlineMarkerIds] = useState<string[]>([]);
+  const [promptError, setPromptError] = useState<string | null>(null);
+  const [promptPlaceholder, setPromptPlaceholder] = useState<string | null>(
+    null,
+  );
+  const editorRef = useRef<PromptEditorHandle | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const backendLocked = (activeConversation?.promptCount ?? 0) > 0;
-  const mode = detectComposerMode(draft);
-
-  // Derive the effective model/effort during render so changing the backend
-  // (which can be driven externally by the active conversation) self-corrects
-  // an unsupported selection without a state-syncing effect.
   const modelOptions = useMemo(
     () => getModelsForBackend(agentBackend).map((m) => m.id),
     [agentBackend],
@@ -162,195 +166,136 @@ export default function UnifiedComposer({
 
   const voice = useVoiceRecorder({
     projectName,
-    onResult: (text) => setDraft((d) => (d ? `${d} ${text}` : text)),
-    onError: () => {
-      /* surfaced by the recorder UI; composer stays usable */
+    onResult: (text) => {
+      const prefix = draft.trim().length > 0 ? " " : "";
+      editorRef.current?.insertText(`${prefix}${text}`);
+      setDraft((current) => (current ? `${current} ${text}` : text));
     },
+    onError: setPromptError,
   });
 
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const clearComposer = useCallback(() => {
+    setDraft("");
+    setInlineMarkerIds([]);
+    setPromptPlaceholder(null);
+    editorRef.current?.clear();
+    clearImages();
+  }, [clearImages]);
 
-  // `computeSuggestions` matches bare words, not the `key:value` colon syntax,
-  // so in filter mode we feed it the post-colon value (e.g. `is:run` → `run`)
-  // and keep only filter suggestions; command mode passes the `/…` draft as-is.
-  const suggestionQuery =
-    mode === "filter" ? draft.slice(draft.indexOf(":") + 1) : draft;
-  const suggestions = useMemo<Suggestion[]>(() => {
-    const all = computeSuggestions({
-      draft: suggestionQuery,
-      tokens,
-      sessions,
-      archivedCount,
-    });
-    return mode === "filter" ? all.filter((s) => s.kind === "filter") : all;
-  }, [suggestionQuery, mode, tokens, sessions, archivedCount]);
-  const showSuggestions =
-    focused &&
-    (mode === "command" || mode === "filter") &&
-    suggestions.length > 0;
-  // Clamp the highlight into range during render (suggestions shrink as the
-  // draft changes); typing resets it to the top via the change handler.
-  const activeIndexSafe =
-    suggestions.length > 0 ? Math.min(activeIndex, suggestions.length - 1) : 0;
-
-  const sendDisabled = busy || (!draft.trim() && pendingImages.length === 0);
-
-  const doSend = useCallback(() => {
-    if (sendDisabled) return;
-    // Validate each attachment at the boundary — only well-formed image
-    // payloads (recognized media type) reach the send envelope.
-    const images: ImagePayload[] = pendingImages.flatMap((a) => {
-      const parsed = imagePayloadSchema.safeParse({
-        attachmentId: a.id,
-        mediaType: a.mediaType,
-        base64Data: a.base64Data,
+  const handleSendPrompt = useCallback(() => {
+    const serialized = editorRef.current?.serialize(pendingImages);
+    const images =
+      serialized?.images ??
+      pendingImages.flatMap((attachment) => {
+        const parsed = imagePayloadSchema.safeParse({
+          attachmentId: attachment.id,
+          mediaType: attachment.mediaType,
+          base64Data: attachment.base64Data,
+        });
+        return parsed.success ? [parsed.data] : [];
       });
-      return parsed.success ? [parsed.data] : [];
-    });
-    onSendPrompt({
-      text: draft.trim(),
-      images,
+    const result = resolveProjectComposerSubmit({
+      draft: serialized?.prompt ?? draft,
+      pendingImages: images,
+      tokens,
       backend: agentBackend,
       modelId: selectedModel,
-      ...(effortSupported ? { effort: selectedEffort } : {}),
+      effort: selectedEffort,
+      effortSupported,
     });
-    setDraft("");
-    clearImages();
+
+    switch (result.kind) {
+      case "noop":
+        return;
+      case "command":
+        onRunCommand(result.id);
+        clearComposer();
+        return;
+      case "tokens":
+        onTokensChange(result.tokens);
+        clearComposer();
+        return;
+      case "send":
+        onSendPrompt(result.input);
+        clearComposer();
+        return;
+    }
   }, [
-    sendDisabled,
     pendingImages,
-    onSendPrompt,
     draft,
+    tokens,
     agentBackend,
     selectedModel,
-    effortSupported,
     selectedEffort,
-    clearImages,
+    effortSupported,
+    onRunCommand,
+    clearComposer,
+    onTokensChange,
+    onSendPrompt,
   ]);
 
-  const applySuggestion = useCallback(
-    (s: Suggestion) => {
-      if (s.kind === "action") {
-        setDraft("");
-        onRunCommand(s.id);
-        return;
-      }
-      onTokensChange(addFilterToken(tokens, s));
-      setDraft("");
-    },
-    [onRunCommand, onTokensChange, tokens],
-  );
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === "Backspace" && draft === "" && tokens.length > 0) {
-        onTokensChange(tokens.slice(0, -1));
-        return;
-      }
-      if (showSuggestions) {
-        if (e.key === "ArrowDown") {
-          e.preventDefault();
-          setActiveIndex((i) => Math.min(i + 1, suggestions.length - 1));
-          return;
-        }
-        if (e.key === "ArrowUp") {
-          e.preventDefault();
-          setActiveIndex((i) => Math.max(i - 1, 0));
-          return;
-        }
-        if (e.key === "Enter" && !e.shiftKey) {
-          const target = suggestions[activeIndexSafe];
-          if (target) {
-            e.preventDefault();
-            applySuggestion(target);
-          }
-          return;
-        }
-      }
-      if (mode === "filter" && e.key === "Enter" && !e.shiftKey) {
-        // No highlighted suggestion (e.g. `archived:true`) — parse the draft.
-        const token = parseFilterDraft(draft);
-        if (token) {
-          e.preventDefault();
-          onTokensChange(replaceTokenByCat(tokens, token));
-          setDraft("");
-        }
-        return;
-      }
-      if (mode === "chat" && e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        doSend();
-        return;
-      }
-      if (e.key === "Escape") {
-        textareaRef.current?.blur();
-      }
-    },
-    [
-      draft,
-      tokens,
-      onTokensChange,
-      showSuggestions,
-      suggestions,
-      activeIndexSafe,
-      applySuggestion,
-      mode,
-      doSend,
-    ],
-  );
-
-  const placeholder =
-    mode === "command"
-      ? "Run a command…"
-      : mode === "filter"
-        ? "Filter sessions — key:value"
-        : activeConversationId === null
-          ? "Message the project — Enter to start a conversation"
-          : "Message the conversation — Enter to send, Shift+Enter for newline";
+  const visibleError = promptError ?? error?.message ?? null;
 
   return (
-    <div
-      className="plc-uc"
-      data-mode={mode}
-      data-agent={agentBackend}
-      data-focused={focused}
-    >
-      <div className="plc-uc-field" data-mode={mode} data-agent={agentBackend}>
-        <ComposerModeChip mode={mode} agent={agentBackend} />
-        <textarea
-          ref={textareaRef}
-          className="plc-uc-textarea"
-          value={draft}
-          rows={1}
-          placeholder={placeholder}
-          onChange={(e) => {
-            setDraft(e.target.value);
-            setActiveIndex(0);
-          }}
-          onKeyDown={handleKeyDown}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
-          aria-label="Project composer"
-        />
-      </div>
-
-      {showSuggestions && (
-        <ComposerSuggestions
-          suggestions={suggestions}
-          activeIndex={activeIndexSafe}
-          onApply={applySuggestion}
-          onHoverIndex={setActiveIndex}
-        />
-      )}
-
-      {pendingImages.length > 0 && (
-        <ImageAttachmentPreview images={pendingImages} onRemove={removeImage} />
-      )}
-
-      {error && (
+    <>
+      <PromptComposer
+        projectName={projectName}
+        sessionName=""
+        conversationId={activeConversationId ?? ""}
+        activeConversation={undefined}
+        editorRef={editorRef}
+        fileInputRef={fileInputRef}
+        promptText={draft}
+        onPromptTextChange={(text) => {
+          setDraft(text);
+          if (promptPlaceholder !== null) setPromptPlaceholder(null);
+        }}
+        onSendPrompt={handleSendPrompt}
+        pendingImages={pendingImages}
+        inlineMarkerIds={inlineMarkerIds}
+        onInlineMarkersChange={setInlineMarkerIds}
+        addImage={addImage}
+        removeImage={removeImage}
+        isAtLimit={isAtLimit}
+        cumulativeImageCount={0}
+        failPrompt={setPromptError}
+        showPlaceholder={setPromptPlaceholder}
+        promptPlaceholder={promptPlaceholder}
+        isReadOnly={false}
+        isFinished={false}
+        sending={busy}
+        hasActiveCollab={false}
+        isRecording={voice.isRecording}
+        isProcessing={voice.isProcessing}
+        voiceAvailable={voice.isAvailable}
+        elapsedTime={voice.elapsedTime}
+        toggleRecording={voice.toggleRecording}
+        stopAndSubmit={voice.stopRecording}
+        backendLocked={backendLocked}
+        selectedBackend={agentBackend}
+        onBackendChange={onAgentChange}
+        selectedModel={selectedModel}
+        onModelChange={setModelPref}
+        selectedEffort={selectedEffort}
+        onEffortChange={setEffortPref}
+        availableEffortLevels={availableEffortLevels}
+        effortSupported={effortSupported}
+        hasCollabChip={false}
+        effectiveCollabConfig={{
+          secondAgent: agentBackend === "claude" ? "codex" : "claude",
+          negotiationRounds: 3,
+          autonomousResolutionThreshold: "major",
+        }}
+        originatingCollabAgent={agentBackend}
+        onCollabConfigChange={() => {}}
+        onCollabDismiss={() => {}}
+        onDebugToggle={() => {}}
+        debugTogglePending={false}
+      />
+      {visibleError && (
         <div className="plc-uc-error" role="alert">
-          <span>{error.message}</span>
-          {onDismissError && (
+          <span>{visibleError}</span>
+          {error && onDismissError && (
             <button
               type="button"
               className="btn btn-ghost btn-sm"
@@ -361,66 +306,6 @@ export default function UnifiedComposer({
           )}
         </div>
       )}
-
-      <div className="plc-uc-toolbar">
-        <BackendToggle
-          value={agentBackend}
-          onChange={onAgentChange}
-          readOnly={backendLocked}
-        />
-        <ModelSelector
-          value={selectedModel}
-          onChange={setModelPref}
-          backend={agentBackend}
-        />
-        <ReasoningLevelSelector
-          value={selectedEffort}
-          onChange={setEffortPref}
-          availableLevels={availableEffortLevels}
-          disabled={!effortSupported}
-        />
-        <button
-          type="button"
-          className="btn-icon-only"
-          aria-label="Attach image"
-          data-tooltip="Attach image"
-          disabled={isAtLimit}
-          onClick={() => fileInputRef.current?.click()}
-        >
-          <PaperclipGlyph />
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          hidden
-          onChange={(e) => {
-            const files = e.target.files;
-            if (files) {
-              for (const f of Array.from(files)) void addImage(f);
-            }
-            e.target.value = "";
-          }}
-        />
-        <VoiceRecordButton
-          isRecording={voice.isRecording}
-          isProcessing={voice.isProcessing}
-          elapsedTime={voice.elapsedTime}
-          isAvailable={voice.isAvailable}
-          toggleRecording={voice.toggleRecording}
-        />
-        <span className="plc-uc-toolbar-spacer" />
-        <button
-          type="button"
-          className="btn btn-primary btn-sm plc-uc-send"
-          aria-label="Send prompt"
-          disabled={sendDisabled}
-          onClick={doSend}
-        >
-          <SendGlyph />
-        </button>
-      </div>
-    </div>
+    </>
   );
 }

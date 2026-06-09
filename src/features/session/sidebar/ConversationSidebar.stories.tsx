@@ -88,6 +88,7 @@ function makeProjectActive(
       `/home/alex/github/${overrides.projectName ?? "remote-ai-manager"}`,
     lastActivitySummary: overrides.lastActivitySummary ?? null,
     unread: overrides.unread ?? false,
+    open: overrides.open ?? true,
   };
 }
 

@@ -79,6 +79,7 @@ function makeProjectConversation(
     worktreePath: "/repos/app",
     lastActivitySummary: null,
     unread: true,
+    open: overrides.open ?? true,
     ...overrides,
   };
 }

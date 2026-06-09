@@ -91,6 +91,14 @@ describe("active-conversations project pass", () => {
     const ids = body.conversations.map((c) => c.id).sort();
 
     expect(ids).toEqual(["p-closed", "p-open", "s1"]); // archived excluded
+    expect(body.conversations.find((c) => c.id === "p-open")).toMatchObject({
+      scope: "project",
+      open: true,
+    });
+    expect(body.conversations.find((c) => c.id === "p-closed")).toMatchObject({
+      scope: "project",
+      open: false,
+    });
   });
 
   it("emits the project variant with the project main worktree and no sessionName", async () => {

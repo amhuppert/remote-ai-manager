@@ -46,6 +46,7 @@ const projectVariant = {
   worktreePath: "/repo",
   lastActivitySummary: null,
   unread: false,
+  open: true,
 };
 
 describe("activeConversationSchema scope union", () => {
@@ -62,6 +63,15 @@ describe("activeConversationSchema scope union", () => {
     const result = activeConversationSchema.safeParse(projectVariant);
     expect(result.success).toBe(true);
     expect(result.success && result.data.scope).toBe("project");
+    expect(
+      result.success && result.data.scope === "project" && result.data.open,
+    ).toBe(true);
+  });
+
+  it("rejects a project-variant object missing open state", () => {
+    const { open: _omit, ...withoutOpen } = projectVariant;
+    void _omit;
+    expect(activeConversationSchema.safeParse(withoutOpen).success).toBe(false);
   });
 
   it("rejects a session-scope object missing sessionName", () => {

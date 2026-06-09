@@ -49,6 +49,7 @@ const PROJECT_BASE: ProjectActiveConversation = {
   worktreePath: "/home/user/my-project",
   lastActivitySummary: "Checked repo root health",
   unread: true,
+  open: true,
 };
 
 describe("ConversationSidebarRow", () => {
@@ -330,5 +331,48 @@ describe("ConversationSidebarRow", () => {
 
     expect(onPeek).not.toHaveBeenCalled();
     expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("intercepts plain left-clicks on project rows so the anchor never triggers a full-page navigation (client-side only)", () => {
+    const onClick = vi.fn();
+
+    render(
+      <ConversationSidebarRow
+        conversation={PROJECT_BASE}
+        href="/projects/my-project?focus=project-convo-1"
+        currentConversationId="other-convo"
+        onClick={onClick}
+      />,
+    );
+
+    // fireEvent.click returns false when the event's default was prevented.
+    const notCancelled = fireEvent.click(
+      screen.getByLabelText("Project conversation — awaiting"),
+    );
+
+    expect(onClick).toHaveBeenCalledTimes(1);
+    expect(notCancelled).toBe(false);
+  });
+
+  it("lets modifier-clicks on project rows fall through to the anchor so they open in a new tab", () => {
+    const onClick = vi.fn();
+
+    render(
+      <ConversationSidebarRow
+        conversation={PROJECT_BASE}
+        href="/projects/my-project?focus=project-convo-1"
+        currentConversationId="other-convo"
+        onClick={onClick}
+      />,
+    );
+
+    const notCancelled = fireEvent.click(
+      screen.getByLabelText("Project conversation — awaiting"),
+      { metaKey: true },
+    );
+
+    // The native anchor handles the modified click (new tab); no client-side nav.
+    expect(onClick).not.toHaveBeenCalled();
+    expect(notCancelled).toBe(true);
   });
 });

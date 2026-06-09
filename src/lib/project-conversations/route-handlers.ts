@@ -22,6 +22,7 @@ import {
   conversationRenamedEventSchema,
   conversationArchivedEventSchema,
   conversationOpenEventSchema,
+  conversationUnreadEventSchema,
 } from "@/lib/conversations/schemas";
 import { sessionArchiveRequestSchema } from "@/lib/sessions/schemas";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
@@ -77,6 +78,10 @@ export interface ProjectConversationRouteDeps {
     conversationId: string,
     open: boolean,
   ): Promise<void>;
+  markProjectConversationRead(
+    projectPath: string,
+    conversationId: string,
+  ): Promise<void>;
   executeProjectPromptStream(
     input: ExecuteProjectPromptStreamInput,
   ): Promise<PromptStreamResult>;
@@ -106,6 +111,8 @@ function defaultDeps(): ProjectConversationRouteDeps {
       service.setProjectConversationArchived(projectPath, id, archived),
     setProjectConversationOpen: (projectPath, id, open) =>
       service.setProjectConversationOpen(projectPath, id, open),
+    markProjectConversationRead: (projectPath, id) =>
+      service.markProjectConversationRead(projectPath, id),
     executeProjectPromptStream: defaultExecuteProjectPromptStream,
     isConversationBusy: defaultIsConversationBusy,
     broadcast: defaultBroadcast,
@@ -524,6 +531,52 @@ export function createProjectConversationRouteHandlers(
     return NextResponse.json({ ok: true });
   }
 
+  async function markReadPOST(
+    _request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const { name, conversationId } = await context.params;
+    const projectPath = await deps.resolveProjectPath(name ?? "");
+    if (!projectPath) return projectNotFound();
+
+    const existing = await deps.getProjectConversation(
+      projectPath,
+      conversationId ?? "",
+    );
+    if (!existing) return conversationNotFound();
+
+    try {
+      await deps.markProjectConversationRead(projectPath, conversationId ?? "");
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to mark as read";
+      return NextResponse.json({ error: message } satisfies ApiError, {
+        status: 500,
+      });
+    }
+
+    const projectName = deps.getProjectDisplayName(projectPath);
+    try {
+      deps.broadcast(
+        conversationUnreadEventSchema.parse({
+          type: "conversation-unread",
+          scope: "project",
+          projectName,
+          conversationId,
+          unread: false,
+        }),
+      );
+    } catch (err) {
+      logger.warn("project_conversation_mark_read.broadcast_failed", {
+        projectName,
+        conversationId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    return NextResponse.json({ ok: true });
+  }
+
   return {
     createPOST,
     listGET,
@@ -533,6 +586,7 @@ export function createProjectConversationRouteHandlers(
     renamePATCH,
     archivePATCH,
     openPATCH,
+    markReadPOST,
   };
 }
 
@@ -545,3 +599,4 @@ export const projectConversationPromptPOST = _handlers.promptPOST;
 export const projectConversationRenamePATCH = _handlers.renamePATCH;
 export const projectConversationArchivePATCH = _handlers.archivePATCH;
 export const projectConversationOpenPATCH = _handlers.openPATCH;
+export const projectConversationMarkReadPOST = _handlers.markReadPOST;

@@ -2,6 +2,19 @@
    Project page — redesign
    ============================================================ */
 
+.app[data-page="sessions"][data-page-variant="project-detail"] .main {
+  display: flex;
+  flex-direction: column;
+  overflow: clip;
+}
+
+.project-detail-shell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 /* Page header */
 .cc-page-header {
   display: flex;

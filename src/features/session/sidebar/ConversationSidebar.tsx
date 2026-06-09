@@ -25,6 +25,7 @@ import {
   useForkConversationMutation,
   useMarkConversationReadMutation,
 } from "@/lib/conversations/mutations";
+import { useMarkProjectConversationReadMutation } from "@/lib/project-conversations-client/mutations";
 import { useGenericArchiveSessionMutation } from "@/lib/sessions/mutations";
 import { apiFetch } from "@/lib/api/fetcher";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
@@ -59,6 +60,7 @@ import {
   splitNeedsYou,
   buildConversationSidebarSections,
   describeActiveRow,
+  isClosedProjectConversation,
   type ActiveRowActionScope,
   type ActiveSidebarConversation,
   type SidebarListFilter,
@@ -94,6 +96,7 @@ interface SidebarRowItemProps {
   isActive: boolean;
   activeConversationId: string;
   archived: boolean;
+  closed: boolean;
   onOpenMenu: (point: { x: number; y: number }) => void;
   onNavigate: () => void;
   onPeek?: (anchorEl: HTMLElement, conversationId: string) => void;
@@ -107,6 +110,7 @@ function SidebarRowItem({
   isActive,
   activeConversationId,
   archived,
+  closed,
   onOpenMenu,
   onNavigate,
   onPeek,
@@ -118,7 +122,13 @@ function SidebarRowItem({
 
   return (
     <div
-      className={`conversation-sidebar-row-wrapper${archived ? " is-archived" : ""}`}
+      className={[
+        "conversation-sidebar-row-wrapper",
+        archived ? "is-archived" : null,
+        closed ? "is-closed" : null,
+      ]
+        .filter(Boolean)
+        .join(" ")}
       style={{ position: "relative" }}
       {...handlers}
     >
@@ -129,6 +139,7 @@ function SidebarRowItem({
         isFirstInSession={row.isFirstInSession}
         isLastInSession={row.isLastInSession}
         currentConversationId={activeConversationId}
+        isClosed={closed}
         onClick={() => {
           if (didLongPressRef.current) return;
           onNavigate();
@@ -151,6 +162,14 @@ interface Props {
   activeConversationId: string;
   mobileOpen?: boolean;
   onMobileClose?: () => void;
+  showNewConversationButton?: boolean;
+  /**
+   * Whether this sidebar owns its own collapse control. The project cockpit
+   * embeds the rail inside a host that owns rail-collapse, so it passes `false`
+   * to suppress the redundant inner toggle (and to ignore any persisted
+   * collapsed state, which would otherwise strand the panel with no restore).
+   */
+  showCollapseControl?: boolean;
 }
 
 function ConversationSidebar({
@@ -159,12 +178,17 @@ function ConversationSidebar({
   activeConversationId,
   mobileOpen,
   onMobileClose,
+  showNewConversationButton = true,
+  showCollapseControl = true,
 }: Props): React.JSX.Element {
   const router = useRouter();
 
   // --- Zustand ---
   const collapsed = useSidebarCollapsed();
   const toggleCollapsed = useToggleSidebar();
+  // When the host owns collapse, never self-collapse — the inner toggle is
+  // hidden and there is no in-rail restore affordance.
+  const effectiveCollapsed = showCollapseControl ? collapsed : false;
   const hydrateSidebar = useHydrateSidebar();
   const sidebarFilter = useSidebarFilter();
   const [sidebarGroupBy] = useSidebarGroupByPersistent();
@@ -203,6 +227,7 @@ function ConversationSidebar({
   const genericRenameMutation = useGenericRenameConversationMutation();
   const genericArchiveSessionMutation = useGenericArchiveSessionMutation();
   const markReadMutation = useMarkConversationReadMutation();
+  const markProjectReadMutation = useMarkProjectConversationReadMutation();
 
   // --- Local UI state ---
   const [activeListFilter, setActiveListFilter] = useSidebarActiveListFilter();
@@ -244,7 +269,9 @@ function ConversationSidebar({
   }, [hydrateSidebar]);
 
   // Hotkeys
-  useAppHotkey("toggleSidebar", toggleCollapsed);
+  useAppHotkey("toggleSidebar", () => {
+    if (showCollapseControl) toggleCollapsed();
+  });
   useAppHotkey("focusSidebarSearch", () => {
     // Don't steal focus from the prompt composer or other editable element.
     const active = document.activeElement;
@@ -409,11 +436,14 @@ function ConversationSidebar({
   );
 
   const filterCounts = useMemo(() => {
-    const { questions, finished } = splitNeedsYou(activeRows);
+    const openRows = activeRows.filter(
+      (row) => !isClosedProjectConversation(row),
+    );
+    const { questions, finished } = splitNeedsYou(openRows);
     return {
       all: activeRows.length,
       needs: questions.length + finished.length,
-      running: activeRows.filter((row) => row.status === "running").length,
+      running: openRows.filter((row) => row.status === "running").length,
       session: activeRows.filter(
         (row) =>
           row.scope === "session" &&
@@ -447,6 +477,7 @@ function ConversationSidebar({
       const isEditing = editingId === row.id;
       const isActive = row.id === activeConversationId;
       const archived = row.archived === true;
+      const closed = isClosedProjectConversation(row);
       const descriptor = describeActiveRow(row);
       const href = descriptor.href;
 
@@ -454,7 +485,13 @@ function ConversationSidebar({
         return (
           <div
             key={row.id}
-            className={`conversation-sidebar-row-wrapper${archived ? " is-archived" : ""}`}
+            className={[
+              "conversation-sidebar-row-wrapper",
+              archived ? "is-archived" : null,
+              closed ? "is-closed" : null,
+            ]
+              .filter(Boolean)
+              .join(" ")}
             style={{ position: "relative" }}
           >
             <div
@@ -494,6 +531,7 @@ function ConversationSidebar({
           isActive={isActive}
           activeConversationId={activeConversationId}
           archived={archived}
+          closed={closed}
           onNavigate={() => {
             router.push(href);
             if (onMobileClose) onMobileClose();
@@ -516,7 +554,12 @@ function ConversationSidebar({
                     conversationId: row.id,
                   });
                 }
-              : undefined
+              : () => {
+                  markProjectReadMutation.mutate({
+                    projectName: row.projectName,
+                    conversationId: row.id,
+                  });
+                }
           }
         />
       );
@@ -527,6 +570,7 @@ function ConversationSidebar({
       editingId,
       handleRenameSubmit,
       markReadMutation,
+      markProjectReadMutation,
       onMobileClose,
       openPeek,
       router,
@@ -545,6 +589,8 @@ function ConversationSidebar({
           if (section.tone === "finished") {
             headerClasses.push("convo-sidebar-section-header--finished");
           }
+        } else if (section.kind === "closed") {
+          headerClasses.push("convo-sidebar-section-header--closed");
         }
         return (
           <section
@@ -719,7 +765,7 @@ function ConversationSidebar({
         onClick={onMobileClose}
       />
       <div
-        className={`convo-sidebar${collapsed ? " collapsed" : ""}${mobileOpen ? " mobile-open" : ""}`}
+        className={`convo-sidebar${effectiveCollapsed ? " collapsed" : ""}${mobileOpen ? " mobile-open" : ""}`}
       >
         <div className="cc-section-header convo-sidebar-header">
           <span className="convo-sidebar-title">
@@ -729,22 +775,26 @@ function ConversationSidebar({
             </span>
           </span>
           <div className="cc-section-actions">
-            <button
-              className="btn-icon-only convo-sidebar-header-new"
-              onClick={handleNewConversation}
-              disabled={createConvoMutation.isPending}
-              data-tooltip="New conversation"
-              aria-label="New conversation"
-            >
-              <PlusIcon />
-            </button>
-            <button
-              className="btn-icon-only convo-sidebar-toggle"
-              onClick={toggleCollapsed}
-              data-tooltip="Collapse sidebar"
-            >
-              {"\u25C0"}
-            </button>
+            {showNewConversationButton && (
+              <button
+                className="btn-icon-only convo-sidebar-header-new"
+                onClick={handleNewConversation}
+                disabled={createConvoMutation.isPending}
+                data-tooltip="New conversation"
+                aria-label="New conversation"
+              >
+                <PlusIcon />
+              </button>
+            )}
+            {showCollapseControl && (
+              <button
+                className="btn-icon-only convo-sidebar-toggle"
+                onClick={toggleCollapsed}
+                data-tooltip="Collapse sidebar"
+              >
+                {"\u25C0"}
+              </button>
+            )}
             <button
               className="convo-sidebar-close"
               onClick={onMobileClose}
@@ -754,7 +804,7 @@ function ConversationSidebar({
             </button>
           </div>
         </div>
-        {(!collapsed || mobileOpen) && (
+        {(!effectiveCollapsed || mobileOpen) && (
           <>
             <div className="convo-sidebar-controls-wrapper">
               <ConversationSidebarHeader

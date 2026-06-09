@@ -10,7 +10,7 @@ import {
   type ConversationRow,
 } from "@/features/session/conversation/conversation-rows";
 
-const ConversationVirtuosoItem = forwardRef<
+export const ConversationVirtuosoItem = forwardRef<
   HTMLDivElement,
   HTMLAttributes<HTMLDivElement>
 >(function ConversationVirtuosoItem({ className, ...props }, ref) {

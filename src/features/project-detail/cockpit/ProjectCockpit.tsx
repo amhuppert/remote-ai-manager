@@ -68,12 +68,14 @@ function ChevronGlyph({ dir }: { dir: "left" | "right" }): React.JSX.Element {
 }
 
 /**
- * The three-column project cockpit: the global Active Conversations rail
- * (collapsible, injected as a slot), the conversation pane (tabs · transcript ·
- * docked composer · diff toggle), and the sessions panel. Layout defaults are
- * locked (composer bottom, tabs switcher, comfy density, ~60% pane width) — no
- * tweak controls. Tab membership is reconciled against the server open list;
- * the store layers ordering, active selection, rail-collapse, and the entry
+ * The project cockpit and the project page's always-on shell: a full-height
+ * Active Conversations rail (collapsible, injected as a slot) on the left, with
+ * the right column split 50/50 in height — the conversation pane on top, the
+ * sessions panel below. The rail is mounted regardless of open-conversation
+ * count so closed conversations stay reachable; with no open conversations the
+ * pane shows a create-a-conversation composer (the empty state) instead of the
+ * tab strip. Tab membership is reconciled against the server open list; the
+ * store layers ordering, active selection, rail-collapse, and the entry
  * animation.
  */
 export default function ProjectCockpit({
@@ -230,26 +232,38 @@ export default function ProjectCockpit({
     />
   );
 
-  const pane = (
-    <ConversationPane
-      agentBackend={agentBackend}
-      projectName={projectName}
-      diffStat={diffStat}
-      {...(activeConversation ? { status: activeConversation.status } : {})}
-      tabs={
-        <ConversationTabs
-          tabs={tabs}
-          activeTabId={activeTabId}
-          onSelect={setActiveTab}
-          onClose={handleClose}
-          onNewChat={handleNewChat}
-        />
-      }
-      transcript={transcript}
-      composer={composer}
-      diffSurface={<MainDiffSurface projectName={projectName} />}
-    />
-  );
+  const pane =
+    tabs.length > 0 ? (
+      <ConversationPane
+        agentBackend={agentBackend}
+        projectName={projectName}
+        diffStat={diffStat}
+        {...(activeConversation ? { status: activeConversation.status } : {})}
+        tabs={
+          <ConversationTabs
+            tabs={tabs}
+            activeTabId={activeTabId}
+            onSelect={setActiveTab}
+            onClose={handleClose}
+            onNewChat={handleNewChat}
+          />
+        }
+        transcript={transcript}
+        composer={composer}
+        diffSurface={<MainDiffSurface projectName={projectName} />}
+      />
+    ) : (
+      <section className="plc-pane plc-pane--empty" data-agent={agentBackend}>
+        <div className="plc-pane-empty">
+          <p className="plc-pane-empty-title">No open conversations</p>
+          <p className="plc-pane-empty-hint">
+            Send a prompt to start a new conversation, or reopen a closed one
+            from the rail.
+          </p>
+        </div>
+        <div className="plc-pane-composer">{composer}</div>
+      </section>
+    );
 
   return (
     <div
