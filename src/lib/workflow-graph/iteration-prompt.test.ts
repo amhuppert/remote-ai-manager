@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildIterationPrompt, buildFollowUpPrompt } from "./iteration-prompt";
 import type {
+  GraphWorkflowCollaborationContinuation,
   GraphWorkflowResolvedContext,
   GraphWorkflowSharedDocumentEntry,
   GraphWorkflowTaskDefinition,
@@ -167,6 +168,47 @@ describe("buildIterationPrompt", () => {
     });
 
     expect(prompt).not.toContain("add_task");
+  });
+
+  it("includes request_collaboration documentation with when-to-use guidance when allowAgentCollaboration is true", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      allowAgentCollaboration: true,
+    });
+
+    expect(prompt).toContain("request_collaboration");
+    expect(prompt).toContain("brief");
+    // Must convey WHEN to reach for it, not just what it does.
+    expect(prompt).toMatch(/ambiguous|hard-to-reverse|high-impact|trade-off/i);
+  });
+
+  it("omits request_collaboration documentation when allowAgentCollaboration is false", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      allowAgentCollaboration: false,
+    });
+
+    expect(prompt).not.toContain("request_collaboration");
+  });
+
+  it("omits request_collaboration documentation when allowAgentCollaboration is omitted", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+    });
+
+    expect(prompt).not.toContain("request_collaboration");
   });
 
   it("instructs the agent to work through tasks in order", () => {
@@ -485,5 +527,140 @@ describe("buildFollowUpPrompt", () => {
     expect(prompt).toContain("Latest Context Validation Failure");
     expect(prompt).toContain("`task-plan-2` - Write plan");
     expect(prompt).toContain("Missing rollback notes");
+  });
+});
+
+// Req 6.3: the background-task-handling feature "shall not change the prompts
+// shown to the implementer agent." The feature is deliberately driven entirely
+// by SDK lifecycle signals and the out-of-band `waitForBackgroundTasks` turn
+// option — never by prompt instructions. These tests pin that invariant by
+// asserting the rendered implementer prompts contain none of the wait/background
+// language the feature introduces elsewhere. They render the maximal input
+// surface (failure history, collaboration continuations, acceptance criteria,
+// shared documents) so every section is covered, and they would fail if any
+// future edit leaked background-task wording into the prompts.
+const BACKGROUND_TASK_PROMPT_PHRASES = [
+  "background task",
+  "background-task",
+  "backgroundwait",
+  "wait for background",
+  "waitforbackgroundtasks",
+  "long-lived watch",
+  "in-flight background",
+  "settlement",
+  "wait barrier",
+  "in the background",
+] as const;
+
+function makeCollaborationContinuation(): GraphWorkflowCollaborationContinuation {
+  return {
+    workflowId: "collab-workflow-1",
+    brief: "Resolve the API ownership question with the platform agent.",
+    result: {
+      status: "rounds_exhausted",
+      finalAnswer: null,
+      openConflicts: [
+        {
+          rejectingAgent: "agent_one",
+          disputedPoint: "Endpoint placement remains disputed.",
+          severity: "blocking",
+          category: "implementation",
+        },
+      ],
+    },
+    roundsConsumed: 3,
+    completedAt: "2026-03-27T17:00:00.000Z",
+    deliveredAt: null,
+  };
+}
+
+function assertNoBackgroundTaskLanguage(prompt: string): void {
+  const lowered = prompt.toLowerCase();
+  for (const phrase of BACKGROUND_TASK_PROMPT_PHRASES) {
+    expect(lowered).not.toContain(phrase);
+  }
+}
+
+describe("background-task-handling prompt invariance (Req 6.3)", () => {
+  it("buildIterationPrompt renders no background-task or waiting language across the full input surface", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext({
+        title: "Implement the build pipeline",
+        description: "Wire up CI and run the test suite.",
+      }),
+      tasks: [
+        makeTask({
+          id: "task-1",
+          title: "Run the build",
+          instructions: "Compile the project and run the suite.",
+        }),
+        makeTask({
+          id: "task-2",
+          order: 2,
+          title: "Start the dev server",
+          instructions: "Boot the local server and verify it serves requests.",
+        }),
+      ],
+      taskStates: {
+        "task-1": makeTaskState({
+          taskId: "task-1",
+          status: "interrupted",
+          failureHistory: [
+            {
+              message: "The suite did not finish running.",
+              timestamp: "2026-03-27T16:05:00.000Z",
+            },
+          ],
+        }),
+        "task-2": makeTaskState({ taskId: "task-2", order: 2 }),
+      },
+      sharedDocuments: [makeSharedDoc()],
+      allowAgentTaskAdd: true,
+      contextValidationAcceptanceCriteria:
+        "All tasks complete and the test suite passes.",
+      latestContextValidationFailure: makeLatestContextValidationFailure(),
+      collaborationContinuations: [makeCollaborationContinuation()],
+    });
+
+    assertNoBackgroundTaskLanguage(prompt);
+  });
+
+  it("buildIterationPrompt renders no background-task language in the minimal (no-feedback) shape", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+    });
+
+    assertNoBackgroundTaskLanguage(prompt);
+  });
+
+  it("buildFollowUpPrompt renders no background-task or waiting language across the full input surface", () => {
+    const prompt = buildFollowUpPrompt({
+      remainingTasks: [
+        makeTask({
+          id: "task-plan-2",
+          order: 2,
+          title: "Write plan",
+          instructions: "Document the rollout plan.",
+        }),
+      ],
+      taskStates: {
+        "task-plan-2": makeTaskState({
+          taskId: "task-plan-2",
+          order: 2,
+          status: "interrupted",
+          failureMessage: "Previous patch missed regression coverage.",
+        }),
+      },
+      attemptNumber: 2,
+      maxAttempts: 3,
+      latestContextValidationFailure: makeLatestContextValidationFailure(),
+      collaborationContinuations: [makeCollaborationContinuation()],
+    });
+
+    assertNoBackgroundTaskLanguage(prompt);
   });
 });

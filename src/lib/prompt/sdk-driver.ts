@@ -8,6 +8,7 @@
  */
 
 import type { ConversationToolingOverrides } from "@/lib/agent-backends/types";
+import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -417,6 +418,13 @@ export interface PromptStreamOptions {
    * because the conversation has no host session to load from.
    */
   actorInput?: EnsureActorInputData;
+  /**
+   * Opt-in: hold the turn open after the agent yields until its in-flight
+   * waitable background tasks settle (or the wait times out). Set only by the
+   * graph-workflow implementer runner; every other caller (interactive chat,
+   * planner/validator/collab turns) leaves it unset so behavior is unchanged.
+   */
+  waitForBackgroundTasks?: boolean;
 }
 
 export interface PromptStreamResult {
@@ -426,6 +434,12 @@ export interface PromptStreamResult {
   structuredOutput?: unknown;
   aborted?: boolean;
   error?: string | null;
+  /**
+   * Summary of the bounded background-task wait the turn performed. Present
+   * only when a wait actually occurred (the turn opted in and waitable tasks
+   * were in flight); absent otherwise.
+   */
+  backgroundWait?: BackgroundWaitSummary;
 }
 
 interface CollabPromptConfig {
@@ -707,6 +721,9 @@ export async function executePromptStream(
         autonomous: options?.autonomous,
         streamId,
         outputFormat: options?.outputFormat,
+        ...(options?.waitForBackgroundTasks
+          ? { waitForBackgroundTasks: true }
+          : {}),
       },
     );
 
@@ -778,7 +795,12 @@ function readContextFromActor(
     | { contextTokens?: number | null; contextWindowMax?: number | null }
     | undefined;
   const lastResult = ctx?.lastResult as
-    | { structuredOutput?: unknown; aborted?: boolean; error?: string | null }
+    | {
+        structuredOutput?: unknown;
+        aborted?: boolean;
+        error?: string | null;
+        backgroundWait?: BackgroundWaitSummary;
+      }
     | undefined;
   const lastError = typeof ctx?.lastError === "string" ? ctx.lastError : null;
   return {
@@ -788,6 +810,9 @@ function readContextFromActor(
     structuredOutput: lastResult?.structuredOutput,
     aborted: lastResult?.aborted ?? false,
     error: lastResult?.error ?? lastError,
+    ...(lastResult?.backgroundWait !== undefined
+      ? { backgroundWait: lastResult.backgroundWait }
+      : {}),
   };
 }
 

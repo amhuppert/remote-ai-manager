@@ -79,6 +79,7 @@ function makeConversation(
     agentBackend: "claude",
     backendRef: null,
     unread: false,
+    pendingQueue: [],
     ...overrides,
   };
 }

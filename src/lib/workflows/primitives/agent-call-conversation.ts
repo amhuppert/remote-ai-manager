@@ -44,6 +44,12 @@ export interface DispatchConversationTurnDeps {
   modelId?: string;
   reasoningEffort?: string;
   autonomous?: boolean;
+  /**
+   * Opt-in: hold the turn open until in-flight waitable background tasks
+   * settle. Forwarded onto the backend turn input; backends without
+   * background-task lifecycle signals ignore it.
+   */
+  waitForBackgroundTasks?: boolean;
   sessionInstructions?: string[];
   imageRefs?: readonly ConversationImageRef[];
   onEvent?: (event: ConversationBackendEvent) => Promise<void> | void;
@@ -108,6 +114,7 @@ export async function dispatchConversationTurn(
     modelId: deps.modelId,
     reasoningEffort: deps.reasoningEffort,
     autonomous: deps.autonomous ?? false,
+    ...(deps.waitForBackgroundTasks ? { waitForBackgroundTasks: true } : {}),
     outputFormat: request.outputSchema
       ? { type: "json_schema", schema: request.outputSchema }
       : undefined,

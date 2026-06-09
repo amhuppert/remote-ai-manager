@@ -10,6 +10,7 @@ import type {
   AskQuestionEvent,
   MessageQueuedEvent,
   ConversationOpenEvent,
+  MessageQueueUpdatedEvent,
 } from "@/lib/conversations/schemas";
 import type { JobStatusEvent } from "@/lib/jobs/schemas";
 import type {
@@ -99,6 +100,7 @@ export type SSEEvent =
   | NotificationUpdatedEvent
   | MessageQueuedEvent
   | ConversationOpenEvent
+  | MessageQueueUpdatedEvent
   | GraphWorkflowStatusEvent
   | GraphWorkflowContextStatusEvent
   | GraphWorkflowTaskStatusEvent

@@ -46,6 +46,7 @@ function makeConv(
     agentBackend: overrides.agentBackend ?? "claude",
     backendRef: null,
     unread: false,
+    pendingQueue: [],
   };
 }
 

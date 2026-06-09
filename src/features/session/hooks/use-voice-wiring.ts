@@ -3,6 +3,7 @@
 import { useCallback, useEffect, type MutableRefObject } from "react";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
+import { pushToast } from "@/stores/toast.store";
 import {
   useStartRecording,
   useStopRecording,
@@ -58,7 +59,11 @@ export function useVoiceWiring({
 
   const handleVoiceError = useCallback(
     (error: string) => {
-      void error;
+      // Surface the failure: a dictation that fails (e.g. "No audio recorded",
+      // a too-short clip, or a voice-server error) must never be lost silently —
+      // swallowing it here was why dropped recordings looked like nothing
+      // happened at all.
+      pushToast(error);
       fireAndForgetRef.current = false;
     },
     [fireAndForgetRef],

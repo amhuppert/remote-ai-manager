@@ -1,0 +1,145 @@
+import { afterEach, beforeEach, describe, it, vi } from "vitest";
+
+vi.mock("@/lib/logging", () => ({
+  createLogger: () => ({
+    info: vi.fn(),
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  }),
+}));
+
+import {
+  createNotification,
+  getNotifications,
+  _createTestDb,
+  _resetForTesting,
+} from "./repo";
+import { setConfigReader } from "@/lib/push-notification/dispatcher";
+import { jobNotificationSchema } from "@/lib/notifications/schemas";
+import type { JobNotification } from "@/lib/notifications/schemas";
+import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
+
+// createNotification fires `dispatchPushForNotification`, which otherwise reads
+// global config from disk and could emit a real push. Inject a config reader
+// that yields no push config so the dispatch is a no-op (DI seam, not a mock of
+// an internal module).
+const noPushConfigReader = () => Promise.resolve({});
+
+// The broadcast dependency is injected per call, so a spy avoids touching the
+// real session-status bus.
+const noopBroadcast = vi.fn();
+
+beforeEach(() => {
+  _createTestDb();
+  setConfigReader(noPushConfigReader);
+  vi.clearAllMocks();
+});
+
+afterEach(() => {
+  _resetForTesting();
+});
+
+/**
+ * Build a notification with EVERY introspectable persisted key path populated to
+ * a distinctive non-default value, so the schema-driven durability harness can
+ * prove no column (including the optional metadata and conflict-file columns) is
+ * dropped on write or reset to its default on read.
+ *
+ * Every optional column (`mergeHash`, `commitHash`, `conflictCount`,
+ * `conflictFiles`, `targetBranch`, `errorMessage`) is populated, and
+ * `conflictFiles` carries a multi-element array so its JSON serialization is
+ * exercised.
+ *
+ * `id`, `read`, and `createdAt` are produced by `createNotification` on write
+ * (generated UUID, `read=false`, generated timestamp), so the fixture seeds
+ * placeholder values to satisfy `parse`; the harness `persist()` returns the
+ * actually-created notification as the `expected` value (see the
+ * `derived-on-write` policies below).
+ */
+function buildMaximalNotification(): JobNotification {
+  return jobNotificationSchema.parse({
+    source: "job",
+    id: "placeholder-id",
+    type: "merge-conflicts",
+    title: "Merge produced conflicts",
+    message: "Branch csm/feature has conflicts that need resolution",
+    read: true,
+    projectName: "maximal-project",
+    sessionName: "maximal-session",
+    branchName: "csm/maximal-session",
+    jobId: "job-maximal",
+    jobType: "resolve-conflicts",
+    mergeHash: "merge-hash-abc123",
+    commitHash: "commit-hash-def456",
+    conflictCount: 2,
+    conflictFiles: ["src/alpha.ts", "src/beta.ts"],
+    targetBranch: "main",
+    errorMessage: "Auto-merge halted on overlapping edits",
+    createdAt: "2026-01-01 00:00:00",
+  });
+}
+
+describe("notifications durability contract", () => {
+  it("round-trips every persisted notification key path through the real repo", async () => {
+    await assertRoundTripDurability({
+      label: "notifications",
+      schema: jobNotificationSchema,
+      buildMaximalFixture: buildMaximalNotification,
+      persist: (fixture) => {
+        // createNotification generates id/createdAt and forces read=false, so it
+        // returns the authoritative persisted notification — use it as expected.
+        return createNotification(
+          {
+            type: fixture.type,
+            title: fixture.title,
+            message: fixture.message,
+            projectName: fixture.projectName,
+            sessionName: fixture.sessionName,
+            branchName: fixture.branchName,
+            jobId: fixture.jobId,
+            jobType: fixture.jobType,
+            ...(fixture.mergeHash !== undefined
+              ? { mergeHash: fixture.mergeHash }
+              : {}),
+            ...(fixture.commitHash !== undefined
+              ? { commitHash: fixture.commitHash }
+              : {}),
+            ...(fixture.conflictCount !== undefined
+              ? { conflictCount: fixture.conflictCount }
+              : {}),
+            ...(fixture.conflictFiles !== undefined
+              ? { conflictFiles: fixture.conflictFiles }
+              : {}),
+            ...(fixture.targetBranch !== undefined
+              ? { targetBranch: fixture.targetBranch }
+              : {}),
+            ...(fixture.errorMessage !== undefined
+              ? { errorMessage: fixture.errorMessage }
+              : {}),
+          },
+          noopBroadcast,
+        );
+      },
+      reload: (expected) => {
+        const { notifications } = getNotifications({ limit: 100 });
+        const found = notifications.find((n) => n.id === expected.id);
+        // The fixture only persists job notifications; narrow the union back to
+        // the job variant the durability harness is parameterized on.
+        return found && found.source === "job" ? found : null;
+      },
+      fieldPolicies: {
+        // id is a UUID generated by createNotification; validated against the
+        // reloaded `expected` returned by persist().
+        id: "derived-on-write",
+        // read is forced to false by createNotification on create; validated
+        // against `expected` (the schema has no ZodDefault on read, so false is
+        // accepted as a present, non-default value by the completeness guard).
+        read: "derived-on-write",
+        // createdAt is generated by createNotification (sqliteUtcNow()) on write;
+        // validated against `expected`.
+        createdAt: "derived-on-write",
+      },
+    });
+  });
+});

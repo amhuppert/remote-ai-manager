@@ -6,6 +6,7 @@
  */
 
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
+import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
 import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
 import type {
   ConversationStatus,
@@ -36,6 +37,14 @@ export interface StructuredOutputFormat {
   schema: Record<string, unknown>;
 }
 
+/** Marks a turn as a queued next-turn delivery: the claimed queue rows it
+ *  delivers and the delivery attempt that claimed them, so the executor can
+ *  confirm acceptance and mark those rows delivered under the same attempt. */
+export interface QueuedDeliveryMetadata {
+  messageIds: string[];
+  deliveryAttemptId: string;
+}
+
 /** Streaming conversation turn: a user-initiated SUBMIT_PROMPT that flows
  *  through the SDK and emits assistant messages live. `outputFormat` is set
  *  on this variant during Debug Mode phases that require a JSON response. */
@@ -50,6 +59,15 @@ export interface ConversationTurnActive {
   startedAt: string | null;
   streamId: string | null;
   outputFormat?: StructuredOutputFormat;
+  /**
+   * Opt-in: hold this turn open until its in-flight waitable background tasks
+   * settle (or the wait times out). Set only by the graph-workflow implementer
+   * runner; unset for every other turn so behavior is unchanged.
+   */
+  waitForBackgroundTasks?: boolean;
+  /** Set only for auto-drained queued next-turn deliveries; unset for normal
+   *  user-initiated turns. */
+  queuedDelivery?: QueuedDeliveryMetadata;
 }
 
 /** Single-shot task run: a non-streaming, structured-output execution invoked
@@ -159,6 +177,8 @@ export type ConversationEvent =
       autonomous?: boolean;
       streamId: string;
       outputFormat?: StructuredOutputFormat;
+      waitForBackgroundTasks?: boolean;
+      queuedDelivery?: QueuedDeliveryMetadata;
     }
   | {
       type: "SUBMIT_TASK_RUN";
@@ -254,6 +274,11 @@ export interface PromptActorResult {
   structuredOutput?: unknown;
   aborted: boolean;
   error: string | null;
+  /**
+   * Summary of the bounded background-task wait this turn performed. Present
+   * only when a wait actually occurred; absent for every other turn.
+   */
+  backgroundWait?: BackgroundWaitSummary;
 }
 
 /** Input for the executePrompt actor. */
@@ -276,6 +301,16 @@ export interface ExecutePromptInput {
   autonomous: boolean;
   debugMode: ConversationContext["debugMode"];
   outputFormat?: StructuredOutputFormat;
+  /**
+   * Opt-in: hold this turn open until its in-flight waitable background tasks
+   * settle (or the wait times out). Forwarded to the backend turn input. Set
+   * only by the graph-workflow implementer runner.
+   */
+  waitForBackgroundTasks?: boolean;
+  /** Set only for auto-drained queued next-turn deliveries; forwarded so the
+   *  executor can confirm acceptance and mark the claimed queue rows delivered.
+   *  Unset for normal user-initiated turns. */
+  queuedDelivery?: QueuedDeliveryMetadata;
 }
 
 /** Input for the prepareTurn actor (resource acquisition). */

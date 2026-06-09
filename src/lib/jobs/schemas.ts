@@ -43,6 +43,25 @@ export const backgroundJobSchema = z.object({
 });
 export type BackgroundJob = z.infer<typeof backgroundJobSchema>;
 
+export const jobRecordSchema = backgroundJobSchema
+  .pick({
+    jobId: true,
+    jobType: true,
+    status: true,
+    projectName: true,
+    sessionName: true,
+    branchName: true,
+    startedAt: true,
+    completedAt: true,
+    mergeHash: true,
+    commitHash: true,
+    conflictCount: true,
+    conflictFiles: true,
+    errorMessage: true,
+  })
+  .strict();
+export type JobRecord = z.infer<typeof jobRecordSchema>;
+
 export const jobStatusEventSchema = z.object({
   type: z.literal("job-status"),
   jobType: jobTypeSchema,

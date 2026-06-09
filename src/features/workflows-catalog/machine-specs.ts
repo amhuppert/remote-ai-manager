@@ -377,6 +377,8 @@ const conversationMetadata: MachineMetadata = {
       "Sets unread=true and broadcasts a conversation-unread SSE event when a turn finishes (running → awaiting). Skipped for workflow-managed roles.",
     markReadOnUserTurnStart:
       "Clears unread=false and broadcasts a conversation-unread SSE event at the start of a user-initiated turn (prompt submit or question answer). Skipped for workflow-managed roles.",
+    drainPendingQueue:
+      "On entry to the settled idle state, claims any durably-queued follow-up messages and dispatches them as the next coalesced turn. No-op for workflow roles and empty queues; provided by the conversation manager.",
   },
 };
 

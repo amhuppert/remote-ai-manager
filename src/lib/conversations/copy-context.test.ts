@@ -35,6 +35,7 @@ function makeConversation(overrides: Record<string, unknown> = {}) {
     agentBackend: "claude" as const,
     backendRef: null,
     unread: false,
+    pendingQueue: [],
     ...overrides,
   };
 }

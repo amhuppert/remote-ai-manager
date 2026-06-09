@@ -1,0 +1,22 @@
+{
+  "feature_name": "conversation-message-queue",
+  "created_at": "2026-06-07T16:46:05Z",
+  "updated_at": "2026-06-07T18:45:00Z",
+  "language": "en",
+  "phase": "tasks-generated",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": true
+    },
+    "design": {
+      "generated": true,
+      "approved": true
+    },
+    "tasks": {
+      "generated": true,
+      "approved": true
+    }
+  },
+  "ready_for_implementation": true
+}

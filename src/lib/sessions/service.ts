@@ -280,6 +280,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       agentBackend: "claude",
       backendRef: null,
       unread: false,
+      pendingQueue: [],
     };
     const session: SessionState = {
       sessionName,
@@ -362,10 +363,19 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
           throw new Error(`Init script not found: ${scriptPath}`);
         }
 
+        // Worktree this session was branched from, so init scripts can copy
+        // files from the parent into the new worktree. Falls back to the
+        // project root when branched from the main branch (no parent session).
+        const parentWorktreePath = opts.parentSessionName
+          ? ((await readState()).projects[projectPath]?.sessions[
+              opts.parentSessionName
+            ]?.worktreePath ?? projectPath)
+          : projectPath;
+
         await timed(
           logger,
           "session.init_script",
-          { scriptPath, worktreePath, sessionName },
+          { scriptPath, worktreePath, parentWorktreePath, sessionName },
           () =>
             execFileAsync(scriptPath, [], {
               cwd: worktreePath,
@@ -374,6 +384,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
                 PROJECT_ROOT: projectPath,
                 CLAUDE_PROJECT_DIR: projectPath,
                 WORKTREE_PATH: worktreePath,
+                PARENT_WORKTREE_PATH: parentWorktreePath,
                 SESSION_NAME: sessionName,
                 BRANCH_NAME: branchName,
               },

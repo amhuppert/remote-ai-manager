@@ -20,6 +20,8 @@ import {
   type CollaborationManager,
 } from "./manager";
 import type { WorkflowEnvelope } from "@/lib/workflows/primitives/workflow-envelope-vocabulary";
+import { conversationStateSchema } from "@/lib/conversations/schemas";
+import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
 
 function buildEnvelope(
   overrides: Partial<WorkflowEnvelope> = {},
@@ -428,82 +430,67 @@ describe("collaboration route handlers — START", () => {
     expect(startCalls).toHaveLength(1);
   });
 
-  it("updates conversation metadata so a fresh /collab-started conversation leaves the new status with a transcriptPath", async () => {
+  it("updates conversation metadata so a fresh /collab-started conversation leaves the new status with a transcriptPath (verified by reload through the real store)", async () => {
     const { manager, startCalls } = buildScriptedManager({
       startResult: { workflowId: "wf-meta", status: "started" },
     });
 
-    type ConversationLike = {
-      id: string;
-      status: string;
-      transcriptPath: string | null;
-      promptCount: number;
-      lastActivityAt: string;
-    };
+    const projectPath = "/projects/example";
+    const sessionName = "sess-1";
+    const conversationId = "conv-meta";
 
-    const fakeConversation: ConversationLike = {
-      id: "conv-meta",
-      status: "new",
-      transcriptPath: null,
-      promptCount: 0,
-      lastActivityAt: "2026-04-28T09:00:00.000Z",
-    };
-
-    const mutateCalls: Array<{
-      projectPath: string;
-      sessionName: string;
-      conversationId: string;
-      reason: string;
-    }> = [];
-
-    const mutateConversation = vi.fn(
-      async (
-        projectPath: string,
-        sessionName: string,
-        conversationId: string,
-        reason: string,
-        mutator: (c: ConversationLike) => void | Promise<void>,
-      ) => {
-        mutateCalls.push({ projectPath, sessionName, conversationId, reason });
-        await mutator(fakeConversation);
-      },
-    );
-
-    const handlers = createCollaborationRouteHandlers({
-      resolveProjectPath: async () => "/projects/example",
-      manager,
-      mutateConversation: mutateConversation as unknown as Parameters<
-        typeof createCollaborationRouteHandlers
-      >[0] extends { mutateConversation?: infer F }
-        ? F
-        : never,
-    } as Partial<Parameters<typeof createCollaborationRouteHandlers>[0]>);
-
-    const response = await handlers.START(
-      new Request("http://test/collab", {
-        method: "POST",
-        body: JSON.stringify({
-          brief: "kick off a new design",
-          negotiationRounds: 3,
-          autonomousResolutionThreshold: "major",
-          conversationId: "conv-meta",
+    const fixture = createPersistenceFixture();
+    try {
+      fixture.seedProject(projectPath);
+      fixture.seedSession(projectPath, sessionName);
+      await fixture.seedConversation(
+        projectPath,
+        sessionName,
+        conversationStateSchema.parse({
+          id: conversationId,
+          transcriptPath: null,
+          status: "new",
+          promptCount: 0,
+          createdAt: "2026-04-28T09:00:00.000Z",
+          lastActivityAt: "2026-04-28T09:00:00.000Z",
         }),
-      }),
-      buildContext("example", "sess-1"),
-    );
+      );
 
-    expect(response.status).toBe(202);
-    expect(startCalls).toHaveLength(1);
-    expect(mutateConversation).toHaveBeenCalled();
-    expect(mutateCalls[0]).toMatchObject({
-      projectPath: "/projects/example",
-      sessionName: "sess-1",
-      conversationId: "conv-meta",
-    });
+      const handlers = createCollaborationRouteHandlers({
+        resolveProjectPath: async () => projectPath,
+        manager,
+        getTranscriptPath: async (id) => `/transcripts/${id}.jsonl`,
+        mutateConversation: fixture.deps.mutateConversation,
+      });
 
-    expect(fakeConversation.transcriptPath).not.toBeNull();
-    expect(fakeConversation.status).not.toBe("new");
-    expect(fakeConversation.promptCount).toBeGreaterThan(0);
+      const response = await handlers.START(
+        new Request("http://test/collab", {
+          method: "POST",
+          body: JSON.stringify({
+            brief: "kick off a new design",
+            negotiationRounds: 3,
+            autonomousResolutionThreshold: "major",
+            conversationId,
+          }),
+        }),
+        buildContext("example", sessionName),
+      );
+
+      expect(response.status).toBe(202);
+      expect(startCalls).toHaveLength(1);
+
+      const reloaded = await fixture.deps.getConversation(
+        projectPath,
+        sessionName,
+        conversationId,
+      );
+      expect(reloaded).not.toBeNull();
+      expect(reloaded!.transcriptPath).toBe("/transcripts/conv-meta.jsonl");
+      expect(reloaded!.status).not.toBe("new");
+      expect(reloaded!.promptCount).toBeGreaterThan(0);
+    } finally {
+      fixture.close();
+    }
   });
 
   it("returns 500 when the manager throws an unexpected error", async () => {

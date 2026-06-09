@@ -15,6 +15,7 @@ import {
   type ClaudeFactoryDeps,
 } from "./conversation-runtime";
 import { CLAUDE_AGENT_SUPPRESSION_STRATEGY } from "@/lib/agent-capabilities/claude-agent-suppression";
+import { backendCapabilities } from "../capabilities-descriptor";
 import type { ConversationBackendEvent } from "../conversation";
 import {
   isUndeliveredQuerySessionError,
@@ -1497,5 +1498,601 @@ describe("ClaudeConversationRuntime — rebuildSessionToolsInstance", () => {
     runtime.close();
     await Promise.resolve();
     expect(first.closeSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ClaudeConversationRuntime — background-task wait barrier (sendTurn)", () => {
+  function pushTaskStarted(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    taskId: string,
+  ) {
+    mock.pushMessage({
+      type: "system",
+      subtype: "task_started",
+      task_id: taskId,
+      tool_use_id: `tool-${taskId}`,
+      description: "running a build",
+      session_id: "sess-1",
+      uuid: `u-start-${taskId}`,
+    } as unknown as SDKMessage);
+  }
+
+  function pushTaskNotification(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    taskId: string,
+    status: "completed" | "failed" | "stopped",
+  ) {
+    mock.pushMessage({
+      type: "system",
+      subtype: "task_notification",
+      task_id: taskId,
+      status,
+      output_file: "/tmp/out.txt",
+      summary: "done",
+      session_id: "sess-1",
+      uuid: `u-notify-${taskId}`,
+    } as unknown as SDKMessage);
+  }
+
+  function pushResult(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    uuid: string,
+  ) {
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid,
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+  }
+
+  function pushAssistantToolUse(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    toolUseId: string,
+    toolName: string,
+  ) {
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-1",
+      uuid: `u-asst-${toolUseId}`,
+      message: {
+        content: [
+          { type: "tool_use", id: toolUseId, name: toolName, input: {} },
+        ],
+      },
+    } as unknown as SDKMessage);
+  }
+
+  it("holds the turn open until a waitable task settles, then carries the wait summary (3.1, 3.2, 3.3, 3.4)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-wait-hold",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "run the build in the background",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: true,
+      waitForBackgroundTasks: true,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+
+    // Agent starts a waitable background task, then yields its caller turn.
+    pushTaskStarted(mock, "task-a");
+    pushResult(mock, "u-caller-result");
+
+    // The caller turn yielded, but a waitable task is still in flight — the
+    // wait barrier must keep sendTurn pending.
+    let settled = false;
+    void turnPromise.then(() => {
+      settled = true;
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(settled).toBe(false);
+
+    // The background task settles (arrives as its own virtual turn).
+    pushTaskNotification(mock, "task-a", "completed");
+
+    const result = await turnPromise;
+    expect(result.backgroundWait).toBeDefined();
+    expect(result.backgroundWait!.waitedTaskIds).toEqual(["task-a"]);
+    expect(result.backgroundWait!.settledTaskIds).toEqual(["task-a"]);
+    expect(result.backgroundWait!.timedOut).toBe(false);
+    expect(result.backgroundWait!.durationMs).toBeGreaterThanOrEqual(0);
+
+    runtime.close();
+  });
+
+  it("completes immediately with no summary when no waitable tasks are in flight (6.1)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-wait-none",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "do something synchronous",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: true,
+      waitForBackgroundTasks: true,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+
+    // Agent yields with no background task ever started.
+    pushResult(mock, "u-caller-result");
+
+    const result = await turnPromise;
+    expect(result.backgroundWait).toBeUndefined();
+
+    runtime.close();
+  });
+
+  it("completes immediately for a Monitor-originated watch and carries no summary (Req 2.2)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-wait-monitor",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "watch the dev server",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: true,
+      waitForBackgroundTasks: true,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+
+    // The agent invokes Monitor (long-lived watch), which starts a task, then
+    // yields. A Monitor watch is excluded, so the wait barrier must not hold.
+    pushAssistantToolUse(mock, "tool-mon", "Monitor");
+    mock.pushMessage({
+      type: "system",
+      subtype: "task_started",
+      task_id: "watch-a",
+      tool_use_id: "tool-mon",
+      description: "watching the dev server",
+      session_id: "sess-1",
+      uuid: "u-start-watch-a",
+    } as unknown as SDKMessage);
+    pushResult(mock, "u-caller-result");
+
+    const result = await turnPromise;
+    expect(result.backgroundWait).toBeUndefined();
+
+    runtime.close();
+  });
+
+  it("does not wait when the flag is unset even with a waitable task in flight (6.2)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-wait-flag-off",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    // No waitForBackgroundTasks flag — interactive/default behavior.
+    const turnPromise = runtime.sendTurn({
+      promptText: "run the build in the background",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+
+    pushTaskStarted(mock, "task-a");
+    pushResult(mock, "u-caller-result");
+
+    // Even though a waitable task is in flight, the turn must resolve without
+    // awaiting settlement because the opt-in flag is off.
+    const result = await turnPromise;
+    expect(result.backgroundWait).toBeUndefined();
+
+    runtime.close();
+  });
+
+  it("resolves with timedOut: true when a waitable task never settles within the bound (4.1, 4.2)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-wait-timeout",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "run the build in the background",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: true,
+      waitForBackgroundTasks: true,
+      backgroundTaskWaitTimeoutMs: 20,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+
+    pushTaskStarted(mock, "task-a");
+    pushResult(mock, "u-caller-result");
+
+    // Never settle the task — only the short timeout can end this wait.
+    const result = await turnPromise;
+    expect(result.backgroundWait).toBeDefined();
+    expect(result.backgroundWait!.timedOut).toBe(true);
+    expect(result.backgroundWait!.waitedTaskIds).toEqual(["task-a"]);
+    expect(result.backgroundWait!.settledTaskIds).toEqual([]);
+
+    runtime.close();
+  });
+});
+
+describe("ClaudeConversationRuntime — sendTurn input acceptance", () => {
+  it("emits input_accepted on the first raw message, before the first provider_event and any content", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-accept-order",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const eventTypes: ConversationBackendEvent["type"][] = [];
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "hello",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: (event: ConversationBackendEvent) => {
+        eventTypes.push(event.type);
+      },
+    });
+
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-1",
+      uuid: "u-asst",
+      message: { content: [{ type: "text", text: "answer" }] },
+    } as unknown as SDKMessage);
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u-result",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 1,
+      result: "answer",
+      is_error: false,
+    } as unknown as SDKMessage);
+
+    await turnPromise;
+
+    const acceptedIdx = eventTypes.indexOf("input_accepted");
+    const firstProviderIdx = eventTypes.indexOf("provider_event");
+    const firstContentIdx = eventTypes.indexOf("content");
+
+    expect(acceptedIdx).toBeGreaterThanOrEqual(0);
+    expect(firstProviderIdx).toBeGreaterThanOrEqual(0);
+    expect(acceptedIdx).toBeLessThan(firstProviderIdx);
+    expect(firstContentIdx).toBeGreaterThan(acceptedIdx);
+
+    runtime.close();
+  });
+
+  it("emits input_accepted exactly once even when many raw messages arrive", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-accept-once",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const acceptedEvents: ConversationBackendEvent[] = [];
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "hello",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: (event: ConversationBackendEvent) => {
+        if (event.type === "input_accepted") acceptedEvents.push(event);
+      },
+    });
+
+    mock.pushMessage({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-1",
+      uuid: "u-init",
+      tools: [],
+      mcp_servers: [],
+      model: "claude",
+    } as unknown as SDKMessage);
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-1",
+      uuid: "u-asst-1",
+      message: { content: [{ type: "text", text: "first" }] },
+    } as unknown as SDKMessage);
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-1",
+      uuid: "u-asst-2",
+      message: { content: [{ type: "text", text: "second" }] },
+    } as unknown as SDKMessage);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u-result",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 1,
+      result: "second",
+      is_error: false,
+    } as unknown as SDKMessage);
+
+    await turnPromise;
+
+    expect(acceptedEvents).toHaveLength(1);
+
+    runtime.close();
+  });
+
+  it("does not emit input_accepted when dispatch fails before any raw message", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-accept-dispatch-fail",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    // Complete a first turn so the session moves past first-prompt state.
+    const turn1 = runtime.sendTurn({
+      promptText: "first",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: false,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await turn1;
+
+    // Dispatch of the second turn rejects before any raw message is delivered.
+    mock.query.streamInput.mockRejectedValue(
+      tagQuerySessionError(
+        new Error("ProcessTransport is not ready for writing"),
+        QUERY_SESSION_ERROR_CODES.promptNotDelivered,
+      ),
+    );
+
+    const acceptedEvents: ConversationBackendEvent[] = [];
+
+    try {
+      await runtime.sendTurn({
+        promptText: "second",
+        imageRefs: [],
+        sessionInstructions: [],
+        autonomous: false,
+        signal: new AbortController().signal,
+        onEvent: (event: ConversationBackendEvent) => {
+          if (event.type === "input_accepted") acceptedEvents.push(event);
+        },
+      });
+    } catch {
+      // The retryable dispatch error is re-thrown; acceptance must not fire.
+    }
+
+    expect(acceptedEvents).toHaveLength(0);
+
+    runtime.close();
+  });
+});
+
+describe("ClaudeConversationRuntime — queueUserInput live acceptance", () => {
+  const textBlock = { type: "text" as const, text: "queued follow-up" };
+
+  it("sources capabilities from the descriptor", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-queue-caps",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    expect(runtime.capabilities).toEqual(backendCapabilities("claude"));
+    expect(runtime.capabilities.queueWhileRunning).toBe(true);
+
+    runtime.close();
+  });
+
+  it("resolves queueUserInput only after streamInput accepts the input (the observable)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-queue-pending",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    let acceptInput: (() => void) | null = null;
+    const streamInputGate = new Promise<void>((resolve) => {
+      acceptInput = resolve;
+    });
+    mock.query.streamInput.mockReturnValue(streamInputGate);
+
+    let resolved = false;
+    const queuePromise = runtime.queueUserInput!({ content: [textBlock] }).then(
+      () => {
+        resolved = true;
+      },
+    );
+
+    // Give the microtask queue a chance to settle: queueUserInput must still be
+    // pending because streamInput has not yet accepted the input.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(resolved).toBe(false);
+    expect(mock.query.streamInput).toHaveBeenCalledTimes(1);
+
+    // Acceptance: streamInput resolves, so queueUserInput must now resolve.
+    acceptInput!();
+    await queuePromise;
+    expect(resolved).toBe(true);
+
+    runtime.close();
+  });
+
+  it("rejects without calling streamInput when the runtime is dead", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-queue-dead",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    runtime.close();
+    expect(runtime.status).toBe("dead");
+
+    await expect(
+      runtime.queueUserInput!({ content: [textBlock] }),
+    ).rejects.toThrow();
+    expect(mock.query.streamInput).not.toHaveBeenCalled();
+  });
+
+  it("propagates a streamInput rejection so the caller can leave the row pending", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-queue-reject",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const rejection = tagQuerySessionError(
+      new Error("ProcessTransport is not ready for writing"),
+      QUERY_SESSION_ERROR_CODES.promptNotDelivered,
+    );
+    mock.query.streamInput.mockRejectedValue(rejection);
+
+    let caught: unknown;
+    try {
+      await runtime.queueUserInput!({ content: [textBlock] });
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBe(rejection);
+    expect(isUndeliveredQuerySessionError(caught)).toBe(true);
+
+    runtime.close();
   });
 });

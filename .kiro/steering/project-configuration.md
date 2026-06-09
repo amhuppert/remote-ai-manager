@@ -52,6 +52,7 @@ Shared:
 | `PROJECT_ROOT` | Original repo root | Original repo root | **Worktree path** |
 | `CLAUDE_PROJECT_DIR` | Original repo root | Original repo root | Original repo root |
 | `WORKTREE_PATH` | Worktree | Parallel-context worktree | Worktree |
+| `PARENT_WORKTREE_PATH` | Parent session worktree, or `PROJECT_ROOT` when branched off main | Session worktree (lane branched from it) | — |
 | `SESSION_NAME` | Session name | Parent session name | Session name |
 | `BRANCH_NAME` | `csm/<name>` | `csm/<sessionDir>-<contextId>` | `csm/<name>` |
 | `CONTEXT_ID` | — | Parallel context id | — |

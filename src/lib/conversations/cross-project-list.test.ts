@@ -35,6 +35,7 @@ function makeConversation(
     agentBackend: overrides.agentBackend ?? "claude",
     backendRef: overrides.backendRef ?? null,
     unread: overrides.unread ?? false,
+    pendingQueue: overrides.pendingQueue ?? [],
   };
 }
 

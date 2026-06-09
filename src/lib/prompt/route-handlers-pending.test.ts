@@ -41,6 +41,7 @@ function makeConvo(
     agentBackend: "claude",
     backendRef: null,
     unread: false,
+    pendingQueue: [],
     ...overrides,
   };
 }

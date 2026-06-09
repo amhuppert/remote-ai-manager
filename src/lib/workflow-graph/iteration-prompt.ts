@@ -27,6 +27,7 @@ export interface BuildIterationPromptInput {
   taskStates: Record<string, GraphWorkflowTaskState>;
   sharedDocuments: GraphWorkflowSharedDocumentEntry[];
   allowAgentTaskAdd: boolean;
+  allowAgentCollaboration?: boolean;
   contextValidationAcceptanceCriteria?: string;
   latestContextValidationFailure?: LatestContextValidationFailureFeedback;
   collaborationContinuations?: GraphWorkflowCollaborationContinuation[];
@@ -244,6 +245,18 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
       "- `title` (string, required): Short, descriptive name.",
       "- `instructions` (string, required): Self-contained instructions for the executing agent.",
       "- `slug` (string, optional): Kebab-case identifier. Auto-generated from title if omitted.",
+    );
+  }
+
+  if (input.allowAgentCollaboration) {
+    toolDocs.push(
+      "",
+      "### request_collaboration",
+      "Request a structured second opinion from another agent on a consequential design decision.",
+      "Use this when you hit a genuinely ambiguous, high-impact, or hard-to-reverse trade-off where an independent perspective would materially de-risk the choice — not for routine decisions you can resolve yourself.",
+      "Command Center runs the collaboration in the background and returns a workflowId immediately; stop work on this turn and wait for the follow-up that delivers the outcome.",
+      "Parameters:",
+      "- `brief` (string, required): The question or decision for the collaboration partner. State the problem and the context they need clearly; do not include your preferred solution.",
     );
   }
 

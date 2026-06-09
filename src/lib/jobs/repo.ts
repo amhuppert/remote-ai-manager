@@ -5,8 +5,12 @@ import { createLogger } from "../logging";
 import { timedSync } from "../logging/timed";
 import { PersistenceError } from "../shared/errors";
 import { jobNotificationSchema } from "../notifications/schemas";
-import { backgroundJobSchema, jobStatusSchema } from "./schemas";
-import type { BackgroundJob, JobType, JobStatus } from "./schemas";
+import {
+  backgroundJobSchema,
+  jobRecordSchema,
+  jobStatusSchema,
+} from "./schemas";
+import type { BackgroundJob, JobRecord, JobType, JobStatus } from "./schemas";
 import type {
   JobNotification,
   JobNotificationType,
@@ -233,6 +237,53 @@ export function updateJobRecord(jobId: string, update: JobRecordUpdate): void {
         jobId,
       );
     },
+  );
+}
+
+/**
+ * Read a single durable job record by id through the production row->domain
+ * deserialization boundary (`rowToBackgroundJob`). Returns the durable
+ * {@link JobRecord} shape — including `completedAt`, which is generated on the
+ * write path by {@link updateJobRecord} — not the live `BackgroundJob` runtime
+ * shape. Live-only keys are dropped: `jobRecordSchema` is `.strict()`, so the
+ * returned object contains only durable fields. Returns `null` when no row
+ * matches the id.
+ */
+export function getJobRecord(jobId: string): JobRecord | null {
+  return timedSync(
+    jobRecordLogger,
+    "state-db.getJobRecord",
+    { jobId },
+    () => {
+      const db = getStateDb();
+      const rawRow = db
+        .prepare("SELECT * FROM job_records WHERE job_id = ?")
+        .get(jobId);
+      if (rawRow === undefined) return null;
+
+      const job = rowToBackgroundJob(rawRow);
+      const durable: Record<string, unknown> = {
+        jobId: job.jobId,
+        jobType: job.jobType,
+        status: job.status,
+        projectName: job.projectName,
+        sessionName: job.sessionName,
+        branchName: job.branchName,
+        startedAt: job.startedAt,
+      };
+      if (job.completedAt !== undefined) durable.completedAt = job.completedAt;
+      if (job.mergeHash !== undefined) durable.mergeHash = job.mergeHash;
+      if (job.commitHash !== undefined) durable.commitHash = job.commitHash;
+      if (job.conflictCount !== undefined)
+        durable.conflictCount = job.conflictCount;
+      if (job.conflictFiles !== undefined)
+        durable.conflictFiles = job.conflictFiles;
+      if (job.errorMessage !== undefined)
+        durable.errorMessage = job.errorMessage;
+
+      return jobRecordSchema.parse(durable);
+    },
+    (result) => ({ found: result !== null }),
   );
 }
 

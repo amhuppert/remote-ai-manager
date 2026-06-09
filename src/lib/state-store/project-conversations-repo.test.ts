@@ -42,6 +42,7 @@ function makeProjectConversation(
     agentBackend: overrides.agentBackend ?? "claude",
     backendRef: null,
     unread: overrides.unread ?? false,
+    pendingQueue: [],
     spawnedSessionIds: overrides.spawnedSessionIds,
   };
 }

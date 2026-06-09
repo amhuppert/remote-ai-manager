@@ -13,11 +13,13 @@ import type {
 } from "@/lib/agent-backends/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
+  CollaborationAutonomousResolutionThreshold,
   GraphWorkflowAgentConfig,
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowCircuitBreakerPolicy,
   GraphWorkflowIterationPolicy,
   GraphWorkflowMutabilityPolicy,
+  WorkflowCollaborationConfig,
 } from "@/lib/workflows/schemas";
 interface EditorBaseProps<T> {
   value: T;
@@ -518,6 +520,103 @@ export function MutabilityEditor({
           onChange={(next) => onChange({ allowAgentTaskAdd: next })}
           disabled={readOnly}
           ariaLabel="Allow agent task add"
+        />
+      </FieldRow>
+    </div>
+  );
+}
+
+const THRESHOLD_OPTIONS: ReadonlyArray<{
+  value: CollaborationAutonomousResolutionThreshold;
+  hint: string;
+}> = [
+  { value: "none", hint: "Always pause when there are conflicts" },
+  { value: "minor", hint: "Auto-resolve only minor conflicts" },
+  { value: "major", hint: "Auto-resolve up to major conflicts" },
+  {
+    value: "blocking",
+    hint: "Auto-resolve everything, including blocking conflicts",
+  },
+];
+
+function ThresholdSegmented({
+  value,
+  onChange,
+  disabled,
+  ariaLabel,
+}: {
+  value: CollaborationAutonomousResolutionThreshold;
+  onChange: (next: CollaborationAutonomousResolutionThreshold) => void;
+  disabled?: boolean;
+  ariaLabel: string;
+}) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label={ariaLabel}
+      className="wb-editor-segmented"
+    >
+      {THRESHOLD_OPTIONS.map((option) => {
+        const active = value === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            className="wb-editor-segmented-option"
+            data-active={active ? "true" : "false"}
+            title={option.hint}
+            disabled={disabled}
+            onClick={() => !disabled && onChange(option.value)}
+          >
+            {option.value}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+export function CollaborationEditor({
+  value,
+  onChange,
+  readOnly,
+}: EditorBaseProps<WorkflowCollaborationConfig>): React.JSX.Element {
+  const activeHint = THRESHOLD_OPTIONS.find(
+    (option) => option.value === value.autonomousResolutionThreshold,
+  )?.hint;
+
+  return (
+    <div className="wb-editor-stack">
+      <div className="wb-editor-field">
+        <div className="wb-editor-field-label">Second agent</div>
+        <ImplementerEditor
+          value={value.secondAgent}
+          onChange={(next) => onChange({ ...value, secondAgent: next })}
+          readOnly={readOnly}
+        />
+      </div>
+      <FieldRow label="Negotiation rounds">
+        <NumericInput
+          value={value.negotiationRounds}
+          min={1}
+          onChange={(next) => {
+            if (next === undefined || next <= 0) return;
+            onChange({ ...value, negotiationRounds: next });
+          }}
+          disabled={readOnly}
+          ariaLabel="Negotiation rounds"
+        />
+      </FieldRow>
+      <FieldRow label="Auto-resolve threshold" hint={activeHint}>
+        <ThresholdSegmented
+          value={value.autonomousResolutionThreshold}
+          onChange={(next) =>
+            onChange({ ...value, autonomousResolutionThreshold: next })
+          }
+          disabled={readOnly}
+          ariaLabel="Auto-resolve threshold"
         />
       </FieldRow>
     </div>

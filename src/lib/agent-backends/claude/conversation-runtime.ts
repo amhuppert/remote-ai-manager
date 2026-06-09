@@ -17,6 +17,7 @@ import type {
   ConversationBackendCapabilities,
 } from "../types";
 import type {
+  BackgroundWaitSummary,
   ClaudeCapabilityApplyResult,
   ConversationBackendEvent,
   ConversationBackendRuntime,
@@ -31,10 +32,12 @@ import type { ClaudeRuntimeCapabilityConfig } from "@/lib/agent-capabilities/cla
 import { registerConversationBackendFactory } from "../registry-core";
 import {
   createQuerySession,
+  type BackgroundWaitOutcome,
   type QuerySession,
   type QuerySessionOptions,
   type TurnResult,
 } from "./query-session";
+import { getWaitableInFlightTaskIds } from "./background-task-tracker";
 import {
   isUndeliveredQuerySessionError,
   isSessionDiedMidTurnError,
@@ -55,10 +58,18 @@ import {
   type SessionMcpServerParams,
 } from "@/lib/mcp-gateway/session-server";
 import { composeClaudeAgentCanUseTool } from "@/lib/agent-capabilities/claude-agent-suppression";
+import { backendCapabilities } from "@/lib/agent-backends/capabilities-descriptor";
 
 const logger = createLogger("claude:conversation-runtime");
 
 const CC_SESSION_TOOLS_SERVER_NAME = "cc-session-tools";
+
+/**
+ * Default hard ceiling for the background-task wait barrier. Decoupled from the
+ * 5-minute idle TTL (which is suppressed while waitable tasks are in flight) so
+ * a long-running build/test can settle without the wait timing out prematurely.
+ */
+const DEFAULT_BACKGROUND_TASK_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
 
 export interface ClaudeFactoryDeps {
   createSessionMcpServer(params: SessionMcpServerParams): Promise<McpServer>;
@@ -77,14 +88,8 @@ const KNOWN_EFFORT_LEVELS = claudeEffortLevelSchema.options;
 
 class ClaudeConversationRuntime implements ConversationBackendRuntime {
   readonly backend: AgentBackendId = "claude";
-  readonly capabilities: ConversationBackendCapabilities = {
-    queueWhileRunning: true,
-    askUserQuestion: true,
-    preciseFork: true,
-    portableMcpAtStart: true,
-    portableMcpBetweenTurns: true,
-    contextWindowMetrics: true,
-  };
+  readonly capabilities: ConversationBackendCapabilities =
+    backendCapabilities("claude");
 
   readonly modelId: string | undefined;
   readonly reasoningEffort: string | undefined;
@@ -181,6 +186,51 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
     this.querySession.notifyTurnStarting();
   }
 
+  /**
+   * Hold the just-yielded turn open until its in-flight waitable background
+   * tasks settle, when the turn opted into `waitForBackgroundTasks`. Returns the
+   * wait summary only when a wait actually occurred (the flag was on AND the
+   * waitable set was non-empty); returns `undefined` otherwise so the result
+   * carries no `backgroundWait` for the no-op path.
+   */
+  private async waitForBackgroundTasksIfOptedIn(
+    input: ConversationBackendTurnInput,
+  ): Promise<BackgroundWaitSummary | undefined> {
+    if (input.waitForBackgroundTasks !== true) return undefined;
+
+    const waitable = getWaitableInFlightTaskIds(
+      this.querySession.backgroundTaskState,
+    );
+    if (waitable.length === 0) return undefined;
+
+    const timeoutMs =
+      input.backgroundTaskWaitTimeoutMs ??
+      DEFAULT_BACKGROUND_TASK_WAIT_TIMEOUT_MS;
+
+    logger.info("claude-runtime.background_wait_begin", {
+      conversationId: this.querySession.conversationId,
+      waitedTaskIds: waitable,
+      timeoutMs,
+    });
+
+    const outcome: BackgroundWaitOutcome =
+      await this.querySession.awaitBackgroundTaskSettlement(timeoutMs);
+
+    logger.info("claude-runtime.background_wait_end", {
+      conversationId: this.querySession.conversationId,
+      settledCount: outcome.settledTaskIds.length,
+      timedOut: outcome.timedOut,
+      durationMs: outcome.durationMs,
+    });
+
+    return {
+      waitedTaskIds: outcome.waitedTaskIds,
+      settledTaskIds: outcome.settledTaskIds,
+      timedOut: outcome.timedOut,
+      durationMs: outcome.durationMs,
+    };
+  }
+
   async sendTurn(
     input: ConversationBackendTurnInput,
   ): Promise<ConversationBackendTurnResult> {
@@ -207,8 +257,25 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
     // can still surface the live SDK session for the next turn's `resume:`.
     let lastKnownSessionId: string | null = null;
 
+    // Emit `input_accepted` exactly once, on the first raw provider message and
+    // before the first provider_event. Claude writes assistant transcript via
+    // the actor's provider_event path DURING sendPrompt, so the queued-delivery
+    // user transcript entry must be appended before any assistant content —
+    // hence acceptance precedes the first provider_event rather than firing
+    // after sendPrompt resolves. A dispatch failure delivers no raw message, so
+    // the flag stays false and acceptance never fires (the actor returns the
+    // queue row to pending for retry).
+    let inputAcceptedEmitted = false;
+
     const emit = (event: string, data: unknown) => {
       if (event === "__raw_message") {
+        if (!inputAcceptedEmitted) {
+          inputAcceptedEmitted = true;
+          input.onEvent({ type: "input_accepted" });
+          logger.debug("claude-runtime.input_accepted", {
+            conversationId: this.querySession.conversationId,
+          });
+        }
         const msg = data as { session_id?: string } | null;
         if (msg && typeof msg.session_id === "string" && msg.session_id) {
           lastKnownSessionId = msg.session_id;
@@ -223,6 +290,14 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
         emit,
         { autonomous: input.autonomous },
       );
+
+      // Bounded wait barrier: if the turn opted in and the agent left waitable
+      // background tasks in flight, hold the turn open until they settle (or the
+      // wait times out). The SDK's virtual-turn auto-continuation runs on the
+      // pump during the await, delivering each settled task's notification to the
+      // agent so it can finish within this same iteration. Returns immediately
+      // when the set is empty or the flag is off (no-op for interactive turns).
+      const backgroundWait = await this.waitForBackgroundTasksIfOptedIn(input);
 
       const backendRef: AgentSessionRef | null = turnResult.sessionId
         ? { backend: "claude", sessionId: turnResult.sessionId }
@@ -247,6 +322,7 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
         structuredOutput: turnResult.structuredOutput,
         aborted: turnResult.aborted,
         error: turnResult.error,
+        ...(backgroundWait ? { backgroundWait } : {}),
       };
 
       logger.info("claude-runtime.turn_end", {
@@ -300,10 +376,26 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
   }
 
   async queueUserInput(input: ConversationQueuedUserInput): Promise<void> {
+    const conversationId = this.querySession.conversationId;
+
+    // Gate live delivery on the session being able to accept input. A dead
+    // session cannot accept a streamInput, so reject (rather than silently
+    // resolve) — the caller leaves the queue row pending for next-turn drain.
+    if (this._status === "dead" || this.querySession.status === "dead") {
+      logger.warn("claude-runtime.queue_input_rejected_dead", {
+        conversationId,
+      });
+      throw new Error("Cannot queue input: Claude runtime is closed");
+    }
+
     logger.debug("claude-runtime.queue_input", {
-      conversationId: this.querySession.conversationId,
+      conversationId,
       blockCount: input.content.length,
     });
+
+    // Resolution is gated on streamInput resolving: that is the live
+    // input-acceptance signal. A streamInput rejection (e.g. tagged
+    // promptNotDelivered) propagates so the caller leaves the row pending.
     await this.querySession.query.streamInput(wrapAsUserMessage(input.content));
   }
 

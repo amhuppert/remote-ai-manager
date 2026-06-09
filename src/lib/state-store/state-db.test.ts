@@ -8,6 +8,7 @@ import {
   _createTestDb,
   _createTestDbAtPath,
   _resetForTesting,
+  truncateAllTables,
 } from "./state-db";
 
 afterEach(() => {
@@ -160,6 +161,154 @@ describe("state-db additive column migrations", () => {
       const second = _createTestDbAtPath(dbPath);
       second.close();
     }).not.toThrow();
+  });
+});
+
+describe("truncateAllTables", () => {
+  function tableNames(db: InstanceType<typeof Database>): string[] {
+    const rows = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all() as { name: string }[];
+    return rows.map((r) => r.name);
+  }
+
+  function countRows(db: InstanceType<typeof Database>, table: string): number {
+    const row = db.prepare(`SELECT COUNT(*) AS n FROM "${table}"`).get() as {
+      n: number;
+    };
+    return row.n;
+  }
+
+  function seedFkChain(db: InstanceType<typeof Database>): void {
+    db.prepare("INSERT INTO projects (root_path) VALUES (?)").run("/p1");
+    db.prepare(
+      `INSERT INTO sessions
+         (project_path, session_name, worktree_path, branch_name, created_at, last_activity_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "/p1",
+      "s1",
+      "/wt/s1",
+      "csm/s1",
+      "2026-01-01T00:00:00Z",
+      "2026-01-01T00:00:00Z",
+    );
+    db.prepare(
+      `INSERT INTO conversations
+         (id, project_path, session_name, status, created_at, last_activity_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "c1",
+      "/p1",
+      "s1",
+      "active",
+      "2026-01-01T00:00:00Z",
+      "2026-01-01T00:00:00Z",
+    );
+    db.prepare(
+      `INSERT INTO reference_documents
+         (id, project_path, session_name, file_path, description, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "rd1",
+      "/p1",
+      "s1",
+      "memory-bank/focus.md",
+      "focus",
+      "2026-01-01T00:00:00Z",
+    );
+    db.prepare(
+      `INSERT INTO notifications
+         (id, type, title, message, project_name, session_name, branch_name, job_id, job_type)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run("n1", "merge", "t", "m", "/p1", "s1", "csm/s1", "j1", "merge");
+    db.prepare(
+      `INSERT INTO job_records
+         (job_id, job_type, status, project_name, session_name, branch_name, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "j1",
+      "merge",
+      "running",
+      "/p1",
+      "s1",
+      "csm/s1",
+      "2026-01-01T00:00:00Z",
+    );
+  }
+
+  it("empties every application table while leaving schema_migrations and its row intact", () => {
+    const db = _createTestDb({ inMemory: true });
+    try {
+      seedFkChain(db);
+      db.prepare(
+        "INSERT INTO schema_migrations (version, description) VALUES (?, ?)",
+      ).run(KNOWN_SCHEMA_VERSION, "baseline");
+
+      const appTables = [
+        "projects",
+        "sessions",
+        "conversations",
+        "reference_documents",
+        "notifications",
+        "job_records",
+      ] as const;
+      for (const t of appTables) {
+        expect(countRows(db, t)).toBeGreaterThan(0);
+      }
+
+      truncateAllTables(db);
+
+      for (const t of appTables) {
+        expect(countRows(db, t)).toBe(0);
+      }
+      expect(tableNames(db)).toContain("schema_migrations");
+      expect(countRows(db, "schema_migrations")).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("clears a runtime-created application table without a hand-maintained list (Req 4.3)", () => {
+    const db = _createTestDb({ inMemory: true });
+    try {
+      db.exec(
+        "CREATE TABLE temp_extra_app_table (id TEXT PRIMARY KEY, value TEXT)",
+      );
+      db.prepare(
+        "INSERT INTO temp_extra_app_table (id, value) VALUES (?, ?)",
+      ).run("x", "y");
+      expect(countRows(db, "temp_extra_app_table")).toBe(1);
+
+      truncateAllTables(db);
+
+      const remaining = tableNames(db).filter(
+        (n) => n !== "schema_migrations" && !n.startsWith("sqlite_"),
+      );
+      for (const t of remaining) {
+        expect(countRows(db, t)).toBe(0);
+      }
+      expect(remaining).toContain("temp_extra_app_table");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("leaves a freshly reset DB able to reopen and pass the forward-only version check", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "cc-state-db-test-"));
+    const dbPath = path.join(dir, "command-center.db");
+
+    const db = _createTestDbAtPath(dbPath);
+    seedFkChain(db);
+    truncateAllTables(db);
+    db.close();
+
+    const reopened = _createTestDbAtPath(dbPath);
+    try {
+      expect(reopened.open).toBe(true);
+    } finally {
+      reopened.close();
+    }
   });
 });
 

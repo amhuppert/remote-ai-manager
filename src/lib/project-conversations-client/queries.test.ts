@@ -52,6 +52,7 @@ function conv(
     pendingQuestions: null,
     pendingPromptText: null,
     unread: false,
+    pendingQueue: [],
     forkedFrom: null,
     role: null,
     activeTurnSource: null,

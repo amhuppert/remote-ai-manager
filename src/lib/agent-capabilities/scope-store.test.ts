@@ -64,6 +64,7 @@ function projectConversation(id: string): ConversationState {
     agentBackend: "claude",
     backendRef: null,
     unread: false,
+    pendingQueue: [],
   };
 }
 
@@ -110,6 +111,7 @@ function stateWithAllScopes(): ManagerState {
                 agentBackend: "claude",
                 backendRef: null,
                 unread: false,
+                pendingQueue: [],
               },
             ],
             source: "cc",

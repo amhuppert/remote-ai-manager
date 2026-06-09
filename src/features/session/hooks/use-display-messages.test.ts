@@ -1,15 +1,57 @@
 // @vitest-environment jsdom
 import { renderHook } from "@testing-library/react";
 import { describe, it, expect, beforeEach } from "vitest";
-import { useDisplayMessages } from "./use-display-messages";
+import {
+  useDisplayMessages,
+  buildDisplayProjection,
+  type OptimisticQueueProjectionEntry,
+} from "./use-display-messages";
 import { useSessionDetailStore } from "@/stores/session-detail.store";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
+import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
 
 function msg(role: "user" | "assistant", text: string): TranscriptMessage {
   return {
     role,
     content: [{ type: "text", text }],
     timestamp: null,
+  };
+}
+
+function pending(
+  id: string,
+  text: string,
+  status: PendingQueuedMessage["status"] = "pending",
+): PendingQueuedMessage {
+  return {
+    id,
+    content: [{ type: "text", text }],
+    status,
+    enqueuedAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    deliveryStartedAt: null,
+    deliveredAt: null,
+    cancelledAt: null,
+    failedAt: null,
+    deliveryAttemptId: null,
+    attemptCount: 0,
+    error: null,
+  };
+}
+
+function optimistic(
+  tempId: string,
+  text: string,
+  queueId: string | null,
+  status: OptimisticQueueProjectionEntry["status"] = queueId
+    ? "accepted"
+    : "pending",
+): OptimisticQueueProjectionEntry {
+  return {
+    tempId,
+    queueId,
+    content: [{ type: "text", text }],
+    status,
   };
 }
 
@@ -89,5 +131,175 @@ describe("useDisplayMessages", () => {
     rerender({ messages: serverMessages });
     expect(result.current).toBe(serverMessages);
     expect(useSessionDetailStore.getState().optimisticMessages).toHaveLength(0);
+  });
+});
+
+describe("buildDisplayProjection", () => {
+  it("shows two pending entries once each in enqueue order after the transcript", () => {
+    const messages = [msg("user", "first"), msg("assistant", "working")];
+    const result = buildDisplayProjection({
+      messages,
+      optimisticMessages: [],
+      messageCountBeforeSubmit: 0,
+      sending: false,
+      pendingQueue: [pending("a", "queued A"), pending("b", "queued B")],
+      optimisticQueue: [],
+    });
+
+    expect(result).toHaveLength(4);
+    expect(result[0]).toBe(messages[0]);
+    expect(result[1]).toBe(messages[1]);
+    expect(result[2]?.content).toEqual([{ type: "text", text: "queued A" }]);
+    expect(result[2]?.queued).toEqual({ id: "a", status: "pending" });
+    expect(result[3]?.content).toEqual([{ type: "text", text: "queued B" }]);
+    expect(result[3]?.queued).toEqual({ id: "b", status: "pending" });
+  });
+
+  it("shows a delivered queued entry by its transcript row only, with no duplicate", () => {
+    // The delivered queue entry's transcript user row is already present.
+    const messages = [
+      msg("user", "first"),
+      msg("assistant", "reply"),
+      msg("user", "queued A"),
+    ];
+    const result = buildDisplayProjection({
+      messages,
+      optimisticMessages: [],
+      messageCountBeforeSubmit: 0,
+      sending: false,
+      pendingQueue: [pending("a", "queued A", "delivered")],
+      optimisticQueue: [],
+    });
+
+    expect(result).toHaveLength(3);
+    expect(result.filter((m) => m.queued)).toHaveLength(0);
+    expect(
+      result.filter(
+        (m) =>
+          m.content.length === 1 &&
+          m.content[0]?.type === "text" &&
+          m.content[0].text === "queued A",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("dedups an optimistic entry whose queueId matches a durable pending id", () => {
+    const messages = [msg("assistant", "working")];
+    const result = buildDisplayProjection({
+      messages,
+      optimisticMessages: [],
+      messageCountBeforeSubmit: 0,
+      sending: false,
+      pendingQueue: [pending("X", "shared")],
+      optimisticQueue: [optimistic("temp-1", "shared", "X")],
+    });
+
+    const sharedRows = result.filter(
+      (m) =>
+        m.content.length === 1 &&
+        m.content[0]?.type === "text" &&
+        m.content[0].text === "shared",
+    );
+    expect(sharedRows).toHaveLength(1);
+    // Durable row wins: carries the server id, not the tempId.
+    expect(sharedRows[0]?.queued).toEqual({ id: "X", status: "pending" });
+  });
+
+  it("keeps an optimistic-only entry (no queueId, not durable) after durable pending rows", () => {
+    const messages = [msg("assistant", "working")];
+    const result = buildDisplayProjection({
+      messages,
+      optimisticMessages: [],
+      messageCountBeforeSubmit: 0,
+      sending: false,
+      pendingQueue: [pending("a", "durable A")],
+      optimisticQueue: [optimistic("temp-1", "optimistic only", null)],
+    });
+
+    expect(result).toHaveLength(3);
+    expect(result[1]?.queued).toEqual({ id: "a", status: "pending" });
+    expect(result[2]?.content).toEqual([
+      { type: "text", text: "optimistic only" },
+    ]);
+    expect(result[2]?.queued).toEqual({
+      id: null,
+      tempId: "temp-1",
+      status: "pending",
+    });
+  });
+
+  it("excludes cancelled and failed pending-queue entries from the projection", () => {
+    const messages = [msg("assistant", "working")];
+    const result = buildDisplayProjection({
+      messages,
+      optimisticMessages: [],
+      messageCountBeforeSubmit: 0,
+      sending: false,
+      pendingQueue: [
+        pending("a", "cancelled one", "cancelled"),
+        pending("b", "failed one", "failed"),
+        pending("c", "pending one", "pending"),
+      ],
+      optimisticQueue: [],
+    });
+
+    expect(result).toHaveLength(2);
+    expect(result[1]?.content).toEqual([{ type: "text", text: "pending one" }]);
+    expect(result[1]?.queued?.id).toBe("c");
+  });
+
+  it("marks a delivering pending-queue entry with delivering status", () => {
+    const result = buildDisplayProjection({
+      messages: [],
+      optimisticMessages: [],
+      messageCountBeforeSubmit: 0,
+      sending: false,
+      pendingQueue: [pending("a", "in flight", "delivering")],
+      optimisticQueue: [],
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.queued).toEqual({ id: "a", status: "delivering" });
+  });
+
+  it("excludes a failed optimistic queue entry", () => {
+    const result = buildDisplayProjection({
+      messages: [],
+      optimisticMessages: [],
+      messageCountBeforeSubmit: 0,
+      sending: false,
+      pendingQueue: [],
+      optimisticQueue: [optimistic("temp-1", "failed", null, "failed")],
+    });
+
+    expect(result).toHaveLength(0);
+  });
+
+  it("preserves the in-flight base merge when the queue is empty", () => {
+    const messages = [
+      msg("user", "u1"),
+      msg("assistant", "a1"),
+      msg("user", "stale"),
+      msg("assistant", "stale"),
+    ];
+    const optimisticMessages = [
+      msg("user", "current"),
+      msg("assistant", "now"),
+    ];
+    const result = buildDisplayProjection({
+      messages,
+      optimisticMessages,
+      messageCountBeforeSubmit: 2,
+      sending: true,
+      pendingQueue: [],
+      optimisticQueue: [],
+    });
+
+    expect(result).toEqual([
+      messages[0],
+      messages[1],
+      optimisticMessages[0],
+      optimisticMessages[1],
+    ]);
   });
 });

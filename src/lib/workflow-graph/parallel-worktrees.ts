@@ -267,6 +267,7 @@ export function createParallelWorktrees(
         {
           projectPath: input.projectPath,
           sessionName: input.sessionName,
+          sessionDir: input.sessionDir,
           laneId: input.laneId,
         },
         targets,
@@ -296,6 +297,7 @@ export function createParallelWorktrees(
   interface InitScriptContext {
     projectPath: string;
     sessionName: string;
+    sessionDir: string;
     laneId: string;
   }
 
@@ -316,11 +318,20 @@ export function createParallelWorktrees(
       throw new Error(`Init script not found: ${scriptPath}`);
     }
 
+    // A lane worktree is branched from the session branch, so the worktree it
+    // was branched from is the session's own worktree at `.worktrees/<dir>`.
+    const parentWorktreePath = path.join(
+      context.projectPath,
+      ".worktrees",
+      context.sessionDir,
+    );
+
     logger.info("init_script_start", {
       projectPath: context.projectPath,
       sessionName: context.sessionName,
       laneId: context.laneId,
       worktreePath: targets.worktreePath,
+      parentWorktreePath,
       scriptPath,
     });
 
@@ -332,6 +343,7 @@ export function createParallelWorktrees(
           PROJECT_ROOT: context.projectPath,
           CLAUDE_PROJECT_DIR: context.projectPath,
           WORKTREE_PATH: targets.worktreePath,
+          PARENT_WORKTREE_PATH: parentWorktreePath,
           SESSION_NAME: context.sessionName,
           BRANCH_NAME: targets.branchName,
           // Per-context init scripts read CONTEXT_ID. For multi-context lanes,

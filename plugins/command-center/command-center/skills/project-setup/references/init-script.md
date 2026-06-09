@@ -26,8 +26,11 @@
 | `PROJECT_ROOT` | `/home/user/repos/my-project` | Absolute path to the original project root |
 | `CLAUDE_PROJECT_DIR` | `/home/user/repos/my-project` | Same as `PROJECT_ROOT` |
 | `WORKTREE_PATH` | `/home/user/repos/my-project/.worktrees/my-session` | Absolute path to the session worktree |
+| `PARENT_WORKTREE_PATH` | `/home/user/repos/my-project/.worktrees/parent-session` | Worktree this one was branched from — the source session's worktree, or `PROJECT_ROOT` when created off the main branch. (For graph-workflow parallel contexts, this is the session worktree each lane branches from.) |
 | `SESSION_NAME` | `my-session` | Session identifier |
 | `BRANCH_NAME` | `csm/my-session` | Git branch created for this session |
+
+Use `PARENT_WORKTREE_PATH` to copy files from the source worktree into the new one (for example local env files or build caches that live outside git). Because it falls back to `PROJECT_ROOT` for sessions created off the main branch, a script can treat it as "wherever this session came from" without special-casing the two cases.
 
 **Stripped variables:** `NODE_ENV` is intentionally unset so package managers use their defaults (e.g., dev dependencies are installed). `__NEXT_*` and `__TURBOPACK_*` internal variables are also stripped to prevent conflicts with child processes.
 
@@ -91,9 +94,10 @@ set -euo pipefail
 # Install dependencies
 npm ci
 
-# Copy environment file if it doesn't exist
-if [ ! -f .env.local ]; then
-  cp "$PROJECT_ROOT/.env.example" .env.local
+# Carry the local env file over from the worktree this session was branched
+# from (the parent session, or the project root when branched off main).
+if [ ! -f .env.local ] && [ -f "$PARENT_WORKTREE_PATH/.env.local" ]; then
+  cp "$PARENT_WORKTREE_PATH/.env.local" .env.local
 fi
 
 # Run code generation

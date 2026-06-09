@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
   GraphWorkflowCollaborationContinuation,
@@ -105,6 +106,14 @@ export interface GraphWorkflowAgentIterationResult {
   contextTokens: number | null;
   contextWindowMax: number | null;
   sessionRef?: AgentSessionRef | null;
+  /**
+   * Summary of the bounded background-task wait the implementer turn performed
+   * inside this single `runAgentIteration` call. Present only when a wait
+   * actually occurred. The orchestrator reads it for lifecycle logging
+   * (Req 7.1–7.3); it never changes control flow, so iteration / failure
+   * accounting is preserved (Req 5.1–5.3).
+   */
+  backgroundWait?: BackgroundWaitSummary;
 }
 
 interface IterationOrchestratorContinuityService {
@@ -457,6 +466,76 @@ function buildTaskFailureMessages(input: {
 }
 
 const logger = createLogger("graph-workflow-iteration");
+
+/**
+ * Emit the structured wait-lifecycle log entries (Req 7.1–7.3) for a single
+ * agent turn that performed a bounded background-task wait. No-op when the
+ * turn did not wait (`backgroundWait` absent). Logging only — never changes
+ * iteration control flow.
+ */
+function logBackgroundWaitLifecycle(params: {
+  execLogger: ReturnType<typeof getExecutionLogger>;
+  executionId: string;
+  contextId: string;
+  turnNumber: number;
+  backgroundWait: BackgroundWaitSummary | undefined;
+}): void {
+  const { execLogger, executionId, contextId, turnNumber, backgroundWait } =
+    params;
+  if (!backgroundWait) {
+    return;
+  }
+
+  const { waitedTaskIds, settledTaskIds, timedOut, durationMs } =
+    backgroundWait;
+
+  // 7.1 — record the begin-wait entry identifying the context + waited tasks.
+  execLogger?.iteration(contextId, "iteration.background_wait_started", {
+    turnNumber,
+    waitedTaskIds,
+  });
+  logger.info("graph-workflow.iteration.background_wait_started", {
+    executionId,
+    contextId,
+    turnNumber,
+    waitedTaskCount: waitedTaskIds.length,
+  });
+
+  if (timedOut) {
+    // 7.3 — record the timeout entry with the tasks still in-flight.
+    const settled = new Set(settledTaskIds);
+    const stillInFlightTaskIds = waitedTaskIds.filter(
+      (taskId) => !settled.has(taskId),
+    );
+    execLogger?.iteration(contextId, "iteration.background_wait_timed_out", {
+      turnNumber,
+      stillInFlightTaskIds,
+      durationMs,
+    });
+    logger.warn("graph-workflow.iteration.background_wait_timed_out", {
+      executionId,
+      contextId,
+      turnNumber,
+      stillInFlightTaskCount: stillInFlightTaskIds.length,
+      durationMs,
+    });
+    return;
+  }
+
+  // 7.2 — record the resolve entry with the settled outcome.
+  execLogger?.iteration(contextId, "iteration.background_wait_resolved", {
+    turnNumber,
+    settledTaskIds,
+    durationMs,
+  });
+  logger.info("graph-workflow.iteration.background_wait_resolved", {
+    executionId,
+    contextId,
+    turnNumber,
+    settledTaskCount: settledTaskIds.length,
+    durationMs,
+  });
+}
 
 export function createGraphWorkflowIterationOrchestrator(
   deps: GraphWorkflowIterationOrchestratorDeps,
@@ -1615,6 +1694,11 @@ export function createGraphWorkflowIterationOrchestrator(
               taskStates: seededExecution.taskStates,
               sharedDocuments: seededExecution.sharedDocuments,
               allowAgentTaskAdd: context.mutability.allowAgentTaskAdd,
+              // Mirrors the request_collaboration registration gate in the
+              // workflow-execution MCP server, which exposes the tool to every
+              // implementer context. Keep these in lockstep if an enable toggle
+              // is ever introduced.
+              allowAgentCollaboration: true,
               contextValidationAcceptanceCriteria:
                 context.contextValidator !== null &&
                 context.contextValidator.enabled
@@ -1729,6 +1813,14 @@ export function createGraphWorkflowIterationOrchestrator(
         turnNumber: 0,
         contextTokens: agentResult.contextTokens,
         contextWindowMax: agentResult.contextWindowMax,
+      });
+
+      logBackgroundWaitLifecycle({
+        execLogger,
+        executionId: seededExecution.id,
+        contextId: input.contextId,
+        turnNumber: 0,
+        backgroundWait: agentResult.backgroundWait,
       });
 
       // Post-turn enforcement of the Same-Turn Tool Dispatch Contract
@@ -1850,6 +1942,14 @@ export function createGraphWorkflowIterationOrchestrator(
             contextWindowMax: agentResult.contextWindowMax,
           },
         );
+
+        logBackgroundWaitLifecycle({
+          execLogger,
+          executionId: seededExecution.id,
+          contextId: input.contextId,
+          turnNumber: attempt,
+          backgroundWait: agentResult.backgroundWait,
+        });
 
         await checkPendingHaltOrThrow("follow_up_turn", attempt);
         stoppedForCollaboration = await hasPendingCollaboration(

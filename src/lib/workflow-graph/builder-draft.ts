@@ -16,7 +16,8 @@ export type ContextOverrideBlock =
   | "scriptValidator"
   | "mutability"
   | "circuitBreaker"
-  | "iterationPolicy";
+  | "iterationPolicy"
+  | "collaboration";
 
 export type WorkflowConfigBlock =
   | "implementer"

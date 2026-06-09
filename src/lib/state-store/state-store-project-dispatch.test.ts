@@ -45,6 +45,7 @@ function makeProjectConversation(
     agentBackend: "claude",
     backendRef: null,
     unread: false,
+    pendingQueue: [],
   };
 }
 

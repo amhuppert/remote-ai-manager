@@ -38,6 +38,12 @@ import {
   QUERY_SESSION_ERROR_CODES,
   tagQuerySessionError,
 } from "./query-session-errors";
+import {
+  emptyBackgroundTaskState,
+  applyTaskMessage,
+  getWaitableInFlightTaskIds,
+  type BackgroundTaskState,
+} from "./background-task-tracker";
 
 // Prevent nested session detection when CC runs inside Claude Code
 import "@/lib/shared/sdk-env";
@@ -64,6 +70,23 @@ export interface TurnResult {
   structuredOutput?: unknown;
   aborted: boolean;
   error: string | null;
+}
+
+/**
+ * Result of a bounded wait for the session's waitable background tasks to
+ * settle (drain the in-flight set with no turn active) or for the wait's hard
+ * maximum duration to elapse. Never indicates a rejection — a timeout is
+ * reported via `timedOut: true`, never thrown.
+ */
+export interface BackgroundWaitOutcome {
+  /** Waitable in-flight task ids captured at the moment the wait began. */
+  waitedTaskIds: string[];
+  /** The `waitedTaskIds` that had drained from the waitable set by resolution. */
+  settledTaskIds: string[];
+  /** True when the hard maximum wait duration elapsed before the set drained. */
+  timedOut: boolean;
+  /** Wall-clock duration from the call to resolution. */
+  durationMs: number;
 }
 
 type TurnEmit = (event: string, data: unknown) => void;
@@ -96,6 +119,27 @@ export interface QuerySession {
   readonly outputFormat:
     | { type: "json_schema"; schema: Record<string, unknown> }
     | undefined;
+
+  /**
+   * Live in-flight background-task state, derived from the SDK `task_*`
+   * lifecycle messages (and their originating tool results). Passively tracked;
+   * the implementer agent is not required to call any tool or emit any signal.
+   */
+  readonly backgroundTaskState: BackgroundTaskState;
+
+  /**
+   * Resolve when the waitable in-flight background-task set has drained AND no
+   * turn is active, or when `timeoutMs` elapses (whichever comes first).
+   *
+   * Bounded and non-rejecting: a timeout resolves with `timedOut: true`; it
+   * never rejects and never waits indefinitely. Failed/stopped tasks settle in
+   * the tracker, so a failing background task also ends the wait. If the
+   * subprocess dies while waiting, the wait resolves (`timedOut: false`) so a
+   * dead session never hangs a waiter.
+   */
+  awaitBackgroundTaskSettlement(
+    timeoutMs: number,
+  ): Promise<BackgroundWaitOutcome>;
 
   /** Send a prompt and wait for the turn to complete */
   sendPrompt(
@@ -199,6 +243,20 @@ interface PendingTurn {
 }
 
 // ============================================================
+// Internal state for a pending settlement waiter
+// ============================================================
+
+interface BackgroundWaiter {
+  /** Waitable in-flight task ids captured when the wait began. */
+  waitedTaskIds: string[];
+  /** Wall-clock start (Date.now) so the outcome can report elapsed time. */
+  startedAt: number;
+  /** Hard-timeout timer; cleared when the waiter resolves normally. */
+  timer: ReturnType<typeof setTimeout> | null;
+  resolve: (outcome: BackgroundWaitOutcome) => void;
+}
+
+// ============================================================
 // Factory
 // ============================================================
 
@@ -236,6 +294,8 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   let recoveryInFlight = false;
   let recoveryFailureCount = 0;
   let consecutiveStreamClosedCount = 0;
+  let backgroundTaskState = emptyBackgroundTaskState();
+  const backgroundWaiters = new Set<BackgroundWaiter>();
 
   // The hanging generator: yields the first user message, then hangs forever.
   // This keeps the SDK subprocess alive indefinitely.
@@ -306,6 +366,10 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     get outputFormat() {
       return options.outputFormat;
     },
+    get backgroundTaskState() {
+      return backgroundTaskState;
+    },
+    awaitBackgroundTaskSettlement,
     sendPrompt,
     setMcpServers,
     notifyTurnStarting,
@@ -490,6 +554,104 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   }
 
   // ------------------------------------------------------------------
+  // awaitBackgroundTaskSettlement
+  // ------------------------------------------------------------------
+
+  /** Tasks from `waitedTaskIds` that have drained from the live waitable set. */
+  function settledFrom(waitedTaskIds: string[]): string[] {
+    const inFlight = new Set(getWaitableInFlightTaskIds(backgroundTaskState));
+    return waitedTaskIds.filter((id) => !inFlight.has(id));
+  }
+
+  function resolveWaiter(waiter: BackgroundWaiter, timedOut: boolean): void {
+    if (!backgroundWaiters.has(waiter)) return;
+    backgroundWaiters.delete(waiter);
+    if (waiter.timer) {
+      clearTimeout(waiter.timer);
+      waiter.timer = null;
+    }
+    waiter.resolve({
+      waitedTaskIds: waiter.waitedTaskIds,
+      settledTaskIds: settledFrom(waiter.waitedTaskIds),
+      timedOut,
+      durationMs: Date.now() - waiter.startedAt,
+    });
+  }
+
+  /**
+   * Resolve every pending waiter whose condition is now satisfied: the waitable
+   * in-flight set is empty AND no turn is active. Invoked at the end of
+   * `processMessage` so both "task settled" (tracker update) and "turn finished"
+   * (pendingTurn cleared on `result`) wake the waiters through the same pump.
+   */
+  function checkBackgroundTaskWaiters(): void {
+    if (backgroundWaiters.size === 0) return;
+    const settled =
+      getWaitableInFlightTaskIds(backgroundTaskState).length === 0;
+    if (!settled || pendingTurn !== null) return;
+    for (const waiter of [...backgroundWaiters]) {
+      resolveWaiter(waiter, false);
+    }
+  }
+
+  /**
+   * Resolve every pending settlement waiter because the subprocess is dying.
+   * Reports whatever has settled and never flags a timeout, so a dead session
+   * never hangs a waiter (Req 4.4). Reached by both `close()` and the
+   * pump-internal death path (`markDead`); the `resolveWaiter` membership guard
+   * makes the second caller a no-op.
+   */
+  function resolveWaitersOnDeath(): void {
+    for (const waiter of [...backgroundWaiters]) {
+      resolveWaiter(waiter, false);
+    }
+  }
+
+  function awaitBackgroundTaskSettlement(
+    timeoutMs: number,
+  ): Promise<BackgroundWaitOutcome> {
+    const waitedTaskIds = getWaitableInFlightTaskIds(backgroundTaskState);
+    const startedAt = Date.now();
+
+    return new Promise<BackgroundWaitOutcome>((resolve) => {
+      const waiter: BackgroundWaiter = {
+        waitedTaskIds,
+        startedAt,
+        timer: null,
+        resolve,
+      };
+
+      // Already drained and no turn active — resolve on the next microtask so
+      // the returned promise is consistently asynchronous.
+      if (waitedTaskIds.length === 0 && pendingTurn === null) {
+        resolve({
+          waitedTaskIds,
+          settledTaskIds: [],
+          timedOut: false,
+          durationMs: Date.now() - startedAt,
+        });
+        return;
+      }
+
+      backgroundWaiters.add(waiter);
+      logger.debug("query-session.background_wait_started", {
+        conversationId: options.conversationId,
+        waitedTaskIds,
+        timeoutMs,
+      });
+
+      waiter.timer = setTimeout(() => {
+        logger.info("query-session.background_wait_timeout", {
+          conversationId: options.conversationId,
+          waitedTaskIds,
+          timeoutMs,
+        });
+        resolveWaiter(waiter, true);
+      }, timeoutMs);
+    });
+  }
+
+  // ------------------------------------------------------------------
   // close
   // ------------------------------------------------------------------
 
@@ -500,6 +662,10 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       idleTimer = null;
     }
     clearMcpKeepaliveTimer();
+
+    // Resolve any pending settlement waiters so a dead subprocess never hangs a
+    // waiter. Report whatever has settled; never flag this as a timeout.
+    resolveWaitersOnDeath();
 
     // Reject any pending turn
     if (pendingTurn) {
@@ -597,6 +763,10 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       conversationId: options.conversationId,
       reason,
     });
+    // Pump-internal deaths (clean exit / pump_error) reach here without going
+    // through close(); resolve pending settlement waiters so they unwind
+    // promptly (timedOut: false) instead of hanging until the hard timeout.
+    resolveWaitersOnDeath();
   }
 
   async function sendSubsequentPrompt(
@@ -766,6 +936,25 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   // ------------------------------------------------------------------
 
   function processMessage(message: SDKMessage): void {
+    // Run after every path (early returns included) so both "task settled"
+    // (tracker update) and "turn finished" (pendingTurn cleared on `result`)
+    // wake the settlement waiters through the same pump.
+    processMessageBody(message);
+    checkBackgroundTaskWaiters();
+  }
+
+  function processMessageBody(message: SDKMessage): void {
+    // Ingest background-task lifecycle BEFORE the idle-discard branch so a task
+    // started/settled between turns is still tracked. applyTaskMessage ignores
+    // non-task messages by returning the state unchanged. The per-turn
+    // tool-name map lets a `task_started` resolve its originating tool (the
+    // assistant tool_use is processed before task_started, so the name is
+    // already recorded); when no turn is active the map is undefined and the
+    // task defaults to waitable.
+    backgroundTaskState = applyTaskMessage(backgroundTaskState, message, {
+      toolNamesById: pendingTurn?.toolNamesById,
+    });
+
     if (!pendingTurn) {
       if (!options.externalTurnHandler) {
         // Between turns — log and discard
@@ -946,8 +1135,16 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
 
         resolve(result);
 
-        // Start idle TTL timer — close session if no new prompt arrives
-        if (idleTtlMs > 0 && status === "alive") {
+        // Start idle TTL timer — close session if no new prompt arrives. Do not
+        // arm it while waitable background tasks are in flight, so a background
+        // task's auto-continuation can still arrive past the default idle
+        // window. The timer arms normally once the last waitable task settles
+        // (its final virtual turn's `result`).
+        if (
+          idleTtlMs > 0 &&
+          status === "alive" &&
+          getWaitableInFlightTaskIds(backgroundTaskState).length === 0
+        ) {
           idleTimer = setTimeout(() => {
             if (status === "alive" && !pendingTurn) {
               logger.info("query-session.idle_timeout", {

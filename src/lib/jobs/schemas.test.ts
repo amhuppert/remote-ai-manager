@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   backgroundJobSchema,
+  jobRecordSchema,
   jobStatusEventSchema,
   jobStatusSchema,
 } from "./schemas";
@@ -73,6 +74,53 @@ describe("backgroundJobSchema", () => {
     expect(parsed.parkedRef).toBeUndefined();
     expect(parsed.preparedSha).toBeUndefined();
     expect(parsed.refreshWarning).toBeUndefined();
+  });
+});
+
+describe("jobRecordSchema", () => {
+  const base = {
+    jobId: "job-1",
+    jobType: "merge" as const,
+    status: "completed" as const,
+    projectName: "demo",
+    sessionName: "feature",
+    branchName: "csm/feature",
+    startedAt: "2026-01-01T00:00:00Z",
+  };
+
+  it("accepts the durable job_records field set", () => {
+    const parsed = jobRecordSchema.parse({
+      ...base,
+      completedAt: "2026-01-01T00:01:00Z",
+      mergeHash: "merge-sha",
+      commitHash: "commit-sha",
+      conflictCount: 2,
+      conflictFiles: ["a.ts", "b.ts"],
+      errorMessage: "terminal details",
+    });
+
+    expect(parsed).toEqual({
+      ...base,
+      completedAt: "2026-01-01T00:01:00Z",
+      mergeHash: "merge-sha",
+      commitHash: "commit-sha",
+      conflictCount: 2,
+      conflictFiles: ["a.ts", "b.ts"],
+      errorMessage: "terminal details",
+    });
+  });
+
+  it.each([
+    ["targetBranch", "main"],
+    ["phase", "awaiting-land"],
+    ["parkedRef", "refs/cc-merges/job-1"],
+    ["preparedSha", "abc123"],
+    ["expectedTargetSha", "def456"],
+    ["refreshWarning", "target worktree could not be refreshed"],
+  ])("rejects live-only field %s", (field, value) => {
+    const result = jobRecordSchema.safeParse({ ...base, [field]: value });
+
+    expect(result.success).toBe(false);
   });
 });
 

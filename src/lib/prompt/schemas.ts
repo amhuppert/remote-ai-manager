@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { queueDeliveryTimingSchema } from "@/lib/agent-backends/capabilities-descriptor";
+import { queuedMessageViewSchema } from "@/lib/conversations/message-queue-schemas";
 import { imagePayloadSchema } from "@/lib/images/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 export const runPromptRequestSchema = z
@@ -26,3 +28,30 @@ export type RunPromptRequest = z.infer<typeof runPromptRequestSchema>;
 export const pendingPromptRequestSchema = z.object({
   text: z.string().nullable(),
 });
+
+export const queueEnqueueRequestSchema = z
+  .object({
+    text: z.string().optional(),
+    images: z.array(imagePayloadSchema).max(5).optional(),
+  })
+  .refine(
+    (data) =>
+      (data.text?.trim().length ?? 0) > 0 || (data.images?.length ?? 0) > 0,
+    { message: "Either message text or at least one image is required" },
+  );
+export type QueueEnqueueRequest = z.infer<typeof queueEnqueueRequestSchema>;
+
+export const queueEnqueueResponseSchema = z.object({
+  queued: z.literal(true),
+  message: queuedMessageViewSchema,
+  deliveryTiming: queueDeliveryTimingSchema,
+});
+export type QueueEnqueueResponse = z.infer<typeof queueEnqueueResponseSchema>;
+
+export const queueCancellationResponseSchema = z.object({
+  cancelled: z.literal(true),
+  id: z.string(),
+});
+export type QueueCancellationResponse = z.infer<
+  typeof queueCancellationResponseSchema
+>;

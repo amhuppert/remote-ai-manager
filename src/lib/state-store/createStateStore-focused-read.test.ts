@@ -15,6 +15,7 @@ import { createProjectsRepo } from "./projects-repo";
 import { createSessionsRepo } from "./sessions-repo";
 import { createConversationsRepo } from "./conversations-repo";
 import { createStateStore } from "./store";
+import { createWriteQueue } from "./write-queue";
 import type { StateAggregate } from "./state-aggregate";
 import { createConversationService } from "../conversations/service";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
@@ -356,5 +357,70 @@ describe("createStateStore — focused read DI guard", () => {
 
     const overrides = await store.getProjectMcpOverrides("/missing-project");
     expect(overrides).toBeUndefined();
+  });
+
+  it("mutateConversation persists a single-row change without invoking aggregate.readAll/diffAndCommit", async () => {
+    const projects = createProjectsRepo(db);
+    const sessions = createSessionsRepo(db);
+    const conversations = createConversationsRepo(db);
+
+    projects.upsert({ rootPath: "/proj-a" });
+    sessions.upsert(
+      "/proj-a",
+      sessionStateSchema.parse({
+        sessionName: "alpha",
+        worktreePath: "/wt/alpha",
+        branchName: "csm/alpha",
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+    conversations.upsert(
+      "/proj-a",
+      "alpha",
+      conversationStateSchema.parse({
+        id: "conv-1",
+        transcriptPath: null,
+        status: "idle",
+        promptCount: 0,
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+        summary: "before",
+      }),
+    );
+
+    const spyAggregate: StateAggregate = {
+      readAll: vi.fn(() => {
+        throw new Error(
+          "spyAggregate.readAll must NOT be called from mutateConversation focused path",
+        );
+      }),
+      diffAndCommit: vi.fn(() => {
+        throw new Error(
+          "spyAggregate.diffAndCommit must NOT be called from mutateConversation focused path",
+        );
+      }),
+    };
+
+    const store = createStateStore({
+      db,
+      aggregate: spyAggregate,
+      writeQueue: createWriteQueue(),
+    });
+
+    await store.mutateConversation(
+      "/proj-a",
+      "alpha",
+      "conv-1",
+      "focused.update",
+      (c) => {
+        c.summary = "after";
+      },
+    );
+
+    const found = await store.getConversation("/proj-a", "alpha", "conv-1");
+    expect(found?.summary).toBe("after");
+    expect(spyAggregate.readAll).not.toHaveBeenCalled();
+    expect(spyAggregate.diffAndCommit).not.toHaveBeenCalled();
   });
 });

@@ -136,18 +136,19 @@ describe("WorkflowInspectorPanel — persistent tab strip", () => {
 });
 
 describe("WorkflowInspectorPanel — workflow tab body", () => {
-  it("renders exactly six InspectorConfigBlocks and no AC, tasks, or delete", () => {
+  it("renders exactly seven InspectorConfigBlocks and no AC, tasks, or delete", () => {
     resetStore();
     setupStore({ selectedContextId: null });
     const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
 
     const blocks = container.querySelectorAll(".wb-inspector-block");
-    expect(blocks).toHaveLength(6);
+    expect(blocks).toHaveLength(7);
     const labels = Array.from(
       container.querySelectorAll(".cc-section-label"),
     ).map((el) => el.textContent);
     expect(labels).toEqual([
       "Implementer",
+      "Collaboration",
       "Context validator",
       "Script validator",
       "Iteration policy",
@@ -189,6 +190,41 @@ describe("WorkflowInspectorPanel — workflow tab body", () => {
     ).toBeUndefined();
   });
 
+  it("clicking Override then Reset on the Collaboration block mutates workflowConfig.collaboration", () => {
+    resetStore();
+    setupStore({ selectedContextId: null });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const collab = findBlockByLabel(container, "Collaboration")!;
+    expect(collab.getAttribute("data-source")).toBe("global");
+    fireEvent.click(
+      footButtons(collab).find((b) => b.textContent === "Override")!,
+    );
+
+    const overridden =
+      _useGraphWorkflowBuilderStore.getState().draftDefinition?.workflowConfig
+        .collaboration;
+    expect(overridden).toBeDefined();
+    expect(overridden?.negotiationRounds).toBe(3);
+    expect(overridden?.secondAgent).toEqual({
+      backend: "claude",
+      model: "sonnet",
+      reasoningEffort: "medium",
+    });
+
+    const collabAfter = findBlockByLabel(container, "Collaboration")!;
+    fireEvent.click(
+      footButtons(collabAfter).find(
+        (b) => b.textContent === "Reset to inherit",
+      )!,
+    );
+
+    expect(
+      _useGraphWorkflowBuilderStore.getState().draftDefinition?.workflowConfig
+        .collaboration,
+    ).toBeUndefined();
+  });
+
   it("toggling the workflow script validator creates and resets a workflow override", () => {
     resetStore();
     setupStore({ selectedContextId: null });
@@ -219,7 +255,7 @@ describe("WorkflowInspectorPanel — workflow tab body", () => {
 });
 
 describe("WorkflowInspectorPanel — context tab body", () => {
-  it("renders AC header, six blocks, tasks editor, and delete button", () => {
+  it("renders AC header, seven blocks, tasks editor, and delete button", () => {
     resetStore();
     setupStore({ selectedContextId: "context-plan" });
     const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
@@ -228,7 +264,7 @@ describe("WorkflowInspectorPanel — context tab body", () => {
       container.querySelector("#context-acceptance-criteria"),
     ).not.toBeNull();
     const blocks = container.querySelectorAll(".wb-inspector-block");
-    expect(blocks).toHaveLength(6);
+    expect(blocks).toHaveLength(7);
 
     expect(container.querySelector(".wb-task-list")).not.toBeNull();
     expect(

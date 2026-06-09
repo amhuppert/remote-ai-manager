@@ -389,6 +389,36 @@ export interface ActorImplementationDeps {
    * agent-backends registry in production; tests inject a stub runner.
    */
   getTaskRunner(backend: AgentBackendId): AgentTaskRunner;
+
+  // Durable queue delivery result. Used only by auto-drained queued turns to
+  // record the outcome of a claimed delivery batch against the message queue.
+  // `markQueuedDelivered` is called after the coalesced user transcript entry
+  // is appended; `markQueuedPending` returns a batch to `pending` for a
+  // recoverable acceptance failure; `markQueuedFailed` marks it terminally
+  // `failed`. Wired to `messageQueueService` in production.
+  markQueuedDelivered(input: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+    ids: string[];
+    deliveryAttemptId: string;
+  }): Promise<void>;
+  markQueuedPending(input: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+    ids: string[];
+    deliveryAttemptId: string;
+    error: string;
+  }): Promise<void>;
+  markQueuedFailed(input: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+    ids: string[];
+    deliveryAttemptId: string;
+    error: string;
+  }): Promise<void>;
 }
 
 let _deps: ActorImplementationDeps | null = null;
@@ -425,6 +455,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     gatewayPortableConfigMod,
     defaultDepsMod,
     capabilitiesDepsMod,
+    messageQueueMod,
   ] = await Promise.all([
     import("@/lib/prompt/single-flight"),
     import("@/lib/shared/query-semaphore"),
@@ -446,6 +477,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     import("@/lib/mcp-gateway/portable-config"),
     import("@/lib/mcp/default-deps"),
     import("@/lib/agent-capabilities/default-deps"),
+    import("@/lib/conversations/message-queue-service"),
   ]);
 
   const composePortableMcpForConversation =
@@ -528,6 +560,9 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
       capabilitiesDepsMod.composeCapabilityConfigForProjectConversation,
     executeAgentCall: defaultExecuteAgentCall,
     getTaskRunner: registryMod.getTaskRunner,
+    markQueuedDelivered: messageQueueMod.messageQueueService.markDelivered,
+    markQueuedPending: messageQueueMod.messageQueueService.markPending,
+    markQueuedFailed: messageQueueMod.messageQueueService.markFailed,
   } as unknown as ActorImplementationDeps;
 }
 
@@ -917,6 +952,7 @@ interface DispatchTurnViaAgentCallInput {
   modelId: string | null | undefined;
   reasoningEffort: string | undefined;
   autonomous: boolean;
+  waitForBackgroundTasks: boolean;
   outputFormat: ConversationBackendTurnInput["outputFormat"];
   onEvent: ConversationBackendTurnInput["onEvent"];
   syntheticForkSeed: ConversationBackendTurnInput["syntheticForkSeed"];
@@ -1016,6 +1052,9 @@ async function dispatchTurnViaAgentCall(
           ? { reasoningEffort: input.reasoningEffort }
           : {}),
         autonomous: input.autonomous,
+        ...(input.waitForBackgroundTasks
+          ? { waitForBackgroundTasks: true }
+          : {}),
         sessionInstructions: [],
         ...(input.imageRefs !== undefined
           ? { imageRefs: input.imageRefs }
@@ -1225,8 +1264,12 @@ export async function executePromptForMachine(
         ? [{ type: "text" as const, text: input.promptText }]
         : [];
 
-  // Persist user prompt in transcript
-  await safeAppendWithMeta(input.conversationId, {
+  // Build the user prompt transcript entry once. For normal turns it is
+  // appended immediately. For queued (auto-drained) turns the durable queue —
+  // not the JSONL transcript — owns this content until the backend confirms
+  // acceptance, so the append is deferred to the `input_accepted` event and the
+  // claimed queue rows are only marked delivered after that append succeeds.
+  const buildUserTranscriptEntry = (): TranscriptEntry => ({
     timestamp: new Date().toISOString(),
     type: "user",
     role: "user",
@@ -1234,6 +1277,10 @@ export async function executePromptForMachine(
     model: effectiveModel ?? undefined,
     effort: effectiveEffort,
   });
+
+  if (!input.queuedDelivery) {
+    await safeAppendWithMeta(input.conversationId, buildUserTranscriptEntry());
+  }
 
   // ---------------------------------------------------------------
   // Get-or-create ConversationBackendRuntime
@@ -1591,6 +1638,14 @@ export async function executePromptForMachine(
   // ---------------------------------------------------------------
   // Safety-net timeout
   // ---------------------------------------------------------------
+  if (runtimeState.abortController.signal.aborted) {
+    logger.info("prompt.abort_controller_refreshed", {
+      sessionName: input.sessionName,
+      backend: input.agentBackend,
+      conversationId: input.conversationId,
+    });
+    runtimeState.abortController = new AbortController();
+  }
   const abortController = runtimeState.abortController;
   deps.registerAbortController(input.conversationId, abortController);
 
@@ -1621,9 +1676,43 @@ export async function executePromptForMachine(
   const pendingTranscriptWrites: Promise<void>[] = [];
   let sawErrorEvent = false;
 
+  // Guards the queued-delivery transcript append. Set true the instant the
+  // coalesced user entry is appended on backend acceptance so a repeated
+  // `input_accepted` cannot re-append, and so a later `markQueuedDelivered`
+  // failure cannot trigger a second append. Read on all exit paths to decide
+  // whether a queued batch must be returned to `pending` (no acceptance).
+  let queuedUserEntryAppended = false;
+
   // onEvent: translate backend events into existing SSE emit path
   const onEvent = async (event: ConversationBackendEvent): Promise<void> => {
     switch (event.type) {
+      case "input_accepted": {
+        if (!input.queuedDelivery || queuedUserEntryAppended) {
+          break;
+        }
+        await safeAppendWithMeta(
+          input.conversationId,
+          buildUserTranscriptEntry(),
+        );
+        // Mark appended before the queue write so a `markQueuedDelivered`
+        // failure cannot cause the entry to be appended twice.
+        queuedUserEntryAppended = true;
+        await deps.markQueuedDelivered({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          conversationId: input.conversationId,
+          ids: input.queuedDelivery.messageIds,
+          deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
+        });
+        logger.info("queue.accepted", {
+          sessionName: input.sessionName,
+          conversationId: input.conversationId,
+          messageIds: input.queuedDelivery.messageIds,
+          deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
+        });
+        break;
+      }
+
       case "backend_init":
         runtimeState.sendToMachine?.({
           type: "BACKEND_INIT",
@@ -1829,6 +1918,7 @@ export async function executePromptForMachine(
       modelId: effectiveModel,
       reasoningEffort: effectiveEffort,
       autonomous: input.autonomous ?? false,
+      waitForBackgroundTasks: input.waitForBackgroundTasks ?? false,
       outputFormat: input.outputFormat,
       onEvent,
       syntheticForkSeed,
@@ -1891,6 +1981,39 @@ export async function executePromptForMachine(
     }
     runtimeState.currentTurnAutonomous = undefined;
     deps.unregisterAbortController(input.conversationId);
+
+    // Queued delivery that never reached backend acceptance (turn completed,
+    // errored, or aborted before `input_accepted`): return the claimed batch to
+    // `pending` so it is never silently lost (req 4.2). No transcript entry was
+    // appended for it. All acceptance failures are treated as recoverable —
+    // the turn result does not surface a terminal queue-acceptance signal, so
+    // we never guess `failed` here (see CONCERNS).
+    if (input.queuedDelivery && !queuedUserEntryAppended) {
+      try {
+        await deps.markQueuedPending({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          conversationId: input.conversationId,
+          ids: input.queuedDelivery.messageIds,
+          deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
+          error: "queued delivery did not reach backend acceptance",
+        });
+        logger.info("queue.return_pending", {
+          sessionName: input.sessionName,
+          conversationId: input.conversationId,
+          messageIds: input.queuedDelivery.messageIds,
+          deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
+        });
+      } catch (err) {
+        logger.error("queue.return_pending_failed", {
+          sessionName: input.sessionName,
+          conversationId: input.conversationId,
+          messageIds: input.queuedDelivery.messageIds,
+          deliveryAttemptId: input.queuedDelivery.deliveryAttemptId,
+          error: getErrorMessage(err),
+        });
+      }
+    }
   }
 
   await Promise.all(pendingTranscriptWrites);
@@ -1987,6 +2110,9 @@ export async function executePromptForMachine(
     structuredOutput: effectiveStructuredOutput,
     aborted: turnResult?.aborted ?? false,
     error: effectiveError,
+    ...(turnResult?.backgroundWait !== undefined
+      ? { backgroundWait: turnResult.backgroundWait }
+      : {}),
   };
 
   // Emit done on the SSE stream

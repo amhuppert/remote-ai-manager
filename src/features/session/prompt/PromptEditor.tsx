@@ -107,18 +107,40 @@ interface ConversationSuggestionState {
   command: (item: ConversationMentionSelection) => void;
 }
 
+/**
+ * Decide whether typing `char` at the start of the line should open the
+ * command/skill popup for the given backend. The `$` skills trigger applies
+ * only to the Codex backend; `/` works on both Claude and Codex.
+ */
+export function shouldOpenSlashPopup(
+  char: string,
+  backend: AgentBackendId | undefined,
+): boolean {
+  if (char === "$") return backend === "codex";
+  return true;
+}
+
 function buildSlashTriggers(args: {
-  backend: AgentBackendId | undefined;
+  backendRef: React.RefObject<AgentBackendId | undefined>;
   setSlashState: (state: SlashSuggestionState | null) => void;
   slashPopupRef: React.RefObject<SlashCommandPopupHandle | null>;
 }): SlashCommandTrigger[] {
-  const { backend, setSlashState, slashPopupRef } = args;
-  const chars: string[] = backend === "codex" ? ["/", "$"] : ["/"];
+  const { backendRef, setSlashState, slashPopupRef } = args;
+  // Register both trigger characters up front and decide per keystroke whether
+  // the popup should open. The Tiptap editor is created once and never rebuilt,
+  // so a backend value captured here would go stale when the user toggles the
+  // backend (before the first message) or when the conversation's stored
+  // backend loads after mount. Reading it from a ref keeps the gate live.
+  const chars = ["/", "$"] as const;
   return chars.map((char) => ({
     char,
     items: () => [],
     render: () => ({
       onStart: (props) => {
+        if (!shouldOpenSlashPopup(char, backendRef.current)) {
+          setSlashState(null);
+          return;
+        }
         setSlashState({
           triggerChar: char,
           query: props.query,
@@ -126,6 +148,10 @@ function buildSlashTriggers(args: {
         });
       },
       onUpdate: (props) => {
+        if (!shouldOpenSlashPopup(char, backendRef.current)) {
+          setSlashState(null);
+          return;
+        }
         setSlashState({
           triggerChar: char,
           query: props.query,
@@ -234,6 +260,10 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
     const onInlineMarkersChangeRef = useRef(onInlineMarkersChange);
     onInlineMarkersChangeRef.current = onInlineMarkersChange;
     const lastMarkerIdsRef = useRef<string[]>([]);
+    // The editor is created once; keep the current backend in a ref so the
+    // slash-command triggers can read the live value without recreating it.
+    const backendRef = useRef(backend);
+    backendRef.current = backend;
 
     const [slashState, setSlashState] = useState<SlashSuggestionState | null>(
       null,
@@ -287,7 +317,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
         }),
         SlashCommand.configure({
           triggers: buildSlashTriggers({
-            backend,
+            backendRef,
             setSlashState,
             slashPopupRef,
           }),

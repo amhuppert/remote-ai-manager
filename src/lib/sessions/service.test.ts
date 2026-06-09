@@ -699,9 +699,45 @@ describe("createSessionFocus", () => {
     expect(opts.cwd).toBe(session.worktreePath);
     expect(opts.env.PROJECT_ROOT).toBe("/projects/repo");
     expect(opts.env.WORKTREE_PATH).toBe(session.worktreePath);
+    // No parent session → parent worktree falls back to the project root.
+    expect(opts.env.PARENT_WORKTREE_PATH).toBe("/projects/repo");
     expect(opts.env.SESSION_NAME).toBe("With Init");
     expect(opts.env.BRANCH_NAME).toBe(session.branchName);
     expect(opts.timeout).toBeUndefined();
+  });
+
+  it("passes the parent session's worktree as PARENT_WORKTREE_PATH when branched", async () => {
+    mockGitSuccess(); // git worktree add
+
+    readStateMock.mockResolvedValue(
+      stateWithSession("/projects/repo", "Parent Session", {
+        worktreePath: "/projects/repo/.worktrees/parent-session",
+      }),
+    );
+
+    (deps.readRepoConfig as Mock).mockResolvedValue({
+      initScriptPath: "./setup.sh",
+    });
+    existsSyncMock.mockImplementation((p: string) =>
+      String(p).includes("setup.sh"),
+    );
+
+    await service.provisionSession("/projects/repo", "child-session", {
+      mode: "fast",
+      objective: null,
+      baseBranch: "csm/parent-session",
+      targetBranch: "csm/parent-session",
+      parentSessionName: "Parent Session",
+    });
+
+    expect(execFileAsyncMock).toHaveBeenCalledTimes(1);
+    const opts = execFileAsyncMock.mock.calls[0]![2] as {
+      env: Record<string, string>;
+    };
+    expect(opts.env.PARENT_WORKTREE_PATH).toBe(
+      "/projects/repo/.worktrees/parent-session",
+    );
+    expect(opts.env.PROJECT_ROOT).toBe("/projects/repo");
   });
 
   it("throws 'Init script not found' when script path doesn't exist", async () => {

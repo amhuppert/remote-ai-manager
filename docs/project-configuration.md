@@ -79,6 +79,7 @@ If the resolved path does not exist, session creation fails with an error.
 | `PROJECT_ROOT` | Absolute path to the original project root | `/home/user/repos/my-project` |
 | `CLAUDE_PROJECT_DIR` | Same as `PROJECT_ROOT` | `/home/user/repos/my-project` |
 | `WORKTREE_PATH` | Absolute path to the session worktree | `/home/user/repos/my-project/.worktrees/my-session` |
+| `PARENT_WORKTREE_PATH` | Worktree the session was branched from — the parent session's worktree, or `PROJECT_ROOT` when branched off the main branch | `/home/user/repos/my-project/.worktrees/parent-session` |
 | `SESSION_NAME` | Session identifier | `my-session` |
 | `BRANCH_NAME` | Git branch created for this session | `csm/my-session` |
 
@@ -113,9 +114,10 @@ set -euo pipefail
 # Install dependencies
 npm ci
 
-# Copy environment file if it doesn't exist
-if [ ! -f .env.local ]; then
-  cp "$PROJECT_ROOT/.env.example" .env.local
+# Carry the local env file over from the worktree this session was branched
+# from (the parent session, or the project root when branched off main).
+if [ ! -f .env.local ] && [ -f "$PARENT_WORKTREE_PATH/.env.local" ]; then
+  cp "$PARENT_WORKTREE_PATH/.env.local" .env.local
 fi
 
 # Run code generation

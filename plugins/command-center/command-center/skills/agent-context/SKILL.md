@@ -88,6 +88,7 @@ Runs after CC creates your worktree. Typically installs dependencies. If the ini
 |---|---|
 | `PROJECT_ROOT` | Original project root path |
 | `WORKTREE_PATH` | Your session worktree path |
+| `PARENT_WORKTREE_PATH` | Worktree this session was branched from (the parent session's worktree, or `PROJECT_ROOT` when branched off main) |
 | `SESSION_NAME` | Session identifier |
 | `BRANCH_NAME` | Git branch (`csm/<name>`) |
 

@@ -142,6 +142,7 @@ export const conversationMachine = setup({
     dispatchPushNotification: () => {},
     markUnreadOnFinish: () => {},
     markReadOnUserTurnStart: () => {},
+    drainPendingQueue: () => {},
   },
 }).createMachine({
   id: "conversation",
@@ -199,6 +200,12 @@ export const conversationMachine = setup({
     // IDLE — waiting for prompt or debug mode entry
     // ========================================================
     idle: {
+      // idle is the settled resting state a conversation reaches after a turn
+      // finalizes (finalizingTurn → idle) and at startup. Draining here is the
+      // canonical "settled user-submit point where a new turn can start": the
+      // manager's provided action claims any pending queue batch and dispatches
+      // it as the next turn. The default stub is a no-op.
+      entry: [{ type: "drainPendingQueue" }],
       always: [
         {
           guard: and(["isDebugModeActive", "isDebugErrorRestore"]),
@@ -240,6 +247,12 @@ export const conversationMachine = setup({
               startedAt: new Date().toISOString(),
               streamId: event.streamId,
               outputFormat: event.outputFormat,
+              ...(event.waitForBackgroundTasks
+                ? { waitForBackgroundTasks: true }
+                : {}),
+              ...(event.queuedDelivery
+                ? { queuedDelivery: event.queuedDelivery }
+                : {}),
             }),
             lastError: null,
           }),
@@ -469,6 +482,12 @@ export const conversationMachine = setup({
                 autonomous: activeTurn.autonomous,
                 debugMode: context.debugMode,
                 outputFormat,
+                ...(activeTurn.waitForBackgroundTasks
+                  ? { waitForBackgroundTasks: true }
+                  : {}),
+                ...(activeTurn.queuedDelivery
+                  ? { queuedDelivery: activeTurn.queuedDelivery }
+                  : {}),
               };
             },
             onDone: {
@@ -953,6 +972,12 @@ export const conversationMachine = setup({
               startedAt: new Date().toISOString(),
               streamId: event.streamId,
               outputFormat: event.outputFormat,
+              ...(event.waitForBackgroundTasks
+                ? { waitForBackgroundTasks: true }
+                : {}),
+              ...(event.queuedDelivery
+                ? { queuedDelivery: event.queuedDelivery }
+                : {}),
             }),
             lastError: null,
           }),

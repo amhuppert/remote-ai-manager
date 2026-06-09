@@ -66,6 +66,7 @@ function baseConversation(overrides: Record<string, unknown> = {}) {
     agentBackend: "claude" as const,
     backendRef: null,
     unread: false,
+    pendingQueue: [],
     ...overrides,
   };
 }

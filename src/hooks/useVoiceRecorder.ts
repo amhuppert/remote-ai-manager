@@ -269,7 +269,12 @@ export function useVoiceRecorder(
         }
       };
 
-      recorder.start(1000); // Collect data every second
+      // Record into a single blob flushed on stop(). A timeslice (e.g.
+      // start(1000)) makes the final partial segment depend on a stop()-time
+      // flush that intermittently arrives empty for short clips, which dropped
+      // the whole recording. Without a timeslice the entire recording is
+      // delivered as one chunk when we stop.
+      recorder.start();
       startTimeRef.current = Date.now();
       setState("recording");
       setElapsedTime(0);

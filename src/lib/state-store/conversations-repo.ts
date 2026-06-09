@@ -5,9 +5,12 @@ import { conversationStateSchema } from "@/lib/conversations/schemas";
 import {
   decodeSharedConversationColumns,
   encodeSharedConversationColumns,
+  jsonOrNull,
+  parseJsonColumn,
   stableStringify,
   throwConversationValidationError,
 } from "./conversation-row-codec";
+import { pendingQueuedMessageSchema } from "@/lib/conversations/message-queue-schemas";
 import type {
   ConversationState,
   ConversationStatus,
@@ -93,6 +96,7 @@ const conversationsTableRowSchema = z.object({
   agent_capability_overrides: z.string().nullable(),
   agent_capabilities_runtime: z.string().nullable(),
   unread: z.union([z.literal(0), z.literal(1)]),
+  pending_queue: z.string().nullable(),
 });
 type ConversationsTableRow = z.infer<typeof conversationsTableRowSchema>;
 
@@ -128,6 +132,7 @@ interface SqlBindRow {
   agent_capability_overrides: string | null;
   agent_capabilities_runtime: string | null;
   unread: number;
+  pending_queue: string | null;
 }
 
 /**
@@ -146,6 +151,7 @@ function conversationToSqlBind(
     project_path: projectPath,
     session_name: sessionName,
     ...encodeSharedConversationColumns(conversation),
+    pending_queue: jsonOrNull(conversation.pendingQueue),
   };
 }
 
@@ -169,6 +175,8 @@ export function canonicalConversationRow(
   );
 }
 
+const pendingQueueArraySchema = z.array(pendingQueuedMessageSchema);
+
 function rowToDomain(rawRow: unknown): {
   projectPath: string;
   sessionName: string;
@@ -187,9 +195,21 @@ function rowToDomain(rawRow: unknown): {
   }
   const row: ConversationsTableRow = rowResult.data;
 
+  const pendingQueue = parseJsonColumn(
+    "pendingQueue",
+    row.pending_queue,
+    pendingQueueArraySchema,
+    "default",
+    [],
+  );
+  if (!pendingQueue.ok) {
+    return throwConversationValidationError(row.id, pendingQueue.issues);
+  }
+
   const candidate: Record<string, unknown> = {
     id: row.id,
     ...decodeSharedConversationColumns(row.id, row),
+    pendingQueue: pendingQueue.value ?? [],
   };
 
   const result = conversationStateSchema.safeParse(candidate);
@@ -257,6 +277,7 @@ const CONVERSATION_COLUMN_KEYS: ReadonlyArray<keyof ConversationsTableRow> = [
   "agent_capability_overrides",
   "agent_capabilities_runtime",
   "unread",
+  "pending_queue",
 ];
 
 function rawRowsEqual(
@@ -315,7 +336,7 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        pending_questions, pending_prompt_text, forked_from, role, context_tokens, context_window_max,
        debug_mode, machine_snapshot, agent_backend, backend_ref,
        mcp_overrides, mcp_runtime, agent_capability_overrides, agent_capabilities_runtime,
-       unread
+       unread, pending_queue
      ) VALUES (
        @id, @project_path, @session_name, @name, @transcript_path, @status,
        @prompt_count, @created_at, @last_activity_at, @source, @summary, @archived,
@@ -323,7 +344,7 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        @pending_questions, @pending_prompt_text, @forked_from, @role, @context_tokens, @context_window_max,
        @debug_mode, @machine_snapshot, @agent_backend, @backend_ref,
        @mcp_overrides, @mcp_runtime, @agent_capability_overrides, @agent_capabilities_runtime,
-       @unread
+       @unread, @pending_queue
      )
      ON CONFLICT(id) DO UPDATE SET
        project_path               = excluded.project_path,
@@ -355,7 +376,8 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        mcp_runtime                = excluded.mcp_runtime,
        agent_capability_overrides = excluded.agent_capability_overrides,
        agent_capabilities_runtime = excluded.agent_capabilities_runtime,
-       unread                     = excluded.unread`,
+       unread                     = excluded.unread,
+       pending_queue              = excluded.pending_queue`,
   );
   const deleteStmt = db.prepare(`DELETE FROM conversations WHERE id = ?`);
   const setPendingPromptTextStmt = db.prepare(

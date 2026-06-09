@@ -91,6 +91,7 @@ function makeConversation(
     agentBackend: "claude",
     backendRef: null,
     unread: false,
+    pendingQueue: [],
     ...overrides,
   };
 }
@@ -612,6 +613,120 @@ describe("executePromptStream (facade)", () => {
 
     expect(result.error).toBe("Claude API overloaded");
     expect(result.aborted).toBe(false);
+  });
+
+  it("forwards waitForBackgroundTasks into the SUBMIT_PROMPT event when opted in", async () => {
+    deps = createTestDeps();
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    await executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello",
+      vi.fn(),
+      "conv-123",
+      undefined,
+      undefined,
+      { waitForBackgroundTasks: true },
+    );
+
+    expect(deps.sendConversationEvent).toHaveBeenCalledWith(
+      "/projects/repo",
+      "test-session",
+      "conv-123",
+      expect.objectContaining({
+        type: "SUBMIT_PROMPT",
+        waitForBackgroundTasks: true,
+      }),
+    );
+  });
+
+  it("does not set waitForBackgroundTasks in the SUBMIT_PROMPT event by default", async () => {
+    deps = createTestDeps();
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    await executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello",
+      vi.fn(),
+      "conv-123",
+    );
+
+    expect(deps.sendConversationEvent).toHaveBeenCalledWith(
+      "/projects/repo",
+      "test-session",
+      "conv-123",
+      expect.not.objectContaining({
+        waitForBackgroundTasks: expect.anything(),
+      }),
+    );
+  });
+
+  it("returns the backgroundWait summary from the actor snapshot when a wait occurred", async () => {
+    const backgroundWait = {
+      waitedTaskIds: ["task-a"],
+      settledTaskIds: ["task-a"],
+      timedOut: false,
+      durationMs: 4200,
+    };
+    mockActor.getSnapshot
+      .mockReturnValueOnce({
+        value: "idle",
+        status: "active" as const,
+        context: {},
+      })
+      .mockReturnValue({
+        value: "idle",
+        status: "active" as const,
+        context: {
+          lastResult: { backgroundWait },
+        },
+      });
+
+    deps = createTestDeps();
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    const result = await executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello",
+      vi.fn(),
+      "conv-123",
+    );
+
+    expect(result.backgroundWait).toEqual(backgroundWait);
+  });
+
+  it("omits backgroundWait from the result when no wait occurred", async () => {
+    mockActor.getSnapshot
+      .mockReturnValueOnce({
+        value: "idle",
+        status: "active" as const,
+        context: {},
+      })
+      .mockReturnValue({
+        value: "idle",
+        status: "active" as const,
+        context: { lastResult: {} },
+      });
+
+    deps = createTestDeps();
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    const result = await executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello",
+      vi.fn(),
+      "conv-123",
+    );
+
+    expect(result.backgroundWait).toBeUndefined();
   });
 
   it("passes images in the SUBMIT_PROMPT event", async () => {

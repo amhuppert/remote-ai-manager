@@ -1198,4 +1198,130 @@ describe("NotificationListener", () => {
       queryKey: conversationKeys.active(),
     });
   });
+
+  it("refreshes the pending-queue and active caches on message-queued without fabricating a transcript row", async () => {
+    const client = makeClient();
+    const messagesKey = conversationKeys.messages("proj", "sess", "conv-1");
+    client.setQueryData(messagesKey, [
+      {
+        role: "user",
+        content: [{ type: "text", text: "hi" }],
+        timestamp: null,
+        seq: 0,
+      },
+    ]);
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("message-queued", {
+      type: "message-queued",
+      projectName: "proj",
+      sessionName: "sess",
+      conversationId: "conv-1",
+      text: "follow up",
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: sessionKeys.detail("proj", "sess"),
+      }),
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: conversationKeys.active(),
+    });
+    // Queue pending events must NOT fabricate a transcript cache row: the
+    // messages cache is neither invalidated nor mutated.
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: messagesKey,
+    });
+    const cached = client.getQueryData<Array<{ seq: number }>>(messagesKey);
+    expect(cached?.length).toBe(1);
+  });
+
+  it("refreshes the pending-queue and active caches on message-queue-updated without touching the messages cache", async () => {
+    const client = makeClient();
+    const messagesKey = conversationKeys.messages("proj", "sess", "conv-1");
+    client.setQueryData(messagesKey, [
+      {
+        role: "user",
+        content: [{ type: "text", text: "hi" }],
+        timestamp: null,
+        seq: 0,
+      },
+    ]);
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("message-queue-updated", {
+      type: "message-queue-updated",
+      projectName: "proj",
+      sessionName: "sess",
+      conversationId: "conv-1",
+      message: {
+        id: "q-1",
+        content: [{ type: "text", text: "follow up" }],
+        status: "delivered",
+        enqueuedAt: "2026-04-28T00:00:00.000Z",
+        updatedAt: "2026-04-28T00:00:01.000Z",
+        deliveredAt: "2026-04-28T00:00:01.000Z",
+        cancelledAt: null,
+        failedAt: null,
+        error: null,
+      },
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: sessionKeys.detail("proj", "sess"),
+      }),
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: conversationKeys.active(),
+    });
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: messagesKey,
+    });
+    const cached = client.getQueryData<Array<{ seq: number }>>(messagesKey);
+    expect(cached?.length).toBe(1);
+  });
+
+  it("ignores malformed queue events without throwing or mutating caches", async () => {
+    const client = makeClient();
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    invalidateQueries.mockClear();
+
+    // Missing required `conversationId`/`text` (message-queued) and
+    // `message`/`conversationId` (message-queue-updated): both must be ignored.
+    es.emit("message-queued", {
+      type: "message-queued",
+      projectName: "proj",
+      sessionName: "sess",
+    });
+    es.emit("message-queue-updated", {
+      type: "message-queue-updated",
+      projectName: "proj",
+      sessionName: "sess",
+    });
+
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: sessionKeys.detail("proj", "sess"),
+    });
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: conversationKeys.active(),
+    });
+  });
 });

@@ -1,10 +1,11 @@
 "use client";
 
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useCallback } from "react";
 import { getModelsForBackend } from "@/components/ModelSelector";
 import { EFFORT_OPTIONS } from "@/components/ReasoningLevelSelector";
 import ConversationAgentCapabilitiesConfig from "@/components/agent-capabilities/ConversationAgentCapabilitiesConfig";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
+import { CloseIcon } from "@/components/icons";
 import DebugStatusStrip from "@/features/session/debug/DebugStatusStrip";
 import ImageAttachmentPreview from "@/components/ImageAttachmentPreview";
 import MobilePromptToolbar from "@/features/session/mobile/MobilePromptToolbar";
@@ -21,6 +22,16 @@ import type {
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
+import {
+  queueCapabilityForBackend as defaultQueueCapabilityForBackend,
+  type QueueCapability,
+} from "@/lib/agent-backends/capabilities-descriptor";
+import { tracedFetch } from "@/lib/shared/traced-fetch";
+import {
+  useCancelOptimisticQueueEntry,
+  useSetQueueError,
+} from "@/stores/session-detail.store";
 
 const PromptEditor = lazy(() =>
   import("@/features/session/prompt/PromptEditor").then((m) => ({
@@ -38,30 +49,79 @@ export function computeSendButtonState({
   pendingImageCount,
   sending,
   conversationId,
+  backend,
   isReadOnly,
   isRecording,
+  queueCapabilityForBackend = defaultQueueCapabilityForBackend,
 }: {
   promptText: string;
   pendingImageCount: number;
   sending: boolean;
   conversationId: string;
+  backend: AgentBackendId;
   isReadOnly: boolean;
   isRecording: boolean;
+  queueCapabilityForBackend?: (backend: AgentBackendId) => QueueCapability;
 }): SendButtonState {
   const sessionBusyNoConvo = sending && !conversationId;
-  const disabled =
-    (!promptText.trim() && pendingImageCount === 0) ||
-    sessionBusyNoConvo ||
-    isReadOnly ||
-    isRecording;
-  const title = isReadOnly
-    ? "Session is read-only"
-    : sessionBusyNoConvo
-      ? "Session is busy"
-      : sending
-        ? "Queue message"
-        : "Send prompt";
-  return { disabled, title };
+  const queuingIntoRunningTurn = sending && !!conversationId;
+  const noContent = !promptText.trim() && pendingImageCount === 0;
+
+  if (isReadOnly) {
+    return { disabled: true, title: "Session is read-only" };
+  }
+  if (sessionBusyNoConvo) {
+    return { disabled: true, title: "Session is busy" };
+  }
+  if (queuingIntoRunningTurn) {
+    const cap = queueCapabilityForBackend(backend);
+    if (!cap.acceptsWhileRunning) {
+      return {
+        disabled: true,
+        title: "Queuing isn't supported for this backend",
+      };
+    }
+    const title =
+      cap.deliveryTiming === "in_turn"
+        ? "Queue for this turn"
+        : "Queue for next turn";
+    return { disabled: noContent || isRecording, title };
+  }
+  return {
+    disabled: noContent || isRecording,
+    title: "Send prompt",
+  };
+}
+
+interface CancellableQueueEntry {
+  id: string;
+  preview: string;
+}
+
+function queueEntryPreview(content: PendingQueuedMessage["content"]): string {
+  const text = content.find((block) => block.type === "text");
+  if (text) return text.text;
+  if (content.some((block) => block.type === "image")) {
+    return "Image attachment";
+  }
+  return "Queued message";
+}
+
+/**
+ * Project the durable pending queue down to the entries the composer can
+ * offer to cancel. Only `pending` entries are cancellable; once delivery has
+ * been claimed (`delivering`) or completed (`delivered`) the agent may already
+ * have seen the message, so cancellation is no longer offered (req 9.3).
+ */
+export function selectCancellableQueueEntries(
+  pendingQueue: readonly PendingQueuedMessage[],
+): CancellableQueueEntry[] {
+  return pendingQueue
+    .filter((entry) => entry.status === "pending")
+    .map((entry) => ({
+      id: entry.id,
+      preview: queueEntryPreview(entry.content),
+    }));
 }
 
 interface PromptComposerProps {
@@ -159,14 +219,49 @@ export default function PromptComposer({
   onDebugToggle,
   debugTogglePending,
 }: PromptComposerProps): React.JSX.Element {
+  const cancelOptimisticQueueEntry = useCancelOptimisticQueueEntry();
+  const setQueueError = useSetQueueError();
   const { disabled: sendDisabled, title: sendTitle } = computeSendButtonState({
     promptText,
     pendingImageCount: pendingImages.length,
     sending,
     conversationId,
+    backend: selectedBackend,
     isReadOnly,
     isRecording,
   });
+  const cancellableEntries = selectCancellableQueueEntries(
+    activeConversation?.pendingQueue ?? [],
+  );
+
+  const cancelQueued = useCallback(
+    async (id: string) => {
+      // Optimistic removal is applied only on a confirmed cancel so a lost
+      // race (the entry already claimed for delivery, returning 409) leaves
+      // the pending entry visible. The `message-queue-updated` SSE reconciles
+      // the durable cache afterward.
+      const url = `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/queue/${encodeURIComponent(id)}`;
+      let res: Response;
+      try {
+        res = await tracedFetch(url, "cancel-queued", { method: "DELETE" });
+      } catch {
+        setQueueError("Failed to cancel queued message");
+        return;
+      }
+      if (!res.ok) {
+        setQueueError("Failed to cancel queued message");
+        return;
+      }
+      cancelOptimisticQueueEntry(id);
+    },
+    [
+      projectName,
+      sessionName,
+      conversationId,
+      cancelOptimisticQueueEntry,
+      setQueueError,
+    ],
+  );
   const sendBtnClass = `send-btn${sending && !conversationId ? " busy" : ""}`;
   const sendButtonInner =
     sending && !conversationId ? (
@@ -239,6 +334,29 @@ export default function PromptComposer({
             onChange={onCollabConfigChange}
             onDismiss={onCollabDismiss}
           />
+        ) : null}
+        {cancellableEntries.length > 0 ? (
+          <div
+            className="queued-cancel-strip"
+            aria-label="Pending queued messages"
+          >
+            {cancellableEntries.map((entry) => (
+              <div key={entry.id} className="queued-cancel-chip">
+                <span className="queued-cancel-chip__preview">
+                  {entry.preview}
+                </span>
+                <button
+                  type="button"
+                  className="queued-cancel-chip__remove"
+                  aria-label="Cancel queued message"
+                  data-tooltip="Cancel queued message"
+                  onClick={() => void cancelQueued(entry.id)}
+                >
+                  <CloseIcon size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
         ) : null}
         <input
           ref={fileInputRef}

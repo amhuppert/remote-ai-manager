@@ -1,4 +1,5 @@
 import { createLogger, timed } from "@/lib/logging";
+import { transcribeResponseSchema } from "@/lib/voice/schemas";
 
 const VOICE_SERVER_URL =
   process.env.VOICE_SERVER_URL ?? "http://localhost:7880";
@@ -82,8 +83,21 @@ export async function proxyTranscribe(
       };
     }
 
-    const data = (await response.json()) as { text: string };
-    return { ok: true, text: data.text };
+    const body = await response.json().catch(() => null);
+    const parsed = transcribeResponseSchema.safeParse(body);
+    if (!parsed.success) {
+      logger.warn("voice.transcribe.upstream.invalid", {
+        projectPath: input.projectPath,
+        issuePaths: parsed.error.issues.map((issue) => issue.path.join(".")),
+      });
+      return {
+        ok: false,
+        status: 502,
+        error: "Invalid response from voice server",
+      };
+    }
+
+    return { ok: true, text: parsed.data.cleanText };
   } catch (err) {
     if (err instanceof DOMException && err.name === "TimeoutError") {
       return { ok: false, status: 504, error: "Transcription timed out" };

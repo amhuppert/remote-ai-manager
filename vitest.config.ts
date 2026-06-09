@@ -12,16 +12,20 @@ const dirname =
 // Bound worker parallelism to available RAM, not just core count. Vitest's
 // default forks pool spawns one worker per CPU core with no heap cap; on a
 // high-core / low-RAM machine that fans out to N heavyweight Node processes at
-// once (each loads the full app module graph + jsdom), which can exhaust
-// RAM + swap during a full-suite (e.g. pre-merge validation) run and freeze
-// the machine. Budget ~2 GB per worker against ~60% of total RAM, clamped to
-// [2, cores].
+// once, which can exhaust RAM + swap during a full-suite (e.g. pre-merge
+// validation) run and freeze the machine. The `unit` project runs in the `node`
+// environment (no jsdom), so ~1.5 GB per worker is ample; budgeting that heap
+// against ~55% of total RAM keeps low-RAM machines at the 2-worker floor while
+// letting high-RAM / high-core machines use more parallelism (e.g. 16 GB / 16
+// cores -> 5 workers) at a *lower* total heap footprint than the old 2 GB
+// budget — so the change adds throughput without raising peak memory pressure.
 const GB = 1024 ** 3;
+const WORKER_HEAP_MB = 1536;
 const maxForks = Math.max(
   2,
   Math.min(
     os.availableParallelism(),
-    Math.floor(((os.totalmem() / GB) * 0.6) / 2),
+    Math.floor(((os.totalmem() / GB) * 0.55) / (WORKER_HEAP_MB / 1024)),
   ),
 );
 
@@ -60,8 +64,9 @@ export default defineConfig({
         maxForks,
         minForks: 1,
         // Cap each worker's heap so a single runaway file OOM-kills its own
-        // fork (bounded) instead of growing unbounded across the machine.
-        execArgv: ["--max-old-space-size=2048"],
+        // fork (bounded) instead of growing unbounded across the machine. Kept
+        // in sync with the RAM budget used to derive `maxForks` above.
+        execArgv: [`--max-old-space-size=${WORKER_HEAP_MB}`],
       },
     },
 

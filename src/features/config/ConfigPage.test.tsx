@@ -182,12 +182,13 @@ describe("ConfigPage — Workflow Defaults", () => {
     ).toHaveLength(0);
   });
 
-  it("renders all six workflow default blocks at the page top level", () => {
+  it("renders all seven workflow default blocks at the page top level", () => {
     renderWithQuery(<ConfigPage />);
     expandWorkflowDefaults();
 
     const expected = [
       "Implementer",
+      "Collaboration",
       "Context validator",
       "Script validator",
       "Iteration policy",
@@ -204,7 +205,7 @@ describe("ConfigPage — Workflow Defaults", () => {
     expandWorkflowDefaults();
 
     const subs = container.querySelectorAll(".config-subsection");
-    expect(subs.length).toBe(6);
+    expect(subs.length).toBe(7);
     for (const el of subs) {
       expect(el.className).toMatch(/config-subsection/);
     }

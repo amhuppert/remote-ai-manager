@@ -39,6 +39,7 @@ function makeConv(
     agentBackend: "claude",
     backendRef: null,
     unread: false,
+    pendingQueue: [],
   };
 }
 

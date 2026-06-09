@@ -280,4 +280,42 @@ describe("createParallelWorktrees.provisionLane", () => {
 
     expect(fromContext).toEqual(fromLane);
   });
+
+  it("passes the session worktree as PARENT_WORKTREE_PATH to the lane init script", async () => {
+    const fakeClient = makeFakeClient(new Map<string, string>());
+
+    const initCalls: Array<{
+      cmd: string;
+      args: string[];
+      cwd?: string;
+      env?: NodeJS.ProcessEnv;
+    }> = [];
+
+    const pwt = createParallelWorktrees({
+      gitClient: fakeClient,
+      // Worktree dir absent (so provisioning proceeds); init script present.
+      existsSync: (p: string) => p.includes("init.sh"),
+      readRepoConfig: async () => ({ initScriptPath: "./init.sh" }),
+      buildChildEnv: () => ({ NODE_ENV: "test" as const }),
+      execFileAsync: async (cmd, args, opts) => {
+        initCalls.push({ cmd, args, cwd: opts?.cwd, env: opts?.env });
+        return { stdout: "", stderr: "" };
+      },
+    });
+
+    await pwt.provisionLane({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      sessionDir: "session-1",
+      sessionBranch: "csm/session-1",
+      laneId: "lane-a",
+    });
+
+    expect(initCalls).toHaveLength(1);
+    const env = initCalls[0]!.env;
+    // Parent = the session's own worktree the lane was branched from.
+    expect(env?.PARENT_WORKTREE_PATH).toBe("/repo/.worktrees/session-1");
+    expect(env?.WORKTREE_PATH).toBe("/repo/.worktrees/session-1.lane-a");
+    expect(env?.PROJECT_ROOT).toBe("/repo");
+  });
 });
