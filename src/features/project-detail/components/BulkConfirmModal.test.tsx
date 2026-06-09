@@ -98,7 +98,7 @@ describe("BulkConfirmModal", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "This permanently removes 5 sessions — worktree, history, and branch will be deleted.",
+        "This permanently removes the worktree, history, and state for 5 sessions. The git branch is preserved. This cannot be undone.",
       ),
     ).toBeInTheDocument();
     const confirm = screen.getByRole("button", { name: "Delete 5" });

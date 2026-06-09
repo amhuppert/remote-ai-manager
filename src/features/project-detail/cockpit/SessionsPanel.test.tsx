@@ -8,6 +8,7 @@ import {
   fireEvent,
   cleanup,
   within,
+  waitFor,
 } from "@testing-library/react";
 import SessionsPanel from "./SessionsPanel";
 import type { SessionListItem } from "@/lib/sessions/schemas";
@@ -139,6 +140,113 @@ describe("SessionsPanel search", () => {
     expect(
       screen.getByText(/Nothing matches “zzz-nomatch”/),
     ).toBeInTheDocument();
+  });
+});
+
+describe("SessionsPanel bulk actions", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function selectRows(...names: string[]) {
+    for (const name of names) {
+      fireEvent.click(screen.getByRole("checkbox", { name: `Select ${name}` }));
+    }
+  }
+
+  it("reveals the bulk ribbon only when sessions are selected", () => {
+    renderPanel(<Harness />);
+    expect(
+      screen.queryByRole("region", { name: "Bulk actions" }),
+    ).not.toBeInTheDocument();
+
+    selectRows("auth", "parser");
+
+    const ribbon = screen.getByRole("region", { name: "Bulk actions" });
+    expect(within(ribbon).getByText("sessions selected")).toBeInTheDocument();
+    expect(within(ribbon).getByText("2")).toBeInTheDocument();
+    expect(
+      within(ribbon).getByRole("button", { name: "Archive 2" }),
+    ).toBeInTheDocument();
+    expect(
+      within(ribbon).getByRole("button", { name: "Delete 2" }),
+    ).toBeInTheDocument();
+  });
+
+  it("confirms then POSTs a bulk archive and clears the selection", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          results: [
+            { sessionName: "auth", success: true },
+            { sessionName: "parser", success: true },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPanel(<Harness />);
+    selectRows("auth", "parser");
+
+    const ribbon = screen.getByRole("region", { name: "Bulk actions" });
+    fireEvent.click(within(ribbon).getByRole("button", { name: "Archive 2" }));
+
+    // Confirmation modal opens; the request only fires after confirming.
+    const overlay = screen.getByTestId("bulk-confirm-overlay");
+    expect(within(overlay).getByText("Archive sessions?")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fireEvent.click(within(overlay).getByRole("button", { name: "Archive 2" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/api/projects/proj/sessions/bulk");
+    expect(init.method).toBe("POST");
+    const body = JSON.parse(String(init.body)) as {
+      op: string;
+      sessionNames: string[];
+    };
+    expect(body.op).toBe("archive");
+    expect([...body.sessionNames].sort()).toEqual(["auth", "parser"]);
+
+    // Selection clears, so the ribbon disappears once the bulk op succeeds.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "Bulk actions" }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("offers Unarchive when every selected session is archived", () => {
+    const archived = [
+      makeSession({
+        sessionName: "old-a",
+        branchName: "csm/old-a",
+        archived: true,
+      }),
+      makeSession({
+        sessionName: "old-b",
+        branchName: "csm/old-b",
+        archived: true,
+      }),
+    ];
+    renderPanel(
+      <SessionsPanel
+        projectName="proj"
+        sessions={archived}
+        tokens={[{ cat: "archived", key: "include", value: "include" }]}
+        onTokensChange={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select old-a" }));
+
+    const ribbon = screen.getByRole("region", { name: "Bulk actions" });
+    expect(
+      within(ribbon).getByRole("button", { name: "Unarchive 1" }),
+    ).toBeInTheDocument();
+    expect(
+      within(ribbon).queryByRole("button", { name: /^Archive/ }),
+    ).not.toBeInTheDocument();
   });
 });
 

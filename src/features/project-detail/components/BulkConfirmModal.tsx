@@ -41,7 +41,7 @@ function buildCopy(kind: BulkConfirmKind, count: number): Copy {
   }
   return {
     title: "Delete sessions?",
-    body: `This permanently removes ${count} ${noun} — worktree, history, and branch will be deleted.`,
+    body: `This permanently removes the worktree, history, and state for ${count} ${noun}. The git branch is preserved. This cannot be undone.`,
     primary: `Delete ${count}`,
     danger: true,
   };

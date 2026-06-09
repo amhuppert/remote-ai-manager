@@ -3,8 +3,17 @@
 import { useCallback, useMemo, useState } from "react";
 import { CloseIcon } from "@/components/icons";
 import type { SessionListItem } from "@/lib/sessions/schemas";
+import { useBulkSessionsMutation } from "@/lib/sessions/mutations";
 import { applyFilters } from "../components/apply-filters";
 import SessionRows, { type SortState } from "../components/SessionRows";
+import SectionHeader from "../components/SectionHeader";
+import BulkConfirmModal, {
+  type BulkConfirmKind,
+} from "../components/BulkConfirmModal";
+import {
+  pruneMissingSelections,
+  selectedBulkActionKind,
+} from "../components/bulk-selection";
 import type { FilterToken } from "../components/filter-tokens";
 import SessionsFilterPopover from "./SessionsFilterPopover";
 import "./styles/cockpit.css";
@@ -37,7 +46,16 @@ export default function SessionsPanel({
     id: "lastActivityAt",
     desc: true,
   });
-  const [selection, setSelection] = useState<Set<string>>(() => new Set());
+  const [rawSelection, setSelection] = useState<Set<string>>(() => new Set());
+  const [confirmKind, setConfirmKind] = useState<BulkConfirmKind | null>(null);
+  const bulkMutation = useBulkSessionsMutation(projectName);
+
+  // Drop selections for sessions that no longer exist (e.g. after a bulk
+  // delete or an external removal); keeps the count and bulk op accurate.
+  const selection = useMemo(
+    () => pruneMissingSelections(rawSelection, sessions),
+    [rawSelection, sessions],
+  );
 
   const filtered = useMemo(
     () => applyFilters(sessions, tokens, search),
@@ -70,6 +88,21 @@ export default function SessionsPanel({
       ),
     [filtered],
   );
+
+  const bulkActionKind = selectedBulkActionKind(selection, sessions);
+
+  const runBulkOp = useCallback(() => {
+    if (confirmKind === null || selection.size === 0) return;
+    bulkMutation.mutate(
+      { op: confirmKind, sessionNames: [...selection] },
+      {
+        onSuccess: () => {
+          setSelection(new Set());
+          setConfirmKind(null);
+        },
+      },
+    );
+  }, [bulkMutation, confirmKind, selection]);
 
   const hasSearch = search.trim().length > 0;
   const hasTokens = tokens.length > 0;
@@ -119,6 +152,30 @@ export default function SessionsPanel({
           </div>
         )}
       </div>
+
+      {selection.size > 0 && (
+        <SectionHeader
+          filteredCount={filtered.length}
+          tokenCount={tokens.length}
+          selectionSize={selection.size}
+          bulkActionKind={bulkActionKind}
+          isBulkPending={bulkMutation.isPending}
+          onClearFilters={() => onTokensChange([])}
+          onDeselect={() => setSelection(new Set())}
+          onBulkArchive={() => setConfirmKind("archive")}
+          onBulkUnarchive={() => setConfirmKind("unarchive")}
+          onBulkDelete={() => setConfirmKind("delete")}
+        />
+      )}
+
+      <BulkConfirmModal
+        open={confirmKind !== null}
+        kind={confirmKind ?? "archive"}
+        count={selection.size}
+        isPending={bulkMutation.isPending}
+        onConfirm={runBulkOp}
+        onClose={() => setConfirmKind(null)}
+      />
 
       <div className="plc-sessions-body">
         {noSessionsAtAll ? (
