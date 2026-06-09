@@ -7,12 +7,21 @@ import {
   setPersistenceDeps,
   _resetForTesting,
 } from "./persistence";
+import {
+  createPersistenceFixture,
+  type PersistenceFixture,
+} from "@/lib/shared/testing/persistence-fixture";
 import type { ConversationState } from "@/lib/conversations/schemas";
+
+const PROJECT_PATH = "/repo";
+const SESSION_NAME = "sess-1";
+const CONVERSATION_ID = "conv-1";
+
 function makeConversation(
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
   return {
-    id: "conv-1",
+    id: CONVERSATION_ID,
     name: null,
     transcriptPath: null,
     status: "awaiting",
@@ -44,87 +53,109 @@ function makeConversation(
 }
 
 describe("conversation persistence", () => {
-  const mockMutateConversation = vi.fn();
-  const mockGetConversation = vi.fn();
+  let fixture: PersistenceFixture;
 
-  beforeEach(() => {
+  /** Reload the seeded conversation through the real serialization boundary. */
+  async function reloadConversation(): Promise<ConversationState> {
+    const conversation = await fixture.deps.getConversation(
+      PROJECT_PATH,
+      SESSION_NAME,
+      CONVERSATION_ID,
+    );
+    if (!conversation) {
+      throw new Error("seeded conversation missing after reload");
+    }
+    return conversation;
+  }
+
+  beforeEach(async () => {
     _resetForTesting();
-    mockMutateConversation.mockReset();
-    mockGetConversation.mockReset();
-    setPersistenceDeps({
-      mutateConversation: mockMutateConversation,
-      getConversation: mockGetConversation,
-    });
+    fixture = createPersistenceFixture();
+    fixture.seedProject(PROJECT_PATH);
+    fixture.seedSession(PROJECT_PATH, SESSION_NAME);
+    await fixture.seedConversation(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeConversation(),
+    );
+    setPersistenceDeps(fixture.deps);
   });
 
   afterEach(() => {
     _resetForTesting();
+    fixture.close();
   });
 
   describe("persistConversationSnapshot", () => {
-    it("calls mutateConversation with the snapshot", async () => {
-      mockMutateConversation.mockImplementation(
-        async (
-          _projectPath: string,
-          _sessionName: string,
-          _conversationId: string,
-          _label: string,
-          mutate: (c: ConversationState) => void,
-        ) => {
-          const conv = makeConversation();
-          mutate(conv);
-          expect(conv.machineSnapshot).toEqual({ value: "idle" });
-        },
-      );
+    it("persists the snapshot to the conversation record", async () => {
+      const snapshot = { value: "idle" } as never;
 
       persistConversationSnapshot(
-        "/repo",
-        "sess-1",
-        "conv-1",
-        {
-          value: "idle",
-        } as never,
+        PROJECT_PATH,
+        SESSION_NAME,
+        CONVERSATION_ID,
+        snapshot,
         { immediate: true },
       );
 
-      // Wait for the async write
-      await vi.waitFor(() => {
-        expect(mockMutateConversation).toHaveBeenCalledOnce();
+      await vi.waitFor(async () => {
+        const reloaded = await reloadConversation();
+        expect(reloaded.machineSnapshot).toEqual({ value: "idle" });
       });
     });
 
     it("debounces writes by default", async () => {
       vi.useFakeTimers();
+      try {
+        persistConversationSnapshot(
+          PROJECT_PATH,
+          SESSION_NAME,
+          CONVERSATION_ID,
+          {
+            value: "idle",
+          } as never,
+        );
 
-      persistConversationSnapshot("/repo", "sess-1", "conv-1", {
-        value: "idle",
-      } as never);
+        // Nothing persisted before the debounce window elapses.
+        const beforeDebounce = await reloadConversation();
+        expect(beforeDebounce.machineSnapshot).toBeNull();
 
-      // Not called yet
-      expect(mockMutateConversation).not.toHaveBeenCalled();
+        // Advance past the debounce; this fires the timer and flushes the
+        // async write through the real write queue.
+        await vi.advanceTimersByTimeAsync(600);
 
-      // Advance past debounce
-      await vi.advanceTimersByTimeAsync(600);
-
-      expect(mockMutateConversation).toHaveBeenCalledOnce();
-
-      vi.useRealTimers();
+        const afterDebounce = await reloadConversation();
+        expect(afterDebounce.machineSnapshot).toEqual({ value: "idle" });
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
   describe("restoreConversationSnapshot", () => {
+    async function seedSnapshot(snapshot: unknown): Promise<void> {
+      await fixture.deps.mutateConversation(
+        PROJECT_PATH,
+        SESSION_NAME,
+        CONVERSATION_ID,
+        "test.seed-snapshot",
+        (conversation) => {
+          conversation.machineSnapshot = snapshot;
+        },
+      );
+    }
+
     it("returns snapshot when schema version matches", async () => {
       const snapshot = {
-        context: { _schemaVersion: 1, conversationId: "conv-1" },
+        context: { _schemaVersion: 1, conversationId: CONVERSATION_ID },
         value: "idle",
       };
-      const conv = makeConversation({ machineSnapshot: snapshot });
-      mockGetConversation.mockResolvedValue(conv);
+      await seedSnapshot(snapshot);
 
       const result = await restoreConversationSnapshot(
-        "/repo",
-        "sess-1",
-        "conv-1",
+        PROJECT_PATH,
+        SESSION_NAME,
+        CONVERSATION_ID,
         1,
       );
       expect(result).toEqual(snapshot);
@@ -132,41 +163,36 @@ describe("conversation persistence", () => {
 
     it("returns null when schema version mismatches", async () => {
       const snapshot = {
-        context: { _schemaVersion: 99, conversationId: "conv-1" },
+        context: { _schemaVersion: 99, conversationId: CONVERSATION_ID },
         value: "idle",
       };
-      const conv = makeConversation({ machineSnapshot: snapshot });
-      mockGetConversation.mockResolvedValue(conv);
+      await seedSnapshot(snapshot);
 
       const result = await restoreConversationSnapshot(
-        "/repo",
-        "sess-1",
-        "conv-1",
+        PROJECT_PATH,
+        SESSION_NAME,
+        CONVERSATION_ID,
         1,
       );
       expect(result).toBeNull();
     });
 
     it("returns null when no snapshot exists", async () => {
-      const conv = makeConversation({ machineSnapshot: null });
-      mockGetConversation.mockResolvedValue(conv);
-
+      // The seeded conversation already has a null machineSnapshot.
       const result = await restoreConversationSnapshot(
-        "/repo",
-        "sess-1",
-        "conv-1",
+        PROJECT_PATH,
+        SESSION_NAME,
+        CONVERSATION_ID,
         1,
       );
       expect(result).toBeNull();
     });
 
     it("returns null when conversation not found", async () => {
-      mockGetConversation.mockResolvedValue(null);
-
       const result = await restoreConversationSnapshot(
-        "/repo",
-        "sess-1",
-        "conv-1",
+        PROJECT_PATH,
+        SESSION_NAME,
+        "missing-conv",
         1,
       );
       expect(result).toBeNull();
@@ -174,37 +200,39 @@ describe("conversation persistence", () => {
   });
 
   describe("validateRestoredSnapshot", () => {
-    it("returns snapshot when schema version matches without reading state", () => {
+    it("returns snapshot when schema version matches", () => {
       const snapshot = {
-        context: { _schemaVersion: 1, conversationId: "conv-1" },
+        context: { _schemaVersion: 1, conversationId: CONVERSATION_ID },
         value: "idle",
       };
 
-      const result = validateRestoredSnapshot(snapshot, "conv-1", 1);
+      const result = validateRestoredSnapshot(snapshot, CONVERSATION_ID, 1);
 
       expect(result).toEqual(snapshot);
-      expect(mockGetConversation).not.toHaveBeenCalled();
     });
 
-    it("returns null when schema version mismatches without reading state", () => {
+    it("returns null when schema version mismatches", () => {
       const snapshot = {
-        context: { _schemaVersion: 99, conversationId: "conv-1" },
+        context: { _schemaVersion: 99, conversationId: CONVERSATION_ID },
         value: "idle",
       };
 
-      const result = validateRestoredSnapshot(snapshot, "conv-1", 1);
+      const result = validateRestoredSnapshot(snapshot, CONVERSATION_ID, 1);
 
       expect(result).toBeNull();
-      expect(mockGetConversation).not.toHaveBeenCalled();
     });
 
     it("returns null when snapshot is null", () => {
-      const result = validateRestoredSnapshot(null, "conv-1", 1);
+      const result = validateRestoredSnapshot(null, CONVERSATION_ID, 1);
       expect(result).toBeNull();
     });
 
     it("returns null when snapshot has no context", () => {
-      const result = validateRestoredSnapshot({ value: "idle" }, "conv-1", 1);
+      const result = validateRestoredSnapshot(
+        { value: "idle" },
+        CONVERSATION_ID,
+        1,
+      );
       expect(result).toBeNull();
     });
 
@@ -225,13 +253,13 @@ describe("conversation persistence", () => {
       const snapshot = {
         context: {
           _schemaVersion: 1,
-          conversationId: "conv-1",
+          conversationId: CONVERSATION_ID,
           activeTurn: { ...legacyActiveTurn },
         },
         value: "executing",
       };
 
-      const result = validateRestoredSnapshot(snapshot, "conv-1", 1);
+      const result = validateRestoredSnapshot(snapshot, CONVERSATION_ID, 1);
 
       expect(result).not.toBeNull();
       const restoredActiveTurn = (
@@ -307,25 +335,27 @@ describe("conversation persistence", () => {
   });
 
   describe("clearConversationSnapshot", () => {
-    it("sets machineSnapshot to null", async () => {
-      mockMutateConversation.mockImplementation(
-        async (
-          _projectPath: string,
-          _sessionName: string,
-          _conversationId: string,
-          _label: string,
-          mutate: (c: ConversationState) => void,
-        ) => {
-          const conv = makeConversation({
-            machineSnapshot: { value: "idle" },
-          });
-          mutate(conv);
-          expect(conv.machineSnapshot).toBeNull();
+    it("clears a persisted machineSnapshot back to null", async () => {
+      await fixture.deps.mutateConversation(
+        PROJECT_PATH,
+        SESSION_NAME,
+        CONVERSATION_ID,
+        "test.seed-snapshot",
+        (conversation) => {
+          conversation.machineSnapshot = { value: "idle" };
         },
       );
+      const seeded = await reloadConversation();
+      expect(seeded.machineSnapshot).toEqual({ value: "idle" });
 
-      await clearConversationSnapshot("/repo", "sess-1", "conv-1");
-      expect(mockMutateConversation).toHaveBeenCalledOnce();
+      await clearConversationSnapshot(
+        PROJECT_PATH,
+        SESSION_NAME,
+        CONVERSATION_ID,
+      );
+
+      const reloaded = await reloadConversation();
+      expect(reloaded.machineSnapshot).toBeNull();
     });
   });
 });

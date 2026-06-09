@@ -323,6 +323,59 @@ export function _createTestDbAtPath(dbPath: string): Db {
 }
 
 /**
+ * Bookkeeping table excluded from {@link truncateAllTables} so the forward-only
+ * version check still passes after a reset.
+ */
+const SCHEMA_VERSION_TABLE = "schema_migrations";
+
+/**
+ * Test helper: empty every application data table, deriving the table set from
+ * the live schema (`sqlite_master`) so a newly added table is cleared with no
+ * code change. Excludes SQLite internals (`sqlite_%`) and the schema-version
+ * bookkeeping table (`schema_migrations`) so the forward-only version check
+ * still passes after reset.
+ *
+ * Foreign-key enforcement is disabled for the duration of the deletes so order
+ * is irrelevant, then restored to its prior state.
+ */
+export function truncateAllTables(db: Db): void {
+  const rows = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+    .all();
+  const tables: string[] = [];
+  for (const row of rows) {
+    if (typeof row !== "object" || row === null || !("name" in row)) {
+      continue;
+    }
+    const name = (row as { name: unknown }).name;
+    if (typeof name !== "string") {
+      continue;
+    }
+    if (name.startsWith("sqlite_") || name === SCHEMA_VERSION_TABLE) {
+      continue;
+    }
+    tables.push(name);
+  }
+
+  const fkRows = db.pragma("foreign_keys") as { foreign_keys: number }[];
+  const fkWasOn = fkRows[0]?.foreign_keys === 1;
+
+  db.pragma("foreign_keys = OFF");
+  try {
+    const truncate = db.transaction(() => {
+      for (const table of tables) {
+        db.exec(`DELETE FROM "${table}"`);
+      }
+    });
+    truncate();
+  } finally {
+    if (fkWasOn) {
+      db.pragma("foreign_keys = ON");
+    }
+  }
+}
+
+/**
  * Test helper: install a `Database` instance into the singleton slot so that
  * subsequent calls to `getDb()` return it. Closes any previously-installed
  * test connection first. Used by test suites whose subject still consumes the

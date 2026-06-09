@@ -1,158 +1,166 @@
 /**
- * Tests for markUnreadOnFinish — the action body that runs when a
- * conversation transitions from running → awaiting (turn end).
+ * Tests for markUnreadOnFinish / markReadOnUserTurnStart — the action bodies
+ * that run when a conversation transitions running → awaiting (turn end) or a
+ * user-initiated turn starts.
  *
- * Uses factory-pattern dependency injection: each test provides its own
- * mutateConversation + publishSessionStatus fakes. No internal mocking.
+ * Persistence-dependent behavior (does `unread` actually change in the store?)
+ * is verified by RELOADING the conversation through the real conversation seam
+ * (`createPersistenceFixture().deps`) rather than by inspecting an in-memory
+ * fake. If `unread` ever stops serializing, the reload-based assertions fail.
+ * `publishSessionStatus` is still a local capture: SSE delivery does not depend
+ * on persistence.
  */
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import {
   markUnreadOnFinish,
   markReadOnUserTurnStart,
   type MarkUnreadOnFinishDeps,
 } from "./mark-unread";
+import { conversationStateSchema } from "./schemas";
 import type { ConversationState, ConversationRole } from "./schemas";
+import {
+  createPersistenceFixture,
+  type PersistenceFixture,
+} from "@/lib/shared/testing/persistence-fixture";
 
-function makeFakeConversation(): ConversationState {
-  return {
-    id: "c-1",
-    name: null,
+const PROJECT_PATH = "/proj";
+const PROJECT_NAME = "proj-display";
+const SESSION_NAME = "sess";
+const CONVERSATION_ID = "conv-1";
+
+function makeConversation(
+  overrides: Partial<ConversationState> = {},
+): ConversationState {
+  return conversationStateSchema.parse({
+    id: CONVERSATION_ID,
     transcriptPath: null,
     status: "awaiting",
     promptCount: 1,
     createdAt: "2026-01-01T00:00:00Z",
     lastActivityAt: "2026-01-01T00:01:00Z",
-    source: "cc",
-    summary: null,
-    archived: false,
     unread: false,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    pendingPromptText: null,
-    forkedFrom: null,
-    role: null,
-    activeTurnSource: null,
-    contextTokens: null,
-    contextWindowMax: null,
-    debugMode: null,
-    machineSnapshot: null,
-    agentBackend: "claude",
-    backendRef: null,
-  } as unknown as ConversationState;
+    ...overrides,
+  });
+}
+
+let fixture: PersistenceFixture;
+
+async function seedConversation(
+  overrides: Partial<ConversationState> = {},
+): Promise<void> {
+  fixture.seedProject(PROJECT_PATH);
+  fixture.seedSession(PROJECT_PATH, SESSION_NAME);
+  await fixture.seedConversation(
+    PROJECT_PATH,
+    SESSION_NAME,
+    makeConversation(overrides),
+  );
+}
+
+async function reloadUnread(): Promise<boolean | undefined> {
+  const reloaded = await fixture.deps.getConversation(
+    PROJECT_PATH,
+    SESSION_NAME,
+    CONVERSATION_ID,
+  );
+  return reloaded?.unread;
 }
 
 function makeDeps(): {
   deps: MarkUnreadOnFinishDeps;
-  mutationCalls: Array<{
-    projectPath: string;
-    sessionName: string;
-    conversationId: string;
-    reason: string;
-    result: ConversationState;
-  }>;
   publishedEvents: Array<
     Parameters<MarkUnreadOnFinishDeps["publishSessionStatus"]>[0]
   >;
 } {
-  const mutationCalls: Array<{
-    projectPath: string;
-    sessionName: string;
-    conversationId: string;
-    reason: string;
-    result: ConversationState;
-  }> = [];
   const publishedEvents: Array<
     Parameters<MarkUnreadOnFinishDeps["publishSessionStatus"]>[0]
   > = [];
 
   const deps: MarkUnreadOnFinishDeps = {
-    async mutateConversation(
-      projectPath,
-      sessionName,
-      conversationId,
-      reason,
-      mutator,
-    ) {
-      const c = makeFakeConversation();
-      await mutator(c);
-      mutationCalls.push({
-        projectPath,
-        sessionName,
-        conversationId,
-        reason,
-        result: c,
-      });
-    },
+    mutateConversation: fixture.deps.mutateConversation,
     publishSessionStatus(event) {
       publishedEvents.push(event);
       return { delivered: true };
     },
   };
 
-  return { deps, mutationCalls, publishedEvents };
+  return { deps, publishedEvents };
 }
 
 function makeCtx(role: ConversationRole) {
   return {
-    projectPath: "/proj",
-    projectName: "proj-display",
-    sessionName: "sess",
-    conversationId: "conv-1",
+    projectPath: PROJECT_PATH,
+    projectName: PROJECT_NAME,
+    sessionName: SESSION_NAME,
+    conversationId: CONVERSATION_ID,
     role,
   };
 }
 
+beforeEach(() => {
+  fixture = createPersistenceFixture();
+});
+
+afterEach(() => {
+  fixture.close();
+});
+
 describe("markUnreadOnFinish", () => {
-  it("sets unread=true and publishes a conversation-unread SSE event for a regular conversation", async () => {
-    const { deps, mutationCalls, publishedEvents } = makeDeps();
+  it("persists unread=true and publishes a conversation-unread SSE event for a regular conversation", async () => {
+    await seedConversation({ unread: false });
+    const { deps, publishedEvents } = makeDeps();
 
     await markUnreadOnFinish(makeCtx(null), deps);
 
-    expect(mutationCalls).toHaveLength(1);
-    const call = mutationCalls[0]!;
-    expect(call.projectPath).toBe("/proj");
-    expect(call.sessionName).toBe("sess");
-    expect(call.conversationId).toBe("conv-1");
-    expect(call.result.unread).toBe(true);
+    expect(await reloadUnread()).toBe(true);
 
     expect(publishedEvents).toHaveLength(1);
     expect(publishedEvents[0]).toMatchObject({
       type: "conversation-unread",
-      projectName: "proj-display",
-      sessionName: "sess",
-      conversationId: "conv-1",
+      projectName: PROJECT_NAME,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
       unread: true,
     });
   });
 
-  it("marks unread for the planner role (planner is a user-facing role)", async () => {
-    const { deps, mutationCalls, publishedEvents } = makeDeps();
+  it("persists unread=true for the planner role (planner is a user-facing role)", async () => {
+    await seedConversation({ unread: false });
+    const { deps, publishedEvents } = makeDeps();
+
     await markUnreadOnFinish(makeCtx("planner"), deps);
-    expect(mutationCalls).toHaveLength(1);
+
+    expect(await reloadUnread()).toBe(true);
     expect(publishedEvents).toHaveLength(1);
   });
 
-  it("marks unread for the initialization role", async () => {
-    const { deps, mutationCalls, publishedEvents } = makeDeps();
+  it("persists unread=true for the initialization role", async () => {
+    await seedConversation({ unread: false });
+    const { deps, publishedEvents } = makeDeps();
+
     await markUnreadOnFinish(makeCtx("initialization"), deps);
-    expect(mutationCalls).toHaveLength(1);
+
+    expect(await reloadUnread()).toBe(true);
     expect(publishedEvents).toHaveLength(1);
   });
 
-  it("does NOT mutate or publish for iteration role (workflow-managed)", async () => {
-    const { deps, mutationCalls, publishedEvents } = makeDeps();
+  it("does NOT persist unread or publish for iteration role (workflow-managed)", async () => {
+    await seedConversation({ unread: false });
+    const { deps, publishedEvents } = makeDeps();
+
     await markUnreadOnFinish(makeCtx("iteration"), deps);
-    expect(mutationCalls).toHaveLength(0);
+
+    expect(await reloadUnread()).toBe(false);
     expect(publishedEvents).toHaveLength(0);
   });
 
-  it("does NOT mutate or publish for validator role (workflow-managed)", async () => {
-    const { deps, mutationCalls, publishedEvents } = makeDeps();
+  it("does NOT persist unread or publish for validator role (workflow-managed)", async () => {
+    await seedConversation({ unread: false });
+    const { deps, publishedEvents } = makeDeps();
+
     await markUnreadOnFinish(makeCtx("validator"), deps);
-    expect(mutationCalls).toHaveLength(0);
+
+    expect(await reloadUnread()).toBe(false);
     expect(publishedEvents).toHaveLength(0);
   });
 
@@ -176,46 +184,51 @@ describe("markUnreadOnFinish", () => {
 });
 
 describe("markReadOnUserTurnStart", () => {
-  it("sets unread=false and publishes conversation-unread (unread=false) for a regular conversation", async () => {
-    const { deps, mutationCalls, publishedEvents } = makeDeps();
+  it("persists unread=false and publishes conversation-unread (unread=false) for a regular conversation", async () => {
+    await seedConversation({ unread: true });
+    const { deps, publishedEvents } = makeDeps();
 
     await markReadOnUserTurnStart(makeCtx(null), deps);
 
-    expect(mutationCalls).toHaveLength(1);
-    const call = mutationCalls[0]!;
-    expect(call.projectPath).toBe("/proj");
-    expect(call.sessionName).toBe("sess");
-    expect(call.conversationId).toBe("conv-1");
-    expect(call.result.unread).toBe(false);
+    expect(await reloadUnread()).toBe(false);
 
     expect(publishedEvents).toHaveLength(1);
     expect(publishedEvents[0]).toMatchObject({
       type: "conversation-unread",
-      projectName: "proj-display",
-      sessionName: "sess",
-      conversationId: "conv-1",
+      projectName: PROJECT_NAME,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
       unread: false,
     });
   });
 
-  it("clears unread for the planner role", async () => {
-    const { deps, mutationCalls, publishedEvents } = makeDeps();
+  it("persists unread=false for the planner role", async () => {
+    await seedConversation({ unread: true });
+    const { deps, publishedEvents } = makeDeps();
+
     await markReadOnUserTurnStart(makeCtx("planner"), deps);
-    expect(mutationCalls).toHaveLength(1);
+
+    expect(await reloadUnread()).toBe(false);
     expect(publishedEvents).toHaveLength(1);
   });
 
-  it("does NOT mutate or publish for iteration role (workflow-managed, never unread)", async () => {
-    const { deps, mutationCalls, publishedEvents } = makeDeps();
+  it("does NOT persist unread or publish for iteration role (workflow-managed, never unread)", async () => {
+    await seedConversation({ unread: true });
+    const { deps, publishedEvents } = makeDeps();
+
     await markReadOnUserTurnStart(makeCtx("iteration"), deps);
-    expect(mutationCalls).toHaveLength(0);
+
+    expect(await reloadUnread()).toBe(true);
     expect(publishedEvents).toHaveLength(0);
   });
 
-  it("does NOT mutate or publish for validator role", async () => {
-    const { deps, mutationCalls, publishedEvents } = makeDeps();
+  it("does NOT persist unread or publish for validator role", async () => {
+    await seedConversation({ unread: true });
+    const { deps, publishedEvents } = makeDeps();
+
     await markReadOnUserTurnStart(makeCtx("validator"), deps);
-    expect(mutationCalls).toHaveLength(0);
+
+    expect(await reloadUnread()).toBe(true);
     expect(publishedEvents).toHaveLength(0);
   });
 });

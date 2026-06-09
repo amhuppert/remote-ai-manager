@@ -4,94 +4,102 @@
  * Verifies behavioral contract: 404 chains for missing project/session/conv,
  * 200 + unread=false mutation + conversation-unread broadcast on success.
  *
- * No vi.mock on internal modules — deps are injected via the factory.
+ * The success path mutates through the REAL conversation seam
+ * (`createPersistenceFixture().deps.mutateConversation`) and asserts the new
+ * `unread` value by RELOADING from the store, so the test fails if `unread`
+ * stops serializing. Project resolution, session lookup, and SSE broadcast do
+ * not depend on persistence and remain injected stubs. No vi.mock on internal
+ * modules.
  */
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import {
   createMarkReadRouteHandlers,
   type MarkReadRouteDeps,
 } from "./mark-read-route-handlers";
-import { conversationUnreadEventSchema } from "@/lib/conversations/schemas";
+import {
+  conversationUnreadEventSchema,
+  conversationStateSchema,
+} from "@/lib/conversations/schemas";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import type { ConversationState } from "@/lib/conversations/schemas";
-import type { SessionState } from "@/lib/sessions/schemas";
+import { sessionStateSchema, type SessionState } from "@/lib/sessions/schemas";
+import {
+  createPersistenceFixture,
+  type PersistenceFixture,
+} from "@/lib/shared/testing/persistence-fixture";
+
+const PROJECT_PATH = "/repos/demo";
+const PROJECT_NAME = "demo";
+const SESSION_NAME = "s1";
+const CONVERSATION_ID = "conv-1";
 
 function makeConversation(
   overrides: Partial<ConversationState> = {},
 ): ConversationState {
-  return {
-    id: "conv-1",
-    name: null,
+  return conversationStateSchema.parse({
+    id: CONVERSATION_ID,
     transcriptPath: null,
     status: "awaiting",
     promptCount: 1,
     createdAt: "2026-01-01T00:00:00Z",
     lastActivityAt: "2026-01-01T00:01:00Z",
-    source: "cc",
-    summary: null,
-    archived: false,
     unread: true,
-    totalCostUsd: null,
-    totalDurationMs: null,
-    totalTurns: null,
-    pendingQuestionId: null,
-    pendingQuestions: null,
-    pendingPromptText: null,
-    forkedFrom: null,
-    role: null,
-    activeTurnSource: null,
-    contextTokens: null,
-    contextWindowMax: null,
-    debugMode: null,
-    machineSnapshot: null,
-    agentBackend: "claude",
-    backendRef: null,
     ...overrides,
-  } as unknown as ConversationState;
+  });
 }
 
 function makeSession(conversations: ConversationState[] = []): SessionState {
-  return {
-    name: "s1",
-    branch: "csm/s1",
+  return sessionStateSchema.parse({
+    sessionName: SESSION_NAME,
     worktreePath: "/tmp/worktree",
-    archived: false,
-    pinned: false,
-    tddEnabled: false,
-    objective: null,
-    conversations,
-    referenceDocuments: [],
+    branchName: `csm/${SESSION_NAME}`,
     createdAt: "2026-01-01T00:00:00Z",
-  } as unknown as SessionState;
+    lastActivityAt: "2026-01-01T00:00:00Z",
+    conversations,
+  });
+}
+
+let fixture: PersistenceFixture;
+
+async function seedConversation(
+  overrides: Partial<ConversationState> = {},
+): Promise<void> {
+  fixture.seedProject(PROJECT_PATH);
+  fixture.seedSession(PROJECT_PATH, SESSION_NAME);
+  await fixture.seedConversation(
+    PROJECT_PATH,
+    SESSION_NAME,
+    makeConversation(overrides),
+  );
+}
+
+async function reloadUnread(): Promise<boolean | undefined> {
+  const reloaded = await fixture.deps.getConversation(
+    PROJECT_PATH,
+    SESSION_NAME,
+    CONVERSATION_ID,
+  );
+  return reloaded?.unread;
 }
 
 function makeDeps(overrides: Partial<MarkReadRouteDeps> = {}): {
   deps: MarkReadRouteDeps;
-  mutationResult: { unread: boolean | null };
   broadcastedEvents: SSEEvent[];
 } {
-  const conversation = makeConversation();
-  const session = makeSession([conversation]);
-  const mutationResult: { unread: boolean | null } = { unread: null };
+  const session = makeSession([makeConversation()]);
   const broadcastedEvents: SSEEvent[] = [];
 
   const deps: MarkReadRouteDeps = {
-    resolveProjectPath: vi.fn(async () => "/repos/demo"),
-    getProjectDisplayName: vi.fn(() => "demo"),
+    resolveProjectPath: vi.fn(async () => PROJECT_PATH),
+    getProjectDisplayName: vi.fn(() => PROJECT_NAME),
     getSession: vi.fn(async () => session),
-    mutateConversation: vi.fn(
-      async (_projectPath, _sessionName, _conversationId, _label, mutator) => {
-        const c = makeConversation();
-        await mutator(c);
-        mutationResult.unread = c.unread;
-      },
-    ),
+    mutateConversation: fixture.deps.mutateConversation,
     broadcast: vi.fn((event: SSEEvent) => {
       broadcastedEvents.push(event);
     }),
     ...overrides,
   };
-  return { deps, mutationResult, broadcastedEvents };
+  return { deps, broadcastedEvents };
 }
 
 function context(params: Record<string, string>) {
@@ -102,18 +110,31 @@ function plainRequest(): Request {
   return new Request("http://cc.test/mark-read", { method: "POST" });
 }
 
+beforeEach(() => {
+  fixture = createPersistenceFixture();
+});
+
+afterEach(() => {
+  fixture.close();
+});
+
 describe("POST /conversations/[id]/mark-read", () => {
-  it("returns 200, sets unread=false, broadcasts conversation-unread event with unread=false", async () => {
-    const { deps, mutationResult, broadcastedEvents } = makeDeps();
+  it("returns 200, persists unread=false, broadcasts conversation-unread event with unread=false", async () => {
+    await seedConversation({ unread: true });
+    const { deps, broadcastedEvents } = makeDeps();
     const { POST } = createMarkReadRouteHandlers(deps);
 
     const response = await POST(
       plainRequest(),
-      context({ name: "demo", session: "s1", conversationId: "conv-1" }),
+      context({
+        name: PROJECT_NAME,
+        session: SESSION_NAME,
+        conversationId: CONVERSATION_ID,
+      }),
     );
 
     expect(response.status).toBe(200);
-    expect(mutationResult.unread).toBe(false);
+    expect(await reloadUnread()).toBe(false);
     expect(broadcastedEvents).toHaveLength(1);
     const parsed = conversationUnreadEventSchema.safeParse(
       broadcastedEvents[0],
@@ -122,29 +143,38 @@ describe("POST /conversations/[id]/mark-read", () => {
     if (parsed.success) {
       expect(parsed.data).toEqual({
         type: "conversation-unread",
-        projectName: "demo",
-        sessionName: "s1",
-        conversationId: "conv-1",
+        projectName: PROJECT_NAME,
+        sessionName: SESSION_NAME,
+        conversationId: CONVERSATION_ID,
         unread: false,
       });
     }
   });
 
   it("returns 404 when the project does not resolve", async () => {
-    const { deps } = makeDeps({
+    await seedConversation({ unread: true });
+    const { deps, broadcastedEvents } = makeDeps({
       resolveProjectPath: vi.fn(async () => null),
     });
     const { POST } = createMarkReadRouteHandlers(deps);
 
     const response = await POST(
       plainRequest(),
-      context({ name: "unknown", session: "s1", conversationId: "conv-1" }),
+      context({
+        name: "unknown",
+        session: SESSION_NAME,
+        conversationId: CONVERSATION_ID,
+      }),
     );
     expect(response.status).toBe(404);
+    expect(broadcastedEvents).toHaveLength(0);
+    // No mutation reached: the persisted conversation stays unread.
+    expect(await reloadUnread()).toBe(true);
   });
 
   it("returns 404 when the session does not exist", async () => {
-    const { deps } = makeDeps({
+    await seedConversation({ unread: true });
+    const { deps, broadcastedEvents } = makeDeps({
       getSession: vi.fn(async () => null),
     });
     const { POST } = createMarkReadRouteHandlers(deps);
@@ -152,15 +182,18 @@ describe("POST /conversations/[id]/mark-read", () => {
     const response = await POST(
       plainRequest(),
       context({
-        name: "demo",
+        name: PROJECT_NAME,
         session: "missing",
-        conversationId: "conv-1",
+        conversationId: CONVERSATION_ID,
       }),
     );
     expect(response.status).toBe(404);
+    expect(broadcastedEvents).toHaveLength(0);
+    expect(await reloadUnread()).toBe(true);
   });
 
   it("returns 404 when the conversation does not exist in the session", async () => {
+    await seedConversation({ unread: true });
     const { deps, broadcastedEvents } = makeDeps({
       getSession: vi.fn(async () => makeSession([makeConversation()])),
     });
@@ -169,12 +202,13 @@ describe("POST /conversations/[id]/mark-read", () => {
     const response = await POST(
       plainRequest(),
       context({
-        name: "demo",
-        session: "s1",
+        name: PROJECT_NAME,
+        session: SESSION_NAME,
         conversationId: "does-not-exist",
       }),
     );
     expect(response.status).toBe(404);
     expect(broadcastedEvents).toHaveLength(0);
+    expect(await reloadUnread()).toBe(true);
   });
 });

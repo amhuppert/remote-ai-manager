@@ -18,6 +18,7 @@ import {
 } from "./sessions-repo";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
+import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
 type Db = InstanceType<typeof Database>;
 
 let db: Db;
@@ -616,5 +617,340 @@ describe("sessions-repo findAll caching", () => {
     const second = repo.findAll();
     expect(second).not.toBe(first);
     expect(second.map((r) => r.session.sessionName)).toEqual(["s-keep"]);
+  });
+});
+
+/**
+ * A fully-populated graph workflow execution: every introspectable persisted
+ * key path of `graphWorkflowExecutionSchema` carries a distinctive non-default
+ * value, every array/record has at least one fully-populated representative
+ * element so the durability harness descends into nested fields, and
+ * `machineSnapshot` (a `z.unknown().nullable().default(null)` leaf) is non-null.
+ *
+ * The harness descends into the FIRST element of each array and the FIRST entry
+ * of each record, so each such container needs only one representative whose own
+ * nested optional fields are all populated.
+ */
+function buildMaximalGraphWorkflowExecution(): unknown {
+  return {
+    id: "wf-maximal",
+    seedDefinitionId: "seed-maximal",
+    seedDefinitionRevision: 3,
+    workingDefinition: {
+      schemaVersion: 2,
+      executionContexts: [
+        {
+          id: "ctx-1",
+          title: "Implement the thing",
+          description: "Detailed description of the context",
+          acceptanceCriteria: "All tests pass and the build is green",
+          implementer: {
+            backend: "claude",
+            model: "opus",
+            reasoningEffort: "high",
+          },
+          contextValidator: {
+            type: "claude",
+            enabled: true,
+            continuity: { enabled: false, contextLimitTokens: 120_000 },
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
+          },
+          scriptValidator: { enabled: true },
+          mutability: { allowAgentTaskAdd: true },
+          circuitBreaker: { consecutiveFailureThreshold: 5 },
+          iterationPolicy: {
+            maxIterations: 7,
+            continuity: { enabled: false, contextLimitTokens: 90_000 },
+          },
+        },
+      ],
+      tasks: [
+        {
+          id: "task-1",
+          contextId: "ctx-1",
+          order: 1,
+          title: "First task",
+          instructions: "Do the first thing carefully",
+          metadata: { area: "backend" },
+          source: "agent",
+        },
+      ],
+      edges: [
+        {
+          id: "edge-1",
+          sourceContextId: "ctx-1",
+          targetContextId: "ctx-2",
+        },
+      ],
+    },
+    status: "running",
+    activeContextIds: ["ctx-1"],
+    contextStates: {
+      "ctx-1": {
+        contextId: "ctx-1",
+        status: "running",
+        totalTaskCount: 4,
+        completedTaskCount: 2,
+        iterationCount: 3,
+        consecutiveFailureCount: 1,
+        worktreePath: "/wt/ctx-1",
+        branchName: "csm/ctx-1",
+        isolation: "worktree",
+        batchId: "batch-1",
+        laneId: "lane-1",
+        joinId: "join-1",
+        mergeStatus: "in-progress",
+        cleanupStatus: "pending",
+        lastMergeError: "merge conflict in foo.ts",
+      },
+    },
+    taskStates: {
+      "task-1": {
+        taskId: "task-1",
+        contextId: "ctx-1",
+        order: 1,
+        status: "running",
+        summary: "implemented the first slice",
+        startedAt: "2026-01-02T00:00:00Z",
+        completedAt: "2026-01-02T01:00:00Z",
+        lastConversationId: "conv-task-1",
+        failureMessage: "transient flake on first attempt",
+        failureHistory: [
+          {
+            message: "assertion failed in unit test",
+            timestamp: "2026-01-02T00:30:00Z",
+          },
+        ],
+      },
+    },
+    sharedDocuments: [
+      {
+        id: "doc-1",
+        relativePath: "docs/plan.md",
+        description: "the shared plan",
+        readWhen: "before implementing",
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-02T00:00:00Z",
+        lastUpdatedByConversationId: "conv-doc-1",
+      },
+    ],
+    laneStates: {
+      "ctx-1": {
+        "lane-key-1": {
+          lane: "implementer",
+          contextId: "ctx-1",
+          engine: "claude",
+          workflowConversationId: "wf-conv-1",
+          sessionRef: {
+            engine: "claude",
+            lane: "implementer",
+            conversationId: "conv-lane-1",
+          },
+          lastContextTokens: 12_000,
+          lastContextWindowMax: 200_000,
+          rotateBeforeNextTurn: true,
+          limitEvaluation: "supported",
+          lastUsedAt: "2026-01-02T02:00:00Z",
+        },
+      },
+    },
+    executionLanes: {
+      "lane-1": {
+        laneId: "lane-1",
+        kind: "worktree",
+        status: "active",
+        worktreePath: "/wt/lane-1",
+        branchName: "csm/lane-1",
+        includedContextIds: ["ctx-1"],
+        lastCommittingContextId: "ctx-1",
+        commitSnapshots: [
+          {
+            contextId: "ctx-1",
+            sha: "abc123def456",
+            committedAt: "2026-01-02T03:00:00Z",
+          },
+        ],
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-02T03:00:00Z",
+      },
+    },
+    joins: {
+      "join-1": {
+        joinId: "join-1",
+        kind: "context_merge",
+        contextId: "ctx-1",
+        targetLaneId: "lane-1",
+        sourceLaneIds: ["lane-2"],
+        mergedSourceLaneIds: ["lane-2"],
+        status: "running",
+        errorMessage: "retrying merge",
+        conflicts: { files: ["foo.ts"], message: "conflict in foo.ts" },
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-02T04:00:00Z",
+        completedAt: "2026-01-02T05:00:00Z",
+      },
+    },
+    lanePlan: {
+      continuationMap: { "ctx-1": "ctx-2" },
+      longestDownstreamPath: { "ctx-1": 3 },
+    },
+    machineSnapshot: { value: "running", context: { step: 2 } },
+    history: [
+      {
+        occurredAt: "2026-01-02T06:00:00Z",
+        event: {
+          type: "graph-workflow-status",
+          projectName: "p1",
+          sessionName: "full-durable",
+          executionId: "wf-maximal",
+          workflowStatus: "running",
+          activeContextIds: ["ctx-1"],
+          activeBatchIds: ["batch-1"],
+          activeJoinIds: ["join-1"],
+          haltReason: { type: "aborted" },
+          pendingHaltReason: { type: "aborted" },
+          secondaryHaltReasons: [{ type: "aborted" }],
+        },
+        preReset: true,
+      },
+    ],
+    startedAt: "2026-01-01T00:00:00Z",
+    completedAt: "2026-01-02T07:00:00Z",
+    haltReason: {
+      type: "max_iterations",
+      contextId: "ctx-1",
+      iterationCount: 7,
+    },
+    pendingHaltReason: {
+      type: "recovery_error",
+      message: "could not recover lane state",
+    },
+    secondaryHaltReasons: [{ type: "aborted" }],
+    pendingCollaborations: {
+      "collab-1": {
+        workflowId: "wf-maximal",
+        contextId: "ctx-1",
+        conversationId: "conv-collab-1",
+        parentImplementerTurnId: "turn-1",
+        brief: "resolve the design disagreement",
+        startedAt: "2026-01-02T08:00:00Z",
+      },
+    },
+    collaborationContinuations: {
+      "ctx-1": [
+        {
+          workflowId: "wf-maximal",
+          brief: "resolve the design disagreement",
+          result: {
+            // Non-converged so the schema's superRefine demands a populated
+            // openConflicts; a non-null finalAnswer is still permitted, which
+            // the durability guard requires (a nullable field left null reads
+            // as "missing"). Both branches stay non-default.
+            status: "rounds_exhausted",
+            finalAnswer: "leaning toward the queue-based approach",
+            openConflicts: [
+              {
+                rejectingAgent: "agent_two",
+                disputedPoint: "queue vs. polling for the merge step",
+                severity: "major",
+                category: "implementation",
+              },
+            ],
+          },
+          roundsConsumed: 2,
+          completedAt: "2026-01-02T09:00:00Z",
+          deliveredAt: "2026-01-02T09:05:00Z",
+        },
+      ],
+    },
+    pendingMergeRetry: ["ctx-1"],
+  };
+}
+
+/**
+ * Build a session with EVERY introspectable persisted key path populated to a
+ * distinctive non-default value, so the schema-driven durability harness can
+ * prove no field is dropped on write or reset to its default on read.
+ *
+ * Every scalar is non-default; every optional/nullable field is present and
+ * non-null; the nested graph-workflow execution (and its execution-history
+ * twin) is fully populated; the opaque envelope/lane records and the
+ * mcp/agent-capability override cascades each carry a representative entry whose
+ * nested optional fields are all set.
+ */
+function buildMaximalSession(): SessionState {
+  const execution = buildMaximalGraphWorkflowExecution();
+  return sessionStateSchema.parse({
+    sessionName: "full-durable",
+    worktreePath: "/wt/full-durable",
+    branchName: "csm/full-durable",
+    createdAt: "2026-01-01T00:00:00Z",
+    lastActivityAt: "2026-02-15T08:09:10Z",
+    archived: true,
+    finished: true,
+    source: "imported",
+    objective: "make the durability contract maximal",
+    creationMode: "focus",
+    tddEnabled: false,
+    targetBranch: "develop",
+    parentSessionName: "ancestor-session",
+    graphWorkflowExecution: execution,
+    graphWorkflowExecutionHistory: [execution],
+    workflowEnvelopes: {
+      env1: { kind: "primitive", payload: 42, status: "running" },
+    },
+    workflowLanes: {
+      lane1: { engine: "noop", status: "active" },
+    },
+    mcpOverrides: {
+      servers: {
+        stripe: {
+          enabled: true,
+          tools: { charge: { enabled: false } },
+        },
+      },
+    },
+    agentCapabilityOverrides: {
+      cascades: {
+        "codex-skills": {
+          items: {
+            "review-pr": { enabled: false },
+          },
+        },
+      },
+    },
+  });
+}
+
+describe("sessions-repo durability contract", () => {
+  it("round-trips every persisted session key path through the real repo", async () => {
+    await assertRoundTripDurability({
+      label: "sessions",
+      schema: sessionStateSchema,
+      buildMaximalFixture: buildMaximalSession,
+      persist: (fixture) => {
+        repo.upsert(PROJECT_PATH, fixture);
+        return fixture;
+      },
+      reload: (expected) => repo.findByKey(PROJECT_PATH, expected.sessionName),
+      fieldPolicies: {
+        // `conversations` is never stored on the sessions row. Conversations
+        // live in their own `conversations` table (see conversations-repo) and
+        // are joined back into the in-memory SessionState by higher layers, not
+        // by sessions-repo. rowToDomain deliberately sets `conversations: []`,
+        // so the column-level round trip cannot carry them and the array is
+        // correctly empty on reload. Not a serialization gap.
+        conversations: "not-persisted",
+        // `referenceDocuments` is likewise never stored on the sessions row.
+        // Reference documents live in their own `reference_documents` table and
+        // are joined in by higher layers; rowToDomain sets
+        // `referenceDocuments: []`. Not a serialization gap.
+        referenceDocuments: "not-persisted",
+      },
+    });
   });
 });

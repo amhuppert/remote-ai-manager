@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   createJobRecord,
   updateJobRecord,
+  getJobRecord,
   recoverStaleJobs,
   deleteJobRecordsForSession,
   deleteJobRecordsForProject,
@@ -15,6 +16,7 @@ import {
   _resetForTesting,
   getDb as getSharedStateDb,
 } from "../state-store/state-db";
+import { jobRecordSchema } from "./schemas";
 import { PersistenceError } from "../shared/errors";
 
 vi.mock("../push-notification/dispatcher");
@@ -71,6 +73,70 @@ describe("updateJobRecord", () => {
 
     const recovered = recoverStaleJobs();
     expect(recovered).toBe(0);
+  });
+});
+
+describe("getJobRecord", () => {
+  it("reads back every durable field including the generated completedAt", () => {
+    createJobRecord({
+      jobId: "job-1",
+      jobType: "merge",
+      status: "running",
+      projectName: "my-project",
+      sessionName: "feature",
+      branchName: "csm/feature",
+      startedAt: "2026-06-09 12:00:00",
+    });
+    updateJobRecord("job-1", {
+      status: "completed",
+      mergeHash: "abc123",
+      commitHash: "def456",
+      conflictCount: 2,
+      conflictFiles: ["a.ts", "b.ts"],
+      errorMessage: "none",
+    });
+
+    const record = getJobRecord("job-1");
+
+    expect(record).not.toBeNull();
+    expect(record!.jobId).toBe("job-1");
+    expect(record!.jobType).toBe("merge");
+    expect(record!.status).toBe("completed");
+    expect(record!.projectName).toBe("my-project");
+    expect(record!.sessionName).toBe("feature");
+    expect(record!.branchName).toBe("csm/feature");
+    expect(record!.startedAt).toBe("2026-06-09 12:00:00");
+    expect(record!.mergeHash).toBe("abc123");
+    expect(record!.commitHash).toBe("def456");
+    expect(record!.conflictCount).toBe(2);
+    expect(record!.conflictFiles).toEqual(["a.ts", "b.ts"]);
+    expect(record!.errorMessage).toBe("none");
+    expect(typeof record!.completedAt).toBe("string");
+  });
+
+  it("returns a JobRecord with no live-only keys that validates against jobRecordSchema", () => {
+    createJobRecord({
+      jobId: "job-1",
+      jobType: "merge",
+      status: "running",
+      projectName: "my-project",
+      sessionName: "feature",
+      branchName: "csm/feature",
+      startedAt: "2026-06-09 12:00:00",
+    });
+    updateJobRecord("job-1", { status: "completed" });
+
+    const record = getJobRecord("job-1");
+
+    expect(record).not.toBeNull();
+    expect(() => jobRecordSchema.parse(record)).not.toThrow();
+    const keys = Object.keys(record!);
+    expect(keys).not.toContain("targetBranch");
+    expect(keys).not.toContain("phase");
+  });
+
+  it("returns null for an unknown id", () => {
+    expect(getJobRecord("does-not-exist")).toBeNull();
   });
 });
 

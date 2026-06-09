@@ -18,6 +18,7 @@ import {
 } from "./conversations-repo";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
 type Db = InstanceType<typeof Database>;
 
 let db: Db;
@@ -677,6 +678,166 @@ describe("conversations-repo findAll caching", () => {
     const firstDrop = first.find((r) => r.conversation.id === "c-drop");
     // Re-inserted row is parsed fresh, not served from stale cache.
     expect(thirdDrop?.conversation).not.toBe(firstDrop!.conversation);
+  });
+});
+
+/**
+ * Build a conversation with EVERY introspectable persisted key path populated
+ * to a distinctive non-default value, so the schema-driven durability harness
+ * can prove no field is dropped on write or reset to its default on read.
+ *
+ * Every scalar is non-default, every optional/nullable field is present and
+ * non-null, every array has a fully-populated representative element, and every
+ * record (mcpOverrides.servers, the capability cascades, the runtime cascade
+ * maps) has at least one entry whose nested optional fields are all populated.
+ */
+function buildMaximalConversation(): ConversationState {
+  return conversationStateSchema.parse({
+    id: "c-maximal",
+    name: "Maximal conversation",
+    transcriptPath: "/tmp/transcripts/c-maximal.jsonl",
+    status: "running",
+    promptCount: 42,
+    createdAt: "2026-01-01T00:00:00Z",
+    lastActivityAt: "2026-02-15T08:09:10Z",
+    source: "imported",
+    summary: "A maximal durability fixture",
+    archived: true,
+    totalCostUsd: 12.34,
+    totalDurationMs: 56_789,
+    totalTurns: 11,
+    pendingQuestionId: "q-maximal",
+    pendingQuestions: [
+      {
+        question: "Continue with the maximal plan?",
+        header: "Plan confirmation",
+        options: [
+          { label: "yes", description: "proceed as planned" },
+          { label: "no", description: "abort the plan" },
+        ],
+        multiSelect: true,
+      },
+    ],
+    pendingPromptText: "draft prompt text that should round-trip verbatim",
+    unread: true,
+    forkedFrom: {
+      sourceConversationId: "parent-conv",
+      messageIndex: 7,
+      sourceBackend: "codex",
+      sourceBackendRef: { backend: "codex", threadId: "src-thread" },
+      forkLocator: "msg-7",
+      forkMode: "synthetic",
+    },
+    role: "validator",
+    // activeTurnSource is intentionally omitted here (see fieldPolicies):
+    // it is transient runtime state with no persistence column.
+    contextTokens: 12_345,
+    contextWindowMax: 200_000,
+    debugMode: {
+      active: true,
+      recording: true,
+      logFilePath: "/tmp/debug/c-maximal.log",
+      enteredAt: "2026-01-15T00:00:00Z",
+      hypotheses: [
+        {
+          id: "h1",
+          description: "suspected race condition",
+          instrumentationPlan: "add timing probes around the lock acquisition",
+        },
+      ],
+      reproductionSteps: ["run the prompt twice in quick succession"],
+      fixSummary: "serialized the write queue",
+      verificationSteps: ["confirm no duplicate rows after concurrent upserts"],
+      instructionsDelivered: true,
+      phase: "awaiting_verification",
+      lastTurnFailed: true,
+    },
+    machineSnapshot: {
+      value: "awaiting",
+      context: { iteration: 3, lastError: null },
+    },
+    agentBackend: "codex",
+    backendRef: { backend: "codex", threadId: "thread-maximal" },
+    mcpOverrides: {
+      servers: {
+        stripe: {
+          enabled: true,
+          tools: {
+            charge: { enabled: false },
+          },
+        },
+      },
+    },
+    mcpRuntime: {
+      lastAppliedConfigHash: "hash-applied",
+      pendingConfigHash: "hash-pending",
+      pendingServerKeys: ["stripe"],
+      lastApplyDisposition: "deferred_to_next_turn",
+      lastApplyError: "transport handshake timed out",
+    },
+    agentCapabilityOverrides: {
+      cascades: {
+        "codex-skills": {
+          items: {
+            "review-pr": { enabled: false },
+          },
+        },
+      },
+    },
+    agentCapabilitiesRuntime: {
+      cascades: {
+        "codex-skills": {
+          appliedHash: "cap-applied",
+          pendingHash: "cap-pending",
+          pendingItemIds: ["review-pr"],
+          lastApplyStatus: "staged-next-turn",
+          lastApplyError: "discovery refresh required",
+        },
+      },
+    },
+    pendingQueue: [
+      {
+        id: "q-maximal",
+        content: [
+          { type: "text", text: "queued follow-up that should round-trip" },
+        ],
+        status: "delivering",
+        enqueuedAt: "2026-03-01T00:00:00Z",
+        updatedAt: "2026-03-01T00:05:00Z",
+        deliveryStartedAt: "2026-03-01T00:04:00Z",
+        deliveredAt: "2026-03-01T00:06:00Z",
+        cancelledAt: "2026-03-01T00:07:00Z",
+        failedAt: "2026-03-01T00:08:00Z",
+        deliveryAttemptId: "attempt-maximal",
+        attemptCount: 3,
+        error: "transient delivery error that should round-trip",
+      },
+    ],
+  });
+}
+
+describe("conversations-repo durability contract", () => {
+  it("round-trips every persisted conversation key path through the real repo", async () => {
+    await assertRoundTripDurability({
+      label: "conversations",
+      schema: conversationStateSchema,
+      buildMaximalFixture: buildMaximalConversation,
+      persist: (fixture) => {
+        repo.upsert(PROJECT_PATH, SESSION_NAME, fixture);
+        return fixture;
+      },
+      reload: (expected) =>
+        repo.findByKey(PROJECT_PATH, SESSION_NAME, expected.id),
+      fieldPolicies: {
+        // `activeTurnSource` is derived from the in-flight XState conversation
+        // machine's `activeTurn` (see deriveActiveTurnSource in
+        // workflows/conversation/manager.ts). It is transient turn state with
+        // no `active_turn_source` column: it is never written and is correctly
+        // reset to null on reload. Not a serialization gap — genuinely durable
+        // state never includes it.
+        activeTurnSource: "not-persisted",
+      },
+    });
   });
 });
 

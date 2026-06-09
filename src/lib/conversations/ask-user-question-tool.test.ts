@@ -1,3 +1,19 @@
+/**
+ * Tests for the AskUserQuestion MCP tool handler.
+ *
+ * Persistence-dependent behavior — does asking a question actually transition
+ * the stored conversation to `waiting_for_input` with the pending question
+ * recorded, and does answering clear it back to `running`? — is verified by
+ * RELOADING the conversation through the real conversation seam
+ * (`createPersistenceFixture().deps`) rather than by asserting on a non-
+ * serializing in-memory fake. If `status` / `pendingQuestionId` /
+ * `pendingQuestions` ever stop serializing, the reload-based assertions fail.
+ *
+ * Tests whose correctness does NOT depend on persisted state (registration,
+ * the early-return error paths that short-circuit before any mutate, and the
+ * abort path whose assertion is the rejection message) stay on lightweight
+ * stubs — there is no persisted state for them to read back.
+ */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -6,7 +22,13 @@ import {
   registerConversationRuntime,
   type ConversationRuntimeState,
 } from "@/lib/workflows/conversation/runtime-state";
+import {
+  createPersistenceFixture,
+  type PersistenceFixture,
+} from "@/lib/shared/testing/persistence-fixture";
 
+import { conversationStateSchema } from "./schemas";
+import type { ConversationState } from "./schemas";
 import {
   registerAskUserQuestionTool,
   type AskUserQuestionToolDeps,
@@ -41,6 +63,20 @@ const runtimeKey = conversationRuntimeKey(
   conversationId,
 );
 
+function makeConversation(
+  overrides: Partial<ConversationState> = {},
+): ConversationState {
+  return conversationStateSchema.parse({
+    id: conversationId,
+    transcriptPath: null,
+    status: "running",
+    promptCount: 1,
+    createdAt: "2026-01-01T00:00:00Z",
+    lastActivityAt: "2026-01-01T00:01:00Z",
+    ...overrides,
+  });
+}
+
 function createRuntimeState(
   overrides: Partial<ConversationRuntimeState> = {},
 ): ConversationRuntimeState {
@@ -52,7 +88,11 @@ function createRuntimeState(
   };
 }
 
-function createDeps(
+/**
+ * Lightweight, non-persisting deps for tests whose correctness does not depend
+ * on persisted conversation state (early returns, the abort-message path).
+ */
+function createStubDeps(
   overrides: Partial<AskUserQuestionToolDeps> = {},
 ): AskUserQuestionToolDeps {
   return {
@@ -92,12 +132,14 @@ describe("ask-user-question-tool", () => {
   });
 
   it("registers the AskUserQuestion tool", () => {
-    const { tools } = register(createDeps());
+    const { tools } = register(createStubDeps());
     expect(tools.has("AskUserQuestion")).toBe(true);
   });
 
   it("returns isError when no runtime is registered for the conversation", async () => {
-    const { handler } = register(createDeps({ getRuntime: () => undefined }));
+    const { handler } = register(
+      createStubDeps({ getRuntime: () => undefined }),
+    );
 
     const result = (await handler({
       questions: [
@@ -117,7 +159,7 @@ describe("ask-user-question-tool", () => {
     registerConversationRuntime(runtimeKey, runtimeState);
 
     const { handler } = register(
-      createDeps({ getRuntime: () => runtimeState }),
+      createStubDeps({ getRuntime: () => runtimeState }),
     );
 
     const result = (await handler({
@@ -142,7 +184,7 @@ describe("ask-user-question-tool", () => {
     registerConversationRuntime(runtimeKey, runtimeState);
 
     const { handler } = register(
-      createDeps({ getRuntime: () => runtimeState }),
+      createStubDeps({ getRuntime: () => runtimeState }),
     );
 
     const result = (await handler({ questions: [] })) as {
@@ -154,101 +196,132 @@ describe("ask-user-question-tool", () => {
     expect(result.content[0]?.text).toMatch(/at least one question/i);
   });
 
-  it("emits ASK_QUESTION, persists pending state, emits SSE, awaits resolver, and returns answers", async () => {
-    const runtimeState = createRuntimeState();
-    registerConversationRuntime(runtimeKey, runtimeState);
+  describe("persisted pending-question lifecycle (real store)", () => {
+    let fixture: PersistenceFixture;
 
-    const mutateConversation = vi.fn(async () => {});
-    const { handler } = register(
-      createDeps({
-        getRuntime: () => runtimeState,
-        mutateConversation,
-      }),
-    );
+    beforeEach(async () => {
+      fixture = createPersistenceFixture();
+      fixture.seedProject(projectPath);
+      fixture.seedSession(projectPath, sessionName);
+      await fixture.seedConversation(
+        projectPath,
+        sessionName,
+        makeConversation(),
+      );
+    });
 
-    const questions = [
-      {
-        question: "Pick one",
-        options: [{ label: "a" }, { label: "b" }],
-        multiSelect: false,
-      },
-    ];
+    afterEach(() => {
+      fixture.close();
+    });
 
-    const resultPromise = handler({ questions });
-
-    await vi.waitFor(() => {
-      if (!runtimeState.activeQuestionResolver) {
-        throw new Error("resolver not yet installed");
+    async function reload(): Promise<ConversationState> {
+      const reloaded = await fixture.deps.getConversation(
+        projectPath,
+        sessionName,
+        conversationId,
+      );
+      if (!reloaded) {
+        throw new Error("conversation not found after reload");
       }
+      return reloaded;
+    }
+
+    it("persists waiting_for_input with the pending question, then clears it on answer (verified by reload)", async () => {
+      const runtimeState = createRuntimeState();
+      registerConversationRuntime(runtimeKey, runtimeState);
+
+      const { handler } = register(
+        createStubDeps({
+          getRuntime: () => runtimeState,
+          mutateConversation: fixture.deps.mutateConversation,
+        }),
+      );
+
+      const questions = [
+        {
+          question: "Pick one",
+          options: [{ label: "a" }, { label: "b" }],
+          multiSelect: false,
+        },
+      ];
+
+      const resultPromise = handler({ questions });
+
+      await vi.waitFor(() => {
+        if (!runtimeState.activeQuestionResolver) {
+          throw new Error("resolver not yet installed");
+        }
+      });
+
+      expect(runtimeState.sendToMachine).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "ASK_QUESTION", questions }),
+      );
+      expect(runtimeState.streamEmit).toHaveBeenCalledWith(
+        "ask-question",
+        expect.objectContaining({ questions }),
+      );
+
+      const waiting = await reload();
+      expect(waiting.status).toBe("waiting_for_input");
+      expect(waiting.pendingQuestionId).toEqual(expect.any(String));
+      expect(waiting.pendingQuestions).toEqual(questions);
+
+      runtimeState.activeQuestionResolver?.resolve({ "Pick one": "a" });
+
+      const result = (await resultPromise) as {
+        content: Array<{ type: string; text: string }>;
+        isError?: boolean;
+      };
+
+      expect(result.isError).toBeFalsy();
+      const text = result.content[0]?.text ?? "";
+      expect(JSON.parse(text)).toEqual({ "Pick one": "a" });
+
+      const resumed = await reload();
+      expect(resumed.status).toBe("running");
+      expect(resumed.pendingQuestionId).toBeNull();
+      expect(resumed.pendingQuestions).toBeNull();
     });
 
-    expect(runtimeState.sendToMachine).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "ASK_QUESTION",
-        questions,
-      }),
-    );
-    expect(runtimeState.streamEmit).toHaveBeenCalledWith(
-      "ask-question",
-      expect.objectContaining({ questions }),
-    );
+    it("clears the persisted pending question on the abort path (verified by reload)", async () => {
+      const runtimeState = createRuntimeState();
+      registerConversationRuntime(runtimeKey, runtimeState);
 
-    expect(mutateConversation).toHaveBeenCalledWith(
-      projectPath,
-      sessionName,
-      conversationId,
-      "prompt.setWaitingForInput",
-      expect.any(Function),
-    );
+      const { handler } = register(
+        createStubDeps({
+          getRuntime: () => runtimeState,
+          mutateConversation: fixture.deps.mutateConversation,
+        }),
+      );
 
-    runtimeState.activeQuestionResolver?.resolve({ "Pick one": "a" });
+      const resultPromise = handler({
+        questions: [{ question: "Pick", options: [{ label: "a" }] }],
+      });
 
-    const result = (await resultPromise) as {
-      content: Array<{ type: string; text: string }>;
-      isError?: boolean;
-    };
+      await vi.waitFor(() => {
+        if (!runtimeState.activeQuestionResolver) {
+          throw new Error("resolver not yet installed");
+        }
+      });
 
-    expect(result.isError).toBeFalsy();
-    const text = result.content[0]?.text ?? "";
-    expect(JSON.parse(text)).toEqual({ "Pick one": "a" });
+      expect((await reload()).status).toBe("waiting_for_input");
 
-    expect(mutateConversation).toHaveBeenCalledWith(
-      projectPath,
-      sessionName,
-      conversationId,
-      "prompt.resumeRunning",
-      expect.any(Function),
-    );
-  });
+      runtimeState.activeQuestionResolver?.reject(
+        new Error("Prompt aborted by user"),
+      );
 
-  it("returns isError when the active question resolver is rejected (abort path)", async () => {
-    const runtimeState = createRuntimeState();
-    registerConversationRuntime(runtimeKey, runtimeState);
+      const result = (await resultPromise) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
 
-    const { handler } = register(
-      createDeps({ getRuntime: () => runtimeState }),
-    );
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).toContain("Prompt aborted by user");
 
-    const resultPromise = handler({
-      questions: [{ question: "Pick", options: [{ label: "a" }] }],
+      const resumed = await reload();
+      expect(resumed.status).toBe("running");
+      expect(resumed.pendingQuestionId).toBeNull();
+      expect(resumed.pendingQuestions).toBeNull();
     });
-
-    await vi.waitFor(() => {
-      if (!runtimeState.activeQuestionResolver) {
-        throw new Error("resolver not yet installed");
-      }
-    });
-
-    runtimeState.activeQuestionResolver?.reject(
-      new Error("Prompt aborted by user"),
-    );
-
-    const result = (await resultPromise) as {
-      content: Array<{ text: string }>;
-      isError?: boolean;
-    };
-
-    expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain("Prompt aborted by user");
   });
 });
