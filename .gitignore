@@ -60,3 +60,4 @@ ROADMAP.md
 /*.webp
 /*.gif
 .cc/dev-server-logs/
+.cc/tmp/
