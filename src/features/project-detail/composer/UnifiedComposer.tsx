@@ -7,6 +7,7 @@ import { getModelsForBackend } from "@/components/ModelSelector";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import {
+  effortLevelSchema,
   getEffortLevelsForBackend,
   type EffortLevel,
 } from "@/lib/agent-backends/schemas";
@@ -43,6 +44,8 @@ export interface UnifiedComposerProps {
   archivedCount: number;
   onSendPrompt: (input: UnifiedComposerSendInput) => void;
   onRunCommand: (id: "new" | "capabilities" | "workflow-builder") => void;
+  lastUsedModelId?: string;
+  lastUsedEffort?: string;
   busy: boolean;
   error?: ProjectPromptError | null;
   onDismissError?: () => void;
@@ -58,8 +61,32 @@ export type ProjectComposerSubmitResult =
 
 const DEFAULT_EFFORT: EffortLevel = "high";
 
-function defaultModelFor(backend: AgentBackendId): string {
-  return getModelsForBackend(backend)[0]?.id ?? "";
+function modelForBackend(
+  backend: AgentBackendId,
+  preferred: string | undefined,
+): string {
+  const modelOptions = getModelsForBackend(backend).map((m) => m.id);
+  if (preferred !== undefined && modelOptions.includes(preferred)) {
+    return preferred;
+  }
+  return modelOptions[0] ?? "";
+}
+
+function parseEffort(value: string | undefined): EffortLevel | undefined {
+  if (value === undefined) return undefined;
+  const result = effortLevelSchema.safeParse(value);
+  return result.success ? result.data : undefined;
+}
+
+function pickEffort(
+  availableLevels: readonly EffortLevel[],
+  preferred: EffortLevel,
+): EffortLevel {
+  if (availableLevels.length === 0) return preferred;
+  if (availableLevels.includes(preferred)) return preferred;
+  return availableLevels.includes(DEFAULT_EFFORT)
+    ? DEFAULT_EFFORT
+    : availableLevels[0]!;
 }
 
 function parseCommandDraft(draft: string): ProjectCommandId | null {
@@ -126,15 +153,28 @@ export default function UnifiedComposer({
   onTokensChange,
   onSendPrompt,
   onRunCommand,
+  lastUsedModelId,
+  lastUsedEffort,
   busy,
   error,
   onDismissError,
 }: UnifiedComposerProps): React.JSX.Element {
+  const rememberedSettingsKey = JSON.stringify([
+    activeConversationId,
+    agentBackend,
+    lastUsedModelId,
+    lastUsedEffort,
+  ]);
   const [draft, setDraft] = useState("");
   const [modelPref, setModelPref] = useState(() =>
-    defaultModelFor(agentBackend),
+    modelForBackend(agentBackend, lastUsedModelId),
   );
-  const [effortPref, setEffortPref] = useState<EffortLevel>(DEFAULT_EFFORT);
+  const [effortPref, setEffortPref] = useState<EffortLevel>(
+    () => parseEffort(lastUsedEffort) ?? DEFAULT_EFFORT,
+  );
+  const [prevRememberedSettingsKey, setPrevRememberedSettingsKey] = useState(
+    rememberedSettingsKey,
+  );
   const [inlineMarkerIds, setInlineMarkerIds] = useState<string[]>([]);
   const [promptError, setPromptError] = useState<string | null>(null);
   const [promptPlaceholder, setPromptPlaceholder] = useState<string | null>(
@@ -144,6 +184,13 @@ export default function UnifiedComposer({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const backendLocked = (activeConversation?.promptCount ?? 0) > 0;
+
+  if (prevRememberedSettingsKey !== rememberedSettingsKey) {
+    setPrevRememberedSettingsKey(rememberedSettingsKey);
+    setModelPref(modelForBackend(agentBackend, lastUsedModelId));
+    setEffortPref(parseEffort(lastUsedEffort) ?? DEFAULT_EFFORT);
+  }
+
   const modelOptions = useMemo(
     () => getModelsForBackend(agentBackend).map((m) => m.id),
     [agentBackend],
@@ -157,9 +204,7 @@ export default function UnifiedComposer({
     [agentBackend, selectedModel],
   );
   const effortSupported = availableEffortLevels.length > 0;
-  const selectedEffort = availableEffortLevels.includes(effortPref)
-    ? effortPref
-    : (availableEffortLevels[0] ?? DEFAULT_EFFORT);
+  const selectedEffort = pickEffort(availableEffortLevels, effortPref);
 
   const { pendingImages, addImage, removeImage, clearImages, isAtLimit } =
     useImageAttachments();

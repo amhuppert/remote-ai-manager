@@ -26,6 +26,7 @@ import { useSessionPageLocalState } from "@/features/session/hooks/use-session-p
 import { useSessionPageQueries } from "@/features/session/hooks/use-session-page-queries";
 import { useSessionPageViewProps } from "@/features/session/hooks/use-session-page-view-props";
 import { useEnqueuePromptErrorToast } from "@/stores/notification.store";
+import { selectLastUserTurnAgentSettings } from "@/lib/conversations/last-turn-agent-settings";
 
 interface Props {
   projectName: string;
@@ -136,6 +137,10 @@ export default function ConversationDetailPage({
 
   const local = useSessionPageLocalState();
   const hasCollabChip = hasCollabPrefix(local.promptText);
+  const lastUserTurnAgentSettings = useMemo(
+    () => selectLastUserTurnAgentSettings(rawMessages),
+    [rawMessages],
+  );
   const {
     selectedBackend,
     selectedModel,
@@ -151,6 +156,8 @@ export default function ConversationDetailPage({
     activeConversation,
     defaultModel,
     defaultEffort,
+    lastUsedModelId: lastUserTurnAgentSettings.modelId,
+    lastUsedEffort: lastUserTurnAgentSettings.effort,
   });
 
   const { handlePromptTextChange, clearPersistedPendingPromptOnSubmit } =

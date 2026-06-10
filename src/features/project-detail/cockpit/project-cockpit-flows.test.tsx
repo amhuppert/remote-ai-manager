@@ -19,7 +19,11 @@ import ProjectCockpit from "./ProjectCockpit";
 import SessionsPanel from "./SessionsPanel";
 import { resolveProjectComposerSubmit } from "../composer/UnifiedComposer";
 import { _useCockpitViewStore } from "./use-cockpit-view-state";
-import type { ConversationState } from "@/lib/conversations/schemas";
+import { selectLastUserTurnAgentSettings } from "@/lib/conversations/last-turn-agent-settings";
+import type {
+  ConversationState,
+  TranscriptMessage,
+} from "@/lib/conversations/schemas";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { FilterToken } from "../components/filter-tokens";
@@ -232,6 +236,46 @@ describe("project page: pre-init backend selection in the cockpit", () => {
     expect(
       document.querySelector('[data-backend="codex"]')?.className,
     ).toContain("active");
+  });
+});
+
+describe("project page: per-conversation model memory", () => {
+  it("derives the remembered controls from the last user turn in the active conversation", () => {
+    const messages: TranscriptMessage[] = [
+      {
+        role: "user",
+        content: [],
+        timestamp: "2026-01-01T00:00:00Z",
+        model: "opus",
+        effort: "high",
+      },
+      {
+        role: "assistant",
+        content: [],
+        timestamp: "2026-01-01T00:00:01Z",
+        model: "opus",
+        effort: "high",
+      },
+      {
+        role: "user",
+        content: [],
+        timestamp: "2026-01-01T00:00:02Z",
+        model: "sonnet",
+        effort: "medium",
+      },
+      {
+        role: "assistant",
+        content: [],
+        timestamp: "2026-01-01T00:00:03Z",
+        model: "sonnet",
+        effort: "medium",
+      },
+    ];
+
+    expect(selectLastUserTurnAgentSettings(messages)).toEqual({
+      modelId: "sonnet",
+      effort: "medium",
+    });
   });
 });
 

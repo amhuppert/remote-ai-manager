@@ -186,6 +186,24 @@ describe("UnifiedComposer backend lock", () => {
   });
 });
 
+describe("UnifiedComposer model settings", () => {
+  it("initializes controls from the active conversation's last sent model and effort", async () => {
+    renderComposer({
+      activeConversation: makeConversation({ promptCount: 2 }),
+      lastUsedModelId: "sonnet",
+      lastUsedEffort: "medium",
+    });
+
+    await waitFor(() =>
+      expect(document.querySelector(".prompt-input-area")).not.toBeNull(),
+    );
+    expect(screen.getByTitle(/Model: Sonnet/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Effort: Medium/i }),
+    ).toBeInTheDocument();
+  });
+});
+
 describe("resolveProjectComposerSubmit", () => {
   it("routes prose as a send envelope", () => {
     const result = resolveProjectComposerSubmit({

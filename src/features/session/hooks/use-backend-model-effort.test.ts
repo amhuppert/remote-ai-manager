@@ -1,5 +1,47 @@
+// @vitest-environment jsdom
+import { renderHook } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
-import { pickPreferredEffort } from "./use-backend-model-effort";
+import {
+  pickPreferredEffort,
+  useBackendModelEffort,
+} from "./use-backend-model-effort";
+import type { ConversationState } from "@/lib/conversations/schemas";
+
+function makeConversation(
+  overrides: Partial<ConversationState> = {},
+): ConversationState {
+  return {
+    id: "c1",
+    scope: "session",
+    name: "chat",
+    transcriptPath: null,
+    status: "awaiting",
+    promptCount: 1,
+    createdAt: "2026-01-01T00:00:00Z",
+    lastActivityAt: "2026-01-01T00:00:00Z",
+    source: "cc",
+    summary: null,
+    archived: false,
+    totalCostUsd: null,
+    totalDurationMs: null,
+    totalTurns: null,
+    pendingQuestionId: null,
+    pendingQuestions: null,
+    pendingPromptText: null,
+    unread: false,
+    pendingQueue: [],
+    forkedFrom: null,
+    role: null,
+    activeTurnSource: null,
+    contextTokens: null,
+    contextWindowMax: null,
+    debugMode: null,
+    machineSnapshot: null,
+    agentBackend: "claude",
+    backendRef: null,
+    ...overrides,
+  };
+}
 
 describe("pickPreferredEffort", () => {
   it("returns preferred when supported", () => {
@@ -18,5 +60,23 @@ describe("pickPreferredEffort", () => {
 
   it("returns preferred when no levels available (effort unsupported)", () => {
     expect(pickPreferredEffort([], "high")).toBe("high");
+  });
+});
+
+describe("useBackendModelEffort", () => {
+  it("initializes controls from the session conversation's last sent model and effort", () => {
+    const { result } = renderHook(() =>
+      useBackendModelEffort({
+        conversationId: "c1",
+        activeConversation: makeConversation(),
+        defaultModel: "fable",
+        defaultEffort: "high",
+        lastUsedModelId: "sonnet",
+        lastUsedEffort: "medium",
+      }),
+    );
+
+    expect(result.current.selectedModel).toBe("sonnet");
+    expect(result.current.selectedEffort).toBe("medium");
   });
 });

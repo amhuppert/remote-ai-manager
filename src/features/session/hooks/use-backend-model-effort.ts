@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import { getModelsForBackend } from "@/components/ModelSelector";
 import {
+  effortLevelSchema,
   type EffortLevel,
   getEffortLevelsForBackend,
 } from "@/lib/agent-backends/schemas";
@@ -14,6 +15,8 @@ export interface UseBackendModelEffortArgs {
   activeConversation: ConversationState | undefined;
   defaultModel: string;
   defaultEffort: EffortLevel;
+  lastUsedModelId?: string;
+  lastUsedEffort?: string;
 }
 
 export interface UseBackendModelEffortResult {
@@ -46,6 +49,51 @@ function pickEffort(
   return pickPreferredEffort(levels, preferred);
 }
 
+function parseEffort(value: string | undefined): EffortLevel | undefined {
+  if (value === undefined) return undefined;
+  const result = effortLevelSchema.safeParse(value);
+  return result.success ? result.data : undefined;
+}
+
+function pickModel(
+  backend: AgentBackendId,
+  preferred: string | undefined,
+  fallback: string,
+): string {
+  const models = getModelsForBackend(backend);
+  if (preferred !== undefined && models.some((m) => m.id === preferred)) {
+    return preferred;
+  }
+  return models.some((m) => m.id === fallback) ? fallback : models[0]!.id;
+}
+
+function resolveModelEffortSelection({
+  backend,
+  defaultModel,
+  defaultEffort,
+  lastUsedModelId,
+  lastUsedEffort,
+}: {
+  backend: AgentBackendId;
+  defaultModel: string;
+  defaultEffort: EffortLevel;
+  lastUsedModelId: string | undefined;
+  lastUsedEffort: string | undefined;
+}): {
+  model: string;
+  effort: EffortLevel;
+} {
+  const model = pickModel(backend, lastUsedModelId, defaultModel);
+  return {
+    model,
+    effort: pickEffort(
+      backend,
+      model,
+      parseEffort(lastUsedEffort) ?? defaultEffort,
+    ),
+  };
+}
+
 // Initialize backend/model/effort consistently from the active conversation's
 // stored backend. The Claude `defaultModel` from server config must not leak
 // into a Codex conversation — picking the first backend-appropriate model
@@ -55,27 +103,28 @@ export function useBackendModelEffort({
   activeConversation,
   defaultModel,
   defaultEffort,
+  lastUsedModelId,
+  lastUsedEffort,
 }: UseBackendModelEffortArgs): UseBackendModelEffortResult {
+  const initialBackend = activeConversation?.agentBackend ?? "claude";
+  const initialSelection = resolveModelEffortSelection({
+    backend: initialBackend,
+    defaultModel,
+    defaultEffort,
+    lastUsedModelId,
+    lastUsedEffort,
+  });
   const [selectedBackend, setSelectedBackend] = useState<AgentBackendId>(
-    () => activeConversation?.agentBackend ?? "claude",
+    () => initialBackend,
   );
 
-  const [selectedModel, setSelectedModel] = useState<string>(() => {
-    const backend = activeConversation?.agentBackend ?? "claude";
-    const models = getModelsForBackend(backend);
-    return models.some((m) => m.id === defaultModel)
-      ? defaultModel
-      : models[0]!.id;
-  });
+  const [selectedModel, setSelectedModel] = useState<string>(
+    () => initialSelection.model,
+  );
 
-  const [selectedEffort, setSelectedEffort] = useState<EffortLevel>(() => {
-    const backend = activeConversation?.agentBackend ?? "claude";
-    const models = getModelsForBackend(backend);
-    const initialModel = models.some((m) => m.id === defaultModel)
-      ? defaultModel
-      : models[0]!.id;
-    return pickEffort(backend, initialModel, defaultEffort);
-  });
+  const [selectedEffort, setSelectedEffort] = useState<EffortLevel>(
+    () => initialSelection.effort,
+  );
 
   const backendLocked = (activeConversation?.promptCount ?? 0) > 0;
 
@@ -87,25 +136,38 @@ export function useBackendModelEffort({
   // without an effect — see https://react.dev/reference/react/useState#storing-information-from-previous-renders
   const activeBackend = activeConversation?.agentBackend;
   const [prevConversationId, setPrevConversationId] = useState(conversationId);
-  const [prevActiveBackend, setPrevActiveBackend] = useState(activeBackend);
+  const rememberedSettingsKey = JSON.stringify([
+    conversationId,
+    activeBackend,
+    defaultModel,
+    defaultEffort,
+    lastUsedModelId,
+    lastUsedEffort,
+  ]);
+  const [prevRememberedSettingsKey, setPrevRememberedSettingsKey] = useState(
+    rememberedSettingsKey,
+  );
   if (
     activeConversation &&
-    (prevConversationId !== conversationId ||
-      prevActiveBackend !== activeBackend)
+    prevRememberedSettingsKey !== rememberedSettingsKey
   ) {
-    setPrevConversationId(conversationId);
-    setPrevActiveBackend(activeBackend);
-    const backend = activeConversation.agentBackend ?? "claude";
     const isConversationSwitch = prevConversationId !== conversationId;
-    if (
-      backend !== selectedBackend &&
-      (isConversationSwitch || (activeConversation.promptCount ?? 0) > 0)
-    ) {
+    setPrevConversationId(conversationId);
+    setPrevRememberedSettingsKey(rememberedSettingsKey);
+    const shouldApplyRememberedSettings =
+      isConversationSwitch || (activeConversation.promptCount ?? 0) > 0;
+    if (shouldApplyRememberedSettings) {
+      const backend = activeConversation.agentBackend ?? "claude";
+      const nextSelection = resolveModelEffortSelection({
+        backend,
+        defaultModel,
+        defaultEffort,
+        lastUsedModelId,
+        lastUsedEffort,
+      });
       setSelectedBackend(backend);
-      const models = getModelsForBackend(backend);
-      setSelectedModel(models[0]!.id);
-      const levels = getEffortLevelsForBackend(backend, models[0]!.id);
-      setSelectedEffort(levels.includes("high") ? "high" : levels[0]!);
+      setSelectedModel(nextSelection.model);
+      setSelectedEffort(nextSelection.effort);
     }
   }
 

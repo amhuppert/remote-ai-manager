@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, type ReactNode } from "react";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { selectLastUserTurnAgentSettings } from "@/lib/conversations/last-turn-agent-settings";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
@@ -158,6 +159,10 @@ export default function ProjectCockpit({
     () => messagesQuery.data ?? [],
     [messagesQuery.data],
   );
+  const lastUserTurnAgentSettings = useMemo(
+    () => selectLastUserTurnAgentSettings(messages),
+    [messages],
+  );
   const { spawnCards, renderSpawnCardRow } = useConversationSpawnCards({
     projectName,
     conversationId: activeTabId,
@@ -218,6 +223,8 @@ export default function ProjectCockpit({
       busy={sender.sending}
       error={sender.error}
       onDismissError={sender.clearError}
+      lastUsedModelId={lastUserTurnAgentSettings.modelId}
+      lastUsedEffort={lastUserTurnAgentSettings.effort}
       onRunCommand={onRunCommand}
       onSendPrompt={(input) =>
         void sender.send({
