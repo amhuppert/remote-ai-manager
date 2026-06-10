@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   claudeEffortLevelSchema,
+  claudeModelSchema,
   effortLevelSchema,
   getEffortLevelsForModel,
   clampEffortToModel,
@@ -61,6 +62,16 @@ describe("getEffortLevelsForModel", () => {
   it("returns empty array for haiku", () => {
     expect(getEffortLevelsForModel("haiku")).toEqual([]);
   });
+
+  it("returns the full range for fable (including xhigh and max)", () => {
+    expect(getEffortLevelsForModel("fable")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+  });
 });
 
 describe("clampEffortToModel", () => {
@@ -83,5 +94,22 @@ describe("clampEffortToModel", () => {
 
   it("returns undefined for haiku", () => {
     expect(clampEffortToModel("high", "haiku")).toBeUndefined();
+  });
+
+  it("returns max and xhigh unchanged for fable", () => {
+    expect(clampEffortToModel("max", "fable")).toBe("max");
+    expect(clampEffortToModel("xhigh", "fable")).toBe("xhigh");
+  });
+});
+
+describe("claudeModelSchema", () => {
+  it("accepts the fable alias", () => {
+    expect(claudeModelSchema.parse("fable")).toBe("fable");
+  });
+
+  it("still accepts opus, sonnet, and haiku", () => {
+    expect(claudeModelSchema.parse("opus")).toBe("opus");
+    expect(claudeModelSchema.parse("sonnet")).toBe("sonnet");
+    expect(claudeModelSchema.parse("haiku")).toBe("haiku");
   });
 });

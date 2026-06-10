@@ -150,10 +150,15 @@ describe("UnifiedComposer shared prompt input", () => {
     expect(document.querySelector(".plc-uc-field")).toBeNull();
     expect(document.querySelector(".plc-uc-send")).toBeNull();
     expect(screen.queryByLabelText("Project composer")).toBeNull();
-    await waitFor(() =>
-      expect(
-        document.querySelector(".prompt-editor__content .ProseMirror"),
-      ).not.toBeNull(),
+    // Tiptap attaches the EditorView in an async effect after render, so the
+    // .ProseMirror node appears a tick later; allow extra time for that mount
+    // to survive CPU contention when the full suite runs in parallel.
+    await waitFor(
+      () =>
+        expect(
+          document.querySelector(".prompt-editor__content .ProseMirror"),
+        ).not.toBeNull(),
+      { timeout: 5000 },
     );
     expect(
       document.querySelector('textarea[placeholder^="Message the"]'),

@@ -194,6 +194,7 @@ describe("validateNumericInput", () => {
 describe("getModelOptionsForBackend", () => {
   it("returns Claude models for claude backend", () => {
     expect(getModelOptionsForBackend("claude")).toEqual([
+      "fable",
       "opus",
       "sonnet",
       "haiku",

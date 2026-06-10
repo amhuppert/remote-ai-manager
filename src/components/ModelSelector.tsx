@@ -18,7 +18,8 @@ interface ModelOption {
 }
 
 const CLAUDE_MODEL_OPTIONS: ModelOption[] = [
-  { id: "opus", label: "Opus", description: "Most capable" },
+  { id: "fable", label: "Fable", description: "Most capable" },
+  { id: "opus", label: "Opus", description: "Highly capable" },
   { id: "sonnet", label: "Sonnet", description: "Balanced" },
   { id: "haiku", label: "Haiku", description: "Fastest" },
 ];

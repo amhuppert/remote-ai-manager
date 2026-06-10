@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 
-export const claudeModelSchema = z.enum(["opus", "sonnet", "haiku"]);
+export const claudeModelSchema = z.enum(["fable", "opus", "sonnet", "haiku"]);
 export type ClaudeModel = z.infer<typeof claudeModelSchema>;
 
 export const agentSessionRefSchema = z.discriminatedUnion("backend", [
@@ -31,6 +31,7 @@ export const claudeEffortLevelSchema = z.enum([
 export type ClaudeEffortLevel = z.infer<typeof claudeEffortLevelSchema>;
 
 const MODEL_EFFORT_LEVELS: Record<ClaudeModel, EffortLevel[]> = {
+  fable: ["low", "medium", "high", "xhigh", "max"],
   opus: ["low", "medium", "high", "xhigh", "max"],
   sonnet: ["low", "medium", "high"],
   haiku: [],

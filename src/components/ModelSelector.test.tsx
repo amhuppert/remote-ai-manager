@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import ModelSelector from "./ModelSelector";
+import ModelSelector, { getModelsForBackend } from "./ModelSelector";
 
 /** Extract z-index value for a CSS selector from globals.css */
 function getZIndex(css: string, selector: string): number | null {
@@ -15,6 +15,19 @@ function getZIndex(css: string, selector: string): number | null {
 }
 
 const globals = readFileSync(resolve(__dirname, "../app/globals.css"), "utf-8");
+
+describe("getModelsForBackend", () => {
+  it("includes the Fable model for the claude backend", () => {
+    const ids = getModelsForBackend("claude").map((m) => m.id);
+    expect(ids).toContain("fable");
+    expect(ids).toEqual(expect.arrayContaining(["opus", "sonnet", "haiku"]));
+  });
+
+  it("does not offer Fable for the codex backend", () => {
+    const ids = getModelsForBackend("codex").map((m) => m.id);
+    expect(ids).not.toContain("fable");
+  });
+});
 
 describe("ModelSelector", () => {
   const defaultProps = { value: "sonnet" as const, onChange: vi.fn() };

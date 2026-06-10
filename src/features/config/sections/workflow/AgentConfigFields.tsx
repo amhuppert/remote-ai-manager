@@ -1,6 +1,6 @@
 import ModelSelector from "@/components/ModelSelector";
 import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
-import type { EffortLevel } from "@/lib/agent-backends/schemas";
+import type { ClaudeModel, EffortLevel } from "@/lib/agent-backends/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { GraphWorkflowAgentConfig } from "@/lib/workflows/schemas";
 import { ConfigField } from "../../components/ConfigField";
@@ -70,7 +70,7 @@ export function AgentConfigFields({
             } else {
               onChange({
                 backend: "claude",
-                model: model as "opus" | "sonnet" | "haiku",
+                model: model as ClaudeModel,
                 reasoningEffort: value.reasoningEffort as EffortLevel,
               });
             }
