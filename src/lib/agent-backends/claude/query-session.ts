@@ -93,6 +93,17 @@ type TurnEmit = (event: string, data: unknown) => void;
 type SetMcpServersResult = Awaited<ReturnType<Query["setMcpServers"]>>;
 type McpMutationSource = "runtime" | "recovery";
 
+/**
+ * Details of a tool_result the SDK synthesized because its connection to an
+ * MCP server was broken ("Stream closed"). `serverName` is parsed from the
+ * `mcp__<server>__<tool>` tool name.
+ */
+export interface SdkMcpStreamClosedInfo {
+  serverName: string;
+  toolName: string;
+  consecutiveCount: number;
+}
+
 export interface QuerySession {
   /** Current health status */
   readonly status: "alive" | "dead";
@@ -151,6 +162,25 @@ export interface QuerySession {
   /** Apply MCP servers and update the session-owned active MCP config. */
   setMcpServers(
     mcpServers: Record<string, unknown>,
+  ): Promise<SetMcpServersResult>;
+
+  /**
+   * Atomically re-bind an in-process (`type: "sdk"`) MCP server to a fresh
+   * instance. The SDK's `setMcpServers` diffs sdk servers by NAME only — a
+   * same-name instance swap in a single call is a silent no-op — so the only
+   * working rebind is two sequential calls: drop the name (SDK disconnects
+   * the old transport), then re-add it with the fresh instance. Both phases
+   * run in one serialized MCP mutation so no other config apply can
+   * interleave. The re-add result is verified: the name must appear in
+   * `added` and not in `errors`, otherwise this rejects.
+   *
+   * `baseServers` is the current non-sdk server map to carry through both
+   * phases (the sdk entry is stripped from the drop phase if present).
+   */
+  replaceSdkServer(
+    serverName: string,
+    instance: unknown,
+    baseServers: Record<string, unknown>,
   ): Promise<SetMcpServersResult>;
 
   /**
@@ -214,6 +244,15 @@ export interface QuerySessionOptions {
     emit: TurnEmit;
     onComplete: (result: TurnResult) => void;
   };
+  /**
+   * Fired when a tool_result arrives whose content is the SDK-synthesized
+   * "Stream closed" error for an MCP tool — the SDK's transport to that
+   * server is broken and the tool handler never ran. Fired only below the
+   * pipe-broken escalation threshold so a listener can attempt recovery
+   * (e.g. re-binding an in-process server via `replaceSdkServer`) before the
+   * session is killed. Must not throw; errors are swallowed and logged.
+   */
+  onSdkMcpStreamClosed?: (info: SdkMcpStreamClosedInfo) => void;
 }
 
 // ============================================================
@@ -372,6 +411,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     awaitBackgroundTaskSettlement,
     sendPrompt,
     setMcpServers,
+    replaceSdkServer,
     notifyTurnStarting,
     close,
   };
@@ -459,6 +499,16 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
             conversationId: options.conversationId,
             source,
             serverCount,
+            added: result.added,
+            removed: result.removed,
+            errors: result.errors,
+          });
+        }
+        if (Object.keys(result.errors).length > 0) {
+          logger.error("query-session.mcp_servers_connect_errors", {
+            conversationId: options.conversationId,
+            source,
+            errors: result.errors,
           });
         }
 
@@ -481,6 +531,61 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     mcpServers: Record<string, unknown>,
   ): Promise<SetMcpServersResult> {
     return applyMcpServers(mcpServers, "runtime");
+  }
+
+  async function replaceSdkServer(
+    serverName: string,
+    instance: unknown,
+    baseServers: Record<string, unknown>,
+  ): Promise<SetMcpServersResult> {
+    return enqueueMcpMutation(async () => {
+      if (status === "dead") {
+        throw new Error("QuerySession closed");
+      }
+
+      const withoutServer = { ...baseServers };
+      delete withoutServer[serverName];
+      await q.setMcpServers(withoutServer as Record<string, never>);
+
+      const merged = {
+        ...withoutServer,
+        [serverName]: { type: "sdk", name: serverName, instance },
+      };
+      const result = await q.setMcpServers(merged as Record<string, never>);
+
+      const connectError = result.errors[serverName];
+      if (connectError !== undefined) {
+        logger.error("query-session.sdk_server_replace_failed", {
+          conversationId: options.conversationId,
+          serverName,
+          error: connectError,
+        });
+        throw new Error(
+          `SDK MCP server "${serverName}" failed to connect on re-bind: ${connectError}`,
+        );
+      }
+      if (!result.added.includes(serverName)) {
+        logger.error("query-session.sdk_server_replace_not_rebound", {
+          conversationId: options.conversationId,
+          serverName,
+          added: result.added,
+        });
+        throw new Error(
+          `SDK MCP server "${serverName}" was not re-bound: setMcpServers reported success without adding it`,
+        );
+      }
+
+      activeMcpServers = merged;
+      recoveryFailureCount = 0;
+      syncMcpKeepaliveTimer();
+
+      logger.info("query-session.sdk_server_replaced", {
+        conversationId: options.conversationId,
+        serverName,
+      });
+
+      return result;
+    });
   }
 
   // ------------------------------------------------------------------
@@ -818,6 +923,24 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   // Pipe-broken escalation
   // ------------------------------------------------------------------
 
+  function notifySdkMcpStreamClosed(
+    toolName: string | undefined,
+    consecutiveCount: number,
+  ): void {
+    if (!options.onSdkMcpStreamClosed || toolName === undefined) return;
+    const serverName = parseMcpServerName(toolName);
+    if (serverName === null) return;
+    try {
+      options.onSdkMcpStreamClosed({ serverName, toolName, consecutiveCount });
+    } catch (err) {
+      logger.warn("query-session.stream_closed_callback_failed", {
+        conversationId: options.conversationId,
+        toolName,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   function escalatePipeBroken(
     reason: "mcp_pipe_broken" | "tool_result_pipe_broken",
     count: number,
@@ -1058,10 +1181,13 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
               turn.contentBlocks.push(resultBlock);
               if (isStreamClosedToolResult(resultBlock)) {
                 consecutiveStreamClosedCount += 1;
+                const toolName = turn.toolNamesById.get(
+                  resultBlock.tool_use_id,
+                );
                 logger.warn("query-session.stream_closed_tool_result", {
                   conversationId: options.conversationId,
                   toolUseId: resultBlock.tool_use_id,
-                  toolName: turn.toolNamesById.get(resultBlock.tool_use_id),
+                  toolName,
                   consecutiveCount: consecutiveStreamClosedCount,
                   contentPreview: previewLogContent(resultBlock.content),
                 });
@@ -1075,6 +1201,10 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
                   );
                   return;
                 }
+                notifySdkMcpStreamClosed(
+                  toolName,
+                  consecutiveStreamClosedCount,
+                );
               } else {
                 consecutiveStreamClosedCount = 0;
               }
@@ -1218,6 +1348,12 @@ function extractToolResultText(
     }
   }
   return textParts.length > 0 ? textParts.join("\n") : undefined;
+}
+
+/** Parse the server name out of an `mcp__<server>__<tool>` tool name. */
+function parseMcpServerName(toolName: string): string | null {
+  const match = /^mcp__(.+?)__/.exec(toolName);
+  return match?.[1] ?? null;
 }
 
 function isStreamClosedToolResult(

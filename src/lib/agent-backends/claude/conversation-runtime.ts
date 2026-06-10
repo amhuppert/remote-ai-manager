@@ -35,6 +35,7 @@ import {
   type BackgroundWaitOutcome,
   type QuerySession,
   type QuerySessionOptions,
+  type SdkMcpStreamClosedInfo,
   type TurnResult,
 } from "./query-session";
 import { getWaitableInFlightTaskIds } from "./background-task-tracker";
@@ -63,6 +64,14 @@ import { backendCapabilities } from "@/lib/agent-backends/capabilities-descripto
 const logger = createLogger("claude:conversation-runtime");
 
 const CC_SESSION_TOOLS_SERVER_NAME = "cc-session-tools";
+
+/**
+ * Minimum spacing between reactive session-tools recovery attempts. A
+ * recovery that "succeeds" without actually fixing the failure (e.g. the
+ * breakage is CLI-side) must not thrash in a rebind loop — the stream-closed
+ * escalation threshold is the backstop that kills the session instead.
+ */
+const SESSION_TOOLS_RECOVERY_MIN_INTERVAL_MS = 10_000;
 
 /**
  * Default hard ceiling for the background-task wait barrier. Decoupled from the
@@ -105,6 +114,8 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
   private sessionToolsInstance: McpServer;
   private readonly recreateSessionToolsServer: () => Promise<McpServer>;
   private lastAppliedTranslatedServers: Record<string, McpServerConfig> = {};
+  private sessionToolsRecoveryInFlight = false;
+  private lastSessionToolsRecoveryAt = 0;
   private readonly onCapabilityConfigApplied: (
     config: ClaudeRuntimeCapabilityConfig,
   ) => Promise<void>;
@@ -130,8 +141,8 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
       /**
        * Factory closure that builds a fresh `cc-session-tools` `McpServer`
        * instance with the same project/session/conversation scoping the
-       * runtime was created with. Used by `rebuildSessionToolsInstance` to
-       * recover from stale in-memory transports between turns.
+       * runtime was created with. Used by `replaceSessionToolsInstance` to
+       * recover from a broken in-process transport.
        */
       recreateSessionToolsServer: () => Promise<McpServer>;
     },
@@ -156,6 +167,12 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
     return this.querySession.isTurnActive;
   }
 
+  /**
+   * INVARIANT: every `setMcpServers` payload must include the current
+   * session-tools entry. The SDK diffs sdk-type servers by name — omitting
+   * the name actively DISCONNECTS the in-process server, after which every
+   * cc-session-tools tool call fails with "Stream closed".
+   */
   private mergeSessionToolsServer(
     base: Record<string, McpServerConfig>,
   ): Record<string, McpServerConfig> {
@@ -473,61 +490,40 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
 
   /**
    * Build a fresh `cc-session-tools` MCP server instance and re-bind it via
-   * `setMcpServers`. The user-server portion of the payload is replayed from
-   * `lastAppliedTranslatedServers` so the SDK's diffing logic sees no churn
-   * for stdio/HTTP servers — only the in-process `sdk` entry's `instance`
-   * field changes, forcing a fresh in-memory transport pair on the SDK side.
+   * the query session's two-phase `replaceSdkServer` (the SDK diffs sdk-type
+   * servers by name only, so a same-name single-call swap is a silent no-op
+   * — the name must be dropped and re-added). The non-sdk server portion of
+   * both phase payloads is replayed from `lastAppliedTranslatedServers`.
    *
-   * No-ops when the runtime is dead or a turn is currently active. On
-   * setMcpServers failure the new instance is closed and the field is left
-   * pointing at the old one so the next caller doesn't try to use a
-   * half-bound server. All failures are swallowed at this layer — the apply
-   * service wires this in for resilience and must not propagate errors that
-   * would block the turn that triggered the rebuild.
+   * Works mid-turn — the re-bind is a control-channel operation and the only
+   * caller is stream-closed recovery, which by definition fires during a
+   * turn. On failure the new instance is closed and the field is left
+   * pointing at the old one so later apply payloads don't carry a
+   * half-bound server; the error propagates to the caller.
    */
-  async rebuildSessionToolsInstance(): Promise<void> {
+  async replaceSessionToolsInstance(): Promise<"replaced" | "skipped-dead"> {
     const conversationId = this.querySession.conversationId;
 
     if (this._status === "dead" || this.querySession.status === "dead") {
-      return;
-    }
-    if (this.querySession.isTurnActive) {
-      logger.info("claude-runtime.session_tools_rebuild_skipped_turn_active", {
-        conversationId,
-      });
-      return;
+      return "skipped-dead";
     }
 
-    let newInstance: McpServer;
-    try {
-      newInstance = await this.recreateSessionToolsServer();
-    } catch (err) {
-      logger.warn("claude-runtime.session_tools_rebuild_create_failed", {
-        conversationId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return;
-    }
-
-    const merged: Record<string, McpServerConfig> = {
-      ...this.lastAppliedTranslatedServers,
-      [CC_SESSION_TOOLS_SERVER_NAME]: {
-        type: "sdk",
-        name: CC_SESSION_TOOLS_SERVER_NAME,
-        instance: newInstance,
-      },
-    };
+    const newInstance = await this.recreateSessionToolsServer();
 
     try {
-      await this.querySession.setMcpServers(merged);
+      await this.querySession.replaceSdkServer(
+        CC_SESSION_TOOLS_SERVER_NAME,
+        newInstance,
+        this.lastAppliedTranslatedServers,
+      );
     } catch (err) {
-      logger.warn("claude-runtime.session_tools_rebuild_bind_failed", {
+      logger.error("claude-runtime.session_tools_replace_failed", {
         conversationId,
         error: err instanceof Error ? err.message : String(err),
       });
       void newInstance.close().catch((closeErr: unknown) => {
         logger.warn(
-          "claude-runtime.session_tools_rebuild_orphan_close_failed",
+          "claude-runtime.session_tools_replace_orphan_close_failed",
           {
             conversationId,
             error:
@@ -535,19 +531,74 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
           },
         );
       });
-      return;
+      throw err;
     }
 
     const previous = this.sessionToolsInstance;
     this.sessionToolsInstance = newInstance;
     void previous.close().catch((err: unknown) => {
-      logger.warn("claude-runtime.session_tools_rebuild_old_close_failed", {
+      logger.warn("claude-runtime.session_tools_replace_old_close_failed", {
         conversationId,
         error: err instanceof Error ? err.message : String(err),
       });
     });
 
-    logger.info("claude-runtime.session_tools_rebuilt", { conversationId });
+    logger.info("claude-runtime.session_tools_replaced", { conversationId });
+    return "replaced";
+  }
+
+  /**
+   * Reactive recovery for a broken in-process MCP transport, fired by the
+   * query session when a `cc-session-tools` tool call comes back with the
+   * SDK-synthesized "Stream closed" error. Re-binds a fresh instance so the
+   * agent's natural retry of the failed tool call succeeds. Single-flight
+   * and debounced; repeated failure is handled by the query session's
+   * stream-closed escalation threshold, not by retrying here.
+   */
+  handleSdkMcpStreamClosed(info: SdkMcpStreamClosedInfo): void {
+    if (info.serverName !== CC_SESSION_TOOLS_SERVER_NAME) return;
+    if (this._status === "dead" || this.querySession.status === "dead") return;
+    if (this.sessionToolsRecoveryInFlight) return;
+
+    const conversationId = this.querySession.conversationId;
+    const now = Date.now();
+    if (
+      now - this.lastSessionToolsRecoveryAt <
+      SESSION_TOOLS_RECOVERY_MIN_INTERVAL_MS
+    ) {
+      logger.info("claude-runtime.session_tools_recovery_debounced", {
+        conversationId,
+        toolName: info.toolName,
+        consecutiveCount: info.consecutiveCount,
+      });
+      return;
+    }
+
+    this.sessionToolsRecoveryInFlight = true;
+    this.lastSessionToolsRecoveryAt = now;
+    logger.warn("claude-runtime.session_tools_recovery_started", {
+      conversationId,
+      toolName: info.toolName,
+      consecutiveCount: info.consecutiveCount,
+    });
+
+    void this.replaceSessionToolsInstance()
+      .then((outcome) => {
+        logger.info("claude-runtime.session_tools_recovery_succeeded", {
+          conversationId,
+          outcome,
+          durationMs: Date.now() - now,
+        });
+      })
+      .catch((err: unknown) => {
+        logger.error("claude-runtime.session_tools_recovery_failed", {
+          conversationId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      })
+      .finally(() => {
+        this.sessionToolsRecoveryInFlight = false;
+      });
   }
 
   /**
@@ -834,6 +885,10 @@ const claudeConversationBackendFactory = {
       ? buildExternalTurnHandler(input.onExternalTurnEvent)
       : undefined;
 
+    // Late-bound: the runtime is constructed after the query session, so the
+    // pump's stream-closed events route through this holder once it's set.
+    let streamClosedRecoveryTarget: ClaudeConversationRuntime | null = null;
+
     const sessionOptions: QuerySessionOptions = {
       conversationId: input.conversationId,
       cwd: input.worktreePath,
@@ -858,6 +913,8 @@ const claudeConversationBackendFactory = {
       disallowedTools: ["AskUserQuestion"],
       outputFormat: input.outputFormat,
       externalTurnHandler,
+      onSdkMcpStreamClosed: (info) =>
+        streamClosedRecoveryTarget?.handleSdkMcpStreamClosed(info),
       ...(initialSettings ? { settings: initialSettings } : {}),
     };
 
@@ -886,6 +943,7 @@ const claudeConversationBackendFactory = {
       sessionToolsInstance,
       recreateSessionToolsServer,
     });
+    streamClosedRecoveryTarget = runtime;
 
     if (input.tooling.claudeCapabilityConfig) {
       logger.info("claude-runtime.initial_capability_config", {

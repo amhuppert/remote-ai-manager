@@ -117,14 +117,11 @@ function makeFakeRuntime(options: {
   isTurnActive?: boolean;
   applyResult?: McpApplyResult;
   applyThrows?: Error;
-  rebuildThrows?: Error;
 }): ConversationBackendRuntime & {
   applyCalls: PortableMcpConfig[];
-  rebuildCalls: number;
   isTurnActive: boolean;
 } {
   const applyCalls: PortableMcpConfig[] = [];
-  let rebuildCalls = 0;
   const capabilities: ConversationBackendCapabilities = {
     queueWhileRunning: options.backend === "claude",
     askUserQuestion: options.backend === "claude",
@@ -142,9 +139,6 @@ function makeFakeRuntime(options: {
     outputFormat: undefined,
     isTurnActive: options.isTurnActive ?? false,
     applyCalls,
-    get rebuildCalls() {
-      return rebuildCalls;
-    },
     async sendTurn(
       _input: ConversationBackendTurnInput,
     ): Promise<ConversationBackendTurnResult> {
@@ -166,10 +160,6 @@ function makeFakeRuntime(options: {
           errors: {},
         }
       );
-    },
-    async rebuildSessionToolsInstance(): Promise<void> {
-      rebuildCalls += 1;
-      if (options.rebuildThrows) throw options.rebuildThrows;
     },
     close() {},
   };
@@ -545,36 +535,6 @@ describe("applyAtTurnStart — no-op when hash already applied", () => {
     expect(runtime.applyCalls).toHaveLength(0);
   });
 
-  it("still rebuilds the session-tools instance on the noop path so a stale in-memory transport gets refreshed every turn", async () => {
-    const { stateManager } = createTestHarness();
-
-    const portable = portableWith([{ id: "s1" }]);
-    const hash = computeEffectiveConfigHash(portable);
-    await stateManager.writeState(
-      stateWith({
-        mcpRuntime: { lastAppliedConfigHash: hash },
-      }),
-    );
-
-    const runtime = makeFakeRuntime({ backend: "claude" });
-    const service = createMcpRuntimeApplyService(
-      createDeps(stateManager, runtime, {
-        portable,
-        effectiveConfigHash: "ignored",
-      }),
-    );
-
-    await service.applyAtTurnStart({
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
-      backend: "claude",
-    });
-
-    expect(runtime.rebuildCalls).toBe(1);
-    expect(runtime.applyCalls).toHaveLength(0);
-  });
-
   it("leaves pending state untouched when a matching applied hash was seeded before the turn", async () => {
     const { stateManager } = createTestHarness();
 
@@ -713,74 +673,6 @@ describe("applyAtTurnStart — applies and writes lastAppliedConfigHash on succe
     // But the newer pending survives for a future turn
     expect(conv.mcpRuntime?.pendingConfigHash).toBe("newer-pending-hash");
     expect(conv.mcpRuntime?.pendingServerKeys).toEqual(["s2"]);
-  });
-
-  it("rebuilds the session-tools instance on the normal apply path too", async () => {
-    const { stateManager } = createTestHarness();
-    const portable = portableWith([{ id: "s1" }]);
-    await stateManager.writeState(stateWith({}));
-
-    const runtime = makeFakeRuntime({
-      backend: "claude",
-      applyResult: {
-        disposition: "applied_now",
-        droppedServerIds: [],
-        droppedFields: [],
-        errors: {},
-      },
-    });
-    const service = createMcpRuntimeApplyService(
-      createDeps(stateManager, runtime, {
-        portable,
-        effectiveConfigHash: "ignored",
-      }),
-    );
-
-    await service.applyAtTurnStart({
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
-      backend: "claude",
-    });
-
-    expect(runtime.rebuildCalls).toBe(1);
-    expect(runtime.applyCalls).toHaveLength(1);
-  });
-
-  it("does not fail the turn-start apply when rebuildSessionToolsInstance throws", async () => {
-    const { stateManager } = createTestHarness();
-    const portable = portableWith([{ id: "s1" }]);
-    const hash = computeEffectiveConfigHash(portable);
-    await stateManager.writeState(stateWith({}));
-
-    const runtime = makeFakeRuntime({
-      backend: "claude",
-      rebuildThrows: new Error("stream closed"),
-      applyResult: {
-        disposition: "applied_now",
-        droppedServerIds: [],
-        droppedFields: [],
-        errors: {},
-      },
-    });
-    const service = createMcpRuntimeApplyService(
-      createDeps(stateManager, runtime, {
-        portable,
-        effectiveConfigHash: "ignored",
-      }),
-    );
-
-    const result = await service.applyAtTurnStart({
-      projectPath: PROJECT_PATH,
-      sessionName: SESSION_NAME,
-      conversationId: CONVERSATION_ID,
-      backend: "claude",
-    });
-
-    expect(result.disposition).toBe("applied_now");
-    expect(result.effectiveConfigHash).toBe(hash);
-    expect(runtime.rebuildCalls).toBe(1);
-    expect(runtime.applyCalls).toHaveLength(1);
   });
 });
 

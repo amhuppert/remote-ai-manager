@@ -3264,3 +3264,347 @@ describe("QuerySession idle-TTL suppression during waitable tasks", () => {
     vi.useRealTimers();
   });
 });
+
+describe("QuerySession.replaceSdkServer", () => {
+  const SERVER = "cc-session-tools";
+  const fakeInstance = { tag: "fresh-instance" };
+  const baseServers = {
+    "ext-srv": { type: "stdio", command: "node" },
+  };
+
+  function okPhaseA() {
+    return { added: [], removed: [SERVER], errors: {} };
+  }
+  function okPhaseB() {
+    return { added: [SERVER], removed: [], errors: {} };
+  }
+
+  it("re-binds via two sequential setMcpServers calls: first without the server name, then with the fresh instance", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    mock.query.setMcpServers
+      .mockResolvedValueOnce(okPhaseA())
+      .mockResolvedValueOnce(okPhaseB());
+
+    const session = createQuerySession(makeDefaultOptions());
+
+    const result = await session.replaceSdkServer(
+      SERVER,
+      fakeInstance,
+      baseServers,
+    );
+
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(2);
+    const phaseA = mock.query.setMcpServers.mock.calls[0]![0] as Record<
+      string,
+      unknown
+    >;
+    const phaseB = mock.query.setMcpServers.mock.calls[1]![0] as Record<
+      string,
+      { instance?: unknown }
+    >;
+    expect(Object.keys(phaseA)).toEqual(["ext-srv"]);
+    expect(Object.keys(phaseB).sort()).toEqual(["cc-session-tools", "ext-srv"]);
+    expect(phaseB[SERVER]?.instance).toBe(fakeInstance);
+    expect(result.added).toContain(SERVER);
+
+    session.close();
+  });
+
+  it("rejects when the re-add phase reports the server in the errors map", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    mock.query.setMcpServers
+      .mockResolvedValueOnce(okPhaseA())
+      .mockResolvedValueOnce({
+        added: [],
+        removed: [],
+        errors: { [SERVER]: "connect failed" },
+      });
+
+    const session = createQuerySession(makeDefaultOptions());
+
+    await expect(
+      session.replaceSdkServer(SERVER, fakeInstance, baseServers),
+    ).rejects.toThrow(/connect failed/);
+
+    session.close();
+  });
+
+  it("rejects when the re-add phase silently omits the server from added (no-op guard)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    mock.query.setMcpServers
+      .mockResolvedValueOnce(okPhaseA())
+      .mockResolvedValueOnce({ added: [], removed: [], errors: {} });
+
+    const session = createQuerySession(makeDefaultOptions());
+
+    await expect(
+      session.replaceSdkServer(SERVER, fakeInstance, baseServers),
+    ).rejects.toThrow(/not re-bound/);
+
+    session.close();
+  });
+
+  it("strips the server from the drop-phase payload even when the base map contains it", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    mock.query.setMcpServers
+      .mockResolvedValueOnce(okPhaseA())
+      .mockResolvedValueOnce(okPhaseB());
+
+    const session = createQuerySession(makeDefaultOptions());
+
+    await session.replaceSdkServer(SERVER, fakeInstance, {
+      ...baseServers,
+      [SERVER]: { type: "sdk", name: SERVER, instance: { tag: "stale" } },
+    });
+
+    const phaseA = mock.query.setMcpServers.mock.calls[0]![0] as Record<
+      string,
+      unknown
+    >;
+    expect(Object.keys(phaseA)).toEqual(["ext-srv"]);
+
+    session.close();
+  });
+
+  it("runs both phases atomically — a concurrent setMcpServers cannot interleave between them", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    let resolvePhaseA: ((v: unknown) => void) | null = null;
+    mock.query.setMcpServers
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolvePhaseA = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(okPhaseB())
+      .mockResolvedValueOnce({ added: ["late-srv"], removed: [], errors: {} });
+
+    const session = createQuerySession(makeDefaultOptions());
+
+    const swapPromise = session.replaceSdkServer(
+      SERVER,
+      fakeInstance,
+      baseServers,
+    );
+    const otherPromise = session.setMcpServers({
+      "late-srv": { type: "stdio", command: "node" },
+    });
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(1);
+
+    resolvePhaseA!({ added: [], removed: [SERVER], errors: {} });
+    await swapPromise;
+    await otherPromise;
+
+    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(3);
+    const second = mock.query.setMcpServers.mock.calls[1]![0] as Record<
+      string,
+      unknown
+    >;
+    const third = mock.query.setMcpServers.mock.calls[2]![0] as Record<
+      string,
+      unknown
+    >;
+    expect(Object.keys(second)).toContain(SERVER);
+    expect(Object.keys(third)).toEqual(["late-srv"]);
+
+    session.close();
+  });
+
+  it("rejects when the session is dead", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    session.close();
+
+    await expect(
+      session.replaceSdkServer(SERVER, fakeInstance, baseServers),
+    ).rejects.toThrow(/closed/);
+  });
+});
+
+describe("onSdkMcpStreamClosed callback", () => {
+  function pushToolUse(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    toolUseId: string,
+    toolName: string,
+  ) {
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-1",
+      uuid: `a-${toolUseId}`,
+      message: {
+        content: [
+          { type: "tool_use", id: toolUseId, name: toolName, input: {} },
+        ],
+      },
+    } as unknown as SDKMessage);
+  }
+
+  function pushToolResult(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    toolUseId: string,
+    content: string,
+    isError: boolean,
+  ) {
+    mock.pushMessage({
+      type: "user",
+      session_id: "sess-1",
+      uuid: `u-${toolUseId}`,
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: toolUseId,
+            content,
+            is_error: isError,
+          },
+        ],
+      },
+      parent_tool_use_id: null,
+    } as unknown as SDKMessage);
+  }
+
+  function finishTurn(mock: ReturnType<typeof createControllableMockQuery>) {
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-1",
+      uuid: "u-result",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+  }
+
+  it("fires with the parsed server name on a stream-closed result for an MCP tool", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const onSdkMcpStreamClosed = vi.fn();
+    const session = createQuerySession(
+      makeDefaultOptions({ onSdkMcpStreamClosed }),
+    );
+    const turnPromise = session.sendPrompt("Hello", vi.fn());
+
+    pushToolUse(mock, "t1", "mcp__cc-session-tools__AskUserQuestion");
+    pushToolResult(mock, "t1", "Stream closed", true);
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(onSdkMcpStreamClosed).toHaveBeenCalledTimes(1);
+    expect(onSdkMcpStreamClosed).toHaveBeenCalledWith({
+      serverName: "cc-session-tools",
+      toolName: "mcp__cc-session-tools__AskUserQuestion",
+      consecutiveCount: 1,
+    });
+
+    finishTurn(mock);
+    await turnPromise;
+    session.close();
+  });
+
+  it("does not fire for stream-closed results from non-MCP tools", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const onSdkMcpStreamClosed = vi.fn();
+    const session = createQuerySession(
+      makeDefaultOptions({ onSdkMcpStreamClosed }),
+    );
+    const turnPromise = session.sendPrompt("Hello", vi.fn());
+
+    pushToolUse(mock, "t1", "Bash");
+    pushToolResult(mock, "t1", "Stream closed", true);
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(onSdkMcpStreamClosed).not.toHaveBeenCalled();
+
+    finishTurn(mock);
+    await turnPromise;
+    session.close();
+  });
+
+  it("does not fire for successful MCP tool results", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const onSdkMcpStreamClosed = vi.fn();
+    const session = createQuerySession(
+      makeDefaultOptions({ onSdkMcpStreamClosed }),
+    );
+    const turnPromise = session.sendPrompt("Hello", vi.fn());
+
+    pushToolUse(mock, "t1", "mcp__cc-session-tools__get_dev_servers");
+    pushToolResult(mock, "t1", "ok", false);
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(onSdkMcpStreamClosed).not.toHaveBeenCalled();
+
+    finishTurn(mock);
+    await turnPromise;
+    session.close();
+  });
+
+  it("still escalates to dead at the threshold even when the callback is registered", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const onSdkMcpStreamClosed = vi.fn();
+    const session = createQuerySession(
+      makeDefaultOptions({ onSdkMcpStreamClosed }),
+    );
+    const turnPromise = session.sendPrompt("Hello", vi.fn());
+
+    for (const id of ["t1", "t2", "t3"]) {
+      pushToolUse(mock, id, "mcp__cc-session-tools__AskUserQuestion");
+      pushToolResult(mock, id, "Stream closed", true);
+    }
+
+    let caughtError: unknown;
+    try {
+      await turnPromise;
+    } catch (err) {
+      caughtError = err;
+    }
+    expect(isSdkPipeBrokenError(caughtError)).toBe(true);
+    expect(session.status).toBe("dead");
+    // Fired for the sub-threshold failures (counts 1 and 2); the third
+    // escalates instead of firing recovery.
+    expect(onSdkMcpStreamClosed).toHaveBeenCalledTimes(2);
+  });
+
+  it("swallows a throwing callback without breaking the pump", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const onSdkMcpStreamClosed = vi.fn(() => {
+      throw new Error("handler boom");
+    });
+    const session = createQuerySession(
+      makeDefaultOptions({ onSdkMcpStreamClosed }),
+    );
+    const turnPromise = session.sendPrompt("Hello", vi.fn());
+
+    pushToolUse(mock, "t1", "mcp__cc-session-tools__AskUserQuestion");
+    pushToolResult(mock, "t1", "Stream closed", true);
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(session.status).toBe("alive");
+
+    finishTurn(mock);
+    const result = await turnPromise;
+    expect(result.error).toBeNull();
+    session.close();
+  });
+});
