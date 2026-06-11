@@ -36,6 +36,7 @@ function makeExecution(
           iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
           contextValidator: null,
           scriptValidator: { enabled: false },
+          humanApprovalGate: { enabled: false },
         },
         {
           id: "ctx-implement",
@@ -60,6 +61,7 @@ function makeExecution(
             continuity: { enabled: true },
           },
           scriptValidator: { enabled: true },
+          humanApprovalGate: { enabled: false },
         },
       ],
       tasks: [

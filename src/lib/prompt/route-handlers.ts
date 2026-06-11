@@ -26,7 +26,7 @@ import {
   runPromptRequestSchema,
   pendingPromptRequestSchema,
 } from "@/lib/prompt/schemas";
-import { withTracing } from "@/lib/logging";
+import { createLogger, withTracing } from "@/lib/logging";
 import {
   getDefaultCollaborationManager,
   type CollaborationManager,
@@ -37,8 +37,46 @@ import type { ApiError } from "@/lib/api/errors";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { RunPromptRequest } from "@/lib/prompt/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowStatus,
+} from "@/lib/workflows/schemas";
+
+const logger = createLogger("prompt");
+
 const DEFAULT_NEGOTIATION_ROUNDS = 3;
 const DEFAULT_AUTONOMOUS_RESOLUTION_THRESHOLD = "major" as const;
+
+/**
+ * Execution statuses under which an undecided approval gate admits chat —
+ * mirrors the gate-standing set (the gate survives pause/halt and a decision
+ * is recordable in those states, so chat stays available too).
+ */
+const GATE_CHAT_EXECUTION_STATUSES: ReadonlySet<GraphWorkflowStatus> = new Set([
+  "running",
+  "paused",
+  "halted",
+]);
+
+/**
+ * A managed conversation is chat-open while a context of the session's
+ * in-flight execution is parked `awaiting_approval` on this conversation
+ * with no recorded decision; the moment a decision lands the managed 403
+ * applies again.
+ */
+function hasUndecidedApprovalGate(
+  execution: GraphWorkflowExecution | null,
+  conversationId: string,
+): boolean {
+  if (!execution) return false;
+  if (!GATE_CHAT_EXECUTION_STATUSES.has(execution.status)) return false;
+  return Object.values(execution.contextStates).some(
+    (contextState) =>
+      contextState.status === "awaiting_approval" &&
+      contextState.pendingApproval?.conversationId === conversationId &&
+      contextState.pendingApproval.decision === null,
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Deps interface
@@ -285,13 +323,24 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
     }
 
     if (conversation.role === "iteration") {
-      return NextResponse.json(
-        {
-          error: "Managed workflow conversations are not user-interactive",
-          code: "MANAGED_CONVERSATION",
-        } satisfies ApiError,
-        { status: 403 },
+      const gateOpen = hasUndecidedApprovalGate(
+        session.graphWorkflowExecution,
+        conversationId,
       );
+      if (!gateOpen) {
+        return NextResponse.json(
+          {
+            error: "Managed workflow conversations are not user-interactive",
+            code: "MANAGED_CONVERSATION",
+          } satisfies ApiError,
+          { status: 403 },
+        );
+      }
+      logger.info("gate.chat_admitted", {
+        projectPath,
+        sessionName,
+        conversationId,
+      });
     }
 
     if (deps.isConversationBusy(projectPath, sessionName, conversationId)) {

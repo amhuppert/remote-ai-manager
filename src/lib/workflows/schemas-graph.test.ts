@@ -5,7 +5,12 @@ import {
   graphWorkflowIterationPolicySchema,
   graphWorkflowLaneContinuityPolicySchema,
   graphWorkflowScriptValidatorConfigSchema,
+  graphWorkflowApprovalDecisionSchema,
+  graphWorkflowApprovalPendingEventSchema,
+  graphWorkflowApprovalResolvedEventSchema,
   graphWorkflowBatchScheduledEventSchema,
+  graphWorkflowHumanApprovalGateConfigSchema,
+  graphWorkflowPendingApprovalSchema,
   graphWorkflowContextStatusSchema,
   graphWorkflowExecutionContextDefinitionSchema,
   graphWorkflowExecutionContextStateSchema,
@@ -630,6 +635,7 @@ function createWorkflowDefaults() {
       continuity: { enabled: true },
     },
     scriptValidator: { enabled: false },
+    humanApprovalGate: { enabled: false },
     iterationPolicy: {
       maxIterations: 20,
       continuity: { enabled: true },
@@ -2464,5 +2470,285 @@ describe("graphWorkflowExecutionSchema lane/join maps", () => {
       totalTaskCount: 1,
     });
     expect(ctxState).not.toHaveProperty("waitReason");
+  });
+});
+
+describe("graphWorkflowContextStatusSchema awaiting_approval", () => {
+  it("accepts awaiting_approval", () => {
+    const result =
+      graphWorkflowContextStatusSchema.safeParse("awaiting_approval");
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("graphWorkflowHumanApprovalGateConfigSchema", () => {
+  it("defaults enabled to false when the block is passed empty", () => {
+    const result = graphWorkflowHumanApprovalGateConfigSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.enabled).toBe(false);
+    }
+  });
+
+  it("accepts { enabled: true }", () => {
+    const result = graphWorkflowHumanApprovalGateConfigSchema.safeParse({
+      enabled: true,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.enabled).toBe(true);
+    }
+  });
+
+  it("rejects non-boolean enabled values", () => {
+    const result = graphWorkflowHumanApprovalGateConfigSchema.safeParse({
+      enabled: "yes",
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("humanApprovalGate cascade fields", () => {
+  it("accepts a workflow-level override that sets humanApprovalGate", () => {
+    const result = workflowConfigOverrideSchema.safeParse({
+      humanApprovalGate: { enabled: true },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.humanApprovalGate?.enabled).toBe(true);
+    }
+  });
+
+  it("accepts a workflow-level override that omits humanApprovalGate (inherits)", () => {
+    const result = workflowConfigOverrideSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.humanApprovalGate).toBeUndefined();
+    }
+  });
+
+  it("accepts a context definition that sets humanApprovalGate", () => {
+    const result = graphWorkflowExecutionContextDefinitionSchema.safeParse({
+      id: "ctx-1",
+      title: "Context",
+      acceptanceCriteria: "AC",
+      humanApprovalGate: { enabled: true },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.humanApprovalGate?.enabled).toBe(true);
+    }
+  });
+
+  it("accepts a context definition that omits humanApprovalGate (inherits)", () => {
+    const result = graphWorkflowExecutionContextDefinitionSchema.safeParse({
+      id: "ctx-1",
+      title: "Context",
+      acceptanceCriteria: "AC",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.humanApprovalGate).toBeUndefined();
+    }
+  });
+
+  it("rejects workflowDefaults missing the humanApprovalGate block", () => {
+    const defaults = createWorkflowDefaults();
+    const { humanApprovalGate: _removed, ...withoutGate } = defaults;
+    const result = workflowDefaultsSchema.safeParse(withoutGate);
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("graphWorkflowApprovalDecisionSchema", () => {
+  it("parses an approved decision", () => {
+    const result = graphWorkflowApprovalDecisionSchema.safeParse({
+      type: "approved",
+      decidedAt: timestamp,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("parses a rejected decision with a message", () => {
+    const result = graphWorkflowApprovalDecisionSchema.safeParse({
+      type: "rejected",
+      message: "Please add tests for the edge cases.",
+      decidedAt: timestamp,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a rejected decision with an empty message", () => {
+    const result = graphWorkflowApprovalDecisionSchema.safeParse({
+      type: "rejected",
+      message: "   ",
+      decidedAt: timestamp,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an unknown decision type", () => {
+    const result = graphWorkflowApprovalDecisionSchema.safeParse({
+      type: "unknown",
+      decidedAt: timestamp,
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("graphWorkflowPendingApprovalSchema", () => {
+  it("defaults decision to null", () => {
+    const result = graphWorkflowPendingApprovalSchema.safeParse({
+      conversationId: "conversation-1",
+      requestedAt: timestamp,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.decision).toBeNull();
+    }
+  });
+
+  it("parses with a recorded rejection decision", () => {
+    const result = graphWorkflowPendingApprovalSchema.safeParse({
+      conversationId: "conversation-1",
+      requestedAt: timestamp,
+      decision: {
+        type: "rejected",
+        message: "Fix the failing edge case.",
+        decidedAt: timestamp,
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an empty conversationId", () => {
+    const result = graphWorkflowPendingApprovalSchema.safeParse({
+      conversationId: "",
+      requestedAt: timestamp,
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("context state pendingApproval", () => {
+  it("defaults pendingApproval to null on legacy payloads", () => {
+    const result = graphWorkflowExecutionContextStateSchema.safeParse({
+      contextId: "ctx-1",
+      status: "running",
+      totalTaskCount: 1,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.pendingApproval).toBeNull();
+    }
+  });
+
+  it("parses an awaiting_approval context with a pending approval record", () => {
+    const result = graphWorkflowExecutionContextStateSchema.safeParse({
+      contextId: "ctx-1",
+      status: "awaiting_approval",
+      totalTaskCount: 1,
+      pendingApproval: {
+        conversationId: "conversation-1",
+        requestedAt: timestamp,
+        decision: null,
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.status).toBe("awaiting_approval");
+      expect(result.data.pendingApproval?.conversationId).toBe(
+        "conversation-1",
+      );
+    }
+  });
+});
+
+describe("approval gate SSE event schemas", () => {
+  it("parses graph-workflow-approval-pending events", () => {
+    const event = graphWorkflowApprovalPendingEventSchema.safeParse({
+      type: "graph-workflow-approval-pending",
+      projectName: "remote-ai-manager",
+      sessionName: "session-1",
+      executionId: "execution-1",
+      contextId: "context-1",
+      contextTitle: "Plan",
+      conversationId: "conversation-1",
+      requestedAt: timestamp,
+    });
+    expect(event.success).toBe(true);
+
+    const nullTitle = graphWorkflowApprovalPendingEventSchema.safeParse({
+      type: "graph-workflow-approval-pending",
+      projectName: "remote-ai-manager",
+      sessionName: "session-1",
+      executionId: "execution-1",
+      contextId: "context-1",
+      contextTitle: null,
+      conversationId: "conversation-1",
+      requestedAt: timestamp,
+    });
+    expect(nullTitle.success).toBe(true);
+  });
+
+  it("parses graph-workflow-approval-resolved events", () => {
+    const approved = graphWorkflowApprovalResolvedEventSchema.safeParse({
+      type: "graph-workflow-approval-resolved",
+      projectName: "remote-ai-manager",
+      sessionName: "session-1",
+      executionId: "execution-1",
+      contextId: "context-1",
+      conversationId: "conversation-1",
+      decision: "approved",
+      message: null,
+      decidedAt: timestamp,
+    });
+    expect(approved.success).toBe(true);
+
+    const rejected = graphWorkflowApprovalResolvedEventSchema.safeParse({
+      type: "graph-workflow-approval-resolved",
+      projectName: "remote-ai-manager",
+      sessionName: "session-1",
+      executionId: "execution-1",
+      contextId: "context-1",
+      conversationId: "conversation-1",
+      decision: "rejected",
+      message: "Needs more tests.",
+      decidedAt: timestamp,
+    });
+    expect(rejected.success).toBe(true);
+  });
+
+  it("accepts approval events in the execution history event union", () => {
+    const result = graphWorkflowExecutionEventSchema.safeParse({
+      occurredAt: timestamp,
+      event: {
+        type: "graph-workflow-approval-pending",
+        projectName: "remote-ai-manager",
+        sessionName: "session-1",
+        executionId: "execution-1",
+        contextId: "context-1",
+        contextTitle: "Plan",
+        conversationId: "conversation-1",
+        requestedAt: timestamp,
+      },
+    });
+    expect(result.success).toBe(true);
+
+    const resolved = graphWorkflowExecutionEventSchema.safeParse({
+      occurredAt: timestamp,
+      event: {
+        type: "graph-workflow-approval-resolved",
+        projectName: "remote-ai-manager",
+        sessionName: "session-1",
+        executionId: "execution-1",
+        contextId: "context-1",
+        conversationId: "conversation-1",
+        decision: "approved",
+        message: null,
+        decidedAt: timestamp,
+      },
+    });
+    expect(resolved.success).toBe(true);
   });
 });

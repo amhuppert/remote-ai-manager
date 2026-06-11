@@ -186,6 +186,10 @@
   color: var(--amber);
 }
 
+.peek__status--approval {
+  color: var(--amber);
+}
+
 .peek__status--running {
   color: var(--cyan);
 }

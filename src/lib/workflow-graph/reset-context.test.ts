@@ -97,6 +97,7 @@ function buildExecution(
     activeContextIds: ["context-implement"],
     contextStates: {
       "context-plan": {
+        pendingApproval: null,
         contextId: "context-plan",
         status: "completed",
         totalTaskCount: 1,
@@ -114,6 +115,7 @@ function buildExecution(
         lastMergeError: null,
       },
       "context-implement": {
+        pendingApproval: null,
         contextId: "context-implement",
         status: "running",
         totalTaskCount: 1,
@@ -131,6 +133,7 @@ function buildExecution(
         lastMergeError: null,
       },
       "context-verify": {
+        pendingApproval: null,
         contextId: "context-verify",
         status: "pending",
         totalTaskCount: 1,
@@ -231,6 +234,7 @@ describe("resetExecutionContext", () => {
       mergeStatus: "not-applicable",
       cleanupStatus: "not-applicable",
       lastMergeError: null,
+      pendingApproval: null,
     });
     expect(next.taskStates["task-implement-1"]).toEqual({
       taskId: "task-implement-1",

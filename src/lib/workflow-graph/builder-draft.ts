@@ -14,6 +14,7 @@ export type ContextOverrideBlock =
   | "implementer"
   | "contextValidator"
   | "scriptValidator"
+  | "humanApprovalGate"
   | "mutability"
   | "circuitBreaker"
   | "iterationPolicy"
@@ -26,7 +27,8 @@ export type WorkflowConfigBlock =
   | "iterationPolicy"
   | "circuitBreaker"
   | "mutability"
-  | "collaboration";
+  | "collaboration"
+  | "humanApprovalGate";
 
 export interface WorkflowBuilderDraftData {
   definition: WorkflowSemanticDefinition;

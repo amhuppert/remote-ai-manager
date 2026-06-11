@@ -42,6 +42,29 @@ const activeConversationSharedFields = {
   worktreePath: z.string(),
   lastActivitySummary: z.string().nullable(),
   unread: z.boolean(),
+  // Human-review-gate standing: present when the conversation's workflow
+  // context is parked awaiting approval with no recorded decision. Always
+  // null for project-scope rows (gates exist only on session executions).
+  pendingApproval: z
+    .object({
+      contextId: z.string(),
+      contextTitle: z.string().nullable(),
+      requestedAt: z.string(),
+      // The owning workflow's display name lives on the stored definition
+      // record, not the embedded working definition, so the assembly cannot
+      // populate it without an async lookup; null until the execution carries
+      // the name itself.
+      workflowName: z.string().nullable().default(null),
+      // True while the owning execution is paused or halted — the gate
+      // survives suspension and the decision applies on resume.
+      executionSuspended: z.boolean().default(false),
+      // Task progress of the gated context, surfaced on the sidebar row's
+      // status line ("approval required · 6/6 tasks · validators ✓").
+      tasksCompleted: z.number().int().min(0).nullable().default(null),
+      tasksTotal: z.number().int().min(0).nullable().default(null),
+    })
+    .nullable()
+    .default(null),
 };
 
 export const activeConversationSchema = z.discriminatedUnion("scope", [

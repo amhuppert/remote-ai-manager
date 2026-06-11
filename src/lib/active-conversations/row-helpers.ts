@@ -3,7 +3,11 @@ import type { ActiveConversation } from "@/lib/active-conversations/schemas";
 export function activeConversationNeedsAttention(
   row: ActiveConversation,
 ): boolean {
-  return row.status === "waiting_for_input" || row.unread;
+  return (
+    row.status === "waiting_for_input" ||
+    row.unread ||
+    row.pendingApproval !== null
+  );
 }
 
 export function activeConversationContextLabel(

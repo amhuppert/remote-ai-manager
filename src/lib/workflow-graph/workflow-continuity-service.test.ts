@@ -69,6 +69,7 @@ function makeExecution(
     activeContextIds: ["ctx-1"],
     contextStates: {
       "ctx-1": {
+        pendingApproval: null,
         contextId: "ctx-1",
         status: "running",
         totalTaskCount: 1,

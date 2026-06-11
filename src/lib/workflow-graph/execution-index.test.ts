@@ -20,6 +20,7 @@ function createContext(id: string, title = id): GraphWorkflowResolvedContext {
     },
     contextValidator: null,
     scriptValidator: { enabled: false },
+    humanApprovalGate: { enabled: false },
     mutability: { allowAgentTaskAdd: false },
     circuitBreaker: {},
     iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },

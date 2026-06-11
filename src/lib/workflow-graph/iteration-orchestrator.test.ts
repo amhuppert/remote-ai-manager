@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowAgentSessionState,
+  GraphWorkflowSSEEvent,
 } from "@/lib/workflows/schemas";
+import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import {
   _resetRegistryForTesting,
   registerExecutionLogger,
@@ -120,6 +122,7 @@ function createExecutionWithPlanTasks(
     workingDefinition: definition,
     contextStates: {
       "context-plan": {
+        pendingApproval: null,
         contextId: "context-plan",
         status: "running",
         totalTaskCount: 2,
@@ -137,6 +140,7 @@ function createExecutionWithPlanTasks(
         lastMergeError: null,
       },
       "context-implement": {
+        pendingApproval: null,
         contextId: "context-implement",
         status: "pending",
         totalTaskCount: 1,
@@ -154,6 +158,7 @@ function createExecutionWithPlanTasks(
         lastMergeError: null,
       },
       "context-verify": {
+        pendingApproval: null,
         contextId: "context-verify",
         status: "pending",
         totalTaskCount: 1,
@@ -2116,6 +2121,7 @@ describe("codex implementer continuity", () => {
           },
           contextValidator: null,
           scriptValidator: { enabled: false },
+          humanApprovalGate: { enabled: false },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: {
@@ -2151,6 +2157,7 @@ describe("codex implementer continuity", () => {
       workingDefinition: definition,
       contextStates: {
         "context-plan": {
+          pendingApproval: null,
           contextId: "context-plan",
           status: "running",
           totalTaskCount: 2,
@@ -4491,5 +4498,293 @@ describe("background-task wait lifecycle (task 4.2)", () => {
     ).toBe(0);
     expect(result.execution.status).toBe("running");
     expect(result.execution.haltReason ?? null).toBeNull();
+  });
+});
+
+// -- Human approval gate at finalization ---------------------------------------
+
+describe("human approval gate at finalization", () => {
+  const NOW = "2026-03-27T16:20:00.000Z";
+
+  function enableGateOnPlanContext(execution: GraphWorkflowExecution): void {
+    const planContext = execution.workingDefinition.executionContexts.find(
+      (ctx) => ctx.id === "context-plan",
+    )!;
+    planContext.humanApprovalGate = { enabled: true };
+  }
+
+  function completeAllPlanTasks(repository: {
+    read(): GraphWorkflowExecution;
+    mutateActive(
+      projectPath: string,
+      sessionName: string,
+      fn: (
+        execution: GraphWorkflowExecution,
+      ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+    ): Promise<GraphWorkflowExecution>;
+  }) {
+    return vi.fn(async () => {
+      const current = structuredClone(repository.read());
+      current.taskStates["task-plan-1"] = {
+        ...current.taskStates["task-plan-1"]!,
+        status: "completed",
+        summary: "Done",
+        completedAt: "2026-03-27T16:02:00.000Z",
+      };
+      current.taskStates["task-plan-2"] = {
+        ...current.taskStates["task-plan-2"]!,
+        status: "completed",
+        summary: "Done",
+        completedAt: "2026-03-27T16:02:30.000Z",
+      };
+      current.contextStates["context-plan"] = {
+        ...current.contextStates["context-plan"]!,
+        completedTaskCount: 2,
+      };
+      await repository.mutateActive("/repo", "session-1", () => current);
+      return {
+        conversationId: "conversation-gate",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
+    });
+  }
+
+  function passingValidationService() {
+    return {
+      validateContextCompletion: vi.fn(async () => ({
+        kind: "pass" as const,
+        summary: "All checks passed",
+        feedback: "Context validation passed.",
+        issues: [] as never[],
+        reopenTaskIds: [],
+        sessionRef: null,
+        reviewArtifact: null,
+      })),
+    };
+  }
+
+  function approvalPendingEvents(
+    calls: Array<[GraphWorkflowSSEEvent]>,
+  ): GraphWorkflowSSEEvent[] {
+    return calls
+      .map(([event]) => event)
+      .filter((event) => event.type === "graph-workflow-approval-pending");
+  }
+
+  it("parks a gate-enabled context after all validators pass and publishes approval-pending after commit", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    enableGateOnPlanContext(execution);
+    const repository = createRepository(execution);
+
+    let statusAtBroadcast: string | null = null;
+    let pendingRecordAtBroadcast:
+      | GraphWorkflowExecution["contextStates"][string]["pendingApproval"]
+      | null = null;
+    const broadcast = vi.fn((event: GraphWorkflowSSEEvent) => {
+      if (event.type === "graph-workflow-approval-pending") {
+        const committedState = repository.read().contextStates["context-plan"];
+        statusAtBroadcast = committedState?.status ?? null;
+        pendingRecordAtBroadcast = committedState?.pendingApproval ?? null;
+      }
+    });
+    const dispatchPush = vi.fn();
+    const eventPublisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      dispatchPush,
+      now: () => NOW,
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation: vi.fn(async () => ({ id: "conversation-gate" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: completeAllPlanTasks(repository),
+      validationService: passingValidationService(),
+      eventPublisher,
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(result.shouldContinueInContext).toBe(false);
+
+    const persisted = repository.read();
+    const contextState = persisted.contextStates["context-plan"];
+    expect(contextState?.status).toBe("awaiting_approval");
+    expect(contextState?.pendingApproval).toEqual({
+      conversationId: "conversation-gate",
+      requestedAt: NOW,
+      decision: null,
+    });
+    expect(persisted.activeContextIds).not.toContain("context-plan");
+
+    const pendingEvents = approvalPendingEvents(broadcast.mock.calls);
+    expect(pendingEvents).toEqual([
+      {
+        type: "graph-workflow-approval-pending",
+        projectName: "repo",
+        sessionName: "session-1",
+        executionId: persisted.id,
+        contextId: "context-plan",
+        contextTitle: "Plan",
+        conversationId: "conversation-gate",
+        requestedAt: NOW,
+      },
+    ]);
+    // Published strictly after the parking mutation committed.
+    expect(statusAtBroadcast).toBe("awaiting_approval");
+    expect(pendingRecordAtBroadcast).toEqual({
+      conversationId: "conversation-gate",
+      requestedAt: NOW,
+      decision: null,
+    });
+    expect(dispatchPush).toHaveBeenCalledExactlyOnceWith({
+      kind: "approval-pending",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextTitle: "Plan",
+    });
+
+    // History entry persists in the repository, not only on the returned clone.
+    const persistedHistoryEvent = persisted.history.find(
+      (entry) => entry.event.type === "graph-workflow-approval-pending",
+    );
+    expect(persistedHistoryEvent?.event).toMatchObject({
+      type: "graph-workflow-approval-pending",
+      contextId: "context-plan",
+      conversationId: "conversation-gate",
+      requestedAt: NOW,
+    });
+    expect(
+      result.execution.history.some(
+        (entry) => entry.event.type === "graph-workflow-approval-pending",
+      ),
+    ).toBe(true);
+  });
+
+  it("completes a gate-disabled context unchanged with no approval event", async () => {
+    const repository = createRepository(
+      createExecutionWithPlanTasks({
+        "task-plan-1": "pending",
+        "task-plan-2": "pending",
+      }),
+    );
+
+    const broadcast = vi.fn<(event: GraphWorkflowSSEEvent) => void>();
+    const dispatchPush = vi.fn();
+    const eventPublisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      dispatchPush,
+      now: () => NOW,
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation: vi.fn(async () => ({ id: "conversation-gate" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: completeAllPlanTasks(repository),
+      validationService: passingValidationService(),
+      eventPublisher,
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(result.shouldContinueInContext).toBe(false);
+
+    const persisted = repository.read();
+    const contextState = persisted.contextStates["context-plan"];
+    expect(contextState?.status).toBe("completed");
+    expect(contextState?.pendingApproval).toBeNull();
+    expect(persisted.activeContextIds).not.toContain("context-plan");
+
+    expect(approvalPendingEvents(broadcast.mock.calls)).toEqual([]);
+    expect(dispatchPush).not.toHaveBeenCalled();
+    expect(
+      persisted.history.some(
+        (entry) => entry.event.type === "graph-workflow-approval-pending",
+      ),
+    ).toBe(false);
+  });
+
+  it("routes a validator failure through the standard reopen flow without triggering the gate", async () => {
+    const execution = createExecutionWithPlanTasks({
+      "task-plan-1": "pending",
+      "task-plan-2": "pending",
+    });
+    enableGateOnPlanContext(execution);
+    const repository = createRepository(execution);
+
+    const broadcast = vi.fn<(event: GraphWorkflowSSEEvent) => void>();
+    const dispatchPush = vi.fn();
+    const eventPublisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      dispatchPush,
+      now: () => NOW,
+    });
+
+    const validateContextCompletion = vi.fn(async () => ({
+      kind: "fail" as const,
+      summary: "Validation failed",
+      feedback:
+        "Context validation blocked completion.\nReopened tasks:\n- task-plan-2",
+      issues: [
+        {
+          taskId: "task-plan-2",
+          title: "Missing tests",
+          description: "Add edge case tests.",
+        },
+      ],
+      reopenTaskIds: ["task-plan-2"],
+      sessionRef: null,
+      reviewArtifact: null,
+    }));
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation: vi.fn(async () => ({ id: "conversation-gate" })),
+      createToolServer: vi.fn(() => ({ server: {} })),
+      runAgentIteration: completeAllPlanTasks(repository),
+      validationService: { validateContextCompletion },
+      eventPublisher,
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    expect(result.shouldContinueInContext).toBe(true);
+
+    const persisted = repository.read();
+    const contextState = persisted.contextStates["context-plan"];
+    expect(contextState?.status).toBe("running");
+    expect(contextState?.pendingApproval).toBeNull();
+    expect(contextState?.consecutiveFailureCount).toBe(1);
+
+    expect(approvalPendingEvents(broadcast.mock.calls)).toEqual([]);
+    expect(dispatchPush).not.toHaveBeenCalled();
+    expect(
+      persisted.history.some(
+        (entry) => entry.event.type === "graph-workflow-approval-pending",
+      ),
+    ).toBe(false);
   });
 });

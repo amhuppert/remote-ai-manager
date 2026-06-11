@@ -54,6 +54,8 @@ import {
   graphWorkflowValidationResultEventSchema,
   graphWorkflowCircuitBreakerEventSchema,
   graphWorkflowSharedDocumentsUpdatedEventSchema,
+  graphWorkflowApprovalPendingEventSchema,
+  graphWorkflowApprovalResolvedEventSchema,
 } from "@/lib/workflows/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import {
@@ -253,6 +255,18 @@ export default function NotificationListener(): null {
       );
     };
 
+    const invalidateConversationViews = (
+      projectName: string,
+      sessionName: string,
+    ) => {
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.active(),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
+      });
+    };
+
     const showBrowserNotification = (input: {
       title: string;
       body: string;
@@ -322,12 +336,7 @@ export default function NotificationListener(): null {
           return;
         }
 
-        void queryClient.invalidateQueries({
-          queryKey: conversationKeys.active(),
-        });
-        void queryClient.invalidateQueries({
-          queryKey: sessionKeys.detail(data.projectName, data.sessionName),
-        });
+        invalidateConversationViews(data.projectName, data.sessionName);
         void queryClient.invalidateQueries({
           queryKey: conversationKeys.messages(
             data.projectName,
@@ -742,6 +751,47 @@ export default function NotificationListener(): null {
         );
         if (!parsed.success) return;
         invalidateGraphWorkflow(
+          parsed.data.projectName,
+          parsed.data.sessionName,
+        );
+      } catch {
+        // best-effort
+      }
+    });
+
+    es.addEventListener("graph-workflow-approval-pending", (event) => {
+      try {
+        const parsed = graphWorkflowApprovalPendingEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        const d = parsed.data;
+        invalidateConversationViews(d.projectName, d.sessionName);
+        actionsRef.current.enqueueInputToast({
+          projectName: d.projectName,
+          sessionName: d.sessionName,
+          conversationId: d.conversationId,
+          title: "Approval required",
+          variant: "approval",
+          contextTitle: d.contextTitle ?? d.contextId,
+        });
+        showBrowserNotification({
+          title: "Approval required",
+          body: `${d.contextTitle ?? d.contextId} passed validators — review to continue`,
+          tag: `approval-${d.conversationId}`,
+        });
+      } catch {
+        // best-effort
+      }
+    });
+
+    es.addEventListener("graph-workflow-approval-resolved", (event) => {
+      try {
+        const parsed = graphWorkflowApprovalResolvedEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        invalidateConversationViews(
           parsed.data.projectName,
           parsed.data.sessionName,
         );

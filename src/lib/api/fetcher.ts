@@ -21,6 +21,10 @@ export async function apiFetch<T>(
     const body = await res.json().catch(() => ({ error: "Request failed" }));
     throw new ApiCallError(
       (body as { error?: string }).error ?? `API error ${res.status}`,
+      undefined,
+      undefined,
+      undefined,
+      res.status,
     );
   }
   const data: unknown = await res.json();

@@ -247,6 +247,7 @@ function createCodexExecutionWithRunningTask() {
         },
         contextValidator: null,
         scriptValidator: { enabled: false },
+        humanApprovalGate: { enabled: false },
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: {},
         iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
@@ -271,6 +272,7 @@ function createCodexExecutionWithRunningTask() {
     workingDefinition: definition,
     contextStates: {
       "context-codex-impl": {
+        pendingApproval: null,
         contextId: "context-codex-impl",
         status: "running",
         totalTaskCount: 1,

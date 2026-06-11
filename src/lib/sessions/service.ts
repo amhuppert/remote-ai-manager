@@ -39,6 +39,7 @@ import {
 } from "../jobs/repo";
 import type { ArtifactRegistry } from "../workflows/primitives/artifact-registry";
 import { createSessionArtifactRegistryForProduction } from "../workflows/primitives/default-session-artifact-registry";
+import { createLaneWorktreeSweep } from "./lane-worktree-sweep";
 
 const logger = createLogger("sessions");
 
@@ -88,6 +89,10 @@ export interface SessionDeps {
   deleteJobRecordsForSession(projectName: string, sessionName: string): number;
   deleteNotificationsForProject(projectName: string): number;
   deleteJobRecordsForProject(projectName: string): number;
+  sweepLaneWorktrees(input: {
+    projectPath: string;
+    sessionWorktreePath: string;
+  }): Promise<string[]>;
 }
 
 const defaultSessionDeps: SessionDeps = {
@@ -110,6 +115,7 @@ const defaultSessionDeps: SessionDeps = {
   deleteJobRecordsForSession: defaultDeleteJobRecordsForSession,
   deleteNotificationsForProject: defaultDeleteNotificationsForProject,
   deleteJobRecordsForProject: defaultDeleteJobRecordsForProject,
+  sweepLaneWorktrees: (input) => createLaneWorktreeSweep().sweep(input),
 };
 
 // ============================================================
@@ -141,6 +147,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     deleteJobRecordsForSession,
     deleteNotificationsForProject,
     deleteJobRecordsForProject,
+    sweepLaneWorktrees,
   } = deps;
 
   /** Execute a git command in the given working directory */
@@ -706,6 +713,14 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       }
     }
 
+    // Graph-workflow lane worktrees (`<sessionDir>.<laneId>`) outlive halted
+    // or aborted executions for forensics; session deletion is their terminal
+    // cleanup point.
+    const laneWorktreesRemoved = await sweepLaneWorktrees({
+      projectPath,
+      sessionWorktreePath: session.worktreePath,
+    });
+
     // Transcripts are stored centrally under $configDir/transcripts/, not in
     // the worktree, so they survive worktree removal unless purged explicitly.
     for (const conv of session.conversations) {
@@ -736,6 +751,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       sessionName,
       source,
       worktreeCleanup,
+      laneWorktreesRemoved,
       notificationsRemoved,
       jobRecordsRemoved,
     });

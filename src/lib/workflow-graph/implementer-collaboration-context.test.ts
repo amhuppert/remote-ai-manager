@@ -32,6 +32,7 @@ function globalDefaultsFixture(): WorkflowDefaults {
       agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
     },
     scriptValidator: { enabled: false },
+    humanApprovalGate: { enabled: false },
     iterationPolicy: { maxIterations: 20, continuity: { enabled: true } },
     circuitBreaker: { consecutiveFailureThreshold: 3 },
     mutability: { allowAgentTaskAdd: false },

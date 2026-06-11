@@ -18,6 +18,7 @@ function makeContext(
     implementer: { backend: "claude", model: "opus", reasoningEffort: "high" },
     contextValidator: null,
     scriptValidator: { enabled: false },
+    humanApprovalGate: { enabled: false },
     mutability: { allowAgentTaskAdd: true },
     circuitBreaker: {},
     iterationPolicy: { maxIterations: 4, continuity: { enabled: true } },

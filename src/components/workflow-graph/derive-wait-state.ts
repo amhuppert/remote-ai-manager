@@ -8,13 +8,19 @@ type WaitStateDefinition =
   | ResolvedWorkflowSemanticDefinition;
 
 export type ContextWaitState =
-  | { kind: "dependency-blocked"; unmetDependencyIds: string[] }
+  | {
+      kind: "dependency-blocked";
+      unmetDependencyIds: string[];
+      /** True when an unmet upstream is parked at a human approval gate. */
+      blockedByApproval: boolean;
+    }
   | { kind: "waiting-for-lane"; laneId: string }
   | { kind: "waiting-for-join"; joinId: string }
   | { kind: "waiting-for-capacity" }
   | { kind: "ready" }
   | { kind: "running" }
   | { kind: "validating" }
+  | { kind: "awaiting-approval" }
   | { kind: "merging"; targetBranch: string | null }
   | { kind: "completed" }
   | { kind: "halted" }
@@ -57,13 +63,24 @@ export function deriveContextWaitState(input: {
     return { kind: "running" };
   }
 
+  if (ctxState.status === "awaiting_approval") {
+    return { kind: "awaiting-approval" };
+  }
+
   const unmetDependencyIds = getUnmetDependencyIds(
     contextId,
     definition,
     execution,
   );
   if (unmetDependencyIds.length > 0) {
-    return { kind: "dependency-blocked", unmetDependencyIds };
+    const blockedByApproval = unmetDependencyIds.some(
+      (id) => execution.contextStates[id]?.status === "awaiting_approval",
+    );
+    return {
+      kind: "dependency-blocked",
+      unmetDependencyIds,
+      blockedByApproval,
+    };
   }
 
   if (ctxState.laneId) {

@@ -23,6 +23,9 @@ export const SEEDED_WORKFLOW_DEFAULTS: WorkflowDefaults = {
   scriptValidator: {
     enabled: false,
   },
+  humanApprovalGate: {
+    enabled: false,
+  },
   iterationPolicy: {
     maxIterations: 20,
     continuity: { enabled: true },

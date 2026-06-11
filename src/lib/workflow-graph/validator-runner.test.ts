@@ -87,6 +87,7 @@ const context: GraphWorkflowResolvedContext = {
   },
   contextValidator: validatorConfig,
   scriptValidator: { enabled: false },
+  humanApprovalGate: { enabled: false },
   mutability: { allowAgentTaskAdd: false },
   circuitBreaker: {},
   iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },

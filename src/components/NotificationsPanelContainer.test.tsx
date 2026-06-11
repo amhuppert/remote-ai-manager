@@ -53,6 +53,7 @@ function makeSessionConversation(
     worktreePath: "/repos/app/.worktrees/feature-session",
     lastActivitySummary: null,
     unread: false,
+    pendingApproval: null,
     ...overrides,
   };
 }
@@ -79,6 +80,7 @@ function makeProjectConversation(
     worktreePath: "/repos/app",
     lastActivitySummary: null,
     unread: true,
+    pendingApproval: null,
     open: overrides.open ?? true,
     ...overrides,
   };

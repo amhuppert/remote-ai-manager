@@ -831,6 +831,7 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
         provisionLane: vi.fn(),
         provisionLaneBatch: vi.fn(),
         disposeLane: vi.fn(),
+        cleanupLane: vi.fn(async () => ({ status: "removed" as const })),
       },
       mergeMutex: { withMergeMutex: async (_k, fn) => fn() },
       sessionGitLock: { withSessionGitLock: async (_k, fn) => fn() },

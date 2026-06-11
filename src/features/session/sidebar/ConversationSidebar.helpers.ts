@@ -11,7 +11,7 @@ import { activeConversationHref } from "@/lib/active-conversations/row-helpers";
 export type ActiveSidebarConversation = ActiveConversation;
 export type SidebarConversation = SessionActiveConversation;
 
-export type NeedsTone = "question" | "finished";
+export type NeedsTone = "approval" | "question" | "finished";
 
 export type ActiveRowActionScope =
   | {
@@ -126,12 +126,15 @@ export function filterBySession<T extends ActiveSidebarConversation>(
 
 export function splitNeedsYou<T extends ActiveSidebarConversation>(
   rows: T[],
-): { questions: T[]; finished: T[]; others: T[] } {
+): { approvals: T[]; questions: T[]; finished: T[]; others: T[] } {
+  const approvals: T[] = [];
   const questions: T[] = [];
   const finished: T[] = [];
   const others: T[] = [];
   for (const row of rows) {
-    if (row.status === "waiting_for_input") {
+    if (row.pendingApproval !== null) {
+      approvals.push(row);
+    } else if (row.status === "waiting_for_input") {
       questions.push(row);
     } else if (row.unread) {
       finished.push(row);
@@ -139,7 +142,7 @@ export function splitNeedsYou<T extends ActiveSidebarConversation>(
       others.push(row);
     }
   }
-  return { questions, finished, others };
+  return { approvals, questions, finished, others };
 }
 
 export function isClosedProjectConversation(
@@ -334,10 +337,20 @@ function annotateCluster<T extends ActiveSidebarConversation>(
 }
 
 function pinnedSections<T extends ActiveSidebarConversation>(
+  approvals: T[],
   questions: T[],
   finished: T[],
 ): SidebarSection<T>[] {
   const sections: SidebarSection<T>[] = [];
+  if (approvals.length > 0) {
+    sections.push({
+      kind: "needs",
+      tone: "approval",
+      groupKey: "needs-you-approvals",
+      label: "Needs approval",
+      items: annotateCluster(approvals),
+    });
+  }
   if (questions.length > 0) {
     sections.push({
       kind: "needs",
@@ -376,8 +389,8 @@ export function buildConversationSidebarSections<
   const { openRows, closedRows } = splitClosedProjectConversations(scopedRows);
 
   if (options.filter === "needs") {
-    const { questions, finished } = splitNeedsYou(openRows);
-    return pinnedSections(questions, finished);
+    const { approvals, questions, finished } = splitNeedsYou(openRows);
+    return pinnedSections(approvals, questions, finished);
   }
 
   if (options.filter === "running") {
@@ -399,8 +412,12 @@ export function buildConversationSidebarSections<
     return sections;
   }
 
-  const { questions, finished, others } = splitNeedsYou(openRows);
-  const sections: SidebarSection<T>[] = pinnedSections(questions, finished);
+  const { approvals, questions, finished, others } = splitNeedsYou(openRows);
+  const sections: SidebarSection<T>[] = pinnedSections(
+    approvals,
+    questions,
+    finished,
+  );
   for (const group of groupByKey(others, options.groupBy)) {
     sections.push({
       kind: options.groupBy,

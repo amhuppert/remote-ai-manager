@@ -57,6 +57,7 @@ function makeSessionConversation(
     worktreePath: "/repos/project-a/.worktrees/session-a",
     lastActivitySummary: null,
     unread: false,
+    pendingApproval: null,
     ...overrides,
   };
 }
@@ -83,6 +84,7 @@ function makeProjectConversation(
     worktreePath: "/repos/project-a",
     lastActivitySummary: null,
     unread: false,
+    pendingApproval: null,
     open: overrides.open ?? true,
     ...overrides,
   };
@@ -97,7 +99,7 @@ function setActiveConversations(conversations: ActiveConversation[]): void {
 }
 
 function getNeedsLink(): HTMLAnchorElement {
-  const needsLabel = screen.getByText("needs you");
+  const needsLabel = screen.getByText(/needs? you/);
   const link = needsLabel.closest("a");
   expect(link).not.toBeNull();
   return link as HTMLAnchorElement;
@@ -236,5 +238,37 @@ describe("Topbar", () => {
     expect(getNeedsLink().getAttribute("href")).toBe(
       "/projects/root-tools/feature-a/session-question",
     );
+  });
+
+  it("counts gated conversations as needing attention and calls out approvals distinctly", () => {
+    setActiveConversations([
+      makeSessionConversation({
+        id: "session-gated",
+        projectName: "root-tools",
+        sessionName: "feature-a",
+        status: "awaiting",
+        pendingApproval: {
+          contextId: "ctx-1",
+          contextTitle: "api-hardening",
+          requestedAt: "2026-06-10T09:00:00.000Z",
+          workflowName: null,
+          executionSuspended: false,
+          tasksCompleted: 6,
+          tasksTotal: 6,
+        },
+      }),
+      makeSessionConversation({
+        id: "session-question",
+        projectName: "root-tools",
+        sessionName: "feature-b",
+        status: "waiting_for_input",
+      }),
+    ]);
+
+    render(<Topbar breadcrumbs={[]} page="projects" />);
+
+    expect(screen.getByText("2")).toBeInTheDocument();
+    expect(screen.getByText("need you")).toBeInTheDocument();
+    expect(screen.getByText("· 1 approval")).toBeInTheDocument();
   });
 });

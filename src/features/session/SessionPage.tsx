@@ -3,6 +3,7 @@
 import { useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { deriveSessionStatus } from "@/lib/sessions/derived";
+import { isSessionNotFoundError } from "@/lib/sessions/queries";
 import { useDebugModeToggleMutation } from "@/lib/debug-log/mutations";
 import { useCollaborationStartMutation } from "@/lib/workflows/mutations";
 import { usePendingPromptPersistence } from "@/features/session/hooks/use-pending-prompt-persistence";
@@ -25,6 +26,7 @@ import { useSessionPageDisplay } from "@/features/session/hooks/use-session-page
 import { useSessionPageLocalState } from "@/features/session/hooks/use-session-page-local-state";
 import { useSessionPageQueries } from "@/features/session/hooks/use-session-page-queries";
 import { useSessionPageViewProps } from "@/features/session/hooks/use-session-page-view-props";
+import { useApprovalGate } from "@/features/session/hooks/use-approval-gate";
 import { useEnqueuePromptErrorToast } from "@/stores/notification.store";
 import { selectLastUserTurnAgentSettings } from "@/lib/conversations/last-turn-agent-settings";
 
@@ -125,8 +127,20 @@ export default function ConversationDetailPage({
     setCollabConfigDraft,
     clearCollabConfigDraft,
   } = collab;
+  // An undecided approval gate keeps chat live alongside the panel (6.1);
+  // once the decision is recorded the standing clears and the workflow-managed
+  // read-only treatment returns.
+  const approvalGate = useApprovalGate({
+    projectName,
+    sessionName,
+    conversationId,
+    execution: session?.graphWorkflowExecution ?? null,
+    conversationBusy: activeConversation?.status === "running",
+  });
   const isReadOnly =
-    isFinished || isWorkflowManagedConversation || hasActiveCollab;
+    isFinished ||
+    (isWorkflowManagedConversation && approvalGate === null) ||
+    hasActiveCollab;
 
   const {
     send: sendPrompt,
@@ -289,6 +303,17 @@ export default function ConversationDetailPage({
       sessionStatus,
     });
 
+  if (isSessionNotFoundError(sessionQuery.error)) {
+    return (
+      <LoadingSessionView
+        projectName={projectName}
+        sessionName={sessionName}
+        decodedProjectName={decodedProjectName}
+        title="Session not found."
+      />
+    );
+  }
+
   if (sessionQuery.isPending || !session) {
     return (
       <LoadingSessionView
@@ -317,6 +342,7 @@ export default function ConversationDetailPage({
         isReadOnly,
         isBusy,
         isWorkflowManagedConversation,
+        approvalGate,
         isInitConversation,
         targetBranch,
         store,

@@ -39,6 +39,12 @@ function getFirstIncompleteTaskTitle(
   return firstIncomplete?.title ?? null;
 }
 
+function countAwaitingApproval(execution: GraphWorkflowExecution): number {
+  return Object.values(execution.contextStates).filter(
+    (state) => state.status === "awaiting_approval",
+  ).length;
+}
+
 const terminalStatuses = new Set(["completed", "halted", "aborted"]);
 const resumableStatuses = new Set(["paused", "halted"]);
 
@@ -56,6 +62,7 @@ export default function ExecutionStatusBar({
     [definition, execution],
   );
   const contextTitle = getActiveContextTitle(execution, index);
+  const awaitingApprovalCount = countAwaitingApproval(execution);
   const taskTitle = getFirstIncompleteTaskTitle(execution, index);
   const showPause = execution.status === "running";
   const showResume = resumableStatuses.has(execution.status);
@@ -71,6 +78,12 @@ export default function ExecutionStatusBar({
         <span className={`wb-exec-badge ${execution.status}`}>
           {execution.status}
         </span>
+        {awaitingApprovalCount > 0 && (
+          <span className="wb-exec-badge awaiting-approval">
+            <span className="wb-exec-badge__dot" aria-hidden="true" />
+            {awaitingApprovalCount} awaiting approval
+          </span>
+        )}
       </div>
 
       <div className="wb-exec-info">

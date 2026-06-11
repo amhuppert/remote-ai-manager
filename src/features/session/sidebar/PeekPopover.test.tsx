@@ -37,6 +37,7 @@ const BASE_CONVERSATION: SessionActiveConversation = {
     "/Users/alex/github/command-center/.worktrees/peek-replay-02e449.schema-and-deps-foundation",
   lastActivitySummary: "Reading the popover spec.",
   unread: false,
+  pendingApproval: null,
 };
 
 const TRANSCRIPT_MESSAGES: TranscriptMessage[] = [
@@ -352,6 +353,150 @@ describe("PeekPopover", () => {
       const body = document.querySelector(".peek__body") as HTMLElement;
       expect(body).not.toBeNull();
       expect(body.scrollTop).toBe(2000);
+    });
+  });
+
+  describe("approval gate", () => {
+    const GATED_CONVERSATION: SessionActiveConversation = {
+      ...BASE_CONVERSATION,
+      status: "awaiting",
+      role: "iteration",
+      pendingApproval: {
+        contextId: "context-implement",
+        contextTitle: "Implement",
+        requestedAt: "2026-05-15T12:00:00.000Z",
+        workflowName: null,
+        executionSuspended: false,
+        tasksCompleted: 6,
+        tasksTotal: 6,
+      },
+    };
+
+    function gateProps(
+      overrides: Partial<
+        NonNullable<React.ComponentProps<typeof PeekPopover>["approvalGate"]>
+      > = {},
+    ) {
+      return {
+        isSubmitting: false,
+        executionSuspended: false,
+        onApprove: vi.fn(),
+        onReject: vi.fn(),
+        ...overrides,
+      };
+    }
+
+    it("shows the awaiting-approval header status with elapsed time", () => {
+      renderPeek({
+        conversation: {
+          ...GATED_CONVERSATION,
+          pendingApproval: {
+            ...GATED_CONVERSATION.pendingApproval!,
+            requestedAt: new Date(Date.now() - 4 * 60_000).toISOString(),
+          },
+        },
+        approvalGate: gateProps(),
+      });
+
+      expect(screen.getByText("awaiting approval · 4m")).toBeInTheDocument();
+    });
+
+    it("renders the approval panel above the live reply composer for a gated conversation", () => {
+      renderPeek({
+        conversation: GATED_CONVERSATION,
+        approvalGate: gateProps(),
+      });
+
+      const panel = screen.getByTestId("approval-gate-panel");
+      expect(panel).toBeInTheDocument();
+      expect(screen.getByText("Implement")).toBeInTheDocument();
+      const editor = screen.getByLabelText("Reply text");
+      expect(editor).toBeInTheDocument();
+      expect(
+        panel.compareDocumentPosition(editor) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    });
+
+    it("renders the approval panel above structured pending questions", () => {
+      renderPeek({
+        conversation: {
+          ...GATED_CONVERSATION,
+          status: "waiting_for_input",
+          pendingQuestionId: "question-1",
+          pendingQuestions: [
+            {
+              question: "Which path should I take?",
+              options: [{ label: "A" }, { label: "B" }],
+              multiSelect: false,
+            },
+          ],
+        },
+        approvalGate: gateProps(),
+      });
+
+      const panel = screen.getByTestId("approval-gate-panel");
+      const question = screen.getByText("Which path should I take?");
+      expect(
+        panel.compareDocumentPosition(question) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    });
+
+    it("invokes the approve callback", () => {
+      const onApprove = vi.fn();
+      renderPeek({
+        conversation: GATED_CONVERSATION,
+        approvalGate: gateProps({ onApprove }),
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+      expect(onApprove).toHaveBeenCalledTimes(1);
+    });
+
+    it("invokes the reject callback with the message", () => {
+      const onReject = vi.fn();
+      renderPeek({
+        conversation: GATED_CONVERSATION,
+        approvalGate: gateProps({ onReject }),
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+      fireEvent.change(
+        screen.getByPlaceholderText("Explain what needs to change..."),
+        { target: { value: "needs more tests" } },
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Submit rejection" }));
+      expect(onReject).toHaveBeenCalledWith("needs more tests");
+    });
+
+    it("disables decisions while the conversation has a turn in flight", () => {
+      renderPeek({
+        conversation: { ...GATED_CONVERSATION, status: "running" },
+        approvalGate: gateProps(),
+      });
+
+      expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+      expect(screen.getByText(/Chat turn in progress/)).toBeInTheDocument();
+    });
+
+    it("shows the suspended hint when the execution is paused or halted", () => {
+      renderPeek({
+        conversation: GATED_CONVERSATION,
+        approvalGate: gateProps({ executionSuspended: true }),
+      });
+
+      expect(screen.getByText(/Execution suspended/)).toBeInTheDocument();
+    });
+
+    it("renders no panel once the pending approval clears", () => {
+      renderPeek({
+        conversation: { ...GATED_CONVERSATION, pendingApproval: null },
+        approvalGate: null,
+      });
+
+      expect(screen.queryByTestId("approval-gate-panel")).toBeNull();
+      expect(screen.getByLabelText("Reply text")).toBeInTheDocument();
     });
   });
 

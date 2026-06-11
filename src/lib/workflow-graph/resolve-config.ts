@@ -29,6 +29,7 @@ const SEEDED_DEFAULTS: WorkflowDefaults = {
     },
   },
   scriptValidator: { enabled: false },
+  humanApprovalGate: { enabled: false },
   iterationPolicy: {
     maxIterations: 20,
     continuity: { enabled: true },
@@ -60,6 +61,8 @@ export function coerceGlobalDefaults(
       globalDefaults.contextValidator ?? SEEDED_DEFAULTS.contextValidator,
     scriptValidator:
       globalDefaults.scriptValidator ?? SEEDED_DEFAULTS.scriptValidator,
+    humanApprovalGate:
+      globalDefaults.humanApprovalGate ?? SEEDED_DEFAULTS.humanApprovalGate,
     iterationPolicy:
       globalDefaults.iterationPolicy ?? SEEDED_DEFAULTS.iterationPolicy,
     circuitBreaker:
@@ -80,6 +83,7 @@ export function resolveWorkflowConfig(
     implementer: override.implementer ?? defaults.implementer,
     contextValidator: override.contextValidator ?? defaults.contextValidator,
     scriptValidator: override.scriptValidator ?? defaults.scriptValidator,
+    humanApprovalGate: override.humanApprovalGate ?? defaults.humanApprovalGate,
     iterationPolicy: override.iterationPolicy ?? defaults.iterationPolicy,
     circuitBreaker: override.circuitBreaker ?? defaults.circuitBreaker,
     mutability: override.mutability ?? defaults.mutability,
@@ -139,6 +143,11 @@ export function resolveContext(
     workflow.scriptValidator ??
     defaults.scriptValidator;
 
+  const humanApprovalGate =
+    context.humanApprovalGate ??
+    workflow.humanApprovalGate ??
+    defaults.humanApprovalGate;
+
   return {
     id: context.id,
     title: context.title,
@@ -149,6 +158,7 @@ export function resolveContext(
     implementer,
     contextValidator,
     scriptValidator,
+    humanApprovalGate,
     mutability,
     circuitBreaker,
     iterationPolicy,

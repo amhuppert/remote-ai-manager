@@ -85,6 +85,7 @@ function makeGraphWorkflowExecution(
           },
           contextValidator: null,
           scriptValidator: { enabled: false },
+          humanApprovalGate: { enabled: false },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 10, continuity: { enabled: true } },
@@ -100,6 +101,7 @@ function makeGraphWorkflowExecution(
           },
           contextValidator: null,
           scriptValidator: { enabled: false },
+          humanApprovalGate: { enabled: false },
           mutability: { allowAgentTaskAdd: false },
           circuitBreaker: {},
           iterationPolicy: { maxIterations: 5, continuity: { enabled: true } },
@@ -154,6 +156,7 @@ function makeGraphWorkflowExecution(
         mergeStatus: "not-applicable",
         cleanupStatus: "not-applicable",
         lastMergeError: null,
+        pendingApproval: null,
       },
       "ctx-2": {
         contextId: "ctx-2",
@@ -171,6 +174,7 @@ function makeGraphWorkflowExecution(
         mergeStatus: "not-applicable",
         cleanupStatus: "not-applicable",
         lastMergeError: null,
+        pendingApproval: null,
       },
     },
     taskStates: {

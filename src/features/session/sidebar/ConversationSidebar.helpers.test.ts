@@ -40,6 +40,7 @@ function makeRow(
     role: null,
     lastActivitySummary: null,
     unread: false,
+    pendingApproval: null,
     ...overrides,
   };
 }
@@ -70,6 +71,7 @@ function makeProjectRow(
     role: null,
     lastActivitySummary: null,
     unread: false,
+    pendingApproval: null,
     open: true,
     ...overrides,
   };
@@ -299,6 +301,31 @@ describe("filterBySession", () => {
 // splitNeedsYou
 // ---------------------------------------------------------------------------
 
+type PendingApprovalStandingFixture = {
+  contextId: string;
+  contextTitle: string | null;
+  requestedAt: string;
+  workflowName: string | null;
+  executionSuspended: boolean;
+  tasksCompleted: number | null;
+  tasksTotal: number | null;
+};
+
+function makePendingApproval(
+  overrides: Partial<PendingApprovalStandingFixture> = {},
+): PendingApprovalStandingFixture {
+  return {
+    contextId: "ctx-1",
+    contextTitle: "Implement feature",
+    requestedAt: "2025-01-01T00:00:00.000Z",
+    workflowName: null,
+    executionSuspended: false,
+    tasksCompleted: 6,
+    tasksTotal: 6,
+    ...overrides,
+  };
+}
+
 describe("splitNeedsYou", () => {
   it("splits waiting_for_input into questions, unread non-questions into finished, rest into others", () => {
     const rows = [
@@ -309,10 +336,54 @@ describe("splitNeedsYou", () => {
       makeRow({ id: "e", status: "awaiting", unread: true }),
       makeRow({ id: "f", status: "running", unread: true }),
     ];
-    const { questions, finished, others } = splitNeedsYou(rows);
+    const { approvals, questions, finished, others } = splitNeedsYou(rows);
+    expect(approvals).toEqual([]);
     expect(questions.map((r) => r.id)).toEqual(["c"]);
     expect(finished.map((r) => r.id)).toEqual(["e", "f"]);
     expect(others.map((r) => r.id)).toEqual(["a", "b", "d"]);
+  });
+
+  it("routes rows with a pending approval into approvals before question/finished classification", () => {
+    const rows = [
+      makeRow({
+        id: "gated-question",
+        status: "waiting_for_input",
+        pendingApproval: makePendingApproval(),
+      }),
+      makeRow({
+        id: "gated-unread",
+        status: "awaiting",
+        unread: true,
+        pendingApproval: makePendingApproval({ contextId: "ctx-2" }),
+      }),
+      makeRow({
+        id: "gated-plain",
+        status: "awaiting",
+        pendingApproval: makePendingApproval({ contextId: "ctx-3" }),
+      }),
+      makeRow({ id: "plain-question", status: "waiting_for_input" }),
+      makeRow({ id: "plain-unread", status: "awaiting", unread: true }),
+    ];
+    const { approvals, questions, finished, others } = splitNeedsYou(rows);
+    expect(approvals.map((r) => r.id)).toEqual([
+      "gated-question",
+      "gated-unread",
+      "gated-plain",
+    ]);
+    expect(questions.map((r) => r.id)).toEqual(["plain-question"]);
+    expect(finished.map((r) => r.id)).toEqual(["plain-unread"]);
+    expect(others).toEqual([]);
+  });
+
+  it("preserves input order within the approvals bucket", () => {
+    const rows = [
+      makeRow({ id: "b", pendingApproval: makePendingApproval() }),
+      makeRow({
+        id: "a",
+        pendingApproval: makePendingApproval({ contextId: "ctx-2" }),
+      }),
+    ];
+    expect(splitNeedsYou(rows).approvals.map((r) => r.id)).toEqual(["b", "a"]);
   });
 
   it("classifies an unread waiting_for_input row as a question, never finished", () => {
@@ -340,7 +411,8 @@ describe("splitNeedsYou", () => {
   });
 
   it("returns empty arrays for empty input", () => {
-    const { questions, finished, others } = splitNeedsYou([]);
+    const { approvals, questions, finished, others } = splitNeedsYou([]);
+    expect(approvals).toEqual([]);
     expect(questions).toEqual([]);
     expect(finished).toEqual([]);
     expect(others).toEqual([]);
@@ -644,6 +716,90 @@ describe("buildConversationSidebarSections", () => {
         .slice(2)
         .flatMap((section) => section.items.map((row) => row.id)),
     ).toEqual(["running", "awaiting-ready", "new"]);
+  });
+
+  it("pins the approvals section above the questions and finished sections", () => {
+    const rows = [
+      makeRow({ id: "running", status: "running" }),
+      makeRow({ id: "asks", status: "waiting_for_input" }),
+      makeRow({ id: "finished", status: "awaiting", unread: true }),
+      makeRow({
+        id: "gated",
+        status: "awaiting",
+        pendingApproval: makePendingApproval(),
+      }),
+    ];
+
+    const sections = buildConversationSidebarSections(rows, {
+      filter: "all",
+      groupBy: "project",
+      sessionScope: null,
+    });
+
+    expect(sections.map((s) => `${s.kind}:${s.tone ?? "_"}`)).toEqual([
+      "needs:approval",
+      "needs:question",
+      "needs:finished",
+      "project:_",
+    ]);
+    expect(sections[0]?.label).toBe("Needs approval");
+    expect(sections[0]?.items.map((row) => row.id)).toEqual(["gated"]);
+    expect(sections[1]?.items.map((row) => row.id)).toEqual(["asks"]);
+    expect(sections[2]?.items.map((row) => row.id)).toEqual(["finished"]);
+  });
+
+  it("orders approval rows by lastActivityAt recency within the approvals section", () => {
+    const rows = [
+      makeRow({
+        id: "older",
+        sessionName: "session-old",
+        lastActivityAt: "2025-01-01T00:00:00.000Z",
+        pendingApproval: makePendingApproval(),
+      }),
+      makeRow({
+        id: "newer",
+        sessionName: "session-new",
+        lastActivityAt: "2025-01-05T00:00:00.000Z",
+        pendingApproval: makePendingApproval({ contextId: "ctx-2" }),
+      }),
+    ];
+
+    const sections = buildConversationSidebarSections(rows, {
+      filter: "all",
+      groupBy: "project",
+      sessionScope: null,
+    });
+
+    expect(sections[0]?.tone).toBe("approval");
+    expect(sections[0]?.items.map((row) => row.id)).toEqual(["newer", "older"]);
+  });
+
+  it("renders the approvals section first when the needs filter is active", () => {
+    const rows = [
+      makeRow({ id: "q", status: "waiting_for_input" }),
+      makeRow({ id: "f", status: "awaiting", unread: true }),
+      makeRow({
+        id: "gated",
+        status: "waiting_for_input",
+        pendingApproval: makePendingApproval(),
+      }),
+      makeRow({ id: "r", status: "running" }),
+    ];
+
+    const sections = buildConversationSidebarSections(rows, {
+      filter: "needs",
+      groupBy: "project",
+      sessionScope: null,
+    });
+
+    expect(sections.map((s) => `${s.kind}:${s.tone ?? "_"}`)).toEqual([
+      "needs:approval",
+      "needs:question",
+      "needs:finished",
+    ]);
+    expect(sections[0]?.items.map((row) => row.id)).toEqual(["gated"]);
+    expect(sections[1]?.items.map((row) => row.id)).toEqual(["q"]);
+    expect(sections[2]?.items.map((row) => row.id)).toEqual(["f"]);
   });
 
   it("omits each pinned section when its bucket is empty", () => {

@@ -49,6 +49,9 @@ export default function Topbar({
     activeConversationNeedsAttention,
   );
   const needsCount = pinnedConversations.length;
+  const approvalsCount = pinnedConversations.filter(
+    (row) => row.pendingApproval !== null,
+  ).length;
   const firstPinned = pinnedConversations[0] ?? null;
   const needsHref =
     firstPinned !== null ? activeConversationHref(firstPinned) : null;
@@ -107,7 +110,14 @@ export default function Topbar({
           >
             <span className="topbar-needs__dot" aria-hidden="true" />
             <span className="topbar-needs__count">{needsCount}</span>
-            <span className="topbar-needs__label">needs you</span>
+            <span className="topbar-needs__label">
+              {needsCount === 1 ? "needs you" : "need you"}
+            </span>
+            {approvalsCount > 0 && (
+              <span className="topbar-needs__approvals">
+                · {approvalsCount} approval{approvalsCount === 1 ? "" : "s"}
+              </span>
+            )}
           </Link>
         )}
         <Link

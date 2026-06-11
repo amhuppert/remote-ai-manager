@@ -161,6 +161,12 @@ type GraphWorkflowPushInfo =
       contextTitle: string;
       completedContexts: number;
       totalContexts: number;
+    }
+  | {
+      kind: "approval-pending";
+      projectName: string;
+      sessionName: string;
+      contextTitle: string;
     };
 
 export async function pushForGraphWorkflowEvent(
@@ -202,6 +208,15 @@ export async function pushForGraphWorkflowEvent(
         trigger: "workflow-completed",
         title: `Context completed (${info.completedContexts}/${info.totalContexts})`,
         message: `Context "${info.contextTitle}" completed for session ${info.sessionName}`,
+        projectName: info.projectName,
+        sessionName: info.sessionName,
+      });
+      return;
+    case "approval-pending":
+      await sendPushNotification(config, {
+        trigger: "waiting-for-input",
+        title: "Approval required",
+        message: `Context "${info.contextTitle}" passed validators — review to continue`,
         projectName: info.projectName,
         sessionName: info.sessionName,
       });

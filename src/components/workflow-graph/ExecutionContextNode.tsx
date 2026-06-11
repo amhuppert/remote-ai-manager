@@ -40,6 +40,8 @@ function getStatusBadge(
       return { label: "Published", className: "completed" };
     case "halted":
       return { label: "Halted", className: "halted" };
+    case "awaiting-approval":
+      return { label: "Awaiting Approval", className: "awaiting-approval" };
     case "ready":
       return { label: "Ready", className: "pending" };
     case "waiting-for-lane":
@@ -85,6 +87,8 @@ function getFooterText(
       return `Running task ${(completedCount ?? 0) + 1}/${totalCount ?? taskCount}`;
     case "validating":
       return "Validating context";
+    case "awaiting-approval":
+      return "Awaiting your approval";
     case "merging":
       return waitState.targetBranch
         ? `Merging → ${waitState.targetBranch}`
@@ -201,6 +205,9 @@ export default function ExecutionContextNode({
     "graph-node",
     selected && "selected",
     waitState && `status-${waitState.kind}`,
+    waitState?.kind === "dependency-blocked" &&
+      waitState.blockedByApproval &&
+      "gate-blocked",
   ]
     .filter(Boolean)
     .join(" ");

@@ -151,6 +151,27 @@
   }
 }
 
+.graph-node.status-awaiting-approval {
+  --node-color: var(--amber);
+  --node-color-glow: rgba(255, 179, 0, 0.15);
+  border-color: rgba(255, 179, 0, 0.4);
+  border-top-color: rgba(255, 179, 0, 0.6);
+  animation: pulse-node 2.5s ease-in-out infinite;
+}
+
+.graph-node.status-awaiting-approval::before {
+  opacity: 1;
+}
+.graph-node.status-awaiting-approval::after {
+  opacity: 1;
+}
+
+/* Dependents parked behind a human approval gate dim so the strip reads the
+   pause as local: the gate glows, its dependents recede. */
+.graph-node.gate-blocked {
+  opacity: 0.55;
+}
+
 .graph-node.status-completed {
   --node-color: var(--green);
   --node-color-glow: rgba(0, 230, 118, 0.1);
@@ -277,6 +298,12 @@
   background: rgba(255, 61, 90, 0.08);
   color: var(--red);
   border: 1px solid rgba(255, 61, 90, 0.25);
+}
+
+.graph-node-badge.awaiting-approval {
+  background: rgba(255, 179, 0, 0.1);
+  color: var(--amber);
+  border: 1px solid rgba(255, 179, 0, 0.3);
 }
 
 .graph-node-badge.merging {
@@ -1639,6 +1666,25 @@
   border: 1px solid rgba(255, 61, 90, 0.25);
 }
 
+.wb-exec-badge.awaiting-approval {
+  background: rgba(255, 179, 0, 0.12);
+  color: var(--amber);
+  border: 1px solid rgba(255, 179, 0, 0.3);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.wb-exec-badge__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--amber);
+  box-shadow: 0 0 8px var(--amber);
+  animation: pulse-dot 2.5s ease-in-out infinite;
+}
+
 .wb-exec-badge.aborted {
   background: var(--bg-raised);
   color: var(--text-tertiary);
@@ -2078,6 +2124,32 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
+}
+
+/* Amber is the gate identity: the on-state toggle and row wash mark the
+   context as parking for human review. */
+.wb-approval-gate-control {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  border-radius: var(--radius-md);
+  transition: background 0.15s ease;
+}
+
+.wb-approval-gate-control--on {
+  background: var(--amber-glow);
+  padding: var(--space-sm);
+  margin: calc(-1 * var(--space-sm));
+}
+
+.config-toggle--gate .config-toggle-track.active {
+  background: var(--amber-glow);
+  border-color: var(--amber-dim);
+  box-shadow: 0 0 10px var(--amber-glow);
+}
+
+.config-toggle--gate .config-toggle-track.active .config-toggle-knob {
+  background: var(--amber);
 }
 
 /* ---- Inspector Block Editor Fields ---- */

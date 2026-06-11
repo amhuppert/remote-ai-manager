@@ -169,6 +169,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         mergeStatus: "not-applicable",
         cleanupStatus: "not-applicable",
         lastMergeError: null,
+        pendingApproval: null,
       });
     }
 

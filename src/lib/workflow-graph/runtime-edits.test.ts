@@ -17,6 +17,7 @@ describe("graph workflow runtime edit service", () => {
       activeContextIds: ["context-plan"],
       contextStates: {
         "context-plan": {
+          pendingApproval: null,
           contextId: "context-plan",
           status: "running",
           totalTaskCount: 1,
@@ -34,6 +35,7 @@ describe("graph workflow runtime edit service", () => {
           lastMergeError: null,
         },
         "context-implement": {
+          pendingApproval: null,
           contextId: "context-implement",
           status: "pending",
           totalTaskCount: 1,
@@ -51,6 +53,7 @@ describe("graph workflow runtime edit service", () => {
           lastMergeError: null,
         },
         "context-verify": {
+          pendingApproval: null,
           contextId: "context-verify",
           status: "pending",
           totalTaskCount: 1,
@@ -111,6 +114,7 @@ describe("graph workflow runtime edit service", () => {
       activeContextIds: ["context-plan"],
       contextStates: {
         "context-plan": {
+          pendingApproval: null,
           contextId: "context-plan",
           status: "running",
           totalTaskCount: 1,
@@ -128,6 +132,7 @@ describe("graph workflow runtime edit service", () => {
           lastMergeError: null,
         },
         "context-implement": {
+          pendingApproval: null,
           contextId: "context-implement",
           status: "pending",
           totalTaskCount: 1,
@@ -145,6 +150,7 @@ describe("graph workflow runtime edit service", () => {
           lastMergeError: null,
         },
         "context-verify": {
+          pendingApproval: null,
           contextId: "context-verify",
           status: "pending",
           totalTaskCount: 1,

@@ -687,6 +687,7 @@ function buildMaximalGraphWorkflowExecution(): unknown {
             },
           },
           scriptValidator: { enabled: true },
+          humanApprovalGate: { enabled: true },
           mutability: { allowAgentTaskAdd: true },
           circuitBreaker: { consecutiveFailureThreshold: 5 },
           iterationPolicy: {
@@ -719,7 +720,11 @@ function buildMaximalGraphWorkflowExecution(): unknown {
     contextStates: {
       "ctx-1": {
         contextId: "ctx-1",
-        status: "running",
+        // Parked at the human-review gate with a recorded-but-unapplied
+        // rejected decision (valid mid-flight state: decisions recorded while
+        // paused/halted persist until the loop applies them). Upholds the
+        // invariant: pendingApproval !== null ⇔ status === "awaiting_approval".
+        status: "awaiting_approval",
         totalTaskCount: 4,
         completedTaskCount: 2,
         iterationCount: 3,
@@ -733,6 +738,15 @@ function buildMaximalGraphWorkflowExecution(): unknown {
         mergeStatus: "in-progress",
         cleanupStatus: "pending",
         lastMergeError: "merge conflict in foo.ts",
+        pendingApproval: {
+          conversationId: "conv-approval-1",
+          requestedAt: "2026-01-01T00:00:30.000Z",
+          decision: {
+            type: "rejected",
+            message: "needs more tests before merge",
+            decidedAt: "2026-01-01T00:00:45.000Z",
+          },
+        },
       },
     },
     taskStates: {

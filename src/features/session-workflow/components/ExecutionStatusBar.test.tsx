@@ -25,6 +25,61 @@ const baseProps = {
   isMutating: false,
 };
 
+describe("ExecutionStatusBar awaiting-approval chip", () => {
+  it("renders an awaiting-approval chip with count when a context is parked", () => {
+    const base = makeExecution({ status: "running", haltReason: null });
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": {
+          ...base.contextStates["context-plan"]!,
+          status: "awaiting_approval",
+        },
+      },
+    };
+
+    render(<ExecutionStatusBar {...baseProps} execution={execution} />);
+
+    const chip = screen.getByText("1 awaiting approval");
+    expect(chip).toBeInTheDocument();
+    expect(chip.classList.contains("awaiting-approval")).toBe(true);
+  });
+
+  it("counts multiple parked contexts in the chip", () => {
+    const base = makeExecution({ status: "running", haltReason: null });
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": {
+          ...base.contextStates["context-plan"]!,
+          status: "awaiting_approval",
+        },
+        "context-implement": {
+          ...base.contextStates["context-implement"]!,
+          status: "awaiting_approval",
+        },
+      },
+    };
+
+    render(<ExecutionStatusBar {...baseProps} execution={execution} />);
+
+    expect(screen.getByText("2 awaiting approval")).toBeInTheDocument();
+  });
+
+  it("does not render the chip when no context is awaiting approval", () => {
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={makeExecution({ status: "running", haltReason: null })}
+      />,
+    );
+
+    expect(screen.queryByText(/awaiting approval/)).not.toBeInTheDocument();
+  });
+});
+
 describe("ExecutionStatusBar halt banner", () => {
   it("renders merge_precondition_failed headline, truncated dirty paths, and action text", () => {
     const haltReason: GraphWorkflowHaltReason = {

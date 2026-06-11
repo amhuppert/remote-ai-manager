@@ -41,6 +41,7 @@ function activeConvo(
     worktreePath: overrides.worktreePath ?? "/w",
     lastActivitySummary: overrides.lastActivitySummary ?? null,
     unread: overrides.unread ?? false,
+    pendingApproval: overrides.pendingApproval ?? null,
   };
 }
 

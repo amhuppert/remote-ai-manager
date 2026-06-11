@@ -1,9 +1,12 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { mutationFetch } from "@/lib/api/fetcher";
+import { ApiCallError } from "@/lib/api/errors";
+import { tracedFetch } from "@/lib/shared/traced-fetch";
 import {
   workflowDefinitionKeys,
   collaborationKeys,
 } from "@/lib/workflows/query-keys";
+import { conversationKeys } from "@/lib/conversations/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import { workflowDefinitionMutationResponseSchema } from "@/lib/workflow-definitions/schemas";
 import {
@@ -226,6 +229,65 @@ export function useResetExecutionContextMutation(
         },
       ),
     onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: sessionKeys.detail(projectName, sessionName),
+      });
+    },
+  });
+}
+
+export type ResolveApprovalVariables =
+  | { contextId: string; decision: "approve" }
+  | { contextId: string; decision: "reject"; message: string };
+
+export type ResolveApprovalResult =
+  | { status: "ok" }
+  | { status: "conflict"; error: string | null };
+
+export function useResolveApprovalMutation(
+  projectName: string,
+  sessionName: string,
+) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (
+      variables: ResolveApprovalVariables,
+    ): Promise<ResolveApprovalResult> => {
+      const res = await tracedFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/resolve-approval`,
+        "resolve-approval",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(variables),
+        },
+      );
+
+      if (res.ok) {
+        return { status: "ok" };
+      }
+
+      const body = (await res.json().catch(() => null)) as {
+        error?: string;
+        code?: string;
+      } | null;
+
+      // 409 (stale/duplicate/ineligible decision) is an expected outcome:
+      // resolve it so onSuccess refreshes the panels that showed stale state.
+      if (res.status === 409) {
+        return { status: "conflict", error: body?.error ?? null };
+      }
+
+      throw new ApiCallError(
+        body?.error ?? `API error ${res.status}`,
+        body?.code,
+      );
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.active(),
+      });
       void queryClient.invalidateQueries({
         queryKey: sessionKeys.detail(projectName, sessionName),
       });

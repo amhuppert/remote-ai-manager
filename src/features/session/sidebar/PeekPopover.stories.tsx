@@ -34,6 +34,7 @@ const BASE_CONVERSATION: SessionActiveConversation = {
     "/Users/alex/github/command-center/.worktrees/peek-replay-02e449.schema-and-deps-foundation",
   lastActivitySummary: "Wiring the FloatingUI shell.",
   unread: false,
+  pendingApproval: null,
 };
 
 function buildConversation(

@@ -606,6 +606,7 @@ describe("classifyContextSchedulability", () => {
           mergeStatus: "merged-success",
         },
         "context-busy": {
+          pendingApproval: null,
           contextId: "context-busy",
           status: "running",
           totalTaskCount: 1,
@@ -1029,6 +1030,7 @@ describe("classifyContextSchedulability", () => {
           mergeStatus: "merged-success",
         },
         "context-busy": {
+          pendingApproval: null,
           contextId: "context-busy",
           status: "running",
           totalTaskCount: 1,

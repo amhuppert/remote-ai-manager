@@ -67,9 +67,54 @@ describe("InputNeededToastContainer", () => {
     render(<InputNeededToastContainer />);
 
     expect(screen.getByText("my-project / my-session")).toBeInTheDocument();
+    expect(screen.getByText("Needs input")).toBeInTheDocument();
 
     act(() => {
       fireEvent.click(screen.getByRole("button", { name: "View" }));
+    });
+
+    expect(pushMock).toHaveBeenCalledWith(
+      "/projects/my-project/my-session/conv-1",
+    );
+  });
+
+  it("renders a custom toast title when the item carries one", async () => {
+    act(() => {
+      useNotificationStore.getState().enqueueInputToast({
+        projectName: "my-project",
+        sessionName: "my-session",
+        conversationId: "conv-1",
+        title: "Awaiting your approval",
+      });
+    });
+
+    render(<InputNeededToastContainer />);
+
+    expect(screen.getByText("Awaiting your approval")).toBeInTheDocument();
+    expect(screen.queryByText("Needs input")).toBeNull();
+  });
+
+  it("renders the approval variant with context detail and a Review action", async () => {
+    act(() => {
+      useNotificationStore.getState().enqueueInputToast({
+        projectName: "my-project",
+        sessionName: "my-session",
+        conversationId: "conv-1",
+        title: "Approval required",
+        variant: "approval",
+        contextTitle: "api-hardening",
+      });
+    });
+
+    render(<InputNeededToastContainer />);
+
+    expect(screen.getByText("Approval required")).toBeInTheDocument();
+    expect(
+      screen.getByText("api-hardening · my-project / my-session"),
+    ).toBeInTheDocument();
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: "Review" }));
     });
 
     expect(pushMock).toHaveBeenCalledWith(

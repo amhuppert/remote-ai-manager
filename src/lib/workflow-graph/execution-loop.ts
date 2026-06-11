@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { captureTraceContext, createLogger, runAsTrace } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
@@ -8,6 +9,15 @@ import {
   type CircuitBreakerGateResult,
   type RunCircuitBreakerGateInput,
 } from "@/lib/workflows/primitives/circuit-breaker-gate";
+import {
+  acquireConversationLock as defaultAcquireConversationLock,
+  isConversationBusy as defaultIsConversationBusy,
+} from "@/lib/prompt/single-flight";
+import {
+  createApprovalGateService,
+  type ApprovalGateService,
+} from "@/lib/workflow-graph/approval-gate";
+import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import type {
   ExecutionTargetResolver,
   ExecutionTarget,
@@ -34,13 +44,16 @@ import {
 } from "@/lib/workflow-graph/lane-join";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type {
+  GraphWorkflowApprovalDecision,
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
+  GraphWorkflowStatus,
 } from "@/lib/workflows/schemas";
 import { DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD } from "./constants";
 import { hasPartialIterationProgress } from "./iteration-failure-with-progress";
 import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
 import type {
+  GraphWorkflowLifecycleSnapshot,
   RecordPendingHaltReasonResult,
   ScheduleEligibleContextsResult,
 } from "./workflow-manager";
@@ -148,6 +161,49 @@ export interface GraphWorkflowExecutionLoopDeps {
     sessionName: string;
     executionId: string;
   }) => Promise<void>;
+  /**
+   * Poll interval for the approval-gate wait, mirroring the collaboration
+   * wait. The loop refreshes execution state after each call until a
+   * recorded decision is observed or the execution leaves the running
+   * state. Default waits ~1s. Also paces the busy-conversation probe while
+   * decision application waits for the conversation lock to free.
+   */
+  waitForApprovalProgress?(input: {
+    projectPath: string;
+    sessionName: string;
+    executionId: string;
+    contextId: string;
+  }): Promise<void>;
+  /**
+   * Approval-gate service whose draft-level apply methods run inside the
+   * loop's decision-application mutation. Defaults to a service backed by
+   * the workflow manager's mutateActive.
+   */
+  approvalGateService?: ApprovalGateService;
+  /**
+   * Publisher for the approval-resolved history/SSE event emitted after a
+   * decision is applied.
+   */
+  eventPublisher?: ReturnType<
+    typeof createGraphWorkflowExecutionEventPublisher
+  >;
+  /**
+   * Conversation single-flight lock probes for the decision-application
+   * quiescence rule: the loop probes `isConversationBusy` on the wait
+   * interval and acquires once free, holding the lock across the approved
+   * merge or rejected remediation seeding. Default to the shared
+   * single-flight lock manager.
+   */
+  isConversationBusy?(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ): boolean;
+  acquireConversationLock?(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+  ): () => void;
 }
 
 // -- Active loop registry -----------------------------------------------------
@@ -183,6 +239,14 @@ function hasPendingCollaborations(execution: GraphWorkflowExecution): boolean {
   return Object.keys(execution.pendingCollaborations ?? {}).length > 0;
 }
 
+function hasAwaitingApprovalContexts(
+  execution: GraphWorkflowExecution,
+): boolean {
+  return Object.values(execution.contextStates).some(
+    (contextState) => contextState.status === "awaiting_approval",
+  );
+}
+
 async function defaultWaitForCollaborationProgress(_input: {
   projectPath: string;
   sessionName: string;
@@ -190,6 +254,71 @@ async function defaultWaitForCollaborationProgress(_input: {
 }): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 1000));
 }
+
+async function defaultWaitForApprovalProgress(_input: {
+  projectPath: string;
+  sessionName: string;
+  executionId: string;
+  contextId: string;
+}): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+}
+
+/**
+ * Mirrors the lifecycle snapshot the iteration orchestrator's finalization
+ * mutations maintain. Decision application rebuilds it the same way the
+ * gate-off completion path would have; there is never a live iteration at
+ * application time.
+ */
+function buildMachineSnapshot(
+  execution: GraphWorkflowExecution,
+): GraphWorkflowLifecycleSnapshot {
+  return {
+    schemaVersion: 1,
+    lifecycleStatus: execution.status,
+    activeContextId: execution.activeContextIds[0] ?? null,
+    recoveryMode: "none",
+    hasLiveIteration: false,
+  };
+}
+
+/**
+ * Outcome of the approval-gate wait: either the operator's recorded decision
+ * was observed (the decision-application path consumes it), or the execution
+ * left the running state and the wait exited without resolving — the pending
+ * record, including any recorded decision, persists untouched.
+ */
+type ApprovalWaitOutcome =
+  | { kind: "decision"; decision: GraphWorkflowApprovalDecision }
+  | {
+      kind: "execution_exited";
+      status: Exclude<GraphWorkflowStatus, "running">;
+    };
+
+/**
+ * Outcome of the conversation-lock deferral: either the lock was acquired,
+ * or the execution left the running state while deferring and the runner
+ * exits without applying — the pending record, including the recorded
+ * decision, persists for application on the first wait refresh after resume.
+ */
+type ConversationLockOutcome =
+  | { kind: "acquired"; release(): void }
+  | {
+      kind: "execution_exited";
+      status: Exclude<GraphWorkflowStatus, "running">;
+    };
+
+/**
+ * Outcome of the decision-application mutation: applied, or the execution
+ * was observed outside the running state inside the mutation (a pause, halt,
+ * or abort raced the application) and the execution was left untouched.
+ */
+type ApprovalApplicationOutcome =
+  | { applied: true }
+  | {
+      applied: false;
+      status: Exclude<GraphWorkflowStatus, "running">;
+    };
 
 // -- Execution loop -----------------------------------------------------------
 
@@ -201,6 +330,19 @@ export function createGraphWorkflowExecutionLoop(
   const runCircuitBreakerGate =
     deps.runCircuitBreakerGate ?? defaultRunCircuitBreakerGate;
   const createJobId = deps.createJobId ?? (() => randomUUID());
+  const approvalGateService =
+    deps.approvalGateService ??
+    createApprovalGateService({
+      mutateActive: (projectPath, sessionName, fn) =>
+        deps.workflowManager.mutateActive(projectPath, sessionName, fn),
+      now: () => new Date().toISOString(),
+    });
+  const eventPublisher =
+    deps.eventPublisher ?? createGraphWorkflowExecutionEventPublisher();
+  const isConversationBusy =
+    deps.isConversationBusy ?? defaultIsConversationBusy;
+  const acquireConversationLock =
+    deps.acquireConversationLock ?? defaultAcquireConversationLock;
 
   function run(
     input: GraphWorkflowExecutionLoopInput,
@@ -266,6 +408,228 @@ export function createGraphWorkflowExecutionLoop(
       if (refreshed) {
         execution = refreshed;
       }
+    }
+
+    /**
+     * Parks the context runner while its approval gate is pending. Polls via
+     * the injected wait and refreshes execution state until the operator's
+     * decision is recorded or the execution leaves the running state
+     * (pause/halt/abort), in which case the wait exits without resolving and
+     * the pending record — including any decision recorded meanwhile —
+     * persists for resume.
+     */
+    async function waitForApprovalResolution(
+      contextId: string,
+    ): Promise<ApprovalWaitOutcome> {
+      execLogger?.iteration(contextId, "gate.waiting", {
+        conversationId:
+          execution.contextStates[contextId]?.pendingApproval?.conversationId ??
+          null,
+      });
+      logger.info("graph-workflow.gate.waiting", {
+        executionId: execution.id,
+        contextId,
+      });
+
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const status = execution.status;
+        if (status !== "running") {
+          execLogger?.iteration(contextId, "gate.wait_exit", {
+            cause: status,
+          });
+          logger.info("graph-workflow.gate.wait_exit", {
+            executionId: execution.id,
+            contextId,
+            cause: status,
+          });
+          return { kind: "execution_exited", status };
+        }
+
+        const decision =
+          execution.contextStates[contextId]?.pendingApproval?.decision ?? null;
+        if (decision !== null) {
+          execLogger?.iteration(contextId, "gate.wait_exit", {
+            cause: "decision_observed",
+            decisionType: decision.type,
+          });
+          logger.info("graph-workflow.gate.wait_exit", {
+            executionId: execution.id,
+            contextId,
+            cause: "decision_observed",
+            decisionType: decision.type,
+          });
+          return { kind: "decision", decision };
+        }
+
+        await (deps.waitForApprovalProgress ?? defaultWaitForApprovalProgress)({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          executionId: execution.id,
+          contextId,
+        });
+
+        const refreshed = await deps.workflowManager.getActive(
+          input.projectPath,
+          input.sessionName,
+        );
+        if (refreshed) {
+          execution = refreshed;
+        }
+      }
+    }
+
+    /**
+     * Poll-acquires the conversation's single-flight lock for decision
+     * application: probes on the wait interval while a chat turn is in
+     * flight and acquires once free, so application (and the approved
+     * path's merge) runs against a quiescent worktree. Each probe refreshes
+     * execution state; when the execution leaves the running state during
+     * the deferral, the runner exits without applying.
+     */
+    async function acquireConversationLockWhenFree(
+      contextId: string,
+      conversationId: string,
+    ): Promise<ConversationLockOutcome> {
+      let deferralLogged = false;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const status = execution.status;
+        if (status !== "running") {
+          execLogger?.iteration(contextId, "gate.application_exit", {
+            cause: status,
+            phase: "lock_wait",
+          });
+          logger.info("graph-workflow.gate.application_exit", {
+            executionId: execution.id,
+            contextId,
+            cause: status,
+            phase: "lock_wait",
+          });
+          return { kind: "execution_exited", status };
+        }
+
+        if (
+          !isConversationBusy(
+            input.projectPath,
+            input.sessionName,
+            conversationId,
+          )
+        ) {
+          return {
+            kind: "acquired",
+            release: acquireConversationLock(
+              input.projectPath,
+              input.sessionName,
+              conversationId,
+            ),
+          };
+        }
+
+        if (!deferralLogged) {
+          deferralLogged = true;
+          execLogger?.iteration(contextId, "gate.application_deferred", {
+            conversationId,
+          });
+          logger.info("graph-workflow.gate.application_deferred", {
+            executionId: execution.id,
+            contextId,
+            conversationId,
+          });
+        }
+        await (deps.waitForApprovalProgress ?? defaultWaitForApprovalProgress)({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          executionId: execution.id,
+          contextId,
+        });
+        const refreshed = await deps.workflowManager.getActive(
+          input.projectPath,
+          input.sessionName,
+        );
+        if (refreshed) {
+          execution = refreshed;
+        }
+      }
+    }
+
+    /**
+     * Applies the operator's recorded decision in one mutation. Approved
+     * clears the record and completes the context exactly as the gate-off
+     * finalization would have (task counts and activeContextIds were already
+     * settled when the context parked); rejected clears the record, appends
+     * the remediation task, and returns the context to running. The running
+     * guard runs inside the mutation so a pause, halt, or abort racing the
+     * application atomically wins: the execution is left untouched and the
+     * recorded decision persists for application after resume.
+     */
+    async function applyApprovalDecision(
+      contextId: string,
+      decision: GraphWorkflowApprovalDecision,
+    ): Promise<ApprovalApplicationOutcome> {
+      let exitedStatus: Exclude<GraphWorkflowStatus, "running"> | null = null;
+      execution = await deps.workflowManager.mutateActive(
+        input.projectPath,
+        input.sessionName,
+        (e) => {
+          if (e.status !== "running") {
+            exitedStatus = e.status;
+            return e;
+          }
+          const next = structuredClone(e);
+          if (decision.type === "approved") {
+            approvalGateService.applyApprovedDecision(next, contextId);
+            const cs = next.contextStates[contextId];
+            if (cs) {
+              cs.status = "completed";
+            }
+          } else {
+            approvalGateService.applyRejectedDecision(next, contextId);
+          }
+          next.machineSnapshot = buildMachineSnapshot(next);
+          return next;
+        },
+      );
+      if (exitedStatus !== null) {
+        execLogger?.iteration(contextId, "gate.application_exit", {
+          cause: exitedStatus,
+          phase: "apply",
+        });
+        logger.info("graph-workflow.gate.application_exit", {
+          executionId: execution.id,
+          contextId,
+          cause: exitedStatus,
+          phase: "apply",
+        });
+        return { applied: false, status: exitedStatus };
+      }
+      return { applied: true };
+    }
+
+    /**
+     * Persists the approval-resolved history entry alongside the publisher's
+     * SSE broadcast, after the decision-application mutation has committed.
+     */
+    async function publishApprovalResolvedEvent(
+      contextId: string,
+      conversationId: string,
+      decision: GraphWorkflowApprovalDecision,
+    ): Promise<void> {
+      execution = await deps.workflowManager.mutateActive(
+        input.projectPath,
+        input.sessionName,
+        (latest) =>
+          eventPublisher.publishApprovalResolved({
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            execution: latest,
+            contextId,
+            conversationId,
+            decision: decision.type,
+            message: decision.type === "rejected" ? decision.message : null,
+            decidedAt: decision.decidedAt,
+          }),
+      );
     }
 
     async function readSessionWorktreeDirtyPaths(
@@ -610,6 +974,31 @@ export function createGraphWorkflowExecutionLoop(
       let featureBranchName: string | null = null;
       let featureLaneId: string | null = null;
 
+      async function runCommitPhase(): Promise<void> {
+        if (
+          isolation === "worktree" &&
+          featureWorktreePath !== null &&
+          featureBranchName !== null
+        ) {
+          if (featureLaneId !== null) {
+            await runLaneCommit(
+              contextId,
+              featureLaneId,
+              featureWorktreePath,
+              featureBranchName,
+            );
+          } else {
+            await runFanInMerge(
+              contextId,
+              featureWorktreePath,
+              featureBranchName,
+            );
+          }
+        } else if (isolation === "session") {
+          await runSoloCommit(contextId);
+        }
+      }
+
       try {
         // Inner per-context iteration loop
         // eslint-disable-next-line no-constant-condition
@@ -636,6 +1025,63 @@ export function createGraphWorkflowExecutionLoop(
           if (target.isolation === "worktree") {
             featureWorktreePath = target.worktreePath;
             featureBranchName = target.branchName;
+          }
+
+          // A context parked at the approval gate — whether it parked during
+          // this loop or was restored from a persisted execution on resume —
+          // enters the gate wait directly; no iteration is seeded. An
+          // observed decision is applied under the conversation lock:
+          // approved completes the context and runs the commit phase inside
+          // the held lock window; rejected seeds the remediation task and
+          // re-enters the iteration loop.
+          if (
+            execution.contextStates[contextId]?.status === "awaiting_approval"
+          ) {
+            const outcome = await waitForApprovalResolution(contextId);
+            if (outcome.kind === "execution_exited") {
+              return;
+            }
+
+            const conversationId =
+              execution.contextStates[contextId]?.pendingApproval
+                ?.conversationId;
+            if (conversationId === undefined) {
+              throw new Error(
+                `Context "${contextId}" observed an approval decision without a pending record`,
+              );
+            }
+
+            const lockOutcome = await acquireConversationLockWhenFree(
+              contextId,
+              conversationId,
+            );
+            if (lockOutcome.kind === "execution_exited") {
+              return;
+            }
+            try {
+              const application = await applyApprovalDecision(
+                contextId,
+                outcome.decision,
+              );
+              if (!application.applied) {
+                return;
+              }
+              await publishApprovalResolvedEvent(
+                contextId,
+                conversationId,
+                outcome.decision,
+              );
+              if (outcome.decision.type === "approved") {
+                await runCommitPhase();
+                return;
+              }
+            } finally {
+              lockOutcome.release();
+            }
+            // Rejected — the next iteration seeds the remediation task and
+            // increments the iteration count; validators re-run on the next
+            // completion before the gate can trigger again.
+            continue;
           }
 
           let iterationResult: GraphWorkflowIterationResult;
@@ -780,6 +1226,14 @@ export function createGraphWorkflowExecutionLoop(
             continue;
           }
 
+          // An awaiting-approval context exits the iteration exactly like a
+          // completed one (no extra iteration is seeded), but loops back to
+          // park in the gate wait at the top of the loop instead of
+          // proceeding to the commit/merge phase.
+          if (contextState?.status === "awaiting_approval") {
+            continue;
+          }
+
           // Context completed all of its tasks — break out for fan-in merge.
           break;
         }
@@ -790,28 +1244,7 @@ export function createGraphWorkflowExecutionLoop(
         });
       }
 
-      if (
-        isolation === "worktree" &&
-        featureWorktreePath !== null &&
-        featureBranchName !== null
-      ) {
-        if (featureLaneId !== null) {
-          await runLaneCommit(
-            contextId,
-            featureLaneId,
-            featureWorktreePath,
-            featureBranchName,
-          );
-        } else {
-          await runFanInMerge(
-            contextId,
-            featureWorktreePath,
-            featureBranchName,
-          );
-        }
-      } else if (isolation === "session") {
-        await runSoloCommit(contextId);
-      }
+      await runCommitPhase();
     }
 
     async function runLaneCommit(
@@ -1219,6 +1652,60 @@ export function createGraphWorkflowExecutionLoop(
       return "halted";
     }
 
+    // A merged lane's content lives on the session branch, so its worktree and
+    // branch are disposable once the execution completes. Contexts that never
+    // merged (halted/aborted executions) keep their lanes intact for forensics
+    // until session delete. Failures are logged and never fail the completion.
+    async function cleanupMergedLanes(): Promise<void> {
+      const laneIds = new Set<string>();
+      for (const cs of Object.values(execution.contextStates)) {
+        if (cs.mergeStatus !== "merged-success") continue;
+        if (cs.isolation !== "worktree") continue;
+        if (cs.laneId !== null) {
+          laneIds.add(cs.laneId);
+        } else if (cs.cleanupStatus !== "removed") {
+          // Legacy per-context worktree whose merge-time dispose did not land.
+          laneIds.add(cs.contextId);
+        }
+      }
+      if (laneIds.size === 0) return;
+
+      const session = await deps.getSession(
+        input.projectPath,
+        input.sessionName,
+      );
+      if (!session) {
+        logger.warn("graph-workflow.lane_cleanup.session_missing", {
+          executionId: execution.id,
+          laneIds: [...laneIds],
+        });
+        return;
+      }
+      const sessionDir = path.basename(session.worktreePath);
+
+      for (const laneId of laneIds) {
+        try {
+          const result = await deps.parallelWorktrees.cleanupLane({
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            sessionDir,
+            contextId: laneId,
+          });
+          execLogger?.lifecycle("lane.cleanup_attempted", {
+            laneId,
+            status: result.status,
+            reason: result.status === "failed" ? result.reason : undefined,
+          });
+        } catch (error) {
+          logger.warn("graph-workflow.lane_cleanup.failed", {
+            executionId: execution.id,
+            laneId,
+            error: getErrorMessage(error),
+          });
+        }
+      }
+    }
+
     try {
       // Outer scheduling loop: schedule currently-eligible work, wait for the
       // next in-flight context or merge event to settle, refresh execution
@@ -1278,6 +1765,29 @@ export function createGraphWorkflowExecutionLoop(
           });
         execution = scheduleResult.execution;
 
+        // The scheduler only seeds pending/ready contexts, so a context
+        // restored as awaiting_approval (a park persisted across a pause,
+        // halt, or restart) gets its runner here and re-enters the gate
+        // wait directly. A context that parked under this loop is skipped:
+        // its runner is still in flight, holding the wait.
+        for (const contextState of Object.values(execution.contextStates)) {
+          if (contextState.status !== "awaiting_approval") continue;
+          const contextId = contextState.contextId;
+          if (inFlight.has(contextId)) continue;
+          execLogger?.iteration(contextId, "gate.reentered", {
+            conversationId:
+              contextState.pendingApproval?.conversationId ?? null,
+          });
+          logger.info("graph-workflow.gate.reentered", {
+            executionId: execution.id,
+            contextId,
+          });
+          const task = runContextTask(contextId).finally(() => {
+            inFlight.delete(contextId);
+          });
+          inFlight.set(contextId, task);
+        }
+
         if (scheduleResult.scheduled.kind === "none") {
           if (inFlight.size > 0) {
             await Promise.race(inFlight.values());
@@ -1292,6 +1802,14 @@ export function createGraphWorkflowExecutionLoop(
           }
           if (hasPendingCollaborations(execution)) {
             await waitForPendingCollaborationProgress();
+            continue;
+          }
+          // A parked context is incomplete (requirement 2.5): the execution
+          // must neither run the final publish join nor complete while a
+          // gate is unresolved. The re-entry pass above keeps a runner in
+          // flight for every parked context, so this guard backstops the
+          // completion determination.
+          if (hasAwaitingApprovalContexts(execution)) {
             continue;
           }
           const joinOutcome = await runEligibleJoinIfAny();
@@ -1310,6 +1828,7 @@ export function createGraphWorkflowExecutionLoop(
             input.sessionName,
             { type: "complete" },
           );
+          await cleanupMergedLanes();
           break;
         }
 

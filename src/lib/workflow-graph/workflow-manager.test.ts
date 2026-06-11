@@ -155,6 +155,7 @@ describe("graph workflow manager", () => {
         activeContextIds: ["context-plan"],
         contextStates: {
           "context-plan": {
+            pendingApproval: null,
             contextId: "context-plan",
             status: "running",
             totalTaskCount: 1,
@@ -172,6 +173,7 @@ describe("graph workflow manager", () => {
             lastMergeError: null,
           },
           "context-implement": {
+            pendingApproval: null,
             contextId: "context-implement",
             status: "pending",
             totalTaskCount: 1,
@@ -189,6 +191,7 @@ describe("graph workflow manager", () => {
             lastMergeError: null,
           },
           "context-verify": {
+            pendingApproval: null,
             contextId: "context-verify",
             status: "pending",
             totalTaskCount: 1,
@@ -287,6 +290,7 @@ describe("graph workflow manager", () => {
         activeContextIds: ["context-a", "context-b"],
         contextStates: {
           "context-a": {
+            pendingApproval: null,
             contextId: "context-a",
             status: "running",
             totalTaskCount: 2,
@@ -304,6 +308,7 @@ describe("graph workflow manager", () => {
             lastMergeError: null,
           },
           "context-b": {
+            pendingApproval: null,
             contextId: "context-b",
             status: "running",
             totalTaskCount: 1,
@@ -321,6 +326,7 @@ describe("graph workflow manager", () => {
             lastMergeError: null,
           },
           "context-c": {
+            pendingApproval: null,
             contextId: "context-c",
             status: "pending",
             totalTaskCount: 1,
@@ -506,6 +512,7 @@ describe("graph workflow manager", () => {
         activeContextIds: ["context-plan"],
         contextStates: {
           "context-plan": {
+            pendingApproval: null,
             contextId: "context-plan",
             status: "running",
             totalTaskCount: 1,
@@ -523,6 +530,7 @@ describe("graph workflow manager", () => {
             lastMergeError: null,
           },
           "context-implement": {
+            pendingApproval: null,
             contextId: "context-implement",
             status: "pending",
             totalTaskCount: 1,
@@ -540,6 +548,7 @@ describe("graph workflow manager", () => {
             lastMergeError: null,
           },
           "context-verify": {
+            pendingApproval: null,
             contextId: "context-verify",
             status: "pending",
             totalTaskCount: 1,
@@ -718,6 +727,7 @@ describe("graph workflow manager", () => {
         activeContextIds: ["context-plan"],
         contextStates: {
           "context-plan": {
+            pendingApproval: null,
             contextId: "context-plan",
             status: "running",
             totalTaskCount: 1,
@@ -735,6 +745,7 @@ describe("graph workflow manager", () => {
             lastMergeError: null,
           },
           "context-implement": {
+            pendingApproval: null,
             contextId: "context-implement",
             status: "pending",
             totalTaskCount: 1,
@@ -752,6 +763,7 @@ describe("graph workflow manager", () => {
             lastMergeError: null,
           },
           "context-verify": {
+            pendingApproval: null,
             contextId: "context-verify",
             status: "pending",
             totalTaskCount: 1,
@@ -841,6 +853,7 @@ describe("graph workflow manager", () => {
         activeContextIds: ["context-plan"],
         contextStates: {
           "context-plan": {
+            pendingApproval: null,
             contextId: "context-plan",
             status: "running",
             totalTaskCount: 1,
@@ -858,6 +871,7 @@ describe("graph workflow manager", () => {
             lastMergeError: null,
           },
           "context-implement": {
+            pendingApproval: null,
             contextId: "context-implement",
             status: "pending",
             totalTaskCount: 1,
@@ -875,6 +889,7 @@ describe("graph workflow manager", () => {
             lastMergeError: null,
           },
           "context-verify": {
+            pendingApproval: null,
             contextId: "context-verify",
             status: "pending",
             totalTaskCount: 1,
@@ -971,6 +986,7 @@ describe("graph workflow manager", () => {
         activeContextIds: ["context-plan"],
         contextStates: {
           "context-plan": {
+            pendingApproval: null,
             contextId: "context-plan",
             status: "running",
             totalTaskCount: 1,
@@ -1044,6 +1060,7 @@ describe("graph workflow manager", () => {
         activeContextIds: ["context-plan"],
         contextStates: {
           "context-plan": {
+            pendingApproval: null,
             contextId: "context-plan",
             status: "ready",
             totalTaskCount: 1,
@@ -1108,6 +1125,84 @@ describe("graph workflow manager", () => {
     });
   });
 
+  it("leaves awaiting_approval contexts and their pending record untouched when normalizing after restart", async () => {
+    const parkedContextState = {
+      pendingApproval: {
+        conversationId: "conversation-1",
+        requestedAt: "2026-03-27T15:01:00.000Z",
+        decision: {
+          type: "rejected" as const,
+          message: "needs more tests",
+          decidedAt: "2026-03-27T15:02:00.000Z",
+        },
+      },
+      contextId: "context-plan",
+      status: "awaiting_approval" as const,
+      totalTaskCount: 1,
+      completedTaskCount: 1,
+      iterationCount: 1,
+      consecutiveFailureCount: 0,
+      worktreePath: "/repo/.worktrees/session-1.context-plan",
+      branchName: "csm/session-1-context-plan",
+      isolation: "worktree" as const,
+      batchId: "batch-1",
+      laneId: null,
+      joinId: null,
+      mergeStatus: "pending" as const,
+      cleanupStatus: "pending" as const,
+      lastMergeError: null,
+    };
+
+    const repository = createRepository(
+      createWorkflowExecution({
+        status: "running",
+        activeContextIds: [],
+        contextStates: {
+          "context-plan": structuredClone(parkedContextState),
+        },
+        taskStates: {
+          "task-plan-1": {
+            taskId: "task-plan-1",
+            contextId: "context-plan",
+            order: 1,
+            status: "completed",
+            summary: "Done",
+            startedAt: "2026-03-27T15:00:00.000Z",
+            completedAt: "2026-03-27T15:00:30.000Z",
+            lastConversationId: "conversation-1",
+            failureMessage: null,
+            failureHistory: [],
+          },
+        },
+        machineSnapshot: {
+          schemaVersion: 1,
+          lifecycleStatus: "running",
+          activeContextId: null,
+          recoveryMode: "none",
+          hasLiveIteration: false,
+        },
+      }),
+    );
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+      isExecutionLoopActive() {
+        return false;
+      },
+    });
+
+    const recovered = await manager.normalizeAfterRestart("/repo", "session-1");
+
+    expect(recovered).not.toBeNull();
+    expect(recovered?.status).toBe("paused");
+    expect(recovered?.contextStates["context-plan"]).toEqual(
+      parkedContextState,
+    );
+  });
+
   it("transitions a running execution with pendingHaltReason directly to halted (drain resumed after crash)", async () => {
     const haltReason: GraphWorkflowHaltReason = {
       type: "circuit_breaker",
@@ -1123,6 +1218,7 @@ describe("graph workflow manager", () => {
         pendingHaltReason: haltReason,
         contextStates: {
           "context-plan": {
+            pendingApproval: null,
             contextId: "context-plan",
             status: "running",
             totalTaskCount: 1,
@@ -1772,6 +1868,7 @@ describe("graph workflow manager", () => {
         haltReason: { type: "aborted" },
         contextStates: {
           "context-plan": {
+            pendingApproval: null,
             contextId: "context-plan",
             status: "ready",
             totalTaskCount: 1,
@@ -1889,6 +1986,7 @@ describe("graph workflow manager", () => {
       },
       contextStates: {
         "context-plan": {
+          pendingApproval: null,
           contextId: "context-plan",
           status: "completed",
           totalTaskCount: 1,
@@ -1906,6 +2004,7 @@ describe("graph workflow manager", () => {
           lastMergeError: null,
         },
         "context-implement": {
+          pendingApproval: null,
           contextId: "context-implement",
           status: "pending",
           totalTaskCount: 1,
@@ -1923,6 +2022,7 @@ describe("graph workflow manager", () => {
           lastMergeError: null,
         },
         "context-verify": {
+          pendingApproval: null,
           contextId: "context-verify",
           status: "pending",
           totalTaskCount: 1,
@@ -1962,6 +2062,7 @@ describe("graph workflow manager", () => {
         activeContextIds: ["context-implement"],
         contextStates: {
           "context-plan": {
+            pendingApproval: null,
             contextId: "context-plan",
             status: "completed",
             totalTaskCount: 1,
@@ -1979,6 +2080,7 @@ describe("graph workflow manager", () => {
             lastMergeError: null,
           },
           "context-implement": {
+            pendingApproval: null,
             contextId: "context-implement",
             status: "ready",
             totalTaskCount: 1,
@@ -1996,6 +2098,7 @@ describe("graph workflow manager", () => {
             lastMergeError: null,
           },
           "context-verify": {
+            pendingApproval: null,
             contextId: "context-verify",
             status: "pending",
             totalTaskCount: 1,
@@ -2136,6 +2239,7 @@ describe("graph workflow manager", () => {
         mergeStatus: "not-applicable",
         cleanupStatus: "not-applicable",
         lastMergeError: null,
+        pendingApproval: null,
       });
       expect(execution.taskStates["task-implement-1"]).toEqual({
         taskId: "task-implement-1",
@@ -2513,6 +2617,10 @@ describe("graph workflow manager", () => {
         return dispose(input);
       }
 
+      async function cleanupLane(): Promise<DisposeResult> {
+        return { status: "removed" };
+      }
+
       return {
         provision,
         provisionBatch,
@@ -2520,6 +2628,7 @@ describe("graph workflow manager", () => {
         provisionLane,
         provisionLaneBatch,
         disposeLane,
+        cleanupLane,
         provisionCalls,
         disposeCalls,
       };
@@ -2532,6 +2641,7 @@ describe("graph workflow manager", () => {
           activeContextIds: [],
           contextStates: {
             "context-plan": {
+              pendingApproval: null,
               contextId: "context-plan",
               status: "completed",
               totalTaskCount: 1,
@@ -2549,6 +2659,7 @@ describe("graph workflow manager", () => {
               lastMergeError: null,
             },
             "context-implement": {
+              pendingApproval: null,
               contextId: "context-implement",
               status: "completed",
               totalTaskCount: 1,
@@ -2566,6 +2677,7 @@ describe("graph workflow manager", () => {
               lastMergeError: null,
             },
             "context-verify": {
+              pendingApproval: null,
               contextId: "context-verify",
               status: "completed",
               totalTaskCount: 1,
@@ -3117,6 +3229,7 @@ describe("graph workflow manager", () => {
             },
             contextValidator: null,
             scriptValidator: { enabled: false },
+            humanApprovalGate: { enabled: false },
             mutability: { allowAgentTaskAdd: false },
             circuitBreaker: {},
             iterationPolicy: {
@@ -3135,6 +3248,7 @@ describe("graph workflow manager", () => {
             },
             contextValidator: null,
             scriptValidator: { enabled: false },
+            humanApprovalGate: { enabled: false },
             mutability: { allowAgentTaskAdd: false },
             circuitBreaker: {},
             iterationPolicy: {
@@ -3153,6 +3267,7 @@ describe("graph workflow manager", () => {
             },
             contextValidator: null,
             scriptValidator: { enabled: false },
+            humanApprovalGate: { enabled: false },
             mutability: { allowAgentTaskAdd: false },
             circuitBreaker: {},
             iterationPolicy: {
@@ -3207,6 +3322,7 @@ describe("graph workflow manager", () => {
           activeContextIds: [],
           contextStates: {
             "context-plan": {
+              pendingApproval: null,
               contextId: "context-plan",
               status: "completed",
               totalTaskCount: 1,
@@ -3224,6 +3340,7 @@ describe("graph workflow manager", () => {
               lastMergeError: null,
             },
             "..escape": {
+              pendingApproval: null,
               contextId: "..escape",
               status: "pending",
               totalTaskCount: 1,
@@ -3241,6 +3358,7 @@ describe("graph workflow manager", () => {
               lastMergeError: null,
             },
             "context-other": {
+              pendingApproval: null,
               contextId: "context-other",
               status: "pending",
               totalTaskCount: 1,

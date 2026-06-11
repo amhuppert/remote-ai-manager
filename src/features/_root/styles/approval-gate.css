@@ -1,0 +1,158 @@
+/* ---- Approval Gate Panel (signal strip) ---- */
+
+.approval-gate-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-lg);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-base);
+  flex-shrink: 0;
+}
+
+/* Amber top edge marks the gate at the panel boundary, mirroring the
+   project-card cyan edge pattern. */
+.approval-gate-panel::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--amber), transparent 65%);
+  opacity: 0.8;
+}
+
+.approval-gate-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.approval-gate-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--amber);
+  box-shadow: 0 0 8px var(--amber);
+  animation: pulse-dot 2.5s ease-in-out infinite;
+}
+
+.approval-gate-badge {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--amber);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.approval-gate-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.approval-gate-context {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.approval-gate-sep {
+  color: var(--text-tertiary);
+}
+
+.approval-gate-workflow {
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.approval-gate-wait {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.approval-gate-hint {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
+}
+
+.approval-gate-hint--suspended {
+  color: var(--amber-dim);
+}
+
+.approval-gate-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+}
+
+.approval-gate-actions .btn {
+  white-space: nowrap;
+}
+
+.approval-gate-actions .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.approval-gate-kbd {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  color: var(--text-tertiary);
+}
+
+.approval-gate-reject {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.approval-gate-reject-input {
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  line-height: 1.5;
+  resize: vertical;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.approval-gate-reject-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* Destructive intent gets the destructive color. */
+.approval-gate-reject-input:focus {
+  outline: none;
+  border-color: var(--red-dim);
+  box-shadow: 0 0 0 2px var(--red-glow);
+}
+
+.approval-gate-reject-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

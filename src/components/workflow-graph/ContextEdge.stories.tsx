@@ -66,6 +66,7 @@ function makeNode(
           mergeStatus: "not-applicable",
           cleanupStatus: "not-applicable",
           lastMergeError: null,
+          pendingApproval: null,
         },
       }),
     },

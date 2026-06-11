@@ -387,6 +387,25 @@ describe("pushForGraphWorkflowEvent", () => {
     });
   });
 
+  it("sends waiting-for-input push when a context awaits approval", async () => {
+    await pushForGraphWorkflowEvent(pushConfig, {
+      kind: "approval-pending",
+      projectName: "proj",
+      sessionName: "sess",
+      contextTitle: "Setup Infrastructure",
+    });
+
+    expect(sendPushNotification).toHaveBeenCalledOnce();
+    expect(sendPushNotification).toHaveBeenCalledWith(pushConfig, {
+      trigger: "waiting-for-input",
+      title: "Approval required",
+      message:
+        'Context "Setup Infrastructure" passed validators — review to continue',
+      projectName: "proj",
+      sessionName: "sess",
+    });
+  });
+
   it("does not send push when config is undefined", async () => {
     await pushForGraphWorkflowEvent(undefined, {
       kind: "workflow-completed",

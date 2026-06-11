@@ -59,6 +59,13 @@ export type DisposeResult =
   | { status: "removed" }
   | { status: "failed"; reason: string };
 
+export interface CleanupLaneInput {
+  projectPath: string;
+  sessionName: string;
+  sessionDir: string;
+  contextId: string;
+}
+
 export interface ParallelWorktrees {
   provision(input: ProvisionInput): Promise<ProvisionResult>;
   provisionBatch(inputs: ProvisionInput[]): Promise<ProvisionResult[]>;
@@ -69,6 +76,12 @@ export interface ParallelWorktrees {
   provisionLaneBatch(inputs: ProvisionLaneInput[]): Promise<ProvisionResult[]>;
   /** Dispose a lane worktree. Identical disk-side semantics to dispose. */
   disposeLane(input: DisposeInput): Promise<DisposeResult>;
+  /**
+   * Remove the lane worktree and lane branch derived from a lane/context id.
+   * A merged lane's content lives on the session branch, so both artifacts
+   * are disposable once the lane's contexts have merged.
+   */
+  cleanupLane(input: CleanupLaneInput): Promise<DisposeResult>;
 }
 
 export interface ParallelWorktreesDeps {
@@ -503,6 +516,37 @@ export function createParallelWorktrees(
     return dispose(input);
   }
 
+  async function cleanupLane(input: CleanupLaneInput): Promise<DisposeResult> {
+    validateLaneId(input.contextId);
+    const targets = deriveLaneTargets({
+      projectPath: input.projectPath,
+      sessionDir: input.sessionDir,
+      laneId: input.contextId,
+    });
+    const result = await dispose({
+      projectPath: input.projectPath,
+      worktreePath: targets.worktreePath,
+      branchName: targets.branchName,
+    });
+    if (result.status === "removed") {
+      logger.info("lane.cleaned", {
+        sessionName: input.sessionName,
+        contextId: input.contextId,
+        branch: targets.branchName,
+        worktreePath: targets.worktreePath,
+      });
+    } else {
+      logger.warn("lane.cleanup_failed", {
+        sessionName: input.sessionName,
+        contextId: input.contextId,
+        branch: targets.branchName,
+        worktreePath: targets.worktreePath,
+        reason: result.reason,
+      });
+    }
+    return result;
+  }
+
   return {
     provision,
     provisionBatch,
@@ -510,5 +554,6 @@ export function createParallelWorktrees(
     provisionLane,
     provisionLaneBatch,
     disposeLane,
+    cleanupLane,
   };
 }

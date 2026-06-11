@@ -15,6 +15,7 @@ import {
 } from "@floating-ui/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useOverlayScope } from "@/hooks/useOverlayScope";
+import ApprovalGatePanel from "@/components/ApprovalGatePanel";
 import AskQuestionPanel from "@/components/AskQuestionPanel";
 import MessageRow from "@/components/conversation/MessageRow";
 import TypingIndicator from "@/components/conversation/TypingIndicator";
@@ -34,6 +35,13 @@ import type { ImageAttachment } from "@/hooks/use-image-attachments";
 
 type ActiveConversationStatus = ActiveConversation["status"];
 
+export interface PeekApprovalGate {
+  isSubmitting: boolean;
+  executionSuspended: boolean;
+  onApprove(): void;
+  onReject(message: string): void;
+}
+
 interface PeekPopoverProps {
   anchorEl: HTMLElement | null;
   conversation: SessionActiveConversation;
@@ -43,6 +51,7 @@ interface PeekPopoverProps {
   onReplyText: (text: string) => void;
   onAnswerQuestion: (answers: Record<string, string>) => void;
   onFork: (messageIndex: number) => void;
+  approvalGate?: PeekApprovalGate | null;
 }
 
 const STATUS_LABEL: Record<ActiveConversationStatus, string> = {
@@ -229,6 +238,7 @@ export default function PeekPopover({
   onReplyText,
   onAnswerQuestion,
   onFork,
+  approvalGate = null,
 }: PeekPopoverProps): React.JSX.Element | null {
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [bodyMounted, setBodyMounted] = useState(false);
@@ -404,11 +414,18 @@ export default function PeekPopover({
               </button>
             </div>
             <div className="peek__meta">
-              <span
-                className={`peek__status peek__status--${conversation.status}`}
-              >
-                {STATUS_LABEL[conversation.status]}
-              </span>
+              {conversation.pendingApproval !== null ? (
+                <span className="peek__status peek__status--approval">
+                  awaiting approval ·{" "}
+                  {formatPeekTime(conversation.pendingApproval.requestedAt)}
+                </span>
+              ) : (
+                <span
+                  className={`peek__status peek__status--${conversation.status}`}
+                >
+                  {STATUS_LABEL[conversation.status]}
+                </span>
+              )}
               <span aria-hidden="true">·</span>
               <b>{conversation.projectName}</b>
               <span aria-hidden="true">·</span>
@@ -458,6 +475,20 @@ export default function PeekPopover({
           </div>
 
           <footer className="peek__composer">
+            {conversation.pendingApproval !== null && approvalGate !== null && (
+              <ApprovalGatePanel
+                contextTitle={conversation.pendingApproval.contextTitle}
+                // The workflow segment is dropped in the peek's compact strip;
+                // the 380px card only fits the context.
+                workflowName={null}
+                requestedAt={conversation.pendingApproval.requestedAt}
+                isSubmitting={approvalGate.isSubmitting}
+                conversationBusy={conversation.status === "running"}
+                executionSuspended={approvalGate.executionSuspended}
+                onApprove={approvalGate.onApprove}
+                onReject={approvalGate.onReject}
+              />
+            )}
             {hasPendingQuestions ? (
               <AskQuestionPanel
                 questions={pendingQuestions}

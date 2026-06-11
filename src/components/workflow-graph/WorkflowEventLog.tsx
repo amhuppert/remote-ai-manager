@@ -132,6 +132,8 @@ function contextStatusToDot(status: GraphWorkflowContextStatus): EventDotKind {
       return "context-ready";
     case "pending":
       return "neutral";
+    case "awaiting_approval":
+      return "neutral";
   }
 }
 
@@ -147,6 +149,8 @@ function contextStatusVerb(status: GraphWorkflowContextStatus): string {
       return "ready";
     case "pending":
       return "pending";
+    case "awaiting_approval":
+      return "awaiting approval";
   }
 }
 
@@ -405,6 +409,8 @@ function normalizeEvent(
 
     case "graph-workflow-shared-documents-updated":
     case "graph-workflow-pending-halt-reason":
+    case "graph-workflow-approval-pending":
+    case "graph-workflow-approval-resolved":
       return null;
   }
 }

@@ -41,6 +41,7 @@ function makeContextState(
     mergeStatus: "not-applicable",
     cleanupStatus: "not-applicable",
     lastMergeError: null,
+    pendingApproval: null,
     ...overrides,
   };
 }
@@ -145,6 +146,34 @@ describe("deriveContextWaitState", () => {
     expect(result).toEqual({
       kind: "dependency-blocked",
       unmetDependencyIds: ["ctx-a"],
+      blockedByApproval: false,
+    });
+  });
+
+  it("flags a dependent as blocked-by-approval when an unmet upstream is parked at a gate", () => {
+    const definition = makeDefinition({
+      edges: [{ id: "e1", sourceContextId: "ctx-a", targetContextId: "ctx-b" }],
+    });
+    const execution = makeExecution({
+      contextStates: {
+        "ctx-a": makeContextState({
+          contextId: "ctx-a",
+          status: "awaiting_approval",
+        }),
+        "ctx-b": makeContextState({ contextId: "ctx-b", status: "pending" }),
+      },
+    });
+
+    const result = deriveContextWaitState({
+      contextId: "ctx-b",
+      definition,
+      execution,
+    });
+
+    expect(result).toEqual({
+      kind: "dependency-blocked",
+      unmetDependencyIds: ["ctx-a"],
+      blockedByApproval: true,
     });
   });
 
@@ -215,6 +244,7 @@ describe("deriveContextWaitState", () => {
     expect(result).toEqual({
       kind: "dependency-blocked",
       unmetDependencyIds: ["ctx-b"],
+      blockedByApproval: false,
     });
   });
 
@@ -293,6 +323,31 @@ describe("deriveContextWaitState", () => {
     });
 
     expect(result).toEqual({ kind: "ready" });
+  });
+
+  it("reports awaiting-approval for a context parked at the human review gate", () => {
+    const execution = makeExecution({
+      contextStates: {
+        "ctx-1": makeContextState({
+          status: "awaiting_approval",
+          totalTaskCount: 1,
+          completedTaskCount: 1,
+          pendingApproval: {
+            conversationId: "conv-1",
+            requestedAt: "2026-06-10T09:00:00.000Z",
+            decision: null,
+          },
+        }),
+      },
+    });
+
+    const result = deriveContextWaitState({
+      contextId: "ctx-1",
+      definition: makeDefinition(),
+      execution,
+    });
+
+    expect(result).toEqual({ kind: "awaiting-approval" });
   });
 
   it("reports running when tasks are still in progress", () => {

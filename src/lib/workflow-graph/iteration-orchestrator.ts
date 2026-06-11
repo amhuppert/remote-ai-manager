@@ -32,6 +32,10 @@ import {
   type GraphWorkflowValidationService,
 } from "@/lib/workflow-graph/execution-validation";
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
+import {
+  createApprovalGateService,
+  type ApprovalGateService,
+} from "@/lib/workflow-graph/approval-gate";
 import type { ScriptValidatorOutcome } from "@/lib/workflow-graph/script-validator-runner";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
 import type { ToolResultBlock } from "./tool-dispatcher";
@@ -165,6 +169,7 @@ export interface GraphWorkflowIterationOrchestratorDeps {
   continuityService?: IterationOrchestratorContinuityService;
   validationService?: GraphWorkflowValidationService;
   scriptValidatorService?: IterationOrchestratorScriptValidatorService;
+  approvalGateService?: ApprovalGateService;
   createTaskId?(): string;
   now?(): string;
   eventPublisher?: ReturnType<
@@ -544,6 +549,13 @@ export function createGraphWorkflowIterationOrchestrator(
     deps.validationService ?? createGraphWorkflowValidationService();
   const eventPublisher =
     deps.eventPublisher ?? createGraphWorkflowExecutionEventPublisher();
+  const approvalGateService =
+    deps.approvalGateService ??
+    createApprovalGateService({
+      mutateActive: (projectPath, sessionName, fn) =>
+        deps.executionRepository.mutateActive(projectPath, sessionName, fn),
+      now: () => getNow(deps),
+    });
   const signalHalt =
     deps.signalHalt ??
     (async () => {
@@ -1197,6 +1209,7 @@ export function createGraphWorkflowIterationOrchestrator(
     let remainingTaskCount = 0;
     let shouldContinueInContext = false;
     let iterationNumber = 0;
+    let approvalRequestedAt: string | null = null;
 
     const persistedExecution = await deps.executionRepository.mutateActive(
       input.projectPath,
@@ -1224,9 +1237,26 @@ export function createGraphWorkflowIterationOrchestrator(
         shouldContinueInContext = remainingTaskCount > 0;
         iterationNumber = finalizedContextState.iterationCount;
 
-        finalizedContextState.status = shouldContinueInContext
-          ? "running"
-          : "completed";
+        // A context only reaches the no-remaining-tasks branch after every
+        // enabled validator passed (failures reopen tasks), so the gate
+        // decision reduces to the resolved per-context config.
+        const gateEnabled =
+          finalizedExecution.workingDefinition.executionContexts.find(
+            (entry) => entry.id === input.contextId,
+          )?.humanApprovalGate.enabled ?? false;
+
+        if (shouldContinueInContext) {
+          finalizedContextState.status = "running";
+        } else if (gateEnabled) {
+          approvalGateService.enterAwaitingApproval(finalizedExecution, {
+            contextId: input.contextId,
+            conversationId,
+          });
+          approvalRequestedAt =
+            finalizedContextState.pendingApproval?.requestedAt ?? null;
+        } else {
+          finalizedContextState.status = "completed";
+        }
         finalizedExecution.activeContextIds = shouldContinueInContext
           ? finalizedExecution.activeContextIds.includes(input.contextId)
             ? finalizedExecution.activeContextIds
@@ -1255,6 +1285,32 @@ export function createGraphWorkflowIterationOrchestrator(
       completedTaskCount,
       remainingTaskCount,
     });
+
+    if (approvalRequestedAt !== null) {
+      const requestedAt: string = approvalRequestedAt;
+      // The parking mutation has committed; this follow-up mutation only
+      // persists the approval-pending history entry that the publisher
+      // appends alongside its SSE broadcast and push dispatch.
+      const executionWithApprovalEvent =
+        await deps.executionRepository.mutateActive(
+          input.projectPath,
+          input.sessionName,
+          (latest) =>
+            eventPublisher.publishApprovalPending({
+              projectPath: input.projectPath,
+              sessionName: input.sessionName,
+              execution: latest,
+              contextId: input.contextId,
+              conversationId,
+              requestedAt,
+            }),
+        );
+      return {
+        conversationId,
+        execution: executionWithApprovalEvent,
+        shouldContinueInContext,
+      };
+    }
 
     return {
       conversationId,

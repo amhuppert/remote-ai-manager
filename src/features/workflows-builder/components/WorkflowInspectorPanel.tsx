@@ -23,6 +23,7 @@ import type {
   GraphWorkflowAgentValidatorConfig,
   GraphWorkflowCircuitBreakerPolicy,
   GraphWorkflowExecutionContextDefinition,
+  GraphWorkflowHumanApprovalGateConfig,
   GraphWorkflowIterationPolicy,
   GraphWorkflowMutabilityPolicy,
   GraphWorkflowScriptValidatorConfig,
@@ -77,6 +78,9 @@ const SEEDED_DEFAULTS: WorkflowDefaults = {
     },
   },
   scriptValidator: {
+    enabled: false,
+  },
+  humanApprovalGate: {
     enabled: false,
   },
   iterationPolicy: {
@@ -156,6 +160,12 @@ function summarizeScriptValidator(
   return validator.enabled ? "enabled" : "off";
 }
 
+function summarizeHumanApprovalGate(
+  gate: GraphWorkflowHumanApprovalGateConfig,
+): string {
+  return gate.enabled ? "enabled" : "off";
+}
+
 function summarizeIterationPolicy(
   policy: GraphWorkflowIterationPolicy,
 ): string {
@@ -195,6 +205,10 @@ type ResolvedContextCascade = {
     value: GraphWorkflowScriptValidatorConfig;
     source: Exclude<InspectorConfigBlockSource, "disabled">;
   };
+  humanApprovalGate: {
+    value: GraphWorkflowHumanApprovalGateConfig;
+    source: Exclude<InspectorConfigBlockSource, "disabled">;
+  };
   iterationPolicy: {
     value: GraphWorkflowIterationPolicy;
     source: InspectorConfigBlockSource;
@@ -222,6 +236,7 @@ function computeContextCascade(
     K extends
       | "implementer"
       | "scriptValidator"
+      | "humanApprovalGate"
       | "iterationPolicy"
       | "circuitBreaker"
       | "mutability",
@@ -270,6 +285,7 @@ function computeContextCascade(
     implementer: resolvePlain("implementer"),
     contextValidator: validator,
     scriptValidator: resolvePlain("scriptValidator"),
+    humanApprovalGate: resolvePlain("humanApprovalGate"),
     iterationPolicy: resolvePlain("iterationPolicy"),
     circuitBreaker: resolvePlain("circuitBreaker"),
     mutability: resolvePlain("mutability"),
@@ -292,6 +308,10 @@ type WorkflowCascade = {
   };
   scriptValidator: {
     value: GraphWorkflowScriptValidatorConfig;
+    source: "global" | "context-override";
+  };
+  humanApprovalGate: {
+    value: GraphWorkflowHumanApprovalGateConfig;
     source: "global" | "context-override";
   };
   iterationPolicy: {
@@ -336,6 +356,7 @@ function computeWorkflowCascade(
     implementer: resolve("implementer"),
     contextValidator: resolve("contextValidator"),
     scriptValidator: resolve("scriptValidator"),
+    humanApprovalGate: resolve("humanApprovalGate"),
     iterationPolicy: resolve("iterationPolicy"),
     circuitBreaker: resolve("circuitBreaker"),
     mutability: resolve("mutability"),
@@ -661,6 +682,16 @@ function WorkflowTabBody({
         onReset={() => onClearOverride("scriptValidator")}
       />
 
+      <HumanApprovalGateBlock
+        scopeLabel="Workflow human approval gate"
+        hint="Applies to every context without its own override."
+        cascade={cascade.humanApprovalGate}
+        onChange={(value) =>
+          onSetOverride("humanApprovalGate", deepClone(value))
+        }
+        onReset={() => onClearOverride("humanApprovalGate")}
+      />
+
       <InspectorConfigBlock
         label="Iteration policy"
         summary={summarizeIterationPolicy(cascade.iterationPolicy.value)}
@@ -722,6 +753,7 @@ type ContextBlock =
   | "implementer"
   | "contextValidator"
   | "scriptValidator"
+  | "humanApprovalGate"
   | "iterationPolicy"
   | "circuitBreaker"
   | "mutability"
@@ -899,6 +931,16 @@ function ContextTabBody({
           onSetContextOverride("scriptValidator", deepClone(value))
         }
         onReset={() => onClearContextOverride("scriptValidator")}
+      />
+
+      <HumanApprovalGateBlock
+        scopeLabel="Context human approval gate"
+        hint="After all validators pass, this context parks for your review before merge. Reject sends feedback into the next iteration."
+        cascade={cascade.humanApprovalGate}
+        onChange={(value) =>
+          onSetContextOverride("humanApprovalGate", deepClone(value))
+        }
+        onReset={() => onClearContextOverride("humanApprovalGate")}
       />
 
       <InspectorConfigBlock
@@ -1196,6 +1238,59 @@ function ScriptValidatorBlock({
         value={cascade.value.enabled}
         onChange={(enabled) => onChange({ enabled })}
       />
+    </InspectorConfigBlock>
+  );
+}
+
+function HumanApprovalGateBlock({
+  scopeLabel,
+  hint,
+  cascade,
+  onChange,
+  onReset,
+}: {
+  scopeLabel: string;
+  hint: string;
+  cascade:
+    | ResolvedContextCascade["humanApprovalGate"]
+    | WorkflowCascade["humanApprovalGate"];
+  onChange: (value: GraphWorkflowHumanApprovalGateConfig) => void;
+  onReset: () => void;
+}): React.JSX.Element {
+  const enabled = cascade.value.enabled;
+  return (
+    <InspectorConfigBlock
+      label="Human approval gate"
+      summary={summarizeHumanApprovalGate(cascade.value)}
+      source={cascade.source}
+      defaultOpen
+      allowInheritedEditing
+      onReset={cascade.source === "context-override" ? onReset : undefined}
+    >
+      <div
+        className={`wb-approval-gate-control${enabled ? " wb-approval-gate-control--on" : ""}`}
+      >
+        <div
+          className="config-toggle config-toggle--gate"
+          onClick={() => onChange({ enabled: !enabled })}
+          role="switch"
+          aria-label={scopeLabel}
+          aria-checked={enabled}
+          tabIndex={0}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onChange({ enabled: !enabled });
+            }
+          }}
+        >
+          <div className={`config-toggle-track${enabled ? " active" : ""}`}>
+            <div className="config-toggle-knob" />
+          </div>
+          <span className="config-toggle-label">{enabled ? "ON" : "OFF"}</span>
+        </div>
+        <div className="wb-field-hint">{hint}</div>
+      </div>
     </InspectorConfigBlock>
   );
 }

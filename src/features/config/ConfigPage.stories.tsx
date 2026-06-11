@@ -115,6 +115,9 @@ const fullyConfiguredConfig: GlobalConfig = {
     scriptValidator: {
       enabled: false,
     },
+    humanApprovalGate: {
+      enabled: false,
+    },
     iterationPolicy: {
       maxIterations: 20,
       continuity: { enabled: true },

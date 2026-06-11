@@ -1293,6 +1293,175 @@ describe("NotificationListener", () => {
     expect(cached?.length).toBe(1);
   });
 
+  it("enqueues an input toast and invalidates active + session detail on graph-workflow-approval-pending", async () => {
+    const client = makeClient();
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("graph-workflow-approval-pending", {
+      type: "graph-workflow-approval-pending",
+      projectName: "proj",
+      sessionName: "sess",
+      executionId: "exec-1",
+      contextId: "ctx-1",
+      contextTitle: "Build the API",
+      conversationId: "conv-1",
+      requestedAt: "2026-06-10T00:00:00.000Z",
+    });
+
+    await waitFor(() =>
+      expect(notificationStoreMocks.enqueueInputToast).toHaveBeenCalledWith({
+        projectName: "proj",
+        sessionName: "sess",
+        conversationId: "conv-1",
+        title: "Approval required",
+        variant: "approval",
+        contextTitle: "Build the API",
+      }),
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: conversationKeys.active(),
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: sessionKeys.detail("proj", "sess"),
+    });
+  });
+
+  it("shows a browser notification with approval wording for hidden approval-pending events when permission is granted", async () => {
+    const client = makeClient();
+    stubHiddenDocument(true);
+    stubBrowserNotifications("granted");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("graph-workflow-approval-pending", {
+      type: "graph-workflow-approval-pending",
+      projectName: "proj",
+      sessionName: "sess",
+      executionId: "exec-1",
+      contextId: "ctx-1",
+      contextTitle: "Build the API",
+      conversationId: "conv-1",
+      requestedAt: "2026-06-10T00:00:00.000Z",
+    });
+
+    await waitFor(() =>
+      expect(FakeBrowserNotification.instances).toHaveLength(1),
+    );
+    expect(FakeBrowserNotification.instances[0]).toMatchObject({
+      title: "Approval required",
+      options: {
+        body: "Build the API passed validators — review to continue",
+        tag: "approval-conv-1",
+      },
+    });
+    expect(FakeBrowserNotification.requestPermission).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the context id in the browser notification body when the approval-pending context has no title", async () => {
+    const client = makeClient();
+    stubHiddenDocument(true);
+    stubBrowserNotifications("granted");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("graph-workflow-approval-pending", {
+      type: "graph-workflow-approval-pending",
+      projectName: "proj",
+      sessionName: "sess",
+      executionId: "exec-1",
+      contextId: "ctx-1",
+      contextTitle: null,
+      conversationId: "conv-1",
+      requestedAt: "2026-06-10T00:00:00.000Z",
+    });
+
+    await waitFor(() =>
+      expect(FakeBrowserNotification.instances).toHaveLength(1),
+    );
+    expect(FakeBrowserNotification.instances[0]).toMatchObject({
+      options: { body: "ctx-1 passed validators — review to continue" },
+    });
+  });
+
+  it("invalidates active + session detail on graph-workflow-approval-resolved without toast or browser notification", async () => {
+    const client = makeClient();
+    stubHiddenDocument(true);
+    stubBrowserNotifications("granted");
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("graph-workflow-approval-resolved", {
+      type: "graph-workflow-approval-resolved",
+      projectName: "proj",
+      sessionName: "sess",
+      executionId: "exec-1",
+      contextId: "ctx-1",
+      conversationId: "conv-1",
+      decision: "approved",
+      message: null,
+      decidedAt: "2026-06-10T00:01:00.000Z",
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: conversationKeys.active(),
+      }),
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: sessionKeys.detail("proj", "sess"),
+    });
+    expect(notificationStoreMocks.enqueueInputToast).not.toHaveBeenCalled();
+    expect(FakeBrowserNotification.instances).toHaveLength(0);
+    expect(FakeBrowserNotification.requestPermission).not.toHaveBeenCalled();
+  });
+
+  it("ignores malformed approval events without invalidating caches", async () => {
+    const client = makeClient();
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    invalidateQueries.mockClear();
+
+    // Missing required fields (conversationId / decision): both must be ignored.
+    es.emit("graph-workflow-approval-pending", {
+      type: "graph-workflow-approval-pending",
+      projectName: "proj",
+      sessionName: "sess",
+    });
+    es.emit("graph-workflow-approval-resolved", {
+      type: "graph-workflow-approval-resolved",
+      projectName: "proj",
+      sessionName: "sess",
+    });
+
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: sessionKeys.detail("proj", "sess"),
+    });
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: conversationKeys.active(),
+    });
+    expect(notificationStoreMocks.enqueueInputToast).not.toHaveBeenCalled();
+  });
+
   it("ignores malformed queue events without throwing or mutating caches", async () => {
     const client = makeClient();
     const invalidateQueries = vi.spyOn(client, "invalidateQueries");

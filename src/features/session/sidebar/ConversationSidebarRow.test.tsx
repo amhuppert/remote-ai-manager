@@ -28,6 +28,7 @@ const BASE: SessionActiveConversation = {
   worktreePath: "/home/user/my-project/.worktrees/my-session",
   lastActivitySummary: null,
   unread: false,
+  pendingApproval: null,
 };
 
 const PROJECT_BASE: ProjectActiveConversation = {
@@ -49,6 +50,7 @@ const PROJECT_BASE: ProjectActiveConversation = {
   worktreePath: "/home/user/my-project",
   lastActivitySummary: "Checked repo root health",
   unread: true,
+  pendingApproval: null,
   open: true,
 };
 
@@ -240,6 +242,82 @@ describe("ConversationSidebarRow", () => {
     expect(
       screen.queryByRole("button", { name: /Mark .* as read/i }),
     ).toBeNull();
+  });
+
+  it("does not render the acknowledge button while an approval gate is pending", () => {
+    render(
+      <ConversationSidebarRow
+        conversation={{
+          ...BASE,
+          status: "awaiting",
+          unread: true,
+          pendingApproval: {
+            contextId: "ctx-1",
+            contextTitle: "Implement feature",
+            requestedAt: "2026-05-15T12:00:00.000Z",
+            workflowName: null,
+            executionSuspended: false,
+            tasksCompleted: 6,
+            tasksTotal: 6,
+          },
+        }}
+        onAcknowledge={vi.fn()}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: /Mark .* as read/i }),
+    ).toBeNull();
+  });
+
+  describe("approval gate treatment", () => {
+    const GATED: SessionActiveConversation = {
+      ...BASE,
+      status: "awaiting",
+      pendingApproval: {
+        contextId: "ctx-1",
+        contextTitle: "Implement feature",
+        requestedAt: "2026-05-15T12:00:00.000Z",
+        workflowName: null,
+        executionSuspended: false,
+        tasksCompleted: 6,
+        tasksTotal: 6,
+      },
+    };
+
+    it("renders the amber APPROVAL chip after the title", () => {
+      render(<ConversationSidebarRow conversation={GATED} />);
+      expect(screen.getByText("approval")).toBeInTheDocument();
+    });
+
+    it("shows the gate status line with task progress and validator state", () => {
+      render(<ConversationSidebarRow conversation={GATED} />);
+      expect(
+        screen.getByText("approval required · 6/6 tasks · validators ✓"),
+      ).toBeInTheDocument();
+    });
+
+    it("omits the task segment when counts are unavailable", () => {
+      render(
+        <ConversationSidebarRow
+          conversation={{
+            ...GATED,
+            pendingApproval: {
+              ...GATED.pendingApproval!,
+              tasksCompleted: null,
+              tasksTotal: null,
+            },
+          }}
+        />,
+      );
+      expect(
+        screen.getByText("approval required · validators ✓"),
+      ).toBeInTheDocument();
+    });
+
+    it("does not render the chip for non-gated rows", () => {
+      render(<ConversationSidebarRow conversation={BASE} />);
+      expect(screen.queryByText("approval")).toBeNull();
+    });
   });
 
   it("does not call onClick or onPeek when the acknowledge button is clicked", () => {

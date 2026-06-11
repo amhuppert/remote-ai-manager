@@ -27,6 +27,7 @@ import type {
 import type { ManagerState } from "@/lib/projects/schemas";
 import type {
   GraphWorkflowCleanupStatusValue,
+  GraphWorkflowExecution,
   GraphWorkflowExecutionJoinKind,
   GraphWorkflowExecutionJoinStatus,
   GraphWorkflowHaltReason,
@@ -191,6 +192,62 @@ const ACTIVE_GW_STATUSES: ReadonlySet<GraphWorkflowStatus> = new Set([
   "running",
   "paused",
 ]);
+
+/**
+ * Execution statuses under which an undecided approval gate keeps its
+ * Needs-Input standing — the gate survives pause/halt/restart and disappears
+ * only when the execution leaves the in-flight set (aborted, completed).
+ */
+const GATE_STANDING_EXECUTION_STATUSES: ReadonlySet<GraphWorkflowStatus> =
+  new Set(["running", "paused", "halted"]);
+
+interface PendingApprovalStanding {
+  contextId: string;
+  contextTitle: string | null;
+  requestedAt: string;
+  workflowName: string | null;
+  executionSuspended: boolean;
+  tasksCompleted: number | null;
+  tasksTotal: number | null;
+}
+
+/**
+ * Map conversationId → gate standing for a session's persisted execution.
+ * An entry exists when the execution is in-flight and a context is parked
+ * `awaiting_approval` with no recorded decision. Derived purely from
+ * execution state so standing is independent of `conversation.status`.
+ */
+function buildPendingApprovalStandings(
+  execution: GraphWorkflowExecution | null,
+): Map<string, PendingApprovalStanding> {
+  const standings = new Map<string, PendingApprovalStanding>();
+  if (!execution) return standings;
+  if (!GATE_STANDING_EXECUTION_STATUSES.has(execution.status)) {
+    return standings;
+  }
+  const executionSuspended =
+    execution.status === "paused" || execution.status === "halted";
+  for (const contextState of Object.values(execution.contextStates)) {
+    if (contextState.status !== "awaiting_approval") continue;
+    const record = contextState.pendingApproval;
+    if (!record || record.decision !== null) continue;
+    const context = execution.workingDefinition.executionContexts.find(
+      (c) => c.id === contextState.contextId,
+    );
+    standings.set(record.conversationId, {
+      contextId: contextState.contextId,
+      contextTitle: context?.title ?? null,
+      requestedAt: record.requestedAt,
+      // The display name lives on the stored definition record only; the
+      // assembly is synchronous over state, so no name is available here.
+      workflowName: null,
+      executionSuspended,
+      tasksCompleted: contextState.completedTaskCount,
+      tasksTotal: contextState.totalTaskCount,
+    });
+  }
+  return standings;
+}
 
 interface PendingQuestionFields {
   pendingQuestion: string | null;
@@ -445,11 +502,23 @@ export function createActiveConversationsRouteHandlers(
             });
           }
 
+          const pendingApprovalStandings = buildPendingApprovalStandings(
+            session.graphWorkflowExecution,
+          );
+
           for (const convo of session.conversations) {
             if (convo.archived) continue;
-            if (!ACTIVE_STATUSES.has(convo.status)) continue;
-            if (convo.role === "iteration" || convo.role === "validator")
-              continue;
+            const pendingApproval =
+              pendingApprovalStandings.get(convo.id) ?? null;
+            // Gated rows bypass the status and role filters: their standing is
+            // derived from execution state, not conversation lifecycle, and
+            // workflow-managed rows must surface while a human decision is
+            // pending. Archival above remains authoritative.
+            if (!pendingApproval) {
+              if (!ACTIVE_STATUSES.has(convo.status)) continue;
+              if (convo.role === "iteration" || convo.role === "validator")
+                continue;
+            }
 
             const lastAssistantBlocks =
               convo.status === "running"
@@ -497,6 +566,7 @@ export function createActiveConversationsRouteHandlers(
                 lastAssistantBlocks ? { content: lastAssistantBlocks } : null,
               ),
               unread: convo.unread === true,
+              pendingApproval,
             });
           }
 
@@ -661,6 +731,7 @@ export function createActiveConversationsRouteHandlers(
             lastAssistantBlocks ? { content: lastAssistantBlocks } : null,
           ),
           unread: conversation.unread === true,
+          pendingApproval: null,
         });
       }
 

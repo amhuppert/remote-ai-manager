@@ -953,6 +953,34 @@ describe("ExecutionInspectorPanel — task editability", () => {
   });
 });
 
+describe("ExecutionInspectorPanel — awaiting-approval status badge", () => {
+  it("shows an Awaiting Approval badge for a parked context in the detail view", () => {
+    const baseExecution = createWorkflowExecution({ status: "running" });
+    const execution = createWorkflowExecution({
+      status: "running",
+      contextStates: {
+        ...baseExecution.contextStates,
+        "context-plan": {
+          ...baseExecution.contextStates["context-plan"]!,
+          status: "awaiting_approval",
+        },
+      },
+    });
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        selectedContextId="context-plan"
+        {...baseHandlers}
+      />,
+    );
+
+    const badge = screen.getByText("Awaiting Approval");
+    expect(badge).toBeInTheDocument();
+    expect(badge.classList.contains("awaiting-approval")).toBe(true);
+  });
+});
+
 describe("ExecutionInspectorPanel — Reset Context", () => {
   it("shows a Reset button when execution is paused and context is not completed", () => {
     const execution = createWorkflowExecution({ status: "paused" });

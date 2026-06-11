@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen, fireEvent, act } from "@testing-library/react";
 import { renderWithQuery } from "@/test/component-mocks";
 import ConversationDetailPage from "@/features/session/SessionPage";
+import { ApiCallError } from "@/lib/api/errors";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { SessionDiff } from "@/lib/git/schemas";
@@ -226,6 +227,7 @@ let testSession: SessionState | undefined;
 let testMessages: TranscriptMessage[];
 let testDiff: SessionDiff;
 let testSessionPending: boolean;
+let testSessionError: Error | null;
 let testCollaborationEnvelopes: Array<{
   workflowId: string;
   status: "running" | "paused" | "completed" | "failed";
@@ -233,8 +235,14 @@ let testCollaborationEnvelopes: Array<{
   featureSnapshot: { conversationId?: string } & Record<string, unknown>;
 }>;
 
-vi.mock("@/lib/sessions/queries", () => ({
-  useSessionQuery: () => ({ data: testSession, isPending: testSessionPending }),
+vi.mock("@/lib/sessions/queries", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/sessions/queries")>()),
+  useSessionQuery: () => ({
+    data: testSession,
+    isPending: testSessionPending,
+    error: testSessionError,
+    isError: testSessionError !== null,
+  }),
 }));
 
 vi.mock("@/lib/git/queries", () => ({
@@ -251,6 +259,7 @@ vi.mock("@/lib/workflows/queries", () => ({
     data: testCollaborationEnvelopes,
     isPending: false,
   }),
+  useWorkflowDefinitionQuery: () => ({ data: undefined }),
 }));
 
 vi.mock("@/lib/conversations/queries", () => ({
@@ -339,6 +348,7 @@ vi.mock("@/lib/workflows/mutations", () => ({
     mutate: collaborationStopMutateMock,
     isPending: false,
   }),
+  useResolveApprovalMutation: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 vi.mock("@/lib/conversations/mutations", () => ({
@@ -486,6 +496,7 @@ beforeEach(() => {
   testMessages = sampleMessages;
   testDiff = emptyDiff;
   testSessionPending = false;
+  testSessionError = null;
   testCollaborationEnvelopes = [];
   useConversationMessagesQueryMock.mockImplementation(() => ({
     data: testMessages,
@@ -610,6 +621,20 @@ describe("ConversationDetailPage", () => {
     testSessionPending = true;
     renderPage();
     expect(screen.getByText("Loading session...")).toBeInTheDocument();
+  });
+
+  it("renders a terminal not-found state instead of the loading spinner when the session query 404s", () => {
+    testSession = undefined;
+    testSessionError = new ApiCallError(
+      "Session not found",
+      undefined,
+      undefined,
+      undefined,
+      404,
+    );
+    renderPage();
+    expect(screen.getByText("Session not found.")).toBeInTheDocument();
+    expect(screen.queryByText("Loading session...")).toBeNull();
   });
 
   it("does not poll messages when a different conversation makes the session running", () => {

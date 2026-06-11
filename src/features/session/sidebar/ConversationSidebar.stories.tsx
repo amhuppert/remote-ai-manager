@@ -60,6 +60,7 @@ function makeSessionActive(
       `/home/alex/github/${overrides.projectName ?? "remote-ai-manager"}/.worktrees/${overrides.sessionName ?? "conversation-ui-overhaul"}`,
     lastActivitySummary: overrides.lastActivitySummary ?? null,
     unread: overrides.unread ?? false,
+    pendingApproval: overrides.pendingApproval ?? null,
   };
 }
 
@@ -88,6 +89,7 @@ function makeProjectActive(
       `/home/alex/github/${overrides.projectName ?? "remote-ai-manager"}`,
     lastActivitySummary: overrides.lastActivitySummary ?? null,
     unread: overrides.unread ?? false,
+    pendingApproval: overrides.pendingApproval ?? null,
     open: overrides.open ?? true,
   };
 }

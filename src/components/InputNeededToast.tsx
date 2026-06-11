@@ -6,6 +6,9 @@ interface InputNeededToastProps {
   sessionName?: string;
   contextLabel?: string;
   projectName: string;
+  title?: string;
+  variant?: "approval";
+  contextTitle?: string;
   onAction?: () => void;
   onDismiss?: () => void;
   autoDismissMs?: number;
@@ -46,6 +49,9 @@ export default function InputNeededToast({
   sessionName,
   contextLabel,
   projectName,
+  title,
+  variant,
+  contextTitle,
   onAction,
   onDismiss,
   autoDismissMs = 10_000,
@@ -70,23 +76,32 @@ export default function InputNeededToast({
   if (!visible) return null;
 
   const detailContext = contextLabel ?? sessionName ?? "";
+  const isApproval = variant === "approval";
+  const toneClass = isApproval
+    ? "merge-toast-approval"
+    : "merge-toast-conflicts";
+  const detail = `${projectName} / ${detailContext}`;
 
   return (
     <div
-      className={`merge-toast merge-toast-conflicts${exiting ? " merge-toast-exit" : ""}`}
+      className={`merge-toast ${toneClass}${exiting ? " merge-toast-exit" : ""}`}
     >
       <div className="merge-toast-icon">
-        <InputIcon />
+        {isApproval ? (
+          <span className="merge-toast-gate-dot" aria-hidden="true" />
+        ) : (
+          <InputIcon />
+        )}
       </div>
       <div className="merge-toast-content">
-        <span className="merge-toast-title">Needs input</span>
+        <span className="merge-toast-title">{title ?? "Needs input"}</span>
         <span className="merge-toast-detail">
-          {projectName} / {detailContext}
+          {contextTitle !== undefined ? `${contextTitle} · ${detail}` : detail}
         </span>
       </div>
       {onAction && (
         <button className="merge-toast-action" onClick={onAction}>
-          View
+          {isApproval ? "Review" : "View"}
         </button>
       )}
       <button className="merge-toast-close" onClick={handleDismiss}>

@@ -39,6 +39,7 @@ export interface UseSessionPageViewPropsArgs {
   isReadOnly: boolean;
   isBusy: boolean;
   isWorkflowManagedConversation: boolean;
+  approvalGate: SessionPageViewProps["promptInputSlotProps"]["approvalGate"];
   isInitConversation: boolean;
   targetBranch: string;
 
@@ -258,6 +259,7 @@ export function useSessionPageViewProps(
     },
     promptInputSlotProps: {
       isWorkflowManagedConversation: args.isWorkflowManagedConversation,
+      approvalGate: args.approvalGate,
       pendingQuestions: store.pendingQuestions,
       pendingQuestionId: store.pendingQuestionId,
       currentQuestionIndex: store.currentQuestionIndex,

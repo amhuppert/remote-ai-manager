@@ -26,6 +26,7 @@ import {
   useMarkConversationReadMutation,
 } from "@/lib/conversations/mutations";
 import { useMarkProjectConversationReadMutation } from "@/lib/project-conversations-client/mutations";
+import { useResolveApprovalMutation } from "@/lib/workflows/mutations";
 import { useGenericArchiveSessionMutation } from "@/lib/sessions/mutations";
 import { apiFetch } from "@/lib/api/fetcher";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
@@ -52,7 +53,9 @@ import ConversationSidebarRow from "@/features/session/sidebar/ConversationSideb
 import ConversationSidebarRowContextMenu, {
   type ContextMenuItem,
 } from "@/features/session/sidebar/ConversationSidebarRowContextMenu";
-import PeekPopover from "@/features/session/sidebar/PeekPopover";
+import PeekPopover, {
+  type PeekApprovalGate,
+} from "@/features/session/sidebar/PeekPopover";
 import { usePeekReply } from "@/features/session/sidebar/use-peek-reply";
 import { useConversationMessagesQuery } from "@/hooks/conversation/use-conversation-messages-query";
 import {
@@ -406,6 +409,32 @@ function ConversationSidebar({
     peekProjectName,
     peekSessionName,
   );
+  const peekResolveApprovalMutation = useResolveApprovalMutation(
+    peekProjectName,
+    peekSessionName,
+  );
+
+  const peekApprovalGate = ((): PeekApprovalGate | null => {
+    const standing = peekConversation?.pendingApproval ?? null;
+    if (standing === null) return null;
+    const contextId = standing.contextId;
+    return {
+      isSubmitting: peekResolveApprovalMutation.isPending,
+      // The standing payload carries the suspension flag — the active
+      // execution list omits halted executions, so it cannot be derived here.
+      executionSuspended: standing.executionSuspended,
+      onApprove: () => {
+        peekResolveApprovalMutation.mutate({ contextId, decision: "approve" });
+      },
+      onReject: (message: string) => {
+        peekResolveApprovalMutation.mutate({
+          contextId,
+          decision: "reject",
+          message,
+        });
+      },
+    };
+  })();
 
   const handlePeekFork = useCallback(
     (messageIndex: number) => {
@@ -439,10 +468,10 @@ function ConversationSidebar({
     const openRows = activeRows.filter(
       (row) => !isClosedProjectConversation(row),
     );
-    const { questions, finished } = splitNeedsYou(openRows);
+    const { approvals, questions, finished } = splitNeedsYou(openRows);
     return {
       all: activeRows.length,
-      needs: questions.length + finished.length,
+      needs: approvals.length + questions.length + finished.length,
       running: openRows.filter((row) => row.status === "running").length,
       session: activeRows.filter(
         (row) =>
@@ -721,13 +750,21 @@ function ConversationSidebar({
           handleRenameStart(row.id, row.name ?? row.summary ?? "", actionScope);
         },
       },
-      {
-        kind: "item",
-        label: archived ? "Unarchive conversation" : "Archive conversation",
-        onSelect: () => {
-          handleArchive(row.id, !archived, actionScope);
-        },
-      },
+      // While an approval gate is pending the row must stay visible and
+      // actionable in Needs Input, so the archive affordance is withheld.
+      ...(row.pendingApproval === null
+        ? [
+            {
+              kind: "item" as const,
+              label: archived
+                ? "Unarchive conversation"
+                : "Archive conversation",
+              onSelect: () => {
+                handleArchive(row.id, !archived, actionScope);
+              },
+            },
+          ]
+        : []),
       ...(row.scope === "session"
         ? [
             {
@@ -946,6 +983,7 @@ function ConversationSidebar({
             });
           }}
           onFork={handlePeekFork}
+          approvalGate={peekApprovalGate}
         />
       )}
       <ConfirmDialog

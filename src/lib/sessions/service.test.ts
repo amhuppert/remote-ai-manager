@@ -76,6 +76,7 @@ function createTestDeps() {
   const fastRemoveWorktreeMock = vi
     .fn()
     .mockResolvedValue({ status: "moved", trashPath: "/trash/x" });
+  const sweepLaneWorktreesMock = vi.fn().mockResolvedValue([]);
 
   const recording = makeRecordingArtifactRegistry();
   const factoryArgs: Array<{ projectPath: string; sessionName: string }> = [];
@@ -122,6 +123,7 @@ function createTestDeps() {
     deleteJobRecordsForSession: vi.fn().mockReturnValue(0),
     deleteNotificationsForProject: vi.fn().mockReturnValue(0),
     deleteJobRecordsForProject: vi.fn().mockReturnValue(0),
+    sweepLaneWorktrees: sweepLaneWorktreesMock,
   };
 
   return {
@@ -132,6 +134,7 @@ function createTestDeps() {
     existsSyncMock,
     execFileAsyncMock,
     fastRemoveWorktreeMock,
+    sweepLaneWorktreesMock,
     queryMock,
     artifactRegistryCalls: recording.calls,
     artifactRegistryFactoryArgs: factoryArgs,
@@ -227,6 +230,7 @@ let writeStateMock: Mock;
 let existsSyncMock: Mock;
 let execFileAsyncMock: Mock;
 let fastRemoveWorktreeMock: Mock;
+let sweepLaneWorktreesMock: Mock;
 let queryMock: Mock;
 let artifactRegistryCalls: CapturedRegistryCall[];
 let artifactRegistryFactoryArgs: Array<{
@@ -272,6 +276,7 @@ beforeEach(() => {
   existsSyncMock = testSetup.existsSyncMock;
   execFileAsyncMock = testSetup.execFileAsyncMock;
   fastRemoveWorktreeMock = testSetup.fastRemoveWorktreeMock;
+  sweepLaneWorktreesMock = testSetup.sweepLaneWorktreesMock;
   queryMock = testSetup.queryMock;
   artifactRegistryCalls = testSetup.artifactRegistryCalls;
   artifactRegistryFactoryArgs = testSetup.artifactRegistryFactoryArgs;
@@ -1063,6 +1068,10 @@ describe("deleteSession", () => {
     expect(fastRemoveWorktreeMock).toHaveBeenCalledWith({
       projectPath: "/projects/repo",
       worktreePath: "/projects/repo/.worktrees/to-delete",
+    });
+    expect(sweepLaneWorktreesMock).toHaveBeenCalledWith({
+      projectPath: "/projects/repo",
+      sessionWorktreePath: "/projects/repo/.worktrees/to-delete",
     });
 
     expect(writeStateMock).toHaveBeenCalledTimes(1);

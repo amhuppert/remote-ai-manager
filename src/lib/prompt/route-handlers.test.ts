@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { NextRequest } from "next/server";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { sessionStateSchema } from "@/lib/sessions/schemas";
+import type {
+  GraphWorkflowPendingApproval,
+  GraphWorkflowStatus,
+} from "@/lib/workflows/schemas";
+import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import {
   createPromptRouteHandlers,
   type PromptRouteDeps,
@@ -444,6 +450,135 @@ describe("POST /api/projects/[name]/sessions/[session]/conversations/[conversati
       "conv-1",
       null,
     );
+  });
+
+  describe("approval-gate chat exception", () => {
+    const GATED_CONTEXT_ID = "context-implement";
+
+    function makeGatedSession(input: {
+      executionStatus?: GraphWorkflowStatus;
+      pendingApproval?: GraphWorkflowPendingApproval;
+    }) {
+      const execution = createWorkflowExecution({
+        status: input.executionStatus ?? "running",
+      });
+      const contextState = execution.contextStates[GATED_CONTEXT_ID];
+      if (!contextState) throw new Error("fixture missing gated context");
+      contextState.status = "awaiting_approval";
+      contextState.pendingApproval = input.pendingApproval ?? {
+        conversationId: "conv-1",
+        requestedAt: "2026-06-10T09:00:00.000Z",
+        decision: null,
+      };
+      return sessionStateSchema.parse({
+        ...testSession,
+        graphWorkflowExecution: execution,
+      });
+    }
+
+    beforeEach(() => {
+      vi.mocked(deps.getConversation).mockResolvedValue({
+        ...testConversation,
+        role: "iteration",
+      } as ConversationState);
+    });
+
+    it("accepts chat with a gated iteration conversation while the decision is pending", async () => {
+      vi.mocked(deps.getSession).mockResolvedValue(makeGatedSession({}));
+
+      const response = await handlers.conversationPOST(
+        makeRequest({ prompt: "Why did you choose this approach?" }),
+        makeConvParams(),
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("Content-Type")).toBe("text/event-stream");
+    });
+
+    it("returns 403 again once an approved decision is recorded", async () => {
+      vi.mocked(deps.getSession).mockResolvedValue(
+        makeGatedSession({
+          pendingApproval: {
+            conversationId: "conv-1",
+            requestedAt: "2026-06-10T09:00:00.000Z",
+            decision: {
+              type: "approved",
+              decidedAt: "2026-06-10T09:05:00.000Z",
+            },
+          },
+        }),
+      );
+
+      const response = await handlers.conversationPOST(
+        makeRequest({ prompt: "Hello" }),
+        makeConvParams(),
+      );
+
+      expect(response.status).toBe(403);
+      const body = await response.json();
+      expect(body.code).toBe("MANAGED_CONVERSATION");
+    });
+
+    it("returns 403 again once a rejected decision is recorded", async () => {
+      vi.mocked(deps.getSession).mockResolvedValue(
+        makeGatedSession({
+          pendingApproval: {
+            conversationId: "conv-1",
+            requestedAt: "2026-06-10T09:00:00.000Z",
+            decision: {
+              type: "rejected",
+              message: "Please use the existing helper",
+              decidedAt: "2026-06-10T09:05:00.000Z",
+            },
+          },
+        }),
+      );
+
+      const response = await handlers.conversationPOST(
+        makeRequest({ prompt: "Hello" }),
+        makeConvParams(),
+      );
+
+      expect(response.status).toBe(403);
+      const body = await response.json();
+      expect(body.code).toBe("MANAGED_CONVERSATION");
+    });
+
+    it("returns 403 for a managed conversation that is not the gated one", async () => {
+      vi.mocked(deps.getSession).mockResolvedValue(
+        makeGatedSession({
+          pendingApproval: {
+            conversationId: "conv-validator",
+            requestedAt: "2026-06-10T09:00:00.000Z",
+            decision: null,
+          },
+        }),
+      );
+
+      const response = await handlers.conversationPOST(
+        makeRequest({ prompt: "Hello" }),
+        makeConvParams(),
+      );
+
+      expect(response.status).toBe(403);
+      const body = await response.json();
+      expect(body.code).toBe("MANAGED_CONVERSATION");
+    });
+
+    it("returns 403 when the gating execution is no longer in flight", async () => {
+      vi.mocked(deps.getSession).mockResolvedValue(
+        makeGatedSession({ executionStatus: "aborted" }),
+      );
+
+      const response = await handlers.conversationPOST(
+        makeRequest({ prompt: "Hello" }),
+        makeConvParams(),
+      );
+
+      expect(response.status).toBe(403);
+      const body = await response.json();
+      expect(body.code).toBe("MANAGED_CONVERSATION");
+    });
   });
 
   it("does not clear pendingPromptText when the conversation is busy", async () => {

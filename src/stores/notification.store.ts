@@ -18,6 +18,12 @@ export interface SessionInputNeededItem {
   projectName: string;
   sessionName: string;
   conversationId: string;
+  /** Toast headline; the renderer falls back to "Needs input". */
+  title?: string;
+  /** Approval gates get the amber toast treatment and a Review action. */
+  variant?: "approval";
+  /** Gated context title, shown in the toast detail line. */
+  contextTitle?: string;
 }
 
 export interface ProjectInputNeededItem {
@@ -26,6 +32,8 @@ export interface ProjectInputNeededItem {
   conversationId: string;
   displayContext: string;
   href: string;
+  /** Toast headline; the renderer falls back to "Needs input". */
+  title?: string;
 }
 
 export type InputNeededItem = SessionInputNeededItem | ProjectInputNeededItem;

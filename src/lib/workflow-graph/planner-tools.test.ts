@@ -175,6 +175,7 @@ describe("graph workflow planner tools", () => {
     );
     expect(ctx.implementer).toBeUndefined();
     expect(ctx.contextValidator).toBeUndefined();
+    expect(ctx.humanApprovalGate).toBeUndefined();
     expect(ctx.mutability).toBeUndefined();
     expect(ctx.circuitBreaker).toBeUndefined();
     expect(ctx.iterationPolicy).toBeUndefined();
@@ -240,6 +241,28 @@ describe("graph workflow planner tools", () => {
       kind: "use",
       value: validatorValue,
     });
+  });
+
+  it("create_graph_workflow: per-context humanApprovalGate is stored verbatim", async () => {
+    const deps = createMockDeps();
+
+    registerTools(deps);
+
+    const result = (await getHandler("create_graph_workflow")({
+      ...MINIMAL_INPUT,
+      executionContexts: [
+        {
+          ...MINIMAL_INPUT.executionContexts[0],
+          humanApprovalGate: { enabled: true },
+        },
+      ],
+    })) as { content: Array<{ text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeUndefined();
+
+    const draft = captureCreatedDraft(deps);
+    const ctx = draft.definition.executionContexts[0]!;
+    expect(ctx.humanApprovalGate).toEqual({ enabled: true });
   });
 
   it("create_graph_workflow: top-level workflowConfig is stored on the semantic definition", async () => {
@@ -403,6 +426,7 @@ describe("graph workflow planner tools", () => {
 
     const workflowConfig = {
       circuitBreaker: { consecutiveFailureThreshold: 5 },
+      humanApprovalGate: { enabled: true },
     };
 
     const result = (await getHandler("replace_graph_workflow")({
@@ -413,6 +437,7 @@ describe("graph workflow planner tools", () => {
         {
           ...MINIMAL_INPUT.executionContexts[0],
           mutability: { allowAgentTaskAdd: true },
+          humanApprovalGate: { enabled: false },
         },
       ],
     })) as { content: Array<{ text: string }>; isError?: boolean };
@@ -430,6 +455,9 @@ describe("graph workflow planner tools", () => {
     expect(draft.definition.workflowConfig).toEqual(workflowConfig);
     expect(draft.definition.executionContexts[0]?.mutability).toEqual({
       allowAgentTaskAdd: true,
+    });
+    expect(draft.definition.executionContexts[0]?.humanApprovalGate).toEqual({
+      enabled: false,
     });
   });
 

@@ -6,12 +6,15 @@ export interface LoadingSessionViewProps {
   projectName: string;
   sessionName: string;
   decodedProjectName: string;
+  /** Empty-state headline; also covers terminal states like "Session not found.". */
+  title?: string;
 }
 
 export default function LoadingSessionView({
   projectName,
   sessionName,
   decodedProjectName,
+  title = "Loading session...",
 }: LoadingSessionViewProps): React.JSX.Element {
   return (
     <div className="app" data-page="detail">
@@ -32,7 +35,7 @@ export default function LoadingSessionView({
       />
       <main className="main">
         <div className="empty-state">
-          <div className="empty-state-title">Loading session...</div>
+          <div className="empty-state-title">{title}</div>
         </div>
       </main>
     </div>

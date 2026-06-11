@@ -17,6 +17,7 @@ describe("graph workflow execution event publisher", () => {
       activeContextIds: ["context-plan"],
       contextStates: {
         "context-plan": {
+          pendingApproval: null,
           contextId: "context-plan",
           status: "running",
           totalTaskCount: 1,
@@ -34,6 +35,7 @@ describe("graph workflow execution event publisher", () => {
           lastMergeError: null,
         },
         "context-implement": {
+          pendingApproval: null,
           contextId: "context-implement",
           status: "pending",
           totalTaskCount: 1,
@@ -51,6 +53,7 @@ describe("graph workflow execution event publisher", () => {
           lastMergeError: null,
         },
         "context-verify": {
+          pendingApproval: null,
           contextId: "context-verify",
           status: "pending",
           totalTaskCount: 1,
@@ -414,6 +417,7 @@ describe("graph workflow execution event publisher", () => {
       activeContextIds: ["context-plan"],
       contextStates: {
         "context-plan": {
+          pendingApproval: null,
           contextId: "context-plan",
           status: "running",
           totalTaskCount: 1,
@@ -431,6 +435,7 @@ describe("graph workflow execution event publisher", () => {
           lastMergeError: null,
         },
         "context-implement": {
+          pendingApproval: null,
           contextId: "context-implement",
           status: "pending",
           totalTaskCount: 1,
@@ -448,6 +453,7 @@ describe("graph workflow execution event publisher", () => {
           lastMergeError: null,
         },
         "context-verify": {
+          pendingApproval: null,
           contextId: "context-verify",
           status: "pending",
           totalTaskCount: 1,
@@ -1091,6 +1097,143 @@ describe("graph workflow execution event publisher", () => {
       .map(([event]) => event)
       .filter((e) => e.type === "graph-workflow-join-status");
     expect(joinEvents).toEqual([]);
+  });
+
+  it("publishes approval-pending with history append, broadcast, and a waiting-for-input push", () => {
+    const broadcast = vi.fn();
+    const dispatchPush = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      dispatchPush,
+      now: () => "2026-06-10T09:00:00.000Z",
+    });
+
+    const execution = createWorkflowExecution({
+      status: "running",
+      activeContextIds: ["context-plan"],
+    });
+
+    const updatedExecution = publisher.publishApprovalPending({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      execution,
+      contextId: "context-plan",
+      conversationId: "conversation-9",
+      requestedAt: "2026-06-10T08:59:00.000Z",
+    });
+
+    expect(broadcast).toHaveBeenCalledExactlyOnceWith({
+      type: "graph-workflow-approval-pending",
+      projectName: "repo",
+      sessionName: "session-1",
+      executionId: execution.id,
+      contextId: "context-plan",
+      contextTitle: "Plan",
+      conversationId: "conversation-9",
+      requestedAt: "2026-06-10T08:59:00.000Z",
+    });
+    expect(updatedExecution.history).toHaveLength(1);
+    expect(updatedExecution.history[0]?.occurredAt).toBe(
+      "2026-06-10T09:00:00.000Z",
+    );
+    expect(updatedExecution.history[0]?.event).toMatchObject({
+      type: "graph-workflow-approval-pending",
+      contextId: "context-plan",
+      conversationId: "conversation-9",
+    });
+    expect(dispatchPush).toHaveBeenCalledExactlyOnceWith({
+      kind: "approval-pending",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextTitle: "Plan",
+    });
+  });
+
+  it("publishes approval-resolved (approved) with history append and broadcast but no push", () => {
+    const broadcast = vi.fn();
+    const dispatchPush = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      dispatchPush,
+      now: () => "2026-06-10T09:30:00.000Z",
+    });
+
+    const execution = createWorkflowExecution({
+      status: "running",
+      activeContextIds: ["context-plan"],
+    });
+
+    const updatedExecution = publisher.publishApprovalResolved({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      execution,
+      contextId: "context-plan",
+      conversationId: "conversation-9",
+      decision: "approved",
+      message: null,
+      decidedAt: "2026-06-10T09:29:00.000Z",
+    });
+
+    expect(broadcast).toHaveBeenCalledExactlyOnceWith({
+      type: "graph-workflow-approval-resolved",
+      projectName: "repo",
+      sessionName: "session-1",
+      executionId: execution.id,
+      contextId: "context-plan",
+      conversationId: "conversation-9",
+      decision: "approved",
+      message: null,
+      decidedAt: "2026-06-10T09:29:00.000Z",
+    });
+    expect(updatedExecution.history).toHaveLength(1);
+    expect(updatedExecution.history[0]?.occurredAt).toBe(
+      "2026-06-10T09:30:00.000Z",
+    );
+    expect(updatedExecution.history[0]?.event).toMatchObject({
+      type: "graph-workflow-approval-resolved",
+      decision: "approved",
+    });
+    expect(dispatchPush).not.toHaveBeenCalled();
+  });
+
+  it("publishes approval-resolved (rejected) with the rejection message in broadcast and history", () => {
+    const broadcast = vi.fn();
+    const dispatchPush = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      dispatchPush,
+      now: () => "2026-06-10T09:45:00.000Z",
+    });
+
+    const execution = createWorkflowExecution({
+      status: "running",
+      activeContextIds: ["context-plan"],
+    });
+
+    const updatedExecution = publisher.publishApprovalResolved({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      execution,
+      contextId: "context-plan",
+      conversationId: "conversation-9",
+      decision: "rejected",
+      message: "The plan misses the migration step.",
+      decidedAt: "2026-06-10T09:44:00.000Z",
+    });
+
+    expect(broadcast).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        type: "graph-workflow-approval-resolved",
+        decision: "rejected",
+        message: "The plan misses the migration step.",
+      }),
+    );
+    expect(updatedExecution.history[0]?.event).toMatchObject({
+      type: "graph-workflow-approval-resolved",
+      decision: "rejected",
+      message: "The plan misses the migration step.",
+    });
+    expect(dispatchPush).not.toHaveBeenCalled();
   });
 
   it("includes derived activeJoinIds in graph-workflow-status events so consumers can render wait state", () => {

@@ -107,6 +107,13 @@ export type GraphWorkflowScriptValidatorConfig = z.infer<
   typeof graphWorkflowScriptValidatorConfigSchema
 >;
 
+export const graphWorkflowHumanApprovalGateConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+});
+export type GraphWorkflowHumanApprovalGateConfig = z.infer<
+  typeof graphWorkflowHumanApprovalGateConfigSchema
+>;
+
 export const contextValidatorOverrideSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("use"),
@@ -229,6 +236,7 @@ export const workflowConfigOverrideSchema = z.object({
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.optional(),
   mutability: graphWorkflowMutabilityPolicySchema.optional(),
   collaboration: workflowCollaborationConfigOverrideSchema.optional(),
+  humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema.optional(),
 });
 export type WorkflowConfigOverride = z.infer<
   typeof workflowConfigOverrideSchema
@@ -253,6 +261,7 @@ export const graphWorkflowExecutionContextDefinitionSchema = z.object({
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema.optional(),
   iterationPolicy: graphWorkflowIterationPolicySchema.optional(),
   collaboration: workflowCollaborationConfigOverrideSchema.optional(),
+  humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema.optional(),
 });
 export type GraphWorkflowExecutionContextDefinition = z.infer<
   typeof graphWorkflowExecutionContextDefinitionSchema
@@ -302,6 +311,9 @@ export const graphWorkflowResolvedContextSchema = z.object({
   implementer: graphWorkflowAgentConfigSchema,
   contextValidator: graphWorkflowAgentValidatorConfigSchema.nullable(),
   scriptValidator: graphWorkflowScriptValidatorConfigSchema.default({
+    enabled: false,
+  }),
+  humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema.default({
     enabled: false,
   }),
   mutability: graphWorkflowMutabilityPolicySchema,
@@ -402,6 +414,7 @@ export const graphWorkflowContextStatusSchema = z.enum([
   "running",
   "completed",
   "halted",
+  "awaiting_approval",
 ]);
 export type GraphWorkflowContextStatus = z.infer<
   typeof graphWorkflowContextStatusSchema
@@ -703,6 +716,30 @@ export type GraphWorkflowExecutionJoinState = z.infer<
   typeof graphWorkflowExecutionJoinStateSchema
 >;
 
+export const graphWorkflowApprovalDecisionSchema = z.discriminatedUnion(
+  "type",
+  [
+    z.object({ type: z.literal("approved"), decidedAt: z.string() }),
+    z.object({
+      type: z.literal("rejected"),
+      message: z.string().trim().min(1),
+      decidedAt: z.string(),
+    }),
+  ],
+);
+export type GraphWorkflowApprovalDecision = z.infer<
+  typeof graphWorkflowApprovalDecisionSchema
+>;
+
+export const graphWorkflowPendingApprovalSchema = z.object({
+  conversationId: z.string().trim().min(1),
+  requestedAt: z.string().trim().min(1),
+  decision: graphWorkflowApprovalDecisionSchema.nullable().default(null),
+});
+export type GraphWorkflowPendingApproval = z.infer<
+  typeof graphWorkflowPendingApprovalSchema
+>;
+
 export const graphWorkflowExecutionContextStateSchema = z.object({
   contextId: z.string().trim().min(1),
   status: graphWorkflowContextStatusSchema,
@@ -730,6 +767,7 @@ export const graphWorkflowExecutionContextStateSchema = z.object({
     .enum(["not-applicable", "pending", "removed", "failed"])
     .default("not-applicable"),
   lastMergeError: z.string().nullable().default(null),
+  pendingApproval: graphWorkflowPendingApprovalSchema.nullable().default(null),
 });
 export type GraphWorkflowExecutionContextState = z.infer<
   typeof graphWorkflowExecutionContextStateSchema
@@ -1003,6 +1041,35 @@ export type GraphWorkflowJoinStatusEvent = z.infer<
   typeof graphWorkflowJoinStatusEventSchema
 >;
 
+export const graphWorkflowApprovalPendingEventSchema = z.object({
+  type: z.literal("graph-workflow-approval-pending"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  contextId: z.string(),
+  contextTitle: z.string().nullable(),
+  conversationId: z.string(),
+  requestedAt: z.string(),
+});
+export type GraphWorkflowApprovalPendingEvent = z.infer<
+  typeof graphWorkflowApprovalPendingEventSchema
+>;
+
+export const graphWorkflowApprovalResolvedEventSchema = z.object({
+  type: z.literal("graph-workflow-approval-resolved"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  contextId: z.string(),
+  conversationId: z.string(),
+  decision: z.enum(["approved", "rejected"]),
+  message: z.string().nullable(),
+  decidedAt: z.string(),
+});
+export type GraphWorkflowApprovalResolvedEvent = z.infer<
+  typeof graphWorkflowApprovalResolvedEventSchema
+>;
+
 const graphWorkflowSseEventSchema = z.discriminatedUnion("type", [
   graphWorkflowStatusEventSchema,
   graphWorkflowContextStatusEventSchema,
@@ -1015,6 +1082,8 @@ const graphWorkflowSseEventSchema = z.discriminatedUnion("type", [
   graphWorkflowBatchScheduledEventSchema,
   graphWorkflowLaneStatusEventSchema,
   graphWorkflowJoinStatusEventSchema,
+  graphWorkflowApprovalPendingEventSchema,
+  graphWorkflowApprovalResolvedEventSchema,
 ]);
 export type GraphWorkflowSSEEvent = z.infer<typeof graphWorkflowSseEventSchema>;
 

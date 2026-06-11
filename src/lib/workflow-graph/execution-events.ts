@@ -5,6 +5,8 @@ import {
   type ExecutionIndex,
 } from "@/lib/workflow-graph/execution-index";
 import type {
+  GraphWorkflowApprovalPendingEvent,
+  GraphWorkflowApprovalResolvedEvent,
   GraphWorkflowBatchScheduledEvent,
   GraphWorkflowCircuitBreakerEvent,
   GraphWorkflowExecution,
@@ -53,6 +55,26 @@ interface PublishValidationResultInput {
   reviewArtifact?: GraphWorkflowValidationReviewArtifact | null;
 }
 
+interface PublishApprovalPendingInput {
+  projectPath: string;
+  sessionName: string;
+  execution: GraphWorkflowExecution;
+  contextId: string;
+  conversationId: string;
+  requestedAt: string;
+}
+
+interface PublishApprovalResolvedInput {
+  projectPath: string;
+  sessionName: string;
+  execution: GraphWorkflowExecution;
+  contextId: string;
+  conversationId: string;
+  decision: GraphWorkflowApprovalResolvedEvent["decision"];
+  message: string | null;
+  decidedAt: string;
+}
+
 /**
  * Convert an AgentSessionRef to a GraphWorkflowExecutionSessionRef for event persistence.
  * The lane is set to "context_validator" since validation events are the only consumer.
@@ -76,7 +98,8 @@ interface GraphWorkflowPushInfo {
     | "workflow-completed"
     | "workflow-halted"
     | "circuit-breaker"
-    | "context-completed";
+    | "context-completed"
+    | "approval-pending";
   projectName: string;
   sessionName: string;
   contextTitle?: string;
@@ -762,8 +785,60 @@ export function createGraphWorkflowExecutionEventPublisher(
     return appendEvents(input.execution, getNow(deps), [event]);
   }
 
+  function publishApprovalPending(
+    input: PublishApprovalPendingInput,
+  ): GraphWorkflowExecution {
+    const projectName = getProjectName(input.projectPath);
+    const index = createExecutionIndex(
+      input.execution.workingDefinition,
+      input.execution,
+    );
+    const contextTitle = index.contextById.get(input.contextId)?.title ?? null;
+
+    const event: GraphWorkflowApprovalPendingEvent = {
+      type: "graph-workflow-approval-pending",
+      projectName,
+      sessionName: input.sessionName,
+      executionId: input.execution.id,
+      contextId: input.contextId,
+      contextTitle,
+      conversationId: input.conversationId,
+      requestedAt: input.requestedAt,
+    };
+
+    publishEvents(deps, [event]);
+    deps.dispatchPush?.({
+      kind: "approval-pending",
+      projectName,
+      sessionName: input.sessionName,
+      contextTitle: contextTitle ?? input.contextId,
+    });
+    return appendEvents(input.execution, getNow(deps), [event]);
+  }
+
+  function publishApprovalResolved(
+    input: PublishApprovalResolvedInput,
+  ): GraphWorkflowExecution {
+    const event: GraphWorkflowApprovalResolvedEvent = {
+      type: "graph-workflow-approval-resolved",
+      projectName: getProjectName(input.projectPath),
+      sessionName: input.sessionName,
+      executionId: input.execution.id,
+      contextId: input.contextId,
+      conversationId: input.conversationId,
+      decision: input.decision,
+      message: input.message,
+      decidedAt: input.decidedAt,
+    };
+
+    publishEvents(deps, [event]);
+    return appendEvents(input.execution, getNow(deps), [event]);
+  }
+
   return {
     publishExecutionUpdate,
     publishValidationResult,
+    publishApprovalPending,
+    publishApprovalResolved,
   };
 }

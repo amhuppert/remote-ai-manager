@@ -1,0 +1,385 @@
+import { createLogger } from "@/lib/logging";
+import type {
+  GraphWorkflowApprovalDecision,
+  GraphWorkflowExecution,
+  GraphWorkflowExecutionContextState,
+  GraphWorkflowStatus,
+  GraphWorkflowTaskDefinition,
+} from "@/lib/workflows/schemas";
+
+const logger = createLogger("workflow-graph.approval-gate");
+
+/**
+ * Execution statuses under which a decision may be recorded. `paused` and
+ * `halted` are the deferred path: the decision persists and the gate wait
+ * applies it after the execution resumes (requirements 7.1, 7.5).
+ */
+const DECISION_RECORDABLE_EXECUTION_STATUSES: ReadonlySet<GraphWorkflowStatus> =
+  new Set(["running", "paused", "halted"]);
+
+const NO_ACTIVE_EXECUTION_MESSAGE =
+  "Session does not have an active graph workflow execution";
+
+export interface ApprovalGateServiceDeps {
+  mutateActive(
+    projectPath: string,
+    sessionName: string,
+    fn: (
+      execution: GraphWorkflowExecution,
+    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+  ): Promise<GraphWorkflowExecution>;
+  now(): string;
+}
+
+export type ApprovalGateDecisionInput =
+  | { type: "approved" }
+  | { type: "rejected"; message: string };
+
+export type RecordDecisionGuardFailureReason =
+  | "no_active_execution"
+  | "not_awaiting_approval"
+  | "already_decided"
+  | "execution_not_running";
+
+export type RecordDecisionResult =
+  | { ok: true; execution: GraphWorkflowExecution }
+  | { ok: false; reason: RecordDecisionGuardFailureReason };
+
+export interface RecordDecisionInput {
+  projectPath: string;
+  sessionName: string;
+  contextId: string;
+  decision: ApprovalGateDecisionInput;
+}
+
+export interface ApprovalGateService {
+  /**
+   * Draft-level: mutates the execution inside the caller's active
+   * `mutateActive` callback so the status flip and pending record land in the
+   * same mutation as the caller's other writes. The caller publishes the
+   * approval-pending event after its mutation commits.
+   */
+  enterAwaitingApproval(
+    execution: GraphWorkflowExecution,
+    input: { contextId: string; conversationId: string },
+  ): void;
+
+  /**
+   * Atomic check-and-set: all guards run inside one `mutateActive` mutation
+   * (serialized via the write queue), so the first decision wins and
+   * concurrent submissions observe `already_decided`.
+   */
+  recordDecision(input: RecordDecisionInput): Promise<RecordDecisionResult>;
+
+  /**
+   * Draft-level: clears the pending record after an approved decision.
+   * Completion and merge stay with the loop's finalization path, which sets
+   * the context status in the same mutation.
+   */
+  applyApprovedDecision(
+    execution: GraphWorkflowExecution,
+    contextId: string,
+  ): void;
+
+  /**
+   * Draft-level: clears the pending record after a rejected decision,
+   * appends a remediation task carrying the operator's message, returns the
+   * context to `running`, and updates the task counts. Never modifies
+   * `consecutiveFailureCount` — human rejections do not count toward the
+   * validation circuit breaker (requirement 5.5).
+   */
+  applyRejectedDecision(
+    execution: GraphWorkflowExecution,
+    contextId: string,
+  ): void;
+
+  /**
+   * Builds the remediation task delivering the operator's rejection message
+   * as human-reviewer feedback. The ID is derived from contextId + rejection
+   * ordinal and skips ordinals already present in `existingTaskIds`, so
+   * repeated rejections never collide. The caller assigns `order` (next
+   * order within the context).
+   */
+  buildRejectionRemediationTask(
+    contextId: string,
+    message: string,
+    existingTaskIds: string[],
+    order: number,
+  ): GraphWorkflowTaskDefinition;
+}
+
+function isNoActiveExecutionError(error: unknown): boolean {
+  return (
+    error instanceof Error && error.message === NO_ACTIVE_EXECUTION_MESSAGE
+  );
+}
+
+/**
+ * Invariant guard for decision application: the loop only calls the apply
+ * methods after observing a recorded decision, so a missing record or
+ * mismatched decision type is a programming error — throw, matching how
+ * sibling engine code treats impossible states.
+ */
+function requireRecordedDecision(
+  execution: GraphWorkflowExecution,
+  contextId: string,
+): {
+  contextState: GraphWorkflowExecutionContextState;
+  decision: GraphWorkflowApprovalDecision;
+} {
+  const contextState = execution.contextStates[contextId];
+  if (!contextState) {
+    throw new Error(
+      `Cannot apply approval decision: unknown context "${contextId}"`,
+    );
+  }
+  if (
+    contextState.status !== "awaiting_approval" ||
+    contextState.pendingApproval === null
+  ) {
+    throw new Error(
+      `Cannot apply approval decision: context "${contextId}" is not awaiting approval`,
+    );
+  }
+  const decision = contextState.pendingApproval.decision;
+  if (decision === null) {
+    throw new Error(
+      `Cannot apply approval decision: context "${contextId}" has no recorded decision`,
+    );
+  }
+  return { contextState, decision };
+}
+
+function buildRejectionRemediationInstructions(message: string): string {
+  return [
+    "The human reviewer rejected this context's work at the approval gate.",
+    "",
+    "Reviewer feedback:",
+    message,
+    "",
+    "Address the feedback above. When you believe it is resolved, mark this task complete; every enabled validator will run again before the work returns for human review.",
+  ].join("\n");
+}
+
+export function createApprovalGateService(
+  deps: ApprovalGateServiceDeps,
+): ApprovalGateService {
+  function enterAwaitingApproval(
+    execution: GraphWorkflowExecution,
+    input: { contextId: string; conversationId: string },
+  ): void {
+    const contextState = execution.contextStates[input.contextId];
+    if (!contextState) {
+      throw new Error(
+        `Cannot enter awaiting approval: unknown context "${input.contextId}"`,
+      );
+    }
+
+    const requestedAt = deps.now();
+    contextState.status = "awaiting_approval";
+    contextState.pendingApproval = {
+      conversationId: input.conversationId,
+      requestedAt,
+      decision: null,
+    };
+
+    logger.info("gate.pending", {
+      executionId: execution.id,
+      contextId: input.contextId,
+      conversationId: input.conversationId,
+      requestedAt,
+    });
+  }
+
+  async function recordDecision(
+    input: RecordDecisionInput,
+  ): Promise<RecordDecisionResult> {
+    let guardFailure: RecordDecisionGuardFailureReason | null = null;
+    let execution: GraphWorkflowExecution;
+
+    try {
+      execution = await deps.mutateActive(
+        input.projectPath,
+        input.sessionName,
+        (draft) => {
+          if (!DECISION_RECORDABLE_EXECUTION_STATUSES.has(draft.status)) {
+            guardFailure = "execution_not_running";
+            return draft;
+          }
+
+          const contextState = draft.contextStates[input.contextId];
+          if (
+            !contextState ||
+            contextState.status !== "awaiting_approval" ||
+            contextState.pendingApproval === null
+          ) {
+            guardFailure = "not_awaiting_approval";
+            return draft;
+          }
+
+          if (contextState.pendingApproval.decision !== null) {
+            guardFailure = "already_decided";
+            return draft;
+          }
+
+          const decidedAt = deps.now();
+          contextState.pendingApproval.decision =
+            input.decision.type === "approved"
+              ? { type: "approved", decidedAt }
+              : {
+                  type: "rejected",
+                  message: input.decision.message,
+                  decidedAt,
+                };
+          return draft;
+        },
+      );
+    } catch (error) {
+      if (isNoActiveExecutionError(error)) {
+        logger.warn("gate.decision_guard_failed", {
+          sessionName: input.sessionName,
+          contextId: input.contextId,
+          decisionType: input.decision.type,
+          reason: "no_active_execution",
+        });
+        return { ok: false, reason: "no_active_execution" };
+      }
+      throw error;
+    }
+
+    if (guardFailure !== null) {
+      logger.warn("gate.decision_guard_failed", {
+        executionId: execution.id,
+        executionStatus: execution.status,
+        sessionName: input.sessionName,
+        contextId: input.contextId,
+        decisionType: input.decision.type,
+        reason: guardFailure,
+      });
+      return { ok: false, reason: guardFailure };
+    }
+
+    logger.info("gate.decision_recorded", {
+      executionId: execution.id,
+      executionStatus: execution.status,
+      sessionName: input.sessionName,
+      contextId: input.contextId,
+      decisionType: input.decision.type,
+      rejectionMessageLength:
+        input.decision.type === "rejected"
+          ? input.decision.message.length
+          : null,
+      deferred: execution.status !== "running",
+    });
+    return { ok: true, execution };
+  }
+
+  function applyApprovedDecision(
+    execution: GraphWorkflowExecution,
+    contextId: string,
+  ): void {
+    const { contextState, decision } = requireRecordedDecision(
+      execution,
+      contextId,
+    );
+    if (decision.type !== "approved") {
+      throw new Error(
+        `Cannot apply approved decision: context "${contextId}" recorded a ${decision.type} decision`,
+      );
+    }
+
+    contextState.pendingApproval = null;
+
+    logger.info("gate.applied", {
+      executionId: execution.id,
+      contextId,
+      decisionType: "approved",
+    });
+  }
+
+  function buildRejectionRemediationTask(
+    contextId: string,
+    message: string,
+    existingTaskIds: string[],
+    order: number,
+  ): GraphWorkflowTaskDefinition {
+    const takenIds = new Set(existingTaskIds);
+    let ordinal = 1;
+    while (takenIds.has(`task-${contextId}-rejection-${ordinal}`)) {
+      ordinal += 1;
+    }
+
+    return {
+      id: `task-${contextId}-rejection-${ordinal}`,
+      contextId,
+      order,
+      title: "Address human review feedback",
+      instructions: buildRejectionRemediationInstructions(message),
+      source: "user",
+      metadata: { origin: "human_rejection" },
+    };
+  }
+
+  function applyRejectedDecision(
+    execution: GraphWorkflowExecution,
+    contextId: string,
+  ): void {
+    const { contextState, decision } = requireRecordedDecision(
+      execution,
+      contextId,
+    );
+    if (decision.type !== "rejected") {
+      throw new Error(
+        `Cannot apply rejected decision: context "${contextId}" recorded a ${decision.type} decision`,
+      );
+    }
+
+    const tasks = execution.workingDefinition.tasks;
+    const order =
+      tasks
+        .filter((task) => task.contextId === contextId)
+        .reduce((currentMax, task) => Math.max(currentMax, task.order), 0) + 1;
+    const remediationTask = buildRejectionRemediationTask(
+      contextId,
+      decision.message,
+      tasks.map((task) => task.id),
+      order,
+    );
+
+    contextState.pendingApproval = null;
+    contextState.status = "running";
+
+    tasks.push(remediationTask);
+    execution.taskStates[remediationTask.id] = {
+      taskId: remediationTask.id,
+      contextId,
+      order,
+      status: "pending",
+      summary: null,
+      startedAt: null,
+      completedAt: null,
+      lastConversationId: null,
+      failureMessage: null,
+      failureHistory: [],
+    };
+    contextState.totalTaskCount = tasks.filter(
+      (task) => task.contextId === contextId,
+    ).length;
+
+    logger.info("gate.applied", {
+      executionId: execution.id,
+      contextId,
+      decisionType: "rejected",
+      remediationTaskId: remediationTask.id,
+      rejectionMessageLength: decision.message.length,
+    });
+  }
+
+  return {
+    enterAwaitingApproval,
+    recordDecision,
+    applyApprovedDecision,
+    applyRejectedDecision,
+    buildRejectionRemediationTask,
+  };
+}

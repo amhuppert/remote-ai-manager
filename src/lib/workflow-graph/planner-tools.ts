@@ -11,6 +11,7 @@ import {
   contextValidatorOverrideSchema,
   graphWorkflowAgentConfigSchema,
   graphWorkflowCircuitBreakerPolicySchema,
+  graphWorkflowHumanApprovalGateConfigSchema,
   graphWorkflowIterationPolicySchema,
   graphWorkflowMutabilityPolicySchema,
   graphWorkflowScriptValidatorConfigSchema,
@@ -65,6 +66,11 @@ const executionContextInputSchema = z.object({
     .optional()
     .describe(
       "Optional per-context script validator. Enable only when this context should leave the codebase fully valid after all of its tasks; follow graph-workflow-planning before setting it.",
+    ),
+  humanApprovalGate: graphWorkflowHumanApprovalGateConfigSchema
+    .optional()
+    .describe(
+      "Optional per-context human approval gate. When enabled, the context pauses for human review after all validators pass instead of completing. Omit to inherit the workflow-level setting (disabled by default); set only when the user asked for a review gate on this context.",
     ),
   mutability: graphWorkflowMutabilityPolicySchema
     .optional()
@@ -218,6 +224,9 @@ function inflateToSemanticDefinition(
       : {}),
     ...(ctx.scriptValidator !== undefined
       ? { scriptValidator: ctx.scriptValidator }
+      : {}),
+    ...(ctx.humanApprovalGate !== undefined
+      ? { humanApprovalGate: ctx.humanApprovalGate }
       : {}),
     ...(ctx.mutability !== undefined ? { mutability: ctx.mutability } : {}),
     ...(ctx.circuitBreaker !== undefined

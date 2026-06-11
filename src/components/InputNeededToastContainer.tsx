@@ -44,6 +44,11 @@ export default function InputNeededToastContainer() {
           : current.sessionName
       }
       projectName={current.projectName}
+      title={current.title}
+      variant={current.scope === "project" ? undefined : current.variant}
+      contextTitle={
+        current.scope === "project" ? undefined : current.contextTitle
+      }
       onAction={handleAction}
       onDismiss={handleDismiss}
       autoDismissMs={10_000}

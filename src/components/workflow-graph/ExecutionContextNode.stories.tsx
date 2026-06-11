@@ -112,6 +112,7 @@ export const DependencyBlocked: Story = {
       tasks: makeTasks(5),
       mode: "execution",
       contextState: {
+        pendingApproval: null,
         contextId: "ctx-1",
         status: "pending",
         totalTaskCount: 5,
@@ -131,6 +132,7 @@ export const DependencyBlocked: Story = {
       waitState: {
         kind: "dependency-blocked",
         unmetDependencyIds: ["ctx-upstream"],
+        blockedByApproval: false,
       },
     },
   },
@@ -143,6 +145,7 @@ export const Ready: Story = {
       tasks: makeTasks(5),
       mode: "execution",
       contextState: {
+        pendingApproval: null,
         contextId: "ctx-1",
         status: "ready",
         totalTaskCount: 5,
@@ -171,6 +174,7 @@ export const WaitingForLane: Story = {
       tasks: makeTasks(5),
       mode: "execution",
       contextState: {
+        pendingApproval: null,
         contextId: "ctx-1",
         status: "ready",
         totalTaskCount: 5,
@@ -199,6 +203,7 @@ export const WaitingForJoin: Story = {
       tasks: makeTasks(5),
       mode: "execution",
       contextState: {
+        pendingApproval: null,
         contextId: "ctx-1",
         status: "ready",
         totalTaskCount: 5,
@@ -227,6 +232,7 @@ export const Running: Story = {
       tasks: makeTasks(5),
       mode: "execution",
       contextState: {
+        pendingApproval: null,
         contextId: "ctx-1",
         status: "running",
         totalTaskCount: 5,
@@ -255,6 +261,7 @@ export const Validating: Story = {
       tasks: makeTasks(5),
       mode: "execution",
       contextState: {
+        pendingApproval: null,
         contextId: "ctx-1",
         status: "running",
         totalTaskCount: 5,
@@ -283,6 +290,7 @@ export const Completed: Story = {
       tasks: makeTasks(5),
       mode: "execution",
       contextState: {
+        pendingApproval: null,
         contextId: "ctx-1",
         status: "completed",
         totalTaskCount: 5,
@@ -311,6 +319,7 @@ export const Published: Story = {
       tasks: makeTasks(5),
       mode: "execution",
       contextState: {
+        pendingApproval: null,
         contextId: "ctx-1",
         status: "completed",
         totalTaskCount: 5,
@@ -332,6 +341,72 @@ export const Published: Story = {
   },
 };
 
+export const AwaitingApproval: Story = {
+  args: {
+    data: {
+      context: makeContext(),
+      tasks: makeTasks(5),
+      mode: "execution",
+      contextState: {
+        pendingApproval: {
+          conversationId: "conv-1",
+          requestedAt: "2026-06-10T09:00:00.000Z",
+          decision: null,
+        },
+        contextId: "ctx-1",
+        status: "awaiting_approval",
+        totalTaskCount: 5,
+        completedTaskCount: 5,
+        iterationCount: 1,
+        consecutiveFailureCount: 0,
+        worktreePath: null,
+        branchName: null,
+        isolation: "session",
+        batchId: null,
+        laneId: null,
+        joinId: null,
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
+      },
+      waitState: { kind: "awaiting-approval" },
+    },
+  },
+};
+
+export const BlockedBehindGate: Story = {
+  args: {
+    data: {
+      context: makeContext(),
+      tasks: makeTasks(5),
+      mode: "execution",
+      contextState: {
+        pendingApproval: null,
+        contextId: "ctx-1",
+        status: "pending",
+        totalTaskCount: 5,
+        completedTaskCount: 0,
+        iterationCount: 0,
+        consecutiveFailureCount: 0,
+        worktreePath: null,
+        branchName: null,
+        isolation: "session",
+        batchId: null,
+        laneId: null,
+        joinId: null,
+        mergeStatus: "not-applicable",
+        cleanupStatus: "not-applicable",
+        lastMergeError: null,
+      },
+      waitState: {
+        kind: "dependency-blocked",
+        unmetDependencyIds: ["ctx-upstream"],
+        blockedByApproval: true,
+      },
+    },
+  },
+};
+
 export const Halted: Story = {
   args: {
     data: {
@@ -339,6 +414,7 @@ export const Halted: Story = {
       tasks: makeTasks(5),
       mode: "execution",
       contextState: {
+        pendingApproval: null,
         contextId: "ctx-1",
         status: "halted",
         totalTaskCount: 5,
@@ -378,6 +454,7 @@ export const SelectedRunning: Story = {
       tasks: makeTasks(5),
       mode: "execution",
       contextState: {
+        pendingApproval: null,
         contextId: "ctx-1",
         status: "running",
         totalTaskCount: 5,
@@ -407,6 +484,7 @@ export const Merging: Story = {
       tasks: makeTasks(5),
       mode: "execution",
       contextState: {
+        pendingApproval: null,
         contextId: "ctx-1",
         status: "running",
         totalTaskCount: 5,
@@ -535,6 +613,7 @@ export const ValidatorsInheritedClaude: Story = {
           },
         },
         scriptValidator: { enabled: false },
+        humanApprovalGate: { enabled: false },
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: { consecutiveFailureThreshold: 3 },
         iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
@@ -567,6 +646,7 @@ export const ValidatorsInheritedScriptAndCodex: Story = {
           codex: { model: "gpt-5.5", reasoningEffort: "medium" },
         },
         scriptValidator: { enabled: true },
+        humanApprovalGate: { enabled: false },
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: { consecutiveFailureThreshold: 3 },
         iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },

@@ -163,6 +163,12 @@
   font-weight: 600;
 }
 
+.topbar-needs__approvals {
+  color: var(--amber);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 @media (max-width: 768px) {
   .topbar-nav-link {
     height: 44px;

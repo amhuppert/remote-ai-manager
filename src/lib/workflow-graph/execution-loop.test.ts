@@ -11,11 +11,13 @@ import type { PerSessionMergeMutex } from "@/lib/workflow-graph/per-session-merg
 import type { SessionGitLock } from "@/lib/workflow-graph/session-git-lock";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type {
+  GraphWorkflowApprovalResolvedEvent,
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
 } from "@/lib/workflows/schemas";
+import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import {
   createGraphWorkflowExecutionLoop,
   isExecutionLoopActive,
@@ -85,6 +87,7 @@ function createRunningExecution(
     activeContextIds: [],
     contextStates: {
       "ctx-1": {
+        pendingApproval: null,
         contextId: "ctx-1",
         status: "pending",
         totalTaskCount: 1,
@@ -181,6 +184,10 @@ interface BuildHarnessInput {
   laneCommitter?: GraphWorkflowExecutionLoopDeps["laneCommitter"];
   getSession?: GraphWorkflowExecutionLoopDeps["getSession"];
   waitForCollaborationProgress?: GraphWorkflowExecutionLoopDeps["waitForCollaborationProgress"];
+  waitForApprovalProgress?: GraphWorkflowExecutionLoopDeps["waitForApprovalProgress"];
+  isConversationBusy?: GraphWorkflowExecutionLoopDeps["isConversationBusy"];
+  acquireConversationLock?: GraphWorkflowExecutionLoopDeps["acquireConversationLock"];
+  eventPublisher?: GraphWorkflowExecutionLoopDeps["eventPublisher"];
 }
 
 function buildHarness(input: BuildHarnessInput): LoopHarness {
@@ -315,6 +322,7 @@ function buildHarness(input: BuildHarnessInput): LoopHarness {
     provisionLane: vi.fn(),
     provisionLaneBatch: vi.fn(),
     disposeLane: vi.fn(),
+    cleanupLane: vi.fn(async () => ({ status: "removed" as const })),
   };
 
   const mergeMutex: PerSessionMergeMutex = input.mergeMutex ?? {
@@ -366,6 +374,10 @@ function buildHarness(input: BuildHarnessInput): LoopHarness {
     getSession,
     runCircuitBreakerGate: input.runCircuitBreakerGate,
     waitForCollaborationProgress: input.waitForCollaborationProgress,
+    waitForApprovalProgress: input.waitForApprovalProgress,
+    isConversationBusy: input.isConversationBusy,
+    acquireConversationLock: input.acquireConversationLock,
+    eventPublisher: input.eventPublisher,
   };
 
   return {
@@ -597,6 +609,7 @@ describe("execution loop", () => {
       activeContextIds: ["ctx-1"],
       contextStates: {
         "ctx-1": {
+          pendingApproval: null,
           contextId: "ctx-1",
           status: "running",
           totalTaskCount: 1,
@@ -704,6 +717,7 @@ describe("execution loop", () => {
       activeContextIds: ["ctx-1"],
       contextStates: {
         "ctx-1": {
+          pendingApproval: null,
           contextId: "ctx-1",
           status: "running",
           totalTaskCount: 1,
@@ -817,6 +831,7 @@ describe("execution loop", () => {
         activeContextIds: ["ctx-1"],
         contextStates: {
           "ctx-1": {
+            pendingApproval: null,
             contextId: "ctx-1",
             status: "running",
             totalTaskCount: 1,
@@ -924,6 +939,7 @@ describe("execution loop", () => {
       activeContextIds: ["ctx-1"],
       contextStates: {
         "ctx-1": {
+          pendingApproval: null,
           contextId: "ctx-1",
           status: "running",
           totalTaskCount: 1,
@@ -989,6 +1005,7 @@ describe("execution loop", () => {
       activeContextIds: ["ctx-1"],
       contextStates: {
         "ctx-1": {
+          pendingApproval: null,
           contextId: "ctx-1",
           status: "running",
           totalTaskCount: 1,
@@ -1069,6 +1086,7 @@ describe("execution loop", () => {
       activeContextIds: ["ctx-1"],
       contextStates: {
         "ctx-1": {
+          pendingApproval: null,
           contextId: "ctx-1",
           status: "running",
           totalTaskCount: 1,
@@ -1134,6 +1152,7 @@ describe("execution loop", () => {
       activeContextIds: ["ctx-1"],
       contextStates: {
         "ctx-1": {
+          pendingApproval: null,
           contextId: "ctx-1",
           status: "running",
           totalTaskCount: 1,
@@ -1205,6 +1224,7 @@ describe("execution loop", () => {
       activeContextIds: ["ctx-1"],
       contextStates: {
         "ctx-1": {
+          pendingApproval: null,
           contextId: "ctx-1",
           status: "running",
           totalTaskCount: 1,
@@ -1290,6 +1310,7 @@ describe("execution loop", () => {
       activeContextIds: ["ctx-1"],
       contextStates: {
         "ctx-1": {
+          pendingApproval: null,
           contextId: "ctx-1",
           status: "running",
           totalTaskCount: 1,
@@ -1357,6 +1378,7 @@ describe("execution loop", () => {
     const initial = createRunningExecution(definition, {
       contextStates: {
         "ctx-1": {
+          pendingApproval: null,
           contextId: "ctx-1",
           status: "pending",
           totalTaskCount: 1,
@@ -1416,6 +1438,7 @@ describe("execution loop", () => {
     const initial = createRunningExecution(definition, {
       contextStates: {
         "ctx-1": {
+          pendingApproval: null,
           contextId: "ctx-1",
           status: "completed",
           totalTaskCount: 1,
@@ -1473,6 +1496,7 @@ describe("execution loop", () => {
       provisionLane: vi.fn(),
       provisionLaneBatch: vi.fn(),
       disposeLane: vi.fn(async () => ({ status: "removed" as const })),
+      cleanupLane: vi.fn(async () => ({ status: "removed" as const })),
     };
 
     const runIterationSpy = vi.fn();
@@ -1510,6 +1534,7 @@ describe("execution loop", () => {
       activeContextIds: ["ctx-1"],
       contextStates: {
         "ctx-1": {
+          pendingApproval: null,
           contextId: "ctx-1",
           status: "running",
           totalTaskCount: 1,
@@ -1576,6 +1601,7 @@ describe("execution loop", () => {
     const initial = createRunningExecution(definition, {
       contextStates: {
         "ctx-1": {
+          pendingApproval: null,
           contextId: "ctx-1",
           status: "pending",
           totalTaskCount: 1,
@@ -1696,6 +1722,7 @@ describe("execution loop", () => {
     const initial = createRunningExecution(definition, {
       contextStates: {
         "ctx-1": {
+          pendingApproval: null,
           contextId: "ctx-1",
           status: "pending",
           totalTaskCount: 1,
@@ -1793,6 +1820,7 @@ describe("execution loop", () => {
     const initial = createRunningExecution(definition, {
       contextStates: {
         "ctx-1": {
+          pendingApproval: null,
           contextId: "ctx-1",
           status: "pending",
           totalTaskCount: 1,
@@ -1892,6 +1920,7 @@ describe("execution loop", () => {
     const initial = createRunningExecution(definition, {
       contextStates: {
         "ctx-1": {
+          pendingApproval: null,
           contextId: "ctx-1",
           status: "completed",
           totalTaskCount: 1,
@@ -1974,6 +2003,7 @@ describe("execution loop", () => {
     const initial = createRunningExecution(definition, {
       contextStates: {
         "ctx-1": {
+          pendingApproval: null,
           contextId: "ctx-1",
           status: "completed",
           totalTaskCount: 1,
@@ -2064,6 +2094,7 @@ describe("execution loop", () => {
     const initial = createRunningExecution(definition, {
       contextStates: {
         "ctx-1": {
+          pendingApproval: null,
           contextId: "ctx-1",
           status: "completed",
           totalTaskCount: 1,
@@ -2155,6 +2186,7 @@ describe("execution loop", () => {
     const initial = createRunningExecution(definition, {
       contextStates: {
         "ctx-1": {
+          pendingApproval: null,
           contextId: "ctx-1",
           status: "completed",
           totalTaskCount: 1,
@@ -2263,6 +2295,7 @@ describe("execution loop", () => {
     const initial = createRunningExecution(definition, {
       contextStates: {
         "ctx-1": {
+          pendingApproval: null,
           contextId: "ctx-1",
           status: "completed",
           totalTaskCount: 1,
@@ -2395,6 +2428,970 @@ describe("execution loop", () => {
       expect(captured).not.toBeNull();
       expect(captured!.traceId).toBe("parent-request-trace");
       expect(captured!.action).toBe("workflow:exec-trace-2");
+    });
+  });
+
+  describe("approval gate wait", () => {
+    const pendingApprovalRecord = {
+      conversationId: "conv-1",
+      requestedAt: "2026-03-27T12:01:00.000Z",
+      decision: null,
+    };
+
+    interface ParkingHarnessInput {
+      waitForApprovalProgress: GraphWorkflowExecutionLoopDeps["waitForApprovalProgress"];
+      soloCommit: GraphWorkflowExecutionLoopDeps["soloContextCommitter"]["commit"];
+      initialExecution: GraphWorkflowExecution;
+      onIteration?: () => void;
+      isConversationBusy?: GraphWorkflowExecutionLoopDeps["isConversationBusy"];
+      acquireConversationLock?: GraphWorkflowExecutionLoopDeps["acquireConversationLock"];
+      eventPublisher?: GraphWorkflowExecutionLoopDeps["eventPublisher"];
+    }
+
+    function buildParkingHarness(input: ParkingHarnessInput): LoopHarness {
+      const harness: LoopHarness = buildHarness({
+        initialExecution: input.initialExecution,
+        waitForApprovalProgress: input.waitForApprovalProgress,
+        isConversationBusy: input.isConversationBusy,
+        acquireConversationLock: input.acquireConversationLock,
+        eventPublisher: input.eventPublisher,
+        soloContextCommitter: {
+          commit: input.soloCommit,
+        },
+        iterationOrchestrator: {
+          async runIteration(): Promise<GraphWorkflowIterationResult> {
+            input.onIteration?.();
+            const next = structuredClone(harness.getCurrent());
+            const cs = next.contextStates["ctx-1"]!;
+            cs.iterationCount = 1;
+            cs.completedTaskCount = 1;
+            cs.status = "awaiting_approval";
+            cs.pendingApproval = structuredClone(pendingApprovalRecord);
+            next.taskStates["task-1"]!.status = "completed";
+            next.activeContextIds = [];
+            harness.setCurrent(next);
+            return {
+              conversationId: "conv-1",
+              execution: next,
+              shouldContinueInContext: false,
+            };
+          },
+        },
+      });
+      return harness;
+    }
+
+    it("holds the runner in-flight on park without committing, then exits unresolved on abort", async () => {
+      _resetActiveLoopsForTesting();
+      const definition = createSingleContextDefinition(5);
+      const initial = createRunningExecution(definition);
+
+      let signalPollStarted!: () => void;
+      const pollStarted = new Promise<void>((resolve) => {
+        signalPollStarted = resolve;
+      });
+      let releasePoll!: () => void;
+      const pollRelease = new Promise<void>((resolve) => {
+        releasePoll = resolve;
+      });
+      const waitForApprovalProgress = vi.fn(async () => {
+        signalPollStarted();
+        await pollRelease;
+      });
+      const soloCommit = vi.fn(async () => ({ status: "skipped" as const }));
+      let iterationCallCount = 0;
+
+      const harness = buildParkingHarness({
+        initialExecution: initial,
+        waitForApprovalProgress,
+        soloCommit,
+        onIteration: () => {
+          iterationCallCount += 1;
+        },
+      });
+
+      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const runPromise = loop.run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: initial,
+      });
+
+      await pollStarted;
+
+      const raceOutcome = await Promise.race([
+        runPromise.then(() => "settled" as const),
+        new Promise<"pending">((resolve) =>
+          setTimeout(() => resolve("pending"), 25),
+        ),
+      ]);
+      expect(raceOutcome).toBe("pending");
+      expect(isExecutionLoopActive("/repo", "session-1")).toBe(true);
+      expect(harness.sendSpy).not.toHaveBeenCalled();
+      expect(soloCommit).not.toHaveBeenCalled();
+
+      const aborted = structuredClone(harness.getCurrent());
+      aborted.status = "aborted";
+      harness.setCurrent(aborted);
+      releasePoll();
+
+      const result = await runPromise;
+      expect(result.status).toBe("aborted");
+      const cs = result.contextStates["ctx-1"]!;
+      expect(cs.status).toBe("awaiting_approval");
+      expect(cs.pendingApproval).toEqual(pendingApprovalRecord);
+      expect(iterationCallCount).toBe(1);
+      expect(soloCommit).not.toHaveBeenCalled();
+      expect(harness.sendSpy).not.toHaveBeenCalled();
+      expect(harness.drainAndHaltSpy).not.toHaveBeenCalled();
+    });
+
+    it.each(["paused", "halted"] as const)(
+      "exits the wait without resolving when the execution becomes %s, preserving a recorded decision",
+      async (suspendedStatus) => {
+        _resetActiveLoopsForTesting();
+        const definition = createSingleContextDefinition(5);
+        const initial = createRunningExecution(definition);
+
+        const recordedDecision = {
+          type: "rejected" as const,
+          message: "needs more tests",
+          decidedAt: "2026-03-27T12:02:00.000Z",
+        };
+        const waitForApprovalProgress = vi.fn(async () => {
+          const next = structuredClone(harness.getCurrent());
+          next.status = suspendedStatus;
+          next.contextStates["ctx-1"]!.pendingApproval!.decision =
+            structuredClone(recordedDecision);
+          harness.setCurrent(next);
+        });
+        const soloCommit = vi.fn(async () => ({ status: "skipped" as const }));
+        let iterationCallCount = 0;
+
+        const harness = buildParkingHarness({
+          initialExecution: initial,
+          waitForApprovalProgress,
+          soloCommit,
+          onIteration: () => {
+            iterationCallCount += 1;
+          },
+        });
+
+        const loop = createGraphWorkflowExecutionLoop(harness.deps);
+        const result = await loop.run({
+          projectPath: "/repo",
+          projectName: "test",
+          sessionName: "session-1",
+          execution: initial,
+        });
+
+        expect(result.status).toBe(suspendedStatus);
+        const cs = result.contextStates["ctx-1"]!;
+        expect(cs.status).toBe("awaiting_approval");
+        expect(cs.pendingApproval).toEqual({
+          ...pendingApprovalRecord,
+          decision: recordedDecision,
+        });
+        expect(waitForApprovalProgress).toHaveBeenCalledTimes(1);
+        expect(iterationCallCount).toBe(1);
+        expect(soloCommit).not.toHaveBeenCalled();
+        expect(harness.sendSpy).not.toHaveBeenCalled();
+        expect(harness.drainAndHaltSpy).not.toHaveBeenCalled();
+      },
+    );
+
+    function findApprovalResolvedEvents(
+      execution: GraphWorkflowExecution,
+    ): GraphWorkflowApprovalResolvedEvent[] {
+      return execution.history
+        .map((entry) => entry.event)
+        .filter(
+          (event): event is GraphWorkflowApprovalResolvedEvent =>
+            event.type === "graph-workflow-approval-resolved",
+        );
+    }
+
+    it("applies an approved decision under the conversation lock, runs the commit phase while holding it, and records approval-resolved", async () => {
+      _resetActiveLoopsForTesting();
+      const definition = createSingleContextDefinition(5);
+      const initial = createRunningExecution(definition);
+
+      const recordedDecision = {
+        type: "approved" as const,
+        decidedAt: "2026-03-27T12:02:00.000Z",
+      };
+      const waitForApprovalProgress = vi.fn(async () => {
+        const next = structuredClone(harness.getCurrent());
+        const decision = next.contextStates["ctx-1"]!.pendingApproval?.decision;
+        if (decision === null) {
+          next.contextStates["ctx-1"]!.pendingApproval!.decision =
+            structuredClone(recordedDecision);
+          harness.setCurrent(next);
+        }
+      });
+      const ordered: string[] = [];
+      const soloCommit = vi.fn(async () => {
+        ordered.push("commit");
+        return { status: "skipped" as const };
+      });
+      const isConversationBusy = vi.fn(() => false);
+      const acquireConversationLock = vi.fn(() => {
+        ordered.push("lock-acquired");
+        return () => {
+          ordered.push("lock-released");
+        };
+      });
+      const broadcast = vi.fn();
+      let iterationCallCount = 0;
+
+      const harness = buildParkingHarness({
+        initialExecution: initial,
+        waitForApprovalProgress,
+        soloCommit,
+        isConversationBusy,
+        acquireConversationLock,
+        eventPublisher: createGraphWorkflowExecutionEventPublisher({
+          broadcast,
+          now: () => "2026-03-27T12:03:00.000Z",
+        }),
+        onIteration: () => {
+          iterationCallCount += 1;
+        },
+      });
+
+      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const result = await loop.run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: initial,
+      });
+
+      expect(result.status).toBe("completed");
+      const cs = result.contextStates["ctx-1"]!;
+      expect(cs.status).toBe("completed");
+      expect(cs.pendingApproval).toBeNull();
+      expect(iterationCallCount).toBe(1);
+      expect(acquireConversationLock).toHaveBeenCalledWith(
+        "/repo",
+        "session-1",
+        "conv-1",
+      );
+      // The commit phase must run inside the held lock window.
+      expect(ordered).toEqual(["lock-acquired", "commit", "lock-released"]);
+
+      const resolvedEvents = findApprovalResolvedEvents(result);
+      expect(resolvedEvents).toHaveLength(1);
+      expect(resolvedEvents[0]).toMatchObject({
+        contextId: "ctx-1",
+        conversationId: "conv-1",
+        decision: "approved",
+        message: null,
+        decidedAt: "2026-03-27T12:02:00.000Z",
+      });
+      expect(broadcast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "graph-workflow-approval-resolved",
+          decision: "approved",
+        }),
+      );
+    });
+
+    it("applies a rejected decision under the conversation lock, re-enters the iteration loop with the remediation task, and records approval-resolved with the message", async () => {
+      _resetActiveLoopsForTesting();
+      const definition = createSingleContextDefinition(5);
+      const initial = createRunningExecution(definition);
+
+      const recordedDecision = {
+        type: "rejected" as const,
+        message: "needs more tests",
+        decidedAt: "2026-03-27T12:02:00.000Z",
+      };
+      const waitForApprovalProgress = vi.fn(async () => {
+        const next = structuredClone(harness.getCurrent());
+        const decision = next.contextStates["ctx-1"]!.pendingApproval?.decision;
+        if (decision === null) {
+          next.contextStates["ctx-1"]!.pendingApproval!.decision =
+            structuredClone(recordedDecision);
+          harness.setCurrent(next);
+        }
+      });
+      const ordered: string[] = [];
+      const soloCommit = vi.fn(async () => {
+        ordered.push("commit");
+        return { status: "skipped" as const };
+      });
+      const acquireConversationLock = vi.fn(() => {
+        ordered.push("lock-acquired");
+        return () => {
+          ordered.push("lock-released");
+        };
+      });
+      const broadcast = vi.fn();
+      let iterationCallCount = 0;
+      let secondIterationTasks: Array<{ id: string; instructions: string }> =
+        [];
+      let secondIterationCount = 0;
+
+      const harness: LoopHarness = buildHarness({
+        initialExecution: initial,
+        waitForApprovalProgress,
+        isConversationBusy: () => false,
+        acquireConversationLock,
+        eventPublisher: createGraphWorkflowExecutionEventPublisher({
+          broadcast,
+          now: () => "2026-03-27T12:03:00.000Z",
+        }),
+        soloContextCommitter: { commit: soloCommit },
+        iterationOrchestrator: {
+          async runIteration(): Promise<GraphWorkflowIterationResult> {
+            iterationCallCount += 1;
+            const next = structuredClone(harness.getCurrent());
+            const cs = next.contextStates["ctx-1"]!;
+            if (iterationCallCount === 1) {
+              cs.iterationCount = 1;
+              cs.completedTaskCount = 1;
+              cs.status = "awaiting_approval";
+              cs.pendingApproval = structuredClone(pendingApprovalRecord);
+              next.taskStates["task-1"]!.status = "completed";
+              next.activeContextIds = [];
+            } else {
+              secondIterationTasks = next.workingDefinition.tasks.map(
+                (task) => ({ id: task.id, instructions: task.instructions }),
+              );
+              secondIterationCount = cs.iterationCount + 1;
+              cs.iterationCount = secondIterationCount;
+              for (const taskState of Object.values(next.taskStates)) {
+                taskState.status = "completed";
+              }
+              cs.completedTaskCount = next.workingDefinition.tasks.length;
+              cs.status = "completed";
+              next.activeContextIds = [];
+            }
+            harness.setCurrent(next);
+            return {
+              conversationId: "conv-1",
+              execution: next,
+              shouldContinueInContext: false,
+            };
+          },
+        },
+      });
+
+      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const result = await loop.run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: initial,
+      });
+
+      expect(result.status).toBe("completed");
+      expect(iterationCallCount).toBe(2);
+
+      // Remediation seeding happens under the lock, before re-entering the
+      // iteration loop; the commit phase runs only after the context
+      // completes its remediation iteration.
+      expect(ordered).toEqual(["lock-acquired", "lock-released", "commit"]);
+
+      // The next iteration sees the appended remediation task carrying the
+      // operator's message.
+      const remediationTask = secondIterationTasks.find(
+        (task) => task.id === "task-ctx-1-rejection-1",
+      );
+      expect(remediationTask).toBeDefined();
+      expect(remediationTask?.instructions).toContain("needs more tests");
+
+      const cs = result.contextStates["ctx-1"]!;
+      expect(cs.pendingApproval).toBeNull();
+      expect(cs.totalTaskCount).toBe(2);
+      expect(cs.iterationCount).toBe(2);
+      expect(cs.consecutiveFailureCount).toBe(0);
+
+      const resolvedEvents = findApprovalResolvedEvents(result);
+      expect(resolvedEvents).toHaveLength(1);
+      expect(resolvedEvents[0]).toMatchObject({
+        contextId: "ctx-1",
+        conversationId: "conv-1",
+        decision: "rejected",
+        message: "needs more tests",
+        decidedAt: "2026-03-27T12:02:00.000Z",
+      });
+      expect(broadcast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "graph-workflow-approval-resolved",
+          decision: "rejected",
+          message: "needs more tests",
+        }),
+      );
+    });
+
+    it("defers decision application until the conversation lock frees when the conversation is busy", async () => {
+      _resetActiveLoopsForTesting();
+      const definition = createSingleContextDefinition(5);
+      const initial = createRunningExecution(definition);
+
+      const recordedDecision = {
+        type: "approved" as const,
+        decidedAt: "2026-03-27T12:02:00.000Z",
+      };
+      const waitForApprovalProgress = vi.fn(async () => {
+        const next = structuredClone(harness.getCurrent());
+        const decision = next.contextStates["ctx-1"]!.pendingApproval?.decision;
+        if (decision === null) {
+          next.contextStates["ctx-1"]!.pendingApproval!.decision =
+            structuredClone(recordedDecision);
+          harness.setCurrent(next);
+        }
+      });
+      const ordered: string[] = [];
+      let busyProbeCount = 0;
+      const isConversationBusy = vi.fn(() => {
+        busyProbeCount += 1;
+        const busy = busyProbeCount <= 2;
+        ordered.push(`probe:${busy}`);
+        return busy;
+      });
+      const acquireConversationLock = vi.fn(() => {
+        ordered.push("lock-acquired");
+        return () => {
+          ordered.push("lock-released");
+        };
+      });
+      const soloCommit = vi.fn(async () => {
+        ordered.push("commit");
+        return { status: "skipped" as const };
+      });
+
+      const harness = buildParkingHarness({
+        initialExecution: initial,
+        waitForApprovalProgress,
+        soloCommit,
+        isConversationBusy,
+        acquireConversationLock,
+      });
+
+      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const result = await loop.run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: initial,
+      });
+
+      expect(result.status).toBe("completed");
+      expect(result.contextStates["ctx-1"]?.status).toBe("completed");
+      // One poll observing the decision, plus one per busy probe.
+      expect(waitForApprovalProgress).toHaveBeenCalledTimes(3);
+      expect(ordered).toEqual([
+        "probe:true",
+        "probe:true",
+        "probe:false",
+        "lock-acquired",
+        "commit",
+        "lock-released",
+      ]);
+    });
+
+    it.each(["aborted", "paused", "halted"] as const)(
+      "exits the busy deferral without applying when the execution becomes %s, preserving the recorded decision",
+      async (exitStatus) => {
+        _resetActiveLoopsForTesting();
+        const definition = createSingleContextDefinition(5);
+        const initial = createRunningExecution(definition);
+
+        const recordedDecision = {
+          type: "approved" as const,
+          decidedAt: "2026-03-27T12:02:00.000Z",
+        };
+        // First wait (gate poll) records the decision; the next wait (busy
+        // deferral) flips the execution out of running, simulating an abort
+        // landing while a chat turn holds the conversation busy.
+        const waitForApprovalProgress = vi.fn(async () => {
+          const next = structuredClone(harness.getCurrent());
+          const pending = next.contextStates["ctx-1"]!.pendingApproval!;
+          if (pending.decision === null) {
+            pending.decision = structuredClone(recordedDecision);
+          } else {
+            next.status = exitStatus;
+          }
+          harness.setCurrent(next);
+        });
+        const soloCommit = vi.fn(async () => ({ status: "skipped" as const }));
+        let busyProbeCount = 0;
+        const isConversationBusy = vi.fn(() => {
+          busyProbeCount += 1;
+          return busyProbeCount <= 1;
+        });
+        const acquireConversationLock = vi.fn(() => () => {});
+        const broadcast = vi.fn();
+
+        const harness = buildParkingHarness({
+          initialExecution: initial,
+          waitForApprovalProgress,
+          soloCommit,
+          isConversationBusy,
+          acquireConversationLock,
+          eventPublisher: createGraphWorkflowExecutionEventPublisher({
+            broadcast,
+            now: () => "2026-03-27T12:03:00.000Z",
+          }),
+        });
+
+        const loop = createGraphWorkflowExecutionLoop(harness.deps);
+        const result = await loop.run({
+          projectPath: "/repo",
+          projectName: "test",
+          sessionName: "session-1",
+          execution: initial,
+        });
+
+        expect(result.status).toBe(exitStatus);
+        const cs = result.contextStates["ctx-1"]!;
+        expect(cs.status).toBe("awaiting_approval");
+        expect(cs.pendingApproval).toEqual({
+          ...pendingApprovalRecord,
+          decision: recordedDecision,
+        });
+        expect(acquireConversationLock).not.toHaveBeenCalled();
+        expect(soloCommit).not.toHaveBeenCalled();
+        expect(findApprovalResolvedEvents(result)).toHaveLength(0);
+        expect(broadcast).not.toHaveBeenCalled();
+        expect(harness.sendSpy).not.toHaveBeenCalled();
+      },
+    );
+
+    it("leaves the execution untouched when it aborts between lock acquisition and decision application", async () => {
+      _resetActiveLoopsForTesting();
+      const definition = createSingleContextDefinition(5);
+      const initial = createRunningExecution(definition);
+
+      const recordedDecision = {
+        type: "rejected" as const,
+        message: "needs more tests",
+        decidedAt: "2026-03-27T12:02:00.000Z",
+      };
+      const waitForApprovalProgress = vi.fn(async () => {
+        const next = structuredClone(harness.getCurrent());
+        const pending = next.contextStates["ctx-1"]!.pendingApproval;
+        if (pending && pending.decision === null) {
+          pending.decision = structuredClone(recordedDecision);
+          harness.setCurrent(next);
+        }
+      });
+      const soloCommit = vi.fn(async () => ({ status: "skipped" as const }));
+      const release = vi.fn();
+      // The abort lands in the window between lock acquisition and the apply
+      // mutation; the mutation-level guard must observe it atomically.
+      const acquireConversationLock = vi.fn(() => {
+        const next = structuredClone(harness.getCurrent());
+        next.status = "aborted";
+        harness.setCurrent(next);
+        return release;
+      });
+      const broadcast = vi.fn();
+      let iterationCallCount = 0;
+
+      const harness = buildParkingHarness({
+        initialExecution: initial,
+        waitForApprovalProgress,
+        soloCommit,
+        isConversationBusy: () => false,
+        acquireConversationLock,
+        eventPublisher: createGraphWorkflowExecutionEventPublisher({
+          broadcast,
+          now: () => "2026-03-27T12:03:00.000Z",
+        }),
+        onIteration: () => {
+          iterationCallCount += 1;
+        },
+      });
+
+      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const result = await loop.run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: initial,
+      });
+
+      expect(result.status).toBe("aborted");
+      const cs = result.contextStates["ctx-1"]!;
+      expect(cs.status).toBe("awaiting_approval");
+      expect(cs.pendingApproval).toEqual({
+        ...pendingApprovalRecord,
+        decision: recordedDecision,
+      });
+      expect(cs.totalTaskCount).toBe(1);
+      // The rejected path must not launch a fresh iteration post-abort.
+      expect(iterationCallCount).toBe(1);
+      expect(release).toHaveBeenCalledTimes(1);
+      expect(soloCommit).not.toHaveBeenCalled();
+      expect(findApprovalResolvedEvents(result)).toHaveLength(0);
+      expect(broadcast).not.toHaveBeenCalled();
+      expect(harness.sendSpy).not.toHaveBeenCalled();
+    });
+
+    it("halts with max_iterations when a rejection consumes the final allowed iteration", async () => {
+      _resetActiveLoopsForTesting();
+      const definition = createSingleContextDefinition(2);
+      const initial = createRunningExecution(definition);
+
+      const recordedDecision = {
+        type: "rejected" as const,
+        message: "still wrong",
+        decidedAt: "2026-03-27T12:02:00.000Z",
+      };
+      const waitForApprovalProgress = vi.fn(async () => {
+        const next = structuredClone(harness.getCurrent());
+        const decision = next.contextStates["ctx-1"]!.pendingApproval?.decision;
+        if (decision === null) {
+          next.contextStates["ctx-1"]!.pendingApproval!.decision =
+            structuredClone(recordedDecision);
+          harness.setCurrent(next);
+        }
+      });
+      const soloCommit = vi.fn(async () => ({ status: "skipped" as const }));
+      let iterationCallCount = 0;
+
+      const harness: LoopHarness = buildHarness({
+        initialExecution: initial,
+        waitForApprovalProgress,
+        isConversationBusy: () => false,
+        acquireConversationLock: () => () => {},
+        soloContextCommitter: { commit: soloCommit },
+        iterationOrchestrator: {
+          async runIteration(): Promise<GraphWorkflowIterationResult> {
+            iterationCallCount += 1;
+            const next = structuredClone(harness.getCurrent());
+            const cs = next.contextStates["ctx-1"]!;
+            cs.iterationCount = iterationCallCount;
+            cs.completedTaskCount = next.workingDefinition.tasks.length;
+            cs.status = "awaiting_approval";
+            cs.pendingApproval = {
+              conversationId: "conv-1",
+              requestedAt: `2026-03-27T12:0${iterationCallCount}:00.000Z`,
+              decision: null,
+            };
+            for (const taskState of Object.values(next.taskStates)) {
+              taskState.status = "completed";
+            }
+            next.activeContextIds = [];
+            harness.setCurrent(next);
+            return {
+              conversationId: "conv-1",
+              execution: next,
+              shouldContinueInContext: false,
+            };
+          },
+        },
+      });
+
+      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const result = await loop.run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: initial,
+      });
+
+      expect(iterationCallCount).toBe(2);
+      expect(result.status).toBe("halted");
+      expect(result.haltReason).toEqual({
+        type: "max_iterations",
+        contextId: "ctx-1",
+        iterationCount: 2,
+      });
+      // The second park is never resolved: the iteration limit halts the
+      // context before the gate wait re-enters.
+      expect(waitForApprovalProgress).toHaveBeenCalledTimes(1);
+      expect(soloCommit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("approval gate resume re-entry", () => {
+    const pendingApprovalRecord = {
+      conversationId: "conv-1",
+      requestedAt: "2026-03-27T12:01:00.000Z",
+      decision: null,
+    };
+
+    function createParkedExecution(
+      definition: WorkflowSemanticDefinition,
+    ): GraphWorkflowExecution {
+      const execution = createRunningExecution(definition);
+      const cs = execution.contextStates["ctx-1"]!;
+      cs.status = "awaiting_approval";
+      cs.iterationCount = 1;
+      cs.completedTaskCount = 1;
+      cs.pendingApproval = structuredClone(pendingApprovalRecord);
+      execution.taskStates["task-1"]!.status = "completed";
+      return execution;
+    }
+
+    function findApprovalResolvedEvents(
+      execution: GraphWorkflowExecution,
+    ): GraphWorkflowApprovalResolvedEvent[] {
+      return execution.history
+        .map((entry) => entry.event)
+        .filter(
+          (event): event is GraphWorkflowApprovalResolvedEvent =>
+            event.type === "graph-workflow-approval-resolved",
+        );
+    }
+
+    it("re-enters a persisted parked context directly into the gate wait and applies the decision without seeding an iteration", async () => {
+      _resetActiveLoopsForTesting();
+      const definition = createSingleContextDefinition(5);
+      const initial = createParkedExecution(definition);
+
+      const recordedDecision = {
+        type: "approved" as const,
+        decidedAt: "2026-03-27T12:02:00.000Z",
+      };
+      const waitForApprovalProgress = vi.fn(async () => {
+        const next = structuredClone(harness.getCurrent());
+        const pending = next.contextStates["ctx-1"]!.pendingApproval;
+        if (pending && pending.decision === null) {
+          pending.decision = structuredClone(recordedDecision);
+          harness.setCurrent(next);
+        }
+      });
+      const ordered: string[] = [];
+      const soloCommit = vi.fn(async () => {
+        ordered.push("commit");
+        return { status: "skipped" as const };
+      });
+      const acquireConversationLock = vi.fn(() => {
+        ordered.push("lock-acquired");
+        return () => {
+          ordered.push("lock-released");
+        };
+      });
+      const runIteration = vi.fn(
+        async (): Promise<GraphWorkflowIterationResult> => {
+          throw new Error(
+            "no iteration may be seeded for a parked context on resume",
+          );
+        },
+      );
+      const broadcast = vi.fn();
+
+      const harness: LoopHarness = buildHarness({
+        initialExecution: initial,
+        waitForApprovalProgress,
+        isConversationBusy: () => false,
+        acquireConversationLock,
+        eventPublisher: createGraphWorkflowExecutionEventPublisher({
+          broadcast,
+          now: () => "2026-03-27T12:03:00.000Z",
+        }),
+        soloContextCommitter: { commit: soloCommit },
+        iterationOrchestrator: { runIteration },
+      });
+
+      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const result = await loop.run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: initial,
+      });
+
+      expect(runIteration).not.toHaveBeenCalled();
+      expect(result.status).toBe("completed");
+      const cs = result.contextStates["ctx-1"]!;
+      expect(cs.status).toBe("completed");
+      expect(cs.pendingApproval).toBeNull();
+      // The commit phase runs inside the held conversation lock window.
+      expect(ordered).toEqual(["lock-acquired", "commit", "lock-released"]);
+
+      const resolvedEvents = findApprovalResolvedEvents(result);
+      expect(resolvedEvents).toHaveLength(1);
+      expect(resolvedEvents[0]).toMatchObject({
+        contextId: "ctx-1",
+        conversationId: "conv-1",
+        decision: "approved",
+        decidedAt: "2026-03-27T12:02:00.000Z",
+      });
+      expect(broadcast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "graph-workflow-approval-resolved",
+          decision: "approved",
+        }),
+      );
+    });
+
+    it("applies a rejection recorded while the execution was suspended on the first wait refresh after resume", async () => {
+      _resetActiveLoopsForTesting();
+      const definition = createSingleContextDefinition(5);
+      const initial = createParkedExecution(definition);
+      initial.contextStates["ctx-1"]!.pendingApproval = {
+        ...structuredClone(pendingApprovalRecord),
+        decision: {
+          type: "rejected",
+          message: "needs more tests",
+          decidedAt: "2026-03-27T12:02:00.000Z",
+        },
+      };
+
+      const waitForApprovalProgress = vi.fn(async () => {});
+      const ordered: string[] = [];
+      const soloCommit = vi.fn(async () => {
+        ordered.push("commit");
+        return { status: "skipped" as const };
+      });
+      const acquireConversationLock = vi.fn(() => {
+        ordered.push("lock-acquired");
+        return () => {
+          ordered.push("lock-released");
+        };
+      });
+      const broadcast = vi.fn();
+      let remediationIterationTasks: Array<{
+        id: string;
+        instructions: string;
+      }> = [];
+      const runIteration = vi.fn(
+        async (): Promise<GraphWorkflowIterationResult> => {
+          const next = structuredClone(harness.getCurrent());
+          const cs = next.contextStates["ctx-1"]!;
+          remediationIterationTasks = next.workingDefinition.tasks.map(
+            (task) => ({ id: task.id, instructions: task.instructions }),
+          );
+          cs.iterationCount += 1;
+          for (const taskState of Object.values(next.taskStates)) {
+            taskState.status = "completed";
+          }
+          cs.completedTaskCount = next.workingDefinition.tasks.length;
+          cs.status = "completed";
+          next.activeContextIds = [];
+          harness.setCurrent(next);
+          return {
+            conversationId: "conv-1",
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      );
+
+      const harness: LoopHarness = buildHarness({
+        initialExecution: initial,
+        waitForApprovalProgress,
+        isConversationBusy: () => false,
+        acquireConversationLock,
+        eventPublisher: createGraphWorkflowExecutionEventPublisher({
+          broadcast,
+          now: () => "2026-03-27T12:03:00.000Z",
+        }),
+        soloContextCommitter: { commit: soloCommit },
+        iterationOrchestrator: { runIteration },
+      });
+
+      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const result = await loop.run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: initial,
+      });
+
+      expect(result.status).toBe("completed");
+      // The wait observes the suspended-recorded decision on its first
+      // refresh; the only iteration is the remediation one.
+      expect(runIteration).toHaveBeenCalledTimes(1);
+      expect(ordered).toEqual(["lock-acquired", "lock-released", "commit"]);
+
+      const remediationTask = remediationIterationTasks.find(
+        (task) => task.id === "task-ctx-1-rejection-1",
+      );
+      expect(remediationTask).toBeDefined();
+      expect(remediationTask?.instructions).toContain("needs more tests");
+
+      const cs = result.contextStates["ctx-1"]!;
+      expect(cs.status).toBe("completed");
+      expect(cs.pendingApproval).toBeNull();
+      expect(cs.totalTaskCount).toBe(2);
+      expect(cs.iterationCount).toBe(2);
+
+      const resolvedEvents = findApprovalResolvedEvents(result);
+      expect(resolvedEvents).toHaveLength(1);
+      expect(resolvedEvents[0]).toMatchObject({
+        contextId: "ctx-1",
+        conversationId: "conv-1",
+        decision: "rejected",
+        message: "needs more tests",
+      });
+    });
+
+    it("stays in-flight without completing or exiting when the only remaining context is parked", async () => {
+      _resetActiveLoopsForTesting();
+      const definition = createSingleContextDefinition(5);
+      const initial = createParkedExecution(definition);
+
+      let signalPollStarted!: () => void;
+      const pollStarted = new Promise<void>((resolve) => {
+        signalPollStarted = resolve;
+      });
+      let releasePoll!: () => void;
+      const pollRelease = new Promise<void>((resolve) => {
+        releasePoll = resolve;
+      });
+      const waitForApprovalProgress = vi.fn(async () => {
+        signalPollStarted();
+        await pollRelease;
+      });
+      const soloCommit = vi.fn(async () => ({ status: "skipped" as const }));
+      const runIteration = vi.fn(
+        async (): Promise<GraphWorkflowIterationResult> => {
+          throw new Error(
+            "no iteration may be seeded for a parked context on resume",
+          );
+        },
+      );
+
+      const harness: LoopHarness = buildHarness({
+        initialExecution: initial,
+        waitForApprovalProgress,
+        soloContextCommitter: { commit: soloCommit },
+        iterationOrchestrator: { runIteration },
+      });
+
+      const loop = createGraphWorkflowExecutionLoop(harness.deps);
+      const runPromise = loop.run({
+        projectPath: "/repo",
+        projectName: "test",
+        sessionName: "session-1",
+        execution: initial,
+      });
+
+      await pollStarted;
+
+      const raceOutcome = await Promise.race([
+        runPromise.then(() => "settled" as const),
+        new Promise<"pending">((resolve) =>
+          setTimeout(() => resolve("pending"), 25),
+        ),
+      ]);
+      expect(raceOutcome).toBe("pending");
+      expect(isExecutionLoopActive("/repo", "session-1")).toBe(true);
+      expect(harness.sendSpy).not.toHaveBeenCalled();
+      expect(runIteration).not.toHaveBeenCalled();
+      expect(soloCommit).not.toHaveBeenCalled();
+
+      const aborted = structuredClone(harness.getCurrent());
+      aborted.status = "aborted";
+      harness.setCurrent(aborted);
+      releasePoll();
+
+      const result = await runPromise;
+      expect(result.status).toBe("aborted");
+      const cs = result.contextStates["ctx-1"]!;
+      expect(cs.status).toBe("awaiting_approval");
+      expect(cs.pendingApproval).toEqual(pendingApprovalRecord);
+      expect(harness.sendSpy).not.toHaveBeenCalled();
+      expect(harness.drainAndHaltSpy).not.toHaveBeenCalled();
     });
   });
 });

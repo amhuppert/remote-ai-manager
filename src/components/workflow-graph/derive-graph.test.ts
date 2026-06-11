@@ -235,6 +235,7 @@ describe("deriveNodes", () => {
     });
 
     const ctxState: GraphWorkflowExecutionContextState = {
+      pendingApproval: null,
       contextId: "ctx-1",
       status: "running",
       totalTaskCount: 1,
@@ -313,6 +314,7 @@ describe("deriveNodes wait state attachment", () => {
       mergeStatus: "not-applicable",
       cleanupStatus: "not-applicable",
       lastMergeError: null,
+      pendingApproval: null,
       ...overrides,
     };
   }
@@ -341,6 +343,7 @@ describe("deriveNodes wait state attachment", () => {
     expect(ctxB?.data.waitState).toEqual({
       kind: "dependency-blocked",
       unmetDependencyIds: ["ctx-a"],
+      blockedByApproval: false,
     });
   });
 
@@ -437,6 +440,7 @@ describe("getContextDisplayPhase", () => {
       mergeStatus: "not-applicable",
       cleanupStatus: "not-applicable",
       lastMergeError: null,
+      pendingApproval: null,
       ...overrides,
     };
   }
@@ -555,6 +559,7 @@ describe("getDisplayValidators", () => {
       },
       contextValidator: null,
       scriptValidator: { enabled: false },
+      humanApprovalGate: { enabled: false },
       mutability: { allowAgentTaskAdd: false },
       circuitBreaker: { consecutiveFailureThreshold: 3 },
       iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
@@ -686,6 +691,7 @@ describe("deriveEdges", () => {
     const execution = makeExecution({
       contextStates: {
         "ctx-1": {
+          pendingApproval: null,
           contextId: "ctx-1",
           status: "completed" as GraphWorkflowContextStatus,
           totalTaskCount: 1,
@@ -703,6 +709,7 @@ describe("deriveEdges", () => {
           lastMergeError: null,
         },
         "ctx-2": {
+          pendingApproval: null,
           contextId: "ctx-2",
           status: "running" as GraphWorkflowContextStatus,
           totalTaskCount: 1,

@@ -58,6 +58,7 @@ const GLOBAL_DEFAULTS: WorkflowDefaults = {
   implementer: GLOBAL_IMPLEMENTER,
   contextValidator: GLOBAL_VALIDATOR,
   scriptValidator: GLOBAL_SCRIPT_VALIDATOR,
+  humanApprovalGate: { enabled: false },
   iterationPolicy: GLOBAL_ITERATION,
   circuitBreaker: GLOBAL_CB,
   mutability: GLOBAL_MUTABILITY,
@@ -232,6 +233,42 @@ describe("resolveContext", () => {
 
     expect(resolved.scriptValidator).toEqual({ enabled: false });
   });
+
+  it("resolves humanApprovalGate to disabled when no layer overrides", () => {
+    const resolved = resolveContext(GLOBAL_DEFAULTS, {}, makeContext());
+
+    expect(resolved.humanApprovalGate).toEqual({ enabled: false });
+  });
+
+  it("inherits humanApprovalGate from global when neither workflow nor context override", () => {
+    const resolved = resolveContext(
+      { ...GLOBAL_DEFAULTS, humanApprovalGate: { enabled: true } },
+      {},
+      makeContext(),
+    );
+
+    expect(resolved.humanApprovalGate).toEqual({ enabled: true });
+  });
+
+  it("inherits humanApprovalGate from workflow when context omits it", () => {
+    const resolved = resolveContext(
+      GLOBAL_DEFAULTS,
+      { humanApprovalGate: { enabled: true } },
+      makeContext(),
+    );
+
+    expect(resolved.humanApprovalGate).toEqual({ enabled: true });
+  });
+
+  it("uses context humanApprovalGate verbatim when overridden", () => {
+    const resolved = resolveContext(
+      { ...GLOBAL_DEFAULTS, humanApprovalGate: { enabled: true } },
+      { humanApprovalGate: { enabled: true } },
+      makeContext({ humanApprovalGate: { enabled: false } }),
+    );
+
+    expect(resolved.humanApprovalGate).toEqual({ enabled: false });
+  });
 });
 
 describe("resolveWorkflowConfig", () => {
@@ -256,6 +293,27 @@ describe("resolveWorkflowConfig", () => {
     expect(resolved.implementer).toEqual(workflowImpl);
   });
 
+  it("uses workflow-level humanApprovalGate when present, ignoring global", () => {
+    const definition = makeDefinition({
+      workflowConfig: { humanApprovalGate: { enabled: true } },
+    });
+    const resolved = resolveWorkflowConfig(makeGlobalConfig(), definition);
+
+    expect(resolved.humanApprovalGate).toEqual({ enabled: true });
+  });
+
+  it("uses global workflowDefaults.humanApprovalGate when workflow-level gate is missing", () => {
+    const global = makeGlobalConfig({
+      workflowDefaults: {
+        ...GLOBAL_DEFAULTS,
+        humanApprovalGate: { enabled: true },
+      },
+    });
+    const resolved = resolveWorkflowConfig(global, makeDefinition());
+
+    expect(resolved.humanApprovalGate).toEqual({ enabled: true });
+  });
+
   it("fills missing global blocks from seeded defaults", () => {
     const partialGlobal: WorkflowDefaults = {
       implementer: GLOBAL_IMPLEMENTER,
@@ -263,6 +321,8 @@ describe("resolveWorkflowConfig", () => {
         undefined as unknown as GraphWorkflowAgentValidatorConfig,
       scriptValidator:
         undefined as unknown as GraphWorkflowScriptValidatorConfig,
+      humanApprovalGate:
+        undefined as unknown as WorkflowDefaults["humanApprovalGate"],
       iterationPolicy: undefined as unknown as GraphWorkflowIterationPolicy,
       circuitBreaker: undefined as unknown as GraphWorkflowCircuitBreakerPolicy,
       mutability: undefined as unknown as GraphWorkflowMutabilityPolicy,
@@ -275,6 +335,7 @@ describe("resolveWorkflowConfig", () => {
     expect(resolved.implementer).toEqual(GLOBAL_IMPLEMENTER);
     expect(resolved.contextValidator.type).toBe("claude");
     expect(resolved.scriptValidator.enabled).toBe(false);
+    expect(resolved.humanApprovalGate.enabled).toBe(false);
     expect(resolved.iterationPolicy.maxIterations).toBeGreaterThan(0);
     expect(resolved.circuitBreaker.consecutiveFailureThreshold).toBe(3);
     expect(resolved.mutability.allowAgentTaskAdd).toBe(false);

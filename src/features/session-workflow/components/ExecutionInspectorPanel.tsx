@@ -159,6 +159,8 @@ function getStatusBadgeClass(status?: string): string {
       return "completed";
     case "halted":
       return "halted";
+    case "awaiting_approval":
+      return "awaiting-approval";
     default:
       return "pending";
   }
@@ -174,6 +176,8 @@ function getStatusLabel(status?: string): string {
       return "Halted";
     case "ready":
       return "Ready";
+    case "awaiting_approval":
+      return "Awaiting Approval";
     default:
       return "Pending";
   }

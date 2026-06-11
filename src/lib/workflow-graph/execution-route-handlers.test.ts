@@ -1,6 +1,14 @@
 import { NextRequest } from "next/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionState } from "@/lib/sessions/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import {
+  createPersistenceFixture,
+  type PersistenceFixture,
+} from "@/lib/shared/testing/persistence-fixture";
+import { createApprovalGateService } from "./approval-gate";
+import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
+import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import { createWorkflowExecution } from "./test-fixtures";
 import {
   createGraphWorkflowExecutionRouteHandlers,
@@ -63,6 +71,7 @@ describe("graph workflow execution route handlers", () => {
   const getActiveExecution = vi.fn();
   const recordPendingHaltReason = vi.fn();
   const drainAndHalt = vi.fn();
+  const recordApprovalDecision = vi.fn();
 
   const handlers = createGraphWorkflowExecutionRouteHandlers({
     resolveProjectPath,
@@ -78,6 +87,7 @@ describe("graph workflow execution route handlers", () => {
     getActiveExecution,
     recordPendingHaltReason,
     drainAndHalt,
+    recordApprovalDecision,
   });
 
   beforeEach(() => {
@@ -1066,6 +1076,309 @@ describe("graph workflow execution route handlers", () => {
   });
 });
 
+describe("graph workflow resolve-approval route handler", () => {
+  const PROJECT_PATH = "/repo";
+  const SESSION_NAME = "session-1";
+  const GATED_CONTEXT_ID = "context-implement";
+  const CONVERSATION_ID = "conv-gate-1";
+  const NOW = "2026-06-10T10:00:00.000Z";
+  const RESOLVE_URL =
+    "/api/projects/repo/sessions/session-1/graph-workflow/resolve-approval";
+
+  let fixture: PersistenceFixture;
+
+  beforeEach(() => {
+    fixture = createPersistenceFixture();
+    fixture.seedProject(PROJECT_PATH);
+    fixture.seedSession(PROJECT_PATH, SESSION_NAME);
+  });
+
+  afterEach(() => {
+    fixture.close();
+  });
+
+  function unusedDep(name: string) {
+    return async (): Promise<never> => {
+      throw new Error(`${name} should not be called by RESOLVE_APPROVAL`);
+    };
+  }
+
+  function buildHandlers() {
+    const repository = createGraphWorkflowExecutionRepository({
+      getSession: fixture.store.getSession,
+      mutateSession: fixture.store.mutateSession,
+      eventPublisher: createGraphWorkflowExecutionEventPublisher({
+        broadcast: () => {},
+        dispatchPush: () => {},
+        now: () => NOW,
+      }),
+    });
+    const approvalGateService = createApprovalGateService({
+      mutateActive: repository.mutateActive,
+      now: () => NOW,
+    });
+    return createGraphWorkflowExecutionRouteHandlers({
+      resolveProjectPath: async (name) =>
+        name === "repo" ? PROJECT_PATH : null,
+      getSession: fixture.store.getSession,
+      recordApprovalDecision: approvalGateService.recordDecision,
+      normalizeExecutionAfterRestart: unusedDep(
+        "normalizeExecutionAfterRestart",
+      ),
+      startExecution: unusedDep("startExecution"),
+      pauseExecution: unusedDep("pauseExecution"),
+      resumeExecution: unusedDep("resumeExecution"),
+      abortExecution: unusedDep("abortExecution"),
+      resetExecutionContext: unusedDep("resetExecutionContext"),
+      archiveExecution: unusedDep("archiveExecution"),
+      kickOffExecutionLoop: unusedDep("kickOffExecutionLoop"),
+      getActiveExecution: unusedDep("getActiveExecution"),
+      recordPendingHaltReason: unusedDep("recordPendingHaltReason"),
+      drainAndHalt: unusedDep("drainAndHalt"),
+    });
+  }
+
+  function buildGatedExecution(
+    input: {
+      executionStatus?: GraphWorkflowExecution["status"];
+    } = {},
+  ): GraphWorkflowExecution {
+    const execution = createWorkflowExecution({
+      status: input.executionStatus ?? "running",
+    });
+    const contextState = execution.contextStates[GATED_CONTEXT_ID];
+    if (!contextState) throw new Error("fixture missing gated context");
+    contextState.status = "awaiting_approval";
+    contextState.pendingApproval = {
+      conversationId: CONVERSATION_ID,
+      requestedAt: "2026-06-10T09:00:00.000Z",
+      decision: null,
+    };
+    return execution;
+  }
+
+  async function seedExecution(execution: GraphWorkflowExecution | null) {
+    await fixture.store.mutateSession(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "test.seedExecution",
+      (session) => {
+        session.graphWorkflowExecution = execution;
+      },
+    );
+  }
+
+  async function reloadGatedContext() {
+    const session = await fixture.store.getSession(PROJECT_PATH, SESSION_NAME);
+    const contextState =
+      session?.graphWorkflowExecution?.contextStates[GATED_CONTEXT_ID];
+    if (!contextState) throw new Error("gated context missing after reload");
+    return contextState;
+  }
+
+  function postResolveApproval(
+    handlers: ReturnType<typeof buildHandlers>,
+    body: unknown,
+    params: Record<string, string> = { name: "repo", session: SESSION_NAME },
+  ) {
+    return handlers.RESOLVE_APPROVAL(
+      makeRequest(RESOLVE_URL, "POST", body),
+      makeContext(params),
+    );
+  }
+
+  it("records an approval, returns the execution payload, and persists the decision", async () => {
+    const handlers = buildHandlers();
+    await seedExecution(buildGatedExecution());
+
+    const response = await postResolveApproval(handlers, {
+      contextId: GATED_CONTEXT_ID,
+      decision: "approve",
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      execution: {
+        executionId: "execution-1",
+        status: "running",
+        archived: false,
+      },
+    });
+
+    const reloaded = await reloadGatedContext();
+    expect(reloaded.status).toBe("awaiting_approval");
+    expect(reloaded.pendingApproval?.decision).toEqual({
+      type: "approved",
+      decidedAt: NOW,
+    });
+  });
+
+  it("records a rejection with the trimmed message and persists it", async () => {
+    const handlers = buildHandlers();
+    await seedExecution(buildGatedExecution());
+
+    const response = await postResolveApproval(handlers, {
+      contextId: GATED_CONTEXT_ID,
+      decision: "reject",
+      message: "  Rename the endpoint to /v2  ",
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      execution: { executionId: "execution-1" },
+    });
+
+    const reloaded = await reloadGatedContext();
+    expect(reloaded.pendingApproval?.decision).toEqual({
+      type: "rejected",
+      message: "Rename the endpoint to /v2",
+      decidedAt: NOW,
+    });
+  });
+
+  it("returns 409 already_decided on a second decision and preserves the first", async () => {
+    const handlers = buildHandlers();
+    await seedExecution(buildGatedExecution());
+
+    const first = await postResolveApproval(handlers, {
+      contextId: GATED_CONTEXT_ID,
+      decision: "approve",
+    });
+    expect(first.status).toBe(200);
+
+    const second = await postResolveApproval(handlers, {
+      contextId: GATED_CONTEXT_ID,
+      decision: "reject",
+      message: "Changed my mind",
+    });
+
+    expect(second.status).toBe(409);
+    const body = (await second.json()) as { error: string };
+    expect(body.error).toContain("already_decided");
+
+    const reloaded = await reloadGatedContext();
+    expect(reloaded.pendingApproval?.decision).toEqual({
+      type: "approved",
+      decidedAt: NOW,
+    });
+  });
+
+  it("returns 404 when the session has no active execution", async () => {
+    const handlers = buildHandlers();
+    await seedExecution(null);
+
+    const response = await postResolveApproval(handlers, {
+      contextId: GATED_CONTEXT_ID,
+      decision: "approve",
+    });
+
+    expect(response.status).toBe(404);
+  });
+
+  it("returns 404 for an unknown project", async () => {
+    const handlers = buildHandlers();
+
+    const response = await postResolveApproval(
+      handlers,
+      { contextId: GATED_CONTEXT_ID, decision: "approve" },
+      { name: "missing-project", session: SESSION_NAME },
+    );
+
+    expect(response.status).toBe(404);
+  });
+
+  it("returns 404 for an unknown session", async () => {
+    const handlers = buildHandlers();
+
+    const response = await postResolveApproval(
+      handlers,
+      { contextId: GATED_CONTEXT_ID, decision: "approve" },
+      { name: "repo", session: "session-missing" },
+    );
+
+    expect(response.status).toBe(404);
+  });
+
+  it.each([
+    [
+      "reject without a message",
+      { contextId: "context-implement", decision: "reject" },
+    ],
+    [
+      "reject with a whitespace-only message",
+      { contextId: "context-implement", decision: "reject", message: "   " },
+    ],
+    [
+      "an unknown decision value",
+      { contextId: "context-implement", decision: "maybe" },
+    ],
+    ["a missing contextId", { decision: "approve" }],
+  ])("returns 400 for %s", async (_label, body) => {
+    const handlers = buildHandlers();
+    await seedExecution(buildGatedExecution());
+
+    const response = await postResolveApproval(handlers, body);
+
+    expect(response.status).toBe(400);
+    const reloaded = await reloadGatedContext();
+    expect(reloaded.pendingApproval?.decision).toBeNull();
+  });
+
+  it("returns 409 execution_not_running for an aborted execution and leaves state unchanged", async () => {
+    const handlers = buildHandlers();
+    await seedExecution(buildGatedExecution({ executionStatus: "aborted" }));
+
+    const response = await postResolveApproval(handlers, {
+      contextId: GATED_CONTEXT_ID,
+      decision: "approve",
+    });
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain("execution_not_running");
+
+    const reloaded = await reloadGatedContext();
+    expect(reloaded.pendingApproval?.decision).toBeNull();
+  });
+
+  it("returns 409 not_awaiting_approval when the context is not gated", async () => {
+    const handlers = buildHandlers();
+    const execution = createWorkflowExecution({ status: "running" });
+    await seedExecution(execution);
+
+    const response = await postResolveApproval(handlers, {
+      contextId: GATED_CONTEXT_ID,
+      decision: "approve",
+    });
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain("not_awaiting_approval");
+  });
+
+  it("records a deferred decision while the execution is paused", async () => {
+    const handlers = buildHandlers();
+    await seedExecution(buildGatedExecution({ executionStatus: "paused" }));
+
+    const response = await postResolveApproval(handlers, {
+      contextId: GATED_CONTEXT_ID,
+      decision: "approve",
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      execution: { executionId: "execution-1", status: "paused" },
+    });
+
+    const reloaded = await reloadGatedContext();
+    expect(reloaded.status).toBe("awaiting_approval");
+    expect(reloaded.pendingApproval?.decision).toEqual({
+      type: "approved",
+      decidedAt: NOW,
+    });
+  });
+});
+
 describe("graph workflow route script validator service", () => {
   it("maps session and config state into the script validator runner input", async () => {
     const getSession = vi.fn(async () =>
@@ -1167,7 +1480,6 @@ import {
   type GraphWorkflowRunAgentIterationInput,
 } from "@/lib/workflow-graph/iteration-orchestrator";
 import { createResolvedWorkflowDefinition } from "./test-fixtures";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 function createCodexWorkflowExecution(): GraphWorkflowExecution {
   const definition = createResolvedWorkflowDefinition({
     executionContexts: [
@@ -1182,6 +1494,7 @@ function createCodexWorkflowExecution(): GraphWorkflowExecution {
         },
         contextValidator: null,
         scriptValidator: { enabled: false },
+        humanApprovalGate: { enabled: false },
         mutability: { allowAgentTaskAdd: false },
         circuitBreaker: {},
         iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
@@ -1206,6 +1519,7 @@ function createCodexWorkflowExecution(): GraphWorkflowExecution {
     workingDefinition: definition,
     contextStates: {
       "context-codex": {
+        pendingApproval: null,
         contextId: "context-codex",
         status: "running",
         totalTaskCount: 1,

@@ -15,6 +15,12 @@ import type {
   ConversationStatus,
 } from "@/lib/conversations/schemas";
 import { managerStateSchema, type ManagerState } from "@/lib/projects/schemas";
+import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
+import type {
+  GraphWorkflowApprovalDecision,
+  GraphWorkflowExecution,
+  GraphWorkflowStatus,
+} from "@/lib/workflows/schemas";
 
 function convo(
   status: ConversationStatus,
@@ -75,7 +81,10 @@ function makeConversation(
   });
 }
 
-function makeState(conversations: ConversationState[]): ManagerState {
+function makeState(
+  conversations: ConversationState[],
+  graphWorkflowExecution: GraphWorkflowExecution | null = null,
+): ManagerState {
   return managerStateSchema.parse({
     projects: {
       "/repo/project": {
@@ -96,7 +105,7 @@ function makeState(conversations: ConversationState[]): ManagerState {
             tddEnabled: true,
             targetBranch: "main",
             parentSessionName: null,
-            graphWorkflowExecution: null,
+            graphWorkflowExecution,
             graphWorkflowExecutionHistory: [],
             referenceDocuments: [],
           },
@@ -108,9 +117,14 @@ function makeState(conversations: ConversationState[]): ManagerState {
   });
 }
 
-async function listRows(conversations: ConversationState[]) {
+async function listRows(
+  conversations: ConversationState[],
+  graphWorkflowExecution: GraphWorkflowExecution | null = null,
+) {
   const deps: ActiveConversationsRouteDeps = {
-    readState: vi.fn().mockResolvedValue(makeState(conversations)),
+    readState: vi
+      .fn()
+      .mockResolvedValue(makeState(conversations, graphWorkflowExecution)),
     getProjectDisplayName: vi.fn().mockReturnValue("project"),
     readLastAssistantContent: vi.fn().mockResolvedValue(null),
     listProjectConversations: vi.fn().mockResolvedValue([]),
@@ -319,4 +333,170 @@ describe("GET /api/conversations/active pending question fields", () => {
       expect(rows[0]?.pendingQuestions).toBeNull();
     },
   );
+});
+
+describe("GET /api/conversations/active pending approval standing", () => {
+  const GATED_CONVERSATION_ID = "conv-gated";
+  const GATED_CONTEXT_ID = "context-implement";
+  const REQUESTED_AT = "2026-06-10T09:00:00.000Z";
+
+  const EXPECTED_STANDING = {
+    contextId: GATED_CONTEXT_ID,
+    contextTitle: "Implement",
+    requestedAt: REQUESTED_AT,
+    workflowName: null,
+    executionSuspended: false,
+    tasksCompleted: 0,
+    tasksTotal: 1,
+  };
+
+  function gatedExecution(
+    opts: {
+      executionStatus?: GraphWorkflowStatus;
+      decision?: GraphWorkflowApprovalDecision | null;
+    } = {},
+  ): GraphWorkflowExecution {
+    const execution = createWorkflowExecution({
+      status: opts.executionStatus ?? "running",
+    });
+    const contextState = execution.contextStates[GATED_CONTEXT_ID];
+    if (!contextState) throw new Error("fixture missing gated context");
+    contextState.status = "awaiting_approval";
+    contextState.pendingApproval = {
+      conversationId: GATED_CONVERSATION_ID,
+      requestedAt: REQUESTED_AT,
+      decision: opts.decision ?? null,
+    };
+    return execution;
+  }
+
+  function gatedConversation(overrides: Partial<ConversationState> = {}) {
+    return makeConversation({
+      id: GATED_CONVERSATION_ID,
+      status: "awaiting",
+      role: "iteration",
+      ...overrides,
+    });
+  }
+
+  it("includes a gated iteration conversation despite the role filter, carrying the standing payload", async () => {
+    const rows = await listRows([gatedConversation()], gatedExecution());
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe(GATED_CONVERSATION_ID);
+    expect(rows[0]?.pendingApproval).toEqual(EXPECTED_STANDING);
+  });
+
+  it("keeps non-gated iteration and validator conversations hidden", async () => {
+    const rows = await listRows(
+      [
+        gatedConversation(),
+        makeConversation({ id: "conv-other-iter", role: "iteration" }),
+        makeConversation({ id: "conv-validator", role: "validator" }),
+      ],
+      gatedExecution(),
+    );
+
+    expect(rows.map((r) => r.id)).toEqual([GATED_CONVERSATION_ID]);
+  });
+
+  it.each(["new", "running", "awaiting", "waiting_for_input"] as const)(
+    "keeps standing independent of conversation status %s",
+    async (status) => {
+      const rows = await listRows(
+        [gatedConversation({ status })],
+        gatedExecution(),
+      );
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.pendingApproval).toEqual(EXPECTED_STANDING);
+    },
+  );
+
+  it.each([
+    { type: "approved", decidedAt: "2026-06-10T10:00:00.000Z" } as const,
+    {
+      type: "rejected",
+      message: "needs rework",
+      decidedAt: "2026-06-10T10:00:00.000Z",
+    } as const,
+  ])(
+    "drops standing the moment a $type decision is recorded",
+    async (decision) => {
+      const rows = await listRows(
+        [gatedConversation()],
+        gatedExecution({ decision }),
+      );
+
+      expect(rows).toHaveLength(0);
+    },
+  );
+
+  it.each(["aborted", "completed"] as const)(
+    "drops standing when the execution is %s",
+    async (executionStatus) => {
+      const rows = await listRows(
+        [gatedConversation()],
+        gatedExecution({ executionStatus }),
+      );
+
+      expect(rows).toHaveLength(0);
+    },
+  );
+
+  it.each(["paused", "halted"] as const)(
+    "keeps standing while the execution is %s and flags it suspended",
+    async (executionStatus) => {
+      const rows = await listRows(
+        [gatedConversation()],
+        gatedExecution({ executionStatus }),
+      );
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.pendingApproval).toEqual({
+        ...EXPECTED_STANDING,
+        executionSuspended: true,
+      });
+    },
+  );
+
+  it("keeps archived conversations excluded even when gated", async () => {
+    const rows = await listRows(
+      [gatedConversation({ archived: true })],
+      gatedExecution(),
+    );
+
+    expect(rows).toHaveLength(0);
+  });
+
+  it("returns null pendingApproval for non-gated rows", async () => {
+    const rows = await listRows(
+      [makeConversation({ id: "conv-plain", status: "running" })],
+      gatedExecution(),
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.pendingApproval).toBeNull();
+  });
+
+  it("returns null pendingApproval for project-scope rows", async () => {
+    const deps: ActiveConversationsRouteDeps = {
+      readState: vi.fn().mockResolvedValue(makeState([])),
+      getProjectDisplayName: vi.fn().mockReturnValue("project"),
+      readLastAssistantContent: vi.fn().mockResolvedValue(null),
+      listProjectConversations: vi.fn().mockResolvedValue([
+        {
+          projectPath: "/repo/project",
+          conversation: makeConversation({ id: "proj-conv", status: "new" }),
+        },
+      ]),
+    };
+    const handlers = createActiveConversationsRouteHandlers(deps);
+    const response = await handlers.GET();
+    expect(response.status).toBe(200);
+    const body = activeConversationsResponseSchema.parse(await response.json());
+
+    expect(body.conversations).toHaveLength(1);
+    expect(body.conversations[0]?.pendingApproval).toBeNull();
+  });
 });

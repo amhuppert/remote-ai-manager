@@ -48,6 +48,7 @@ const currentProjectConversation: ProjectActiveConversationWithOpen = {
   worktreePath: "/home/alex/github/remote-ai-manager",
   lastActivitySummary: "Checking current project focus routing.",
   unread: false,
+  pendingApproval: null,
   open: true,
 };
 
@@ -208,6 +209,96 @@ describe("ConversationSidebar", () => {
         );
         expect(hitMarkRead).toBe(true);
       });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  const gatedSessionConversation = {
+    scope: "session" as const,
+    id: "gated-session-convo",
+    name: "Gated session conversation",
+    status: "awaiting" as const,
+    lastActivityAt: "2026-05-15T12:36:00.000Z",
+    projectName: "remote-ai-manager",
+    projectPath: "/home/alex/github/remote-ai-manager",
+    sessionName: "gated-session",
+    branchName: "csm/gated-session",
+    worktreePath: "/home/alex/github/remote-ai-manager/.worktrees/gated",
+    agentBackend: "claude" as const,
+    summary: null,
+    pendingQuestion: null,
+    pendingQuestionId: null,
+    pendingQuestions: null,
+    forkedFrom: null,
+    debugActive: false,
+    role: "iteration" as const,
+    lastActivitySummary: "Awaiting your review.",
+    unread: false,
+    pendingApproval: {
+      contextId: "ctx-1",
+      contextTitle: "Implement feature",
+      requestedAt: "2026-05-15T12:30:00.000Z",
+      workflowName: null,
+      executionSuspended: false,
+      tasksCompleted: 6,
+      tasksTotal: 6,
+    },
+  };
+
+  it("hides the archive affordance in the context menu while an approval gate is pending", () => {
+    renderSidebarWithActiveData({
+      conversations: [gatedSessionConversation, currentProjectConversation],
+      graphWorkflowExecutions: [],
+      activeCollaborationExecutions: [],
+    });
+
+    fireEvent.contextMenu(
+      screen.getByLabelText("Gated session conversation — awaiting"),
+    );
+    expect(screen.queryByText("Archive conversation")).toBeNull();
+    expect(screen.getByText("Rename…")).not.toBeNull();
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    fireEvent.contextMenu(
+      screen.getByLabelText("Current project cockpit — running"),
+    );
+    expect(screen.getByText("Archive conversation")).not.toBeNull();
+  });
+
+  it("shows the suspended hint in the peek for a gated row whose execution is halted", async () => {
+    const fetchMock = vi.fn<(url: RequestInfo | URL) => Promise<Response>>(
+      async () =>
+        new Response(JSON.stringify({ messages: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      renderSidebarWithActiveData({
+        conversations: [
+          {
+            ...gatedSessionConversation,
+            pendingApproval: {
+              ...gatedSessionConversation.pendingApproval,
+              executionSuspended: true,
+            },
+          },
+        ],
+        // A halted execution is excluded from the active execution list, so
+        // the suspended flag must come from the row's standing payload.
+        graphWorkflowExecutions: [],
+        activeCollaborationExecutions: [],
+      });
+
+      fireEvent.click(
+        screen.getByLabelText("Gated session conversation — awaiting"),
+      );
+
+      expect(
+        await screen.findByText(/Execution suspended/),
+      ).toBeInTheDocument();
     } finally {
       vi.unstubAllGlobals();
     }

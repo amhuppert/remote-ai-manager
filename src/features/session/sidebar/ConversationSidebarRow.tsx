@@ -31,6 +31,24 @@ const ROLE_LABEL: Record<NonNullable<ActiveConversation["role"]>, string> = {
   planner: "planner",
 };
 
+function formatGateStatusLine(
+  pendingApproval: NonNullable<ActiveConversation["pendingApproval"]>,
+): string {
+  const segments = ["approval required"];
+  if (
+    pendingApproval.tasksCompleted !== null &&
+    pendingApproval.tasksTotal !== null
+  ) {
+    segments.push(
+      `${pendingApproval.tasksCompleted}/${pendingApproval.tasksTotal} tasks`,
+    );
+  }
+  // The gate only parks after all validators pass, so a pending gate implies
+  // a green validator outcome.
+  segments.push("validators ✓");
+  return segments.join(" · ");
+}
+
 function formatSidebarTime(isoDate: string): string {
   const timestamp = new Date(isoDate).getTime();
   if (!Number.isFinite(timestamp)) return "";
@@ -124,6 +142,7 @@ export default function ConversationSidebarRow({
     role,
     pendingQuestion,
     unread,
+    pendingApproval,
   } = conversation;
 
   const contextLabel =
@@ -133,7 +152,9 @@ export default function ConversationSidebarRow({
       ? [conversation.projectName, contextLabel]
       : [contextLabel];
   const title = name ?? summary ?? "Unnamed conversation";
-  const activityText = pendingQuestion ?? lastActivitySummary;
+  const gateStatusLine =
+    pendingApproval !== null ? formatGateStatusLine(pendingApproval) : null;
+  const activityText = gateStatusLine ?? pendingQuestion ?? lastActivitySummary;
   const showActivity =
     activityText !== null &&
     activityText.trim() !== "" &&
@@ -143,14 +164,19 @@ export default function ConversationSidebarRow({
     !isClosed && unread && status !== "waiting_for_input";
   const statusPrefix = isClosed
     ? null
-    : status === "waiting_for_input"
-      ? "Asks"
-      : isUnreadFinished
-        ? "Done"
-        : status === "running"
-          ? "Running"
-          : null;
-  const showAck = isUnreadFinished && onAcknowledge !== undefined;
+    : gateStatusLine !== null
+      ? null
+      : status === "waiting_for_input"
+        ? "Asks"
+        : isUnreadFinished
+          ? "Done"
+          : status === "running"
+            ? "Running"
+            : null;
+  // A pending approval gate owns the row's resolution: dismissing (mark-read)
+  // is suppressed until the gate is decided.
+  const showAck =
+    isUnreadFinished && pendingApproval === null && onAcknowledge !== undefined;
 
   const classNames = [
     "conversation-sidebar-row",
@@ -159,6 +185,7 @@ export default function ConversationSidebarRow({
     isFirstInSession ? "is-first-in-session" : null,
     isLastInSession ? "is-last-in-session" : null,
     !isClosed && pendingQuestion !== null ? "has-pending-question" : null,
+    !isClosed && pendingApproval !== null ? "has-pending-approval" : null,
     isUnreadFinished ? "is-unread" : null,
   ]
     .filter(Boolean)
@@ -234,9 +261,20 @@ export default function ConversationSidebarRow({
             className="conversation-sidebar-row__dot"
             data-status={status}
             data-unread={isUnreadFinished ? "true" : undefined}
+            data-gated={
+              !isClosed && pendingApproval !== null ? "true" : undefined
+            }
             aria-hidden="true"
           />
           <span className="conversation-sidebar-row__title">{title}</span>
+          {!isClosed && pendingApproval !== null && (
+            <span
+              className="conversation-sidebar-row__gate-chip"
+              aria-label="approval required"
+            >
+              approval
+            </span>
+          )}
           {isClosed && (
             <span
               className="conversation-sidebar-row__reopen"
@@ -318,7 +356,10 @@ export default function ConversationSidebarRow({
         </span>
 
         {showActivity && (
-          <span className="conversation-sidebar-row__activity">
+          <span
+            className="conversation-sidebar-row__activity"
+            data-tone={gateStatusLine !== null ? "approval" : undefined}
+          >
             {statusPrefix !== null && (
               <span
                 className="conversation-sidebar-row__activity-prefix"

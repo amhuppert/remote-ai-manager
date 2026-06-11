@@ -136,13 +136,13 @@ describe("WorkflowInspectorPanel — persistent tab strip", () => {
 });
 
 describe("WorkflowInspectorPanel — workflow tab body", () => {
-  it("renders exactly seven InspectorConfigBlocks and no AC, tasks, or delete", () => {
+  it("renders exactly eight InspectorConfigBlocks and no AC, tasks, or delete", () => {
     resetStore();
     setupStore({ selectedContextId: null });
     const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
 
     const blocks = container.querySelectorAll(".wb-inspector-block");
-    expect(blocks).toHaveLength(7);
+    expect(blocks).toHaveLength(8);
     const labels = Array.from(
       container.querySelectorAll(".cc-section-label"),
     ).map((el) => el.textContent);
@@ -151,6 +151,7 @@ describe("WorkflowInspectorPanel — workflow tab body", () => {
       "Collaboration",
       "Context validator",
       "Script validator",
+      "Human approval gate",
       "Iteration policy",
       "Circuit breaker",
       "Mutability",
@@ -252,10 +253,38 @@ describe("WorkflowInspectorPanel — workflow tab body", () => {
         .scriptValidator,
     ).toBeUndefined();
   });
+
+  it("toggling the workflow human approval gate creates and resets a workflow override", () => {
+    resetStore();
+    setupStore({ selectedContextId: null });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const toggle = screen.getByRole("switch", {
+      name: /workflow human approval gate/i,
+    });
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+
+    fireEvent.click(toggle);
+
+    expect(
+      _useGraphWorkflowBuilderStore.getState().draftDefinition?.workflowConfig
+        .humanApprovalGate,
+    ).toEqual({ enabled: true });
+
+    const block = findBlockByLabel(container, "Human approval gate")!;
+    fireEvent.click(
+      footButtons(block).find((b) => b.textContent === "Reset to inherit")!,
+    );
+
+    expect(
+      _useGraphWorkflowBuilderStore.getState().draftDefinition?.workflowConfig
+        .humanApprovalGate,
+    ).toBeUndefined();
+  });
 });
 
 describe("WorkflowInspectorPanel — context tab body", () => {
-  it("renders AC header, seven blocks, tasks editor, and delete button", () => {
+  it("renders AC header, eight blocks, tasks editor, and delete button", () => {
     resetStore();
     setupStore({ selectedContextId: "context-plan" });
     const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
@@ -264,7 +293,7 @@ describe("WorkflowInspectorPanel — context tab body", () => {
       container.querySelector("#context-acceptance-criteria"),
     ).not.toBeNull();
     const blocks = container.querySelectorAll(".wb-inspector-block");
-    expect(blocks).toHaveLength(7);
+    expect(blocks).toHaveLength(8);
 
     expect(container.querySelector(".wb-task-list")).not.toBeNull();
     expect(
@@ -365,6 +394,24 @@ describe("WorkflowInspectorPanel — context tab body", () => {
       .getState()
       .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
     expect(ctx?.scriptValidator).toEqual({ enabled: true });
+  });
+
+  it("toggling the context human approval gate creates a context override", () => {
+    resetStore();
+    setupStore({ selectedContextId: "context-plan" });
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const toggle = screen.getByRole("switch", {
+      name: /context human approval gate/i,
+    });
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+
+    fireEvent.click(toggle);
+
+    const ctx = _useGraphWorkflowBuilderStore
+      .getState()
+      .draftDefinition?.executionContexts.find((c) => c.id === "context-plan");
+    expect(ctx?.humanApprovalGate).toEqual({ enabled: true });
   });
 });
 

@@ -62,6 +62,13 @@ import { createSessionGitLock } from "./session-git-lock";
 import { createGraphWorkflowMergeRunner } from "./graph-merge-runner";
 import { createExecutionTargetResolver } from "./execution-target-resolver";
 import { createGraphWorkflowSignalHaltHandler } from "./graph-workflow-signal-halt";
+import {
+  createApprovalGateService,
+  type ApprovalGateDecisionInput,
+  type RecordDecisionGuardFailureReason,
+  type RecordDecisionInput,
+  type RecordDecisionResult,
+} from "./approval-gate";
 import { createSoloContextCommitter } from "./solo-context-committer";
 import { createLaneCommitter } from "./lane-committer";
 import { createJoinRunner } from "./join-runner";
@@ -73,6 +80,18 @@ type RouteContext = {
 const startExecutionSchema = z.object({
   definitionId: z.string().trim().min(1),
 });
+
+const resolveApprovalSchema = z.discriminatedUnion("decision", [
+  z.object({
+    contextId: z.string().trim().min(1),
+    decision: z.literal("approve"),
+  }),
+  z.object({
+    contextId: z.string().trim().min(1),
+    decision: z.literal("reject"),
+    message: z.string().trim().min(1),
+  }),
+]);
 
 const logger = createLogger("graph-workflow-route-handlers");
 
@@ -204,6 +223,7 @@ const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
   executionRepository: workflowManager,
   createConversation,
   continuityService,
+  eventPublisher,
   signalHalt: createGraphWorkflowSignalHaltHandler(workflowManager),
   createToolServer: (input) => ({
     server: buildGraphWorkflowPortableMcp(
@@ -356,7 +376,15 @@ export interface GraphWorkflowExecutionRouteDeps {
     input: RecordPendingHaltReasonInput,
   ): Promise<RecordPendingHaltReasonResult>;
   drainAndHalt(input: DrainAndHaltInput): Promise<GraphWorkflowExecution>;
+  recordApprovalDecision(
+    input: RecordDecisionInput,
+  ): Promise<RecordDecisionResult>;
 }
+
+const approvalGateService = createApprovalGateService({
+  mutateActive: executionRepository.mutateActive,
+  now: () => new Date().toISOString(),
+});
 
 const defaultDeps: GraphWorkflowExecutionRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,
@@ -382,6 +410,7 @@ const defaultDeps: GraphWorkflowExecutionRouteDeps = {
   recordPendingHaltReason: (input) =>
     workflowManager.recordPendingHaltReason(input),
   drainAndHalt: (input) => workflowManager.drainAndHalt(input),
+  recordApprovalDecision: (input) => approvalGateService.recordDecision(input),
 };
 
 function isTerminalStatus(status: GraphWorkflowStatus): boolean {
@@ -551,6 +580,20 @@ async function resolveSession(
   }
 
   return { projectName, projectPath, sessionName, session };
+}
+
+function resolveApprovalConflictMessage(
+  reason: Exclude<RecordDecisionGuardFailureReason, "no_active_execution">,
+  contextId: string,
+): string {
+  switch (reason) {
+    case "not_awaiting_approval":
+      return `Context "${contextId}" is not awaiting approval (not_awaiting_approval)`;
+    case "already_decided":
+      return `Context "${contextId}" already has a recorded approval decision (already_decided)`;
+    case "execution_not_running":
+      return "The graph workflow execution no longer accepts approval decisions (execution_not_running)";
+  }
 }
 
 function respondToManagerError(error: unknown): Response {
@@ -944,6 +987,68 @@ export function createGraphWorkflowExecutionRouteHandlers(
     }
   }
 
+  async function RESOLVE_APPROVAL(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSession(context, deps);
+    if ("error" in resolved) {
+      return resolved.error;
+    }
+
+    const parsed = resolveApprovalSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid request: contextId and decision are required; reject requires a non-empty message",
+        } satisfies ApiError,
+        { status: 400 },
+      );
+    }
+
+    const decision: ApprovalGateDecisionInput =
+      parsed.data.decision === "approve"
+        ? { type: "approved" }
+        : { type: "rejected", message: parsed.data.message };
+
+    let result: RecordDecisionResult;
+    try {
+      result = await deps.recordApprovalDecision({
+        projectPath: resolved.projectPath,
+        sessionName: resolved.sessionName,
+        contextId: parsed.data.contextId,
+        decision,
+      });
+    } catch (error) {
+      return respondToManagerError(error);
+    }
+
+    if (!result.ok) {
+      if (result.reason === "no_active_execution") {
+        return NextResponse.json(
+          {
+            error: "Session does not have an active graph workflow execution",
+          } satisfies ApiError,
+          { status: 404 },
+        );
+      }
+      return NextResponse.json(
+        {
+          error: resolveApprovalConflictMessage(
+            result.reason,
+            parsed.data.contextId,
+          ),
+        } satisfies ApiError,
+        { status: 409 },
+      );
+    }
+
+    return NextResponse.json({
+      execution: summarizeExecution(result.execution, false),
+    });
+  }
+
   async function CLEAR(
     _request: Request,
     context: RouteContext,
@@ -979,6 +1084,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
     RESUME,
     ABORT,
     RESET_CONTEXT,
+    RESOLVE_APPROVAL,
     CLEAR,
   };
 }
@@ -1006,6 +1112,9 @@ export const abortGraphWorkflowExecution = withTracing(
 );
 export const resetGraphWorkflowExecutionContext = withTracing(
   defaultGraphWorkflowExecutionHandlers.RESET_CONTEXT,
+);
+export const resolveGraphWorkflowApproval = withTracing(
+  defaultGraphWorkflowExecutionHandlers.RESOLVE_APPROVAL,
 );
 export const clearGraphWorkflowExecution = withTracing(
   defaultGraphWorkflowExecutionHandlers.CLEAR,
