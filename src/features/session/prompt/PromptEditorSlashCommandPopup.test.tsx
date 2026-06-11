@@ -255,6 +255,84 @@ describe("PromptEditorSlashCommandPopup", () => {
     expect(screen.getByText("/commit")).toBeInTheDocument();
   });
 
+  it("lists /commit and /merge built-ins with descriptions and argument hints", async () => {
+    mockUseCommandsQuery.mockReturnValue({
+      data: { items: [] },
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    await act(async () => {
+      renderPopup();
+    });
+    expect(screen.getByText("/commit")).toBeInTheDocument();
+    expect(screen.getByText("/merge")).toBeInTheDocument();
+    expect(
+      screen.getByText(/commit session changes with an agent-written message/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/smart-merge the session/i)).toBeInTheDocument();
+  });
+
+  it("selecting the /commit built-in inserts the command ready for hint text", async () => {
+    mockUseCommandsQuery.mockReturnValue({
+      data: { items: [] },
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    const onSelect = vi.fn();
+    const onShowPlaceholder = vi.fn();
+    const ref = createRef<SlashCommandPopupHandle>();
+    await act(async () => {
+      renderPopup({ query: "commit", onSelect, onShowPlaceholder }, ref);
+    });
+    act(() => {
+      ref.current?.handleKeyDown(
+        new KeyboardEvent("keydown", { key: "Enter" }),
+      );
+    });
+    expect(onSelect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "/commit",
+        trigger: "/",
+        kind: "command",
+        source: "built-in",
+        argumentHint: expect.any(String),
+      }),
+    );
+    expect(onShowPlaceholder).toHaveBeenCalledWith(expect.any(String));
+  });
+
+  it("selecting the /merge built-in inserts the command ready for hint text", async () => {
+    mockUseCommandsQuery.mockReturnValue({
+      data: { items: [] },
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    const onSelect = vi.fn();
+    const onShowPlaceholder = vi.fn();
+    const ref = createRef<SlashCommandPopupHandle>();
+    await act(async () => {
+      renderPopup({ query: "merge", onSelect, onShowPlaceholder }, ref);
+    });
+    act(() => {
+      ref.current?.handleKeyDown(
+        new KeyboardEvent("keydown", { key: "Enter" }),
+      );
+    });
+    expect(onSelect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "/merge",
+        trigger: "/",
+        kind: "command",
+        source: "built-in",
+        argumentHint: expect.any(String),
+      }),
+    );
+    expect(onShowPlaceholder).toHaveBeenCalledWith(expect.any(String));
+  });
+
   it("returns false from handleKeyDown for unrelated keys", async () => {
     const ref = createRef<SlashCommandPopupHandle>();
     await act(async () => {

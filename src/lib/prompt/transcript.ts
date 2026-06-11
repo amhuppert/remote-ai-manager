@@ -40,9 +40,9 @@ export interface TranscriptEntry {
   timestamp: string;
   /** SDK message type */
   type: string;
-  /** Message role (for user/assistant messages) */
-  role?: "user" | "assistant";
-  /** Extracted content blocks (for user/assistant messages) */
+  /** Message role (for user/assistant messages; `notice` = CC-authored) */
+  role?: "user" | "assistant" | "notice";
+  /** Extracted content blocks (for user/assistant/notice messages) */
   content?: MessageContentBlock[];
   /** Full SDK message data (for debugging/future use) */
   raw?: unknown;
@@ -55,6 +55,25 @@ export interface TranscriptEntry {
   /** Where this entry originated. Absent on legacy entries and any caller that
    *  doesn't yet thread it through. Persisted verbatim to JSONL. */
   origin?: TranscriptMessageOrigin;
+}
+
+/**
+ * A transcript entry that surfaces as a conversation message: a user,
+ * assistant, or CC-authored notice entry with non-empty content. Shared by
+ * the SSE broadcast gate, the conversation read path, and the fork/copy
+ * merged-message counting so they stay index-consistent.
+ */
+function isVisibleEntry(entry: TranscriptEntry): entry is TranscriptEntry & {
+  role: "user" | "assistant" | "notice";
+  content: MessageContentBlock[];
+} {
+  return (
+    (entry.role === "user" ||
+      entry.role === "assistant" ||
+      entry.role === "notice") &&
+    entry.content !== undefined &&
+    entry.content.length > 0
+  );
 }
 
 // ============================================================
@@ -204,12 +223,7 @@ export async function appendTranscriptEntry(
   // direct broadcast (not StatusBus): clients register
   // `es.addEventListener('message-appended', ...)`, which requires a dedicated
   // event-name frame line that StatusBus's generic envelope does not provide.
-  if (
-    meta &&
-    (entry.role === "user" || entry.role === "assistant") &&
-    entry.content &&
-    entry.content.length > 0
-  ) {
+  if (meta && isVisibleEntry(entry)) {
     const event: MessageAppendedEvent = messageAppendedEventSchema.parse({
       type: "message-appended",
       ...conversationEventScopeFields(
@@ -229,6 +243,47 @@ export async function appendTranscriptEntry(
     });
     activeDeps.broadcast(event);
   }
+}
+
+// ============================================================
+// System Notices
+// ============================================================
+
+export interface AppendNoticeInput {
+  conversationId: string;
+  /** Notice body shown in the conversation as a system-style row */
+  text: string;
+  projectName: string;
+  sessionName: string;
+  /** Optional config directory for transcript path resolution */
+  configDir?: string;
+}
+
+/**
+ * Append a CC-authored notice entry to the conversation transcript and
+ * broadcast it as a `message-appended` SSE event. Notices are durable
+ * informational rows (e.g., command rejections, fallback explanations) —
+ * not user or agent turns.
+ */
+export async function appendNotice(input: AppendNoticeInput): Promise<void> {
+  const { conversationId, text, projectName, sessionName, configDir } = input;
+  await appendTranscriptEntry(
+    conversationId,
+    {
+      timestamp: new Date().toISOString(),
+      type: "notice",
+      role: "notice",
+      content: [{ type: "text", text }],
+    },
+    configDir,
+    { projectName, sessionName },
+  );
+  transcriptLogger.info("notice_appended", {
+    conversationId,
+    projectName,
+    sessionName,
+    textLength: text.length,
+  });
 }
 
 // ============================================================
@@ -293,12 +348,7 @@ export async function copyTranscriptUpTo(
       continue;
     }
 
-    const isVisible =
-      (entry.role === "user" || entry.role === "assistant") &&
-      entry.content &&
-      entry.content.length > 0;
-
-    if (isVisible) {
+    if (isVisibleEntry(entry)) {
       const wouldBeMergedIndex =
         entry.role !== lastVisibleRole ? mergedIndex + 1 : mergedIndex;
 
@@ -368,7 +418,7 @@ export async function findForkAnchorUuid(
   let mergedIndex = -1;
   let lastVisibleRole: string | null = null;
   let lastAssistantUuidBefore: string | null = null;
-  let targetMergedRole: "user" | "assistant" | null = null;
+  let targetMergedRole: TranscriptEntry["role"] | null = null;
   let inclusiveAnchorUuid: string | null = null;
 
   for (const line of lines) {
@@ -379,12 +429,7 @@ export async function findForkAnchorUuid(
       continue;
     }
 
-    const isVisible =
-      (entry.role === "user" || entry.role === "assistant") &&
-      entry.content &&
-      entry.content.length > 0;
-
-    if (!isVisible) continue;
+    if (!isVisibleEntry(entry)) continue;
 
     if (entry.role !== lastVisibleRole) {
       mergedIndex++;
@@ -661,8 +706,7 @@ async function readConversationMessagesWithSeqImpl(
       continue;
     }
 
-    if (entry.role !== "user" && entry.role !== "assistant") continue;
-    if (!entry.content || entry.content.length === 0) continue;
+    if (!isVisibleEntry(entry)) continue;
 
     // Update tracking when we see a user entry with model/effort metadata
     if (entry.role === "user") {
@@ -703,9 +747,14 @@ async function readConversationMessagesWithSeqImpl(
         role: entry.role,
         content: entry.content,
         timestamp: entry.timestamp ?? null,
-        // User entries carry their own metadata; assistant entries inherit
-        model: entry.role === "user" ? entry.model : currentModel,
-        effort: entry.role === "user" ? entry.effort : currentEffort,
+        // User entries carry their own metadata; assistant entries inherit.
+        // CC-authored notices are not agent turns and carry neither.
+        ...(entry.role === "notice"
+          ? {}
+          : {
+              model: entry.role === "user" ? entry.model : currentModel,
+              effort: entry.role === "user" ? entry.effort : currentEffort,
+            }),
         seq: lineIndex,
       });
     }

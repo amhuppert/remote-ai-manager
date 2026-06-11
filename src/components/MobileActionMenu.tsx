@@ -11,16 +11,6 @@ interface MobileActionMenuProps {
   onTddToggle: (enabled: boolean) => void;
   /** Whether TDD toggle is disabled */
   tddDisabled?: boolean;
-  /** Whether commit is disabled */
-  commitDisabled: boolean;
-  /** Whether merge is disabled */
-  mergeDisabled: boolean;
-  /** Branch this session merges into */
-  targetBranch?: string;
-  /** Commit handler */
-  onCommit: () => void;
-  /** Merge handler */
-  onMerge: () => void;
   /** Delete handler */
   onDelete: () => void;
   /** Dev servers: count of running / total */
@@ -33,11 +23,6 @@ export default function MobileActionMenu({
   tddEnabled,
   onTddToggle,
   tddDisabled = false,
-  commitDisabled,
-  mergeDisabled,
-  targetBranch = "main",
-  onCommit,
-  onMerge,
   onDelete,
   devServerCounts,
   onDevServers,
@@ -119,31 +104,6 @@ export default function MobileActionMenu({
               )}
             </button>
           )}
-        </div>
-
-        <div className="mobile-action-sheet-divider" />
-
-        {/* Actions section */}
-        <div className="mobile-action-sheet-section">
-          <div className="mobile-action-sheet-label">Actions</div>
-          <button
-            className="mobile-action-btn-commit"
-            onClick={() => handleAction(onCommit)}
-            disabled={commitDisabled}
-            type="button"
-          >
-            <span>{"\u2714"}</span>
-            <span>Commit</span>
-          </button>
-          <button
-            className="mobile-action-btn-merge"
-            onClick={() => handleAction(onMerge)}
-            disabled={mergeDisabled}
-            type="button"
-          >
-            <span>{"\u2192"}</span>
-            <span>Merge into {targetBranch}</span>
-          </button>
         </div>
 
         <div className="mobile-action-sheet-divider" />

@@ -58,7 +58,7 @@ export type TranscriptMessageOrigin = z.infer<
 >;
 
 export const transcriptMessageSchema = z.object({
-  role: z.enum(["user", "assistant"]),
+  role: z.enum(["user", "assistant", "notice"]),
   content: z.array(messageContentBlockSchema),
   timestamp: z.string().nullable(),
   model: z.string().optional(),
@@ -68,8 +68,8 @@ export const transcriptMessageSchema = z.object({
 
 /** Parsed transcript message */
 export interface TranscriptMessage {
-  /** Message role */
-  role: "user" | "assistant";
+  /** Message role. `notice` marks a CC-authored informational entry. */
+  role: "user" | "assistant" | "notice";
   /** Message content blocks (text, tool_use, tool_result) */
   content: MessageContentBlock[];
   /** ISO 8601 timestamp if available */

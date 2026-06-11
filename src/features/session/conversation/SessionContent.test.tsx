@@ -122,9 +122,6 @@ function makeProps(overrides: Partial<Props> = {}): Props {
     dsStopServer: vi.fn(),
     dsStartAll: vi.fn(),
     dsStopAll: vi.fn(),
-    commitDisabled: false,
-    onCommit: vi.fn(),
-    onMerge: vi.fn(),
     onDelete: vi.fn(),
     ...overrides,
   };

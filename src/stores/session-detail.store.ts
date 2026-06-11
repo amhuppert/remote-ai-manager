@@ -49,8 +49,6 @@ interface SessionDetailState {
   optimisticQueue: OptimisticQueueEntry[];
   messageCountBeforeSubmit: number;
   showDeleteConfirm: boolean;
-  showCommitDialog: boolean;
-  showMergeDialog: boolean;
   sidebarCollapsed: boolean;
   sidebarFilter: string;
   sidebarSessionFilter: SidebarSessionFilter | null;
@@ -91,10 +89,6 @@ interface SessionDetailActions {
   stopRecording: () => void;
   showPlaceholder: (text: string) => void;
   clearPlaceholder: () => void;
-  requestCommit: () => void;
-  cancelCommit: () => void;
-  requestMerge: () => void;
-  cancelMerge: () => void;
   requestDeleteSession: () => void;
   cancelDeleteSession: () => void;
   toggleSidebar: () => void;
@@ -137,8 +131,6 @@ const initialState: SessionDetailState = {
   optimisticQueue: [],
   messageCountBeforeSubmit: 0,
   showDeleteConfirm: false,
-  showCommitDialog: false,
-  showMergeDialog: false,
   sidebarCollapsed: false,
   sidebarFilter: "",
   sidebarSessionFilter: null,
@@ -361,26 +353,6 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
 
     // -- Dialogs --
 
-    requestCommit: () =>
-      set((state) => {
-        state.showCommitDialog = true;
-      }),
-
-    cancelCommit: () =>
-      set((state) => {
-        state.showCommitDialog = false;
-      }),
-
-    requestMerge: () =>
-      set((state) => {
-        state.showMergeDialog = true;
-      }),
-
-    cancelMerge: () =>
-      set((state) => {
-        state.showMergeDialog = false;
-      }),
-
     requestDeleteSession: () =>
       set((state) => {
         state.showDeleteConfirm = true;
@@ -513,10 +485,6 @@ export const useMessageCountBeforeSubmit = () =>
   useSessionDetailStore((s) => s.messageCountBeforeSubmit);
 export const useShowDeleteConfirm = () =>
   useSessionDetailStore((s) => s.showDeleteConfirm);
-export const useShowCommitDialog = () =>
-  useSessionDetailStore((s) => s.showCommitDialog);
-export const useShowMergeDialog = () =>
-  useSessionDetailStore((s) => s.showMergeDialog);
 export const useSidebarCollapsed = () =>
   useSessionDetailStore((s) => s.sidebarCollapsed);
 export const useSidebarFilter = () =>
@@ -579,13 +547,6 @@ export const useShowPlaceholderAction = () =>
   useSessionDetailStore((s) => s.showPlaceholder);
 export const useClearPlaceholder = () =>
   useSessionDetailStore((s) => s.clearPlaceholder);
-export const useRequestCommit = () =>
-  useSessionDetailStore((s) => s.requestCommit);
-export const useCancelCommit = () =>
-  useSessionDetailStore((s) => s.cancelCommit);
-export const useRequestMerge = () =>
-  useSessionDetailStore((s) => s.requestMerge);
-export const useCancelMerge = () => useSessionDetailStore((s) => s.cancelMerge);
 export const useRequestDeleteSession = () =>
   useSessionDetailStore((s) => s.requestDeleteSession);
 export const useCancelDeleteSessionDetail = () =>

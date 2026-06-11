@@ -18,11 +18,6 @@ export interface MobileBottomBarProps {
   tddEnabled: boolean;
   onTddToggle: (enabled: boolean) => void;
   tddDisabled: boolean;
-  commitDisabled: boolean;
-  mergeDisabled: boolean;
-  targetBranch?: string;
-  onCommit: () => void;
-  onMerge: () => void;
   onDelete: () => void;
   devServerCounts: { running: number; total: number };
   onDevServers: () => void;
@@ -34,11 +29,6 @@ export default function MobileBottomBar({
   tddEnabled,
   onTddToggle,
   tddDisabled,
-  commitDisabled,
-  mergeDisabled,
-  targetBranch,
-  onCommit,
-  onMerge,
   onDelete,
   devServerCounts,
   onDevServers,
@@ -60,11 +50,6 @@ export default function MobileBottomBar({
         tddEnabled={tddEnabled}
         onTddToggle={onTddToggle}
         tddDisabled={tddDisabled}
-        commitDisabled={commitDisabled}
-        mergeDisabled={mergeDisabled}
-        targetBranch={targetBranch}
-        onCommit={onCommit}
-        onMerge={onMerge}
         onDelete={onDelete}
         devServerCounts={devServerCounts}
         onDevServers={onDevServers}

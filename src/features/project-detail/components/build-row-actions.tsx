@@ -1,7 +1,6 @@
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import {
   BranchIcon,
-  CheckIcon,
   CopyIcon,
   ArchiveIcon,
   TrashIcon,
@@ -10,7 +9,6 @@ import type { KebabItem } from "./KebabMenu";
 
 export interface RowHandlers {
   onBranch: (s: SessionListItem) => void;
-  onMerge: (s: SessionListItem) => void;
   onCopyBranch: (s: SessionListItem) => void;
   onArchive: (s: SessionListItem) => void;
   onDelete: (s: SessionListItem) => void;
@@ -28,11 +26,6 @@ export function buildRowActions(
       label: "Branch from here",
       icon: <BranchIcon size={14} />,
       onClick: () => handlers.onBranch(session),
-    });
-    items.push({
-      label: "Merge to target",
-      icon: <CheckIcon size={14} />,
-      onClick: () => handlers.onMerge(session),
     });
     items.push("divider");
   }

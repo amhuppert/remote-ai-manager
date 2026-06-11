@@ -9,6 +9,7 @@ import {
   _resetLastSeqCacheForTesting,
   _resetTranscriptReadCacheForTesting,
   appendTranscriptEntry,
+  appendNotice,
   getTranscriptPath,
   parseCommandContent,
   copyTranscriptUpTo,
@@ -1983,5 +1984,176 @@ describe("appendTranscriptEntry — message-appended broadcast", () => {
       );
       expect((captured[0] as { seq: number }).seq).toBe(0);
     });
+  });
+});
+
+// ==========================================================================
+// System notices
+// ==========================================================================
+
+describe("system notices", () => {
+  let captured: SSEEvent[] = [];
+
+  beforeEach(() => {
+    captured = [];
+    _resetLastSeqCacheForTesting();
+    _resetTranscriptReadCacheForTesting();
+    setTranscriptDeps({
+      broadcast: (event: SSEEvent) => {
+        captured.push(event);
+      },
+    });
+  });
+
+  afterEach(() => {
+    _resetTranscriptDepsForTesting();
+  });
+
+  const meta = { projectName: "demo", sessionName: "main" };
+
+  it("appendNotice round-trips through the visible-message read path and the SSE broadcast gate", async () => {
+    const conversationId = "conv-notice-roundtrip";
+    await appendTranscriptEntry(
+      conversationId,
+      {
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "please commit" }],
+      },
+      TEST_DIR,
+      meta,
+    );
+    await appendNotice({
+      conversationId,
+      text: "No changes to commit.",
+      projectName: meta.projectName,
+      sessionName: meta.sessionName,
+      configDir: TEST_DIR,
+    });
+
+    // Read path: the notice must surface as a visible conversation message.
+    const transcriptPath = await getTranscriptPath(conversationId, TEST_DIR);
+    const messages = await readConversationMessagesWithSeq(transcriptPath);
+    expect(messages).toHaveLength(2);
+    expect(messages[1]).toMatchObject({
+      role: "notice",
+      content: [{ type: "text", text: "No changes to commit." }],
+      seq: 1,
+    });
+
+    // Broadcast path: the notice must pass the appendTranscriptEntry gate.
+    expect(captured).toHaveLength(2);
+    const noticeEvent = messageAppendedEventSchema.parse(captured[1]);
+    expect(noticeEvent.message.role).toBe("notice");
+    expect(noticeEvent.message.content).toEqual([
+      { type: "text", text: "No changes to commit." },
+    ]);
+    expect(noticeEvent.seq).toBe(1);
+  });
+
+  it("does not broadcast a notice entry with empty content", async () => {
+    await appendTranscriptEntry(
+      "conv-notice-empty",
+      {
+        timestamp: "2024-01-01T00:00:00Z",
+        type: "notice",
+        role: "notice",
+        content: [],
+      },
+      TEST_DIR,
+      meta,
+    );
+    expect(captured).toHaveLength(0);
+  });
+
+  it("keeps model/effort inheritance across an interleaved notice and gives notices no model/effort", async () => {
+    const transcriptPath = path.join(
+      TEST_DIR,
+      "transcripts",
+      "conv-notice-model.jsonl",
+    );
+    const lines = [
+      JSON.stringify({
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "hi" }],
+        timestamp: "2024-01-01T00:00:00Z",
+        model: "opus",
+        effort: "high",
+      }),
+      JSON.stringify({
+        type: "notice",
+        role: "notice",
+        content: [{ type: "text", text: "Commit job started." }],
+        timestamp: "2024-01-01T00:00:01Z",
+      }),
+      JSON.stringify({
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "hello" }],
+        timestamp: "2024-01-01T00:00:02Z",
+      }),
+    ];
+    await writeFile(transcriptPath, lines.join("\n") + "\n", "utf-8");
+
+    const messages = await readConversationMessages(transcriptPath);
+    expect(messages.map((m) => m.role)).toEqual([
+      "user",
+      "notice",
+      "assistant",
+    ]);
+    expect(messages[1]?.model).toBeUndefined();
+    expect(messages[1]?.effort).toBeUndefined();
+    expect(messages[2]?.model).toBe("opus");
+    expect(messages[2]?.effort).toBe("high");
+  });
+
+  it("copyTranscriptUpTo counts notices as visible merged messages", async () => {
+    const sourcePath = path.join(
+      TEST_DIR,
+      "transcripts",
+      "conv-notice-copy-src.jsonl",
+    );
+    const lines = [
+      JSON.stringify({
+        type: "user",
+        role: "user",
+        content: [{ type: "text", text: "one" }],
+        timestamp: "2024-01-01T00:00:00Z",
+      }),
+      JSON.stringify({
+        type: "notice",
+        role: "notice",
+        content: [{ type: "text", text: "a notice" }],
+        timestamp: "2024-01-01T00:00:01Z",
+      }),
+      JSON.stringify({
+        type: "assistant",
+        role: "assistant",
+        content: [{ type: "text", text: "two" }],
+        timestamp: "2024-01-01T00:00:02Z",
+      }),
+    ];
+    await writeFile(sourcePath, lines.join("\n") + "\n", "utf-8");
+
+    await copyTranscriptUpTo({
+      sourceTranscriptPath: sourcePath,
+      targetConversationId: "conv-notice-copy-target",
+      upToMessageIndex: 2,
+      mode: "exclusive",
+      configDir: TEST_DIR,
+    });
+
+    const targetPath = await getTranscriptPath(
+      "conv-notice-copy-target",
+      TEST_DIR,
+    );
+    const raw = await readFile(targetPath, "utf-8");
+    const copied = raw
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l) as TranscriptEntry);
+    expect(copied.map((e) => e.role)).toEqual(["user", "notice"]);
   });
 });

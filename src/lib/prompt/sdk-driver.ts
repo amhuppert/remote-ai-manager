@@ -17,7 +17,12 @@ import type { ConversationActorRef } from "@/lib/workflows/conversation/machine"
 import type { ConversationEvent } from "@/lib/workflows/conversation/types";
 import type { EnsureActorInputData } from "@/lib/workflows/conversation/manager";
 import type { ExecutionTarget } from "@/lib/workflow-graph/execution-target-resolver";
+import type { RunCommandOutcome } from "@/lib/conversation-commands/service";
+import type { ConversationCommandDispatchInput } from "@/lib/conversation-commands/dispatch";
+import { dispatchConversationCommand as defaultDispatchConversationCommand } from "@/lib/conversation-commands/dispatch";
 import { createLogger } from "@/lib/logging";
+import { parseConversationCommand } from "@/lib/conversation-commands/parse";
+import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import {
   getConversation,
   createConversation,
@@ -268,6 +273,18 @@ export interface PromptDeps {
     negotiationRounds?: number;
     autonomousResolutionThreshold?: CollaborationAutonomousResolutionThreshold;
   }): Promise<{ workflowId: string }>;
+
+  /**
+   * Dispatches a `/commit` or `/merge` conversation command to the command
+   * service. `executePromptStream` calls this when `parseConversationCommand`
+   * matches, instead of running the normal SUBMIT_PROMPT flow. The dispatcher
+   * is responsible for persisting the user's command message (`rawText`) to
+   * the conversation transcript and running the command service to completion
+   * — the route awaits the returned promise.
+   */
+  dispatchConversationCommand?(
+    input: ConversationCommandDispatchInput,
+  ): Promise<RunCommandOutcome>;
 }
 
 let _defaultPromptDeps: PromptDeps | null = null;
@@ -330,6 +347,7 @@ async function getDefaultPromptDeps(): Promise<PromptDeps> {
       const result = await collabManager.start(startInput);
       return { workflowId: result.workflowId };
     },
+    dispatchConversationCommand: defaultDispatchConversationCommand,
     setTooling: (projectPath, sessionName, conversationId, tooling) => {
       const key = runtimeState.conversationRuntimeKey(
         projectPath,
@@ -467,6 +485,17 @@ export class CollabDispatcherUnavailableError extends Error {
   }
 }
 
+export class ConversationCommandDispatcherUnavailableError extends Error {
+  readonly statusCode = 500;
+  readonly code = "CONVERSATION_COMMAND_DISPATCHER_UNAVAILABLE";
+  constructor() {
+    super(
+      "Conversation command dispatcher is not configured for this prompt executor",
+    );
+    this.name = "ConversationCommandDispatcherUnavailableError";
+  }
+}
+
 export function hasCollabPrefix(text: string): boolean {
   const trimmed = text.trimStart();
   return trimmed === "/collab" || trimmed.startsWith("/collab ");
@@ -503,6 +532,7 @@ export async function executePromptStream(
   const resolvedDeps = deps ?? (await getDefaultPromptDeps());
 
   const isCollab = hasCollabPrefix(promptText);
+  const parsedCommand = parseConversationCommand(promptText);
 
   // Get or create conversation, resolving backend along the way
   let resolvedBackend: AgentBackendId;
@@ -557,6 +587,70 @@ export async function executePromptStream(
       { agentBackend: resolvedBackend },
     );
     conversationId = conversation.id;
+  }
+
+  if (parsedCommand) {
+    logger.info("prompt.command_detected", {
+      entry: "prompt-stream",
+      command: parsedCommand.command,
+      hintLength: parsedCommand.hint.length,
+      sessionName: session.sessionName,
+      conversationId,
+    });
+    if (!resolvedDeps.dispatchConversationCommand) {
+      logger.error("prompt.command_dispatcher_unavailable", {
+        command: parsedCommand.command,
+        sessionName: session.sessionName,
+        conversationId,
+      });
+      throw new ConversationCommandDispatcherUnavailableError();
+    }
+    // The project-conversation entry synthesizes a sentinel session; the
+    // service treats that as "no session worktree" (rejection 1.5) while the
+    // sentinel still addresses the project scope for the rejection notice.
+    const hasSessionWorktree = !isProjectSentinel(session.sessionName);
+    try {
+      const outcome = await resolvedDeps.dispatchConversationCommand({
+        projectPath,
+        projectName: resolvedDeps.getProjectDisplayName(projectPath),
+        sessionName: hasSessionWorktree ? session.sessionName : null,
+        ...(hasSessionWorktree
+          ? {}
+          : { noticeSessionName: session.sessionName }),
+        conversationId,
+        parsed: parsedCommand,
+        rawText: promptText,
+      });
+      logger.info("prompt.command_complete", {
+        command: parsedCommand.command,
+        status: outcome.status,
+        sessionName: session.sessionName,
+        conversationId,
+      });
+      emit("done", {});
+      return {
+        conversationId,
+        contextTokens: null,
+        contextWindowMax: null,
+      };
+    } catch (err) {
+      const errorMsg =
+        err instanceof Error ? err.message : "Conversation command failed";
+      logger.error("prompt.command_failed", {
+        command: parsedCommand.command,
+        sessionName: session.sessionName,
+        conversationId,
+        error: errorMsg,
+      });
+      emit("error", { message: errorMsg });
+      emit("done", {});
+      return {
+        conversationId,
+        contextTokens: null,
+        contextWindowMax: null,
+        error: errorMsg,
+      };
+    }
   }
 
   if (isCollab) {

@@ -20,6 +20,7 @@ import {
   getNextImageIndex as defaultGetNextImageIndex,
 } from "@/lib/images/transcript-images";
 import { buildUserTranscriptBlocks } from "@/lib/workflows/conversation/build-user-transcript-blocks";
+import { parseConversationCommand } from "@/lib/conversation-commands/parse";
 import { appendTranscriptEntry as defaultAppendTranscriptEntry } from "./transcript";
 import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
 import type { MessageContentBlock } from "@/lib/conversations/message-content-schemas";
@@ -183,6 +184,24 @@ export async function queueMessage(
     conversationId,
     content,
   });
+
+  // Conversation commands must never be delivered into a running turn: the
+  // row stays pending so the next-turn drain routes it to the command service
+  // instead of the agent, regardless of backend delivery timing.
+  const parsedCommand = text ? parseConversationCommand(text) : null;
+  if (parsedCommand) {
+    logger.info("queue.command_detected", {
+      entry: "message-queue",
+      command: parsedCommand.command,
+      hintLength: parsedCommand.hint.length,
+      projectName: deps.getProjectDisplayName(projectPath),
+      sessionName,
+      conversationId,
+      messageIds: [entry.id],
+      status: "pending",
+    });
+    return { entry, deliveryTiming: "next_turn" };
+  }
 
   const timing = deps.queueCapabilityForBackend(backend).deliveryTiming;
 

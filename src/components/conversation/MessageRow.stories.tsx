@@ -86,3 +86,19 @@ export const NoBadgeUserOrigin: Story = {
     }),
   },
 };
+
+export const SystemNotice: Story = {
+  name: "System notice — distinct row",
+  args: {
+    msg: makeMessage({
+      role: "notice",
+      content: [
+        {
+          type: "text",
+          text: "Commit job started — generating commit message from session changes.",
+        },
+      ],
+      model: undefined,
+    }),
+  },
+};

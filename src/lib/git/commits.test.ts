@@ -1,6 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { GitClient } from "./client";
 import { createCommitsOperations } from "./commits";
+
+const execFileAsync = promisify(execFile);
 
 const gitMock = vi.fn();
 
@@ -9,6 +16,9 @@ const testClient: GitClient = {
 };
 
 const ops = createCommitsOperations(testClient);
+
+// Backed by the real GitClient for temp-repo fixture tests.
+const realOps = createCommitsOperations();
 
 const { parseDiffMock } = vi.hoisted(() => ({
   parseDiffMock: vi.fn(),
@@ -343,6 +353,87 @@ describe("getCommitDiff", () => {
       totalDeletions: 0,
     });
     expect(parseDiffMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("collectChangeSummary", () => {
+  it("returns empty string for a clean worktree", async () => {
+    mockGitSuccess("");
+    const result = await ops.collectChangeSummary("/worktree");
+    expect(result).toBe("");
+  });
+
+  it("combines file status and per-file change magnitude for a dirty worktree", async () => {
+    mockGitSequence([
+      { stdout: " M src/index.ts\n?? new-file.ts\n" },
+      {
+        stdout:
+          " src/index.ts | 12 ++++++++----\n 1 file changed, 8 insertions(+), 4 deletions(-)\n",
+      },
+    ]);
+
+    const result = await ops.collectChangeSummary("/worktree");
+    expect(result).toContain(" M src/index.ts");
+    expect(result).toContain("?? new-file.ts");
+    expect(result).toContain("src/index.ts | 12 ++++++++----");
+
+    expect(gitMock.mock.calls[0]![0]).toEqual([
+      "status",
+      "--porcelain",
+      "--untracked-files=all",
+    ]);
+    expect(gitMock.mock.calls[1]![0]).toEqual(["diff", "--stat", "HEAD"]);
+  });
+
+  it("still names changed files when diff --stat fails (e.g. no HEAD yet)", async () => {
+    mockGitSequence([
+      { stdout: "?? brand-new.ts\n" },
+      { error: new Error("fatal: bad revision 'HEAD'") },
+    ]);
+
+    const result = await ops.collectChangeSummary("/worktree");
+    expect(result).toContain("?? brand-new.ts");
+  });
+});
+
+describe("collectChangeSummary (real git repo)", () => {
+  let repoPath: string;
+
+  async function gitIn(args: string[]): Promise<void> {
+    await execFileAsync("git", args, { cwd: repoPath });
+  }
+
+  beforeEach(async () => {
+    repoPath = await mkdtemp(join(tmpdir(), "cc-change-summary-"));
+    await gitIn(["init"]);
+    await gitIn(["config", "user.email", "test@example.com"]);
+    await gitIn(["config", "user.name", "Test"]);
+    await writeFile(join(repoPath, "tracked.ts"), "export const a = 1;\n");
+    await gitIn(["add", "-A"]);
+    await gitIn(["commit", "-m", "initial", "--no-verify"]);
+  });
+
+  afterEach(async () => {
+    await rm(repoPath, { recursive: true, force: true });
+  });
+
+  it("names modified and untracked files with change magnitude", async () => {
+    await writeFile(
+      join(repoPath, "tracked.ts"),
+      "export const a = 1;\nexport const b = 2;\n",
+    );
+    await writeFile(join(repoPath, "untracked.ts"), "export const c = 3;\n");
+
+    const result = await realOps.collectChangeSummary(repoPath);
+    expect(result).toContain("tracked.ts");
+    expect(result).toContain("untracked.ts");
+    // diff --stat magnitude line for the tracked change
+    expect(result).toMatch(/tracked\.ts\s*\|\s*\d+/);
+  });
+
+  it("returns empty string for a clean worktree", async () => {
+    const result = await realOps.collectChangeSummary(repoPath);
+    expect(result).toBe("");
   });
 });
 

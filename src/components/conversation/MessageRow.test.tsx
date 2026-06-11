@@ -215,6 +215,93 @@ describe("MessageRow", () => {
     expect(container.querySelector(".debug-action-card")).toBeNull();
   });
 
+  describe("notice messages", () => {
+    it("renders a notice as a distinct system row with its content", () => {
+      const { container } = renderWithQuery(
+        <MessageRow
+          msg={makeMessage({
+            role: "notice",
+            content: [{ type: "text", text: "Commit job started." }],
+          })}
+          messageIndex={1}
+          isLast={false}
+          selectedBackend="claude"
+          worktreePath="/tmp/proj"
+          onFork={vi.fn()}
+          lastMessageExtras={null}
+        />,
+      );
+      expect(container.querySelector(".message.notice")).not.toBeNull();
+      expect(screen.getByText("Commit job started.")).toBeInTheDocument();
+    });
+
+    it("does not label a notice as You/Claude/Codex", () => {
+      renderWithQuery(
+        <MessageRow
+          msg={makeMessage({
+            role: "notice",
+            content: [{ type: "text", text: "Merge rejected: session busy" }],
+          })}
+          messageIndex={1}
+          isLast={false}
+          selectedBackend="codex"
+          worktreePath="/tmp/proj"
+          onFork={vi.fn()}
+          lastMessageExtras={null}
+        />,
+      );
+      expect(screen.queryByText("You")).toBeNull();
+      expect(screen.queryByText("Claude")).toBeNull();
+      expect(screen.queryByText("Codex")).toBeNull();
+    });
+
+    it("does not offer the fork action on a notice row even when onFork is wired", () => {
+      const { container } = renderWithQuery(
+        <MessageRow
+          msg={makeMessage({
+            role: "notice",
+            content: [{ type: "text", text: "Commit job started." }],
+          })}
+          messageIndex={1}
+          isLast={false}
+          selectedBackend="claude"
+          worktreePath="/tmp/proj"
+          onFork={vi.fn()}
+          lastMessageExtras={null}
+        />,
+      );
+      expect(
+        container.querySelector(
+          '[title="Fork conversation from this message"]',
+        ),
+      ).toBeNull();
+    });
+
+    it("does not render DebugActionCard for a last notice message", () => {
+      const { container } = renderWithQuery(
+        <MessageRow
+          msg={makeMessage({
+            role: "notice",
+            content: [{ type: "text", text: "Commit job started." }],
+          })}
+          messageIndex={2}
+          isLast={true}
+          selectedBackend="claude"
+          worktreePath="/tmp/proj"
+          onFork={vi.fn()}
+          lastMessageExtras={{
+            projectName: "proj",
+            sessionName: "sess",
+            conversation: makeConversation(),
+            onSendPrompt: vi.fn().mockResolvedValue(undefined),
+            isBusy: false,
+          }}
+        />,
+      );
+      expect(container.querySelector(".debug-action-card")).toBeNull();
+    });
+  });
+
   describe("workflow iteration badge", () => {
     it("renders the iteration index when origin.source === 'workflow'", () => {
       renderWithQuery(

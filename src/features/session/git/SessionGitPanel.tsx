@@ -11,12 +11,7 @@ interface SessionGitPanelProps {
   commits: CommitLogEntry[];
   projectName: string;
   sessionName: string;
-  isFinished?: boolean;
-  commitDisabled?: boolean;
-  mergeDisabled?: boolean;
   isRefreshing?: boolean;
-  onCommit?: () => void;
-  onMerge?: () => void;
   onRefresh?: () => void;
 }
 
@@ -68,12 +63,7 @@ export default function SessionGitPanel({
   commits,
   projectName,
   sessionName,
-  isFinished = false,
-  commitDisabled = false,
-  mergeDisabled = false,
   isRefreshing = false,
-  onCommit,
-  onMerge,
   onRefresh,
 }: SessionGitPanelProps): React.JSX.Element {
   const diffHref = `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/diff`;
@@ -143,24 +133,6 @@ export default function SessionGitPanel({
             <Link href={diffHref} className="btn btn-sm btn-ghost">
               View Diff
             </Link>
-          )}
-          {!isFinished && (
-            <>
-              <button
-                className="btn btn-sm"
-                disabled={commitDisabled || !hasChanges}
-                onClick={onCommit}
-              >
-                Commit
-              </button>
-              <button
-                className="btn btn-sm btn-primary"
-                disabled={mergeDisabled}
-                onClick={onMerge}
-              >
-                Merge
-              </button>
-            </>
           )}
         </div>
       </div>

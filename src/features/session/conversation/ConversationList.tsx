@@ -29,8 +29,6 @@ import CopyableId from "@/components/CopyableId";
 import ScopedAgentCapabilitiesConfig from "@/components/agent-capabilities/ScopedAgentCapabilitiesConfig";
 import GraphWorkflowCard from "@/features/session/conversation/GraphWorkflowCard";
 import SessionGitPanel from "@/features/session/git/SessionGitPanel";
-import CommitDialog from "@/features/session/git/CommitDialog";
-import SmartMergeDialog from "@/features/session/dialogs/SmartMergeDialog";
 
 interface Props {
   projectName: string;
@@ -100,8 +98,6 @@ export default function ConversationList({
 
   // --- Local UI state ---
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [showCommitDialog, setShowCommitDialog] = useState(false);
-  const [showMergeDialog, setShowMergeDialog] = useState(false);
   const [contextCopied, setContextCopied] = useState(false);
 
   // --- Derived data ---
@@ -120,11 +116,6 @@ export default function ConversationList({
   const isFinished = session?.finished ?? false;
   const targetBranch = session?.targetBranch ?? "main";
   const sessionStatus = session ? deriveSessionStatus(session) : "idle";
-  const isBusy =
-    sessionStatus === "running" || sessionStatus === "waiting_for_input";
-
-  const commitDisabled = isFinished || diff.files.length === 0;
-  const mergeDisabled = isFinished;
 
   // Workflow conversations (role !== null) are surfaced on the workflow page
   // instead of the session overview to reduce noise.
@@ -253,27 +244,6 @@ export default function ConversationList({
               {displayStatus}
             </div>
             <div className="topbar-sep" />
-            {!isFinished && (
-              <>
-                <button
-                  className="btn btn-sm"
-                  data-tooltip="Commit changes"
-                  disabled={commitDisabled}
-                  onClick={() => setShowCommitDialog(true)}
-                >
-                  Commit
-                </button>
-                <button
-                  className="btn btn-sm btn-primary"
-                  data-tooltip={`Merge into ${targetBranch}`}
-                  disabled={mergeDisabled}
-                  onClick={() => setShowMergeDialog(true)}
-                >
-                  Merge
-                </button>
-                <div className="topbar-sep" />
-              </>
-            )}
             <button
               className="btn-icon-only danger"
               data-tooltip="Delete session"
@@ -398,12 +368,7 @@ export default function ConversationList({
               commits={commits}
               projectName={projectName}
               sessionName={sessionName}
-              isFinished={isFinished}
-              commitDisabled={commitDisabled || isBusy}
-              mergeDisabled={mergeDisabled || isBusy}
               isRefreshing={diffQuery.isFetching || commitsQuery.isFetching}
-              onCommit={() => setShowCommitDialog(true)}
-              onMerge={() => setShowMergeDialog(true)}
               onRefresh={() => {
                 void diffQuery.refetch();
                 void commitsQuery.refetch();
@@ -525,27 +490,6 @@ export default function ConversationList({
         onConfirm={handleDelete}
         onCancel={() => setShowDeleteConfirm(false)}
       />
-
-      <CommitDialog
-        open={showCommitDialog}
-        onClose={() => setShowCommitDialog(false)}
-        onSuccess={() => setShowCommitDialog(false)}
-        projectName={projectName}
-        sessionName={sessionName}
-      />
-
-      {session && (
-        <SmartMergeDialog
-          open={showMergeDialog}
-          onClose={() => setShowMergeDialog(false)}
-          projectName={projectName}
-          sessionName={sessionName}
-          branchName={session.branchName}
-          targetBranch={targetBranch}
-          commitCount={commits.length}
-          hasUncommittedChanges={diff.files.length > 0}
-        />
-      )}
     </div>
   );
 }

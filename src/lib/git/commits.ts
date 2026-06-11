@@ -53,6 +53,45 @@ export function createCommitsOperations(client: GitClient = defaultGitClient) {
     return stdout.trim().length > 0;
   }
 
+  /** Summarize the worktree's current changes as agent-readable text:
+   *  file statuses (including untracked files) plus per-file change
+   *  magnitude for tracked changes. Returns an empty string when clean. */
+  async function collectChangeSummary(worktreePath: string): Promise<string> {
+    const { stdout: status } = await git(worktreePath, [
+      "status",
+      "--porcelain",
+      "--untracked-files=all",
+    ]);
+    if (!status.trim()) {
+      return "";
+    }
+
+    let stat = "";
+    try {
+      const { stdout } = await git(worktreePath, ["diff", "--stat", "HEAD"]);
+      stat = stdout.trim();
+    } catch {
+      // No HEAD yet (unborn branch) or stat failure — the status file list
+      // alone still names every changed file.
+    }
+
+    const sections = [
+      `File status (git status --porcelain):\n${status.trimEnd()}`,
+    ];
+    if (stat) {
+      sections.push(`Change magnitude (git diff --stat HEAD):\n${stat}`);
+    }
+    const summary = sections.join("\n\n");
+
+    logger.debug("git.changeSummary", {
+      worktreePath,
+      fileCount: status.trim().split("\n").length,
+      summaryLength: summary.length,
+    });
+
+    return summary;
+  }
+
   /** Read the worktree's currently checked-out branch.
    *  Returns null when HEAD is detached (symbolic-ref fails). */
   async function getCurrentBranch(
@@ -239,6 +278,7 @@ export function createCommitsOperations(client: GitClient = defaultGitClient) {
 
   return {
     hasUncommittedChanges,
+    collectChangeSummary,
     getCurrentBranch,
     commitChanges,
     getCommitLog,
@@ -253,6 +293,7 @@ export function createCommitsOperations(client: GitClient = defaultGitClient) {
 const defaultOps = createCommitsOperations();
 
 export const hasUncommittedChanges = defaultOps.hasUncommittedChanges;
+export const collectChangeSummary = defaultOps.collectChangeSummary;
 export const getCurrentBranch = defaultOps.getCurrentBranch;
 export const commitChanges = defaultOps.commitChanges;
 export const getCommitLog = defaultOps.getCommitLog;

@@ -115,11 +115,6 @@ const meta = {
     commits: sampleCommits,
     projectName: "my-project",
     sessionName: "my-session",
-    isFinished: false,
-    commitDisabled: false,
-    mergeDisabled: false,
-    onCommit: fn(),
-    onMerge: fn(),
     onRefresh: fn(),
   },
   decorators: [
@@ -154,17 +149,5 @@ export const Empty: Story = {
   args: {
     diff: emptyDiff,
     commits: [],
-  },
-};
-
-export const Finished: Story = {
-  args: {
-    isFinished: true,
-  },
-};
-
-export const CommitDisabled: Story = {
-  args: {
-    commitDisabled: true,
   },
 };

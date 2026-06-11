@@ -11,8 +11,6 @@ describe("useSessionPageStoreBundle", () => {
     expect(typeof bundle.hydrateLayout).toBe("function");
     expect(typeof bundle.switchMobilePanel).toBe("function");
     expect(typeof bundle.dismissError).toBe("function");
-    expect(typeof bundle.requestCommit).toBe("function");
-    expect(typeof bundle.requestMerge).toBe("function");
     expect(typeof bundle.requestDelete).toBe("function");
     expect(typeof bundle.dsToggle).toBe("function");
     expect(bundle).toHaveProperty("layout");

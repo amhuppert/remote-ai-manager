@@ -29,7 +29,6 @@ function makeSession(overrides: Partial<SessionListItem>): SessionListItem {
 function makeHandlers(): RowHandlers {
   return {
     onBranch: vi.fn(),
-    onMerge: vi.fn(),
     onCopyBranch: vi.fn(),
     onArchive: vi.fn(),
     onDelete: vi.fn(),
@@ -41,11 +40,10 @@ function labels(items: ReturnType<typeof buildRowActions>): string[] {
 }
 
 describe("buildRowActions", () => {
-  it("returns Branch/Merge/divider for an active session", () => {
+  it("returns Branch/divider for an active session", () => {
     const items = buildRowActions(makeSession({}), makeHandlers());
     expect(labels(items)).toEqual([
       "Branch from here",
-      "Merge to target",
       "divider",
       "Copy branch",
       "divider",
@@ -54,7 +52,7 @@ describe("buildRowActions", () => {
     ]);
   });
 
-  it("omits Branch/Merge and the first divider for finished sessions", () => {
+  it("omits Branch and the first divider for finished sessions", () => {
     const items = buildRowActions(
       makeSession({ finished: true }),
       makeHandlers(),
@@ -96,7 +94,6 @@ describe("buildRowActions", () => {
       it.onClick?.();
     }
     expect(handlers.onBranch).toHaveBeenCalledWith(session);
-    expect(handlers.onMerge).toHaveBeenCalledWith(session);
     expect(handlers.onCopyBranch).toHaveBeenCalledWith(session);
     expect(handlers.onArchive).toHaveBeenCalledWith(session);
     expect(handlers.onDelete).toHaveBeenCalledWith(session);

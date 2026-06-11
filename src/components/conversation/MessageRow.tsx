@@ -42,6 +42,16 @@ const MessageRow = memo(function MessageRow({
   onFork,
   lastMessageExtras,
 }: MessageRowProps): React.JSX.Element {
+  if (msg.role === "notice") {
+    return (
+      <div className="message notice" data-msg-index={messageIndex}>
+        <div className="message-role">System</div>
+        <div className="message-content">
+          <MessageContent content={msg.content} worktreePath={worktreePath} />
+        </div>
+      </div>
+    );
+  }
   const isUserMsg = msg.role === "user";
   const iterationIndex =
     msg.origin?.source === "workflow"

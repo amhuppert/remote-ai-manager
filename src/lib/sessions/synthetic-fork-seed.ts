@@ -50,6 +50,9 @@ export async function buildSyntheticForkSeed(
 
     const blocks: string[] = [];
     for (const msg of forkSlice) {
+      // CC-authored notices are not part of the user/agent dialogue —
+      // including them would misattribute them as agent turns.
+      if (msg.role === "notice") continue;
       const role = msg.role === "user" ? "User" : "Assistant";
       const textParts = msg.content
         .filter((b): b is { type: "text"; text: string } => b.type === "text")

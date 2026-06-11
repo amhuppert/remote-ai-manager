@@ -5,9 +5,6 @@ import type { DerivedSessionStatus } from "@/lib/sessions/schemas";
 export interface UseSessionPageDisplayArgs {
   projectName: string;
   isFinished: boolean;
-  isReadOnly: boolean;
-  isBusy: boolean;
-  hasUncommittedChanges: boolean;
   pendingQuestions: unknown;
   sending: boolean;
   sessionStatus: DerivedSessionStatus;
@@ -15,8 +12,6 @@ export interface UseSessionPageDisplayArgs {
 
 export interface SessionPageDisplay {
   decodedProjectName: string;
-  commitDisabled: boolean;
-  mergeDisabled: boolean;
   displayStatus: string;
   statusDotClass: string;
 }
@@ -24,16 +19,11 @@ export interface SessionPageDisplay {
 export function useSessionPageDisplay({
   projectName,
   isFinished,
-  isReadOnly,
-  isBusy,
-  hasUncommittedChanges,
   pendingQuestions,
   sending,
   sessionStatus,
 }: UseSessionPageDisplayArgs): SessionPageDisplay {
   const decodedProjectName = decodeURIComponent(projectName);
-  const commitDisabled = !hasUncommittedChanges || isBusy || isReadOnly;
-  const mergeDisabled = isBusy || isReadOnly;
   const displayStatus = isFinished
     ? "merged"
     : pendingQuestions
@@ -52,8 +42,6 @@ export function useSessionPageDisplay({
 
   return {
     decodedProjectName,
-    commitDisabled,
-    mergeDisabled,
     displayStatus,
     statusDotClass,
   };

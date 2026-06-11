@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { getSession } from "@/lib/state-store";
 import { computeDiff } from "./diff";
+import { resolveMergeTarget } from "./merge-target";
 import { getCommitLog, getCommitDiff } from "./commits";
 import { commitRequestSchema } from "./schemas";
 import {
@@ -323,18 +324,11 @@ export const mergeSession = withTracing(
       );
     }
 
-    const targetBranch = session.targetBranch ?? "main";
+    const { targetBranch, targetWorktreePath } = await resolveMergeTarget(
+      projectPath,
+      session,
+    );
     const mergeMessage = `Merge ${session.branchName} into ${targetBranch}`;
-
-    // Resolve parent worktree path when targeting a non-main branch
-    let targetWorktreePath: string | undefined;
-    if (targetBranch !== "main" && session.parentSessionName) {
-      const parentSession = await getSession(
-        projectPath,
-        session.parentSessionName,
-      );
-      targetWorktreePath = parentSession?.worktreePath;
-    }
 
     const result = dispatchMergeJob({
       projectPath,
@@ -345,7 +339,7 @@ export const mergeSession = withTracing(
       message: mergeMessage,
       autoResolve: body.autoResolve,
       targetBranch,
-      targetWorktreePath,
+      targetWorktreePath: targetWorktreePath ?? undefined,
     });
 
     if (!result.ok) {
@@ -415,18 +409,11 @@ export const resolveSessionConflicts = withTracing(
       );
     }
 
-    const targetBranch = session.targetBranch ?? "main";
+    const { targetBranch, targetWorktreePath } = await resolveMergeTarget(
+      projectPath,
+      session,
+    );
     const mergeMessage = `Merge ${session.branchName} into ${targetBranch}`;
-
-    // Resolve parent worktree path when targeting a non-main branch
-    let targetWorktreePath: string | undefined;
-    if (targetBranch !== "main" && session.parentSessionName) {
-      const parentSession = await getSession(
-        projectPath,
-        session.parentSessionName,
-      );
-      targetWorktreePath = parentSession?.worktreePath;
-    }
 
     const result = dispatchResolveConflictsJob({
       projectPath,
@@ -437,7 +424,7 @@ export const resolveSessionConflicts = withTracing(
       mergeMessage,
       decisions: body.decisions,
       targetBranch,
-      targetWorktreePath,
+      targetWorktreePath: targetWorktreePath ?? undefined,
     });
 
     if (!result.ok) {
@@ -581,17 +568,11 @@ export const landSession = withTracing(
       );
     }
 
-    const targetBranch = session.targetBranch ?? "main";
+    const { targetBranch, targetWorktreePath } = await resolveMergeTarget(
+      projectPath,
+      session,
+    );
     const mergeMessage = `Merge ${session.branchName} into ${targetBranch}`;
-
-    let targetWorktreePath: string | undefined;
-    if (targetBranch !== "main" && session.parentSessionName) {
-      const parentSession = await getSession(
-        projectPath,
-        session.parentSessionName,
-      );
-      targetWorktreePath = parentSession?.worktreePath;
-    }
 
     const result = dispatchMergeJob({
       projectPath,
@@ -602,7 +583,7 @@ export const landSession = withTracing(
       message: mergeMessage,
       autoResolve: false,
       targetBranch,
-      targetWorktreePath,
+      targetWorktreePath: targetWorktreePath ?? undefined,
       entryMode: "land",
       preparedSha,
       expectedTargetSha,

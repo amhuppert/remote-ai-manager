@@ -320,9 +320,6 @@ vi.mock("@/lib/sessions/mutations", () => ({
 }));
 
 vi.mock("@/lib/git/mutations", () => ({
-  useCommitMutation: () => ({ mutate: vi.fn(), isPending: false }),
-  useMergeMutation: () => ({ mutate: vi.fn(), isPending: false }),
-  useSmartMergeMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useResolveConflictsMutation: () => ({ mutate: vi.fn(), isPending: false }),
   ApiCallError: class extends Error {
     code?: string;

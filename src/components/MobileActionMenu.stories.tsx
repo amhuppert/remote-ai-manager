@@ -10,10 +10,6 @@ const meta = {
   args: {
     tddEnabled: false,
     onTddToggle: fn(),
-    commitDisabled: false,
-    mergeDisabled: false,
-    onCommit: fn(),
-    onMerge: fn(),
     onDelete: fn(),
     devServerCounts: { running: 1, total: 2 },
     onDevServers: fn(),
@@ -62,21 +58,8 @@ export const TddEnabled: Story = {
   },
 };
 
-export const CommitDisabled: Story = {
-  args: {
-    commitDisabled: true,
-  },
-};
-
 export const NoDevServers: Story = {
   args: {
     devServerCounts: { running: 0, total: 0 },
-  },
-};
-
-/** Child session merging into a non-main target */
-export const ChildSession: Story = {
-  args: {
-    targetBranch: "csm/implement-auth",
   },
 };

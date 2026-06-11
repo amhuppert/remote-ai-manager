@@ -72,9 +72,6 @@ export default function SessionRow({
   const handlers = useMemo(
     () => ({
       onBranch: (s: SessionListItem) => onBranch?.(s.sessionName),
-      onMerge: () => {
-        // Wired in a follow-up once the merge mutation lives in this UI.
-      },
       onCopyBranch: (s: SessionListItem) => {
         void navigator.clipboard?.writeText(s.branchName);
       },

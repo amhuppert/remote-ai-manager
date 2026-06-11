@@ -56,6 +56,10 @@ import type { ImagePayload } from "@/lib/images/schemas";
 import type { ActiveTurn } from "./types";
 import { messageQueueService } from "@/lib/conversations/message-queue-service";
 import type { ClaimedQueuedBatch } from "@/lib/conversations/message-queue-service";
+import type { ParsedConversationCommand } from "@/lib/conversation-commands/schemas";
+import type { RunCommandOutcome } from "@/lib/conversation-commands/service";
+import type { ConversationCommandDispatchInput } from "@/lib/conversation-commands/dispatch";
+import { dispatchConversationCommand } from "@/lib/conversation-commands/dispatch";
 const logger = createLogger("conversation-manager");
 
 type ProjectConversationStatusNotificationDeps = {
@@ -103,18 +107,45 @@ export interface ConversationQueueDeps {
     deliveryAttemptId: string;
     error: string;
   }): Promise<void>;
+  markDelivered(input: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+    ids: string[];
+    deliveryAttemptId: string;
+  }): Promise<void>;
+  markFailed(input: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+    ids: string[];
+    deliveryAttemptId: string;
+    error: string;
+  }): Promise<void>;
   recoverAbandonedDeliveries(input: {
     projectPath: string;
     sessionName: string;
     conversationId: string;
   }): Promise<number>;
+  /**
+   * Run a queued `/commit` or `/merge` through the conversation command
+   * service with direct-path semantics: persist the user's command message to
+   * the transcript, then await the service run (req 8.3). Mirrors the prompt
+   * route's `dispatchConversationCommand` dep.
+   */
+  runConversationCommand(
+    input: ConversationCommandDispatchInput,
+  ): Promise<RunCommandOutcome>;
 }
 
 const defaultConversationQueueDeps: ConversationQueueDeps = {
   claimNextTurnBatch: (input) => messageQueueService.claimNextTurnBatch(input),
   markPending: (input) => messageQueueService.markPending(input),
+  markDelivered: (input) => messageQueueService.markDelivered(input),
+  markFailed: (input) => messageQueueService.markFailed(input),
   recoverAbandonedDeliveries: (input) =>
     messageQueueService.recoverAbandonedDeliveries(input),
+  runConversationCommand: (input) => dispatchConversationCommand(input),
 };
 
 let _conversationQueueDeps: ConversationQueueDeps | null = null;
@@ -201,11 +232,100 @@ export interface DrainSelf {
 }
 
 /**
+ * Run a claimed single-command batch through the command service with the same
+ * `RunCommandInput` mapping as the direct prompt path (project-sentinel
+ * sessions map to `sessionName: null` + `noticeSessionName`). The queue row is
+ * marked `delivered` only after the run resolves. A service throw is a system
+ * error — rejections and fallbacks resolve as outcomes — so the row is settled
+ * terminally (`failed`, error recorded) rather than returned to `pending`,
+ * which would retry a deterministic failure on every idle entry. Never throws.
+ */
+async function runQueuedCommand(
+  batch: ClaimedQueuedBatch,
+  command: ParsedConversationCommand,
+  context: Pick<
+    ConversationContext,
+    "projectPath" | "sessionName" | "conversationId" | "projectName"
+  >,
+  deps: ConversationQueueDeps,
+): Promise<void> {
+  const { projectPath, projectName, sessionName, conversationId } = context;
+  const { promptText } = queuedBatchToSubmitPrompt(batch.content);
+  const hasSessionWorktree = !isProjectSentinel(sessionName);
+
+  logger.info("queue.drain_command_dispatched", {
+    conversationId,
+    sessionName,
+    command: command.command,
+    hintLength: command.hint.length,
+    messageIds: batch.messageIds,
+    deliveryAttemptId: batch.deliveryAttemptId,
+  });
+
+  try {
+    const outcome = await deps.runConversationCommand({
+      projectPath,
+      projectName,
+      sessionName: hasSessionWorktree ? sessionName : null,
+      ...(hasSessionWorktree ? {} : { noticeSessionName: sessionName }),
+      conversationId,
+      parsed: command,
+      rawText: promptText,
+    });
+    await deps.markDelivered({
+      projectPath,
+      sessionName,
+      conversationId,
+      ids: batch.messageIds,
+      deliveryAttemptId: batch.deliveryAttemptId,
+    });
+    logger.info("queue.drain_command_complete", {
+      conversationId,
+      sessionName,
+      command: command.command,
+      status: outcome.status,
+      messageIds: batch.messageIds,
+      deliveryAttemptId: batch.deliveryAttemptId,
+    });
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    logger.error("queue.drain_command_failed", {
+      conversationId,
+      sessionName,
+      command: command.command,
+      messageIds: batch.messageIds,
+      deliveryAttemptId: batch.deliveryAttemptId,
+      error,
+    });
+    try {
+      await deps.markFailed({
+        projectPath,
+        sessionName,
+        conversationId,
+        ids: batch.messageIds,
+        deliveryAttemptId: batch.deliveryAttemptId,
+        error,
+      });
+    } catch (markErr) {
+      logger.error("queue.drain_command_failed", {
+        conversationId,
+        sessionName,
+        phase: "mark_failed",
+        error: markErr instanceof Error ? markErr.message : String(markErr),
+      });
+    }
+  }
+}
+
+/**
  * Claim the next-turn batch and dispatch exactly one `SUBMIT_PROMPT` carrying
  * the queued-delivery metadata through the actor. No-op when the queue is
- * empty. If the actor can no longer accept `SUBMIT_PROMPT`, the claimed rows are
- * returned to `pending` so a later settle re-drains them. Fire-and-forget: any
- * unexpected error is contained and the rows are returned to `pending`.
+ * empty. A batch claimed as a single command row is routed to the command
+ * service instead of `SUBMIT_PROMPT` (req 8.3); remaining entries drain on
+ * later idle entries, preserving order. If the actor can no longer accept
+ * `SUBMIT_PROMPT`, the claimed rows are returned to `pending` so a later
+ * settle re-drains them. Fire-and-forget: any unexpected error is contained
+ * and the rows are returned to `pending`.
  */
 export async function drainConversationQueue(
   self: DrainSelf,
@@ -224,6 +344,11 @@ export async function drainConversationQueue(
       conversationId,
     });
     if (!batch) return;
+
+    if (batch.command) {
+      await runQueuedCommand(batch, batch.command, context, deps);
+      return;
+    }
 
     const { promptText, images } = queuedBatchToSubmitPrompt(batch.content);
 

@@ -5,9 +5,6 @@ import { useOverlayScope } from "@/hooks/useOverlayScope";
 
 export interface SessionActionsMenuProps {
   targetBranch: string;
-  commitDisabled: boolean;
-  onCommit: () => void;
-  onMerge: () => void;
   onPush?: () => void;
   onRebase?: () => void;
   onDelete: () => void;
@@ -15,9 +12,6 @@ export interface SessionActionsMenuProps {
 
 export default function SessionActionsMenu({
   targetBranch,
-  commitDisabled,
-  onCommit,
-  onMerge,
   onPush,
   onRebase,
   onDelete,
@@ -67,42 +61,6 @@ export default function SessionActionsMenu({
       </button>
       {open && (
         <div className="session-actions-menu" role="menu">
-          <button
-            type="button"
-            role="menuitem"
-            className="session-actions-item"
-            onClick={pick(onCommit)}
-            disabled={commitDisabled}
-          >
-            <span className="sa-item-glyph" aria-hidden="true">
-              {"\u23CE"}
-            </span>
-            <span className="sa-item-body">
-              <span className="sa-item-label">Commit changes</span>
-              <span className="sa-item-desc">
-                Stage and commit working diff
-              </span>
-            </span>
-            <span className="sa-item-shortcut">{"\u2318\u23CE"}</span>
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="session-actions-item session-actions-item--primary"
-            onClick={pick(onMerge)}
-          >
-            <span className="sa-item-glyph" aria-hidden="true">
-              {"\u21E8"}
-            </span>
-            <span className="sa-item-body">
-              <span className="sa-item-label">Merge into {targetBranch}</span>
-              <span className="sa-item-desc">
-                Squash &amp; merge this branch
-              </span>
-            </span>
-            <span className="sa-item-shortcut">{"\u2318M"}</span>
-          </button>
-          <div className="session-actions-sep" role="separator" />
           <button
             type="button"
             role="menuitem"

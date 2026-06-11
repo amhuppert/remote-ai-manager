@@ -48,10 +48,7 @@ interface SessionInfoStripProps {
 
   changesAdd: number;
   changesDel: number;
-  commitDisabled: boolean;
   targetBranch: string;
-  onCommit: () => void;
-  onMerge: () => void;
   onDelete: () => void;
 }
 
@@ -84,10 +81,7 @@ function SessionInfoStrip({
   dsIsStoppingUnmanaged = false,
   changesAdd,
   changesDel,
-  commitDisabled,
   targetBranch,
-  onCommit,
-  onMerge,
   onDelete,
 }: SessionInfoStripProps): React.JSX.Element {
   const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
@@ -155,13 +149,7 @@ function SessionInfoStrip({
             onStopUnmanagedAndRetry={dsStopUnmanagedAndRetry}
             isStoppingUnmanaged={dsIsStoppingUnmanaged}
           />
-          <SessionActionsMenu
-            targetBranch={targetBranch}
-            commitDisabled={commitDisabled}
-            onCommit={onCommit}
-            onMerge={onMerge}
-            onDelete={onDelete}
-          />
+          <SessionActionsMenu targetBranch={targetBranch} onDelete={onDelete} />
           <InfoDetailsPopover
             conversationId={conversationId}
             backendRef={activeConversation?.backendRef ?? null}

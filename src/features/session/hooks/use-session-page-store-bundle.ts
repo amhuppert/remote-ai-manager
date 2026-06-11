@@ -15,8 +15,6 @@ import {
   useDismissCancelled,
   useShowPlaceholderAction,
   useClearPlaceholder,
-  useRequestCommit,
-  useRequestMerge,
   useRequestDeleteSession,
   useCancelDeleteSessionDetail,
   useResetSessionDetailStore,
@@ -69,8 +67,6 @@ export function useSessionPageStoreBundle() {
   const dismissCancelled = useDismissCancelled();
   const showPlaceholder = useShowPlaceholderAction();
   const clearPlaceholder = useClearPlaceholder();
-  const requestCommit = useRequestCommit();
-  const requestMerge = useRequestMerge();
   const requestDelete = useRequestDeleteSession();
   const cancelDelete = useCancelDeleteSessionDetail();
   const resetStore = useResetSessionDetailStore();
@@ -104,8 +100,6 @@ export function useSessionPageStoreBundle() {
     dismissCancelled,
     showPlaceholder,
     clearPlaceholder,
-    requestCommit,
-    requestMerge,
     requestDelete,
     cancelDelete,
     resetStore,

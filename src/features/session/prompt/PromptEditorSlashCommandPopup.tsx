@@ -30,6 +30,21 @@ const BUILT_IN_CLAUDE_COMMANDS: readonly CommandItem[] = [
     type: "command",
     source: "built-in",
   },
+  {
+    name: "/commit",
+    description: "Commit session changes with an agent-written message.",
+    argumentHint: "[message guidance]",
+    type: "command",
+    source: "built-in",
+  },
+  {
+    name: "/merge",
+    description:
+      "Smart-merge the session into its target with an agent-written squash message.",
+    argumentHint: "[message guidance]",
+    type: "command",
+    source: "built-in",
+  },
 ];
 
 export interface SlashCommandPopupHandle {

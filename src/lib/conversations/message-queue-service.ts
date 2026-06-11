@@ -4,8 +4,10 @@ import {
   mutateConversation as defaultMutateConversation,
 } from "@/lib/state-store";
 import { publishSessionStatus } from "@/lib/workflows/primitives/default-session-status-bus";
+import { parseConversationCommand } from "@/lib/conversation-commands/parse";
 import { createLogger } from "@/lib/logging";
 
+import type { ParsedConversationCommand } from "@/lib/conversation-commands/schemas";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { MessageContentBlock } from "@/lib/conversations/message-content-schemas";
@@ -145,18 +147,44 @@ export function claimLiveDeliveryTransform(
 }
 
 /**
- * Atomically claim ALL `pending` rows (in array order) into `delivering` under
- * one shared `attemptId`. Returns the next queue and the claimed rows in order.
- * Pure.
+ * Atomically claim the next deliverable batch of `pending` rows (in array
+ * order) into `delivering` under one shared `attemptId`. The batch is either:
+ *   (a) the maximal prefix of non-command pending rows — coalesced into one
+ *       turn by the caller — stopping before the first conversation command, or
+ *   (b) a single command row at the head of the pending queue, claimed alone
+ *       so the drain routes it to the command service (req 8.3).
+ * Returns the next queue, the claimed rows in order, and the parsed command
+ * for case (b) (`null` for plain batches). Pure.
  */
 export function claimNextTurnBatchTransform(
   queue: readonly PendingQueuedMessage[],
   attemptId: string,
   now: string,
-): { queue: PendingQueuedMessage[]; claimed: PendingQueuedMessage[] } {
+): {
+  queue: PendingQueuedMessage[];
+  claimed: PendingQueuedMessage[];
+  command: ParsedConversationCommand | null;
+} {
+  const pending = queue.filter((entry) => entry.status === "pending");
+  const head = pending[0];
+  if (!head) {
+    return { queue: [...queue], claimed: [], command: null };
+  }
+
+  const headCommand = parseConversationCommand(contentToText(head.content));
+  const claimIds = new Set<string>();
+  if (headCommand) {
+    claimIds.add(head.id);
+  } else {
+    for (const entry of pending) {
+      if (parseConversationCommand(contentToText(entry.content))) break;
+      claimIds.add(entry.id);
+    }
+  }
+
   const claimed: PendingQueuedMessage[] = [];
   const next = queue.map((entry) => {
-    if (entry.status !== "pending") {
+    if (entry.status !== "pending" || !claimIds.has(entry.id)) {
       return entry;
     }
     const updated: PendingQueuedMessage = {
@@ -170,7 +198,7 @@ export function claimNextTurnBatchTransform(
     claimed.push(updated);
     return updated;
   });
-  return { queue: next, claimed };
+  return { queue: next, claimed, command: headCommand };
 }
 
 /**
@@ -327,6 +355,12 @@ export interface ClaimedQueuedBatch {
   deliveryAttemptId: string;
   messageIds: string[];
   content: MessageContentBlock[];
+  /**
+   * Non-null when the batch is a single conversation-command row claimed alone
+   * at the queue head; the drain routes it to the command service instead of
+   * dispatching a SUBMIT_PROMPT turn.
+   */
+  command: ParsedConversationCommand | null;
 }
 
 export interface MessageQueueServiceDeps {
@@ -516,7 +550,7 @@ export function createMessageQueueService(
     const attemptId = deps.newId();
     const now = deps.now();
 
-    const claimed = await deps.mutateConversation(
+    const { claimed, command } = await deps.mutateConversation(
       projectPath,
       sessionName,
       conversationId,
@@ -528,7 +562,7 @@ export function createMessageQueueService(
           now,
         );
         conversation.pendingQueue = result.queue;
-        return result.claimed;
+        return { claimed: result.claimed, command: result.command };
       },
     );
 
@@ -547,12 +581,14 @@ export function createMessageQueueService(
       messageIds,
       deliveryAttemptId: attemptId,
       status: "delivering",
+      command: command?.command ?? null,
     });
 
     return {
       deliveryAttemptId: attemptId,
       messageIds,
       content: coalesceContent(claimed),
+      command,
     };
   }
 

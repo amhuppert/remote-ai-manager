@@ -43,6 +43,9 @@ import type { Snapshot } from "xstate";
 import type { ConversationEvent } from "./types";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import type { ClaimedQueuedBatch } from "@/lib/conversations/message-queue-service";
+import { createMessageQueueService } from "@/lib/conversations/message-queue-service";
+import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
+import { conversationStateSchema } from "@/lib/conversations/schemas";
 import { _resetForTesting as resetRuntime } from "./runtime-state";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import type { ConversationState } from "@/lib/conversations/schemas";
@@ -1011,7 +1014,14 @@ describe("conversation manager", () => {
     return {
       claimNextTurnBatch: vi.fn(async () => null),
       markPending: vi.fn(async () => {}),
+      markDelivered: vi.fn(async () => {}),
+      markFailed: vi.fn(async () => {}),
       recoverAbandonedDeliveries: vi.fn(async () => 0),
+      runConversationCommand: vi.fn(async () => ({
+        status: "dispatched" as const,
+        jobId: "job-1",
+        usedFallback: false,
+      })),
       ...overrides,
     };
   }
@@ -1098,6 +1108,7 @@ describe("conversation manager", () => {
       deliveryAttemptId: "att-9",
       messageIds: ["m1", "m2"],
       content: [{ type: "text", text: "hello" }],
+      command: null,
     };
 
     it("dispatches exactly one SUBMIT_PROMPT carrying the claimed delivery metadata", async () => {
@@ -1178,6 +1189,281 @@ describe("conversation manager", () => {
           deliveryAttemptId: "att-9",
         }),
       );
+    });
+  });
+
+  describe("drainConversationQueue command routing", () => {
+    const COMMAND_BATCH: ClaimedQueuedBatch = {
+      deliveryAttemptId: "att-cmd",
+      messageIds: ["c1"],
+      content: [{ type: "text", text: "/commit focus on the API" }],
+      command: { command: "commit", hint: "focus on the API" },
+    };
+
+    it("routes a command batch to the command service with the direct-path input shape and never sends SUBMIT_PROMPT", async () => {
+      const deps = makeQueueDeps({
+        claimNextTurnBatch: vi.fn(async () => COMMAND_BATCH),
+      });
+      const { self, send } = makeDrainSelf(true);
+
+      await drainConversationQueue(self, DRAIN_CONTEXT, deps);
+
+      expect(send).not.toHaveBeenCalled();
+      expect(deps.runConversationCommand).toHaveBeenCalledTimes(1);
+      expect(deps.runConversationCommand).toHaveBeenCalledWith({
+        projectPath: DRAIN_CONTEXT.projectPath,
+        projectName: DRAIN_CONTEXT.projectName,
+        sessionName: DRAIN_CONTEXT.sessionName,
+        conversationId: DRAIN_CONTEXT.conversationId,
+        parsed: { command: "commit", hint: "focus on the API" },
+        rawText: "/commit focus on the API",
+      });
+      expect(deps.markPending).not.toHaveBeenCalled();
+      expect(deps.markFailed).not.toHaveBeenCalled();
+    });
+
+    it("marks the command row delivered only after the run resolves", async () => {
+      const order: string[] = [];
+      let resolveRun!: (outcome: {
+        status: "dispatched";
+        jobId: string;
+        usedFallback: boolean;
+      }) => void;
+      const runConversationCommand = vi.fn(() => {
+        order.push("run-start");
+        return new Promise<{
+          status: "dispatched";
+          jobId: string;
+          usedFallback: boolean;
+        }>((resolve) => {
+          resolveRun = resolve;
+        });
+      });
+      const markDelivered = vi.fn(async () => {
+        order.push("delivered");
+      });
+      const deps = makeQueueDeps({
+        claimNextTurnBatch: vi.fn(async () => COMMAND_BATCH),
+        runConversationCommand,
+        markDelivered,
+      });
+      const { self } = makeDrainSelf(true);
+
+      const drain = drainConversationQueue(self, DRAIN_CONTEXT, deps);
+      // Let the drain reach the awaited run before resolving it.
+      await vi.waitFor(() => expect(runConversationCommand).toHaveBeenCalled());
+      expect(markDelivered).not.toHaveBeenCalled();
+
+      resolveRun({ status: "dispatched", jobId: "job-7", usedFallback: false });
+      await drain;
+
+      expect(order).toEqual(["run-start", "delivered"]);
+      expect(markDelivered).toHaveBeenCalledWith({
+        projectPath: DRAIN_CONTEXT.projectPath,
+        sessionName: DRAIN_CONTEXT.sessionName,
+        conversationId: DRAIN_CONTEXT.conversationId,
+        ids: ["c1"],
+        deliveryAttemptId: "att-cmd",
+      });
+    });
+
+    it("maps the project sentinel to sessionName null + noticeSessionName, like the direct path", async () => {
+      const deps = makeQueueDeps({
+        claimNextTurnBatch: vi.fn(async () => COMMAND_BATCH),
+      });
+      const { self } = makeDrainSelf(true);
+
+      await drainConversationQueue(
+        self,
+        {
+          ...DRAIN_CONTEXT,
+          sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+        },
+        deps,
+      );
+
+      expect(deps.runConversationCommand).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionName: null,
+          noticeSessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+        }),
+      );
+    });
+
+    it("marks the row failed (terminal, error recorded) when the run throws, never returning it to pending", async () => {
+      // A service throw is a system error: rejections and fallbacks resolve as
+      // outcomes. Returning the row to pending would retry a deterministic
+      // failure on every idle entry, so the drain must settle it terminally.
+      const deps = makeQueueDeps({
+        claimNextTurnBatch: vi.fn(async () => COMMAND_BATCH),
+        runConversationCommand: vi.fn(async () => {
+          throw new Error("command run boom");
+        }),
+      });
+      const { self, send } = makeDrainSelf(true);
+
+      await expect(
+        drainConversationQueue(self, DRAIN_CONTEXT, deps),
+      ).resolves.toBeUndefined();
+
+      expect(send).not.toHaveBeenCalled();
+      expect(deps.markDelivered).not.toHaveBeenCalled();
+      expect(deps.markPending).not.toHaveBeenCalled();
+      expect(deps.markFailed).toHaveBeenCalledWith({
+        projectPath: DRAIN_CONTEXT.projectPath,
+        sessionName: DRAIN_CONTEXT.sessionName,
+        conversationId: DRAIN_CONTEXT.conversationId,
+        ids: ["c1"],
+        deliveryAttemptId: "att-cmd",
+        error: "command run boom",
+      });
+    });
+  });
+
+  describe("drain integration over the real-store queue (text → command → text)", () => {
+    it("drains as turn, command run, turn — in order, with direct-path command semantics", async () => {
+      const fixture = createPersistenceFixture();
+      try {
+        const projectPath = "/repos/proj";
+        const sessionName = "feat";
+        const conversationId = "conv-int";
+        fixture.seedProject(projectPath);
+        fixture.seedSession(projectPath, sessionName);
+        await fixture.seedConversation(
+          projectPath,
+          sessionName,
+          conversationStateSchema.parse({
+            id: conversationId,
+            transcriptPath: null,
+            status: "running",
+            promptCount: 0,
+            createdAt: "2026-06-01T00:00:00.000Z",
+            lastActivityAt: "2026-06-01T00:00:00.000Z",
+          }),
+        );
+
+        const queueService = createMessageQueueService({
+          mutateConversation: (p, s, c, label, mutate) =>
+            fixture.deps.mutateConversation(p, s, c, label, mutate),
+          getConversation: (p, s, c) => fixture.deps.getConversation(p, s, c),
+          getProjectDisplayName: () => "proj",
+          broadcast: () => {},
+          now: () => new Date().toISOString(),
+          newId: () => crypto.randomUUID(),
+        });
+
+        const key = { projectPath, sessionName, conversationId };
+        const first = await queueService.enqueue({
+          ...key,
+          content: [{ type: "text", text: "first message" }],
+        });
+        const command = await queueService.enqueue({
+          ...key,
+          content: [{ type: "text", text: "/commit tighten the API" }],
+        });
+        const last = await queueService.enqueue({
+          ...key,
+          content: [{ type: "text", text: "last message" }],
+        });
+
+        const runInputs: unknown[] = [];
+        const commandRowStatusDuringRun: string[] = [];
+        const deps: ConversationQueueDeps = {
+          claimNextTurnBatch: (input) => queueService.claimNextTurnBatch(input),
+          markPending: (input) => queueService.markPending(input),
+          markDelivered: (input) => queueService.markDelivered(input),
+          markFailed: (input) => queueService.markFailed(input),
+          recoverAbandonedDeliveries: (input) =>
+            queueService.recoverAbandonedDeliveries(input),
+          async runConversationCommand(input) {
+            runInputs.push(input);
+            // The row must not be marked delivered while the run is in flight.
+            const conv = await fixture.deps.getConversation(
+              projectPath,
+              sessionName,
+              conversationId,
+            );
+            commandRowStatusDuringRun.push(
+              conv?.pendingQueue.find((r) => r.id === command.id)?.status ??
+                "missing",
+            );
+            return {
+              status: "dispatched",
+              jobId: "job-int",
+              usedFallback: false,
+            };
+          },
+        };
+
+        const sent: ConversationEvent[] = [];
+        const self: DrainSelf = {
+          getSnapshot: () => ({ can: () => true }),
+          send: (event) => {
+            sent.push(event);
+          },
+        };
+        const context = {
+          projectPath,
+          projectName: "proj",
+          sessionName,
+          conversationId,
+        };
+
+        // Drain 1: the plain prefix before the command becomes one turn.
+        await drainConversationQueue(self, context, deps);
+        expect(sent).toHaveLength(1);
+        const firstEvent = sent[0];
+        if (firstEvent?.type !== "SUBMIT_PROMPT") {
+          throw new Error("expected SUBMIT_PROMPT");
+        }
+        expect(firstEvent.promptText).toBe("first message");
+        expect(firstEvent.queuedDelivery?.messageIds).toEqual([first.id]);
+        // Simulate backend acceptance of the dispatched turn.
+        await queueService.markDelivered({
+          ...key,
+          ids: [first.id],
+          deliveryAttemptId: firstEvent.queuedDelivery!.deliveryAttemptId,
+        });
+
+        // Drain 2: the command at the head runs through the command service.
+        await drainConversationQueue(self, context, deps);
+        expect(sent).toHaveLength(1);
+        expect(runInputs).toEqual([
+          {
+            projectPath,
+            projectName: "proj",
+            sessionName,
+            conversationId,
+            parsed: { command: "commit", hint: "tighten the API" },
+            rawText: "/commit tighten the API",
+          },
+        ]);
+        expect(commandRowStatusDuringRun).toEqual(["delivering"]);
+        // Read back the RELOADED state: command delivered, trailing text pending.
+        const afterCommand = await fixture.deps.getConversation(
+          projectPath,
+          sessionName,
+          conversationId,
+        );
+        expect(
+          afterCommand?.pendingQueue.find((r) => r.id === command.id)?.status,
+        ).toBe("delivered");
+        expect(
+          afterCommand?.pendingQueue.find((r) => r.id === last.id)?.status,
+        ).toBe("pending");
+
+        // Drain 3: the trailing text drains as a normal turn.
+        await drainConversationQueue(self, context, deps);
+        expect(sent).toHaveLength(2);
+        const lastEvent = sent[1];
+        if (lastEvent?.type !== "SUBMIT_PROMPT") {
+          throw new Error("expected SUBMIT_PROMPT");
+        }
+        expect(lastEvent.promptText).toBe("last message");
+        expect(lastEvent.queuedDelivery?.messageIds).toEqual([last.id]);
+      } finally {
+        fixture.close();
+      }
     });
   });
 

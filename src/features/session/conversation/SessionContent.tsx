@@ -56,9 +56,6 @@ export interface SessionContentProps {
   dsDismissUnmanagedConflict?: () => void;
   dsStopUnmanagedAndRetry?: () => void;
   dsIsStoppingUnmanaged?: boolean;
-  commitDisabled: boolean;
-  onCommit: () => void;
-  onMerge: () => void;
   onDelete: () => void;
 }
 
@@ -101,9 +98,6 @@ export default function SessionContent({
   dsDismissUnmanagedConflict,
   dsStopUnmanagedAndRetry,
   dsIsStoppingUnmanaged,
-  commitDisabled,
-  onCommit,
-  onMerge,
   onDelete,
 }: SessionContentProps): React.JSX.Element {
   const hasSidebar = conversations !== undefined;
@@ -165,10 +159,7 @@ export default function SessionContent({
           dsIsStoppingUnmanaged={dsIsStoppingUnmanaged}
           changesAdd={diff.totalAdditions}
           changesDel={diff.totalDeletions}
-          commitDisabled={commitDisabled}
           targetBranch={targetBranch}
-          onCommit={onCommit}
-          onMerge={onMerge}
           onDelete={onDelete}
         />
 

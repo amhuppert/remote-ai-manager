@@ -32,3 +32,23 @@ describe("SessionGitPanel refresh", () => {
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("SessionGitPanel legacy triggers", () => {
+  it("does not render Commit or Merge trigger buttons", () => {
+    renderWithQuery(
+      <SessionGitPanel
+        diff={diff}
+        commits={commits}
+        projectName="proj"
+        sessionName="sess"
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Commit" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Merge" }),
+    ).not.toBeInTheDocument();
+  });
+});

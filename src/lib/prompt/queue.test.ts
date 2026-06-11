@@ -352,6 +352,66 @@ describe("queueMessage in_turn", () => {
     expect(appendTranscriptEntryMock).not.toHaveBeenCalled();
   });
 
+  it("never live-delivers a /commit command: row stays pending for next-turn handling", async () => {
+    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+    enqueueMock.mockResolvedValue(
+      makePendingEntry({ content: [{ type: "text", text: "/commit" }] }),
+    );
+
+    const result = await queueMessage({
+      ...baseParams,
+      text: "/commit",
+      backend: "claude",
+      deps,
+    });
+
+    expect(enqueueMock).toHaveBeenCalledWith({
+      ...baseParams,
+      content: [{ type: "text", text: "/commit" }],
+    });
+    expect(claimLiveDeliveryMock).not.toHaveBeenCalled();
+    expect(queueUserInputMock).not.toHaveBeenCalled();
+    expect(appendTranscriptEntryMock).not.toHaveBeenCalled();
+    expect(markDeliveredMock).not.toHaveBeenCalled();
+    expect(markPendingMock).not.toHaveBeenCalled();
+    expect(result.entry.status).toBe("pending");
+    expect(result.deliveryTiming).toBe("next_turn");
+  });
+
+  it("never live-delivers a /merge command with hint text", async () => {
+    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+
+    const result = await queueMessage({
+      ...baseParams,
+      text: "/merge focus on the schema change",
+      backend: "claude",
+      deps,
+    });
+
+    expect(claimLiveDeliveryMock).not.toHaveBeenCalled();
+    expect(queueUserInputMock).not.toHaveBeenCalled();
+    expect(result.deliveryTiming).toBe("next_turn");
+  });
+
+  it("still live-delivers near-miss command text like /committed", async () => {
+    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+
+    const result = await queueMessage({
+      ...baseParams,
+      text: "/committed the fix already",
+      backend: "claude",
+      deps,
+    });
+
+    expect(queueUserInputMock).toHaveBeenCalledWith({
+      content: [{ type: "text", text: "/committed the fix already" }],
+    });
+    expect(result.deliveryTiming).toBe("in_turn");
+  });
+
   it("returns without delivering when the claim is lost (row no longer pending)", async () => {
     claimLiveDeliveryMock.mockResolvedValue(null);
     const queueUserInputMock = vi.fn().mockResolvedValue(undefined);

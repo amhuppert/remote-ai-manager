@@ -280,23 +280,14 @@ export default function ConversationDetailPage({
     enqueuePromptErrorToast,
   });
 
-  const hasUncommittedChanges = diff.files.length > 0;
-  const {
-    decodedProjectName,
-    commitDisabled,
-    mergeDisabled,
-    displayStatus,
-    statusDotClass,
-  } = useSessionPageDisplay({
-    projectName,
-    isFinished,
-    isReadOnly,
-    isBusy,
-    hasUncommittedChanges,
-    pendingQuestions: store.pendingQuestions,
-    sending: store.sending,
-    sessionStatus,
-  });
+  const { decodedProjectName, displayStatus, statusDotClass } =
+    useSessionPageDisplay({
+      projectName,
+      isFinished,
+      pendingQuestions: store.pendingQuestions,
+      sending: store.sending,
+      sessionStatus,
+    });
 
   if (sessionQuery.isPending || !session) {
     return (
@@ -328,10 +319,6 @@ export default function ConversationDetailPage({
         isWorkflowManagedConversation,
         isInitConversation,
         targetBranch,
-        branchName: session.branchName,
-        hasUncommittedChanges,
-        commitDisabled,
-        mergeDisabled,
         store,
         local,
         collab,

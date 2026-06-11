@@ -2729,64 +2729,6 @@
   background: var(--bg-hover);
 }
 
-/* Styled action buttons (desktop-consistent) */
-.mobile-action-btn-commit {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  width: 100%;
-  padding: 10px var(--space-md);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  background: var(--bg-surface);
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  min-height: 44px;
-}
-
-.mobile-action-btn-commit:hover {
-  background: var(--bg-raised);
-  border-color: var(--border-strong);
-}
-
-.mobile-action-btn-commit:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.mobile-action-btn-merge {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-  width: 100%;
-  padding: 10px var(--space-md);
-  border: 1px solid var(--cyan);
-  border-radius: var(--radius-sm);
-  background: var(--cyan);
-  color: var(--text-inverse);
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  min-height: 44px;
-}
-
-.mobile-action-btn-merge:hover {
-  background: var(--cyan-dim);
-  border-color: var(--cyan-dim);
-  box-shadow: 0 0 20px var(--cyan-glow);
-}
-
-.mobile-action-btn-merge:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
 /* ============================================================
    Shared Selectors — ModelSelector / ReasoningLevelSelector
    (Cross-feature components in src/components/; consumed from

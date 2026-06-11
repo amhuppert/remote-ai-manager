@@ -447,10 +447,6 @@ function MobileSessionViewDemo({
         <MobileActionMenu
           tddEnabled={false}
           onTddToggle={fn()}
-          commitDisabled={sending}
-          mergeDisabled={sending}
-          onCommit={fn()}
-          onMerge={fn()}
           onDelete={fn()}
           devServerCounts={{ running: 1, total: 2 }}
           onDevServers={fn()}

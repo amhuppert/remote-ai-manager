@@ -6,10 +6,6 @@ import MobileActionMenu from "./MobileActionMenu";
 const baseProps = {
   tddEnabled: false,
   onTddToggle: vi.fn(),
-  commitDisabled: false,
-  mergeDisabled: false,
-  onCommit: vi.fn(),
-  onMerge: vi.fn(),
   onDelete: vi.fn(),
 };
 
@@ -36,5 +32,20 @@ describe("MobileActionMenu", () => {
     expect(
       container.querySelector(".mobile-action-sheet.visible"),
     ).not.toBeInTheDocument();
+  });
+
+  it("does not render Commit or Merge actions", () => {
+    render(<MobileActionMenu {...baseProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
+
+    expect(
+      screen.queryByRole("button", { name: /commit/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /merge/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /delete session/i }),
+    ).toBeInTheDocument();
   });
 });

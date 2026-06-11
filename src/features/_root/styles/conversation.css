@@ -249,6 +249,21 @@
   color: var(--violet);
 }
 
+.message.notice {
+  border-left: 2px solid var(--border-subtle);
+  padding-left: var(--space-md);
+}
+
+.message.notice .message-role {
+  color: var(--text-muted);
+}
+
+.message.notice .message-content {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
 .message-content {
   font-family: var(--font-body);
   font-size: 0.9rem;

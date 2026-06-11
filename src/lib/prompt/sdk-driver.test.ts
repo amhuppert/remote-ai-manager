@@ -27,11 +27,18 @@ import {
   createPromptExecutor,
   BackendMismatchError,
   ModelEffortValidationError,
+  ConversationCommandDispatcherUnavailableError,
   DEBUG_MODE_INSTRUCTIONS,
   hasCollabPrefix,
   stripCollabPrefix,
   type PromptDeps,
 } from "./sdk-driver";
+import {
+  createConversationCommandService,
+  type ConversationCommandDeps,
+} from "@/lib/conversation-commands/service";
+import { sessionStateSchema } from "@/lib/sessions/schemas";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 
 // ---------------------------------------------------------------------------
 // Mock actor (simulates XState conversation actor for waitForTurnCompletion)
@@ -1212,5 +1219,296 @@ describe("/collab prompt interception", () => {
       expect(error).toBeTruthy();
       expect(events.find(([e]) => e === "done")).toBeTruthy();
     });
+  });
+});
+
+// ===========================================================================
+// Conversation command interception (/commit, /merge)
+// ===========================================================================
+
+describe("conversation command interception", () => {
+  function makeCommandDeps(
+    overrides: Partial<ConversationCommandDeps> = {},
+  ): ConversationCommandDeps {
+    return {
+      getSession: vi.fn(async () =>
+        sessionStateSchema.parse({
+          sessionName: "test-session",
+          worktreePath: "/projects/repo/.worktrees/test-session",
+          branchName: "csm/test-session",
+          createdAt: "2024-01-01T00:00:00Z",
+          lastActivityAt: "2024-01-01T00:00:00Z",
+        }),
+      ),
+      hasActiveJob: vi.fn(() => false),
+      hasUncommittedChanges: vi.fn(async () => true),
+      collectChangeSummary: vi.fn(async () => " M src/index.ts"),
+      resolveMergeTarget: vi.fn(async () => ({
+        targetBranch: "main",
+        targetWorktreePath: null,
+      })),
+      executeWorkflowTaskRun: vi.fn(async () => ({
+        kind: "structured" as const,
+        structuredOutput: { message: "Add API eligibility checks" },
+        text: "",
+        usage: {
+          costUsd: null,
+          durationMs: null,
+          contextTokens: null,
+          contextWindowMax: null,
+          inputTokens: null,
+          outputTokens: null,
+          cachedInputTokens: null,
+        },
+        backendRef: null,
+      })),
+      dispatchCommitJob: vi.fn(() => ({
+        ok: true as const,
+        value: { jobId: "job-commit-1" },
+      })),
+      dispatchMergeJob: vi.fn(() => ({
+        ok: true as const,
+        value: { jobId: "job-merge-1" },
+      })),
+      appendNotice: vi.fn(async () => {}),
+      ...overrides,
+    };
+  }
+
+  it("invokes the command service for /commit and never enters the normal turn flow (integration)", async () => {
+    const commandDeps = makeCommandDeps();
+    const service = createConversationCommandService(commandDeps);
+    const callOrder: string[] = [];
+    deps = createTestDeps({
+      dispatchConversationCommand: async (input) => {
+        const outcome = await service.run(input);
+        callOrder.push("service-resolved");
+        return outcome;
+      },
+    });
+    const events: Array<[string, unknown]> = [];
+    const emit = (event: string, data: unknown) => {
+      callOrder.push(`emit:${event}`);
+      events.push([event, data]);
+    };
+    const executor = createPromptExecutor(deps);
+
+    const result = await executor.executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "/commit focus on the API surface",
+      emit,
+      "conv-123",
+    );
+
+    // (a) service ran end-to-end: generation turn + commit job dispatch
+    expect(commandDeps.executeWorkflowTaskRun).toHaveBeenCalledTimes(1);
+    expect(commandDeps.dispatchCommitJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectPath: "/projects/repo",
+        sessionName: "test-session",
+        message: "Add API eligibility checks",
+      }),
+    );
+    // (b) normal SUBMIT_PROMPT flow never entered — no actor, no lock path
+    expect(deps.ensureConversationActor).not.toHaveBeenCalled();
+    expect(deps.sendConversationEvent).not.toHaveBeenCalled();
+    expect(deps.attachPromptStream).not.toHaveBeenCalled();
+    // (e) done emitted only after the awaited service completed
+    expect(callOrder).toEqual(["service-resolved", "emit:done"]);
+    expect(events.find(([e]) => e === "done")).toBeTruthy();
+    expect(result).toEqual({
+      conversationId: "conv-123",
+      contextTokens: null,
+      contextWindowMax: null,
+    });
+  });
+
+  it("passes the full RunCommandInput (with rawText) to the dispatcher", async () => {
+    const dispatchConversationCommand = vi.fn(async () => ({
+      status: "dispatched" as const,
+      jobId: "job-1",
+      usedFallback: false,
+    }));
+    deps = createTestDeps({ dispatchConversationCommand });
+    const executor = createPromptExecutor(deps);
+
+    await executor.executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "/merge keep it short",
+      vi.fn(),
+      "conv-123",
+    );
+
+    expect(dispatchConversationCommand).toHaveBeenCalledWith({
+      projectPath: "/projects/repo",
+      projectName: "repo",
+      sessionName: "test-session",
+      conversationId: "conv-123",
+      parsed: { command: "merge", hint: "keep it short" },
+      rawText: "/merge keep it short",
+    });
+  });
+
+  it("maps the project sentinel session to sessionName null with noticeSessionName scope", async () => {
+    const dispatchConversationCommand = vi.fn(async () => ({
+      status: "rejected" as const,
+      reason: "no-session" as const,
+    }));
+    deps = createTestDeps({ dispatchConversationCommand });
+    const executor = createPromptExecutor(deps);
+
+    await executor.executePromptStream(
+      "/projects/repo",
+      makeSession({
+        sessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+        worktreePath: "/projects/repo",
+        branchName: "main",
+      }),
+      "/commit",
+      vi.fn(),
+      "conv-123",
+    );
+
+    expect(dispatchConversationCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionName: null,
+        noticeSessionName: PROJECT_CONVERSATION_SESSION_SENTINEL,
+        parsed: { command: "commit", hint: "" },
+      }),
+    );
+    expect(deps.sendConversationEvent).not.toHaveBeenCalled();
+  });
+
+  it("creates a conversation when a command arrives without conversationId", async () => {
+    const dispatchConversationCommand = vi.fn(async () => ({
+      status: "dispatched" as const,
+      jobId: "job-1",
+      usedFallback: false,
+    }));
+    deps = createTestDeps({ dispatchConversationCommand });
+    const executor = createPromptExecutor(deps);
+
+    const result = await executor.executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "/commit",
+      vi.fn(),
+    );
+
+    expect(deps.createConversation).toHaveBeenCalled();
+    expect(dispatchConversationCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: "conv-123" }),
+    );
+    expect(result.conversationId).toBe("conv-123");
+  });
+
+  it("does not intercept commands appearing mid-prompt or near-misses", async () => {
+    const dispatchConversationCommand = vi.fn();
+    deps = createTestDeps({ dispatchConversationCommand });
+    const executor = createPromptExecutor(deps);
+
+    await executor.executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "please /commit this later",
+      vi.fn(),
+      "conv-123",
+    );
+    await executor.executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "/committed the change",
+      vi.fn(),
+      "conv-123",
+    );
+
+    expect(dispatchConversationCommand).not.toHaveBeenCalled();
+    expect(deps.sendConversationEvent).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves plain prompts on the normal SUBMIT_PROMPT flow", async () => {
+    const dispatchConversationCommand = vi.fn();
+    deps = createTestDeps({ dispatchConversationCommand });
+    const executor = createPromptExecutor(deps);
+
+    await executor.executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "refactor the auth flow",
+      vi.fn(),
+      "conv-123",
+    );
+
+    expect(dispatchConversationCommand).not.toHaveBeenCalled();
+    expect(deps.ensureConversationActor).toHaveBeenCalled();
+    expect(deps.sendConversationEvent).toHaveBeenCalledWith(
+      "/projects/repo",
+      "test-session",
+      "conv-123",
+      expect.objectContaining({ type: "SUBMIT_PROMPT" }),
+    );
+  });
+
+  it("leaves /collab on the collaboration dispatcher, not the command service", async () => {
+    const dispatchConversationCommand = vi.fn();
+    const dispatchCollabStart = vi
+      .fn()
+      .mockResolvedValue({ workflowId: "wf-9" });
+    deps = createTestDeps({ dispatchConversationCommand, dispatchCollabStart });
+    const executor = createPromptExecutor(deps);
+
+    await executor.executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "/collab plan the rollout",
+      vi.fn(),
+      "conv-123",
+    );
+
+    expect(dispatchConversationCommand).not.toHaveBeenCalled();
+    expect(dispatchCollabStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("emits error and done when the command dispatch throws", async () => {
+    const dispatchConversationCommand = vi
+      .fn()
+      .mockRejectedValue(new Error("command boom"));
+    deps = createTestDeps({ dispatchConversationCommand });
+    const events: Array<[string, unknown]> = [];
+    const emit = (event: string, data: unknown) => events.push([event, data]);
+    const executor = createPromptExecutor(deps);
+
+    const result = await executor.executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "/merge",
+      emit,
+      "conv-123",
+    );
+
+    expect(events.find(([e]) => e === "error")?.[1]).toMatchObject({
+      message: "command boom",
+    });
+    expect(events.find(([e]) => e === "done")).toBeTruthy();
+    expect(result.error).toBe("command boom");
+    expect(deps.sendConversationEvent).not.toHaveBeenCalled();
+  });
+
+  it("throws when a command arrives but no dispatcher is configured", async () => {
+    deps = createTestDeps();
+    const executor = createPromptExecutor(deps);
+
+    await expect(
+      executor.executePromptStream(
+        "/projects/repo",
+        makeSession(),
+        "/commit",
+        vi.fn(),
+        "conv-123",
+      ),
+    ).rejects.toBeInstanceOf(ConversationCommandDispatcherUnavailableError);
+    expect(deps.sendConversationEvent).not.toHaveBeenCalled();
   });
 });

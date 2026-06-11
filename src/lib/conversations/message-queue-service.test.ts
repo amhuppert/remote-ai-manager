@@ -337,9 +337,89 @@ describe("claimNextTurnBatchTransform", () => {
       makeEntry({ id: "d1", status: "delivering" }),
     ];
 
-    const { claimed } = claimNextTurnBatchTransform(queue, "attempt-B", NOW);
+    const { claimed, command } = claimNextTurnBatchTransform(
+      queue,
+      "attempt-B",
+      NOW,
+    );
 
     expect(claimed).toEqual([]);
+    expect(command).toBeNull();
+  });
+
+  it("claims a head command entry alone and returns the parsed command", () => {
+    const queue: PendingQueuedMessage[] = [
+      makeEntry({ id: "c1", content: [textBlock("/commit focus the API")] }),
+      makeEntry({ id: "p1", content: [textBlock("after the command")] }),
+    ];
+
+    const {
+      queue: next,
+      claimed,
+      command,
+    } = claimNextTurnBatchTransform(queue, "attempt-B", NOW);
+
+    expect(claimed.map((e) => e.id)).toEqual(["c1"]);
+    expect(claimed[0]?.status).toBe("delivering");
+    expect(command).toEqual({ command: "commit", hint: "focus the API" });
+    // The trailing plain message stays pending for a later drain.
+    expect(next.find((e) => e.id === "p1")?.status).toBe("pending");
+  });
+
+  it("claims the maximal non-command prefix, stopping before the first command", () => {
+    const queue: PendingQueuedMessage[] = [
+      makeEntry({ id: "p1", content: [textBlock("one")] }),
+      makeEntry({ id: "p2", content: [textBlock("two")] }),
+      makeEntry({ id: "c1", content: [textBlock("/merge")] }),
+      makeEntry({ id: "p3", content: [textBlock("three")] }),
+    ];
+
+    const {
+      queue: next,
+      claimed,
+      command,
+    } = claimNextTurnBatchTransform(queue, "attempt-B", NOW);
+
+    expect(claimed.map((e) => e.id)).toEqual(["p1", "p2"]);
+    expect(command).toBeNull();
+    expect(next.find((e) => e.id === "c1")?.status).toBe("pending");
+    expect(next.find((e) => e.id === "p3")?.status).toBe("pending");
+  });
+
+  it("ignores non-pending rows when locating the head command", () => {
+    const queue: PendingQueuedMessage[] = [
+      makeEntry({
+        id: "done",
+        status: "delivered",
+        content: [textBlock("old")],
+      }),
+      makeEntry({ id: "c1", content: [textBlock("/commit")] }),
+    ];
+
+    const { claimed, command } = claimNextTurnBatchTransform(
+      queue,
+      "attempt-B",
+      NOW,
+    );
+
+    expect(claimed.map((e) => e.id)).toEqual(["c1"]);
+    expect(command).toEqual({ command: "commit", hint: "" });
+  });
+
+  it("treats near-miss text like /committed as a plain message", () => {
+    const queue: PendingQueuedMessage[] = [
+      makeEntry({ id: "p1", content: [textBlock("/committed the fix")] }),
+      makeEntry({ id: "p2", content: [textBlock("two")] }),
+    ];
+
+    const { claimed, command } = claimNextTurnBatchTransform(
+      queue,
+      "attempt-B",
+      NOW,
+    );
+
+    expect(claimed.map((e) => e.id)).toEqual(["p1", "p2"]);
+    expect(command).toBeNull();
   });
 });
 
@@ -743,6 +823,7 @@ describe("messageQueueService.claimNextTurnBatch", () => {
     expect(batch).not.toBeNull();
     expect(batch?.messageIds).toEqual(["p1", "p2"]);
     expect(batch?.content).toEqual([textBlock("one"), textBlock("two")]);
+    expect(batch?.command).toBeNull();
 
     const ids = batch?.messageIds ?? [];
     const attemptId = batch?.deliveryAttemptId;
@@ -776,6 +857,38 @@ describe("messageQueueService.claimNextTurnBatch", () => {
     const batch = await service.claimNextTurnBatch(KEY);
 
     expect(batch).toBeNull();
+  });
+
+  it("claims a single head command row alone and surfaces the parsed command", async () => {
+    const store: FakeStore = {
+      conversation: conversationWith([
+        makeEntry({
+          id: "c1",
+          status: "pending",
+          content: [textBlock("/commit polish the API")],
+        }),
+        makeEntry({
+          id: "p1",
+          status: "pending",
+          content: [textBlock("later message")],
+        }),
+      ]),
+    };
+    const { deps } = makeDeps(store);
+    const service = createMessageQueueService(deps);
+
+    const batch = await service.claimNextTurnBatch(KEY);
+
+    expect(batch?.messageIds).toEqual(["c1"]);
+    expect(batch?.command).toEqual({
+      command: "commit",
+      hint: "polish the API",
+    });
+    expect(batch?.content).toEqual([textBlock("/commit polish the API")]);
+    // The trailing plain row stays pending for a later drain.
+    const rows = store.conversation?.pendingQueue ?? [];
+    expect(rows.find((r) => r.id === "p1")?.status).toBe("pending");
+    expect(rows.find((r) => r.id === "c1")?.status).toBe("delivering");
   });
 });
 

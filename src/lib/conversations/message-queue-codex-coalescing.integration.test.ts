@@ -123,8 +123,13 @@ function makeDrainDeps(service: MessageQueueService): ConversationQueueDeps {
   return {
     claimNextTurnBatch: (input) => service.claimNextTurnBatch(input),
     markPending: (input) => service.markPending(input),
+    markDelivered: (input) => service.markDelivered(input),
+    markFailed: (input) => service.markFailed(input),
     recoverAbandonedDeliveries: (input) =>
       service.recoverAbandonedDeliveries(input),
+    runConversationCommand: async () => {
+      throw new Error("not used in coalescing tests");
+    },
   };
 }
 

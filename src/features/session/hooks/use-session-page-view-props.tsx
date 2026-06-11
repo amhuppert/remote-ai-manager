@@ -41,10 +41,6 @@ export interface UseSessionPageViewPropsArgs {
   isWorkflowManagedConversation: boolean;
   isInitConversation: boolean;
   targetBranch: string;
-  branchName: string;
-  hasUncommittedChanges: boolean;
-  commitDisabled: boolean;
-  mergeDisabled: boolean;
 
   store: StoreBundle;
   local: LocalState;
@@ -258,9 +254,6 @@ export function useSessionPageViewProps(
       dsDismissUnmanagedConflict: args.dsDismissUnmanagedConflict,
       dsStopUnmanagedAndRetry: args.dsStopUnmanagedAndRetry,
       dsIsStoppingUnmanaged: args.dsIsStoppingUnmanaged,
-      commitDisabled: args.commitDisabled,
-      onCommit: store.requestCommit,
-      onMerge: store.requestMerge,
       onDelete: store.requestDelete,
     },
     promptInputSlotProps: {
@@ -278,11 +271,6 @@ export function useSessionPageViewProps(
       tddEnabled: args.tddEnabled,
       onTddToggle: args.onTddChange,
       tddDisabled: args.tddDisabled,
-      commitDisabled: args.commitDisabled,
-      mergeDisabled: args.mergeDisabled,
-      targetBranch: args.targetBranch,
-      onCommit: store.requestCommit,
-      onMerge: store.requestMerge,
       onDelete: store.requestDelete,
       devServerCounts: {
         running: args.dsServers.filter((s) => s.status === "running").length,
@@ -291,12 +279,7 @@ export function useSessionPageViewProps(
       onDevServers: store.dsToggle,
     },
     dialogsProps: {
-      projectName: args.projectName,
       sessionName: args.session.sessionName,
-      branchName: args.branchName,
-      targetBranch: args.targetBranch,
-      commitCount: args.commits.length,
-      hasUncommittedChanges: args.hasUncommittedChanges,
       pendingConcurrentSubmission: args.pendingConcurrentSubmission,
       onDeleteConfirm: args.handleDelete,
       onConcurrentConfirm: args.handleConcurrentConfirm,
