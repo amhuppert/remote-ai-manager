@@ -11,15 +11,19 @@ import {
 import type { ImageAttachment } from "@/hooks/use-image-attachments";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 
-const { mockUseCommandsQuery, mockUseAgentCapabilityViewQuery } = vi.hoisted(
-  () => ({
-    mockUseCommandsQuery: vi.fn(),
-    mockUseAgentCapabilityViewQuery: vi.fn(),
-  }),
-);
+const {
+  mockUseCommandsQuery,
+  mockUseProjectCommandsQuery,
+  mockUseAgentCapabilityViewQuery,
+} = vi.hoisted(() => ({
+  mockUseCommandsQuery: vi.fn(),
+  mockUseProjectCommandsQuery: vi.fn(),
+  mockUseAgentCapabilityViewQuery: vi.fn(),
+}));
 
 vi.mock("@/lib/commands/queries", () => ({
   useCommandsQuery: mockUseCommandsQuery,
+  useProjectCommandsQuery: mockUseProjectCommandsQuery,
 }));
 
 vi.mock("@/hooks/use-agent-capabilities", () => ({
@@ -64,6 +68,12 @@ afterEach(() => {
 beforeEach(() => {
   mockUseCommandsQuery.mockReturnValue({
     data: { items: [] },
+    isPending: false,
+    isError: false,
+    error: null,
+  });
+  mockUseProjectCommandsQuery.mockReturnValue({
+    data: undefined,
     isPending: false,
     isError: false,
     error: null,

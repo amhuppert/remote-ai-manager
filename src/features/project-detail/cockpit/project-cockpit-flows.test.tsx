@@ -173,13 +173,15 @@ describe("project page: empty ↔ populated cockpit transition", () => {
     await waitFor(() =>
       expect(document.querySelector(".prompt-input-area")).not.toBeNull(),
     );
-    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.queryByRole("tablist", { name: "Conversations" })).toBeNull();
 
     // The foundation reports the first open conversation → tab strip appears.
     rerender(
       withClient(<PageHarness openConversations={[makeConversation("c1")]} />),
     );
-    expect(screen.getByRole("tablist")).toBeInTheDocument();
+    expect(
+      screen.getByRole("tablist", { name: "Conversations" }),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("rail-stub")).toBeInTheDocument();
     // Entry animation applied on the zero→one crossing.
     expect(container.querySelector(".plc-enter")).not.toBeNull();
@@ -189,10 +191,12 @@ describe("project page: empty ↔ populated cockpit transition", () => {
     const { rerender } = render(
       withClient(<PageHarness openConversations={[makeConversation("c1")]} />),
     );
-    expect(screen.getByRole("tablist")).toBeInTheDocument();
+    expect(
+      screen.getByRole("tablist", { name: "Conversations" }),
+    ).toBeInTheDocument();
 
     rerender(withClient(<PageHarness openConversations={[]} />));
-    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.queryByRole("tablist", { name: "Conversations" })).toBeNull();
     // The rail stays reachable — the whole point of always mounting the shell.
     expect(screen.getByTestId("rail-stub")).toBeInTheDocument();
     await waitFor(() =>

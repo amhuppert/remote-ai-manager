@@ -3,7 +3,9 @@ import type { NextRequest } from "next/server";
 import type { CommandItem } from "@/lib/commands/schemas";
 import {
   createCommandsRouteHandlers,
+  createProjectCommandsRouteHandlers,
   type CommandsRouteDeps,
+  type ProjectCommandsRouteDeps,
 } from "./route-handlers";
 
 // ---------------------------------------------------------------------------
@@ -151,5 +153,58 @@ describe("GET /api/projects/[name]/sessions/[session]/commands", () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as { items: CommandItem[] };
     expect(body.items).toEqual([]);
+  });
+});
+
+// ===========================================================================
+// GET /api/projects/[name]/commands
+// ===========================================================================
+
+describe("GET /api/projects/[name]/commands", () => {
+  function createProjectTestDeps(): ProjectCommandsRouteDeps {
+    return {
+      resolveProjectPath: vi.fn().mockResolvedValue("/projects/my-project"),
+      discoverCommands: vi.fn().mockResolvedValue(testCommands),
+    };
+  }
+
+  function makeProjectRequest(
+    url = "http://localhost/api/projects/my-project/commands",
+  ) {
+    return new Request(url, { method: "GET" });
+  }
+
+  it("discovers commands from the project root", async () => {
+    const projectDeps = createProjectTestDeps();
+    const projectHandlers = createProjectCommandsRouteHandlers(projectDeps);
+
+    const response = await projectHandlers.GET(makeProjectRequest(), {
+      params: Promise.resolve({ name: "my-project" }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { items: CommandItem[] };
+    expect(body.items).toEqual(testCommands);
+    expect(projectDeps.discoverCommands).toHaveBeenCalledWith(
+      "/projects/my-project",
+      "claude",
+    );
+  });
+
+  it("passes the requested backend to command discovery", async () => {
+    const projectDeps = createProjectTestDeps();
+    const projectHandlers = createProjectCommandsRouteHandlers(projectDeps);
+
+    await projectHandlers.GET(
+      makeProjectRequest(
+        "http://localhost/api/projects/my-project/commands?backend=codex",
+      ),
+      { params: Promise.resolve({ name: "my-project" }) },
+    );
+
+    expect(projectDeps.discoverCommands).toHaveBeenCalledWith(
+      "/projects/my-project",
+      "codex",
+    );
   });
 });

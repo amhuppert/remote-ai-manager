@@ -87,6 +87,13 @@ Heuristic: if a hook returns state that changes on user interaction *within* a p
 
 Each entry: symptom → root cause → fix → lesson. Add new entries at the top.
 
+### 2026-06-11 — Default state store was not a process singleton; HMR generations served stale cached lists
+
+- **Symptom**: on the project page, sending a project-level prompt created the conversation (row present in SQLite, transcript written, `findByKey` reads fine) but `GET /api/projects/[name]/conversations` kept returning `[]` indefinitely. The UI stayed on "No open conversations" while the agent was running and answering. A dev-server restart made the rows appear.
+- **Root cause**: `src/lib/state-store/index.ts` built the default store with a plain module-level `const defaultStore = createStateStore()`. The underlying DB connection is a `globalThis` singleton (`__cc_state_db`), but the store — and with it every repo's Pattern 3 parsed-row cache and `cacheVersion` counter — was per-module-instance. A Next.js dev/HMR reload of any server module in the graph produced a second store over the same DB: writes through the new generation bumped only its own `cacheVersion`, so the older generation's `findAll` short-circuit (`cacheVersion === lastFindAllVersion`) kept returning its stale (empty) snapshot forever.
+- **Fix**: `defaultStore` now lives on `globalThis` via `getGlobalSingleton("__cc_state_store", ...)`, matching the DB connection. Regression pinned by `src/lib/state-store/index.singleton.test.ts`, which simulates an HMR reload with `vi.resetModules()` and asserts a write through the later module generation is visible to the earlier generation's cached reads.
+- **Lesson**: Pattern 3's monotonic version counter is only coherent within one store instance. Any module-level cache (or the object owning it) that fronts a shared resource must itself be `getGlobalSingleton`-backed, or HMR/multi-bundle module duplication silently splits the cache brain. When a list API returns stale/empty while point reads work, suspect a second instance of the caching layer before suspecting the cache logic.
+
 ### 2026-06-06 — `sessions-repo.findAll` re-parsed every session row on every `readAll`
 
 - **Symptom**: `state-store.sessions.findAll.timing` p95 **134 ms**, n=1308 in the two-day report — paid on every `aggregate.readAll()` (i.e. every `readState` and every remaining whole-state `mutateState`/`mutateSession`). `conversations-repo` had a parsed-row cache since 2026-05-22 but `sessions-repo` never got one, so each `readAll` re-ran `rowToDomain` (multiple `safeParse`s + JSON-column parses + the legacy-execution migration check) for every session row even when nothing changed.

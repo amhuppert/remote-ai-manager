@@ -1,9 +1,17 @@
 import { createStateStore } from "./store";
+import { getGlobalSingleton } from "@/lib/shared/global-singleton";
 
 export { createStateStore, getStateDb, type StateStore } from "./store";
 export type { AllRepos, StateStoreDeps } from "./schemas";
 
-const defaultStore = createStateStore();
+// One store per process, like the DB connection it wraps (`state-db`'s
+// `__cc_state_db`). The repos inside hold parsed-row caches invalidated by a
+// per-instance version counter; a second instance over the same DB (e.g. a
+// fresh module generation after a Next.js HMR reload) would never see the
+// first instance's bumps and would serve stale list reads indefinitely.
+const defaultStore = getGlobalSingleton("__cc_state_store", () =>
+  createStateStore(),
+);
 
 export const createStateManager = createStateStore;
 

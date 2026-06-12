@@ -161,3 +161,17 @@ describe("PromptEditorFileMentionPopup", () => {
     expect(stopPropagation).toHaveBeenCalled();
   });
 });
+
+describe("PromptEditorFileMentionPopup (project-level conversations)", () => {
+  it("scans the project root when sessionName is the project sentinel", async () => {
+    await act(async () => {
+      renderPopup({ sessionName: "__project__" });
+    });
+    expect(mockUseProjectFilesQuery).toHaveBeenCalledWith({
+      projectName: "proj",
+    });
+    expect(
+      screen.getByText((_, el) => el?.textContent === "src/index.ts"),
+    ).toBeInTheDocument();
+  });
+});

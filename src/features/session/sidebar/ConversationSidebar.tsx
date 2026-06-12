@@ -173,6 +173,12 @@ interface Props {
    * collapsed state, which would otherwise strand the panel with no restore).
    */
   showCollapseControl?: boolean;
+  /**
+   * Whether this sidebar owns the mod+k binding. On the project page mod+k
+   * belongs to the command console (the cockpit composer), so the embedded
+   * rail passes `false` to keep the route-exclusive binding from colliding.
+   */
+  enableSearchHotkey?: boolean;
 }
 
 function ConversationSidebar({
@@ -183,6 +189,7 @@ function ConversationSidebar({
   onMobileClose,
   showNewConversationButton = true,
   showCollapseControl = true,
+  enableSearchHotkey = true,
 }: Props): React.JSX.Element {
   const router = useRouter();
 
@@ -275,14 +282,18 @@ function ConversationSidebar({
   useAppHotkey("toggleSidebar", () => {
     if (showCollapseControl) toggleCollapsed();
   });
-  useAppHotkey("focusSidebarSearch", () => {
-    // Don't steal focus from the prompt composer or other editable element.
-    const active = document.activeElement;
-    // If editable and not our own search input, leave focus alone.
-    if (isEditableTarget(active) && active !== searchInputRef.current) return;
-    searchInputRef.current?.focus();
-    searchInputRef.current?.select();
-  });
+  useAppHotkey(
+    "focusSidebarSearch",
+    () => {
+      // Don't steal focus from the prompt composer or other editable element.
+      const active = document.activeElement;
+      // If editable and not our own search input, leave focus alone.
+      if (isEditableTarget(active) && active !== searchInputRef.current) return;
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    },
+    { enabled: enableSearchHotkey },
+  );
 
   // Focus the rename input when editing begins
   useEffect(() => {

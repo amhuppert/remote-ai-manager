@@ -15,6 +15,7 @@ import {
 } from "@/components/FileAutocompleteList";
 import { useProjectFilesQuery } from "@/lib/files/queries";
 import { filterAndScoreFiles } from "@/lib/files/file-autocomplete-filter";
+import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 
 export interface FileMentionPopupHandle {
   /** Forward a keydown event from the editor; returns true when consumed. */
@@ -53,7 +54,13 @@ export const PromptEditorFileMentionPopup = forwardRef<
   { query, projectName, sessionName, onSelect, onClose },
   ref,
 ) {
-  const filesQuery = useProjectFilesQuery({ projectName, sessionName });
+  // Project-level conversations (the `__project__` sentinel) scan the project
+  // root; sessions scan their own worktree.
+  const filesQuery = useProjectFilesQuery(
+    isProjectSentinel(sessionName)
+      ? { projectName }
+      : { projectName, sessionName },
+  );
 
   const { display, totalCount, truncated } = useMemo(() => {
     const files = filesQuery.data?.items ?? [];

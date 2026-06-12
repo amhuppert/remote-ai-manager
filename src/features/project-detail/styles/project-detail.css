@@ -72,6 +72,17 @@
   animation: pulse-dot 2.5s ease infinite;
 }
 
+/* Header actions cluster (Workflows link + New session) */
+.cc-page-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+}
+.cc-page-actions .cc-ibtn {
+  text-decoration: none;
+}
+
 /* Buttons (page redesign) */
 .cc-primary {
   display: inline-flex;
@@ -1024,6 +1035,19 @@
   }
   .cc-primary-kbd {
     display: none;
+  }
+  .cc-page-actions {
+    align-self: stretch;
+  }
+  .cc-page-actions .cc-primary {
+    align-self: center;
+    flex: 1;
+  }
+  .cc-page-actions .cc-ibtn {
+    min-height: 44px;
+    height: 44px;
+    flex: 1;
+    justify-content: center;
   }
 
   /* Command console: tighten padding, drop desktop-only kbd hints */

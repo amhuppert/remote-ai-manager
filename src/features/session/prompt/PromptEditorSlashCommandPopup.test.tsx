@@ -30,15 +30,28 @@ const mockCommands: CommandItem[] = [
   },
 ];
 
-const { mockUseCommandsQuery, mockUseAgentCapabilityViewQuery } = vi.hoisted(
-  () => ({
-    mockUseCommandsQuery: vi.fn(),
-    mockUseAgentCapabilityViewQuery: vi.fn(),
-  }),
-);
+const mockProjectCommands: CommandItem[] = [
+  {
+    name: "/deploy",
+    description: "Deploy from the project root",
+    type: "command",
+    source: "project",
+  },
+];
+
+const {
+  mockUseCommandsQuery,
+  mockUseProjectCommandsQuery,
+  mockUseAgentCapabilityViewQuery,
+} = vi.hoisted(() => ({
+  mockUseCommandsQuery: vi.fn(),
+  mockUseProjectCommandsQuery: vi.fn(),
+  mockUseAgentCapabilityViewQuery: vi.fn(),
+}));
 
 vi.mock("@/lib/commands/queries", () => ({
   useCommandsQuery: mockUseCommandsQuery,
+  useProjectCommandsQuery: mockUseProjectCommandsQuery,
 }));
 
 vi.mock("@/hooks/use-agent-capabilities", () => ({
@@ -73,12 +86,37 @@ function renderPopup(
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockUseCommandsQuery.mockReturnValue({
-    data: { items: mockCommands },
-    isPending: false,
-    isError: false,
-    error: null,
-  });
+  mockUseCommandsQuery.mockImplementation(
+    (
+      _projectName: string,
+      _sessionName: string,
+      _backend: string,
+      options?: { enabled?: boolean },
+    ) =>
+      options?.enabled === false
+        ? { data: undefined, isPending: false, isError: false, error: null }
+        : {
+            data: { items: mockCommands },
+            isPending: false,
+            isError: false,
+            error: null,
+          },
+  );
+  mockUseProjectCommandsQuery.mockImplementation(
+    (
+      _projectName: string,
+      _backend: string,
+      options?: { enabled?: boolean },
+    ) =>
+      options?.enabled === false
+        ? { data: undefined, isPending: false, isError: false, error: null }
+        : {
+            data: { items: mockProjectCommands },
+            isPending: false,
+            isError: false,
+            error: null,
+          },
+  );
   mockUseAgentCapabilityViewQuery.mockReturnValue({
     data: undefined,
     isPending: false,
@@ -362,5 +400,65 @@ describe("PromptEditorSlashCommandPopup", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(preventDefault).toHaveBeenCalled();
     expect(stopPropagation).toHaveBeenCalled();
+  });
+});
+
+describe("PromptEditorSlashCommandPopup (project-level conversations)", () => {
+  const SENTINEL = "__project__";
+
+  it("renders project-root commands when sessionName is the project sentinel", async () => {
+    await act(async () => {
+      renderPopup({ sessionName: SENTINEL });
+    });
+    expect(screen.getByText("/deploy")).toBeInTheDocument();
+    expect(screen.queryByText("/review")).toBeNull();
+  });
+
+  it("still renders the built-in commands at project scope", async () => {
+    await act(async () => {
+      renderPopup({ sessionName: SENTINEL });
+    });
+    expect(screen.getByText("/collab")).toBeInTheDocument();
+    expect(screen.getByText("/commit")).toBeInTheDocument();
+  });
+
+  it("does not fetch session-scoped commands at project scope", async () => {
+    await act(async () => {
+      renderPopup({ sessionName: SENTINEL });
+    });
+    expect(mockUseCommandsQuery).toHaveBeenCalledWith(
+      "proj",
+      SENTINEL,
+      "claude",
+      { enabled: false },
+    );
+    expect(mockUseProjectCommandsQuery).toHaveBeenCalledWith("proj", "claude", {
+      enabled: true,
+    });
+  });
+
+  it("filters capabilities via the project-scoped conversation cascade", async () => {
+    await act(async () => {
+      renderPopup({ sessionName: SENTINEL, conversationId: "plc-1" });
+    });
+    expect(mockUseAgentCapabilityViewQuery).toHaveBeenCalledWith(
+      {
+        level: "conversation",
+        projectName: "proj",
+        conversationScope: "project",
+        conversationId: "plc-1",
+      },
+      "claude-plugins",
+    );
+  });
+
+  it("falls back to project-level capabilities before the first conversation exists", async () => {
+    await act(async () => {
+      renderPopup({ sessionName: SENTINEL, conversationId: "" });
+    });
+    expect(mockUseAgentCapabilityViewQuery).toHaveBeenCalledWith(
+      { level: "project", projectName: "proj" },
+      "claude-plugins",
+    );
   });
 });

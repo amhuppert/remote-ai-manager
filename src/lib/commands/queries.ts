@@ -23,13 +23,14 @@ export function useCommandsQuery(
 
 export function useProjectCommandsQuery(
   projectName: string,
+  backend: AgentBackendId = "claude",
   options?: { enabled?: boolean },
 ) {
   return useQuery({
-    queryKey: commandKeys.projectList(projectName),
+    queryKey: commandKeys.projectList(projectName, backend),
     queryFn: () =>
       apiFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/commands`,
+        `/api/projects/${encodeURIComponent(projectName)}/commands?backend=${encodeURIComponent(backend)}`,
         commandsResponseSchema,
       ),
     enabled: options?.enabled,

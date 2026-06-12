@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { selectLastUserTurnAgentSettings } from "@/lib/conversations/last-turn-agent-settings";
 import type { SessionListItem } from "@/lib/sessions/schemas";
@@ -29,6 +35,7 @@ import {
   useSetActiveTab,
   useFocusTab,
   useToggleRail,
+  useSetRailCollapsed,
 } from "./use-cockpit-view-state";
 import "./styles/cockpit.css";
 
@@ -49,6 +56,18 @@ export interface ProjectCockpitProps {
   /** The global Active Conversations rail, mounted as the left column. */
   rail: ReactNode;
 }
+
+/**
+ * Which cockpit area a small viewport shows. Desktop shows all three at once;
+ * at ≤768px the switcher picks one (the grid collapses to a single column).
+ */
+type MobilePane = "chat" | "rail" | "sessions";
+
+const MOBILE_PANES: { id: MobilePane; label: string }[] = [
+  { id: "chat", label: "Chat" },
+  { id: "rail", label: "Conversations" },
+  { id: "sessions", label: "Sessions" },
+];
 
 function ChevronGlyph({ dir }: { dir: "left" | "right" }): React.JSX.Element {
   return (
@@ -100,6 +119,27 @@ export default function ProjectCockpit({
   const setActiveTab = useSetActiveTab();
   const focusTab = useFocusTab();
   const toggleRail = useToggleRail();
+  const setRailCollapsed = useSetRailCollapsed();
+
+  const [mobilePane, setMobilePane] = useState<MobilePane>("chat");
+  const handleMobilePane = useCallback(
+    (pane: MobilePane) => {
+      setMobilePane(pane);
+      // A collapsed rail renders no content; opening the rail pane on mobile
+      // must always show the conversations list.
+      if (pane === "rail") setRailCollapsed(false);
+    },
+    [setRailCollapsed],
+  );
+
+  // Focusing a conversation (rail tap, `?focus=` param, new tab) must surface
+  // the chat pane on mobile — otherwise the selection happens invisibly behind
+  // the rail or sessions pane.
+  const [prevActiveTabId, setPrevActiveTabId] = useState(activeTabId);
+  if (prevActiveTabId !== activeTabId) {
+    setPrevActiveTabId(activeTabId);
+    setMobilePane("chat");
+  }
 
   const sender = useSendProjectPrompt(projectName);
   const createConversation = useCreateProjectConversation(projectName);
@@ -276,7 +316,26 @@ export default function ProjectCockpit({
     <div
       className={`plc-cockpit${entering ? " plc-enter" : ""}`}
       data-rail-collapsed={railCollapsed}
+      data-mobile-pane={mobilePane}
     >
+      <div
+        className="plc-mobile-switch cc-tabs"
+        role="tablist"
+        aria-label="Cockpit panes"
+      >
+        {MOBILE_PANES.map((pane) => (
+          <button
+            key={pane.id}
+            type="button"
+            role="tab"
+            aria-selected={mobilePane === pane.id}
+            className={`cc-tab${mobilePane === pane.id ? " active" : ""}`}
+            onClick={() => handleMobilePane(pane.id)}
+          >
+            {pane.label}
+          </button>
+        ))}
+      </div>
       <div className="plc-rail" data-collapsed={railCollapsed}>
         {railCollapsed ? (
           <div className="plc-rail-collapsed">
@@ -292,7 +351,7 @@ export default function ProjectCockpit({
           </div>
         ) : (
           <>
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <div className="plc-rail-toggle-row">
               <button
                 type="button"
                 className="btn-icon-only"

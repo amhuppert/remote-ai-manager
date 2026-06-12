@@ -2,6 +2,7 @@
 
 import "./styles/project-detail.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSessionsQuery } from "@/lib/sessions/queries";
 import { useProjectsQuery } from "@/lib/projects/queries";
@@ -37,6 +38,47 @@ import {
 
 interface ProjectDetailViewProps {
   projectName: string;
+}
+
+function WorkflowGlyph(): React.JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <circle
+        cx="3.5"
+        cy="3.5"
+        r="2.1"
+        stroke="currentColor"
+        strokeWidth="1.2"
+      />
+      <circle
+        cx="12.5"
+        cy="3.5"
+        r="2.1"
+        stroke="currentColor"
+        strokeWidth="1.2"
+      />
+      <circle
+        cx="8"
+        cy="12.5"
+        r="2.1"
+        stroke="currentColor"
+        strokeWidth="1.2"
+      />
+      <path
+        d="M5 4.5 L11 4.5 M4.5 5.2 L7.4 11 M11.5 5.2 L8.6 11"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
 }
 
 export default function ProjectDetailView({
@@ -218,17 +260,27 @@ export default function ProjectDetailView({
                     </span>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  className="cc-primary"
-                  onClick={() => openCreateModal()}
-                >
-                  <span className="plus">
-                    <PlusIcon size={12} />
-                  </span>
-                  New session
-                  <span className="cc-primary-kbd">⌘N</span>
-                </button>
+                <div className="cc-page-actions">
+                  <Link
+                    href={`/projects/${encodeURIComponent(projectName)}/workflows`}
+                    className="cc-ibtn"
+                    title="Open the Workflow Builder"
+                  >
+                    <WorkflowGlyph />
+                    Workflows
+                  </Link>
+                  <button
+                    type="button"
+                    className="cc-primary"
+                    onClick={() => openCreateModal()}
+                  >
+                    <span className="plus">
+                      <PlusIcon size={12} />
+                    </span>
+                    New session
+                    <span className="cc-primary-kbd">⌘N</span>
+                  </button>
+                </div>
               </div>
 
               <ProjectCockpit
@@ -249,6 +301,7 @@ export default function ProjectDetailView({
                     activeConversationId={activeTabId ?? ""}
                     showNewConversationButton={false}
                     showCollapseControl={false}
+                    enableSearchHotkey={false}
                   />
                 }
               />

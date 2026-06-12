@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 
 import { useOverlayScope } from "@/hooks/useOverlayScope";
 import type { AgentCapabilityScope } from "@/hooks/use-agent-capabilities";
+import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 
 import { AgentCapabilitiesConfigurator } from "./AgentCapabilitiesConfigurator";
 import type { AgentCapabilityLayerOption } from "./AgentCapabilityPanel";
@@ -26,26 +27,41 @@ export default function ConversationAgentCapabilitiesConfig({
 }: ConversationAgentCapabilitiesConfigProps): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
+  // Project-level conversations (the `__project__` sentinel) cascade
+  // global → project → conversation; there is no session layer to configure.
+  const projectScoped = isProjectSentinel(sessionName);
   const initialScope = useMemo<AgentCapabilityScope>(
-    () => ({
-      level: "conversation",
-      projectName,
-      sessionName,
-      conversationId,
-    }),
-    [conversationId, projectName, sessionName],
+    () =>
+      projectScoped
+        ? {
+            level: "conversation",
+            projectName,
+            conversationScope: "project",
+            conversationId,
+          }
+        : {
+            level: "conversation",
+            projectName,
+            sessionName,
+            conversationId,
+          },
+    [projectScoped, conversationId, projectName, sessionName],
   );
   const layerOptions = useMemo<readonly AgentCapabilityLayerOption[]>(
     () => [
       { label: "Global", scope: { level: "global" } },
       { label: "Project", scope: { level: "project", projectName } },
-      {
-        label: "Session",
-        scope: { level: "session", projectName, sessionName },
-      },
+      ...(projectScoped
+        ? []
+        : [
+            {
+              label: "Session",
+              scope: { level: "session", projectName, sessionName } as const,
+            },
+          ]),
       { label: "Conversation", scope: initialScope },
     ],
-    [initialScope, projectName, sessionName],
+    [initialScope, projectScoped, projectName, sessionName],
   );
 
   const title = disabled

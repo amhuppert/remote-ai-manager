@@ -7,6 +7,6 @@ export const commandKeys = {
     sessionName: string,
     backend: "claude" | "codex" = "claude",
   ) => [...commandKeys.lists(), projectName, sessionName, backend] as const,
-  projectList: (projectName: string) =>
-    [...commandKeys.projectLists(), projectName] as const,
+  projectList: (projectName: string, backend: "claude" | "codex" = "claude") =>
+    [...commandKeys.projectLists(), projectName, backend] as const,
 };

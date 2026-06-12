@@ -3,9 +3,11 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import PromptComposer from "@/features/session/prompt/PromptComposer";
 import type { PromptEditorHandle } from "@/features/session/prompt/PromptEditor";
+import { useVoiceWiring } from "@/features/session/hooks/use-voice-wiring";
+import { useClearInputHotkey } from "@/features/session/hooks/use-clear-input-hotkey";
 import { getModelsForBackend } from "@/components/ModelSelector";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
-import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
+import { useAppHotkey } from "@/hooks/useAppHotkey";
 import {
   effortLevelSchema,
   getEffortLevelsForBackend,
@@ -14,6 +16,7 @@ import {
 import { imagePayloadSchema, type ImagePayload } from "@/lib/images/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { ProjectPromptError } from "@/lib/project-conversations-client/mutations";
 import type { FilterToken } from "../components/filter-tokens";
@@ -182,6 +185,8 @@ export default function UnifiedComposer({
   );
   const editorRef = useRef<PromptEditorHandle | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const promptTextRef = useRef("");
+  const fireAndForgetRef = useRef(false);
 
   const backendLocked = (activeConversation?.promptCount ?? 0) > 0;
 
@@ -209,18 +214,9 @@ export default function UnifiedComposer({
   const { pendingImages, addImage, removeImage, clearImages, isAtLimit } =
     useImageAttachments();
 
-  const voice = useVoiceRecorder({
-    projectName,
-    onResult: (text) => {
-      const prefix = draft.trim().length > 0 ? " " : "";
-      editorRef.current?.insertText(`${prefix}${text}`);
-      setDraft((current) => (current ? `${current} ${text}` : text));
-    },
-    onError: setPromptError,
-  });
-
   const clearComposer = useCallback(() => {
     setDraft("");
+    promptTextRef.current = "";
     setInlineMarkerIds([]);
     setPromptPlaceholder(null);
     editorRef.current?.clear();
@@ -279,13 +275,43 @@ export default function UnifiedComposer({
     onSendPrompt,
   ]);
 
+  // Voice dictation with the same wiring as session conversations: the Alt+V
+  // hotkey, transcribed-text insertion, and stop-and-submit on Enter while
+  // recording all come from useVoiceWiring.
+  const handleSendPromptAsync = useCallback(async () => {
+    handleSendPrompt();
+  }, [handleSendPrompt]);
+  const voice = useVoiceWiring({
+    projectName,
+    promptTextRef,
+    editorRef,
+    fireAndForgetRef,
+    handleSendPrompt: handleSendPromptAsync,
+  });
+
+  useClearInputHotkey({
+    editorRef,
+    setPromptText: setDraft,
+    clearPlaceholder: useCallback(() => setPromptPlaceholder(null), []),
+    clearImages,
+    isPromptFocused: useCallback(
+      () => editorRef.current?.editor?.isFocused ?? false,
+      [],
+    ),
+  });
+
+  // The composer is the project page's command console (registry: mod+k).
+  useAppHotkey("focusCommandConsole", () => {
+    editorRef.current?.focus();
+  });
+
   const visibleError = promptError ?? error?.message ?? null;
 
   return (
     <>
       <PromptComposer
         projectName={projectName}
-        sessionName=""
+        sessionName={PROJECT_CONVERSATION_SESSION_SENTINEL}
         conversationId={activeConversationId ?? ""}
         activeConversation={undefined}
         editorRef={editorRef}
@@ -293,6 +319,7 @@ export default function UnifiedComposer({
         promptText={draft}
         onPromptTextChange={(text) => {
           setDraft(text);
+          promptTextRef.current = text;
           if (promptPlaceholder !== null) setPromptPlaceholder(null);
         }}
         onSendPrompt={handleSendPrompt}
@@ -312,10 +339,10 @@ export default function UnifiedComposer({
         hasActiveCollab={false}
         isRecording={voice.isRecording}
         isProcessing={voice.isProcessing}
-        voiceAvailable={voice.isAvailable}
+        voiceAvailable={voice.voiceAvailable}
         elapsedTime={voice.elapsedTime}
         toggleRecording={voice.toggleRecording}
-        stopAndSubmit={voice.stopRecording}
+        stopAndSubmit={voice.stopAndSubmit}
         backendLocked={backendLocked}
         selectedBackend={agentBackend}
         onBackendChange={onAgentChange}

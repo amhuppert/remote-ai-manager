@@ -116,10 +116,13 @@ export function createProjectCommandsRouteHandlers(
   deps: ProjectCommandsRouteDeps = defaultProjectDeps,
 ) {
   async function GET(
-    _request: Request,
+    request: Request,
     context: RouteContext,
   ): Promise<Response> {
     const name = (await context.params)["name"] ?? "";
+    const requestedBackend = new URL(request.url).searchParams.get("backend");
+    const backend: AgentBackendId =
+      requestedBackend === "codex" ? "codex" : "claude";
 
     const projectPath = await deps.resolveProjectPath(name);
     if (!projectPath) {
@@ -130,7 +133,7 @@ export function createProjectCommandsRouteHandlers(
     }
 
     try {
-      const items = await deps.discoverCommands(projectPath);
+      const items = await deps.discoverCommands(projectPath, backend);
       const response: CommandsResponse = { items };
       return NextResponse.json(response);
     } catch (err) {

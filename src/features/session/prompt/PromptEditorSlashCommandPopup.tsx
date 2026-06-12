@@ -18,9 +18,16 @@ import {
   compareFuzzyResults,
   type MatchTier,
 } from "@/lib/shared/fuzzy";
-import { useCommandsQuery } from "@/lib/commands/queries";
+import {
+  useCommandsQuery,
+  useProjectCommandsQuery,
+} from "@/lib/commands/queries";
 import { filterDisabledCommandItems } from "@/lib/commands/capability-filter";
-import { useAgentCapabilityViewQuery } from "@/hooks/use-agent-capabilities";
+import {
+  useAgentCapabilityViewQuery,
+  type AgentCapabilityScope,
+} from "@/hooks/use-agent-capabilities";
+import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import type { CommandItem } from "@/lib/commands/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 const BUILT_IN_CLAUDE_COMMANDS: readonly CommandItem[] = [
@@ -108,18 +115,44 @@ export const PromptEditorSlashCommandPopup = forwardRef<
   },
   ref,
 ) {
-  const commandsQuery = useCommandsQuery(projectName, sessionName, backend);
-
-  const capabilityScope = useMemo(
-    () =>
-      ({
-        level: "conversation",
-        projectName,
-        sessionName,
-        conversationId,
-      }) as const,
-    [projectName, sessionName, conversationId],
+  // Project-level conversations address the otherwise session-keyed APIs via
+  // the `__project__` sentinel; commands are then discovered from the project
+  // root rather than a session worktree, and capabilities cascade through the
+  // project-scoped conversation layer.
+  const projectScoped = isProjectSentinel(sessionName);
+  const sessionCommandsQuery = useCommandsQuery(
+    projectName,
+    sessionName,
+    backend,
+    { enabled: !projectScoped },
   );
+  const projectCommandsQuery = useProjectCommandsQuery(projectName, backend, {
+    enabled: projectScoped,
+  });
+  const commandsQuery = projectScoped
+    ? projectCommandsQuery
+    : sessionCommandsQuery;
+
+  const capabilityScope = useMemo<AgentCapabilityScope>(() => {
+    if (projectScoped) {
+      // Before the first conversation exists there is no conversation layer to
+      // cascade through; fall back to the project layer.
+      return conversationId
+        ? {
+            level: "conversation",
+            projectName,
+            conversationScope: "project",
+            conversationId,
+          }
+        : { level: "project", projectName };
+    }
+    return {
+      level: "conversation",
+      projectName,
+      sessionName,
+      conversationId,
+    };
+  }, [projectScoped, projectName, sessionName, conversationId]);
   const pluginsCascade =
     backend === "codex" ? "codex-plugins" : "claude-plugins";
   const skillsCascade = backend === "codex" ? "codex-skills" : "claude-skills";
