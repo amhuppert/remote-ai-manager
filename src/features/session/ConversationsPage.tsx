@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { Suspense, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import Topbar from "@/components/Topbar";
 import ConversationWorkspace from "@/features/session/ConversationWorkspace";
@@ -85,6 +85,16 @@ function renderPanel(
 }
 
 export default function ConversationsPage(props: Props): React.JSX.Element {
+  // useSearchParams() forces a CSR bailout during prerender; Next.js requires
+  // a Suspense boundary above it for the /conversations static shell to build.
+  return (
+    <Suspense>
+      <ConversationsPageInner {...props} />
+    </Suspense>
+  );
+}
+
+function ConversationsPageInner(props: Props): React.JSX.Element {
   const searchParams = useSearchParams();
   const params = useMemo(
     () => parseConversationsPageParams(searchParams),
