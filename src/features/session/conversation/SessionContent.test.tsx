@@ -8,7 +8,7 @@ import type { ConversationState } from "@/lib/conversations/schemas";
 
 // Stub heavy child components — they have their own tests and their internals
 // are not part of SessionContent's behavior. We assert only on SessionContent's
-// own conditional branches (root class name, sidebar mount predicate).
+// own conditional branches (root class name, chrome-free boundary).
 vi.mock("@/features/session/conversation/SessionInfoStrip", () => ({
   default: () => <div data-testid="stub-info-strip" />,
 }));
@@ -17,9 +17,6 @@ vi.mock("@/features/session/conversation/RightPane", () => ({
 }));
 vi.mock("@/features/session/conversation/ConversationPanelContainer", () => ({
   default: () => <div data-testid="stub-conversation-panel" />,
-}));
-vi.mock("@/features/session/sidebar/ConversationSidebar", () => ({
-  default: () => <div data-testid="stub-conversation-sidebar" />,
 }));
 vi.mock("@/features/session/mobile/MobileInfoPanel", () => ({
   default: () => <div data-testid="stub-mobile-info-panel" />,
@@ -90,7 +87,6 @@ function makeProps(overrides: Partial<Props> = {}): Props {
   return {
     session: makeSession(),
     activeConversation: makeConversation(),
-    conversations: undefined,
     projectName: "my-proj",
     sessionName: "sess-1",
     conversationId: "conv-1",
@@ -100,10 +96,6 @@ function makeProps(overrides: Partial<Props> = {}): Props {
     buildContext: () => null,
     isFinished: false,
     targetBranch: "main",
-    sidebarCollapsed: false,
-    toggleSidebar: vi.fn(),
-    mobileSidebarOpen: false,
-    closeMobileSidebar: vi.fn(),
     layout: "default",
     mobilePanel: "chat",
     diff: { files: [], totalAdditions: 0, totalDeletions: 0 },
@@ -146,26 +138,12 @@ describe("SessionContent", () => {
     expect(layout!.classList.contains("finished")).toBe(false);
   });
 
-  it("does not render the ConversationSidebar when conversations=undefined", () => {
-    const { queryByTestId, container } = renderWithQuery(
-      <SessionContent {...makeProps({ conversations: undefined })} />,
-    );
-    expect(queryByTestId("stub-conversation-sidebar")).toBeNull();
-    const main = container.querySelector("main.main");
-    expect(main?.getAttribute("data-with-sidebar")).toBe("off");
-  });
-
-  it("renders the ConversationSidebar as a sibling of the detail layout when conversations are supplied", () => {
-    const { getByTestId, container } = renderWithQuery(
-      <SessionContent
-        {...makeProps({ conversations: [makeConversation()] })}
-      />,
-    );
-    const sidebar = getByTestId("stub-conversation-sidebar");
-    expect(sidebar).toBeInTheDocument();
-    const main = container.querySelector("main.main");
-    expect(main?.getAttribute("data-with-sidebar")).toBe("on");
-    // Sidebar lives at the top level of .main, not inside the content area.
-    expect(sidebar.parentElement).toBe(main);
+  it("renders the detail layout as its root, without page chrome or the rail", () => {
+    const { container } = renderWithQuery(<SessionContent {...makeProps()} />);
+    expect(
+      container.firstElementChild?.classList.contains("session-detail-layout"),
+    ).toBe(true);
+    expect(container.querySelector("main.main")).toBeNull();
+    expect(container.querySelector(".convo-sidebar")).toBeNull();
   });
 });

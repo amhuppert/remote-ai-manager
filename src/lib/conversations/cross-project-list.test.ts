@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { createListAllConversations } from "./cross-project-list";
+import {
+  createListAllConversations,
+  createFindConversationById,
+} from "./cross-project-list";
 import type { ConversationState } from "./schemas";
 import type { ManagerState, ProjectState } from "@/lib/projects/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
@@ -381,5 +384,129 @@ describe("listAllConversations", () => {
     const result = await listAll({ includeArchived: false });
     expect(result.items).toEqual([]);
     expect(result.totalCount).toBe(0);
+  });
+});
+
+describe("findConversationById", () => {
+  function makeLookupRecord(
+    overrides: Partial<ConversationState> & { id: string },
+  ) {
+    return {
+      projectPath: "/repos/awesome-app",
+      sessionName: "main",
+      worktreePath: "/repos/awesome-app/.worktrees/main",
+      conversation: makeConversation(overrides),
+    };
+  }
+
+  it("builds the list item from the focused lookup record", async () => {
+    const calls: string[] = [];
+    const find = createFindConversationById({
+      getConversationById: async (id) => {
+        calls.push(id);
+        return makeLookupRecord({
+          id: "target",
+          name: "Target",
+          status: "running",
+          lastActivityAt: "2024-06-01T12:00:00Z",
+        });
+      },
+      getFirstPromptSnippet: async () => null,
+    });
+
+    const item = await find("target");
+    expect(item).toMatchObject({
+      projectName: "awesome-app",
+      projectPath: "/repos/awesome-app",
+      sessionName: "main",
+      worktreePath: "/repos/awesome-app/.worktrees/main",
+      conversationId: "target",
+      conversationName: "Target",
+      status: "running",
+      lastActivityAt: "2024-06-01T12:00:00Z",
+      archived: false,
+    });
+    expect(calls).toEqual(["target"]);
+  });
+
+  it("passes archived conversations through (archived deep links must resolve)", async () => {
+    const find = createFindConversationById({
+      getConversationById: async () =>
+        makeLookupRecord({ id: "buried", archived: true }),
+      getFirstPromptSnippet: async () => null,
+    });
+
+    const item = await find("buried");
+    expect(item?.conversationId).toBe("buried");
+    expect(item?.archived).toBe(true);
+  });
+
+  it("returns null when the lookup finds nothing", async () => {
+    const find = createFindConversationById({
+      getConversationById: async () => null,
+      getFirstPromptSnippet: async () => null,
+    });
+
+    expect(await find("missing")).toBeNull();
+  });
+
+  it("reads the first-prompt snippet for an unnamed conversation", async () => {
+    const snippetCalls: string[] = [];
+    const find = createFindConversationById({
+      getConversationById: async () =>
+        makeLookupRecord({
+          id: "target",
+          name: null,
+          summary: null,
+          transcriptPath: "/t/target.jsonl",
+        }),
+      getFirstPromptSnippet: async (path) => {
+        snippetCalls.push(path);
+        return "snippet";
+      },
+    });
+
+    const item = await find("target");
+    expect(item?.firstPromptSnippet).toBe("snippet");
+    expect(snippetCalls).toEqual(["/t/target.jsonl"]);
+  });
+
+  it("does not read a snippet when the conversation has a name or summary", async () => {
+    let called = false;
+    const find = createFindConversationById({
+      getConversationById: async () =>
+        makeLookupRecord({
+          id: "named",
+          name: "Named",
+          transcriptPath: "/t/named.jsonl",
+        }),
+      getFirstPromptSnippet: async () => {
+        called = true;
+        return null;
+      },
+    });
+
+    const item = await find("named");
+    expect(called).toBe(false);
+    expect(item?.firstPromptSnippet).toBeNull();
+  });
+
+  it("returns the item with a null snippet when the snippet read fails", async () => {
+    const find = createFindConversationById({
+      getConversationById: async () =>
+        makeLookupRecord({
+          id: "target",
+          name: null,
+          summary: null,
+          transcriptPath: "/t/target.jsonl",
+        }),
+      getFirstPromptSnippet: async () => {
+        throw new Error("transcript unreadable");
+      },
+    });
+
+    const item = await find("target");
+    expect(item?.conversationId).toBe("target");
+    expect(item?.firstPromptSnippet).toBeNull();
   });
 });

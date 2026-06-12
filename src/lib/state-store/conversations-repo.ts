@@ -21,6 +21,11 @@ const logger = createLogger("state-store.conversations");
 
 export interface ConversationsRepo {
   findById(id: string): ConversationState | null;
+  findByIdWithKey(id: string): {
+    projectPath: string;
+    sessionName: string;
+    conversation: ConversationState;
+  } | null;
   findByKey(
     projectPath: string,
     sessionName: string,
@@ -408,6 +413,13 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
         const row: unknown = findByIdStmt.get(id);
         if (row === undefined) return null;
         return rowToDomain(row).conversation;
+      });
+    },
+    findByIdWithKey(id) {
+      return timed("findByIdWithKey", { id }, () => {
+        const row: unknown = findByIdStmt.get(id);
+        if (row === undefined) return null;
+        return rowToDomain(row);
       });
     },
     findByKey(projectPath, sessionName, conversationId) {

@@ -131,7 +131,7 @@ describe("describeActiveRow", () => {
       groupLabel: "creative-ai / feature-session",
       projectLabel: "creative-ai",
       contextLabel: "feature-session",
-      href: "/projects/creative-ai/feature-session/session-convo-1",
+      href: "/conversations?c=session-convo-1",
       actionScope: {
         scope: "session",
         projectName: "creative-ai",

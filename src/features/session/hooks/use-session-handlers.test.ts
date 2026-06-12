@@ -69,6 +69,71 @@ describe("useSessionHandlers", () => {
     expect(failPrompt).not.toHaveBeenCalled();
   });
 
+  it("handleFork routes through onOpenConversation when provided and never router.push", async () => {
+    const onOpenConversation = vi.fn();
+    const push = vi.fn();
+    const router = { push, replace: vi.fn() } as never;
+    const forkMutation = {
+      mutateAsync: vi.fn(async () => ({ conversationId: "forked-1" })),
+    };
+
+    const { result } = renderHook(() =>
+      useSessionHandlers({
+        projectName: "p",
+        sessionName: "s",
+        conversationId: "c",
+        session: fakeSession,
+        router,
+        answerMutation: { mutateAsync: async () => ({ status: "ok" }) },
+        deleteMutation: { mutate: () => {} },
+        forkMutation,
+        cancelDelete: () => {},
+        clearQuestions: () => {},
+        failPrompt: () => {},
+        onOpenConversation,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleFork(3);
+    });
+
+    expect(onOpenConversation).toHaveBeenCalledTimes(1);
+    expect(onOpenConversation).toHaveBeenCalledWith({
+      conversationId: "forked-1",
+    });
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("handleFork falls back to router.push to the per-conversation URL when the seam is absent", async () => {
+    const push = vi.fn();
+    const router = { push, replace: vi.fn() } as never;
+
+    const { result } = renderHook(() =>
+      useSessionHandlers({
+        projectName: "p",
+        sessionName: "s",
+        conversationId: "c",
+        session: fakeSession,
+        router,
+        answerMutation: { mutateAsync: async () => ({ status: "ok" }) },
+        deleteMutation: { mutate: () => {} },
+        forkMutation: {
+          mutateAsync: async () => ({ conversationId: "forked-1" }),
+        },
+        cancelDelete: () => {},
+        clearQuestions: () => {},
+        failPrompt: () => {},
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleFork(3);
+    });
+
+    expect(push).toHaveBeenCalledWith("/conversations?c=forked-1");
+  });
+
   it("buildContext returns null when session is undefined", () => {
     const router = { push: vi.fn(), replace: vi.fn() } as never;
     const { result } = renderHook(() =>

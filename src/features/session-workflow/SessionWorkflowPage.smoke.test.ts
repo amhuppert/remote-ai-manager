@@ -16,7 +16,7 @@ const shouldRun = typeof smokeUrl === "string" && smokeUrl.length > 0;
 //      absence can be asserted on the same fixture).
 //
 // Skipped unless the env var is set so regular `bun run test` runs stay fast
-// and offline. Pattern mirrors src/features/session/SessionPage.smoke.test.ts.
+// and offline. Pattern mirrors src/features/session/ConversationsPage.smoke.test.ts.
 describe.skipIf(!shouldRun)(
   "SessionWorkflowPage Playwright smoke (workflow execution view)",
   () => {

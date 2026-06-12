@@ -139,6 +139,56 @@ describe("ConversationSidebarRow", () => {
     expect(onPeek).toHaveBeenCalledWith(row, "convo-1");
   });
 
+  it("lets modifier-clicks on session rows fall through to the anchor instead of opening the peek", () => {
+    const onPeek = vi.fn();
+    const onClick = vi.fn();
+
+    render(
+      <ConversationSidebarRow
+        conversation={BASE}
+        href="/conversations?c=convo-1"
+        currentConversationId="convo-current"
+        onPeek={onPeek}
+        onClick={onClick}
+      />,
+    );
+
+    const notCancelled = fireEvent.click(
+      screen.getByLabelText("Some conversation — running"),
+      { metaKey: true },
+    );
+
+    // The native anchor handles the modified click (new tab); no peek, no
+    // client-side nav.
+    expect(onPeek).not.toHaveBeenCalled();
+    expect(onClick).not.toHaveBeenCalled();
+    expect(notCancelled).toBe(true);
+  });
+
+  it("lets modifier-clicks on the current row fall through to the anchor", () => {
+    const onPeek = vi.fn();
+    const onClick = vi.fn();
+
+    render(
+      <ConversationSidebarRow
+        conversation={BASE}
+        href="/conversations?c=convo-1"
+        currentConversationId="convo-1"
+        onPeek={onPeek}
+        onClick={onClick}
+      />,
+    );
+
+    const notCancelled = fireEvent.click(
+      screen.getByLabelText("Some conversation — running"),
+      { ctrlKey: true },
+    );
+
+    expect(onPeek).not.toHaveBeenCalled();
+    expect(onClick).not.toHaveBeenCalled();
+    expect(notCancelled).toBe(true);
+  });
+
   it("does not peek or navigate for current-row left-clicks", () => {
     const onPeek = vi.fn();
     const onClick = vi.fn();

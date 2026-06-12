@@ -3,6 +3,7 @@
 import { useCallback, type ReactNode } from "react";
 import ConversationPanel from "@/components/conversation/ConversationPanel";
 import TypingIndicator from "@/components/conversation/TypingIndicator";
+import { useOpenMobileSidebar } from "@/stores/session-detail.store";
 import { useSessionPageConversation } from "@/features/session/hooks/use-session-page-conversation";
 import { useConversationPanelProps } from "@/features/session/hooks/use-conversation-panel-props";
 import type { useSessionPageLocalState } from "@/features/session/hooks/use-session-page-local-state";
@@ -78,6 +79,7 @@ export default function ConversationPanelContainer({
   onStop,
   promptInputSlot,
 }: ConversationPanelContainerProps): React.JSX.Element {
+  const openMobileSidebar = useOpenMobileSidebar();
   const conversation = useSessionPageConversation({
     projectName,
     sessionName,
@@ -110,7 +112,7 @@ export default function ConversationPanelContainer({
     conversations,
     activeConversation,
     sessionName,
-    openMobileSidebar: local.openMobileSidebar,
+    openMobileSidebar,
     currentMessageIndex: conversation.nav.currentMessageIndex,
     totalMessages: conversation.displayMessages.length,
     handleFirstMessage: conversation.nav.handleFirstMessage,

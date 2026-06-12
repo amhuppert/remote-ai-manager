@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useCreateSessionMutation } from "@/lib/sessions/mutations";
+import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import { useSessionsQuery } from "@/lib/sessions/queries";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
@@ -258,15 +259,12 @@ export default function CreateSessionModal({
         if (mode === "optimistic") return;
 
         const conversationId = session.conversations[0]?.id;
-        const basePath = conversationId
-          ? `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(session.sessionName)}/${encodeURIComponent(conversationId)}`
+        const url = conversationId
+          ? conversationsPageHref({
+              conversationId,
+              autoFocus: mode === "focus",
+            })
           : `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(session.sessionName)}`;
-
-        // Append autoFocus param for Focus mode
-        const url =
-          mode === "focus" && conversationId
-            ? `${basePath}?autoFocus=true`
-            : basePath;
 
         router.push(url);
       },

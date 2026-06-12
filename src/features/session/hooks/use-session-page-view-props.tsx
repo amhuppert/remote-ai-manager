@@ -2,7 +2,7 @@
 
 import type { ComponentProps } from "react";
 import type SessionContent from "@/features/session/conversation/SessionContent";
-import type { SessionPageViewProps } from "@/features/session/SessionPageView";
+import type { ConversationWorkspaceViewProps } from "@/features/session/ConversationWorkspaceView";
 import type { useSessionPageStoreBundle } from "@/features/session/hooks/use-session-page-store-bundle";
 import type { useSessionPageLocalState } from "@/features/session/hooks/use-session-page-local-state";
 import type { useCollabContext } from "@/features/session/hooks/use-collab-context";
@@ -20,7 +20,7 @@ type StoreBundle = ReturnType<typeof useSessionPageStoreBundle>;
 type LocalState = ReturnType<typeof useSessionPageLocalState>;
 type CollabContext = ReturnType<typeof useCollabContext>;
 type PanelContainerProps =
-  SessionPageViewProps["contentProps"]["panelContainerProps"];
+  ConversationWorkspaceViewProps["contentProps"]["panelContainerProps"];
 type SessionContentProps = ComponentProps<typeof SessionContent>;
 
 export interface UseSessionPageViewPropsArgs {
@@ -30,7 +30,6 @@ export interface UseSessionPageViewPropsArgs {
   session: SessionState;
   activeConversation: ConversationState | undefined;
   conversations: ConversationState[] | undefined;
-  decodedProjectName: string;
   statusDotClass: string;
   displayStatus: string;
   contextPercent: number | null;
@@ -39,7 +38,7 @@ export interface UseSessionPageViewPropsArgs {
   isReadOnly: boolean;
   isBusy: boolean;
   isWorkflowManagedConversation: boolean;
-  approvalGate: SessionPageViewProps["promptInputSlotProps"]["approvalGate"];
+  approvalGate: ConversationWorkspaceViewProps["promptInputSlotProps"]["approvalGate"];
   isInitConversation: boolean;
   targetBranch: string;
 
@@ -112,11 +111,11 @@ export interface UseSessionPageViewPropsArgs {
   handlePromptTextChange: PromptComposerArgs["handlePromptTextChange"];
   canStop: boolean;
   handleStopPrompt: () => void;
-  handleAnswerSubmit: SessionPageViewProps["promptInputSlotProps"]["handleAnswerSubmit"];
+  handleAnswerSubmit: ConversationWorkspaceViewProps["promptInputSlotProps"]["handleAnswerSubmit"];
   handleDelete: () => void;
   handleConcurrentConfirm: () => void;
   cancelConcurrentSubmission: () => void;
-  pendingConcurrentSubmission: SessionPageViewProps["dialogsProps"]["pendingConcurrentSubmission"];
+  pendingConcurrentSubmission: ConversationWorkspaceViewProps["dialogsProps"]["pendingConcurrentSubmission"];
 
   // mutations
   debugToggleMutation: PromptComposerArgs["debugToggleMutation"];
@@ -124,7 +123,7 @@ export interface UseSessionPageViewPropsArgs {
 
 export function useSessionPageViewProps(
   args: UseSessionPageViewPropsArgs,
-): SessionPageViewProps {
+): ConversationWorkspaceViewProps {
   const { store, local } = args;
 
   const panelContainerProps: PanelContainerProps = {
@@ -202,25 +201,9 @@ export function useSessionPageViewProps(
   });
 
   return {
-    mobilePanel: store.mobilePanel,
-    topbarProps: {
-      breadcrumbs: [
-        { label: "projects", href: "/projects" },
-        {
-          label: args.decodedProjectName,
-          href: `/projects/${encodeURIComponent(args.projectName)}`,
-        },
-        {
-          label: args.session.sessionName,
-          href: `/projects/${encodeURIComponent(args.projectName)}/${encodeURIComponent(args.session.sessionName)}`,
-          isSession: true,
-        },
-      ],
-    },
     contentProps: {
       session: args.session,
       activeConversation: args.activeConversation,
-      conversations: args.conversations,
       projectName: args.projectName,
       sessionName: args.sessionName,
       conversationId: args.conversationId,
@@ -230,10 +213,6 @@ export function useSessionPageViewProps(
       buildContext: args.buildContext,
       isFinished: args.isFinished,
       targetBranch: args.targetBranch,
-      sidebarCollapsed: store.sidebarCollapsed,
-      toggleSidebar: store.toggleSidebar,
-      mobileSidebarOpen: local.mobileSidebarOpen,
-      closeMobileSidebar: local.closeMobileSidebar,
       layout: store.layout,
       mobilePanel: store.mobilePanel,
       diff: args.diff,

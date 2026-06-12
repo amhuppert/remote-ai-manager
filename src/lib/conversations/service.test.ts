@@ -344,11 +344,19 @@ describe("getSessionConversations", () => {
     const { state, conversations } = createTestServices();
     await seedSession(state);
 
-    // Create two conversations (second one will have a later lastActivityAt)
+    // Pin distinct lastActivityAt values: back-to-back creates can land in the
+    // same millisecond, which would make the ordering ambiguous.
     const c1 = await conversations.createConversation("/proj", "test");
     const c2 = await conversations.createConversation("/proj", "test");
+    await state.mutateSession("/proj", "test", "test-setup", (session) => {
+      for (const convo of session.conversations) {
+        convo.lastActivityAt =
+          convo.id === c2.id
+            ? "2026-01-02T00:00:00.000Z"
+            : "2026-01-01T00:00:00.000Z";
+      }
+    });
 
-    // c2 was created after c1, so c2 should appear first
     const convos = await conversations.getSessionConversations("/proj", "test");
     expect(convos).toHaveLength(2);
     expect(convos[0]!.id).toBe(c2.id);

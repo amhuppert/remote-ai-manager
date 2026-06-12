@@ -217,7 +217,7 @@ describe("Topbar", () => {
     );
   });
 
-  it("preserves the session detail href when the first attention target is a session row (Req 11.2, 12.4)", () => {
+  it("targets the conversations page when the first attention target is a session row (Req 11.2, 12.4)", () => {
     setActiveConversations([
       makeSessionConversation({
         id: "session-question",
@@ -236,7 +236,7 @@ describe("Topbar", () => {
 
     expect(screen.getByText("2")).toBeInTheDocument();
     expect(getNeedsLink().getAttribute("href")).toBe(
-      "/projects/root-tools/feature-a/session-question",
+      "/conversations?c=session-question",
     );
   });
 

@@ -29,25 +29,18 @@ describe("ConversationLinkChip", () => {
     render(<ConversationLinkChip attrs={makeAttrs()} />);
 
     const anchor = screen.getByRole("link");
-    expect(anchor).toHaveAttribute("href", "/projects/my-app/main/conv-123");
+    expect(anchor).toHaveAttribute("href", "/conversations?c=conv-123");
   });
 
-  it("URL-encodes name/session/id segments containing special characters", () => {
+  it("URL-encodes a conversation id containing special characters", () => {
     render(
       <ConversationLinkChip
-        attrs={makeAttrs({
-          "project-name": "my app",
-          "session-name": "feature/x",
-          "conversation-id": "conv 1",
-        })}
+        attrs={makeAttrs({ "conversation-id": "conv 1" })}
       />,
     );
 
     const anchor = screen.getByRole("link");
-    expect(anchor).toHaveAttribute(
-      "href",
-      "/projects/my%20app/feature%2Fx/conv%201",
-    );
+    expect(anchor).toHaveAttribute("href", "/conversations?c=conv%201");
   });
 
   it("renders the conversation name when present", () => {

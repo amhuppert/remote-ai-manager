@@ -1,16 +1,29 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import type { useRouter } from "next/navigation";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { AskQuestionItem } from "@/lib/conversations/schemas";
 
+/**
+ * The current URL with the one-shot autoFocus param removed. Pure so the
+ * cleanup is testable on both host routes of the workspace.
+ */
+export function autoFocusStrippedUrl(location: {
+  pathname: string;
+  search: string;
+}): string {
+  const params = new URLSearchParams(location.search);
+  params.delete("autoFocus");
+  const query = params.toString();
+  return query === "" ? location.pathname : `${location.pathname}?${query}`;
+}
+
 export interface UseSessionLifecycleArgs {
   storageKey: string;
   hydrateLayout: (key: string) => void;
-  resetStore: () => void;
+  resetConversationState: () => void;
   clearConversationMessages: () => void;
   conversationId: string;
   session: SessionState | undefined;
@@ -18,9 +31,6 @@ export interface UseSessionLifecycleArgs {
   showQuestions: (id: string, questions: AskQuestionItem[]) => void;
   clearQuestions: () => void;
   autoFocus: boolean | undefined;
-  router: ReturnType<typeof useRouter>;
-  projectName: string;
-  sessionName: string;
   sendPrompt: (
     prompt: string,
     messageCount: number,
@@ -39,7 +49,7 @@ export interface UseSessionLifecycleArgs {
 export function useSessionLifecycle({
   storageKey,
   hydrateLayout,
-  resetStore,
+  resetConversationState,
   clearConversationMessages,
   conversationId,
   session,
@@ -47,9 +57,6 @@ export function useSessionLifecycle({
   showQuestions,
   clearQuestions,
   autoFocus,
-  router,
-  projectName,
-  sessionName,
   sendPrompt,
   messagesLength,
   selectedModel,
@@ -63,9 +70,9 @@ export function useSessionLifecycle({
 
   useEffect(() => {
     return () => {
-      resetStore();
+      resetConversationState();
     };
-  }, [resetStore]);
+  }, [resetConversationState]);
 
   useEffect(() => {
     clearConversationMessages();
@@ -113,9 +120,13 @@ export function useSessionLifecycle({
     if (!autoFocus || autoFocusFired.current || !session?.objective) return;
     autoFocusFired.current = true;
 
-    router.replace(
-      `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/${encodeURIComponent(conversationId)}`,
-      { scroll: false },
+    // One-shot param: strip it shallowly so refresh/back can't re-trigger the
+    // objective prompt. Must never be an App Router navigation (§1.2) — the
+    // workspace's host shell stays mounted.
+    window.history.replaceState(
+      null,
+      "",
+      autoFocusStrippedUrl(window.location),
     );
 
     void import("@/lib/prompt/templates").then(
@@ -140,9 +151,6 @@ export function useSessionLifecycle({
     selectedEffort,
     effortSupported,
     selectedBackend,
-    router,
-    projectName,
-    sessionName,
     conversationId,
   ]);
 }

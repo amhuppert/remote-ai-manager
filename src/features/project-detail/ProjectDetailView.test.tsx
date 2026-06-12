@@ -306,6 +306,35 @@ describe("ProjectDetailView", () => {
     expect(link?.getAttribute("href")).toBe("/projects/my-project/session-1");
   });
 
+  it("renders a conversations quick-link on each session row targeting the filtered /conversations page", () => {
+    mockSessionsData.data = makeSessions(1);
+    renderWithQuery(<ProjectDetailView projectName="my-project" />);
+
+    const quickLink = screen.getByLabelText("Open in Conversations");
+    expect(quickLink.getAttribute("href")).toBe(
+      "/conversations?project=my-project&session=session-1",
+    );
+    expect(quickLink.getAttribute("data-tooltip")).toBeTruthy();
+  });
+
+  it("keeps the session-landing link independent of the conversations quick-link", () => {
+    mockSessionsData.data = makeSessions(1);
+    renderWithQuery(<ProjectDetailView projectName="my-project" />);
+
+    const titleLink = screen.getByText("session-1").closest("a");
+    expect(titleLink?.getAttribute("href")).toBe(
+      "/projects/my-project/session-1",
+    );
+
+    const quickLink = screen.getByLabelText("Open in Conversations");
+    expect(quickLink).not.toBe(titleLink);
+    expect(titleLink!.contains(quickLink)).toBe(false);
+    expect(quickLink.contains(titleLink!)).toBe(false);
+
+    fireEvent.click(quickLink);
+    expect(routerPushMock).not.toHaveBeenCalled();
+  });
+
   it("renders primary New session CTA in page header (Req 3.1)", () => {
     mockSessionsData.data = [];
     const { container } = renderWithQuery(

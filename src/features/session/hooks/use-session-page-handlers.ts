@@ -41,6 +41,7 @@ export interface UseSessionPageHandlersArgs {
   clearCollabConfigDraft: SubmissionArgs["clearCollabConfigDraft"];
   clearPersistedPendingPromptOnSubmit: SubmissionArgs["clearPersistedPendingPromptOnSubmit"];
   enqueuePromptErrorToast: SubmissionArgs["enqueuePromptErrorToast"];
+  onOpenConversation?: (target: { conversationId: string }) => void;
 }
 
 export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
@@ -66,6 +67,7 @@ export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
     clearCollabConfigDraft,
     clearPersistedPendingPromptOnSubmit,
     enqueuePromptErrorToast,
+    onOpenConversation,
   } = args;
 
   const deleteMutation = useDeleteSessionMutation(projectName);
@@ -120,6 +122,7 @@ export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
     effortSupported,
     selectedBackend,
     sendPrompt,
+    onOpenConversation,
   });
 
   const { handleAnswerSubmit, handleDelete, handleFork, buildContext } =
@@ -135,6 +138,7 @@ export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
       cancelDelete: store.cancelDelete,
       clearQuestions: store.clearQuestions,
       failPrompt: store.failPrompt,
+      onOpenConversation,
     });
 
   const {

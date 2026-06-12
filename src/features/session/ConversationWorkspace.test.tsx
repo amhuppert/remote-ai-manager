@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, fireEvent, act } from "@testing-library/react";
+import { screen, fireEvent, act, render } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderWithQuery } from "@/test/component-mocks";
-import ConversationDetailPage from "@/features/session/SessionPage";
+import ConversationWorkspace from "@/features/session/ConversationWorkspace";
+import { useSessionDetailStore } from "@/stores/session-detail.store";
 import { ApiCallError } from "@/lib/api/errors";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
@@ -224,6 +226,7 @@ vi.mock("@/hooks/use-abort-prompt", () => ({
 const useConversationMessagesQueryMock = vi.hoisted(() => vi.fn());
 
 let testSession: SessionState | undefined;
+let testConversations: SessionState["conversations"] | undefined;
 let testMessages: TranscriptMessage[];
 let testDiff: SessionDiff;
 let testSessionPending: boolean;
@@ -263,7 +266,10 @@ vi.mock("@/lib/workflows/queries", () => ({
 }));
 
 vi.mock("@/lib/conversations/queries", () => ({
-  useConversationsQuery: () => ({ data: undefined, isPending: false }),
+  useConversationsQuery: () => ({
+    data: testConversations,
+    isPending: false,
+  }),
 }));
 vi.mock("@/hooks/conversation/use-conversation-messages-query", () => ({
   useConversationMessagesQuery: (...args: unknown[]) =>
@@ -326,6 +332,10 @@ vi.mock("@/lib/sessions/mutations", () => ({
     isPending: false,
   }),
   useTddToggleMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useGenericArchiveSessionMutation: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+  }),
 }));
 
 vi.mock("@/lib/git/mutations", () => ({
@@ -354,6 +364,16 @@ vi.mock("@/lib/workflows/mutations", () => ({
 vi.mock("@/lib/conversations/mutations", () => ({
   useCreateConversationMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useArchiveConversationMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useRenameConversationMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useGenericArchiveConversationMutation: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+  }),
+  useGenericRenameConversationMutation: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+  }),
+  useMarkConversationReadMutation: () => ({ mutate: vi.fn() }),
   useAnswerQuestionMutation: () => ({
     mutateAsync: vi.fn(async () => ({ status: "ok" as const })),
     isPending: false,
@@ -363,6 +383,9 @@ vi.mock("@/lib/conversations/mutations", () => ({
     mutateAsync: vi.fn(),
     isPending: false,
   }),
+}));
+vi.mock("@/lib/project-conversations-client/mutations", () => ({
+  useMarkProjectConversationReadMutation: () => ({ mutate: vi.fn() }),
 }));
 vi.mock("@/lib/debug-log/mutations", () => ({
   useDebugModeToggleMutation: () => ({ mutate: vi.fn(), isPending: false }),
@@ -493,7 +516,9 @@ beforeEach(() => {
   virtuosoMockHandlers.atBottomStateChange = undefined;
   virtuosoMockHandlers.atTopStateChange = undefined;
   testSession = baseSession;
+  testConversations = undefined;
   testMessages = sampleMessages;
+  useSessionDetailStore.getState().resetStore();
   testDiff = emptyDiff;
   testSessionPending = false;
   testSessionError = null;
@@ -525,7 +550,7 @@ function renderPage(props?: {
   defaultEffort?: "low" | "medium" | "high" | "max";
 }) {
   return renderWithQuery(
-    <ConversationDetailPage
+    <ConversationWorkspace
       projectName="repo"
       sessionName="test-session"
       conversationId="conv-1"
@@ -539,7 +564,7 @@ function renderPage(props?: {
 // Tests
 // ===========================================================================
 
-describe("ConversationDetailPage", () => {
+describe("ConversationWorkspace", () => {
   it("renders user and assistant messages with role indicators", () => {
     renderPage();
     expect(screen.getAllByText("You")).toHaveLength(2);
@@ -1242,6 +1267,87 @@ describe("ConversationDetailPage", () => {
           "Unique collaboration final answer from command block",
         ),
       ).toHaveLength(1);
+    });
+  });
+
+  describe("ConversationWorkspace boundaries", () => {
+    function renderWorkspace() {
+      return renderWithQuery(
+        <ConversationWorkspace
+          projectName="repo"
+          sessionName="test-session"
+          conversationId="conv-1"
+          defaultModel="sonnet"
+        />,
+      );
+    }
+
+    it("renders the conversation content without shell chrome or the rail", () => {
+      testConversations = baseSession.conversations;
+      const { container } = renderWorkspace();
+
+      expect(screen.getByText("Hello Claude")).toBeInTheDocument();
+      expect(container.querySelector(".session-detail-layout")).not.toBeNull();
+
+      expect(container.querySelector(".app")).toBeNull();
+      expect(container.querySelector("main.main")).toBeNull();
+      expect(container.querySelector(".convo-sidebar")).toBeNull();
+    });
+
+    it("preserves host-owned rail state across a keyed workspace remount", () => {
+      testConversations = baseSession.conversations;
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const workspace = (conversationId: string) => (
+        <QueryClientProvider client={queryClient}>
+          <ConversationWorkspace
+            key={conversationId}
+            projectName="repo"
+            sessionName="test-session"
+            conversationId={conversationId}
+            defaultModel="sonnet"
+          />
+        </QueryClientProvider>
+      );
+      const view = render(workspace("conv-1"));
+
+      act(() => {
+        const s = useSessionDetailStore.getState();
+        s.toggleSidebar();
+        s.openMobileSidebar();
+        s.switchMobilePanel("diff");
+      });
+
+      view.rerender(workspace("conv-2"));
+
+      const after = useSessionDetailStore.getState();
+      // Rail visibility belongs to the host shell and must survive the swap.
+      expect(after.sidebarCollapsed).toBe(true);
+      expect(after.mobileSidebarOpen).toBe(true);
+      // Conversation-scoped state still resets on remount.
+      expect(after.mobilePanel).toBe("chat");
+    });
+
+    it("never renders the collapse/expand affordance, even when the sidebar is collapsed", () => {
+      testConversations = baseSession.conversations;
+      act(() => {
+        useSessionDetailStore.getState().toggleSidebar();
+      });
+      const { container } = renderWorkspace();
+
+      expect(container.querySelector(".convo-sidebar-expand-float")).toBeNull();
+    });
+
+    it("opens the host-owned mobile drawer from the Conversations toggle", () => {
+      testConversations = baseSession.conversations;
+      renderWorkspace();
+
+      expect(useSessionDetailStore.getState().mobileSidebarOpen).toBe(false);
+
+      fireEvent.click(screen.getByTitle("Show conversations"));
+
+      expect(useSessionDetailStore.getState().mobileSidebarOpen).toBe(true);
     });
   });
 

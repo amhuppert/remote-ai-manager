@@ -2,7 +2,6 @@
 
 import { type ComponentProps, type ReactNode } from "react";
 import ConversationPanelContainer from "@/features/session/conversation/ConversationPanelContainer";
-import ConversationSidebar from "@/features/session/sidebar/ConversationSidebar";
 import { FinishedBanner } from "@/components/conversation/ConversationBanners";
 import SessionInfoStrip from "@/features/session/conversation/SessionInfoStrip";
 import MobileInfoPanel from "@/features/session/mobile/MobileInfoPanel";
@@ -19,7 +18,6 @@ type SessionInfoStripProps = ComponentProps<typeof SessionInfoStrip>;
 export interface SessionContentProps {
   session: SessionState;
   activeConversation: ConversationState | undefined;
-  conversations: ConversationState[] | undefined;
   projectName: string;
   sessionName: string;
   conversationId: string;
@@ -29,10 +27,6 @@ export interface SessionContentProps {
   buildContext: () => string | null;
   isFinished: boolean;
   targetBranch: string;
-  sidebarCollapsed: boolean;
-  toggleSidebar: () => void;
-  mobileSidebarOpen: boolean;
-  closeMobileSidebar: () => void;
   layout: LayoutMode;
   mobilePanel: MobilePanel;
   diff: RightPaneProps["diff"];
@@ -62,7 +56,6 @@ export interface SessionContentProps {
 export default function SessionContent({
   session,
   activeConversation,
-  conversations,
   projectName,
   sessionName,
   conversationId,
@@ -72,10 +65,6 @@ export default function SessionContent({
   buildContext,
   isFinished,
   targetBranch,
-  sidebarCollapsed,
-  toggleSidebar,
-  mobileSidebarOpen,
-  closeMobileSidebar,
   layout,
   mobilePanel,
   diff,
@@ -100,103 +89,76 @@ export default function SessionContent({
   dsIsStoppingUnmanaged,
   onDelete,
 }: SessionContentProps): React.JSX.Element {
-  const hasSidebar = conversations !== undefined;
   return (
-    <main
-      className="main"
-      data-with-sidebar={hasSidebar ? "on" : "off"}
-      data-sidebar-collapsed={hasSidebar && sidebarCollapsed ? "true" : "false"}
+    <div
+      className={`session-detail-layout stagger-in${isFinished ? " finished" : ""}`}
     >
-      {conversations && (
-        <ConversationSidebar
-          projectName={projectName}
-          sessionName={session.sessionName}
-          activeConversationId={conversationId}
-          mobileOpen={mobileSidebarOpen}
-          onMobileClose={closeMobileSidebar}
-        />
-      )}
+      <SessionInfoStrip
+        session={session}
+        activeConversation={activeConversation}
+        projectName={projectName}
+        sessionName={sessionName}
+        conversationId={conversationId}
+        statusDotClass={statusDotClass}
+        displayStatus={displayStatus}
+        contextPercent={contextPercent}
+        buildContext={buildContext}
+        tddEnabled={tddEnabled}
+        onTddChange={onTddChange}
+        tddDisabled={tddDisabled}
+        layout={layout}
+        onLayoutChange={onLayoutChange}
+        dsOpen={dsOpen}
+        dsServers={dsServers}
+        dsClose={dsClose}
+        dsToggle={dsToggle}
+        dsStartServer={dsStartServer}
+        dsStopServer={dsStopServer}
+        dsStartAll={dsStartAll}
+        dsStopAll={dsStopAll}
+        dsUnmanagedConflict={dsUnmanagedConflict}
+        dsDismissUnmanagedConflict={dsDismissUnmanagedConflict}
+        dsStopUnmanagedAndRetry={dsStopUnmanagedAndRetry}
+        dsIsStoppingUnmanaged={dsIsStoppingUnmanaged}
+        changesAdd={diff.totalAdditions}
+        changesDel={diff.totalDeletions}
+        targetBranch={targetBranch}
+        onDelete={onDelete}
+      />
 
-      {conversations && sidebarCollapsed && (
-        <button
-          className="convo-sidebar-expand-float"
-          onClick={toggleSidebar}
-          data-tooltip="Expand sidebar"
-        >
-          {"\u25B6"}
-        </button>
-      )}
+      {isFinished && <FinishedBanner targetBranch={targetBranch} />}
 
-      <div
-        className={`session-detail-layout stagger-in${isFinished ? " finished" : ""}`}
-      >
-        <SessionInfoStrip
-          session={session}
-          activeConversation={activeConversation}
-          projectName={projectName}
-          sessionName={sessionName}
-          conversationId={conversationId}
-          statusDotClass={statusDotClass}
-          displayStatus={displayStatus}
-          contextPercent={contextPercent}
-          buildContext={buildContext}
-          tddEnabled={tddEnabled}
-          onTddChange={onTddChange}
-          tddDisabled={tddDisabled}
-          layout={layout}
-          onLayoutChange={onLayoutChange}
-          dsOpen={dsOpen}
-          dsServers={dsServers}
-          dsClose={dsClose}
-          dsToggle={dsToggle}
-          dsStartServer={dsStartServer}
-          dsStopServer={dsStopServer}
-          dsStartAll={dsStartAll}
-          dsStopAll={dsStopAll}
-          dsUnmanagedConflict={dsUnmanagedConflict}
-          dsDismissUnmanagedConflict={dsDismissUnmanagedConflict}
-          dsStopUnmanagedAndRetry={dsStopUnmanagedAndRetry}
-          dsIsStoppingUnmanaged={dsIsStoppingUnmanaged}
-          changesAdd={diff.totalAdditions}
-          changesDel={diff.totalDeletions}
-          targetBranch={targetBranch}
-          onDelete={onDelete}
+      <div className="session-content-area" data-layout={layout}>
+        <ConversationPanelContainer
+          {...panelContainerProps}
+          promptInputSlot={promptInputSlot}
         />
 
-        {isFinished && <FinishedBanner targetBranch={targetBranch} />}
-
-        <div className="session-content-area" data-layout={layout}>
-          <ConversationPanelContainer
-            {...panelContainerProps}
-            promptInputSlot={promptInputSlot}
+        {(layout !== "conversation" ||
+          mobilePanel === "diff" ||
+          mobilePanel === "docs" ||
+          mobilePanel === "specs") && (
+          <RightPane
+            diff={diff}
+            commits={commits}
+            projectName={projectName}
+            sessionName={session.sessionName}
+            targetBranch={targetBranch}
           />
+        )}
 
-          {(layout !== "conversation" ||
-            mobilePanel === "diff" ||
-            mobilePanel === "docs" ||
-            mobilePanel === "specs") && (
-            <RightPane
-              diff={diff}
-              commits={commits}
-              projectName={projectName}
-              sessionName={session.sessionName}
-              targetBranch={targetBranch}
-            />
-          )}
-
-          {mobilePanel === "info" && (
-            <MobileInfoPanel
-              session={session}
-              activeConversation={activeConversation}
-              conversationId={conversationId}
-              statusDotClass={statusDotClass}
-              displayStatus={displayStatus}
-              contextPercent={contextPercent}
-              buildContext={buildContext}
-            />
-          )}
-        </div>
+        {mobilePanel === "info" && (
+          <MobileInfoPanel
+            session={session}
+            activeConversation={activeConversation}
+            conversationId={conversationId}
+            statusDotClass={statusDotClass}
+            displayStatus={displayStatus}
+            contextPercent={contextPercent}
+            buildContext={buildContext}
+          />
+        )}
       </div>
-    </main>
+    </div>
   );
 }

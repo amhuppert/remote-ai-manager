@@ -197,17 +197,6 @@ export default function ConversationSidebarRow({
 
   const handleClick = useCallback(
     (event: React.MouseEvent<HTMLAnchorElement>) => {
-      if (isCurrentConversation) {
-        event.preventDefault();
-        return;
-      }
-
-      if (conversation.scope === "session" && onPeek !== undefined) {
-        event.preventDefault();
-        onPeek(rowRef.current ?? event.currentTarget, conversation.id);
-        return;
-      }
-
       // Let modifier/non-primary clicks fall through to the native anchor so
       // cmd/ctrl/middle-click still open the conversation in a new tab.
       if (
@@ -217,6 +206,17 @@ export default function ConversationSidebarRow({
         event.shiftKey ||
         event.altKey
       ) {
+        return;
+      }
+
+      if (isCurrentConversation) {
+        event.preventDefault();
+        return;
+      }
+
+      if (conversation.scope === "session" && onPeek !== undefined) {
+        event.preventDefault();
+        onPeek(rowRef.current ?? event.currentTarget, conversation.id);
         return;
       }
 

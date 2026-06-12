@@ -9,7 +9,6 @@ describe("useSessionPageLocalState", () => {
 
     expect(result.current.promptText).toBe("");
     expect(result.current.promptTextRef.current).toBe("");
-    expect(result.current.mobileSidebarOpen).toBe(false);
     expect(result.current.inlineMarkerIds).toEqual([]);
     expect(result.current.collabPinnedTopTarget).toBeNull();
     expect(result.current.collabRowEl).toBeNull();
@@ -21,8 +20,6 @@ describe("useSessionPageLocalState", () => {
     expect(result.current.virtuosoRef).toMatchObject({ current: null });
 
     expect(typeof result.current.setPromptText).toBe("function");
-    expect(typeof result.current.openMobileSidebar).toBe("function");
-    expect(typeof result.current.closeMobileSidebar).toBe("function");
     expect(typeof result.current.setInlineMarkerIds).toBe("function");
     expect(typeof result.current.setCollabPinnedTopTarget).toBe("function");
     expect(typeof result.current.setCollabRowEl).toBe("function");
@@ -43,21 +40,6 @@ describe("useSessionPageLocalState", () => {
 
     expect(result.current.promptText).toBe("foo");
     expect(result.current.promptTextRef.current).toBe("foo");
-  });
-
-  it("openMobileSidebar sets mobileSidebarOpen=true; closeMobileSidebar sets it false", () => {
-    const { result } = renderHook(() => useSessionPageLocalState());
-    expect(result.current.mobileSidebarOpen).toBe(false);
-
-    act(() => {
-      result.current.openMobileSidebar();
-    });
-    expect(result.current.mobileSidebarOpen).toBe(true);
-
-    act(() => {
-      result.current.closeMobileSidebar();
-    });
-    expect(result.current.mobileSidebarOpen).toBe(false);
   });
 
   it("setInlineMarkerIds replaces the state value", () => {

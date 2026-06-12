@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import type { ConversationRefAttrs } from "@/lib/conversations/schemas";
+import { conversationsPageHref } from "@/lib/conversations/hrefs";
 
 interface ConversationLinkChipProps {
   attrs: ConversationRefAttrs;
@@ -16,9 +17,7 @@ export default function ConversationLinkChip({
   const conversationName = attrs["conversation-name"];
   const backend = attrs["backend"];
 
-  const href = `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(
-    sessionName,
-  )}/${encodeURIComponent(conversationId)}`;
+  const href = conversationsPageHref({ conversationId });
 
   const displayLabel =
     conversationName.length > 0 ? conversationName : conversationId;

@@ -31,6 +31,7 @@ import { useGenericArchiveSessionMutation } from "@/lib/sessions/mutations";
 import { apiFetch } from "@/lib/api/fetcher";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import { buildConversationContext } from "@/lib/conversations/copy-context";
+import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import {
   useSidebarCollapsed,
@@ -179,6 +180,18 @@ interface Props {
    * rail passes `false` to keep the route-exclusive binding from colliding.
    */
   enableSearchHotkey?: boolean;
+  /**
+   * When provided, invoked instead of `router.push` for every session-scoped
+   * conversation open (row navigate, open-after-create, open-after-fork,
+   * open-from-peek, context-menu open) so a host can switch conversations
+   * in place. Project-scoped rows always `router.push` regardless. Rows keep
+   * rendering real anchors, so modifier-clicks still open a new tab.
+   */
+  onOpenConversation?: (target: {
+    conversationId: string;
+    projectName: string;
+    sessionName: string;
+  }) => void;
 }
 
 function ConversationSidebar({
@@ -190,8 +203,27 @@ function ConversationSidebar({
   showNewConversationButton = true,
   showCollapseControl = true,
   enableSearchHotkey = true,
+  onOpenConversation,
 }: Props): React.JSX.Element {
   const router = useRouter();
+
+  const openSessionScopedConversation = useCallback(
+    (
+      target: {
+        conversationId: string;
+        projectName: string;
+        sessionName: string;
+      },
+      href: string,
+    ) => {
+      if (onOpenConversation !== undefined) {
+        onOpenConversation(target);
+        return;
+      }
+      router.push(href);
+    },
+    [onOpenConversation, router],
+  );
 
   // --- Zustand ---
   const collapsed = useSidebarCollapsed();
@@ -307,12 +339,18 @@ function ConversationSidebar({
     if (createConvoMutation.isPending) return;
     createConvoMutation.mutate(undefined, {
       onSuccess: (convo) => {
-        router.push(
-          `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/${convo.id}`,
+        openSessionScopedConversation(
+          { conversationId: convo.id, projectName, sessionName },
+          conversationsPageHref({ conversationId: convo.id }),
         );
       },
     });
-  }, [createConvoMutation, projectName, sessionName, router]);
+  }, [
+    createConvoMutation,
+    projectName,
+    sessionName,
+    openSessionScopedConversation,
+  ]);
 
   const handleRenameStart = useCallback(
     (id: string, name: string, scope: ActiveRowActionScope) => {
@@ -455,8 +493,13 @@ function ConversationSidebar({
         .then(({ conversationId }) => {
           closePeek();
           if (onMobileClose) onMobileClose();
-          router.push(
-            `/projects/${encodeURIComponent(peekConversation.projectName)}/${encodeURIComponent(peekConversation.sessionName)}/${conversationId}`,
+          openSessionScopedConversation(
+            {
+              conversationId,
+              projectName: peekConversation.projectName,
+              sessionName: peekConversation.sessionName,
+            },
+            conversationsPageHref({ conversationId }),
           );
         });
     },
@@ -466,7 +509,7 @@ function ConversationSidebar({
       peek,
       peekConversation,
       peekForkMutation,
-      router,
+      openSessionScopedConversation,
     ],
   );
 
@@ -573,7 +616,18 @@ function ConversationSidebar({
           archived={archived}
           closed={closed}
           onNavigate={() => {
-            router.push(href);
+            if (row.scope === "session") {
+              openSessionScopedConversation(
+                {
+                  conversationId: row.id,
+                  projectName: row.projectName,
+                  sessionName: row.sessionName,
+                },
+                href,
+              );
+            } else {
+              router.push(href);
+            }
             if (onMobileClose) onMobileClose();
           }}
           onPeek={descriptor.supportsSessionPeek ? openPeek : undefined}
@@ -613,6 +667,7 @@ function ConversationSidebar({
       markProjectReadMutation,
       onMobileClose,
       openPeek,
+      openSessionScopedConversation,
       router,
     ],
   );
@@ -688,7 +743,18 @@ function ConversationSidebar({
         label: "Open conversation",
         hotkey: "Enter",
         onSelect: () => {
-          router.push(href);
+          if (row.scope === "session") {
+            openSessionScopedConversation(
+              {
+                conversationId: row.id,
+                projectName: row.projectName,
+                sessionName: row.sessionName,
+              },
+              href,
+            );
+          } else {
+            router.push(href);
+          }
           if (onMobileClose) onMobileClose();
         },
       },
@@ -799,6 +865,7 @@ function ConversationSidebar({
     handleCopyContext,
     handleRenameStart,
     onMobileClose,
+    openSessionScopedConversation,
     router,
     setActiveListFilter,
     setSidebarSessionFilter,
@@ -916,7 +983,9 @@ function ConversationSidebar({
                   </div>
                   {activeCollaborations.map((collab) => {
                     const href = collab.conversationId
-                      ? `/projects/${encodeURIComponent(collab.projectName)}/${encodeURIComponent(collab.sessionName)}/${collab.conversationId}`
+                      ? conversationsPageHref({
+                          conversationId: collab.conversationId,
+                        })
                       : `/projects/${encodeURIComponent(collab.projectName)}/${encodeURIComponent(collab.sessionName)}`;
                     return (
                       <Link
@@ -977,8 +1046,13 @@ function ConversationSidebar({
           transcriptMessages={peekMessagesQuery.data ?? []}
           onClose={closePeek}
           onOpenFull={() => {
-            router.push(
-              `/projects/${encodeURIComponent(peekConversation.projectName)}/${encodeURIComponent(peekConversation.sessionName)}/${peekConversation.id}`,
+            openSessionScopedConversation(
+              {
+                conversationId: peekConversation.id,
+                projectName: peekConversation.projectName,
+                sessionName: peekConversation.sessionName,
+              },
+              conversationsPageHref({ conversationId: peekConversation.id }),
             );
             if (onMobileClose) onMobileClose();
             closePeek();

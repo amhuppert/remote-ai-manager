@@ -50,6 +50,7 @@ interface SessionDetailState {
   messageCountBeforeSubmit: number;
   showDeleteConfirm: boolean;
   sidebarCollapsed: boolean;
+  mobileSidebarOpen: boolean;
   sidebarFilter: string;
   sidebarSessionFilter: SidebarSessionFilter | null;
   pendingQuestions: AskQuestionItem[] | null;
@@ -92,6 +93,8 @@ interface SessionDetailActions {
   requestDeleteSession: () => void;
   cancelDeleteSession: () => void;
   toggleSidebar: () => void;
+  openMobileSidebar: () => void;
+  closeMobileSidebar: () => void;
   hydrateSidebar: () => void;
   setSidebarFilter: (value: string) => void;
   setSidebarSessionFilter: (value: SidebarSessionFilter | null) => void;
@@ -104,6 +107,7 @@ interface SessionDetailActions {
   openDocById: (docId: string) => void;
   selectDocId: (docId: string | null) => void;
   clearConversationMessages: () => void;
+  resetConversationState: () => void;
   resetStore: () => void;
 }
 
@@ -132,6 +136,7 @@ const initialState: SessionDetailState = {
   messageCountBeforeSubmit: 0,
   showDeleteConfirm: false,
   sidebarCollapsed: false,
+  mobileSidebarOpen: false,
   sidebarFilter: "",
   sidebarSessionFilter: null,
   pendingQuestions: null,
@@ -378,6 +383,16 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
         }
       }),
 
+    openMobileSidebar: () =>
+      set((state) => {
+        state.mobileSidebarOpen = true;
+      }),
+
+    closeMobileSidebar: () =>
+      set((state) => {
+        state.mobileSidebarOpen = false;
+      }),
+
     hydrateSidebar: () => {
       try {
         const saved = localStorage.getItem(SIDEBAR_STORAGE_KEY);
@@ -461,6 +476,18 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
         state.messageCountBeforeSubmit = 0;
       }),
 
+    // Reset everything scoped to a single conversation workspace. Rail-owned
+    // state (collapse, mobile drawer, filters) belongs to the host shell, which
+    // stays mounted while workspaces swap, so it must survive this reset.
+    resetConversationState: () =>
+      set((state) => ({
+        ...initialState,
+        sidebarCollapsed: state.sidebarCollapsed,
+        mobileSidebarOpen: state.mobileSidebarOpen,
+        sidebarFilter: state.sidebarFilter,
+        sidebarSessionFilter: state.sidebarSessionFilter,
+      })),
+
     resetStore: () => set(() => ({ ...initialState })),
   })),
 );
@@ -487,6 +514,8 @@ export const useShowDeleteConfirm = () =>
   useSessionDetailStore((s) => s.showDeleteConfirm);
 export const useSidebarCollapsed = () =>
   useSessionDetailStore((s) => s.sidebarCollapsed);
+export const useMobileSidebarOpen = () =>
+  useSessionDetailStore((s) => s.mobileSidebarOpen);
 export const useSidebarFilter = () =>
   useSessionDetailStore((s) => s.sidebarFilter);
 export const useSidebarSessionFilter = () =>
@@ -553,6 +582,10 @@ export const useCancelDeleteSessionDetail = () =>
   useSessionDetailStore((s) => s.cancelDeleteSession);
 export const useToggleSidebar = () =>
   useSessionDetailStore((s) => s.toggleSidebar);
+export const useOpenMobileSidebar = () =>
+  useSessionDetailStore((s) => s.openMobileSidebar);
+export const useCloseMobileSidebar = () =>
+  useSessionDetailStore((s) => s.closeMobileSidebar);
 export const useHydrateSidebar = () =>
   useSessionDetailStore((s) => s.hydrateSidebar);
 export const useSetSidebarFilter = () =>
@@ -579,5 +612,7 @@ export const useOpenDocById = () => useSessionDetailStore((s) => s.openDocById);
 export const useSelectDocId = () => useSessionDetailStore((s) => s.selectDocId);
 export const useClearConversationMessages = () =>
   useSessionDetailStore((s) => s.clearConversationMessages);
+export const useResetConversationState = () =>
+  useSessionDetailStore((s) => s.resetConversationState);
 export const useResetSessionDetailStore = () =>
   useSessionDetailStore((s) => s.resetStore);

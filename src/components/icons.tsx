@@ -75,6 +75,21 @@ export function CheckIcon({ size, className }: IconProps) {
   );
 }
 
+export function ChatIcon({ size, className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      className={className}
+      {...baseSvgProps}
+      aria-hidden="true"
+    >
+      <path d="M4 5h16v11H9l-5 4V5z" />
+    </svg>
+  );
+}
+
 export function KebabIcon({ size, className }: IconProps) {
   return (
     <svg

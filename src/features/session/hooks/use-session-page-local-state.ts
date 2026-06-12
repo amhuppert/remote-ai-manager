@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 import type { PromptEditorHandle } from "@/features/session/prompt/PromptEditor";
 import type { VirtuosoHandle } from "@/components/conversation/ConversationVirtuosoList";
@@ -13,10 +13,6 @@ export function useSessionPageLocalState(initialPromptText = "") {
     promptTextRef.current = promptText;
   }, [promptText]);
   const fireAndForgetRef = useRef(false);
-
-  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const openMobileSidebar = useCallback(() => setMobileSidebarOpen(true), []);
-  const closeMobileSidebar = useCallback(() => setMobileSidebarOpen(false), []);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -37,9 +33,6 @@ export function useSessionPageLocalState(initialPromptText = "") {
     editorRef,
     promptTextRef,
     fireAndForgetRef,
-    mobileSidebarOpen,
-    openMobileSidebar,
-    closeMobileSidebar,
     fileInputRef,
     pendingImages,
     addImage,

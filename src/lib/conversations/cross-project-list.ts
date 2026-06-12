@@ -8,11 +8,15 @@
  */
 
 import path from "node:path";
-import { readState as defaultReadState } from "@/lib/state-store";
+import {
+  readState as defaultReadState,
+  getConversationById as defaultGetConversationById,
+} from "@/lib/state-store";
 import { getFirstPromptSnippet as defaultGetFirstPromptSnippet } from "./first-prompt-snippet";
 import { createLogger } from "@/lib/logging";
 import type { ManagerState } from "@/lib/projects/schemas";
-import type { ConversationListItem } from "./schemas";
+import type { SessionState } from "@/lib/sessions/schemas";
+import type { ConversationListItem, ConversationState } from "./schemas";
 
 const log = createLogger("conversations:cross-project-list");
 
@@ -37,6 +41,38 @@ const defaultDeps: ListAllConversationsDeps = {
   getFirstPromptSnippet: defaultGetFirstPromptSnippet,
 };
 
+function buildConversationListItem(
+  projectPath: string,
+  session: Pick<SessionState, "sessionName" | "worktreePath">,
+  convo: ConversationState,
+): ConversationListItem {
+  return {
+    projectName: path.basename(projectPath) || projectPath,
+    projectPath,
+    sessionName: session.sessionName,
+    worktreePath: session.worktreePath,
+    conversationId: convo.id,
+    conversationName: convo.name,
+    summary: convo.summary,
+    firstPromptSnippet: null,
+    backend: convo.agentBackend,
+    backendRef: convo.backendRef,
+    transcriptPath: convo.transcriptPath,
+    debugLogPath: convo.debugMode?.logFilePath ?? null,
+    status: convo.status,
+    lastActivityAt: convo.lastActivityAt,
+    archived: convo.archived,
+  };
+}
+
+function needsSnippet(convo: ConversationState): boolean {
+  return (
+    convo.name === null &&
+    convo.summary === null &&
+    convo.transcriptPath !== null
+  );
+}
+
 export function createListAllConversations(deps: ListAllConversationsDeps) {
   return async function listAllConversations(
     options: ListAllConversationsOptions,
@@ -59,8 +95,6 @@ export function createListAllConversations(deps: ListAllConversationsDeps) {
         continue;
       projectCount += 1;
 
-      const projectName = path.basename(projectPath) || projectPath;
-
       for (const session of Object.values(project.sessions)) {
         if (!options.includeArchived && session.archived) continue;
 
@@ -68,32 +102,10 @@ export function createListAllConversations(deps: ListAllConversationsDeps) {
           if (!options.includeArchived && convo.archived) continue;
           conversationCount += 1;
 
-          const item: ConversationListItem = {
-            projectName,
-            projectPath,
-            sessionName: session.sessionName,
-            worktreePath: session.worktreePath,
-            conversationId: convo.id,
-            conversationName: convo.name,
-            summary: convo.summary,
-            firstPromptSnippet: null,
-            backend: convo.agentBackend,
-            backendRef: convo.backendRef,
-            transcriptPath: convo.transcriptPath,
-            debugLogPath: convo.debugMode?.logFilePath ?? null,
-            status: convo.status,
-            lastActivityAt: convo.lastActivityAt,
-            archived: convo.archived,
-          };
-
           const itemIndex = items.length;
-          items.push(item);
+          items.push(buildConversationListItem(projectPath, session, convo));
 
-          if (
-            convo.name === null &&
-            convo.summary === null &&
-            convo.transcriptPath !== null
-          ) {
+          if (needsSnippet(convo) && convo.transcriptPath !== null) {
             pending.push({ itemIndex, transcriptPath: convo.transcriptPath });
           }
         }
@@ -147,3 +159,54 @@ async function runWithConcurrency<T>(
 }
 
 export const listAllConversations = createListAllConversations(defaultDeps);
+
+export interface FindConversationByIdDeps {
+  getConversationById(conversationId: string): Promise<{
+    projectPath: string;
+    sessionName: string;
+    worktreePath: string;
+    conversation: ConversationState;
+  } | null>;
+  getFirstPromptSnippet(transcriptPath: string): Promise<string | null>;
+}
+
+const defaultFindDeps: FindConversationByIdDeps = {
+  getConversationById: defaultGetConversationById,
+  getFirstPromptSnippet: defaultGetFirstPromptSnippet,
+};
+
+/**
+ * Resolve a single session-scoped conversation by id alone, via the focused
+ * state-store accessor (no whole-state scan). Archived conversations stay
+ * resolvable — deep links to archived conversations must render.
+ * Project-scoped conversations live in a separate table and are never found.
+ */
+export function createFindConversationById(deps: FindConversationByIdDeps) {
+  return async function findConversationById(
+    conversationId: string,
+  ): Promise<ConversationListItem | null> {
+    const found = await deps.getConversationById(conversationId);
+    if (!found) return null;
+
+    const item = buildConversationListItem(
+      found.projectPath,
+      found,
+      found.conversation,
+    );
+    if (needsSnippet(found.conversation) && item.transcriptPath !== null) {
+      try {
+        item.firstPromptSnippet = await deps.getFirstPromptSnippet(
+          item.transcriptPath,
+        );
+      } catch (err) {
+        log.warn("snippet read failed", {
+          conversationId,
+          err: String(err),
+        });
+      }
+    }
+    return item;
+  };
+}
+
+export const findConversationById = createFindConversationById(defaultFindDeps);

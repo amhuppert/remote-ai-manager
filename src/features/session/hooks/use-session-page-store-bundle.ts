@@ -17,7 +17,7 @@ import {
   useClearPlaceholder,
   useRequestDeleteSession,
   useCancelDeleteSessionDetail,
-  useResetSessionDetailStore,
+  useResetConversationState,
   useClearConversationMessages,
   usePendingQuestions,
   usePendingQuestionId,
@@ -69,7 +69,7 @@ export function useSessionPageStoreBundle() {
   const clearPlaceholder = useClearPlaceholder();
   const requestDelete = useRequestDeleteSession();
   const cancelDelete = useCancelDeleteSessionDetail();
-  const resetStore = useResetSessionDetailStore();
+  const resetConversationState = useResetConversationState();
   const clearConversationMessages = useClearConversationMessages();
   const pendingQuestions = usePendingQuestions();
   const pendingQuestionId = usePendingQuestionId();
@@ -102,7 +102,7 @@ export function useSessionPageStoreBundle() {
     clearPlaceholder,
     requestDelete,
     cancelDelete,
-    resetStore,
+    resetConversationState,
     clearConversationMessages,
     pendingQuestions,
     pendingQuestionId,

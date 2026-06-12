@@ -1,9 +1,10 @@
 import { z } from "zod";
 import { useQuery } from "@tanstack/react-query";
-import { apiFetch } from "@/lib/api/fetcher";
+import { apiFetch, apiFetchOptional } from "@/lib/api/fetcher";
 import { conversationKeys } from "./query-keys";
 import {
   allConversationsResponseSchema,
+  conversationListItemSchema,
   conversationStateSchema,
   transcriptMessageSchema,
 } from "./schemas";
@@ -25,6 +26,24 @@ export function useConversationsQuery(
 export const stampedTranscriptMessageSchema = transcriptMessageSchema.extend({
   seq: z.number().int().nonnegative(),
 });
+
+/**
+ * Resolve a session-scoped conversation by id alone via
+ * GET /api/conversations/[conversationId]. `data === null` is the
+ * distinguishable not-found state (lookup 404); other failures surface as a
+ * regular query error. Disabled while `conversationId` is null.
+ */
+export function useConversationLookupQuery(conversationId: string | null) {
+  return useQuery({
+    queryKey: conversationKeys.lookup(conversationId ?? ""),
+    queryFn: () =>
+      apiFetchOptional(
+        `/api/conversations/${encodeURIComponent(conversationId ?? "")}`,
+        conversationListItemSchema,
+      ),
+    enabled: conversationId !== null,
+  });
+}
 
 export function useAllConversationsQuery(
   params: { includeArchived: boolean },

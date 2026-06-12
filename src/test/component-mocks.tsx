@@ -29,18 +29,17 @@ export function renderWithQuery(ui: React.ReactElement) {
 // Mock modules — use with vi.mock("module", async () => ...)
 // ---------------------------------------------------------------------------
 
-/** next/link — renders as a plain <a> tag. */
+/** next/link — renders as a plain <a> tag, forwarding anchor attributes. */
 export const nextLinkMock = {
   default: ({
     href,
     children,
-    className,
+    ...rest
   }: {
     href: string;
     children: React.ReactNode;
-    className?: string;
-  }) => (
-    <a href={href} className={className}>
+  } & React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
+    <a href={href} {...rest}>
       {children}
     </a>
   ),

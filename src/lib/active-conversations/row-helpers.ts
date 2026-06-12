@@ -1,4 +1,5 @@
 import type { ActiveConversation } from "@/lib/active-conversations/schemas";
+import { conversationsPageHref } from "@/lib/conversations/hrefs";
 
 export function activeConversationNeedsAttention(
   row: ActiveConversation,
@@ -17,10 +18,8 @@ export function activeConversationContextLabel(
 }
 
 export function activeConversationHref(row: ActiveConversation): string {
-  const projectName = encodeURIComponent(row.projectName);
-  const conversationId = encodeURIComponent(row.id);
   if (row.scope === "session") {
-    return `/projects/${projectName}/${encodeURIComponent(row.sessionName)}/${conversationId}`;
+    return conversationsPageHref({ conversationId: row.id });
   }
-  return `/projects/${projectName}?focus=${conversationId}`;
+  return `/projects/${encodeURIComponent(row.projectName)}?focus=${encodeURIComponent(row.id)}`;
 }

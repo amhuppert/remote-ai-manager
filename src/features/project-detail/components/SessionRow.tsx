@@ -8,7 +8,9 @@ import {
   useArchiveSessionMutation,
 } from "@/lib/sessions/mutations";
 import { useConfirmDeleteSession } from "@/stores/sessions.store";
+import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import TddToggle from "@/components/TddToggle";
+import { ChatIcon } from "@/components/icons";
 import BranchChip from "./BranchChip";
 import ModeDot from "./ModeDot";
 import StatusPill from "./StatusPill";
@@ -138,6 +140,18 @@ export default function SessionRow({
         {formatRelativeTime(session.lastActivityAt)}
       </span>
       <div className="v3-actions">
+        <Link
+          href={conversationsPageHref({
+            projectName,
+            sessionName: session.sessionName,
+          })}
+          className="btn-icon-only"
+          aria-label="Open in Conversations"
+          data-tooltip="Open in Conversations"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <ChatIcon size={14} />
+        </Link>
         <SessionTddToggle projectName={projectName} session={session} />
         <KebabMenu items={rowActions} />
       </div>

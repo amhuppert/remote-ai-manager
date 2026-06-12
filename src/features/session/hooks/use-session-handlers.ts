@@ -4,6 +4,7 @@ import { useCallback } from "react";
 import type { useRouter } from "next/navigation";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { buildConversationContext } from "@/lib/conversations/copy-context";
+import { conversationsPageHref } from "@/lib/conversations/hrefs";
 
 interface AnswerMutation {
   mutateAsync: (input: {
@@ -38,6 +39,13 @@ export interface UseSessionHandlersArgs {
   cancelDelete: () => void;
   clearQuestions: () => void;
   failPrompt: (message: string) => void;
+  /**
+   * When provided, invoked instead of `router.push` for conversation switches
+   * originating inside the workspace (e.g. opening a fork), so a host like
+   * /conversations can switch in place with the history API (§1.2). When
+   * absent, behavior is the per-conversation route's `router.push`.
+   */
+  onOpenConversation?: (target: { conversationId: string }) => void;
 }
 
 export interface SessionHandlers {
@@ -62,6 +70,7 @@ export function useSessionHandlers({
   cancelDelete,
   clearQuestions,
   failPrompt,
+  onOpenConversation,
 }: UseSessionHandlersArgs): SessionHandlers {
   const handleAnswerSubmit = useCallback(
     async (questionId: string, answers: Record<string, string>) => {
@@ -102,9 +111,13 @@ export function useSessionHandlers({
           conversationId,
           messageIndex,
         });
-        router.push(
-          `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/${result.conversationId}`,
-        );
+        if (onOpenConversation !== undefined) {
+          onOpenConversation({ conversationId: result.conversationId });
+        } else {
+          router.push(
+            conversationsPageHref({ conversationId: result.conversationId }),
+          );
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : "Fork failed";
         failPrompt(message);
@@ -117,6 +130,7 @@ export function useSessionHandlers({
       conversationId,
       router,
       failPrompt,
+      onOpenConversation,
     ],
   );
 

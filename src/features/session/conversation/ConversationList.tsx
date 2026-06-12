@@ -10,6 +10,7 @@ import {
   deriveSessionPromptCount,
 } from "@/lib/sessions/derived";
 import { buildSessionContext } from "@/lib/conversations/copy-context";
+import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import { useConversationsQuery } from "@/lib/conversations/queries";
 import { useSessionQuery } from "@/lib/sessions/queries";
 import { useSessionDiffQuery, useCommitsQuery } from "@/lib/git/queries";
@@ -154,9 +155,7 @@ export default function ConversationList({
     if (createConvoMutation.isPending || isFinished) return;
     createConvoMutation.mutate(undefined, {
       onSuccess: (convo) => {
-        router.push(
-          `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/${convo.id}`,
-        );
+        router.push(conversationsPageHref({ conversationId: convo.id }));
       },
     });
   }, [createConvoMutation, isFinished, projectName, sessionName, router]);
@@ -381,7 +380,7 @@ export default function ConversationList({
                 {filteredConversations.map((convo) => (
                   <Link
                     key={convo.id}
-                    href={`/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/${convo.id}`}
+                    href={conversationsPageHref({ conversationId: convo.id })}
                     className={`convo-card${convo.id === mostRecentId ? " most-recent" : ""}${convo.archived ? " archived" : ""}`}
                   >
                     <div className="convo-card-header">

@@ -342,6 +342,7 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     getProjectSessionListItems: accessors.getProjectSessionListItems,
     getSession: accessors.getSession,
     getConversation: accessors.getConversation,
+    getConversationById: accessors.getConversationById,
     getSessionConversations: accessors.getSessionConversations,
     getProjectConversation: accessors.getProjectConversation,
     getProjectConversations: accessors.getProjectConversations,

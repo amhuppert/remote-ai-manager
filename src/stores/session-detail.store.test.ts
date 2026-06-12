@@ -47,6 +47,77 @@ describe("session-detail.store — sidebar UI slice", () => {
   });
 });
 
+describe("session-detail.store — mobile sidebar slice", () => {
+  beforeEach(resetStore);
+
+  it("defaults mobileSidebarOpen to false", () => {
+    expect(useSessionDetailStore.getState().mobileSidebarOpen).toBe(false);
+  });
+
+  it("openMobileSidebar sets mobileSidebarOpen=true; closeMobileSidebar sets it false", () => {
+    useSessionDetailStore.getState().openMobileSidebar();
+    expect(useSessionDetailStore.getState().mobileSidebarOpen).toBe(true);
+
+    useSessionDetailStore.getState().closeMobileSidebar();
+    expect(useSessionDetailStore.getState().mobileSidebarOpen).toBe(false);
+  });
+
+  it("openMobileSidebar mutates only mobileSidebarOpen", () => {
+    const before = useSessionDetailStore.getState();
+    useSessionDetailStore.getState().openMobileSidebar();
+    const after = useSessionDetailStore.getState();
+    expect(after.sidebarCollapsed).toBe(before.sidebarCollapsed);
+    expect(after.layout).toBe(before.layout);
+    expect(after.mobilePanel).toBe(before.mobilePanel);
+  });
+
+  it("resetStore restores mobileSidebarOpen to false", () => {
+    useSessionDetailStore.getState().openMobileSidebar();
+    useSessionDetailStore.getState().resetStore();
+    expect(useSessionDetailStore.getState().mobileSidebarOpen).toBe(false);
+  });
+});
+
+describe("session-detail.store — resetConversationState", () => {
+  beforeEach(resetStore);
+
+  it("resets conversation-scoped state to defaults", () => {
+    const s = useSessionDetailStore.getState();
+    s.switchMobilePanel("diff");
+    s.switchRightPaneTab("docs");
+    s.submitPrompt(textBlock("hello"), 3);
+    s.showQuestions("q-1", []);
+
+    useSessionDetailStore.getState().resetConversationState();
+
+    const after = useSessionDetailStore.getState();
+    expect(after.mobilePanel).toBe("chat");
+    expect(after.rightPaneTab).toBe("diff");
+    expect(after.sending).toBe(false);
+    expect(after.optimisticMessages).toEqual([]);
+    expect(after.pendingQuestionId).toBeNull();
+  });
+
+  it("preserves rail-owned state (collapse, mobile drawer, filters)", () => {
+    const s = useSessionDetailStore.getState();
+    s.toggleSidebar();
+    s.openMobileSidebar();
+    s.setSidebarFilter("auth");
+    s.setSidebarSessionFilter({ projectName: "p", sessionName: "sess" });
+
+    useSessionDetailStore.getState().resetConversationState();
+
+    const after = useSessionDetailStore.getState();
+    expect(after.sidebarCollapsed).toBe(true);
+    expect(after.mobileSidebarOpen).toBe(true);
+    expect(after.sidebarFilter).toBe("auth");
+    expect(after.sidebarSessionFilter).toEqual({
+      projectName: "p",
+      sessionName: "sess",
+    });
+  });
+});
+
 describe("session-detail.store — optimistic queue slice", () => {
   beforeEach(resetStore);
 

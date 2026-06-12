@@ -304,6 +304,248 @@ describe("ConversationSidebar", () => {
     }
   });
 
+  describe("onOpenConversation seam", () => {
+    const sessionScopedConversation = {
+      scope: "session" as const,
+      id: "session-convo-1",
+      name: "Session conversation one",
+      status: "awaiting" as const,
+      lastActivityAt: "2026-05-15T12:36:00.000Z",
+      projectName: "remote-ai-manager",
+      projectPath: "/home/alex/github/remote-ai-manager",
+      sessionName: "conversation-ui-overhaul",
+      branchName: "csm/conversation-ui-overhaul",
+      worktreePath: "/home/alex/github/remote-ai-manager/.worktrees/overhaul",
+      agentBackend: "claude" as const,
+      summary: null,
+      pendingQuestion: null,
+      pendingQuestionId: null,
+      pendingQuestions: null,
+      forkedFrom: null,
+      debugActive: false,
+      role: null,
+      lastActivitySummary: "Awaiting your review.",
+      unread: false,
+      pendingApproval: null,
+    };
+
+    const sessionRowHref = "/conversations?c=session-convo-1";
+
+    const createdConversationState = {
+      id: "created-convo-1",
+      scope: "session",
+      name: null,
+      transcriptPath: null,
+      status: "new",
+      promptCount: 0,
+      createdAt: "2026-05-15T12:40:00.000Z",
+      lastActivityAt: "2026-05-15T12:40:00.000Z",
+      source: "cc",
+      summary: null,
+      archived: false,
+      totalCostUsd: null,
+      totalDurationMs: null,
+      totalTurns: null,
+      pendingQuestionId: null,
+      pendingQuestions: null,
+      pendingPromptText: null,
+      forkedFrom: null,
+      role: null,
+      activeTurnSource: null,
+      contextTokens: null,
+      contextWindowMax: null,
+      debugMode: null,
+      machineSnapshot: null,
+      agentBackend: "claude",
+      backendRef: null,
+      unread: false,
+      pendingQueue: [],
+    };
+
+    const sessionActiveData: ActiveConversationsResponse = {
+      conversations: [sessionScopedConversation, currentProjectConversation],
+      graphWorkflowExecutions: [],
+      activeCollaborationExecutions: [],
+    };
+
+    function jsonResponse(body: unknown): Response {
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    function stubApiFetch(): void {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: RequestInfo | URL) => {
+          const target = String(url);
+          if (target.includes("/fork")) {
+            return jsonResponse({
+              conversationId: "forked-convo-1",
+              name: "Forked conversation",
+              forkMode: "native",
+            });
+          }
+          if (target.endsWith("/conversations")) {
+            return jsonResponse(createdConversationState);
+          }
+          return jsonResponse([]);
+        }),
+      );
+    }
+
+    beforeEach(stubApiFetch);
+    afterEach(() => vi.unstubAllGlobals());
+
+    async function openPeek(): Promise<void> {
+      fireEvent.click(
+        screen.getByLabelText("Session conversation one — awaiting"),
+      );
+      await screen.findByLabelText("Conversation peek");
+    }
+
+    it("keeps rendering the real session href on the row anchor when the prop is provided", () => {
+      renderSidebarWithActiveData(sessionActiveData, {
+        onOpenConversation: vi.fn(),
+      });
+
+      const anchor = screen.getByLabelText(
+        "Session conversation one — awaiting",
+      );
+      expect(anchor.getAttribute("href")).toBe(sessionRowHref);
+    });
+
+    it("opens a session conversation from the peek through onOpenConversation when provided", async () => {
+      const onOpenConversation = vi.fn();
+      renderSidebarWithActiveData(sessionActiveData, { onOpenConversation });
+
+      await openPeek();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Open conversation" }),
+      );
+
+      expect(onOpenConversation).toHaveBeenCalledTimes(1);
+      expect(onOpenConversation).toHaveBeenCalledWith({
+        conversationId: "session-convo-1",
+        projectName: "remote-ai-manager",
+        sessionName: "conversation-ui-overhaul",
+      });
+      expect(routerPushMock).not.toHaveBeenCalled();
+    });
+
+    it("falls back to router.push for the peek open when the prop is absent", async () => {
+      renderSidebarWithActiveData(sessionActiveData);
+
+      await openPeek();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Open conversation" }),
+      );
+
+      expect(routerPushMock).toHaveBeenCalledTimes(1);
+      expect(routerPushMock).toHaveBeenCalledWith(sessionRowHref);
+    });
+
+    it("routes the new-conversation open through onOpenConversation when provided", async () => {
+      const onOpenConversation = vi.fn();
+      renderSidebarWithActiveData(sessionActiveData, { onOpenConversation });
+
+      fireEvent.click(screen.getByLabelText("New conversation"));
+
+      await waitFor(() => {
+        expect(onOpenConversation).toHaveBeenCalledWith({
+          conversationId: "created-convo-1",
+          projectName: "remote-ai-manager",
+          sessionName: "conversation-ui-overhaul",
+        });
+      });
+      expect(routerPushMock).not.toHaveBeenCalled();
+    });
+
+    it("falls back to router.push after create when the prop is absent", async () => {
+      renderSidebarWithActiveData(sessionActiveData);
+
+      fireEvent.click(screen.getByLabelText("New conversation"));
+
+      await waitFor(() => {
+        expect(routerPushMock).toHaveBeenCalledWith(
+          "/conversations?c=created-convo-1",
+        );
+      });
+    });
+
+    it("routes the fork open from the peek through onOpenConversation when provided", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: RequestInfo | URL) => {
+          const target = String(url);
+          if (target.includes("/fork")) {
+            return jsonResponse({
+              conversationId: "forked-convo-1",
+              name: "Forked conversation",
+              forkMode: "native",
+            });
+          }
+          return jsonResponse([
+            {
+              role: "user",
+              content: [{ type: "text", text: "Hello from the transcript" }],
+              timestamp: "2026-05-15T12:30:00.000Z",
+              seq: 0,
+            },
+          ]);
+        }),
+      );
+      const onOpenConversation = vi.fn();
+      renderSidebarWithActiveData(sessionActiveData, { onOpenConversation });
+
+      await openPeek();
+      fireEvent.click(
+        await screen.findByTitle("Fork conversation from this message"),
+      );
+
+      await waitFor(() => {
+        expect(onOpenConversation).toHaveBeenCalledWith({
+          conversationId: "forked-convo-1",
+          projectName: "remote-ai-manager",
+          sessionName: "conversation-ui-overhaul",
+        });
+      });
+      expect(routerPushMock).not.toHaveBeenCalled();
+    });
+
+    it("opens a session conversation from the context menu through onOpenConversation when provided", async () => {
+      const onOpenConversation = vi.fn();
+      renderSidebarWithActiveData(sessionActiveData, { onOpenConversation });
+
+      fireEvent.contextMenu(
+        screen.getByLabelText("Session conversation one — awaiting"),
+      );
+      fireEvent.click(screen.getByText("Open conversation"));
+
+      expect(onOpenConversation).toHaveBeenCalledWith({
+        conversationId: "session-convo-1",
+        projectName: "remote-ai-manager",
+        sessionName: "conversation-ui-overhaul",
+      });
+      expect(routerPushMock).not.toHaveBeenCalled();
+    });
+
+    it("always router.pushes project-scoped rows, even when the prop is provided", () => {
+      const onOpenConversation = vi.fn();
+      renderSidebarWithActiveData(sessionActiveData, { onOpenConversation });
+
+      fireEvent.click(
+        screen.getByLabelText("Current project cockpit — running"),
+      );
+
+      expect(routerPushMock).toHaveBeenCalledWith(
+        "/projects/remote-ai-manager?focus=current-project-convo",
+      );
+      expect(onOpenConversation).not.toHaveBeenCalled();
+    });
+  });
+
   it("renders closed project conversations in Closed and excludes them from Needs/Run counts", () => {
     renderSidebarWithActiveData({
       conversations: [

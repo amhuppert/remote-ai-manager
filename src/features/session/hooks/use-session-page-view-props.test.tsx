@@ -4,6 +4,6 @@ import { describe, it } from "vitest";
 
 describe("useSessionPageViewProps", () => {
   it.todo(
-    "returns the SessionPageView props bundle (topbarProps, contentProps, promptInputSlotProps, mobileBottomBarProps, dialogsProps) — exercised via SessionPage integration test",
+    "returns the ConversationWorkspaceView props bundle (contentProps, promptInputSlotProps, mobileBottomBarProps, dialogsProps) — exercised via SessionPage integration test",
   );
 });

@@ -263,6 +263,7 @@ describe("state-aggregate.readAll", () => {
       },
       conversations: {
         findById: () => null,
+        findByIdWithKey: () => null,
         findByKey: () => null,
         findBySession: () => [],
         findListItemsForProject: () => [],

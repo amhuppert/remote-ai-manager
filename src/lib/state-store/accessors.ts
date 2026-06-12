@@ -233,6 +233,48 @@ export function createAccessors(core: StateStoreCore) {
     }
   }
 
+  /**
+   * Resolve a session-scoped conversation by id alone — two single-row
+   * indexed reads (conversation by primary key, then its owning session for
+   * the worktree path). Project-scoped conversations live in a separate
+   * table and are never found here.
+   */
+  async function getConversationById(conversationId: string): Promise<{
+    projectPath: string;
+    sessionName: string;
+    worktreePath: string;
+    conversation: ConversationState;
+  } | null> {
+    const start = performance.now();
+    try {
+      const found = repos.conversations.findByIdWithKey(conversationId);
+      if (!found) return null;
+      const session = repos.sessions.findByKey(
+        found.projectPath,
+        found.sessionName,
+      );
+      if (!session) {
+        logger.warn("state-store.conversation_session_missing", {
+          conversationId,
+          projectPath: found.projectPath,
+          sessionName: found.sessionName,
+        });
+        return null;
+      }
+      return {
+        projectPath: found.projectPath,
+        sessionName: found.sessionName,
+        worktreePath: session.worktreePath,
+        conversation: found.conversation,
+      };
+    } finally {
+      emitReadTiming(start, {
+        accessor: "getConversationById",
+        conversationId,
+      });
+    }
+  }
+
   async function getProjectConversation(
     projectPath: string,
     conversationId: string,
@@ -383,6 +425,7 @@ export function createAccessors(core: StateStoreCore) {
     getProjectSessions,
     getProjectSessionListItems,
     getConversation,
+    getConversationById,
     getSessionConversations,
     getProjectConversation,
     getProjectConversations,

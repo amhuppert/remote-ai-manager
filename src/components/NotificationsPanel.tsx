@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback } from "react";
 import { assertNever } from "@/lib/shared/assert-never";
+import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import { getItemLabel } from "./notification-helpers";
 import { CloseIcon } from "@/components/icons";
 import LandPreparedMergeButton from "./LandPreparedMergeButton";
@@ -174,7 +175,7 @@ function getItemHref(item: NotificationItem): string {
     case "conversation": {
       switch (item.scope) {
         case "session":
-          return `/projects/${encodeURIComponent(item.projectName)}/${encodeURIComponent(item.sessionName)}/${encodeURIComponent(item.id)}`;
+          return conversationsPageHref({ conversationId: item.id });
         case "project":
           return item.href;
         default:

@@ -8,6 +8,8 @@ export const conversationKeys = {
     [...conversationKeys.lists(), projectName, sessionName] as const,
   allConversations: (params: { includeArchived: boolean }) =>
     [...conversationKeys.all, "all", params] as const,
+  lookup: (conversationId: string) =>
+    [...conversationKeys.all, "lookup", conversationId] as const,
   messages: (
     projectName: string,
     sessionName: string,

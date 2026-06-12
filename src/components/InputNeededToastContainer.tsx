@@ -3,6 +3,7 @@
 import { useCallback } from "react";
 import { useRouter } from "next/navigation";
 import InputNeededToast from "./InputNeededToast";
+import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import {
   useInputToastQueue,
   useDismissInputToast,
@@ -22,8 +23,9 @@ export default function InputNeededToastContainer() {
       dismissToast();
       return;
     }
-    const basePath = `/projects/${encodeURIComponent(current.projectName)}/${encodeURIComponent(current.sessionName)}`;
-    router.push(`${basePath}/${current.conversationId}`);
+    router.push(
+      conversationsPageHref({ conversationId: current.conversationId }),
+    );
     dismissToast();
   }, [current, router, dismissToast]);
 

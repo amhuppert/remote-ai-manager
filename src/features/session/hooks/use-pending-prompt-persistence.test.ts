@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// Minimal smoke test for colocation criterion; deep behavior is covered by integration via SessionPage.
+// Minimal smoke test for colocation criterion; deep behavior is covered by integration via ConversationWorkspace.
 import { renderHook } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
 import React from "react";

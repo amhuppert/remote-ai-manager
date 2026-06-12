@@ -55,7 +55,7 @@ describe("InputNeededToastContainer", () => {
     expect(useNotificationStore.getState().inputToastQueue).toEqual([]);
   });
 
-  it("keeps session input-needed toasts on the session conversation route", async () => {
+  it("routes session input-needed toasts to the conversations page", async () => {
     act(() => {
       useNotificationStore.getState().enqueueInputToast({
         projectName: "my-project",
@@ -73,9 +73,7 @@ describe("InputNeededToastContainer", () => {
       fireEvent.click(screen.getByRole("button", { name: "View" }));
     });
 
-    expect(pushMock).toHaveBeenCalledWith(
-      "/projects/my-project/my-session/conv-1",
-    );
+    expect(pushMock).toHaveBeenCalledWith("/conversations?c=conv-1");
   });
 
   it("renders a custom toast title when the item carries one", async () => {
@@ -117,8 +115,6 @@ describe("InputNeededToastContainer", () => {
       fireEvent.click(screen.getByRole("button", { name: "Review" }));
     });
 
-    expect(pushMock).toHaveBeenCalledWith(
-      "/projects/my-project/my-session/conv-1",
-    );
+    expect(pushMock).toHaveBeenCalledWith("/conversations?c=conv-1");
   });
 });

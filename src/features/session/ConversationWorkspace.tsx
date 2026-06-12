@@ -13,8 +13,7 @@ import { useSessionLifecycle } from "@/features/session/hooks/use-session-lifecy
 import { computeContextFillPercent } from "@/lib/conversations/context-fill";
 import { useSendPrompt } from "@/hooks/use-send-prompt";
 import { useAbortPrompt } from "@/hooks/use-abort-prompt";
-import LoadingSessionView from "@/features/session/conversation/LoadingSessionView";
-import SessionPageView from "@/features/session/SessionPageView";
+import ConversationWorkspaceView from "@/features/session/ConversationWorkspaceView";
 import { type EffortLevel } from "@/lib/agent-backends/schemas";
 import { useBackendModelEffort } from "@/features/session/hooks/use-backend-model-effort";
 import { useImageIndexCountQuery } from "@/hooks/use-image-index-count";
@@ -30,27 +29,44 @@ import { useApprovalGate } from "@/features/session/hooks/use-approval-gate";
 import { useEnqueuePromptErrorToast } from "@/stores/notification.store";
 import { selectLastUserTurnAgentSettings } from "@/lib/conversations/last-turn-agent-settings";
 
-interface Props {
+export interface ConversationWorkspaceProps {
   projectName: string;
   sessionName: string;
   conversationId: string;
   defaultModel: string;
   defaultEffort?: EffortLevel;
   autoFocus?: boolean;
+  /**
+   * When provided, conversation switches originating inside the workspace
+   * (fork open, focus-initialization finalize) are routed through this
+   * callback instead of `router.push`, so a host like /conversations can
+   * switch in place with the history API (§1.2). When absent, behavior is
+   * the per-conversation route's `router.push`.
+   */
+  onOpenConversation?: (target: { conversationId: string }) => void;
 }
 
 function hasCollabPrefix(text: string): boolean {
   return text === "/collab" || text.startsWith("/collab ");
 }
 
-export default function ConversationDetailPage({
+function WorkspaceFallback({ title }: { title: string }): React.JSX.Element {
+  return (
+    <div className="empty-state">
+      <div className="empty-state-title">{title}</div>
+    </div>
+  );
+}
+
+export default function ConversationWorkspace({
   projectName,
   sessionName,
   conversationId,
   defaultModel,
   defaultEffort = "high",
   autoFocus,
-}: Props): React.JSX.Element {
+  onOpenConversation,
+}: ConversationWorkspaceProps): React.JSX.Element {
   const router = useRouter();
   const storageKey = `cc-layout-${projectName}-${sessionName}`;
 
@@ -201,7 +217,7 @@ export default function ConversationDetailPage({
   useSessionLifecycle({
     storageKey,
     hydrateLayout: store.hydrateLayout,
-    resetStore: store.resetStore,
+    resetConversationState: store.resetConversationState,
     clearConversationMessages: store.clearConversationMessages,
     conversationId,
     session,
@@ -209,9 +225,6 @@ export default function ConversationDetailPage({
     showQuestions: store.showQuestions,
     clearQuestions: store.clearQuestions,
     autoFocus,
-    router,
-    projectName,
-    sessionName,
     sendPrompt,
     messagesLength: rawMessages.length,
     selectedModel,
@@ -292,40 +305,27 @@ export default function ConversationDetailPage({
     clearCollabConfigDraft,
     clearPersistedPendingPromptOnSubmit,
     enqueuePromptErrorToast,
+    onOpenConversation,
   });
 
-  const { decodedProjectName, displayStatus, statusDotClass } =
-    useSessionPageDisplay({
-      projectName,
-      isFinished,
-      pendingQuestions: store.pendingQuestions,
-      sending: store.sending,
-      sessionStatus,
-    });
+  const { displayStatus, statusDotClass } = useSessionPageDisplay({
+    projectName,
+    isFinished,
+    pendingQuestions: store.pendingQuestions,
+    sending: store.sending,
+    sessionStatus,
+  });
 
   if (isSessionNotFoundError(sessionQuery.error)) {
-    return (
-      <LoadingSessionView
-        projectName={projectName}
-        sessionName={sessionName}
-        decodedProjectName={decodedProjectName}
-        title="Session not found."
-      />
-    );
+    return <WorkspaceFallback title="Session not found." />;
   }
 
   if (sessionQuery.isPending || !session) {
-    return (
-      <LoadingSessionView
-        projectName={projectName}
-        sessionName={sessionName}
-        decodedProjectName={decodedProjectName}
-      />
-    );
+    return <WorkspaceFallback title="Loading session..." />;
   }
 
   return (
-    <SessionPageContent
+    <WorkspaceContent
       args={{
         projectName,
         sessionName,
@@ -333,7 +333,6 @@ export default function ConversationDetailPage({
         session,
         activeConversation,
         conversations,
-        decodedProjectName,
         statusDotClass,
         displayStatus,
         contextPercent,
@@ -407,11 +406,11 @@ export default function ConversationDetailPage({
   );
 }
 
-function SessionPageContent({
+function WorkspaceContent({
   args,
 }: {
   args: Parameters<typeof useSessionPageViewProps>[0];
 }): React.JSX.Element {
   const viewProps = useSessionPageViewProps(args);
-  return <SessionPageView {...viewProps} />;
+  return <ConversationWorkspaceView {...viewProps} />;
 }

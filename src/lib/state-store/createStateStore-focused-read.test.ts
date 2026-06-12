@@ -359,6 +359,124 @@ describe("createStateStore — focused read DI guard", () => {
     expect(overrides).toBeUndefined();
   });
 
+  it("getConversationById resolves identity by id alone without invoking the aggregate", async () => {
+    const projects = createProjectsRepo(db);
+    const sessions = createSessionsRepo(db);
+    const conversations = createConversationsRepo(db);
+
+    projects.upsert({ rootPath: "/proj-a" });
+    projects.upsert({ rootPath: "/proj-b" });
+    sessions.upsert(
+      "/proj-a",
+      sessionStateSchema.parse({
+        sessionName: "alpha",
+        worktreePath: "/wt/alpha",
+        branchName: "csm/alpha",
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+    sessions.upsert(
+      "/proj-b",
+      sessionStateSchema.parse({
+        sessionName: "beta",
+        worktreePath: "/wt/beta",
+        branchName: "csm/beta",
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+        archived: true,
+      }),
+    );
+    conversations.upsert(
+      "/proj-a",
+      "alpha",
+      conversationStateSchema.parse({
+        id: "conv-1",
+        transcriptPath: null,
+        status: "idle",
+        promptCount: 0,
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+    conversations.upsert(
+      "/proj-b",
+      "beta",
+      conversationStateSchema.parse({
+        id: "conv-2",
+        transcriptPath: null,
+        status: "idle",
+        promptCount: 0,
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+        archived: true,
+      }),
+    );
+
+    const spyAggregate: StateAggregate = {
+      readAll: vi.fn(() => {
+        throw new Error(
+          "spyAggregate.readAll must NOT be called from getConversationById focused-read path",
+        );
+      }),
+      diffAndCommit: vi.fn(() => {
+        throw new Error(
+          "spyAggregate.diffAndCommit must NOT be called from getConversationById focused-read path",
+        );
+      }),
+    };
+
+    const store = createStateStore({ db, aggregate: spyAggregate });
+
+    const found = await store.getConversationById("conv-2");
+    expect(found).toMatchObject({
+      projectPath: "/proj-b",
+      sessionName: "beta",
+      worktreePath: "/wt/beta",
+    });
+    expect(found?.conversation.id).toBe("conv-2");
+    expect(found?.conversation.archived).toBe(true);
+
+    expect(await store.getConversationById("missing")).toBeNull();
+    expect(spyAggregate.readAll).not.toHaveBeenCalled();
+    expect(spyAggregate.diffAndCommit).not.toHaveBeenCalled();
+  });
+
+  it("getConversationById does not resolve project-scoped conversations", async () => {
+    const projects = createProjectsRepo(db);
+    createSessionsRepo(db);
+    createConversationsRepo(db);
+
+    projects.upsert({ rootPath: "/proj-a" });
+
+    const spyAggregate: StateAggregate = {
+      readAll: vi.fn(() => {
+        throw new Error("readAll must not be called");
+      }),
+      diffAndCommit: vi.fn(() => {
+        throw new Error("diffAndCommit must not be called");
+      }),
+    };
+
+    const store = createStateStore({ db, aggregate: spyAggregate });
+
+    await store.createProjectConversation(
+      "/proj-a",
+      conversationStateSchema.parse({
+        id: "plc-1",
+        scope: "project",
+        transcriptPath: null,
+        status: "new",
+        promptCount: 0,
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+        open: true,
+      }),
+    );
+
+    expect(await store.getConversationById("plc-1")).toBeNull();
+  });
+
   it("mutateConversation persists a single-row change without invoking aggregate.readAll/diffAndCommit", async () => {
     const projects = createProjectsRepo(db);
     const sessions = createSessionsRepo(db);

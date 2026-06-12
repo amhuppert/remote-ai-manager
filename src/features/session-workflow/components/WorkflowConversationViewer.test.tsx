@@ -6,7 +6,7 @@ import { renderWithQuery } from "@/test/component-mocks";
 // react-virtuoso is layout-driven and renders no items in jsdom (no real
 // height/scroll). Replace it with a flat list renderer so the full data path
 // (query → rows → renderMessageRow → MessageRow) can be exercised in the
-// integration test below. This mirrors the pattern in SessionPage.test.tsx.
+// integration test below. This mirrors the pattern in ConversationWorkspace.test.tsx.
 vi.mock("react-virtuoso", async () => {
   const React = await import("react");
   type VirtuosoMockProps = {
