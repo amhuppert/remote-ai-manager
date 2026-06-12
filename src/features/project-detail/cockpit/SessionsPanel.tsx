@@ -19,6 +19,8 @@ import SessionsFilterPopover from "./SessionsFilterPopover";
 import "./styles/cockpit.css";
 
 export interface SessionsPanelProps {
+  id?: string;
+  hidden?: boolean;
   projectName: string;
   sessions: SessionListItem[];
   /** Shared filter-token state (also driven by the composer's filter mode). */
@@ -35,6 +37,8 @@ export interface SessionsPanelProps {
  * distinguishes a search term from a filter.
  */
 export default function SessionsPanel({
+  id,
+  hidden,
   projectName,
   sessions,
   tokens,
@@ -110,7 +114,13 @@ export default function SessionsPanel({
   const emptyAfterFilter = !noSessionsAtAll && filtered.length === 0;
 
   return (
-    <div className="plc-sessions">
+    <div
+      id={id}
+      className="plc-sessions"
+      role="tabpanel"
+      aria-label="Sessions"
+      hidden={hidden}
+    >
       <div className="plc-sessions-header">
         <div className="plc-sessions-searchrow">
           <input

@@ -18,41 +18,51 @@
 /* Page header */
 .cc-page-header {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
-  gap: var(--space-lg);
-  padding: var(--space-xl) var(--space-xl) var(--space-md);
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-xl);
+  min-height: 44px;
 }
-.cc-page-titleblock {
+.cc-page-header--compact {
+  border-bottom: 1px solid var(--border-dim);
+}
+.cc-page-summaryrow {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: var(--space-sm);
   min-width: 0;
+  flex: 1;
 }
 .cc-page-title {
   font-family: var(--font-display);
   font-weight: 800;
-  font-size: 1.85rem;
-  letter-spacing: -0.03em;
+  font-size: 1.05rem;
+  letter-spacing: 0;
   line-height: 1.05;
   color: var(--text-primary);
+  white-space: nowrap;
 }
 .cc-page-title .accent {
   color: var(--cyan);
   text-shadow: 0 0 24px var(--cyan-glow-text);
 }
-.cc-page-sub {
+.cc-page-meta {
   font-family: var(--font-mono);
-  font-size: 0.76rem;
-  color: var(--text-secondary);
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
 }
-.cc-page-sub .path {
+.cc-page-path {
   color: var(--text-tertiary);
+  max-width: min(48vw, 58ch);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.cc-page-sub .pill {
+.cc-page-summaryrow .pill {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -62,8 +72,9 @@
   border: 1px solid var(--border-subtle);
   font-size: 0.7rem;
   color: var(--text-secondary);
+  white-space: nowrap;
 }
-.cc-page-sub .pill .live-dot {
+.cc-page-summaryrow .pill .live-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -1012,20 +1023,24 @@
    ============================================================ */
 
 @media (max-width: 768px) {
-  /* Page header: stack title, subtitle, and primary action */
-  .cc-page-header {
+  .cc-page-header--compact {
     flex-direction: column;
     align-items: stretch;
-    gap: var(--space-md);
-    padding: var(--space-lg) var(--space-md) var(--space-sm);
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+  }
+  .cc-page-summaryrow {
+    flex-wrap: wrap;
+    row-gap: var(--space-xs);
   }
   .cc-page-title {
-    font-size: 1.4rem;
+    font-size: 1rem;
     overflow-wrap: anywhere;
+    white-space: normal;
   }
-  .cc-page-sub {
-    flex-wrap: wrap;
-    row-gap: 4px;
+  .cc-page-path {
+    max-width: 100%;
+    flex-basis: 100%;
   }
   .cc-primary {
     align-self: flex-start;

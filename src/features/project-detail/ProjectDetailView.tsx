@@ -237,28 +237,28 @@ export default function ProjectDetailView({
         ) : (
           <>
             <div className="stagger-in project-detail-shell">
-              <div
-                className="cc-page-header"
-                style={{ paddingBottom: "var(--space-sm)" }}
-              >
-                <div className="cc-page-titleblock">
+              <div className="cc-page-header cc-page-header--compact">
+                <div
+                  className="cc-page-summaryrow"
+                  aria-label="Project summary"
+                >
                   <div className="cc-page-title">
                     {projectName} <span className="accent">·</span>
                   </div>
-                  <div className="cc-page-sub">
-                    <span className="path">{projectPath ?? projectName}</span>
-                    {runningCount > 0 && (
-                      <span className="pill">
-                        <span className="live-dot" />
-                        {runningCount} running
-                      </span>
-                    )}
-                    <span style={{ color: "var(--text-tertiary)" }}>
-                      · {sessions.length} session
-                      {sessions.length === 1 ? "" : "s"}, {archivedCount}{" "}
-                      archived
+                  <span className="cc-page-meta cc-page-path">
+                    {projectPath ?? projectName}
+                  </span>
+                  {runningCount > 0 && (
+                    <span className="pill">
+                      <span className="live-dot" />
+                      {runningCount} running
                     </span>
-                  </div>
+                  )}
+                  <span className="cc-page-meta">
+                    {sessions.length} session
+                    {sessions.length === 1 ? "" : "s"}
+                  </span>
+                  <span className="cc-page-meta">{archivedCount} archived</span>
                 </div>
                 <div className="cc-page-actions">
                   <Link

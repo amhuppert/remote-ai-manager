@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { screen, waitFor, render } from "@testing-library/react";
+import {
+  fireEvent,
+  screen,
+  waitFor,
+  render,
+  within,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderWithQuery } from "@/test/component-mocks";
 import ProjectDetailView from "./ProjectDetailView";
@@ -310,10 +316,30 @@ describe("ProjectDetailView", () => {
     expect(primary?.textContent).toContain("New session");
   });
 
+  it("renders the project header as a compact single-row summary", () => {
+    mockSessionsData.data = makeSessions(2);
+    const { container } = renderWithQuery(
+      <ProjectDetailView projectName="my-project" />,
+    );
+
+    const header = container.querySelector(".cc-page-header--compact");
+    const summary = header?.querySelector(".cc-page-summaryrow");
+    expect(header).not.toBeNull();
+    expect(summary).not.toBeNull();
+    expect(summary?.textContent).toContain("my-project");
+    expect(summary?.textContent).toContain("2 sessions");
+    expect(summary?.textContent).toContain("0 archived");
+    expect(header?.querySelector(".cc-page-actions")).not.toBeNull();
+  });
+
   it("renders the shared prompt composer in place of the legacy command console", async () => {
     mockSessionsData.data = [];
     const { container } = renderWithQuery(
       <ProjectDetailView projectName="my-project" />,
+    );
+    const viewTabs = screen.getByRole("tablist", { name: "Project view" });
+    fireEvent.click(
+      within(viewTabs).getByRole("tab", { name: /Conversations/ }),
     );
     await waitFor(() =>
       expect(container.querySelector(".prompt-input-area")).not.toBeNull(),

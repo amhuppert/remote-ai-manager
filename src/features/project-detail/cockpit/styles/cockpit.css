@@ -1,10 +1,9 @@
 /*
  * Project-conversation cockpit. Production naming under the `.plc-*` namespace;
- * every visual value references a design-system token. Layout: a full-height
- * Active Conversations rail on the left, and a right column split 50/50 in
- * height — the conversation pane on top, the sessions panel below. Panes sit
- * flush (no gaps, no rounded borders), separated by single-pixel dividers, to
- * match the session conversation page.
+ * every visual value references a design-system token. Layout: a compact view
+ * switch above either the full-height sessions table or the conversation
+ * workspace. Conversation mode keeps the Active Conversations rail and
+ * transcript pane flush, separated by a single-pixel divider.
  */
 
 /* ── Shell layout ──────────────────────────────────────────────────────── */
@@ -13,26 +12,47 @@
   flex: 1;
   display: grid;
   grid-template-columns: var(--plc-rail-w, 308px) minmax(0, 1fr);
-  grid-template-rows: 1fr 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
   grid-template-areas:
-    "rail conversation"
-    "rail sessions";
+    "view view"
+    "rail conversation";
   align-items: stretch;
   min-height: 0;
   height: 100%;
+}
+
+.plc-cockpit[data-workspace-view="sessions"] {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    "view"
+    "sessions";
 }
 
 .plc-cockpit[data-rail-collapsed="true"] {
   --plc-rail-w: 48px;
 }
 
-/* Mobile pane switcher — hidden on desktop where all panes show at once. */
+.plc-cockpit[data-workspace-view="sessions"] .plc-rail,
+.plc-cockpit[data-workspace-view="sessions"] .plc-workspace-pane,
+.plc-cockpit[data-workspace-view="conversations"] .plc-sessions {
+  display: none;
+}
+
+.plc-view-switch {
+  grid-area: view;
+  justify-self: start;
+  margin: 0 var(--space-md) var(--space-sm);
+}
+
+/* Conversation sub-pane switcher — mobile only. */
 .plc-mobile-switch {
   display: none;
 }
 
 .plc-rail {
   grid-area: rail;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
   height: 100%;
@@ -44,6 +64,13 @@
 .plc-rail-toggle-row {
   display: flex;
   justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+.plc-rail > .convo-sidebar {
+  flex: 1;
+  min-height: 0;
+  height: auto;
 }
 
 .plc-rail-collapsed {
@@ -51,6 +78,19 @@
   flex-direction: column;
   align-items: center;
   padding: var(--space-sm) 0;
+}
+
+.plc-workspace-pane {
+  grid-area: conversation;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.plc-workspace-pane > .plc-pane {
+  flex: 1;
 }
 
 /* Entry animation — 8px rise + fade over .2s ease (entries).
@@ -80,13 +120,11 @@
 /* ── Conversation pane ─────────────────────────────────────────────────── */
 
 .plc-pane {
-  grid-area: conversation;
   display: flex;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
   height: 100%;
-  border-bottom: 1px solid var(--border-subtle);
   background: var(--bg-surface);
   overflow: hidden;
 }
@@ -592,11 +630,10 @@
   }
 }
 
-/* ── Mobile (≤768px): single-pane cockpit with a switcher ─────────────────
- * The three-pane grid cannot fit a phone. The cockpit collapses to one
- * full-width column showing exactly one pane (chat / conversations rail /
- * sessions); the `.plc-mobile-switch` tabs pick which. Same density per
- * pane, one pane at a time. */
+/* ── Mobile (≤768px): primary view plus conversation sub-pane switcher ────
+ * The cockpit collapses to one full-width panel. Sessions remain the primary
+ * default; in conversation mode the `.plc-mobile-switch` tabs pick transcript
+ * or conversation list. */
 
 @media (max-width: 768px) {
   .plc-cockpit {
@@ -605,31 +642,58 @@
     min-height: 0;
   }
 
-  .plc-mobile-switch {
-    display: flex;
+  .plc-view-switch {
+    align-self: stretch;
+    justify-self: auto;
     margin: 0 var(--space-md) var(--space-sm);
     flex-shrink: 0;
+  }
+  .plc-view-switch .cc-tab {
+    flex: 1;
+    justify-content: center;
+    min-height: 36px;
+  }
+
+  .plc-mobile-switch {
+    display: none;
+    margin: 0 var(--space-md) var(--space-sm);
+    flex-shrink: 0;
+  }
+  .plc-cockpit[data-workspace-view="conversations"] .plc-mobile-switch {
+    display: flex;
   }
   .plc-mobile-switch .cc-tab {
     flex: 1;
     min-height: 36px;
+    justify-content: center;
   }
 
   .plc-rail,
+  .plc-workspace-pane,
   .plc-pane,
   .plc-sessions {
     display: none;
   }
 
-  .plc-cockpit[data-mobile-pane="chat"] .plc-pane {
+  .plc-cockpit[data-workspace-view="conversations"][data-mobile-pane="chat"]
+    .plc-workspace-pane {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+
+  .plc-cockpit[data-workspace-view="conversations"][data-mobile-pane="chat"]
+    .plc-pane {
     display: flex;
     flex: 1;
     min-height: 0;
     border-bottom: none;
   }
 
-  .plc-cockpit[data-mobile-pane="rail"] .plc-rail {
-    display: block;
+  .plc-cockpit[data-workspace-view="conversations"][data-mobile-pane="rail"]
+    .plc-rail {
+    display: flex;
+    flex-direction: column;
     flex: 1;
     min-height: 0;
     width: 100%;
@@ -637,25 +701,33 @@
   }
   /* The embedded rail is an in-flow cockpit pane, not the session page's
    * slide-out drawer — undo the fixed-position drawer treatment. */
-  .plc-cockpit[data-mobile-pane="rail"] .plc-rail .convo-sidebar {
+  .plc-cockpit[data-workspace-view="conversations"][data-mobile-pane="rail"]
+    .plc-rail
+    .convo-sidebar {
     position: static;
     transform: none;
     transition: none;
+    flex: 1;
+    min-height: 0;
     width: 100%;
     min-width: 0;
-    height: 100%;
+    height: auto;
     border-right: none;
     z-index: auto;
   }
   /* The host-owned collapse toggle and the drawer close button are
    * meaningless when the rail is the only visible pane. */
-  .plc-cockpit[data-mobile-pane="rail"] .plc-rail-toggle-row,
-  .plc-cockpit[data-mobile-pane="rail"] .plc-rail-collapsed,
-  .plc-cockpit[data-mobile-pane="rail"] .plc-rail .convo-sidebar-close {
+  .plc-cockpit[data-workspace-view="conversations"][data-mobile-pane="rail"]
+    .plc-rail-toggle-row,
+  .plc-cockpit[data-workspace-view="conversations"][data-mobile-pane="rail"]
+    .plc-rail-collapsed,
+  .plc-cockpit[data-workspace-view="conversations"][data-mobile-pane="rail"]
+    .plc-rail
+    .convo-sidebar-close {
     display: none;
   }
 
-  .plc-cockpit[data-mobile-pane="sessions"] .plc-sessions {
+  .plc-cockpit[data-workspace-view="sessions"] .plc-sessions {
     display: flex;
     flex: 1;
     min-height: 0;

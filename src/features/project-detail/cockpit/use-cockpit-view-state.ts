@@ -2,12 +2,14 @@ import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { reconcileOpenTabs } from "./reconcile-open-tabs";
 
+export type CockpitWorkspaceView = "sessions" | "conversations";
+
 /**
  * Client-only view-state for the project cockpit. The foundation's server state
  * is authoritative for *which* conversations are open; this store layers the
- * client's ordering, active selection, rail-collapse, and the transient entry-
- * animation flag on top. It is reconciled against the server open list via
- * `reconcileTabs` on every list change.
+ * client's ordering, active selection, primary workspace view, rail-collapse,
+ * and the transient entry-animation flag on top. It is reconciled against the
+ * server open list via `reconcileTabs` on every list change.
  *
  * Selectors are exposed individually so consumers subscribe to a single slice
  * (no whole-store reads on hot paths, per PERFORMANCE.md).
@@ -15,6 +17,7 @@ import { reconcileOpenTabs } from "./reconcile-open-tabs";
 interface CockpitViewState {
   openTabIds: string[];
   activeTabId: string | null;
+  workspaceView: CockpitWorkspaceView;
   railCollapsed: boolean;
   /** Transient flag driving the first-run→cockpit entry animation. */
   entering: boolean;
@@ -26,6 +29,7 @@ interface CockpitViewActions {
   setActiveTab(id: string): void;
   /** Focus a tab, appending it optimistically if not already tracked. */
   focusTab(id: string): void;
+  setWorkspaceView(view: CockpitWorkspaceView): void;
   toggleRail(): void;
   setRailCollapsed(collapsed: boolean): void;
   clearEntering(): void;
@@ -38,6 +42,7 @@ type CockpitViewStore = CockpitViewState & CockpitViewActions;
 const initialState: CockpitViewState = {
   openTabIds: [],
   activeTabId: null,
+  workspaceView: "sessions",
   railCollapsed: false,
   entering: false,
 };
@@ -68,6 +73,7 @@ const useCockpitViewStore = create<CockpitViewStore>()(
     setActiveTab: (id) =>
       set((state) => {
         state.activeTabId = id;
+        state.workspaceView = "conversations";
       }),
 
     focusTab: (id) =>
@@ -76,6 +82,12 @@ const useCockpitViewStore = create<CockpitViewStore>()(
           state.openTabIds.push(id);
         }
         state.activeTabId = id;
+        state.workspaceView = "conversations";
+      }),
+
+    setWorkspaceView: (view) =>
+      set((state) => {
+        state.workspaceView = view;
       }),
 
     toggleRail: () =>
@@ -97,6 +109,7 @@ const useCockpitViewStore = create<CockpitViewStore>()(
       set((state) => {
         state.openTabIds = [];
         state.activeTabId = null;
+        state.workspaceView = "sessions";
         state.railCollapsed = false;
         state.entering = false;
       }),
@@ -107,6 +120,8 @@ const useCockpitViewStore = create<CockpitViewStore>()(
 
 export const useOpenTabIds = () => useCockpitViewStore((s) => s.openTabIds);
 export const useActiveTabId = () => useCockpitViewStore((s) => s.activeTabId);
+export const useWorkspaceView = () =>
+  useCockpitViewStore((s) => s.workspaceView);
 export const useRailCollapsed = () =>
   useCockpitViewStore((s) => s.railCollapsed);
 export const useEntering = () => useCockpitViewStore((s) => s.entering);
@@ -117,6 +132,8 @@ export const useReconcileTabs = () =>
   useCockpitViewStore((s) => s.reconcileTabs);
 export const useSetActiveTab = () => useCockpitViewStore((s) => s.setActiveTab);
 export const useFocusTab = () => useCockpitViewStore((s) => s.focusTab);
+export const useSetWorkspaceView = () =>
+  useCockpitViewStore((s) => s.setWorkspaceView);
 export const useToggleRail = () => useCockpitViewStore((s) => s.toggleRail);
 export const useSetRailCollapsed = () =>
   useCockpitViewStore((s) => s.setRailCollapsed);

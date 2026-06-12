@@ -63,17 +63,40 @@ describe("cockpit design-system compliance", () => {
     expect(reducedEnter?.[1]).toMatch(/opacity:\s*1/);
   });
 
-  it("stacks the conversation pane above the sessions panel, splitting height 50/50", () => {
+  it("uses a primary view switch above the active cockpit panel", () => {
     const cockpit = cockpitCss.match(/\.plc-cockpit\s*\{([^}]*)\}/)?.[1] ?? "";
-    // Two equal-height rows.
-    expect(cockpit).toMatch(/grid-template-rows:\s*1fr\s+1fr/);
-    // Conversation stacks above sessions in the right column.
+    expect(cockpit).toMatch(/grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)/);
     const areas =
       cockpit.match(/grid-template-areas:\s*([\s\S]*?);/)?.[1] ?? "";
+    expect(areas).toContain("view view");
+    expect(areas).toContain("rail conversation");
+
+    const sessionsLayout =
+      cockpitCss.match(
+        /\.plc-cockpit\[data-workspace-view="sessions"\]\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+    expect(sessionsLayout).toContain('"view"');
+    expect(sessionsLayout).toContain('"sessions"');
+  });
+
+  it("shows only the selected project workspace panel", () => {
+    expect(cockpitCss).toContain(
+      '.plc-cockpit[data-workspace-view="sessions"] .plc-workspace-pane',
+    );
+    expect(cockpitCss).toContain(
+      '.plc-cockpit[data-workspace-view="conversations"] .plc-sessions',
+    );
+  });
+
+  it("places the conversation rail beside the transcript workspace", () => {
+    const cockpit = cockpitCss.match(/\.plc-cockpit\s*\{([^}]*)\}/)?.[1] ?? "";
+    const areas =
+      cockpit.match(/grid-template-areas:\s*([\s\S]*?);/)?.[1] ?? "";
+    const railColumn = areas.indexOf("rail");
     const convoRow = areas.indexOf("conversation");
-    const sessionsRow = areas.indexOf("sessions");
+    expect(railColumn).toBeGreaterThanOrEqual(0);
     expect(convoRow).toBeGreaterThanOrEqual(0);
-    expect(sessionsRow).toBeGreaterThan(convoRow);
+    expect(convoRow).toBeGreaterThan(railColumn);
   });
 
   it("removes the inter-pane gaps (flush panes)", () => {
@@ -101,7 +124,25 @@ describe("cockpit design-system compliance", () => {
     );
     expect(cockpitCss).toMatch(/\.plc-cockpit\s*\{[^}]*flex:\s*1/s);
     expect(cockpitCss).toMatch(/\.plc-rail\s*\{[^}]*height:\s*100%/s);
+    expect(cockpitCss).toMatch(/\.plc-workspace-pane\s*\{[^}]*height:\s*100%/s);
     expect(cockpitCss).toMatch(/\.plc-pane\s*\{[^}]*height:\s*100%/s);
     expect(cockpitCss).toMatch(/\.plc-sessions\s*\{[^}]*height:\s*100%/s);
+  });
+
+  it("constrains the embedded active-conversations rail so its list can scroll", () => {
+    const rail = cockpitCss.match(/\.plc-rail\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(rail).toMatch(/display:\s*flex/);
+    expect(rail).toMatch(/flex-direction:\s*column/);
+
+    const toggleRow =
+      cockpitCss.match(/\.plc-rail-toggle-row\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(toggleRow).toMatch(/flex-shrink:\s*0/);
+
+    const embeddedSidebar =
+      cockpitCss.match(/\.plc-rail\s*>\s*\.convo-sidebar\s*\{([^}]*)\}/)?.[1] ??
+      "";
+    expect(embeddedSidebar).toMatch(/flex:\s*1/);
+    expect(embeddedSidebar).toMatch(/min-height:\s*0/);
+    expect(embeddedSidebar).toMatch(/height:\s*auto/);
   });
 });

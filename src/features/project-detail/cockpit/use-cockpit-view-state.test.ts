@@ -15,6 +15,7 @@ describe("use-cockpit-view-state", () => {
     store().reconcileTabs(["a", "b"]);
     expect(store().openTabIds).toEqual(["a", "b"]);
     expect(store().activeTabId).toBe("a");
+    expect(store().workspaceView).toBe("sessions");
     expect(store().entering).toBe(true);
   });
 
@@ -38,6 +39,7 @@ describe("use-cockpit-view-state", () => {
     store().reconcileTabs(["a", "b"]);
     store().setActiveTab("b");
     expect(store().activeTabId).toBe("b");
+    expect(store().workspaceView).toBe("conversations");
   });
 
   it("focusTab appends an untracked tab and focuses it (reopen path)", () => {
@@ -45,6 +47,7 @@ describe("use-cockpit-view-state", () => {
     store().focusTab("z");
     expect(store().openTabIds).toEqual(["a", "z"]);
     expect(store().activeTabId).toBe("z");
+    expect(store().workspaceView).toBe("conversations");
   });
 
   it("focusTab focuses an already-open tab without duplicating it", () => {
@@ -60,5 +63,13 @@ describe("use-cockpit-view-state", () => {
     expect(store().railCollapsed).toBe(true);
     store().toggleRail();
     expect(store().railCollapsed).toBe(false);
+  });
+
+  it("sets the workspace view explicitly", () => {
+    expect(store().workspaceView).toBe("sessions");
+    store().setWorkspaceView("conversations");
+    expect(store().workspaceView).toBe("conversations");
+    store().setWorkspaceView("sessions");
+    expect(store().workspaceView).toBe("sessions");
   });
 });

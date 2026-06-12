@@ -14,6 +14,7 @@ import {
   fireEvent,
   cleanup,
   waitFor,
+  within,
 } from "@testing-library/react";
 import ProjectCockpit from "./ProjectCockpit";
 import SessionsPanel from "./SessionsPanel";
@@ -163,11 +164,51 @@ function PageHarness({
   );
 }
 
+function showConversationsView() {
+  const viewTabs = screen.getByRole("tablist", { name: "Project view" });
+  fireEvent.click(within(viewTabs).getByRole("tab", { name: /Conversations/ }));
+}
+
 describe("project page: empty ↔ populated cockpit transition", () => {
+  it("defaults to the sessions view and toggles to the conversation workspace", async () => {
+    const { container } = render(
+      withClient(
+        <PageHarness openConversations={[makeConversation("planning")]} />,
+      ),
+    );
+
+    const viewTabs = screen.getByRole("tablist", { name: "Project view" });
+    const sessionsTab = within(viewTabs).getByRole("tab", {
+      name: /Sessions/,
+    });
+    const conversationsTab = within(viewTabs).getByRole("tab", {
+      name: /Conversations/,
+    });
+    const sessionsPanel = container.querySelector(".plc-sessions");
+    const conversationPane = container.querySelector(".plc-pane");
+
+    expect(sessionsTab).toHaveAttribute("aria-selected", "true");
+    expect(conversationsTab).toHaveAttribute("aria-selected", "false");
+    expect(sessionsPanel).toBeVisible();
+    expect(conversationPane).toBeNull();
+
+    fireEvent.click(conversationsTab);
+
+    await waitFor(() =>
+      expect(document.querySelector(".prompt-input-area")).not.toBeNull(),
+    );
+    expect(sessionsTab).toHaveAttribute("aria-selected", "false");
+    expect(conversationsTab).toHaveAttribute("aria-selected", "true");
+    expect(sessionsPanel).not.toBeVisible();
+    expect(container.querySelector(".plc-pane")).toBeVisible();
+    expect(screen.getByTestId("rail-stub")).toBeVisible();
+  });
+
   it("keeps the rail and composer mounted with zero open conversations (no tabs), then shows the tab strip with the entry animation once one is open", async () => {
     const { container, rerender } = render(
       withClient(<PageHarness openConversations={[]} />),
     );
+    showConversationsView();
     // Empty cockpit: the rail and composer are present; no conversation tabs.
     expect(screen.getByTestId("rail-stub")).toBeInTheDocument();
     await waitFor(() =>
@@ -191,6 +232,7 @@ describe("project page: empty ↔ populated cockpit transition", () => {
     const { rerender } = render(
       withClient(<PageHarness openConversations={[makeConversation("c1")]} />),
     );
+    showConversationsView();
     expect(
       screen.getByRole("tablist", { name: "Conversations" }),
     ).toBeInTheDocument();
@@ -227,6 +269,7 @@ describe("project page: pre-init backend selection in the cockpit", () => {
     const { rerender } = render(
       withClient(<ProjectCockpit {...props("claude")} />),
     );
+    showConversationsView();
     // Pre-init: the backend toggle is interactive, not the locked badge.
     expect(document.querySelector(".backend-toggle-badge")).toBeNull();
     const codexBtn = document.querySelector('[data-backend="codex"]');

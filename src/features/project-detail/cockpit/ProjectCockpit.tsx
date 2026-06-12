@@ -34,6 +34,8 @@ import {
   useReconcileTabs,
   useSetActiveTab,
   useFocusTab,
+  useWorkspaceView,
+  useSetWorkspaceView,
   useToggleRail,
   useSetRailCollapsed,
 } from "./use-cockpit-view-state";
@@ -57,16 +59,11 @@ export interface ProjectCockpitProps {
   rail: ReactNode;
 }
 
-/**
- * Which cockpit area a small viewport shows. Desktop shows all three at once;
- * at ≤768px the switcher picks one (the grid collapses to a single column).
- */
-type MobilePane = "chat" | "rail" | "sessions";
+type MobilePane = "chat" | "rail";
 
 const MOBILE_PANES: { id: MobilePane; label: string }[] = [
   { id: "chat", label: "Chat" },
-  { id: "rail", label: "Conversations" },
-  { id: "sessions", label: "Sessions" },
+  { id: "rail", label: "List" },
 ];
 
 function ChevronGlyph({ dir }: { dir: "left" | "right" }): React.JSX.Element {
@@ -89,14 +86,13 @@ function ChevronGlyph({ dir }: { dir: "left" | "right" }): React.JSX.Element {
 
 /**
  * The project cockpit and the project page's always-on shell: a full-height
- * Active Conversations rail (collapsible, injected as a slot) on the left, with
- * the right column split 50/50 in height — the conversation pane on top, the
- * sessions panel below. The rail is mounted regardless of open-conversation
- * count so closed conversations stay reachable; with no open conversations the
- * pane shows a create-a-conversation composer (the empty state) instead of the
- * tab strip. Tab membership is reconciled against the server open list; the
- * store layers ordering, active selection, rail-collapse, and the entry
- * animation.
+ * Active Conversations rail (collapsible, injected as a slot) and transcript
+ * workspace, plus the sessions table behind a primary view switch. The rail is
+ * mounted regardless of open-conversation count so closed conversations stay
+ * reachable; with no open conversations the pane shows a create-a-conversation
+ * composer instead of the tab strip. Tab membership is reconciled against the
+ * server open list; the store layers ordering, active selection, workspace
+ * view, rail-collapse, and the entry animation.
  */
 export default function ProjectCockpit({
   projectName,
@@ -114,10 +110,12 @@ export default function ProjectCockpit({
   const openTabIds = useOpenTabIds();
   const activeTabId = useActiveTabId();
   const entering = useEntering();
+  const workspaceView = useWorkspaceView();
   const railCollapsed = useRailCollapsed();
   const reconcile = useReconcileTabs();
   const setActiveTab = useSetActiveTab();
   const focusTab = useFocusTab();
+  const setWorkspaceView = useSetWorkspaceView();
   const toggleRail = useToggleRail();
   const setRailCollapsed = useSetRailCollapsed();
 
@@ -134,7 +132,7 @@ export default function ProjectCockpit({
 
   // Focusing a conversation (rail tap, `?focus=` param, new tab) must surface
   // the chat pane on mobile — otherwise the selection happens invisibly behind
-  // the rail or sessions pane.
+  // the rail pane.
   const [prevActiveTabId, setPrevActiveTabId] = useState(activeTabId);
   if (prevActiveTabId !== activeTabId) {
     setPrevActiveTabId(activeTabId);
@@ -311,17 +309,48 @@ export default function ProjectCockpit({
         <div className="plc-pane-composer">{composer}</div>
       </section>
     );
+  const showingConversations = workspaceView === "conversations";
+  const showingSessions = workspaceView === "sessions";
 
   return (
     <div
       className={`plc-cockpit${entering ? " plc-enter" : ""}`}
       data-rail-collapsed={railCollapsed}
+      data-workspace-view={workspaceView}
       data-mobile-pane={mobilePane}
     >
       <div
+        className="plc-view-switch cc-tabs"
+        role="tablist"
+        aria-label="Project view"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={workspaceView === "sessions"}
+          aria-controls="plc-sessions-panel"
+          className={`cc-tab${workspaceView === "sessions" ? " active" : ""}`}
+          onClick={() => setWorkspaceView("sessions")}
+        >
+          Sessions
+          <span className="cc-tab-count">{sessions.length}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={workspaceView === "conversations"}
+          aria-controls="plc-conversation-workspace"
+          className={`cc-tab${workspaceView === "conversations" ? " active" : ""}`}
+          onClick={() => setWorkspaceView("conversations")}
+        >
+          Conversations
+          <span className="cc-tab-count">{openConversations.length}</span>
+        </button>
+      </div>
+      <div
         className="plc-mobile-switch cc-tabs"
         role="tablist"
-        aria-label="Cockpit panes"
+        aria-label="Conversation pane"
       >
         {MOBILE_PANES.map((pane) => (
           <button
@@ -336,38 +365,63 @@ export default function ProjectCockpit({
           </button>
         ))}
       </div>
-      <div className="plc-rail" data-collapsed={railCollapsed}>
-        {railCollapsed ? (
-          <div className="plc-rail-collapsed">
-            <button
-              type="button"
-              className="btn-icon-only"
-              aria-label="Expand conversations rail"
-              data-tooltip="Expand rail"
-              onClick={toggleRail}
-            >
-              <ChevronGlyph dir="right" />
-            </button>
+      {showingConversations && (
+        <>
+          <div
+            className="plc-rail"
+            id="plc-conversation-list"
+            data-collapsed={railCollapsed}
+          >
+            {railCollapsed ? (
+              <div className="plc-rail-collapsed">
+                <button
+                  type="button"
+                  className="btn-icon-only"
+                  aria-label="Expand conversations rail"
+                  data-tooltip="Expand rail"
+                  onClick={toggleRail}
+                >
+                  <ChevronGlyph dir="right" />
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="plc-rail-toggle-row">
+                  <button
+                    type="button"
+                    className="btn-icon-only"
+                    aria-label="Collapse conversations rail"
+                    data-tooltip="Collapse rail"
+                    onClick={toggleRail}
+                  >
+                    <ChevronGlyph dir="left" />
+                  </button>
+                </div>
+                {rail}
+              </>
+            )}
           </div>
-        ) : (
-          <>
-            <div className="plc-rail-toggle-row">
-              <button
-                type="button"
-                className="btn-icon-only"
-                aria-label="Collapse conversations rail"
-                data-tooltip="Collapse rail"
-                onClick={toggleRail}
-              >
-                <ChevronGlyph dir="left" />
-              </button>
-            </div>
-            {rail}
-          </>
-        )}
-      </div>
-      {pane}
+          <div
+            id="plc-conversation-workspace"
+            className="plc-workspace-pane"
+            role="tabpanel"
+            aria-label="Conversations"
+          >
+            {pane}
+          </div>
+        </>
+      )}
+      {!showingConversations && (
+        <div
+          id="plc-conversation-workspace"
+          role="tabpanel"
+          aria-label="Conversations"
+          hidden
+        />
+      )}
       <SessionsPanel
+        id="plc-sessions-panel"
+        hidden={!showingSessions}
         projectName={projectName}
         sessions={sessions}
         tokens={tokens}
