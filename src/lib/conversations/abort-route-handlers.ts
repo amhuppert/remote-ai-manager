@@ -16,8 +16,10 @@ import {
   conversationRuntimeKey,
   rejectActiveQuestionResolver,
 } from "@/lib/workflows/conversation/runtime-state";
-import { withTracing } from "@/lib/logging";
+import { createLogger, withTracing } from "@/lib/logging";
 import type { ApiError } from "@/lib/api/errors";
+
+const logger = createLogger("abort-route-handlers");
 
 /** POST /api/projects/[name]/sessions/[session]/conversations/[conversationId]/abort — abort a running prompt */
 export const abortConversation = withTracing(async (_request, { params }) => {
@@ -65,11 +67,21 @@ export const abortConversation = withTracing(async (_request, { params }) => {
   // Signal the AbortController to stop SDK execution
   const aborted = abortConversationRegistry(conversationId);
 
-  // Send ABORT_TURN to the machine for a clean state transition
-  sendConversationEvent(projectPath, sessionName, conversationId, {
-    type: "ABORT_TURN",
-    reason: "user",
-  });
+  // Send ABORT_TURN to the machine for a clean state transition. The
+  // AbortController signal above already stops SDK execution, so a machine
+  // refusal is not a request failure — but it must be diagnosable from logs.
+  const machineAccepted = sendConversationEvent(
+    projectPath,
+    sessionName,
+    conversationId,
+    { type: "ABORT_TURN", reason: "user" },
+  );
+  if (!machineAccepted) {
+    logger.warn("abort.event_rejected", {
+      conversationId,
+      sessionName,
+    });
+  }
 
   if (!aborted) {
     return NextResponse.json(

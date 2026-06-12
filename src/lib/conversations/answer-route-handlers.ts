@@ -10,7 +10,7 @@ import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { getSession, mutateConversation } from "@/lib/state-store";
 import { answerQuestionRequestSchema } from "@/lib/conversations/schemas";
-import { withTracing } from "@/lib/logging";
+import { createLogger, withTracing } from "@/lib/logging";
 import {
   getConversationActor,
   sendConversationEvent,
@@ -20,6 +20,8 @@ import {
   getConversationRuntime,
 } from "@/lib/workflows/conversation/runtime-state";
 import type { ApiError } from "@/lib/api/errors";
+
+const logger = createLogger("answer-route-handlers");
 
 /** POST /api/projects/[name]/sessions/[session]/conversations/[conversationId]/answer — submit answers to Claude's question */
 export const submitConversationAnswer = withTracing(
@@ -84,12 +86,26 @@ export const submitConversationAnswer = withTracing(
       runtime.activeQuestionResolver.resolve(body.answers);
       runtime.activeQuestionResolver = undefined;
 
-      // Send ANSWER event to the machine for state tracking
-      sendConversationEvent(projectPath, sessionName, conversationId, {
-        type: "ANSWER",
-        questionId: body.questionId,
-        answers: body.answers,
-      });
+      // Send ANSWER event to the machine for state tracking. The answer
+      // already reached the SDK via the resolver above, so a machine refusal
+      // is not a request failure — but it must be diagnosable from logs.
+      const accepted = sendConversationEvent(
+        projectPath,
+        sessionName,
+        conversationId,
+        {
+          type: "ANSWER",
+          questionId: body.questionId,
+          answers: body.answers,
+        },
+      );
+      if (!accepted) {
+        logger.warn("answer.event_rejected", {
+          conversationId,
+          sessionName,
+          questionId: body.questionId,
+        });
+      }
 
       return NextResponse.json({ ok: true });
     }

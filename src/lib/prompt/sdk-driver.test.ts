@@ -137,6 +137,19 @@ function makeMockFactory(
   };
 }
 
+/**
+ * Race a promise against a timeout so a hung `executePromptStream` (the bug
+ * under test) surfaces as a test failure instead of stalling the whole suite.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms),
+    ),
+  ]);
+}
+
 function createTestDeps(overrides: Partial<PromptDeps> = {}): PromptDeps {
   const conversation = makeConversation();
   return {
@@ -426,6 +439,41 @@ describe("executePromptStream (facade)", () => {
     const errorEvent = events.find(([e]) => e === "error");
     expect(errorEvent).toBeTruthy();
     expect(events.find(([e]) => e === "done")).toBeTruthy();
+  });
+
+  it("fails fast with an error result instead of hanging when sendConversationEvent rejects the prompt", async () => {
+    // The actor is wedged (e.g. stuck in externalExecuting after the SDK
+    // subprocess died): it never fires a settling transition, so reaching
+    // waitForTurnCompletion would hang forever.
+    mockActor.getSnapshot.mockReturnValue({
+      value: "externalExecuting",
+      status: "active" as const,
+      context: {},
+    });
+    mockActor.subscribe.mockImplementation(() => ({ unsubscribe: vi.fn() }));
+
+    deps = createTestDeps({ sendConversationEvent: vi.fn(() => false) });
+    const events: Array<[string, unknown]> = [];
+    const emit = (event: string, data: unknown) => events.push([event, data]);
+    const executor = createPromptExecutor(deps);
+
+    const result = await withTimeout(
+      executor.executePromptStream(
+        "/projects/repo",
+        makeSession(),
+        "Hello",
+        emit,
+        "conv-123",
+      ),
+      1000,
+    );
+
+    expect(deps.sendConversationEvent).toHaveBeenCalled();
+    expect(result.error).toBeTruthy();
+    expect(events.find(([e]) => e === "error")).toBeTruthy();
+    expect(events.find(([e]) => e === "done")).toBeTruthy();
+    // The SSE stream is still torn down on the fail-fast path.
+    expect(deps.detachPromptStream).toHaveBeenCalled();
   });
 
   it("detaches stream even when an error occurs", async () => {

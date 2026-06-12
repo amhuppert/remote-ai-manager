@@ -118,10 +118,18 @@ const workflowManager = createGraphWorkflowManager({
   getSession: defaultGetSession,
   abortConversation: ({ projectPath, sessionName, conversationId }) => {
     abortConversationRegistry(conversationId);
-    sendConversationEvent(projectPath, sessionName, conversationId, {
-      type: "ABORT_TURN",
-      reason: "user",
-    });
+    const accepted = sendConversationEvent(
+      projectPath,
+      sessionName,
+      conversationId,
+      { type: "ABORT_TURN", reason: "user" },
+    );
+    if (!accepted) {
+      logger.warn("workflow.abort_event_rejected", {
+        conversationId,
+        sessionName,
+      });
+    }
   },
 });
 

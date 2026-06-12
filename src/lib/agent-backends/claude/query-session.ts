@@ -1089,13 +1089,37 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       }
 
       const handler = options.externalTurnHandler;
-      pendingTurn = {
+      const externalTurn: PendingTurn = {
         resolve: handler.onComplete,
         reject: (err: Error) => {
           logger.warn("query-session.virtual_turn_rejected", {
             conversationId: options.conversationId,
             error: err.message,
           });
+          // The machine is in `externalExecuting`; without a completion it
+          // wedges there with persisted status 'running'. Deliver the rejection
+          // as a terminal result through the same handler the `result` path
+          // uses so the external turn handler still emits
+          // EXTERNAL_TURN_COMPLETED and the conversation settles back to idle.
+          // The rejection fires inside session teardown (pump death, close);
+          // a throwing handler must not escape and skip the remaining cleanup
+          // (status = "dead", subprocess close).
+          try {
+            handler.onComplete(
+              buildTurnResult(externalTurn, {
+                error: err.message,
+                aborted: false,
+              }),
+            );
+          } catch (completionErr) {
+            logger.error("query-session.virtual_turn_completion_failed", {
+              conversationId: options.conversationId,
+              error:
+                completionErr instanceof Error
+                  ? completionErr.message
+                  : String(completionErr),
+            });
+          }
         },
         emit: handler.emit,
         sessionId: null,
@@ -1108,6 +1132,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         toolNamesById: new Map(),
         traceContext: null,
       };
+      pendingTurn = externalTurn;
 
       logger.info("query-session.external_turn_started", {
         conversationId: options.conversationId,
@@ -1240,18 +1265,10 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         }
 
         // Resolve the turn promise
-        const result: TurnResult = {
-          sessionId: turn.sessionId,
-          costUsd: turn.costUsd,
-          durationMs: turn.durationMs,
-          numTurns: turn.numTurns,
-          contextTokens: turn.contextTokens,
-          contextWindow: turn.contextWindow,
-          contentBlocks: turn.contentBlocks,
-          structuredOutput: turn.structuredOutput,
-          aborted: false,
+        const result: TurnResult = buildTurnResult(turn, {
           error,
-        };
+          aborted: false,
+        });
 
         const resolve = turn.resolve;
         pendingTurn = null;
@@ -1316,6 +1333,29 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
 // ============================================================
 // Helpers
 // ============================================================
+
+/**
+ * Assemble a `TurnResult` from a pending turn's accumulated state. Used by both
+ * terminal paths — the normal `result` message and the rejection that delivers
+ * a virtual turn's completion when the subprocess dies mid-turn.
+ */
+function buildTurnResult(
+  turn: PendingTurn,
+  outcome: { error: string | null; aborted: boolean },
+): TurnResult {
+  return {
+    sessionId: turn.sessionId,
+    costUsd: turn.costUsd,
+    durationMs: turn.durationMs,
+    numTurns: turn.numTurns,
+    contextTokens: turn.contextTokens,
+    contextWindow: turn.contextWindow,
+    contentBlocks: turn.contentBlocks,
+    structuredOutput: turn.structuredOutput,
+    aborted: outcome.aborted,
+    error: outcome.error,
+  };
+}
 
 interface SdkToolResultBlock {
   type: "tool_result";

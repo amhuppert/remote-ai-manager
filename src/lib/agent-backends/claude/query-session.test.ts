@@ -28,7 +28,11 @@ vi.mock("@/lib/shared/sdk-env", () => ({}));
 // Import module under test
 // ---------------------------------------------------------------------------
 
-import { createQuerySession, type QuerySessionOptions } from "./query-session";
+import {
+  createQuerySession,
+  type QuerySessionOptions,
+  type TurnResult,
+} from "./query-session";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -798,6 +802,125 @@ describe("Mid-turn death tagging", () => {
     expect((caughtError as Error).message).toBe("subprocess gone");
     expect(isSessionDiedMidTurnError(caughtError)).toBe(true);
     expect(isUndeliveredQuerySessionError(caughtError)).toBe(false);
+    expect(session.status).toBe("dead");
+  });
+});
+
+describe("External (virtual) turn rejection", () => {
+  it("delivers a terminal completion with the error when a virtual turn is rejected by pump death", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const onComplete = vi.fn();
+    const handlerEmit = vi.fn();
+    const session = createQuerySession(
+      makeDefaultOptions({
+        externalTurnHandler: { emit: handlerEmit, onComplete },
+      }),
+    );
+
+    // A stray message between turns synthesizes a virtual turn (no caller prompt).
+    mock.pushMessage({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-ext",
+      uuid: "sys-1",
+    } as unknown as SDKMessage);
+
+    // The agent emits partial work before the subprocess dies.
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-ext",
+      uuid: "asst-1",
+      message: { content: [{ type: "text", text: "partial work" }] },
+    } as unknown as SDKMessage);
+
+    // Let the pump drain both queued messages.
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Subprocess exits cleanly while the virtual turn is still in flight.
+    mock.endPump();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    const result = onComplete.mock.calls[0]![0] as TurnResult;
+    expect(result.error).toBeTruthy();
+    expect(result.aborted).toBe(false);
+    expect(
+      result.contentBlocks.some(
+        (b) => b.type === "text" && b.text === "partial work",
+      ),
+    ).toBe(true);
+    expect(session.status).toBe("dead");
+  });
+
+  it("delivers exactly one completion when a normal-result virtual turn is followed by pump death", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const onComplete = vi.fn();
+    const handlerEmit = vi.fn();
+    createQuerySession(
+      makeDefaultOptions({
+        externalTurnHandler: { emit: handlerEmit, onComplete },
+      }),
+    );
+
+    mock.pushMessage({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-ext",
+      uuid: "sys-1",
+    } as unknown as SDKMessage);
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-ext",
+      uuid: "res-1",
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 1,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+    await new Promise((r) => setTimeout(r, 0));
+
+    // The virtual turn already resolved via `result`; a later pump death must
+    // not deliver a second (rejected) completion.
+    mock.endPump();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    const result = onComplete.mock.calls[0]![0] as TurnResult;
+    expect(result.error).toBeNull();
+  });
+
+  it("still tears down the session when handler.onComplete throws during rejection", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const onComplete = vi.fn(() => {
+      throw new Error("machine dispatch failed");
+    });
+    const session = createQuerySession(
+      makeDefaultOptions({
+        externalTurnHandler: { emit: vi.fn(), onComplete },
+      }),
+    );
+
+    mock.pushMessage({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-ext",
+      uuid: "sys-1",
+    } as unknown as SDKMessage);
+    await new Promise((r) => setTimeout(r, 0));
+
+    // close() rejects the in-flight virtual turn; a throwing onComplete must
+    // not escape the reject closure and skip the rest of session teardown
+    // (status = "dead", subprocess close).
+    expect(() => session.close()).not.toThrow();
+    expect(onComplete).toHaveBeenCalledTimes(1);
     expect(session.status).toBe("dead");
   });
 });
@@ -2552,7 +2675,7 @@ describe("QuerySession externalTurnHandler (auto-continuation)", () => {
     session.close();
   });
 
-  it("does not invoke handler.onComplete when the pump dies mid-virtual-turn", async () => {
+  it("invokes handler.onComplete with the error when the pump dies mid-virtual-turn", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
@@ -2599,12 +2722,17 @@ describe("QuerySession externalTurnHandler (auto-continuation)", () => {
 
     await new Promise((r) => setTimeout(r, 10));
 
-    // Pump crashes before a result arrives
+    // Pump crashes before a result arrives. The rejected virtual turn must
+    // still deliver a terminal completion (with the error) so the conversation
+    // machine leaves externalExecuting instead of wedging at status 'running'.
     mock.crashPump(new Error("subprocess died mid-virtual-turn"));
 
     await new Promise((r) => setTimeout(r, 10));
 
-    expect(externalOnComplete).not.toHaveBeenCalled();
+    expect(externalOnComplete).toHaveBeenCalledTimes(1);
+    const result = externalOnComplete.mock.calls[0]![0];
+    expect(result.error).toBe("subprocess died mid-virtual-turn");
+    expect(result.aborted).toBe(false);
     expect(session.status).toBe("dead");
   });
 });

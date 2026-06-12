@@ -322,6 +322,43 @@ describe("conversationMachine", () => {
     });
   });
 
+  describe("external turn lifecycle", () => {
+    it("settles to idle and re-accepts SUBMIT_PROMPT after EXTERNAL_TURN_COMPLETED carries an error", () => {
+      const machine = makeTestMachine();
+      const actor = createActor(machine, { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
+
+      // A stray between-turns message drove the machine into externalExecuting
+      // and persisted status 'running'.
+      actor.send({ type: "EXTERNAL_TURN_STARTED" });
+      expect(actor.getSnapshot().value).toBe("externalExecuting");
+      expect(actor.getSnapshot().context.status).toBe("running");
+
+      // The SDK subprocess died mid virtual turn; the rejected turn is delivered
+      // as a completion carrying the error.
+      actor.send({
+        type: "EXTERNAL_TURN_COMPLETED",
+        result: successResult({
+          error: "QuerySession ended before the turn completed",
+          structuredOutput: undefined,
+        }),
+      });
+
+      const snap = actor.getSnapshot();
+      expect(snap.value).toBe("idle");
+      expect(snap.context.status).toBe("awaiting");
+      expect(snap.context.activeTurn).toBeNull();
+      expect(
+        snap.can({
+          type: "SUBMIT_PROMPT",
+          promptText: "next prompt",
+          streamId: "s2",
+        }),
+      ).toBe(true);
+    });
+  });
+
   describe("error handling", () => {
     it("handles prepareTurn failure", async () => {
       const machine = makeTestMachine({

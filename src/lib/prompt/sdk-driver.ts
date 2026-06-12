@@ -642,8 +642,7 @@ export async function executePromptStream(
         conversationId,
         error: errorMsg,
       });
-      emit("error", { message: errorMsg });
-      emit("done", {});
+      emitErrorAndDone(emit, errorMsg);
       return {
         conversationId,
         contextTokens: null,
@@ -708,8 +707,7 @@ export async function executePromptStream(
         conversationId,
         error: errorMsg,
       });
-      emit("error", { message: errorMsg });
-      emit("done", {});
+      emitErrorAndDone(emit, errorMsg);
       return {
         conversationId,
         contextTokens: null,
@@ -801,7 +799,7 @@ export async function executePromptStream(
 
   try {
     // Send the prompt event to the machine
-    resolvedDeps.sendConversationEvent(
+    const accepted = resolvedDeps.sendConversationEvent(
       projectPath,
       session.sessionName,
       conversationId,
@@ -821,6 +819,26 @@ export async function executePromptStream(
       },
     );
 
+    // The machine refused SUBMIT_PROMPT — no actor, or the current state cannot
+    // accept it (e.g. wedged in externalExecuting after the SDK subprocess died
+    // mid virtual turn). Fail fast: awaiting waitForTurnCompletion here would
+    // hang forever since no turn ever starts, leaving the request open and the
+    // UI loading indicator spinning.
+    if (!accepted) {
+      const errorMessage = "Conversation is not ready to accept a new prompt";
+      const snapshot = actor.getSnapshot();
+      logger.error("prompt.submit_rejected", {
+        conversationId,
+        sessionName: session.sessionName,
+        actorState: snapshot.value,
+      });
+      emitErrorAndDone(emit, errorMessage);
+      return {
+        ...readContextFromSnapshot(snapshot, conversationId),
+        error: errorMessage,
+      };
+    }
+
     // Wait for the turn to complete: actor reaches idle, debug.*, or done
     await waitForTurnCompletion(actor);
 
@@ -830,7 +848,7 @@ export async function executePromptStream(
     });
 
     emit("done", {});
-    return readContextFromActor(actor, conversationId);
+    return readContextFromSnapshot(actor.getSnapshot(), conversationId);
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : "Prompt failed";
     logger.error("prompt.facade_error", {
@@ -838,9 +856,8 @@ export async function executePromptStream(
       conversationId,
       error: errorMsg,
     });
-    emit("error", { message: errorMsg });
-    emit("done", {});
-    return readContextFromActor(actor, conversationId);
+    emitErrorAndDone(emit, errorMsg);
+    return readContextFromSnapshot(actor.getSnapshot(), conversationId);
   } finally {
     resolvedDeps.detachPromptStream(
       projectPath,
@@ -877,13 +894,24 @@ export class ModelEffortValidationError extends Error {
 }
 
 /**
+ * Emit the terminal SSE pair for a failed prompt request so the client's
+ * loading state always resolves.
+ */
+function emitErrorAndDone(
+  emit: (event: string, data: unknown) => void,
+  message: string,
+): void {
+  emit("error", { message });
+  emit("done", {});
+}
+
+/**
  * Read context token usage from the actor snapshot after a turn completes.
  */
-function readContextFromActor(
-  actor: ConversationActorRef,
+function readContextFromSnapshot(
+  snap: ReturnType<ConversationActorRef["getSnapshot"]>,
   conversationId: string,
 ): PromptStreamResult {
-  const snap = actor.getSnapshot();
   const ctx = snap.context as unknown as Record<string, unknown>;
   const totals = ctx?.totals as
     | { contextTokens?: number | null; contextWindowMax?: number | null }
