@@ -87,8 +87,21 @@ interface FinalAnswerInput {
   userAnswers?: CollaborationUserAnswer[];
 }
 
-const SCHEMA_REMINDER =
+// Every phase prompt ends with the structured-output reminder. The
+// collaboration agent caller runs schema-bearing calls in two turns: a prose
+// work turn where this reminder is swapped for COLLABORATION_PROSE_TURN_INSTRUCTION
+// so the agent reasons freely, then a format turn driven by
+// COLLABORATION_FORMAT_TURN_INSTRUCTION that restates the answer as JSON under
+// schema enforcement. Single-call consumers (the graph-scoped collaborator)
+// keep this reminder verbatim.
+export const COLLABORATION_STRUCTURED_OUTPUT_REMINDER =
   "Return only the structured JSON object that matches the supplied JSON Schema. Do not include prose outside the object.";
+
+export const COLLABORATION_PROSE_TURN_INSTRUCTION =
+  "Work through your full answer in prose for this turn — cover every field described above with complete detail. Do not emit JSON yet; a follow-up message will ask you to produce the structured JSON object.";
+
+export const COLLABORATION_FORMAT_TURN_INSTRUCTION =
+  "Convert your previous response into a single JSON object that conforms to the required output schema. Restate the full substance of your answer — do not summarize, abbreviate, or drop any detail. Output only the JSON object, with no prose outside it.";
 
 function joinLines(...lines: Array<string | string[]>): string {
   return lines
@@ -247,7 +260,7 @@ export function buildAgentOneInitialDraftPrompt(
     ``,
     `Produce your initial draft of an answer to the user prompt. You are drafting in parallel with agent_two; you have not seen agent_two's draft yet.`,
     ``,
-    SCHEMA_REMINDER,
+    COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
   );
   return {
     prompt,
@@ -271,7 +284,7 @@ export function buildAgentTwoInitialDraftPrompt(
     ``,
     `Produce your initial draft of an answer to the user prompt. You are drafting in parallel with agent_one; you have not seen agent_one's draft yet.`,
     ``,
-    SCHEMA_REMINDER,
+    COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
   );
   return {
     prompt,
@@ -299,7 +312,7 @@ export function buildAgentOneProposedChangesPrompt(
     ``,
     `Read agent_two's draft. Identify points you accept (acceptedFromAgentTwoDraft), formulate concrete proposed changes (proposedChanges) that address gaps or disagreements, and list any disagreements you still hold (remainingDisagreements) with category and severity.`,
     ``,
-    SCHEMA_REMINDER,
+    COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
   );
   return {
     prompt,
@@ -328,7 +341,7 @@ export function buildAgentTwoCrossReviewPrompt(
     ``,
     `Produce a structured cross-review of agent_one's draft. Categorize each disagreement as objective or implementation and assign a severity (minor, major, blocking). Include any reviseSelf items you would change in your own draft based on what you learned.`,
     ``,
-    SCHEMA_REMINDER,
+    COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
   );
   return {
     prompt,
@@ -370,7 +383,7 @@ export function buildAgentTwoCounterProposalPrompt(
     ``,
     `Decide which proposed change ids you accept and which you reject (by id). Offer alternative changes only when needed. Restate any remaining agreements (agree) and disagreements (disagree) — including the points from your cross-review you still hold — with category and severity.`,
     ``,
-    SCHEMA_REMINDER,
+    COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
   );
   return {
     prompt,
@@ -420,7 +433,7 @@ export function buildAgentOneResolutionDecisionPrompt(
     ``,
     `Choose nextAction: "final" if agreement is reached, "continue_negotiation" if implementation disagreements remain and rounds remain, "ask_user" if objective disagreements remain or remaining implementation disagreements exceed the autonomous threshold, or "fail" if the run cannot proceed. Populate resolvedDisagreements with autonomous resolutions you take and userQuestions for any clarification you need from the user.`,
     ``,
-    SCHEMA_REMINDER,
+    COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
   );
   return {
     prompt,
@@ -496,7 +509,7 @@ export function buildAgentOneFinalAnswerPrompt(
     ``,
     `Set "answer" to the user-facing final answer text. Set "report" to inline collapsed-audit markdown the UI surfaces alongside the final answer (a brief synthesis of how the negotiation resolved), and "supporting" to any inline supplementary markdown blocks; both are stored verbatim — do not return file paths and do not embed audit prose inside "answer".`,
     ``,
-    SCHEMA_REMINDER,
+    COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
   );
 
   return {

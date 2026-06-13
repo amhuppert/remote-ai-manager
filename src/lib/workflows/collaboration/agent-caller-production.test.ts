@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { createCollaborationProductionCallAgent } from "./agent-caller-production";
 import {
+  COLLABORATION_FORMAT_TURN_INSTRUCTION,
+  COLLABORATION_PROSE_TURN_INSTRUCTION,
+  COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
+} from "./prompt-builders";
+import {
   COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA,
   type CollaborationInitialDraftOutput,
 } from "./types";
@@ -288,7 +293,7 @@ describe("createCollaborationProductionCallAgent", () => {
     });
   });
 
-  it("passes the lane outputSchema to the Claude runtime factory as SDK outputFormat", async () => {
+  it("passes the lane outputSchema to the Claude runtime factory as SDK outputFormat on the format turn, leaving the prose work turn unconstrained", async () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
     await laneService.initialize({
       workflowId: "wf-claude-output-format",
@@ -379,7 +384,10 @@ describe("createCollaborationProductionCallAgent", () => {
       outputSchema: schema,
     });
 
-    expect(outputFormats[0]).toEqual({
+    // The prose work turn runs without schema enforcement; the format turn
+    // carries the json_schema outputFormat.
+    expect(outputFormats[0]).toBeUndefined();
+    expect(outputFormats[1]).toEqual({
       type: "json_schema",
       schema,
     });
@@ -447,12 +455,25 @@ describe("createCollaborationProductionCallAgent", () => {
     await callAgent(request(1));
     await callAgent(request(2));
 
+    // Each schema-bearing call is two turns (prose work + JSON format), so two
+    // rounds produce four task runs. Continuity threads the resume ref through
+    // all of them.
+    expect(taskRequests).toHaveLength(4);
+    // Round 1 work turn starts a fresh thread.
     expect(taskRequests[0]?.resumeRef).toBeUndefined();
+    expect(taskRequests[0]?.prompt).toBe("round 1");
+    // Round 1 format turn resumes the work turn's thread.
     expect(taskRequests[1]?.resumeRef).toEqual({
       backend: "codex",
       threadId: "real-thread-1",
     });
-    expect(taskRequests[1]?.prompt).toBe("round 2");
+    expect(taskRequests[1]?.prompt).toBe(COLLABORATION_FORMAT_TURN_INSTRUCTION);
+    // Round 2 work turn resumes the latest recorded thread.
+    expect(taskRequests[2]?.resumeRef).toEqual({
+      backend: "codex",
+      threadId: "real-thread-2",
+    });
+    expect(taskRequests[2]?.prompt).toBe("round 2");
   });
 
   it("does NOT pass a Codex resumeRef when the lane policy disables continuity, even if a prior threadId is recorded", async () => {
@@ -633,10 +654,16 @@ describe("createCollaborationProductionCallAgent", () => {
       backend: "claude",
       sessionId: "fresh-session",
     });
+    // Round 1 work turn creates fresh (null); the format turn resumes that
+    // session (stale-session), the resume fails as stale, and the caller
+    // recovers once with a fresh runtime (null) → fresh-session. Round 2
+    // resumes the recovered session for both of its turns.
     expect(persistedRefs).toEqual([
       null,
       { backend: "claude", sessionId: "stale-session" },
       null,
+      { backend: "claude", sessionId: "fresh-session" },
+      { backend: "claude", sessionId: "fresh-session" },
     ]);
   });
 
@@ -852,5 +879,149 @@ describe("createCollaborationProductionCallAgent", () => {
     });
 
     expect(createRuntimeInputs[0]?.modelId).toBe("sonnet");
+  });
+
+  it("runs a prose work turn (no schema) then a JSON format turn (schema) on the same lane, returning the format turn's structured output", async () => {
+    const laneService = createLaneService({ store: createInMemoryLaneStore() });
+    await laneService.initialize({
+      workflowId: "wf-two-step",
+      laneId: "codex",
+      backend: "codex",
+      writeCapability: "write_capable",
+      policy: { continuityEnabled: true },
+      backendState: { backend: "codex" },
+      metrics: { backend: "codex", rotateBeforeNextTurn: false },
+      lastUsedAt: "2026-04-28T10:00:00.000Z",
+    });
+
+    const taskRequests: AgentTaskRequest[] = [];
+    let callCount = 0;
+    const runner: AgentTaskRunner = {
+      backend: "codex",
+      async run(request): Promise<AgentTaskResult> {
+        taskRequests.push(request);
+        callCount += 1;
+        // Only the schema-bearing format turn returns structured output; the
+        // work turn answers in prose.
+        const structuredOutput = request.outputSchema
+          ? draftOutput(callCount)
+          : undefined;
+        return {
+          backendRef: {
+            backend: "codex",
+            threadId: `real-thread-${callCount}`,
+          },
+          text: structuredOutput
+            ? JSON.stringify(structuredOutput)
+            : "prose answer",
+          ...(structuredOutput ? { structuredOutput } : {}),
+          usage: null,
+          error: null,
+          timedOut: false,
+        };
+      },
+    };
+
+    const callAgent = createCollaborationProductionCallAgent({
+      workflowId: "wf-two-step",
+      projectPath: "/projects/example",
+      sessionName: "sess-1",
+      worktreePath: "/worktrees/sess-1",
+      sessionKey: "/projects/example::sess-1",
+      originatingConversationId: "test-originating-conv",
+      laneService,
+      getTaskRunner: () => runner,
+    });
+
+    const schema =
+      COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA as unknown as Record<
+        string,
+        unknown
+      >;
+    const workBody = "do the actual work and cover every field";
+    const result = await callAgent({
+      kind: "task_run",
+      backend: "codex",
+      prompt: `${workBody}\n\n${COLLABORATION_STRUCTURED_OUTPUT_REMINDER}`,
+      laneRef: { workflowId: "wf-two-step", laneId: "codex" },
+      writeCapability: "write_capable",
+      outputSchema: schema,
+    });
+
+    expect(taskRequests).toHaveLength(2);
+    // Work turn: keeps the semantic body but swaps the JSON reminder for the
+    // prose directive, runs with no schema enforcement on a fresh thread.
+    expect(taskRequests[0]?.prompt).toBe(
+      `${workBody}\n\n${COLLABORATION_PROSE_TURN_INSTRUCTION}`,
+    );
+    expect(taskRequests[0]?.prompt).not.toContain(
+      COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
+    );
+    expect(taskRequests[0]?.outputSchema).toBeUndefined();
+    expect(taskRequests[0]?.resumeRef).toBeUndefined();
+    // Format turn: restate-as-JSON prompt, schema enforced, resuming the work
+    // turn's thread.
+    expect(taskRequests[1]?.prompt).toBe(COLLABORATION_FORMAT_TURN_INSTRUCTION);
+    expect(taskRequests[1]?.outputSchema).toEqual(schema);
+    expect(taskRequests[1]?.resumeRef).toEqual({
+      backend: "codex",
+      threadId: "real-thread-1",
+    });
+    // The returned result is the format turn's structured output.
+    expect(result.outcome.kind).toBe("completed");
+    if (result.outcome.kind === "completed") {
+      expect(result.outcome.structuredOutput).toEqual(draftOutput(2));
+    }
+  });
+
+  it("issues a single turn when the request carries no output schema", async () => {
+    const laneService = createLaneService({ store: createInMemoryLaneStore() });
+    await laneService.initialize({
+      workflowId: "wf-single-turn",
+      laneId: "codex",
+      backend: "codex",
+      writeCapability: "write_capable",
+      policy: { continuityEnabled: true },
+      backendState: { backend: "codex" },
+      metrics: { backend: "codex", rotateBeforeNextTurn: false },
+      lastUsedAt: "2026-04-28T10:00:00.000Z",
+    });
+
+    const taskRequests: AgentTaskRequest[] = [];
+    const runner: AgentTaskRunner = {
+      backend: "codex",
+      async run(request): Promise<AgentTaskResult> {
+        taskRequests.push(request);
+        return {
+          backendRef: { backend: "codex", threadId: "real-thread-1" },
+          text: "prose answer",
+          usage: null,
+          error: null,
+          timedOut: false,
+        };
+      },
+    };
+
+    const callAgent = createCollaborationProductionCallAgent({
+      workflowId: "wf-single-turn",
+      projectPath: "/projects/example",
+      sessionName: "sess-1",
+      worktreePath: "/worktrees/sess-1",
+      sessionKey: "/projects/example::sess-1",
+      originatingConversationId: "test-originating-conv",
+      laneService,
+      getTaskRunner: () => runner,
+    });
+
+    await callAgent({
+      kind: "task_run",
+      backend: "codex",
+      prompt: "no schema here",
+      laneRef: { workflowId: "wf-single-turn", laneId: "codex" },
+      writeCapability: "write_capable",
+    });
+
+    expect(taskRequests).toHaveLength(1);
+    expect(taskRequests[0]?.prompt).toBe("no schema here");
   });
 });

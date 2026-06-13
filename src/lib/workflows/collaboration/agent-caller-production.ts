@@ -52,6 +52,11 @@ import type {
 import type { LaneScheduler } from "@/lib/workflows/primitives/lane-scheduler";
 import type { LaneService } from "@/lib/workflows/primitives/lane-service";
 import type { AsymmetricCollaborationSliceDeps } from "./envelope";
+import {
+  COLLABORATION_FORMAT_TURN_INSTRUCTION,
+  COLLABORATION_PROSE_TURN_INSTRUCTION,
+  COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
+} from "./prompt-builders";
 
 const logger = createLogger("workflows.collaboration.agent-caller-production");
 
@@ -347,13 +352,45 @@ export function createCollaborationProductionCallAgent(
         laneAction: "create",
       });
     }
-    return caller.call({
-      laneRef: request.laneRef,
-      sessionKey: input.sessionKey,
-      ...(request.writeCapability !== undefined
-        ? { writeCapability: request.writeCapability }
-        : {}),
-      agentCallRequest: request,
+
+    const laneRef = request.laneRef;
+    const callOnLane = (agentCallRequest: AgentCallRequest) =>
+      caller.call({
+        laneRef,
+        sessionKey: input.sessionKey,
+        ...(request.writeCapability !== undefined
+          ? { writeCapability: request.writeCapability }
+          : {}),
+        agentCallRequest,
+      });
+
+    // A request without a structured-output schema is a single turn.
+    if (request.outputSchema === undefined) {
+      return callOnLane(request);
+    }
+
+    // Two-step structured output: the agent first answers in prose (work turn,
+    // schema stripped, the JSON reminder swapped for a prose directive), then a
+    // format turn on the same lane restates that answer as schema-conforming
+    // JSON under backend enforcement. The format turn resumes the work turn's
+    // session via the lane's continuity ref, so the model formats an answer it
+    // has already produced instead of reasoning and conforming to the schema in
+    // a single pass — which fails when the task is large enough that the agent
+    // is still mid-reasoning at enforcement time.
+    const workResult = await callOnLane({
+      ...request,
+      outputSchema: undefined,
+      prompt: request.prompt.replace(
+        COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
+        COLLABORATION_PROSE_TURN_INSTRUCTION,
+      ),
+    });
+    if (workResult.outcome.kind !== "completed") {
+      return workResult;
+    }
+    return callOnLane({
+      ...request,
+      prompt: COLLABORATION_FORMAT_TURN_INSTRUCTION,
     });
   };
 }
