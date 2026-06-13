@@ -37,6 +37,61 @@ function draftOutput(round: number): CollaborationInitialDraftOutput {
   };
 }
 
+/**
+ * Claude conversation factory double that records every `createRuntime` input
+ * into the provided sink and replies with a valid initial draft, so tests can
+ * assert how the production caller resolves the runtime's model/effort.
+ */
+function makeRecordingClaudeFactory(
+  createRuntimeInputs: Array<
+    Parameters<ConversationBackendFactory["createRuntime"]>[0]
+  >,
+): ConversationBackendFactory {
+  return {
+    backend: "claude",
+    async createRuntime(input): Promise<ConversationBackendRuntime> {
+      createRuntimeInputs.push(input);
+      return {
+        backend: "claude",
+        status: "alive",
+        capabilities: {
+          queueWhileRunning: true,
+          askUserQuestion: true,
+          preciseFork: true,
+          portableMcpAtStart: true,
+          portableMcpBetweenTurns: true,
+          contextWindowMetrics: true,
+        },
+        modelId: input.modelId,
+        reasoningEffort: input.reasoningEffort,
+        outputFormat: input.outputFormat,
+        applyPortableMcpConfig: async () => ({
+          disposition: "applied_now",
+          droppedServerIds: [],
+          droppedFields: [],
+          errors: {},
+        }),
+        async sendTurn(): Promise<ConversationBackendTurnResult> {
+          const structuredOutput = draftOutput(1);
+          return {
+            backendRef: { backend: "claude", sessionId: "real-session-1" },
+            costUsd: null,
+            durationMs: 10,
+            numTurns: 1,
+            contextTokens: null,
+            contextWindowMax: null,
+            contentBlocks: [{ type: "text", text: structuredOutput.narrative }],
+            structuredOutput,
+            aborted: false,
+            error: null,
+          };
+        },
+        close: () => undefined,
+      };
+    },
+  };
+}
+
 describe("createCollaborationProductionCallAgent", () => {
   it("passes the originating conversationId to the Claude runtime as mcpScopeConversationId so the session MCP server resolves to a real CC conversation", async () => {
     const laneService = createLaneService({ store: createInMemoryLaneStore() });
@@ -702,5 +757,100 @@ describe("createCollaborationProductionCallAgent", () => {
     });
 
     expect(taskRequests[0]?.modelId).toBe("gpt-5.4");
+  });
+
+  it("applies the configured claude model and reasoning effort to a conversation_turn request that carries none", async () => {
+    const laneService = createLaneService({ store: createInMemoryLaneStore() });
+    await laneService.initialize({
+      workflowId: "wf-claude-model",
+      laneId: "claude",
+      backend: "claude",
+      writeCapability: "write_capable",
+      policy: { continuityEnabled: true },
+      backendState: { backend: "claude" },
+      metrics: { backend: "claude", rotateBeforeNextTurn: false },
+      lastUsedAt: "2026-04-28T10:00:00.000Z",
+    });
+
+    const createRuntimeInputs: Array<
+      Parameters<ConversationBackendFactory["createRuntime"]>[0]
+    > = [];
+    const factory = makeRecordingClaudeFactory(createRuntimeInputs);
+
+    const callAgent = createCollaborationProductionCallAgent({
+      workflowId: "wf-claude-model",
+      projectPath: "/projects/example",
+      sessionName: "sess-1",
+      worktreePath: "/worktrees/sess-1",
+      sessionKey: "/projects/example::sess-1",
+      originatingConversationId: "test-originating-conv",
+      laneService,
+      getConversationBackendFactory: () => factory,
+      claudeModel: "opus",
+      claudeReasoningEffort: "xhigh",
+    });
+
+    await callAgent({
+      kind: "conversation_turn",
+      backend: "claude",
+      prompt: "round 1",
+      laneRef: { workflowId: "wf-claude-model", laneId: "claude" },
+      writeCapability: "write_capable",
+      outputSchema:
+        COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA as unknown as Record<
+          string,
+          unknown
+        >,
+    });
+
+    expect(createRuntimeInputs[0]?.modelId).toBe("opus");
+    expect(createRuntimeInputs[0]?.reasoningEffort).toBe("xhigh");
+  });
+
+  it("prefers an explicit request modelId over the configured claude model", async () => {
+    const laneService = createLaneService({ store: createInMemoryLaneStore() });
+    await laneService.initialize({
+      workflowId: "wf-claude-model-override",
+      laneId: "claude",
+      backend: "claude",
+      writeCapability: "write_capable",
+      policy: { continuityEnabled: true },
+      backendState: { backend: "claude" },
+      metrics: { backend: "claude", rotateBeforeNextTurn: false },
+      lastUsedAt: "2026-04-28T10:00:00.000Z",
+    });
+
+    const createRuntimeInputs: Array<
+      Parameters<ConversationBackendFactory["createRuntime"]>[0]
+    > = [];
+    const factory = makeRecordingClaudeFactory(createRuntimeInputs);
+
+    const callAgent = createCollaborationProductionCallAgent({
+      workflowId: "wf-claude-model-override",
+      projectPath: "/projects/example",
+      sessionName: "sess-1",
+      worktreePath: "/worktrees/sess-1",
+      sessionKey: "/projects/example::sess-1",
+      originatingConversationId: "test-originating-conv",
+      laneService,
+      getConversationBackendFactory: () => factory,
+      claudeModel: "opus",
+    });
+
+    await callAgent({
+      kind: "conversation_turn",
+      backend: "claude",
+      prompt: "round 1",
+      modelId: "sonnet",
+      laneRef: { workflowId: "wf-claude-model-override", laneId: "claude" },
+      writeCapability: "write_capable",
+      outputSchema:
+        COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA as unknown as Record<
+          string,
+          unknown
+        >,
+    });
+
+    expect(createRuntimeInputs[0]?.modelId).toBe("sonnet");
   });
 });

@@ -78,6 +78,7 @@ interface ScriptedDepsOptions {
   stopRegistryOverride?: CollaborationStopRegistry;
   sliceDepsOverride?: AsymmetricCollaborationSliceDeps;
   resolveCodexModelConfigResult?: { model: string; reasoningEffort?: string };
+  resolveClaudeModelConfigResult?: { model: string; reasoningEffort?: string };
 }
 
 function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
@@ -91,6 +92,8 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
     worktreePath: string;
     codexModel?: string;
     codexReasoningEffort?: string;
+    claudeModel?: string;
+    claudeReasoningEffort?: string;
   }>;
   publishedStatuses: Array<
     Omit<
@@ -118,6 +121,8 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
     worktreePath: string;
     codexModel?: string;
     codexReasoningEffort?: string;
+    claudeModel?: string;
+    claudeReasoningEffort?: string;
   }> = [];
   const publishedStatuses: Array<
     Omit<
@@ -177,6 +182,8 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
         worktreePath: input.worktreePath,
         codexModel: input.codexModel,
         codexReasoningEffort: input.codexReasoningEffort,
+        claudeModel: input.claudeModel,
+        claudeReasoningEffort: input.claudeReasoningEffort,
       });
       return async () => {
         throw new Error("stub callAgent should not be called in tests");
@@ -184,6 +191,8 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
     },
     resolveCodexModelConfig: async () =>
       options.resolveCodexModelConfigResult ?? { model: "gpt-5.4" },
+    resolveClaudeModelConfig: async () =>
+      options.resolveClaudeModelConfigResult ?? { model: "opus" },
     runSlice: async (input, sliceDeps) => {
       runSliceCalls.push({ input, deps: sliceDeps });
       try {
@@ -385,13 +394,17 @@ describe("createCollaborationManager.start", () => {
     expect(call.input.primaryAgentBackend).toBe("claude");
   });
 
-  it("forwards the workflowId, worktreePath, and resolved codex model config to buildCallAgent", async () => {
+  it("forwards the workflowId, worktreePath, and resolved codex + claude model config to buildCallAgent", async () => {
     const { deps, buildCallAgentCalls, runSliceCompletion } = buildScriptedDeps(
       {
         resolveSessionResult: { worktreePath: "/wt/xyz" },
         resolveCodexModelConfigResult: {
           model: "gpt-5.5",
           reasoningEffort: "high",
+        },
+        resolveClaudeModelConfigResult: {
+          model: "sonnet",
+          reasoningEffort: "xhigh",
         },
       },
     );
@@ -414,6 +427,8 @@ describe("createCollaborationManager.start", () => {
         worktreePath: "/wt/xyz",
         codexModel: "gpt-5.5",
         codexReasoningEffort: "high",
+        claudeModel: "sonnet",
+        claudeReasoningEffort: "xhigh",
       },
     ]);
   });

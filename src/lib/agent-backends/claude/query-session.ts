@@ -1253,15 +1253,12 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         }
 
         let error: string | null = null;
-        if (resultMsg.subtype === "success") {
-          const success = resultMsg as SDKResultSuccess;
-          turn.structuredOutput = success.structured_output;
+        if (resultMsg.subtype === "success" && !resultMsg.is_error) {
+          turn.structuredOutput = (
+            resultMsg as SDKResultSuccess
+          ).structured_output;
         } else {
-          const errMsg = resultMsg as SDKResultError;
-          error =
-            errMsg.errors?.length > 0
-              ? errMsg.errors.join("; ")
-              : "Error during execution";
+          error = extractResultMessageError(resultMsg);
         }
 
         // Resolve the turn promise
@@ -1333,6 +1330,29 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
 // ============================================================
 // Helpers
 // ============================================================
+
+/**
+ * Recover a human-readable error from a terminal `result` message.
+ *
+ * The SDK reports some failures — notably an inaccessible model — as a
+ * `subtype: "success"` result with `is_error: true`, carrying the message in
+ * `result` and omitting `structured_output`. Treating those as successful
+ * turns surfaces the absent structured output downstream as a misleading
+ * schema-validation failure ("$ must be object"), so the caller classifies
+ * them as errors and recovers the real message from `result` here. Genuine
+ * error subtypes carry their detail in `errors`.
+ */
+function extractResultMessageError(
+  resultMsg: SDKResultSuccess | SDKResultError,
+): string {
+  if (resultMsg.subtype === "success") {
+    const text = resultMsg.result?.trim();
+    return text && text.length > 0 ? text : "Error during execution";
+  }
+  return resultMsg.errors?.length > 0
+    ? resultMsg.errors.join("; ")
+    : "Error during execution";
+}
 
 /**
  * Assemble a `TurnResult` from a pending turn's accumulated state. Used by both

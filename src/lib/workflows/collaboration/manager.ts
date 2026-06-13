@@ -295,6 +295,8 @@ export interface CollaborationManagerDeps {
     laneService: LaneService;
     codexModel: string;
     codexReasoningEffort?: string;
+    claudeModel: string;
+    claudeReasoningEffort?: string;
   }): AsymmetricCollaborationSliceDeps["callAgent"];
 
   /**
@@ -305,6 +307,19 @@ export interface CollaborationManagerDeps {
    * the singleton global config; tests inject a deterministic value.
    */
   resolveCodexModelConfig(): Promise<{
+    model: string;
+    reasoningEffort?: string;
+  }>;
+
+  /**
+   * Resolves the Claude lane's model + reasoning effort from the global config
+   * cascade. Standalone Collaboration mode carries no per-call model, so the
+   * resolved model is threaded to the Claude lane to avoid the Claude SDK's
+   * built-in CLI default model (which the account may not have access to,
+   * surfacing as a misleading structured-output validation failure). Defaults
+   * to reading the singleton global config; tests inject a deterministic value.
+   */
+  resolveClaudeModelConfig(): Promise<{
     model: string;
     reasoningEffort?: string;
   }>;
@@ -403,6 +418,10 @@ const defaultBuildCallAgent: CollaborationManagerDeps["buildCallAgent"] = (
     ...(input.codexReasoningEffort !== undefined
       ? { codexReasoningEffort: input.codexReasoningEffort }
       : {}),
+    claudeModel: input.claudeModel,
+    ...(input.claudeReasoningEffort !== undefined
+      ? { claudeReasoningEffort: input.claudeReasoningEffort }
+      : {}),
   });
 
 const defaultDeps: CollaborationManagerDeps = {
@@ -447,6 +466,15 @@ const defaultDeps: CollaborationManagerDeps = {
       model: config.codex?.model ?? getDefaultCodexModel(),
       ...(config.codex?.reasoningEffort !== undefined
         ? { reasoningEffort: config.codex.reasoningEffort }
+        : {}),
+    };
+  },
+  async resolveClaudeModelConfig() {
+    const config = await defaultReadConfig();
+    return {
+      model: config.defaultModel,
+      ...(config.defaultEffort !== undefined
+        ? { reasoningEffort: config.defaultEffort }
         : {}),
     };
   },
@@ -648,6 +676,7 @@ export function createCollaborationManager(
       });
 
       const codexModelConfig = await deps.resolveCodexModelConfig();
+      const claudeModelConfig = await deps.resolveClaudeModelConfig();
 
       const callAgent = deps.buildCallAgent({
         projectPath: input.projectPath,
@@ -659,6 +688,10 @@ export function createCollaborationManager(
         codexModel: codexModelConfig.model,
         ...(codexModelConfig.reasoningEffort !== undefined
           ? { codexReasoningEffort: codexModelConfig.reasoningEffort }
+          : {}),
+        claudeModel: claudeModelConfig.model,
+        ...(claudeModelConfig.reasoningEffort !== undefined
+          ? { claudeReasoningEffort: claudeModelConfig.reasoningEffort }
           : {}),
       });
 
@@ -842,6 +875,7 @@ export function createCollaborationManager(
         sessionName: input.sessionName,
       });
       const codexModelConfig = await deps.resolveCodexModelConfig();
+      const claudeModelConfig = await deps.resolveClaudeModelConfig();
       const callAgent = deps.buildCallAgent({
         projectPath: input.projectPath,
         sessionName: input.sessionName,
@@ -852,6 +886,10 @@ export function createCollaborationManager(
         codexModel: codexModelConfig.model,
         ...(codexModelConfig.reasoningEffort !== undefined
           ? { codexReasoningEffort: codexModelConfig.reasoningEffort }
+          : {}),
+        claudeModel: claudeModelConfig.model,
+        ...(claudeModelConfig.reasoningEffort !== undefined
+          ? { claudeReasoningEffort: claudeModelConfig.reasoningEffort }
           : {}),
       });
       const sliceDeps = deps.createDeps({

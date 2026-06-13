@@ -89,6 +89,17 @@ export interface CollaborationProductionAgentCallerInput {
   codexModel?: string;
   /** Reasoning effort the Codex lane runs with, resolved alongside `codexModel`. */
   codexReasoningEffort?: string;
+  /**
+   * Model the Claude lane runs with. The asymmetric slice builds Claude
+   * `conversation_turn` requests without a per-call model, so without this the
+   * Claude SDK falls back to its CLI default model — which is rejected for
+   * accounts without access to it, surfacing as a misleading structured-output
+   * validation failure. Resolved from the global config cascade by the manager.
+   * A per-call `request.modelId` (if a caller sets one) still takes precedence.
+   */
+  claudeModel?: string;
+  /** Reasoning effort the Claude lane runs with, resolved alongside `claudeModel`. */
+  claudeReasoningEffort?: string;
   /** Optional override for testing. Defaults to module-level `executeAgentCall`. */
   executeAgentCallImpl?: (
     request: AgentCallRequest,
@@ -201,6 +212,16 @@ function buildInnerCallAgent(
     const outputFormat = request.outputSchema
       ? { type: "json_schema" as const, schema: request.outputSchema }
       : undefined;
+    // The slice omits a per-call model, so fall back to the lane's configured
+    // Claude model rather than the SDK's built-in CLI default. The Claude
+    // conversation runtime fixes the model at creation time, so it must be set
+    // here (the per-turn modelId on the dispatch resolution is ignored).
+    const isClaude = backend === "claude";
+    const effectiveModelId =
+      request.modelId ?? (isClaude ? input.claudeModel : undefined);
+    const effectiveReasoningEffort =
+      request.reasoningEffort ??
+      (isClaude ? input.claudeReasoningEffort : undefined);
     const runtime = await factory.createRuntime({
       conversationId,
       mcpScopeConversationId: input.originatingConversationId,
@@ -209,6 +230,10 @@ function buildInnerCallAgent(
       sessionName: input.sessionName,
       worktreePath: input.worktreePath,
       persistedRef: claudeResumeRef,
+      ...(effectiveModelId !== undefined ? { modelId: effectiveModelId } : {}),
+      ...(effectiveReasoningEffort !== undefined
+        ? { reasoningEffort: effectiveReasoningEffort }
+        : {}),
       ...(outputFormat !== undefined ? { outputFormat } : {}),
       sessionInstructions: [],
       tooling: {},

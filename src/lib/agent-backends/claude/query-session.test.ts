@@ -569,6 +569,44 @@ describe("structured output error handling", () => {
 
     session.close();
   });
+
+  it("treats a success-subtype result with is_error true as a turn error and surfaces the result text", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(
+      makeDefaultOptions({
+        outputFormat: {
+          type: "json_schema",
+          schema: { type: "object", properties: { name: { type: "string" } } },
+        },
+      }),
+    );
+    const emit = vi.fn();
+
+    const turnPromise = session.sendPrompt("Hello", emit);
+
+    // The SDK reports an inaccessible model as subtype "success" with
+    // is_error true, carrying the message in `result` and no structured_output.
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-abc",
+      uuid: "u1",
+      total_cost_usd: 0,
+      duration_ms: 670,
+      num_turns: 1,
+      result:
+        "There's an issue with the selected model (claude-fable-5[1m]). It may not exist or you may not have access to it.",
+      is_error: true,
+    } as unknown as SDKMessage);
+
+    const result = await turnPromise;
+    expect(result.error).toContain("issue with the selected model");
+    expect(result.structuredOutput).toBeUndefined();
+
+    session.close();
+  });
 });
 
 describe("QuerySession.close", () => {
