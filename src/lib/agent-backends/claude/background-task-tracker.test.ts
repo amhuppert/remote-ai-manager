@@ -4,7 +4,7 @@ import type {
   SDKTaskUpdatedMessage,
   SDKTaskNotificationMessage,
   SDKTaskProgressMessage,
-  SDKThinkingTokensMessage,
+  SDKNotificationMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
   emptyBackgroundTaskState,
@@ -369,15 +369,16 @@ describe("background-task-tracker", () => {
         emptyBackgroundTaskState(),
         taskStarted({ task_id: "t1" }),
       );
-      const thinking: SDKThinkingTokensMessage = {
+      const notification: SDKNotificationMessage = {
         type: "system",
-        subtype: "thinking_tokens",
-        estimated_tokens: 10,
-        estimated_tokens_delta: 2,
+        subtype: "notification",
+        key: "some-key",
+        text: "some notification",
+        priority: "low",
         uuid: UUID,
         session_id: SESSION,
       };
-      const after: BackgroundTaskState = applyTaskMessage(start, thinking);
+      const after: BackgroundTaskState = applyTaskMessage(start, notification);
       expect(after).toBe(start);
       expect(getWaitableInFlightTaskIds(after)).toEqual(["t1"]);
     });
