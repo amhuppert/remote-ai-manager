@@ -27,6 +27,13 @@ import {
 import { sessionArchiveRequestSchema } from "@/lib/sessions/schemas";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import { broadcast as defaultBroadcast } from "@/lib/events/broadcaster";
+import { broadcastEvent } from "@/lib/events/broadcast-event";
+import {
+  resolveProjectOr404,
+  parseJsonBody,
+  jsonError,
+} from "@/lib/shared/route-resolution";
+import { resolveProjectConversationRoute } from "./route-resolution";
 import { readConversationMessagesWithSeq as defaultReadConversationMessagesWithSeq } from "@/lib/prompt/transcript";
 import { createLogger } from "@/lib/logging";
 import {
@@ -36,7 +43,6 @@ import {
 import { createProjectConversationService } from "./service";
 import { buildProjectConversationCreatedEvent } from "./events";
 import { executeProjectPromptStream as defaultExecuteProjectPromptStream } from "./prompt-entry";
-import type { ApiError } from "@/lib/api/errors";
 import type { SSEEvent } from "@/lib/api/sse-events";
 import type {
   ConversationState,
@@ -117,19 +123,6 @@ function defaultDeps(): ProjectConversationRouteDeps {
     isConversationBusy: defaultIsConversationBusy,
     broadcast: defaultBroadcast,
   };
-}
-
-function projectNotFound(): Response {
-  return NextResponse.json({ error: "Project not found" } satisfies ApiError, {
-    status: 404,
-  });
-}
-
-function conversationNotFound(): Response {
-  return NextResponse.json(
-    { error: "Conversation not found" } satisfies ApiError,
-    { status: 404 },
-  );
 }
 
 export function createProjectConversationRouteHandlers(
@@ -213,38 +206,30 @@ export function createProjectConversationRouteHandlers(
     context: RouteContext,
   ): Promise<Response> {
     const { name } = await context.params;
-    const projectPath = await deps.resolveProjectPath(name ?? "");
-    if (!projectPath) return projectNotFound();
+    const project = await resolveProjectOr404(deps, name ?? "");
+    if (!project.ok) return project.response;
+    const projectPath = project.value;
 
-    let body: {
-      agentBackend?: ConversationState["agentBackend"];
-      name?: string;
-    };
-    try {
-      body = createProjectConversationRequestSchema.parse(await request.json());
-    } catch {
-      return NextResponse.json(
-        { error: "Invalid request body" } satisfies ApiError,
-        { status: 400 },
-      );
-    }
+    const parsed = await parseJsonBody(
+      request,
+      createProjectConversationRequestSchema,
+      "Invalid request body",
+    );
+    if (!parsed.ok) return parsed.response;
 
     const conversation = await deps.createProjectConversation(
       projectPath,
-      body,
+      parsed.value,
     );
     const projectName = deps.getProjectDisplayName(projectPath);
-    try {
-      deps.broadcast(
+    broadcastEvent({
+      broadcast: deps.broadcast,
+      logger,
+      failureEvent: "project_conversation_created.broadcast_failed",
+      context: { projectName, conversationId: conversation.id },
+      build: () =>
         buildProjectConversationCreatedEvent(projectName, conversation),
-      );
-    } catch (err) {
-      logger.warn("project_conversation_created.broadcast_failed", {
-        projectName,
-        conversationId: conversation.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+    });
 
     return NextResponse.json(conversation, { status: 201 });
   }
@@ -254,10 +239,10 @@ export function createProjectConversationRouteHandlers(
     context: RouteContext,
   ): Promise<Response> {
     const { name } = await context.params;
-    const projectPath = await deps.resolveProjectPath(name ?? "");
-    if (!projectPath) return projectNotFound();
+    const project = await resolveProjectOr404(deps, name ?? "");
+    if (!project.ok) return project.response;
 
-    const conversations = await deps.listProjectConversations(projectPath);
+    const conversations = await deps.listProjectConversations(project.value);
     return NextResponse.json(conversations);
   }
 
@@ -265,28 +250,19 @@ export function createProjectConversationRouteHandlers(
     _request: Request,
     context: RouteContext,
   ): Promise<Response> {
-    const { name, conversationId } = await context.params;
-    const projectPath = await deps.resolveProjectPath(name ?? "");
-    if (!projectPath) return projectNotFound();
-
-    const conversation = await deps.getProjectConversation(
-      projectPath,
-      conversationId ?? "",
-    );
-    if (!conversation) return conversationNotFound();
+    const resolved = await resolveProjectConversationRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
 
     try {
       const messages = await deps.readConversationMessagesWithSeq(
-        conversation.transcriptPath,
+        resolved.value.conversation.transcriptPath,
       );
       const sorted = [...messages].sort((a, b) => a.seq - b.seq);
       return NextResponse.json(sorted);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to read messages";
-      return NextResponse.json({ error: message } satisfies ApiError, {
-        status: 500,
-      });
+      return jsonError(message, 500);
     }
   }
 
@@ -295,118 +271,89 @@ export function createProjectConversationRouteHandlers(
     context: RouteContext,
   ): Promise<Response> {
     const { name } = await context.params;
-    const projectPath = await deps.resolveProjectPath(name ?? "");
-    if (!projectPath) return projectNotFound();
+    const project = await resolveProjectOr404(deps, name ?? "");
+    if (!project.ok) return project.response;
 
-    let body: ReturnType<typeof runPromptRequestSchema.parse>;
-    try {
-      body = runPromptRequestSchema.parse(await request.json());
-    } catch {
-      return NextResponse.json(
-        { error: "prompt or images required" } satisfies ApiError,
-        { status: 400 },
-      );
-    }
+    const parsed = await parseJsonBody(
+      request,
+      runPromptRequestSchema,
+      "prompt or images required",
+    );
+    if (!parsed.ok) return parsed.response;
 
-    return streamPrompt(projectPath, undefined, body);
+    return streamPrompt(project.value, undefined, parsed.value);
   }
 
   async function promptPOST(
     request: Request,
     context: RouteContext,
   ): Promise<Response> {
-    const { name, conversationId } = await context.params;
-    const projectPath = await deps.resolveProjectPath(name ?? "");
-    if (!projectPath) return projectNotFound();
-
-    const existing = await deps.getProjectConversation(
-      projectPath,
-      conversationId ?? "",
-    );
-    if (!existing) return conversationNotFound();
+    const resolved = await resolveProjectConversationRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const { projectPath, conversationId } = resolved.value;
 
     if (
       deps.isConversationBusy(
         projectPath,
         PROJECT_CONVERSATION_SESSION_SENTINEL,
-        conversationId ?? "",
+        conversationId,
       )
     ) {
-      return NextResponse.json(
-        { error: "Conversation is busy" } satisfies ApiError,
-        { status: 409 },
-      );
+      return jsonError("Conversation is busy", 409);
     }
 
-    let body: ReturnType<typeof runPromptRequestSchema.parse>;
-    try {
-      body = runPromptRequestSchema.parse(await request.json());
-    } catch {
-      return NextResponse.json(
-        { error: "prompt or images required" } satisfies ApiError,
-        { status: 400 },
-      );
-    }
+    const parsed = await parseJsonBody(
+      request,
+      runPromptRequestSchema,
+      "prompt or images required",
+    );
+    if (!parsed.ok) return parsed.response;
 
-    return streamPrompt(projectPath, conversationId, body);
+    return streamPrompt(projectPath, conversationId, parsed.value);
   }
 
   async function renamePATCH(
     request: Request,
     context: RouteContext,
   ): Promise<Response> {
-    const { name, conversationId } = await context.params;
-    const projectPath = await deps.resolveProjectPath(name ?? "");
-    if (!projectPath) return projectNotFound();
+    const resolved = await resolveProjectConversationRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const { projectPath, conversationId } = resolved.value;
 
-    const existing = await deps.getProjectConversation(
-      projectPath,
-      conversationId ?? "",
+    const parsed = await parseJsonBody(
+      request,
+      renameConversationRequestSchema,
+      "name (non-empty string) is required",
     );
-    if (!existing) return conversationNotFound();
-
-    let body: { name: string };
-    try {
-      body = renameConversationRequestSchema.parse(await request.json());
-    } catch {
-      return NextResponse.json(
-        { error: "name (non-empty string) is required" } satisfies ApiError,
-        { status: 400 },
-      );
-    }
+    if (!parsed.ok) return parsed.response;
 
     try {
       await deps.renameProjectConversation(
         projectPath,
-        conversationId ?? "",
-        body.name,
+        conversationId,
+        parsed.value.name,
       );
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to rename conversation";
-      return NextResponse.json({ error: message } satisfies ApiError, {
-        status: 500,
-      });
+      return jsonError(message, 500);
     }
 
     const projectName = deps.getProjectDisplayName(projectPath);
-    try {
-      deps.broadcast(
+    broadcastEvent({
+      broadcast: deps.broadcast,
+      logger,
+      failureEvent: "project_conversation_renamed.broadcast_failed",
+      context: { projectName, conversationId },
+      build: () =>
         conversationRenamedEventSchema.parse({
           type: "conversation-renamed",
           scope: "project",
           projectName,
           conversationId,
-          name: body.name,
+          name: parsed.value.name,
         }),
-      );
-    } catch (err) {
-      logger.warn("project_conversation_renamed.broadcast_failed", {
-        projectName,
-        conversationId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+    });
 
     return NextResponse.json({ ok: true });
   }
@@ -415,58 +362,44 @@ export function createProjectConversationRouteHandlers(
     request: Request,
     context: RouteContext,
   ): Promise<Response> {
-    const { name, conversationId } = await context.params;
-    const projectPath = await deps.resolveProjectPath(name ?? "");
-    if (!projectPath) return projectNotFound();
+    const resolved = await resolveProjectConversationRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const { projectPath, conversationId } = resolved.value;
 
-    const existing = await deps.getProjectConversation(
-      projectPath,
-      conversationId ?? "",
+    const parsed = await parseJsonBody(
+      request,
+      sessionArchiveRequestSchema,
+      "archived (boolean) is required",
     );
-    if (!existing) return conversationNotFound();
-
-    let body: { archived: boolean };
-    try {
-      body = sessionArchiveRequestSchema.parse(await request.json());
-    } catch {
-      return NextResponse.json(
-        { error: "archived (boolean) is required" } satisfies ApiError,
-        { status: 400 },
-      );
-    }
+    if (!parsed.ok) return parsed.response;
 
     try {
       await deps.setProjectConversationArchived(
         projectPath,
-        conversationId ?? "",
-        body.archived,
+        conversationId,
+        parsed.value.archived,
       );
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to update archive state";
-      return NextResponse.json({ error: message } satisfies ApiError, {
-        status: 500,
-      });
+      return jsonError(message, 500);
     }
 
     const projectName = deps.getProjectDisplayName(projectPath);
-    try {
-      deps.broadcast(
+    broadcastEvent({
+      broadcast: deps.broadcast,
+      logger,
+      failureEvent: "project_conversation_archived.broadcast_failed",
+      context: { projectName, conversationId },
+      build: () =>
         conversationArchivedEventSchema.parse({
           type: "conversation-archived",
           scope: "project",
           projectName,
           conversationId,
-          archived: body.archived,
+          archived: parsed.value.archived,
         }),
-      );
-    } catch (err) {
-      logger.warn("project_conversation_archived.broadcast_failed", {
-        projectName,
-        conversationId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+    });
 
     return NextResponse.json({ ok: true });
   }
@@ -475,58 +408,44 @@ export function createProjectConversationRouteHandlers(
     request: Request,
     context: RouteContext,
   ): Promise<Response> {
-    const { name, conversationId } = await context.params;
-    const projectPath = await deps.resolveProjectPath(name ?? "");
-    if (!projectPath) return projectNotFound();
+    const resolved = await resolveProjectConversationRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const { projectPath, conversationId } = resolved.value;
 
-    const existing = await deps.getProjectConversation(
-      projectPath,
-      conversationId ?? "",
+    const parsed = await parseJsonBody(
+      request,
+      projectConversationOpenRequestSchema,
+      "open (boolean) is required",
     );
-    if (!existing) return conversationNotFound();
-
-    let body: { open: boolean };
-    try {
-      body = projectConversationOpenRequestSchema.parse(await request.json());
-    } catch {
-      return NextResponse.json(
-        { error: "open (boolean) is required" } satisfies ApiError,
-        { status: 400 },
-      );
-    }
+    if (!parsed.ok) return parsed.response;
 
     try {
       await deps.setProjectConversationOpen(
         projectPath,
-        conversationId ?? "",
-        body.open,
+        conversationId,
+        parsed.value.open,
       );
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to update open state";
-      return NextResponse.json({ error: message } satisfies ApiError, {
-        status: 500,
-      });
+      return jsonError(message, 500);
     }
 
     const projectName = deps.getProjectDisplayName(projectPath);
-    try {
-      deps.broadcast(
+    broadcastEvent({
+      broadcast: deps.broadcast,
+      logger,
+      failureEvent: "project_conversation_open.broadcast_failed",
+      context: { projectName, conversationId },
+      build: () =>
         conversationOpenEventSchema.parse({
           type: "conversation-open",
           scope: "project",
           projectName,
           conversationId,
-          open: body.open,
+          open: parsed.value.open,
         }),
-      );
-    } catch (err) {
-      logger.warn("project_conversation_open.broadcast_failed", {
-        projectName,
-        conversationId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+    });
 
     return NextResponse.json({ ok: true });
   }
@@ -535,29 +454,25 @@ export function createProjectConversationRouteHandlers(
     _request: Request,
     context: RouteContext,
   ): Promise<Response> {
-    const { name, conversationId } = await context.params;
-    const projectPath = await deps.resolveProjectPath(name ?? "");
-    if (!projectPath) return projectNotFound();
-
-    const existing = await deps.getProjectConversation(
-      projectPath,
-      conversationId ?? "",
-    );
-    if (!existing) return conversationNotFound();
+    const resolved = await resolveProjectConversationRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const { projectPath, conversationId } = resolved.value;
 
     try {
-      await deps.markProjectConversationRead(projectPath, conversationId ?? "");
+      await deps.markProjectConversationRead(projectPath, conversationId);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to mark as read";
-      return NextResponse.json({ error: message } satisfies ApiError, {
-        status: 500,
-      });
+      return jsonError(message, 500);
     }
 
     const projectName = deps.getProjectDisplayName(projectPath);
-    try {
-      deps.broadcast(
+    broadcastEvent({
+      broadcast: deps.broadcast,
+      logger,
+      failureEvent: "project_conversation_mark_read.broadcast_failed",
+      context: { projectName, conversationId },
+      build: () =>
         conversationUnreadEventSchema.parse({
           type: "conversation-unread",
           scope: "project",
@@ -565,14 +480,7 @@ export function createProjectConversationRouteHandlers(
           conversationId,
           unread: false,
         }),
-      );
-    } catch (err) {
-      logger.warn("project_conversation_mark_read.broadcast_failed", {
-        projectName,
-        conversationId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+    });
 
     return NextResponse.json({ ok: true });
   }

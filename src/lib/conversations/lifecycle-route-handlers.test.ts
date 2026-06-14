@@ -151,6 +151,23 @@ describe("POST_CREATE — conversation-created broadcast", () => {
     expect(response.status).toBe(404);
     expect(deps.broadcast).not.toHaveBeenCalled();
   });
+
+  it("returns 500 and does not broadcast when the create service throws", async () => {
+    const { deps } = makeDeps({
+      createConversation: vi.fn(async () => {
+        throw new Error("disk full");
+      }),
+    });
+    const { POST_CREATE } = createConversationRouteHandlers(deps);
+
+    const response = await POST_CREATE(
+      jsonRequest(),
+      context({ name: "demo", session: "s1" }),
+    );
+
+    expect(response.status).toBe(500);
+    expect(deps.broadcast).not.toHaveBeenCalled();
+  });
 });
 
 // ============================================================================

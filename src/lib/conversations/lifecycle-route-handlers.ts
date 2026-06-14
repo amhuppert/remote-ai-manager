@@ -33,7 +33,12 @@ import {
 import { sessionArchiveRequestSchema } from "@/lib/sessions/schemas";
 import { broadcast as defaultBroadcast } from "@/lib/events/broadcaster";
 import type { BroadcastFn } from "@/lib/events/broadcaster";
-import type { ApiError } from "@/lib/api/errors";
+import { broadcastEvent } from "@/lib/events/broadcast-event";
+import { jsonError, parseJsonBody } from "@/lib/shared/route-resolution";
+import {
+  resolveSessionRoute,
+  resolveSessionConversationRoute,
+} from "./route-resolution";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { createLogger, withTracing } from "@/lib/logging";
@@ -111,25 +116,6 @@ type RouteContext = {
   params: Promise<Record<string, string>>;
 };
 
-function projectNotFound(): Response {
-  return NextResponse.json({ error: "Project not found" } satisfies ApiError, {
-    status: 404,
-  });
-}
-
-function sessionNotFound(): Response {
-  return NextResponse.json({ error: "Session not found" } satisfies ApiError, {
-    status: 404,
-  });
-}
-
-function conversationNotFound(): Response {
-  return NextResponse.json(
-    { error: "Conversation not found" } satisfies ApiError,
-    { status: 404 },
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -141,20 +127,12 @@ export function createConversationsListRouteHandlers(
     _request: Request,
     context: RouteContext,
   ): Promise<Response> {
-    const resolvedParams = await context.params;
-    const name = resolvedParams["name"] ?? "";
-    const sessionSlug = resolvedParams["session"] ?? "";
-    const sessionName = decodeURIComponent(sessionSlug);
-
-    const projectPath = await deps.resolveProjectPath(name);
-    if (!projectPath) return projectNotFound();
-
-    const session = await deps.getSession(projectPath, sessionName);
-    if (!session) return sessionNotFound();
+    const resolved = await resolveSessionRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
 
     const conversations = await deps.getSessionConversations(
-      projectPath,
-      sessionName,
+      resolved.value.projectPath,
+      resolved.value.sessionName,
     );
     return NextResponse.json(conversations);
   }
@@ -169,40 +147,34 @@ export function createConversationRouteHandlers(
     _request: Request,
     context: RouteContext,
   ): Promise<Response> {
-    const resolvedParams = await context.params;
-    const name = resolvedParams["name"] ?? "";
-    const sessionSlug = resolvedParams["session"] ?? "";
-    const sessionName = decodeURIComponent(sessionSlug);
+    const resolved = await resolveSessionRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const { projectPath, sessionName } = resolved.value;
 
-    const projectPath = await deps.resolveProjectPath(name);
-    if (!projectPath) return projectNotFound();
-
-    const session = await deps.getSession(projectPath, sessionName);
-    if (!session) return sessionNotFound();
-
-    const conversation = await deps.createConversation(
-      projectPath,
-      sessionName,
-    );
+    let conversation: ConversationState;
+    try {
+      conversation = await deps.createConversation(projectPath, sessionName);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to create conversation";
+      return jsonError(message, 500);
+    }
 
     const projectName = deps.getProjectDisplayName(projectPath);
-    try {
-      const event = conversationCreatedEventSchema.parse({
-        type: "conversation-created",
-        scope: "session",
-        projectName,
-        sessionName,
-        conversation,
-      });
-      deps.broadcast(event);
-    } catch (err) {
-      logger.warn("conversation_created.broadcast_failed", {
-        projectName,
-        sessionName,
-        conversationId: conversation.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+    broadcastEvent({
+      broadcast: deps.broadcast,
+      logger,
+      failureEvent: "conversation_created.broadcast_failed",
+      context: { projectName, sessionName, conversationId: conversation.id },
+      build: () =>
+        conversationCreatedEventSchema.parse({
+          type: "conversation-created",
+          scope: "session",
+          projectName,
+          sessionName,
+          conversation,
+        }),
+    });
 
     return NextResponse.json(conversation, { status: 201 });
   }
@@ -211,67 +183,46 @@ export function createConversationRouteHandlers(
     request: Request,
     context: RouteContext,
   ): Promise<Response> {
-    const resolvedParams = await context.params;
-    const name = resolvedParams["name"] ?? "";
-    const sessionSlug = resolvedParams["session"] ?? "";
-    const sessionName = decodeURIComponent(sessionSlug);
-    const conversationId = resolvedParams["conversationId"] ?? "";
+    const resolved = await resolveSessionConversationRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const { projectPath, sessionName, conversationId } = resolved.value;
 
-    const projectPath = await deps.resolveProjectPath(name);
-    if (!projectPath) return projectNotFound();
-
-    const session = await deps.getSession(projectPath, sessionName);
-    if (!session) return sessionNotFound();
-
-    const conversation = session.conversations.find(
-      (c) => c.id === conversationId,
+    const parsed = await parseJsonBody(
+      request,
+      renameConversationRequestSchema,
+      "name (non-empty string) is required",
     );
-    if (!conversation) return conversationNotFound();
-
-    let body: { name: string };
-    try {
-      body = renameConversationRequestSchema.parse(await request.json());
-    } catch {
-      return NextResponse.json(
-        { error: "name (non-empty string) is required" } satisfies ApiError,
-        { status: 400 },
-      );
-    }
+    if (!parsed.ok) return parsed.response;
 
     try {
       await deps.renameConversation(
         projectPath,
         sessionName,
         conversationId,
-        body.name,
+        parsed.value.name,
       );
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to rename conversation";
-      return NextResponse.json({ error: message } satisfies ApiError, {
-        status: 500,
-      });
+      return jsonError(message, 500);
     }
 
     const projectName = deps.getProjectDisplayName(projectPath);
-    try {
-      const event = conversationRenamedEventSchema.parse({
-        type: "conversation-renamed",
-        scope: "session",
-        projectName,
-        sessionName,
-        conversationId,
-        name: body.name,
-      });
-      deps.broadcast(event);
-    } catch (err) {
-      logger.warn("conversation_renamed.broadcast_failed", {
-        projectName,
-        sessionName,
-        conversationId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+    broadcastEvent({
+      broadcast: deps.broadcast,
+      logger,
+      failureEvent: "conversation_renamed.broadcast_failed",
+      context: { projectName, sessionName, conversationId },
+      build: () =>
+        conversationRenamedEventSchema.parse({
+          type: "conversation-renamed",
+          scope: "session",
+          projectName,
+          sessionName,
+          conversationId,
+          name: parsed.value.name,
+        }),
+    });
 
     return NextResponse.json({ ok: true });
   }
@@ -280,67 +231,46 @@ export function createConversationRouteHandlers(
     request: Request,
     context: RouteContext,
   ): Promise<Response> {
-    const resolvedParams = await context.params;
-    const name = resolvedParams["name"] ?? "";
-    const sessionSlug = resolvedParams["session"] ?? "";
-    const sessionName = decodeURIComponent(sessionSlug);
-    const conversationId = resolvedParams["conversationId"] ?? "";
+    const resolved = await resolveSessionConversationRoute(deps, context);
+    if (!resolved.ok) return resolved.response;
+    const { projectPath, sessionName, conversationId } = resolved.value;
 
-    const projectPath = await deps.resolveProjectPath(name);
-    if (!projectPath) return projectNotFound();
-
-    const session = await deps.getSession(projectPath, sessionName);
-    if (!session) return sessionNotFound();
-
-    const conversation = session.conversations.find(
-      (c) => c.id === conversationId,
+    const parsed = await parseJsonBody(
+      request,
+      sessionArchiveRequestSchema,
+      "archived (boolean) is required",
     );
-    if (!conversation) return conversationNotFound();
-
-    let body: { archived: boolean };
-    try {
-      body = sessionArchiveRequestSchema.parse(await request.json());
-    } catch {
-      return NextResponse.json(
-        { error: "archived (boolean) is required" } satisfies ApiError,
-        { status: 400 },
-      );
-    }
+    if (!parsed.ok) return parsed.response;
 
     try {
       await deps.setConversationArchived(
         projectPath,
         sessionName,
         conversationId,
-        body.archived,
+        parsed.value.archived,
       );
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to update archive state";
-      return NextResponse.json({ error: message } satisfies ApiError, {
-        status: 500,
-      });
+      return jsonError(message, 500);
     }
 
     const projectName = deps.getProjectDisplayName(projectPath);
-    try {
-      const event = conversationArchivedEventSchema.parse({
-        type: "conversation-archived",
-        scope: "session",
-        projectName,
-        sessionName,
-        conversationId,
-        archived: body.archived,
-      });
-      deps.broadcast(event);
-    } catch (err) {
-      logger.warn("conversation_archived.broadcast_failed", {
-        projectName,
-        sessionName,
-        conversationId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+    broadcastEvent({
+      broadcast: deps.broadcast,
+      logger,
+      failureEvent: "conversation_archived.broadcast_failed",
+      context: { projectName, sessionName, conversationId },
+      build: () =>
+        conversationArchivedEventSchema.parse({
+          type: "conversation-archived",
+          scope: "session",
+          projectName,
+          sessionName,
+          conversationId,
+          archived: parsed.value.archived,
+        }),
+    });
 
     return NextResponse.json({ ok: true });
   }
