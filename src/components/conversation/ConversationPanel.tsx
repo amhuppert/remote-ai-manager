@@ -193,62 +193,64 @@ export default function ConversationPanel({
           <button onClick={dismissCancelled}>&times;</button>
         </div>
       )}
-      <div
-        className="panel-body"
-        ref={panelBodyRef}
-        {...(activeConversation?.debugMode?.active
-          ? { "data-debug-mode": "" }
-          : {})}
-      >
-        <div className="conversation" data-backend={selectedBackend}>
-          <div
-            ref={setCollabPinnedTopTarget}
-            className="collab-pinned-top-target"
-            data-visible={isCollabPassageInView ? "true" : "false"}
-          />
-          {messagesPending ? (
+      <div className="conversation-stage">
+        <div
+          className="panel-body"
+          ref={panelBodyRef}
+          {...(activeConversation?.debugMode?.active
+            ? { "data-debug-mode": "" }
+            : {})}
+        >
+          <div className="conversation" data-backend={selectedBackend}>
             <div
-              className="empty-state"
-              style={{ padding: "var(--space-xl) 0" }}
-            >
-              <div className="empty-state-title">Loading conversation...</div>
-            </div>
-          ) : rows.length > 0 ? (
-            <ConversationVirtuosoList
-              rows={rows}
-              virtuosoRef={virtuosoRef}
-              conversationId={conversationId}
-              followBottom={followBottom}
-              renderMessage={renderMessageRow}
-              renderCollab={renderCollabRow}
-              renderFooter={renderTypingIndicator}
-              onRangeChanged={handleRangeChanged}
-              onAtBottomStateChange={handleAtBottomStateChange}
-              onAtTopStateChange={handleAtTopStateChange}
+              ref={setCollabPinnedTopTarget}
+              className="collab-pinned-top-target"
+              data-visible={isCollabPassageInView ? "true" : "false"}
             />
-          ) : (
-            <div
-              className="empty-state"
-              style={{ padding: "var(--space-xl) 0" }}
-            >
-              <div className="empty-state-title">No messages yet</div>
-              <div className="empty-state-desc">
-                Send a prompt to start the conversation.
+            {messagesPending ? (
+              <div
+                className="empty-state"
+                style={{ padding: "var(--space-xl) 0" }}
+              >
+                <div className="empty-state-title">Loading conversation...</div>
               </div>
-            </div>
-          )}
+            ) : rows.length > 0 ? (
+              <ConversationVirtuosoList
+                rows={rows}
+                virtuosoRef={virtuosoRef}
+                conversationId={conversationId}
+                followBottom={followBottom}
+                renderMessage={renderMessageRow}
+                renderCollab={renderCollabRow}
+                renderFooter={renderTypingIndicator}
+                onRangeChanged={handleRangeChanged}
+                onAtBottomStateChange={handleAtBottomStateChange}
+                onAtTopStateChange={handleAtTopStateChange}
+              />
+            ) : (
+              <div
+                className="empty-state"
+                style={{ padding: "var(--space-xl) 0" }}
+              >
+                <div className="empty-state-title">No messages yet</div>
+                <div className="empty-state-desc">
+                  Send a prompt to start the conversation.
+                </div>
+              </div>
+            )}
+          </div>
         </div>
+
+        {showFocusConfirmation && (
+          <FocusConfirmationBar
+            onConfirm={handleConfirmFocus}
+            disabled={isReadOnly}
+            loading={focusConfirmLoading}
+          />
+        )}
+
+        {promptInputSlot}
       </div>
-
-      {showFocusConfirmation && (
-        <FocusConfirmationBar
-          onConfirm={handleConfirmFocus}
-          disabled={isReadOnly}
-          loading={focusConfirmLoading}
-        />
-      )}
-
-      {promptInputSlot}
     </div>
   );
 }

@@ -116,7 +116,7 @@ const AWAITING_TRANSCRIPT: TranscriptMessage[] = [
   ),
 ];
 
-const SINGLE_SELECT_QUESTION = [
+const SINGLE_SELECT_QUESTION: AskQuestionItem[] = [
   {
     question: "Should I keep the popover open after sending?",
     header: "Popover behavior",
@@ -124,18 +124,24 @@ const SINGLE_SELECT_QUESTION = [
       {
         label: "Keep it open",
         description: "Continue watching the transcript tail after reply.",
+        recommended: true,
       },
       {
         label: "Close it",
         description: "Return immediately to sidebar triage.",
+        recommended: false,
       },
       {
         label: "Ask again later",
         description: "Defer until visual verification is complete.",
+        recommended: false,
       },
     ],
+    multiSelect: false,
+    required: true,
+    allowNote: true,
   },
-] as unknown as AskQuestionItem[];
+];
 
 const MULTI_SELECT_QUESTION: AskQuestionItem[] = [
   {
@@ -145,13 +151,17 @@ const MULTI_SELECT_QUESTION: AskQuestionItem[] = [
       {
         label: "Typecheck",
         description: "Confirm the component and stories satisfy TypeScript.",
+        recommended: true,
       },
       {
         label: "Storybook render",
         description: "Load every status story in the browser.",
+        recommended: false,
       },
     ],
     multiSelect: true,
+    required: false,
+    allowNote: true,
   },
 ];
 

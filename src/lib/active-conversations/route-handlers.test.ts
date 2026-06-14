@@ -44,10 +44,16 @@ const STRUCTURED_QUESTIONS: AskQuestionItem[] = [
     header: "Deploy",
     question: "Deploy to production now?",
     options: [
-      { label: "Deploy", description: "Start the production deploy." },
-      { label: "Wait", description: "Do not deploy yet." },
+      {
+        label: "Deploy",
+        description: "Start the production deploy.",
+        recommended: false,
+      },
+      { label: "Wait", description: "Do not deploy yet.", recommended: false },
     ],
     multiSelect: false,
+    required: true,
+    allowNote: true,
   },
 ];
 

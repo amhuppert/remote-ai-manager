@@ -58,12 +58,15 @@ describe("useSessionHandlers", () => {
     expect(typeof result.current.handleFork).toBe("function");
     expect(typeof result.current.buildContext).toBe("function");
 
+    const answers = {
+      q1: { selected: ["yes"], note: null, skipped: false },
+    };
     await act(async () => {
-      await result.current.handleAnswerSubmit("q1", { q1: "yes" });
+      await result.current.handleAnswerSubmit("q1", answers);
     });
     expect(answerMutation.mutateAsync).toHaveBeenCalledWith({
       questionId: "q1",
-      answers: { q1: "yes" },
+      answers,
     });
     expect(clearQuestions).toHaveBeenCalledTimes(1);
     expect(failPrompt).not.toHaveBeenCalled();

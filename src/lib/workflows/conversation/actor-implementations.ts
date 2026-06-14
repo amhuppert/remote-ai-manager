@@ -66,6 +66,7 @@ import {
   DEBUG_PHASE_CONTEXT,
   CC_CONTEXT,
   TDD_INSTRUCTIONS,
+  ASK_USER_QUESTION_INSTRUCTIONS,
 } from "@/lib/prompt/sdk-driver";
 import { isUndeliveredQuerySessionError } from "@/lib/agent-backends/claude/query-session-errors";
 import { buildSyntheticForkSeed } from "@/lib/sessions/synthetic-fork-seed";
@@ -1485,6 +1486,9 @@ export async function executePromptForMachine(
     const ccContext = isProjectConversation ? PROJECT_CC_CONTEXT : CC_CONTEXT;
     const sessionInstructions = [
       ccContext,
+      // AskUserQuestion is registered for both session and project servers, so
+      // the encouragement applies to every CC agent.
+      ASK_USER_QUESTION_INSTRUCTIONS,
       // Spawn-proposal convention is a project-conversation-only capability:
       // session agents cannot propose sibling sessions from a conversation.
       isProjectConversation ? PROJECT_SPAWN_INSTRUCTIONS : null,

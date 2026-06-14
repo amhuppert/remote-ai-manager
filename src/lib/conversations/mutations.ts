@@ -10,6 +10,7 @@ import {
   conversationStateSchema,
   forkResponseSchema,
   type ConversationState,
+  type AskQuestionAnswer,
 } from "./schemas";
 import type { ActiveConversationsResponse } from "@/lib/active-conversations/schemas";
 import { mutationFetch } from "@/lib/api/fetcher";
@@ -323,7 +324,7 @@ export function useAnswerQuestionMutation(
       answers,
     }: {
       questionId: string;
-      answers: Record<string, string>;
+      answers: Record<string, AskQuestionAnswer>;
     }) => {
       const res = await fetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/conversations/${encodeURIComponent(conversationId)}/answer`,

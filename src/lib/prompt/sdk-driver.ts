@@ -200,6 +200,14 @@ export const DEBUG_PHASE_CONTEXT: Record<string, string> = {
 export const CC_CONTEXT =
   "<command-center>You are running inside Command Center (CC), a web-based control plane for managing remote Claude Code sessions. Your session runs in an isolated git worktree with its own branch. CC provides a notification tool to send push notifications to the user's phone when warranted (e.g., long tasks complete, user asked to be notified). Stay within your worktree — CC manages merging, dev servers, and session lifecycle.\n\nDev servers: before driving Playwright, browser, visual, or Next.js MCP tools, call the `ensure_dev_server` MCP tool to obtain the correct localUrl/remoteUrl for THIS session's worktree. Never assume ports like 3000 or 6006 belong to you — parallel sessions live on different ports. Use `get_dev_servers` to inspect current status. Only ask the user to start a server from the UI if `ensure_dev_server` reports NO_DEV_SERVERS_CONFIGURED or an unrecoverable start failure.</command-center>";
 
+/**
+ * Appended to every CC agent's system prompt (session and project
+ * conversations alike) to surface the native AskUserQuestion tool and
+ * encourage reaching for it instead of guessing on consequential choices.
+ */
+export const ASK_USER_QUESTION_INSTRUCTIONS =
+  "<asking-questions>Command Center gives you a first-class AskUserQuestion tool — use it liberally. It renders your questions as a rich multiple-choice panel the user answers in a couple of clicks, so asking is far cheaper than guessing wrong on a consequential, hard-to-reverse, or genuinely ambiguous decision; default to asking at real forks instead of silently deciding for the user. Batch related questions into a single call. Per question you may add a `context` note (implications and trade-offs), mark a `recommended` option, attach per-option `tradeoff` { pro, con } hints, and set `required`/`allowNote`; the user can pick option(s) AND add a free-text note, and answers come back to you keyed by question id. Skip it for trivial, reversible, or easily-inferred choices — make a sensible call and keep moving. (The tool is disabled during autonomous/optimistic turns; use your best judgment there.)</asking-questions>";
+
 // ============================================================
 // Dependency Injection (simplified — facade only needs conversation CRUD)
 // ============================================================

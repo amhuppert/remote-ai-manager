@@ -75,6 +75,83 @@ export function CheckIcon({ size, className }: IconProps) {
   );
 }
 
+export function ChevronDownIcon({ size, className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      className={className}
+      {...baseSvgProps}
+      aria-hidden="true"
+    >
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
+
+export function ChevronRightIcon({ size, className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      className={className}
+      {...baseSvgProps}
+      aria-hidden="true"
+    >
+      <path d="M9 6l6 6-6 6" />
+    </svg>
+  );
+}
+
+export function SearchIcon({ size, className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      className={className}
+      {...baseSvgProps}
+      aria-hidden="true"
+    >
+      <circle cx="11" cy="11" r="7" />
+      <line x1="16.5" y1="16.5" x2="21" y2="21" />
+    </svg>
+  );
+}
+
+export function ArrowUpIcon({ size, className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      className={className}
+      {...baseSvgProps}
+      aria-hidden="true"
+    >
+      <line x1="12" y1="20" x2="12" y2="4" />
+      <path d="M5 11l7-7 7 7" />
+    </svg>
+  );
+}
+
+export function StarIcon({ size, className }: IconProps) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      className={className}
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+    </svg>
+  );
+}
+
 export function ChatIcon({ size, className }: IconProps) {
   return (
     <svg

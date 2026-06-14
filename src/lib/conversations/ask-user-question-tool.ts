@@ -7,6 +7,7 @@ import { createLogger } from "@/lib/logging";
 import {
   askQuestionItemSchema,
   type AskQuestionItem,
+  type AskQuestionAnswer,
 } from "@/lib/conversations/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import {
@@ -133,23 +134,30 @@ function createAskUserQuestionHandler(
       return textResult(AUTONOMOUS_DENIAL_MESSAGE, true);
     }
 
+    // Fill a stable id where the agent omitted one, so answers, navigation, and
+    // the status rail key off it instead of question text.
+    const questions: AskQuestionItem[] = args.questions.map((q, i) => ({
+      ...q,
+      id: q.id ?? String(i),
+    }));
+
     const questionId = randomUUID();
 
     runtime.sendToMachine?.({
       type: "ASK_QUESTION",
       questionId,
-      questions: args.questions,
+      questions,
     });
 
-    await persistWaitingForInput(deps, context, questionId, args.questions);
+    await persistWaitingForInput(deps, context, questionId, questions);
 
     runtime.streamEmit?.("ask-question", {
       questionId,
-      questions: args.questions,
+      questions,
     });
 
     try {
-      const answers = await new Promise<Record<string, string>>(
+      const answers = await new Promise<Record<string, AskQuestionAnswer>>(
         (resolve, reject) => {
           runtime.activeQuestionResolver = { resolve, reject };
         },
@@ -186,7 +194,7 @@ export function registerAskUserQuestionTool(
     "AskUserQuestion",
     {
       description:
-        "Ask the user one or more multiple-choice questions and wait for their answer. Use only when you genuinely need clarification that cannot be inferred. Returns answers keyed by question text.",
+        "Ask the user one or more multiple-choice questions and wait for their answer. Use only when you genuinely need clarification that cannot be inferred. Each question may declare an optional context note (implications & trade-offs), whether it is required, whether a free-text note is allowed, and per-option recommended/tradeoff hints. Returns a JSON object keyed by question id; each value is { selected: string[], note: string | null, skipped: boolean, question?: string }.",
       inputSchema: askUserQuestionInputSchema,
     },
     createAskUserQuestionHandler(context, deps),

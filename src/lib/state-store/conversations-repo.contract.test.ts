@@ -94,9 +94,16 @@ function makeFullConversation(
     pendingQuestionId: "q-1",
     pendingQuestions: [
       {
+        id: "q-1-item",
         question: "Continue?",
-        options: [{ label: "yes" }, { label: "no" }],
+        context: "short context with `code`",
+        options: [
+          { label: "yes", recommended: true },
+          { label: "no", recommended: false },
+        ],
         multiSelect: false,
+        required: false,
+        allowNote: false,
       },
     ],
     pendingPromptText: "draft prompt text that should round-trip",
@@ -709,13 +716,26 @@ function buildMaximalConversation(): ConversationState {
     pendingQuestionId: "q-maximal",
     pendingQuestions: [
       {
+        // Non-default required/allowNote and a recommended first option so the
+        // durability backstop (which descends into options[0] and rejects
+        // schema-default values) actually exercises the grown schema.
+        id: "q-maximal-item",
         question: "Continue with the maximal plan?",
         header: "Plan confirmation",
+        context:
+          "Implications: this **proceeds** with the `maximal` plan.\n- ships sooner\n- less review",
         options: [
-          { label: "yes", description: "proceed as planned" },
-          { label: "no", description: "abort the plan" },
+          {
+            label: "yes",
+            description: "proceed as planned",
+            recommended: true,
+            tradeoff: { pro: "ships now", con: "less review headroom" },
+          },
+          { label: "no", description: "abort the plan", recommended: false },
         ],
         multiSelect: true,
+        required: false,
+        allowNote: false,
       },
     ],
     pendingPromptText: "draft prompt text that should round-trip verbatim",

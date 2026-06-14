@@ -13,6 +13,7 @@
 
 import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
 import type { ConversationToolingOverrides } from "@/lib/agent-backends/types";
+import type { AskQuestionAnswer } from "@/lib/conversations/schemas";
 
 export interface ConversationRuntimeState {
   /** AbortController for cancelling in-flight SDK queries. */
@@ -32,7 +33,7 @@ export interface ConversationRuntimeState {
 
   /** Deferred resolver for pending AskUserQuestion. */
   activeQuestionResolver?: {
-    resolve: (answers: Record<string, string>) => void;
+    resolve: (answers: Record<string, AskQuestionAnswer>) => void;
     reject: (reason: unknown) => void;
   };
 

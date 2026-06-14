@@ -253,20 +253,41 @@ describe("ask-user-question-tool", () => {
         }
       });
 
+      // The handler mints a stable index id when the agent omits one, and
+      // threads the normalized questions (not the raw args) downstream.
       expect(runtimeState.sendToMachine).toHaveBeenCalledWith(
-        expect.objectContaining({ type: "ASK_QUESTION", questions }),
+        expect.objectContaining({
+          type: "ASK_QUESTION",
+          questions: [
+            expect.objectContaining({ id: "0", question: "Pick one" }),
+          ],
+        }),
       );
       expect(runtimeState.streamEmit).toHaveBeenCalledWith(
         "ask-question",
-        expect.objectContaining({ questions }),
+        expect.objectContaining({
+          questions: [expect.objectContaining({ id: "0" })],
+        }),
       );
 
       const waiting = await reload();
       expect(waiting.status).toBe("waiting_for_input");
       expect(waiting.pendingQuestionId).toEqual(expect.any(String));
-      expect(waiting.pendingQuestions).toEqual(questions);
+      expect(waiting.pendingQuestions?.[0]).toMatchObject({
+        id: "0",
+        question: "Pick one",
+        required: true, // schema default applied on persist round-trip
+        allowNote: true,
+      });
 
-      runtimeState.activeQuestionResolver?.resolve({ "Pick one": "a" });
+      runtimeState.activeQuestionResolver?.resolve({
+        "0": {
+          selected: ["a"],
+          note: null,
+          skipped: false,
+          question: "Pick one",
+        },
+      });
 
       const result = (await resultPromise) as {
         content: Array<{ type: string; text: string }>;
@@ -275,7 +296,14 @@ describe("ask-user-question-tool", () => {
 
       expect(result.isError).toBeFalsy();
       const text = result.content[0]?.text ?? "";
-      expect(JSON.parse(text)).toEqual({ "Pick one": "a" });
+      expect(JSON.parse(text)).toEqual({
+        "0": {
+          selected: ["a"],
+          note: null,
+          skipped: false,
+          question: "Pick one",
+        },
+      });
 
       const resumed = await reload();
       expect(resumed.status).toBe("running");

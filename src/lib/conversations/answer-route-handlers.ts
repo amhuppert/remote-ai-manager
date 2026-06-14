@@ -9,7 +9,10 @@
 import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { getSession, mutateConversation } from "@/lib/state-store";
-import { answerQuestionRequestSchema } from "@/lib/conversations/schemas";
+import {
+  answerQuestionRequestSchema,
+  type AnswerQuestionRequest,
+} from "@/lib/conversations/schemas";
 import { createLogger, withTracing } from "@/lib/logging";
 import {
   getConversationActor,
@@ -58,7 +61,7 @@ export const submitConversationAnswer = withTracing(
       );
     }
 
-    let body: { questionId: string; answers: Record<string, string> };
+    let body: AnswerQuestionRequest;
     try {
       body = answerQuestionRequestSchema.parse(await request.json());
     } catch {

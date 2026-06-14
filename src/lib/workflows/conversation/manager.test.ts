@@ -491,7 +491,13 @@ describe("conversation manager", () => {
           pendingQuestion: {
             questionId: "question-7",
             questions: [
-              { question: "Continue?", multiSelect: false, options: [] },
+              {
+                question: "Continue?",
+                multiSelect: false,
+                options: [],
+                required: true,
+                allowNote: true,
+              },
             ],
           },
         }),
@@ -534,7 +540,13 @@ describe("conversation manager", () => {
           pendingQuestion: {
             questionId: "question-8",
             questions: [
-              { question: "Continue?", multiSelect: false, options: [] },
+              {
+                question: "Continue?",
+                multiSelect: false,
+                options: [],
+                required: true,
+                allowNote: true,
+              },
             ],
           },
         }),

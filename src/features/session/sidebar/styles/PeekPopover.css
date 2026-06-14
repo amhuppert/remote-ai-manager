@@ -202,6 +202,16 @@
   color: var(--blue);
 }
 
+/* Positioned stage the AskUserQuestion overlay anchors to (covers the body +
+   composer, never the header). */
+.peek__stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .peek__body {
   flex: 1 1 auto;
   min-height: 0;
@@ -214,8 +224,11 @@
   background: var(--bg-surface);
 }
 
+/* While asking, the body fills the stage so the maximized question sheet has
+   room; the minimized banner overlays the bottom, so pad it clear. */
 .peek--asking .peek__body {
-  max-height: 188px;
+  max-height: none;
+  padding-bottom: 66px;
 }
 
 .peek__awaiting {

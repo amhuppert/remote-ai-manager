@@ -96,8 +96,10 @@ describe("shared gate behavior", () => {
       questions: [
         {
           question: "Pick a region",
-          options: [{ label: "us" }],
+          options: [{ label: "us", recommended: false }],
           multiSelect: false,
+          required: true,
+          allowNote: true,
         },
       ],
     });

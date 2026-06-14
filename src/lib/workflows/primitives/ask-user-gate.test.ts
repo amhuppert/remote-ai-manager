@@ -39,8 +39,10 @@ describe("pauseForAskUser", () => {
       questions: [
         {
           question: "Continue?",
-          options: [{ label: "Yes" }],
+          options: [{ label: "Yes", recommended: false }],
           multiSelect: false,
+          required: true,
+          allowNote: true,
         },
       ],
     });

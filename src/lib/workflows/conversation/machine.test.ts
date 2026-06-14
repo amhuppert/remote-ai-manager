@@ -559,7 +559,7 @@ describe("conversationMachine", () => {
       actor.send({
         type: "ANSWER",
         questionId: "q1",
-        answers: { "Continue?": "yes" },
+        answers: { q1: { selected: ["yes"], note: null, skipped: false } },
       });
 
       // Give time for any potential re-invocation

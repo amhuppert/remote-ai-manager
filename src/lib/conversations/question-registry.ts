@@ -1,10 +1,11 @@
 import { createLogger } from "../logging";
 import { getGlobalSingleton } from "../shared/global-singleton";
+import type { AskQuestionAnswer } from "./schemas";
 
 const logger = createLogger("question-registry");
 
 interface PendingQuestion {
-  resolve: (answers: Record<string, string>) => void;
+  resolve: (answers: Record<string, AskQuestionAnswer>) => void;
   reject: (error: Error) => void;
   conversationId: string;
   createdAt: number;

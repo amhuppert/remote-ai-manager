@@ -3,13 +3,14 @@
 import { useCallback } from "react";
 import type { useRouter } from "next/navigation";
 import type { SessionState } from "@/lib/sessions/schemas";
+import type { AskQuestionAnswer } from "@/lib/conversations/schemas";
 import { buildConversationContext } from "@/lib/conversations/copy-context";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
 
 interface AnswerMutation {
   mutateAsync: (input: {
     questionId: string;
-    answers: Record<string, string>;
+    answers: Record<string, AskQuestionAnswer>;
   }) => Promise<
     | { status: "ok"; error?: undefined }
     | { status: "gone"; error: string | null }
@@ -51,7 +52,7 @@ export interface UseSessionHandlersArgs {
 export interface SessionHandlers {
   handleAnswerSubmit: (
     questionId: string,
-    answers: Record<string, string>,
+    answers: Record<string, AskQuestionAnswer>,
   ) => Promise<void>;
   handleDelete: () => void;
   handleFork: (messageIndex: number) => Promise<void>;
@@ -73,7 +74,7 @@ export function useSessionHandlers({
   onOpenConversation,
 }: UseSessionHandlersArgs): SessionHandlers {
   const handleAnswerSubmit = useCallback(
-    async (questionId: string, answers: Record<string, string>) => {
+    async (questionId: string, answers: Record<string, AskQuestionAnswer>) => {
       try {
         const result = await answerMutation.mutateAsync({
           questionId,

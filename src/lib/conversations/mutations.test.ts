@@ -870,7 +870,7 @@ describe("useAnswerQuestionMutation", () => {
     await expect(
       result.current.mutateAsync({
         questionId: "q1",
-        answers: { choice: "yes" },
+        answers: { choice: { selected: ["yes"], note: null, skipped: false } },
       }),
     ).resolves.toEqual({ status: "ok" });
 
@@ -880,7 +880,9 @@ describe("useAnswerQuestionMutation", () => {
         method: "POST",
         body: JSON.stringify({
           questionId: "q1",
-          answers: { choice: "yes" },
+          answers: {
+            choice: { selected: ["yes"], note: null, skipped: false },
+          },
         }),
       }),
     );
@@ -911,7 +913,7 @@ describe("useAnswerQuestionMutation", () => {
     await expect(
       result.current.mutateAsync({
         questionId: "q1",
-        answers: { choice: "yes" },
+        answers: { choice: { selected: ["yes"], note: null, skipped: false } },
       }),
     ).resolves.toEqual({ status: "gone", error: "Question expired" });
 

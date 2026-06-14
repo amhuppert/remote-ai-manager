@@ -23,8 +23,13 @@ const composerStub = {} as PromptComposerProps;
 const sampleQuestions: AskQuestionItem[] = [
   {
     question: "Pick a flavor",
-    options: [{ label: "vanilla" }, { label: "chocolate" }],
+    options: [
+      { label: "vanilla", recommended: false },
+      { label: "chocolate", recommended: false },
+    ],
     multiSelect: false,
+    required: true,
+    allowNote: true,
   },
 ];
 
@@ -104,6 +109,7 @@ describe("PromptInputSlot", () => {
         currentQuestionIndex={0}
         navigateQuestion={vi.fn()}
         handleAnswerSubmit={vi.fn()}
+        agentBackend="claude"
         promptComposerProps={composerStub}
       />,
     );
@@ -123,6 +129,7 @@ describe("PromptInputSlot", () => {
         currentQuestionIndex={0}
         navigateQuestion={vi.fn()}
         handleAnswerSubmit={vi.fn()}
+        agentBackend="claude"
         promptComposerProps={composerStub}
       />,
     );
@@ -143,11 +150,13 @@ describe("PromptInputSlot", () => {
         currentQuestionIndex={0}
         navigateQuestion={vi.fn()}
         handleAnswerSubmit={vi.fn()}
+        agentBackend="claude"
         promptComposerProps={composerStub}
       />,
     );
 
-    expect(screen.getByText("Pick a flavor")).toBeInTheDocument();
+    // The question text appears in both the status rail and the detail card.
+    expect(screen.getAllByText("Pick a flavor").length).toBeGreaterThan(0);
     expect(screen.getByText("vanilla")).toBeInTheDocument();
     expect(screen.getByText("chocolate")).toBeInTheDocument();
   });
@@ -162,12 +171,15 @@ describe("PromptInputSlot", () => {
         currentQuestionIndex={0}
         navigateQuestion={vi.fn()}
         handleAnswerSubmit={vi.fn()}
+        agentBackend="claude"
         promptComposerProps={composerStub}
       />,
     );
 
     const panel = screen.getByTestId("approval-gate-panel");
-    const question = screen.getByText("Pick a flavor");
+    const question = screen.getByText("Pick a flavor", {
+      selector: ".ask-question-card-q",
+    });
     expect(panel).toBeInTheDocument();
     expect(question).toBeInTheDocument();
     expect(
@@ -191,6 +203,7 @@ describe("PromptInputSlot", () => {
         currentQuestionIndex={0}
         navigateQuestion={vi.fn()}
         handleAnswerSubmit={vi.fn()}
+        agentBackend="claude"
         promptComposerProps={composerStub}
       />,
     );

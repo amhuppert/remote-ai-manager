@@ -30,7 +30,10 @@ import type {
   ActiveConversation,
   SessionActiveConversation,
 } from "@/lib/active-conversations/schemas";
-import type { TranscriptMessage } from "@/lib/conversations/schemas";
+import type {
+  AskQuestionAnswer,
+  TranscriptMessage,
+} from "@/lib/conversations/schemas";
 import type { ImageAttachment } from "@/hooks/use-image-attachments";
 
 type ActiveConversationStatus = ActiveConversation["status"];
@@ -49,7 +52,7 @@ interface PeekPopoverProps {
   onClose: () => void;
   onOpenFull: () => void;
   onReplyText: (text: string) => void;
-  onAnswerQuestion: (answers: Record<string, string>) => void;
+  onAnswerQuestion: (answers: Record<string, AskQuestionAnswer>) => void;
   onFork: (messageIndex: number) => void;
   approvalGate?: PeekApprovalGate | null;
 }
@@ -358,7 +361,7 @@ export default function PeekPopover({
   }, [conversation.id, onOpenFull]);
 
   const handleQuestionSubmit = useCallback(
-    (_questionId: string, answers: Record<string, string>) => {
+    (_questionId: string, answers: Record<string, AskQuestionAnswer>) => {
       logPeekDebug("peek.question.submit", {
         conversationId: conversation.id,
         answerCount: Object.keys(answers).length,
@@ -444,66 +447,78 @@ export default function PeekPopover({
             </div>
           </header>
 
-          <div className="peek__body" ref={setBodyRef}>
-            {showFallbackBanner && (
-              <div className="peek__awaiting">
-                {conversation.pendingQuestion}
-              </div>
-            )}
+          <div className="peek__stage">
+            <div className="peek__body" ref={setBodyRef}>
+              {showFallbackBanner && (
+                <div className="peek__awaiting">
+                  {conversation.pendingQuestion}
+                </div>
+              )}
 
-            {transcriptMessages.length === 0 ? (
-              <div className="peek__empty">No transcript messages yet.</div>
-            ) : (
-              transcriptMessages.map((message, index) => (
-                <MessageRow
-                  key={`${message.role}-${message.timestamp ?? "no-time"}-${index}`}
-                  msg={message}
-                  messageIndex={index}
-                  isLast={index === transcriptMessages.length - 1}
-                  selectedBackend={conversation.agentBackend}
-                  worktreePath={conversation.worktreePath}
-                  onFork={onFork}
-                  lastMessageExtras={null}
-                />
-              ))
-            )}
-            <TypingIndicator
-              selectedBackend={conversation.agentBackend}
-              visible={conversation.status === "running"}
-              hasAssistantOptimistic={false}
-            />
-          </div>
-
-          <footer className="peek__composer">
-            {conversation.pendingApproval !== null && approvalGate !== null && (
-              <ApprovalGatePanel
-                contextTitle={conversation.pendingApproval.contextTitle}
-                // The workflow segment is dropped in the peek's compact strip;
-                // the 380px card only fits the context.
-                workflowName={null}
-                requestedAt={conversation.pendingApproval.requestedAt}
-                isSubmitting={approvalGate.isSubmitting}
-                conversationBusy={conversation.status === "running"}
-                executionSuspended={approvalGate.executionSuspended}
-                onApprove={approvalGate.onApprove}
-                onReject={approvalGate.onReject}
+              {transcriptMessages.length === 0 ? (
+                <div className="peek__empty">No transcript messages yet.</div>
+              ) : (
+                transcriptMessages.map((message, index) => (
+                  <MessageRow
+                    key={`${message.role}-${message.timestamp ?? "no-time"}-${index}`}
+                    msg={message}
+                    messageIndex={index}
+                    isLast={index === transcriptMessages.length - 1}
+                    selectedBackend={conversation.agentBackend}
+                    worktreePath={conversation.worktreePath}
+                    onFork={onFork}
+                    lastMessageExtras={null}
+                  />
+                ))
+              )}
+              <TypingIndicator
+                selectedBackend={conversation.agentBackend}
+                visible={conversation.status === "running"}
+                hasAssistantOptimistic={false}
               />
+            </div>
+
+            {(!hasPendingQuestions ||
+              (conversation.pendingApproval !== null &&
+                approvalGate != null)) && (
+              <footer className="peek__composer">
+                {conversation.pendingApproval !== null &&
+                  approvalGate != null && (
+                    <ApprovalGatePanel
+                      contextTitle={conversation.pendingApproval.contextTitle}
+                      // The workflow segment is dropped in the peek's compact
+                      // strip; the 380px card only fits the context.
+                      workflowName={null}
+                      requestedAt={conversation.pendingApproval.requestedAt}
+                      isSubmitting={approvalGate.isSubmitting}
+                      conversationBusy={conversation.status === "running"}
+                      executionSuspended={approvalGate.executionSuspended}
+                      onApprove={approvalGate.onApprove}
+                      onReject={approvalGate.onReject}
+                    />
+                  )}
+                {!hasPendingQuestions && (
+                  <PeekReplyComposer
+                    conversation={conversation}
+                    onReplyText={onReplyText}
+                  />
+                )}
+              </footer>
             )}
-            {hasPendingQuestions ? (
+
+            {hasPendingQuestions && (
               <AskQuestionPanel
+                key={questionResetKey}
                 questions={pendingQuestions}
                 questionId={conversation.pendingQuestionId ?? conversation.id}
                 currentIndex={currentQuestionIndex}
                 onNavigate={handleQuestionNavigate}
                 onSubmit={handleQuestionSubmit}
-              />
-            ) : (
-              <PeekReplyComposer
-                conversation={conversation}
-                onReplyText={onReplyText}
+                agent={conversation.agentBackend}
+                compact
               />
             )}
-          </footer>
+          </div>
         </section>
       </FloatingFocusManager>
     </FloatingPortal>

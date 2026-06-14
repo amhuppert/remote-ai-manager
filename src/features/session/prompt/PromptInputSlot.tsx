@@ -5,6 +5,8 @@ import ApprovalGatePanel from "@/components/ApprovalGatePanel";
 import AskQuestionPanel from "@/components/AskQuestionPanel";
 import { IterationReadonlyBanner } from "@/components/conversation/ConversationBanners";
 import PromptComposer from "@/features/session/prompt/PromptComposer";
+import { useIsMobile } from "@/hooks/use-is-mobile";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 
 type PromptComposerProps = ComponentProps<typeof PromptComposer>;
 type AskQuestionPanelProps = ComponentProps<typeof AskQuestionPanel>;
@@ -47,6 +49,8 @@ export interface PromptInputSlotProps {
   currentQuestionIndex: number;
   navigateQuestion: AskQuestionPanelProps["onNavigate"];
   handleAnswerSubmit: AskQuestionPanelProps["onSubmit"];
+  /** Asking agent — drives the question panel's accent color. */
+  agentBackend: AgentBackendId;
   promptComposerProps: PromptComposerProps;
 }
 
@@ -58,8 +62,10 @@ export default function PromptInputSlot({
   currentQuestionIndex,
   navigateQuestion,
   handleAnswerSubmit,
+  agentBackend,
   promptComposerProps,
 }: PromptInputSlotProps): React.JSX.Element {
+  const isMobile = useIsMobile();
   const view = resolvePromptSlotView({
     hasApprovalGate: approvalGate !== null,
     isWorkflowManagedConversation,
@@ -80,11 +86,14 @@ export default function PromptInputSlot({
       <>
         {gatePanel}
         <AskQuestionPanel
+          key={pendingQuestionId}
           questions={pendingQuestions}
           questionId={pendingQuestionId}
           currentIndex={currentQuestionIndex}
           onNavigate={navigateQuestion}
           onSubmit={handleAnswerSubmit}
+          agent={agentBackend}
+          compact={isMobile}
         />
       </>
     );

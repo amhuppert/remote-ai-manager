@@ -245,14 +245,21 @@ describe("PeekPopover", () => {
         pendingQuestions: [
           {
             question: "Which path should I take?",
-            options: [{ label: "A" }, { label: "B" }, { label: "C" }],
+            options: [
+              { label: "A", recommended: false },
+              { label: "B", recommended: false },
+              { label: "C", recommended: false },
+            ],
             multiSelect: false,
+            required: true,
+            allowNote: true,
           },
         ],
       },
     });
 
-    expect(screen.getByText("Agent needs your input")).toBeDefined();
+    expect(screen.getByText("Which path should I take?")).toBeDefined();
+    expect(screen.getByText("Needs your input")).toBeDefined();
     expect(screen.queryByText("Yes, proceed")).toBeNull();
   });
 
@@ -269,18 +276,29 @@ describe("PeekPopover", () => {
         pendingQuestions: [
           {
             question: "Which path should I take?",
-            options: [{ label: "A" }, { label: "B" }],
+            options: [
+              { label: "A", recommended: false },
+              { label: "B", recommended: false },
+            ],
             multiSelect: false,
+            required: true,
+            allowNote: true,
           },
         ],
       },
     });
 
-    fireEvent.click(screen.getByLabelText("A"));
-    fireEvent.click(screen.getByRole("button", { name: "Submit Answer" }));
+    fireEvent.click(screen.getByText("A"));
+    fireEvent.click(screen.getByRole("button", { name: /^send/i }));
 
+    // No id on the fixture question → server-style index fallback key "0".
     expect(onAnswerQuestion).toHaveBeenCalledWith({
-      "Which path should I take?": "A",
+      "0": {
+        selected: ["A"],
+        note: null,
+        skipped: false,
+        question: "Which path should I take?",
+      },
     });
   });
 
@@ -427,8 +445,13 @@ describe("PeekPopover", () => {
           pendingQuestions: [
             {
               question: "Which path should I take?",
-              options: [{ label: "A" }, { label: "B" }],
+              options: [
+                { label: "A", recommended: false },
+                { label: "B", recommended: false },
+              ],
               multiSelect: false,
+              required: true,
+              allowNote: true,
             },
           ],
         },

@@ -81,7 +81,15 @@ describe("default session status bus", () => {
         sessionName: "s",
         conversationId: "conv-1",
         questionId: "q-1",
-        questions: [{ question: "ok?", multiSelect: false, options: [] }],
+        questions: [
+          {
+            question: "ok?",
+            multiSelect: false,
+            options: [],
+            required: true,
+            allowNote: true,
+          },
+        ],
       },
       {
         type: "debug-mode-status",

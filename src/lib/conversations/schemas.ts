@@ -83,16 +83,34 @@ export interface TranscriptMessage {
 }
 
 // AskUserQuestion schemas (defined before conversationStateSchema which references them)
+const askQuestionTradeoffSchema = z.object({
+  pro: z.string().optional(),
+  con: z.string().optional(),
+});
+
 const askQuestionOptionSchema = z.object({
   label: z.string(),
   description: z.string().optional(),
+  recommended: z.boolean().default(false),
+  tradeoff: askQuestionTradeoffSchema.optional(),
 });
 
 export const askQuestionItemSchema = z.object({
+  // Optional: the agent tool does not require it. The server fills a stable
+  // index-based fallback (q.id ?? String(index)) before persist/broadcast so
+  // answers, navigation, and the status rail key off it instead of question
+  // text, while legacy persisted rows without an id still decode cleanly.
+  id: z.string().min(1).optional(),
   question: z.string(),
   header: z.string().optional(),
+  // Free prose expanding on the question (implications & trade-offs). Rendered
+  // in the panel's context disclosure with a markdown-lite subset (**bold**,
+  // `code`, and "- " bullet lines).
+  context: z.string().optional(),
   options: z.array(askQuestionOptionSchema),
   multiSelect: z.boolean().default(false),
+  required: z.boolean().default(true),
+  allowNote: z.boolean().default(true),
 });
 export type AskQuestionItem = z.infer<typeof askQuestionItemSchema>;
 
@@ -272,10 +290,29 @@ export const forkResponseSchema = z.object({
   forkMode: z.enum(["native", "synthetic"]).nullable(),
 });
 
+// A single answer to one AskUserQuestion item. Carries the user's selected
+// option labels plus an optional clarifying note, so a selection and free text
+// travel together instead of "Other" replacing the choice.
+export const askQuestionAnswerSchema = z.object({
+  // Chosen option labels. A "Something else" free-text answer is pushed in
+  // verbatim. Empty when the question was skipped.
+  selected: z.array(z.string()),
+  // Clarifying note sent alongside the selection; null when empty.
+  note: z.string().nullable(),
+  skipped: z.boolean(),
+  // Echoed question text, so the agent can map an answer without re-deriving
+  // it from the (now id-keyed) record.
+  question: z.string().optional(),
+});
+export type AskQuestionAnswer = z.infer<typeof askQuestionAnswerSchema>;
+
 export const answerQuestionRequestSchema = z.object({
   questionId: z.string(),
-  answers: z.record(z.string(), z.string()),
+  // Keyed by question id. Zod v4 requires the explicit key schema as the first
+  // arg — z.record(value) alone would treat the value schema as the key schema.
+  answers: z.record(z.string(), askQuestionAnswerSchema),
 });
+export type AnswerQuestionRequest = z.infer<typeof answerQuestionRequestSchema>;
 
 // ============================================================
 // SSE Event Schemas (scope-discriminated)

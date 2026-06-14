@@ -29,6 +29,7 @@ import {
   ModelEffortValidationError,
   ConversationCommandDispatcherUnavailableError,
   DEBUG_MODE_INSTRUCTIONS,
+  ASK_USER_QUESTION_INSTRUCTIONS,
   hasCollabPrefix,
   stripCollabPrefix,
   type PromptDeps,
@@ -234,6 +235,22 @@ describe("DEBUG_MODE_INSTRUCTIONS", () => {
       exampleStart + 1200,
     );
     expect(exampleBlock).not.toContain("X-CC-Debug-Log");
+  });
+});
+
+describe("ASK_USER_QUESTION_INSTRUCTIONS", () => {
+  it("is a single well-formed <asking-questions> block", () => {
+    expect(
+      ASK_USER_QUESTION_INSTRUCTIONS.startsWith("<asking-questions>"),
+    ).toBe(true);
+    expect(ASK_USER_QUESTION_INSTRUCTIONS.endsWith("</asking-questions>")).toBe(
+      true,
+    );
+  });
+
+  it("names the tool and encourages reaching for it", () => {
+    expect(ASK_USER_QUESTION_INSTRUCTIONS).toContain("AskUserQuestion");
+    expect(ASK_USER_QUESTION_INSTRUCTIONS).toMatch(/use it liberally|ask/i);
   });
 });
 

@@ -13,6 +13,7 @@ import type {
   ConversationRole,
   ForkedFrom,
   AskQuestionItem,
+  AskQuestionAnswer,
   MessageContentBlock,
   TranscriptMessageOrigin,
 } from "@/lib/conversations/schemas";
@@ -197,7 +198,11 @@ export type ConversationEvent =
   | { type: "RESOURCES_FAILED"; error: string }
   | { type: "BACKEND_INIT"; backendRef: AgentSessionRef }
   | { type: "ASK_QUESTION"; questionId: string; questions: AskQuestionItem[] }
-  | { type: "ANSWER"; questionId: string; answers: Record<string, string> }
+  | {
+      type: "ANSWER";
+      questionId: string;
+      answers: Record<string, AskQuestionAnswer>;
+    }
   | { type: "PROMPT_COMPLETED"; result: PromptActorResult }
   | { type: "PROMPT_FAILED"; error: string }
   | { type: "ABORT_TURN"; reason: "timeout" | "user" | "shutdown" }

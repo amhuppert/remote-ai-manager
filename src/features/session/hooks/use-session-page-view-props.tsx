@@ -244,6 +244,7 @@ export function useSessionPageViewProps(
       currentQuestionIndex: store.currentQuestionIndex,
       navigateQuestion: store.navigateQuestion,
       handleAnswerSubmit: args.handleAnswerSubmit,
+      agentBackend: args.selectedBackend,
       promptComposerProps,
     },
     mobileBottomBarProps: {

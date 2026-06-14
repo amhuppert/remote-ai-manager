@@ -227,8 +227,13 @@ describe("section 6.1 — conversation + focus-mode parity (Task 6.1)", () => {
       questions: [
         {
           question: "Which option do you want?",
-          options: [{ label: "Option 1" }, { label: "Option 2" }],
+          options: [
+            { label: "Option 1", recommended: false },
+            { label: "Option 2", recommended: false },
+          ],
           multiSelect: false,
+          required: true,
+          allowNote: true,
         },
       ],
     };
