@@ -14,6 +14,7 @@ import { registerDevServerTools } from "@/lib/dev-server/mcp-tools";
 import { createSessionArtifactRegistryForProduction } from "@/lib/workflows/primitives/default-session-artifact-registry";
 import { resolveConfiguredTimeoutMs } from "@/lib/agent-backends/timeout";
 import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
+import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import { registerPlannerTools } from "@/lib/workflow-graph/planner-tools";
 import { getConversationRuntime } from "@/lib/workflows/conversation/runtime-state";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
@@ -87,6 +88,7 @@ const defaultSessionMcpServerDeps: SessionMcpServerDeps = {
   registerReferenceDocumentTools,
   registerPlannerTools(server, context) {
     const storage = createWorkflowStorageService();
+    const eventPublisher = createGraphWorkflowExecutionEventPublisher();
     registerPlannerTools(server, context, {
       readConfig,
       listWorkflows: storage.list,
@@ -98,6 +100,7 @@ const defaultSessionMcpServerDeps: SessionMcpServerDeps = {
         const session = await getSession(projectPath, sessionName);
         return session?.graphWorkflowExecution ?? null;
       },
+      publishCharterUpdated: eventPublisher.publishCharterUpdated,
     });
   },
   registerNotificationTool(server, context) {

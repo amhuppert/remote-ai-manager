@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildIterationPrompt, buildFollowUpPrompt } from "./iteration-prompt";
+import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 import type {
   GraphWorkflowCollaborationContinuation,
   GraphWorkflowResolvedContext,
@@ -7,6 +8,36 @@ import type {
   GraphWorkflowTaskDefinition,
   GraphWorkflowTaskState,
 } from "@/lib/workflows/schemas";
+
+function makeCharter(
+  overrides: Partial<WorkflowCharter> = {},
+): WorkflowCharter {
+  return {
+    mission: "Ship the billing rewrite without breaking existing invoices.",
+    sourcesOfTruth: [
+      {
+        rank: 1,
+        id: "domain-spec",
+        label: "Billing domain spec",
+        type: "spec",
+        locator: "docs/billing-spec.md",
+        description: "Authoritative invoice lifecycle rules.",
+        appliesTo: "billing/**",
+        accessPolicy: "worktree-relative",
+      },
+      {
+        rank: 2,
+        id: "legacy-ledger",
+        label: "Legacy ledger schema",
+        type: "code",
+        locator: "https://internal.example/ledger",
+        description: "Read-only reference for historical ledger columns.",
+        accessPolicy: "external-readonly",
+      },
+    ],
+    ...overrides,
+  };
+}
 function makeContext(
   overrides: Partial<GraphWorkflowResolvedContext> = {},
 ): GraphWorkflowResolvedContext {
@@ -48,6 +79,7 @@ function makeSharedDoc(
     relativePath: "memory-bank/shared/plan.md",
     description: "Current implementation plan",
     readWhen: "Read before starting implementation tasks.",
+    kind: "shared",
     createdAt: "2026-03-27T15:00:00.000Z",
     updatedAt: "2026-03-27T15:00:00.000Z",
     lastUpdatedByConversationId: "conversation-seed",
@@ -409,6 +441,109 @@ describe("buildIterationPrompt", () => {
     expect(prompt).not.toContain("Validation Criteria");
   });
 
+  it("begins with the charter digest and points to the full charter document", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      charter: makeCharter(),
+    });
+
+    expect(prompt.startsWith("# Workflow Charter")).toBe(true);
+    // The digest renders mission + ranked hierarchy before the execution context.
+    expect(prompt.indexOf("# Workflow Charter")).toBeLessThan(
+      prompt.indexOf("# Execution Context"),
+    );
+    expect(prompt).toContain(
+      "Ship the billing rewrite without breaking existing invoices.",
+    );
+    expect(prompt).toContain(".cc/graph-workflow-docs/charter.md");
+  });
+
+  it("instructs the implementer to cite the governing source and that external sources require permission", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+      charter: makeCharter(),
+    });
+
+    // 5.4: cite the governing source in the complete_task summary on conflict.
+    expect(prompt).toMatch(/cite.+governing source/i);
+    expect(prompt).toMatch(/complete_task/);
+    // 6.3: outside-worktree sources are read-only and require explicit permission.
+    expect(prompt).toMatch(/permission/i);
+  });
+
+  it("excludes the charter entry from the generic Shared Documents list", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [
+        makeSharedDoc({
+          id: "doc-charter",
+          relativePath: ".cc/graph-workflow-docs/charter.md",
+          description: "The workflow charter document",
+          readWhen: "Read for source-of-truth precedence.",
+          kind: "charter",
+        }),
+        makeSharedDoc({
+          id: "doc-plan",
+          relativePath: "memory-bank/shared/plan.md",
+          description: "Current implementation plan",
+          readWhen: "Read before starting implementation tasks.",
+          kind: "shared",
+        }),
+      ],
+      allowAgentTaskAdd: false,
+      charter: makeCharter(),
+    });
+
+    const sharedSection = prompt.slice(prompt.indexOf("## Shared Documents"));
+    expect(sharedSection).toContain("memory-bank/shared/plan.md");
+    expect(sharedSection).not.toContain("The workflow charter document");
+  });
+
+  it("renders 'None registered' in the generic list when only the charter entry exists", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [
+        makeSharedDoc({
+          id: "doc-charter",
+          relativePath: ".cc/graph-workflow-docs/charter.md",
+          description: "The workflow charter document",
+          readWhen: "Read for source-of-truth precedence.",
+          kind: "charter",
+        }),
+      ],
+      allowAgentTaskAdd: false,
+      charter: makeCharter(),
+    });
+
+    const sharedSection = prompt.slice(prompt.indexOf("## Shared Documents"));
+    expect(sharedSection).toContain("- None registered.");
+  });
+
+  it("omits the charter section when no charter is provided", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+    });
+
+    expect(prompt).not.toContain("# Workflow Charter");
+    expect(prompt.startsWith("# Execution Context")).toBe(true);
+  });
+
   it("includes the latest failed context validation summary, reopened tasks, and grouped issues", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),
@@ -512,6 +647,41 @@ describe("buildFollowUpPrompt", () => {
 
     expect(prompt).toContain("Previous Attempt Failed");
     expect(prompt).toContain("Previous patch missed regression coverage.");
+  });
+
+  it("carries a compact charter reference on continuation turns without the full digest", () => {
+    const prompt = buildFollowUpPrompt({
+      remainingTasks: [makeTask({ id: "task-1" })],
+      taskStates: {
+        "task-1": makeTaskState({ taskId: "task-1" }),
+      },
+      attemptNumber: 1,
+      maxAttempts: 2,
+      charter: makeCharter(),
+    });
+
+    expect(prompt).toMatch(/charter/i);
+    expect(prompt).toContain(".cc/graph-workflow-docs/charter.md");
+    // 5.1 precedence reminder is kept compact — the full ranked hierarchy and
+    // mission live in the iteration prompt / charter.md, not here.
+    expect(prompt).toMatch(/higher-ranked source/i);
+    expect(prompt).not.toContain("## Mission");
+    expect(prompt).not.toContain(
+      "Ship the billing rewrite without breaking existing invoices.",
+    );
+  });
+
+  it("omits the charter reference when no charter is provided", () => {
+    const prompt = buildFollowUpPrompt({
+      remainingTasks: [makeTask({ id: "task-1" })],
+      taskStates: {
+        "task-1": makeTaskState({ taskId: "task-1" }),
+      },
+      attemptNumber: 1,
+      maxAttempts: 2,
+    });
+
+    expect(prompt).not.toContain(".cc/graph-workflow-docs/charter.md");
   });
 
   it("includes latest failed context validation feedback during follow-up prompts", () => {

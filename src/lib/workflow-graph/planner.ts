@@ -5,6 +5,7 @@ import type {
   WorkflowPlanRequest,
   WorkflowSemanticDefinition,
 } from "@/lib/workflows/schemas";
+import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger } from "@/lib/logging";
 import {
@@ -28,6 +29,27 @@ import { createWorkflowStorageService } from "./storage";
 import { validateWorkflowDefinition } from "./validation";
 
 const logger = createLogger("graph-workflow-planner");
+
+// The empty fallback definition the planner returns when it cannot run (missing
+// session binding or no submitted draft) still has to satisfy the now-required
+// charter on the semantic-definition schema. A submitted draft carries the
+// planner-authored charter; this placeholder only governs the degenerate
+// no-output path. Charter-rejection semantics for the planner are owned by a
+// later task.
+const PLACEHOLDER_PLANNER_CHARTER: WorkflowCharter = {
+  mission: "Placeholder charter for an empty planner result",
+  sourcesOfTruth: [
+    {
+      rank: 1,
+      id: "objective",
+      label: "Workflow objective",
+      type: "document",
+      locator: "objective",
+      description: "The stated objective for this workflow",
+      accessPolicy: "worktree-relative",
+    },
+  ],
+};
 
 /**
  * Input enrichments the planner runner needs that aren't part of the public
@@ -87,6 +109,7 @@ export function createDefaultPlannerRunner(
     const emptyDefinition: WorkflowSemanticDefinition = {
       schemaVersion: 1,
       workflowConfig: {},
+      charter: PLACEHOLDER_PLANNER_CHARTER,
       executionContexts: [],
       tasks: [],
       edges: [],

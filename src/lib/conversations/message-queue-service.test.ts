@@ -2,8 +2,13 @@ import { describe, it, expect, vi } from "vitest";
 
 // Logging is module-load-time infrastructure; mocking it is the sanctioned
 // exception (CLAUDE.md / engineering-principles). We capture log calls so the
-// `queue.enqueue` event can be asserted without a real sink.
-const capturedLogs: { level: string; message: string; data?: unknown }[] = [];
+// `queue.enqueue` event can be asserted without a real sink. The array is
+// `vi.hoisted` so it is initialized before the hoisted `vi.mock` factory's
+// closure runs — a logger call during another module's load-time DB open
+// (e.g. the state-store purge migration) would otherwise hit the TDZ.
+const capturedLogs = vi.hoisted(
+  () => [] as { level: string; message: string; data?: unknown }[],
+);
 vi.mock("@/lib/logging", () => ({
   createLogger: () => ({
     info: (message: string, data?: unknown) =>

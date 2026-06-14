@@ -13,6 +13,8 @@ import {
   createWorkflowDefinitionRecord,
 } from "./test-fixtures";
 import { createWorkflowStorageService } from "./storage";
+import { createWorkflowCharterService } from "./charter/service";
+import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 
 const TEST_DIR = path.join("/tmp", `cc-graph-workflow-${Date.now()}`);
@@ -23,6 +25,16 @@ function createServices() {
     readConfig: () => configReader.readConfig(),
   });
 
+  // Charter seed writes charter.md to the session worktree. These tests use a
+  // synthetic worktree path that does not exist on disk, so inject a no-op fs
+  // writer — the subject under test is state-store persistence, not the file.
+  const eventPublisher = createGraphWorkflowExecutionEventPublisher();
+  const charterService = createWorkflowCharterService({
+    writeFile: async () => {},
+    ensureDir: async () => {},
+    publishCharterRegistered: eventPublisher.publishCharterRegistered,
+  });
+
   return {
     stateManager,
     storage: createWorkflowStorageService({
@@ -31,6 +43,8 @@ function createServices() {
     repository: createGraphWorkflowExecutionRepository({
       getSession: stateManager.getSession,
       mutateSession: stateManager.mutateSession,
+      eventPublisher,
+      charterService,
       readConfig: () => configReader.readConfig(),
     }),
   };

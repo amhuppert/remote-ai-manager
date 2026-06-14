@@ -5,6 +5,7 @@ import type {
   GraphWorkflowExecutionEvent,
 } from "@/lib/workflows/schemas";
 import WorkflowEventLog from "./WorkflowEventLog";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import "./workflow-graph.css";
 
 const PROJECT = "demo";
@@ -98,6 +99,7 @@ function makeExecution(
         },
       ],
     },
+    charter: makeTestCharter(),
     status: "running",
     activeContextIds: ["ctx-implement"],
     contextStates: {},

@@ -29,6 +29,7 @@ import type {
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
 } from "@/lib/workflows/schemas";
+import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 import type { BuilderMobilePanel } from "./WorkflowBuilderEditor";
 import WorkflowBuilderEditor from "./WorkflowBuilderEditor";
 import WorkflowDefinitionsSidebar from "./WorkflowDefinitionsSidebar";
@@ -40,9 +41,29 @@ interface ConnectedWorkflowBuilderPageProps {
   codexConfig?: CodexConfig;
 }
 
+// A new builder draft starts charter-less from the user's point of view; the
+// schema now requires one, so the empty draft carries a placeholder until the
+// author fills it in. Charter authoring in the builder UI is owned by a later
+// task.
+const placeholderCharter: WorkflowCharter = {
+  mission: "Describe this workflow's mission",
+  sourcesOfTruth: [
+    {
+      rank: 1,
+      id: "objective",
+      label: "Workflow objective",
+      type: "document",
+      locator: "objective",
+      description: "The stated objective for this workflow",
+      accessPolicy: "worktree-relative",
+    },
+  ],
+};
+
 const emptyDefinition: WorkflowSemanticDefinition = {
   schemaVersion: 1,
   workflowConfig: {},
+  charter: placeholderCharter,
   executionContexts: [],
   tasks: [],
   edges: [],

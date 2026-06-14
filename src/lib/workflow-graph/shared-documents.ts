@@ -108,6 +108,7 @@ export function createGraphWorkflowSharedDocumentRegistryService(
             relativePath: normalizedRelativePath,
             description: reg.description,
             readWhen: reg.readWhen,
+            kind: "shared",
             createdAt: now,
             updatedAt: now,
             lastUpdatedByConversationId: conversationId,

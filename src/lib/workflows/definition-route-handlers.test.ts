@@ -5,6 +5,7 @@ import {
   createWorkflowDefinitionRecord,
   createWorkflowLayout,
 } from "@/lib/workflow-graph/test-fixtures";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import { createWorkflowDefinitionRouteHandlers } from "./definition-route-handlers";
 import { resolveWorkflowDefinition } from "@/lib/workflow-graph/resolve-config";
 import type { GlobalConfig } from "@/lib/config/schemas";
@@ -194,6 +195,7 @@ describe("workflow definition route handlers", () => {
         definition: {
           schemaVersion: 1,
           workflowConfig: {},
+          charter: makeTestCharter(),
           executionContexts: [
             {
               id: "context-plan",

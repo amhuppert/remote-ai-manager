@@ -25,6 +25,7 @@ import type Database from "better-sqlite3";
 import { _createTestDb } from "./state-db";
 import { createSessionsRepo, type SessionsRepo } from "./sessions-repo";
 import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 type Db = InstanceType<typeof Database>;
 
 let db: Db;
@@ -45,6 +46,7 @@ function buildLegacyExecutionJson(
     seedDefinitionId: "seed-1",
     seedDefinitionRevision: 1,
     workingDefinition: {},
+    charter: makeTestCharter(),
     status: "running",
     activeContextId: "ctx-a",
     contextStates: {
@@ -97,6 +99,7 @@ function buildCleanExecutionJson(): string {
       tasks: [],
       edges: [],
     },
+    charter: makeTestCharter(),
     status: "paused",
     activeContextIds: [],
     contextStates: {},
@@ -293,6 +296,7 @@ describe("sessions-repo graph-workflow legacy migration on load", () => {
         tasks: [],
         edges: [],
       },
+      charter: makeTestCharter(),
       status: "running",
       activeContextIds: ["ctx-a"],
       contextStates: {
@@ -366,6 +370,7 @@ describe("sessions-repo graph-workflow legacy migration on load", () => {
         tasks: [],
         edges: [],
       },
+      charter: makeTestCharter(),
       status: "paused",
       activeContextIds: [],
       contextStates: {},

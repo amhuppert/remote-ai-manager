@@ -5,6 +5,7 @@ import type {
   WorkflowDefinitionRecord,
   WorkflowSemanticDefinition,
 } from "@/lib/workflows/schemas";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 const timestamp = "2026-03-27T12:00:00.000Z";
 
 export function createWorkflowDefinition(
@@ -13,6 +14,7 @@ export function createWorkflowDefinition(
   return {
     schemaVersion: 1,
     workflowConfig: {},
+    charter: makeTestCharter(),
     executionContexts: [
       {
         id: "context-plan",
@@ -191,6 +193,7 @@ export function createWorkflowExecution(
     seedDefinitionId: "workflow-1",
     seedDefinitionRevision: 1,
     workingDefinition: definition,
+    charter: makeTestCharter(),
     status: "pending",
     activeContextIds: [],
     contextStates: {

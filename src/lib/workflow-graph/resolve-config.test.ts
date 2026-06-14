@@ -19,6 +19,7 @@ import {
   resolveWorkflowConfig,
   resolveWorkflowDefinition,
 } from "./resolve-config";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 
 const GLOBAL_IMPLEMENTER: GraphWorkflowAgentConfig = {
   backend: "claude",
@@ -102,6 +103,7 @@ function makeDefinition(
   return {
     schemaVersion: 1,
     workflowConfig: {},
+    charter: makeTestCharter(),
     executionContexts: [makeContext()],
     tasks: [],
     edges: [],
@@ -392,6 +394,35 @@ describe("resolveWorkflowDefinition", () => {
     expect(resolved.executionContexts[0]?.mutability).toEqual(
       GLOBAL_MUTABILITY,
     );
+  });
+
+  it("attaches the same workflow-global charter to every resolved context (1.5, 4.5)", () => {
+    const charter = makeTestCharter({
+      mission: "Single authority model across all contexts",
+    });
+    const definition = makeDefinition({
+      charter,
+      executionContexts: [
+        makeContext({ id: "a", title: "A", acceptanceCriteria: "A-AC" }),
+        makeContext({ id: "b", title: "B", acceptanceCriteria: "B-AC" }),
+      ],
+    });
+
+    const resolved = resolveWorkflowDefinition(makeGlobalConfig(), definition);
+
+    expect(resolved.executionContexts).toHaveLength(2);
+    for (const ctx of resolved.executionContexts) {
+      expect(ctx.charter).toEqual(definition.charter);
+    }
+    // Same charter object content on every context — implementer and validator
+    // of any context read identical charter content (4.5), and the charter is
+    // workflow-global with no per-context override (1.5). The semantic context
+    // input (GraphWorkflowExecutionContextDefinition) has no `charter` field at
+    // all, so there is structurally no per-context override path.
+    expect(resolved.executionContexts[0]?.charter).toEqual(
+      resolved.executionContexts[1]?.charter,
+    );
+    expect((makeContext() as { charter?: unknown }).charter).toBeUndefined();
   });
 
   it("never inherits acceptanceCriteria across cascade tiers", () => {

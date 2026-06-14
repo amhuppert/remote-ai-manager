@@ -8,6 +8,7 @@ import type {
   WorkflowSemanticDefinition,
 } from "@/lib/workflows/schemas";
 import { deriveContextWaitState } from "./derive-wait-state";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 
 function makeDefinition(
   overrides: Partial<WorkflowSemanticDefinition> = {},
@@ -15,6 +16,7 @@ function makeDefinition(
   return {
     schemaVersion: 1,
     workflowConfig: {},
+    charter: makeTestCharter(),
     executionContexts: [],
     tasks: [],
     edges: [],
@@ -93,6 +95,7 @@ function makeExecution(
     seedDefinitionRevision: 1,
     workingDefinition:
       makeDefinition() as unknown as ResolvedWorkflowSemanticDefinition,
+    charter: makeTestCharter(),
     status: "running",
     activeContextIds: [],
     contextStates: {},

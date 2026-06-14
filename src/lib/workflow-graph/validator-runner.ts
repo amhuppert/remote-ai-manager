@@ -1,4 +1,6 @@
 import { workflowAgentValidatorResultSchema } from "@/lib/workflows/schemas";
+import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
+import { renderCharterPromptSection } from "@/lib/workflow-graph/charter/render";
 import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import {
@@ -60,6 +62,13 @@ export interface BuildContextValidationPromptInput {
   tasks: GraphWorkflowTaskDefinition[];
   taskStates: GraphWorkflowExecution["taskStates"];
   validator: GraphWorkflowAgentValidatorConfig;
+  // Optional because the resolved context carries an optional charter; when
+  // present the digest is prepended so the prompt opens with it (4.2).
+  charter?: WorkflowCharter;
+}
+
+function buildCharterSection(charter: WorkflowCharter): string {
+  return renderCharterPromptSection(charter);
 }
 
 function formatTaskBlock(
@@ -86,8 +95,12 @@ export function buildContextValidationPrompt(
     .map((task) => formatTaskBlock(task, input.taskStates))
     .join("\n");
 
+  const charterSection = input.charter
+    ? `${buildCharterSection(input.charter)}\n\n`
+    : "";
+
   return [
-    "# Context Validation",
+    charterSection + "# Context Validation",
     "",
     "You are a validation agent reviewing a completed execution context in a graph workflow.",
     "You must inspect files and verify the agent's claims.",
@@ -97,6 +110,7 @@ export function buildContextValidationPrompt(
     "",
     "- **Intent over strict wording.** Acceptance criteria may be imprecise. Use judgment to decide whether the completed work satisfies the intent of the criteria. Do not reject work that meets the spirit of the criteria simply because the wording differs or a detail is fuzzy.",
     "- **Respect context scope boundaries.** This execution context is one step in a larger graph workflow. Work that is explicitly out of scope for this context — for example, type updates or cleanup handled by a downstream context, or integration work reserved for another context — must not cause this context to fail. If the current context produced the intermediate state it is responsible for, treat that as success even if the wider codebase is not yet fully consistent.",
+    "- **Defer to the higher-ranked source on a charter conflict.** When an acceptance criterion conflicts with a higher-ranked source of truth and the implementation follows that higher-ranked source, do not fail the context solely for that acceptance-criterion mismatch — the higher-ranked source prevails. Instead, record the conflict in your `summary`, naming the affected acceptance criterion, the prevailing source, and the resolution. Evaluate each source's precedence within that source's declared applicability scope (`appliesTo`).",
     "- **Do not enforce deterministic checks.** You must not fail the context for failing tests, type errors, lint violations, build failures, or compile errors. Those concerns are handled separately by the project's pre-merge validation script and are not your responsibility. Focus on judgments that only a reviewing agent can make.",
     "",
     "## Acceptance Criteria",
@@ -920,6 +934,7 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       tasks: contextTasks,
       taskStates: input.execution.taskStates,
       validator: input.validator,
+      ...(input.context.charter ? { charter: input.context.charter } : {}),
     });
 
     const execLogger = getExecutionLogger(input.execution.id);

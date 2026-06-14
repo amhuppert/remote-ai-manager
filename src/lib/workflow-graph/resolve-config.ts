@@ -187,9 +187,13 @@ export function resolveWorkflowDefinition(
 
   return {
     schemaVersion: definition.schemaVersion,
-    executionContexts: definition.executionContexts.map((context) =>
-      resolveContext(defaults, workflowConfig, context),
-    ),
+    // The charter is workflow-global semantic content, attached identically to
+    // every resolved context by passthrough — never routed through the
+    // operational config cascade and with no per-context override (1.5, 4.5).
+    executionContexts: definition.executionContexts.map((context) => ({
+      ...resolveContext(defaults, workflowConfig, context),
+      charter: definition.charter,
+    })),
     tasks: definition.tasks,
     edges: definition.edges,
   };

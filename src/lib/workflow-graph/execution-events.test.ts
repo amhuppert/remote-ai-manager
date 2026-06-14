@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import {
+  graphWorkflowCharterRegisteredEventSchema,
+  graphWorkflowCharterUpdatedEventSchema,
+} from "@/lib/workflows/schemas";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 
@@ -145,6 +149,7 @@ describe("graph workflow execution event publisher", () => {
           relativePath: ".cc/graph-workflow-docs/plan.md",
           description: "Updated implementation plan",
           readWhen: "Read before resuming the plan context.",
+          kind: "shared",
           createdAt: "2026-03-28T09:59:00.000Z",
           updatedAt: "2026-03-28T10:00:00.000Z",
           lastUpdatedByConversationId: "conversation-1",
@@ -1311,5 +1316,124 @@ describe("graph workflow execution event publisher", () => {
     expect(statusEvent!.activeJoinIds.sort()).toEqual(
       ["join-pending", "join-running"].sort(),
     );
+  });
+
+  it("broadcasts a charter-registered event and appends it to execution history", () => {
+    const broadcast = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      now: () => "2026-06-14T10:00:00.000Z",
+    });
+
+    const execution = createWorkflowExecution({
+      status: "running",
+      activeContextIds: ["context-plan"],
+    });
+
+    const updatedExecution = publisher.publishCharterRegistered({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      execution,
+      definitionId: "workflow-1",
+      definitionRevision: 3,
+      charterHash: "sha256:abc123",
+    });
+
+    expect(broadcast).toHaveBeenCalledExactlyOnceWith({
+      type: "graph-workflow-charter-registered",
+      projectName: "repo",
+      sessionName: "session-1",
+      executionId: execution.id,
+      definitionId: "workflow-1",
+      definitionRevision: 3,
+      charterHash: "sha256:abc123",
+    });
+
+    const [broadcastEvent] = broadcast.mock.calls[0] ?? [];
+    expect(
+      graphWorkflowCharterRegisteredEventSchema.parse(broadcastEvent),
+    ).toMatchObject({
+      executionId: execution.id,
+      definitionId: "workflow-1",
+      definitionRevision: 3,
+      charterHash: "sha256:abc123",
+    });
+
+    expect(updatedExecution.history).toHaveLength(1);
+    expect(updatedExecution.history[0]?.occurredAt).toBe(
+      "2026-06-14T10:00:00.000Z",
+    );
+    expect(updatedExecution.history[0]?.event).toMatchObject({
+      type: "graph-workflow-charter-registered",
+      executionId: execution.id,
+      definitionId: "workflow-1",
+      definitionRevision: 3,
+      charterHash: "sha256:abc123",
+    });
+  });
+
+  it("broadcasts a charter-updated event with the active execution id and appends it to history", () => {
+    const broadcast = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      now: () => "2026-06-14T11:00:00.000Z",
+    });
+
+    const execution = createWorkflowExecution({
+      status: "running",
+      activeContextIds: ["context-plan"],
+    });
+
+    const updatedExecution = publisher.publishCharterUpdated({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      execution,
+      definitionId: "workflow-1",
+      definitionRevision: 4,
+      charterHash: "sha256:def456",
+    });
+
+    expect(broadcast).toHaveBeenCalledExactlyOnceWith({
+      type: "graph-workflow-charter-updated",
+      projectName: "repo",
+      sessionName: "session-1",
+      executionId: execution.id,
+      definitionId: "workflow-1",
+      definitionRevision: 4,
+      charterHash: "sha256:def456",
+    });
+    expect(updatedExecution).not.toBeNull();
+    expect(updatedExecution?.history).toHaveLength(1);
+    expect(updatedExecution?.history[0]?.event).toMatchObject({
+      type: "graph-workflow-charter-updated",
+      executionId: execution.id,
+    });
+  });
+
+  it("broadcasts a charter-updated event with a null execution id when no execution is active", () => {
+    const broadcast = vi.fn();
+    const publisher = createGraphWorkflowExecutionEventPublisher({
+      broadcast,
+      now: () => "2026-06-14T12:00:00.000Z",
+    });
+
+    const updatedExecution = publisher.publishCharterUpdated({
+      projectPath: "/projects/repo",
+      sessionName: "session-1",
+      definitionId: "workflow-1",
+      definitionRevision: 5,
+      charterHash: "sha256:ghi789",
+    });
+
+    const [broadcastEvent] = broadcast.mock.calls[0] ?? [];
+    expect(
+      graphWorkflowCharterUpdatedEventSchema.parse(broadcastEvent),
+    ).toMatchObject({
+      executionId: null,
+      definitionId: "workflow-1",
+      definitionRevision: 5,
+      charterHash: "sha256:ghi789",
+    });
+    expect(updatedExecution).toBeNull();
   });
 });

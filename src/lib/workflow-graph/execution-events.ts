@@ -8,6 +8,8 @@ import type {
   GraphWorkflowApprovalPendingEvent,
   GraphWorkflowApprovalResolvedEvent,
   GraphWorkflowBatchScheduledEvent,
+  GraphWorkflowCharterRegisteredEvent,
+  GraphWorkflowCharterUpdatedEvent,
   GraphWorkflowCircuitBreakerEvent,
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
@@ -73,6 +75,24 @@ interface PublishApprovalResolvedInput {
   decision: GraphWorkflowApprovalResolvedEvent["decision"];
   message: string | null;
   decidedAt: string;
+}
+
+interface PublishCharterRegisteredInput {
+  projectPath: string;
+  sessionName: string;
+  execution: GraphWorkflowExecution;
+  definitionId: string;
+  definitionRevision: number;
+  charterHash: string;
+}
+
+interface PublishCharterUpdatedInput {
+  projectPath: string;
+  sessionName: string;
+  definitionId: string;
+  definitionRevision: number;
+  charterHash: string;
+  execution?: GraphWorkflowExecution | null;
 }
 
 /**
@@ -835,10 +855,51 @@ export function createGraphWorkflowExecutionEventPublisher(
     return appendEvents(input.execution, getNow(deps), [event]);
   }
 
+  function publishCharterRegistered(
+    input: PublishCharterRegisteredInput,
+  ): GraphWorkflowExecution {
+    const event: GraphWorkflowCharterRegisteredEvent = {
+      type: "graph-workflow-charter-registered",
+      projectName: getProjectName(input.projectPath),
+      sessionName: input.sessionName,
+      executionId: input.execution.id,
+      definitionId: input.definitionId,
+      definitionRevision: input.definitionRevision,
+      charterHash: input.charterHash,
+    };
+
+    publishEvents(deps, [event]);
+    return appendEvents(input.execution, getNow(deps), [event]);
+  }
+
+  function publishCharterUpdated(
+    input: PublishCharterUpdatedInput,
+  ): GraphWorkflowExecution | null {
+    const event: GraphWorkflowCharterUpdatedEvent = {
+      type: "graph-workflow-charter-updated",
+      projectName: getProjectName(input.projectPath),
+      sessionName: input.sessionName,
+      executionId: input.execution?.id ?? null,
+      definitionId: input.definitionId,
+      definitionRevision: input.definitionRevision,
+      charterHash: input.charterHash,
+    };
+
+    publishEvents(deps, [event]);
+    // A definition-level charter replacement with no active execution has no
+    // history to append to — broadcast only.
+    if (!input.execution) {
+      return null;
+    }
+    return appendEvents(input.execution, getNow(deps), [event]);
+  }
+
   return {
     publishExecutionUpdate,
     publishValidationResult,
     publishApprovalPending,
     publishApprovalResolved,
+    publishCharterRegistered,
+    publishCharterUpdated,
   };
 }

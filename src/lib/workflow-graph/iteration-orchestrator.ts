@@ -1743,6 +1743,7 @@ export function createGraphWorkflowIterationOrchestrator(
               maxAttempts: MAX_FOLLOW_UPS,
               latestContextValidationFailure,
               collaborationContinuations,
+              charter: context.charter,
             })
           : buildIterationPrompt({
               context,
@@ -1750,6 +1751,7 @@ export function createGraphWorkflowIterationOrchestrator(
               taskStates: seededExecution.taskStates,
               sharedDocuments: seededExecution.sharedDocuments,
               allowAgentTaskAdd: context.mutability.allowAgentTaskAdd,
+              charter: context.charter,
               // Mirrors the request_collaboration registration gate in the
               // workflow-execution MCP server, which exposes the tool to every
               // implementer context. Keep these in lockstep if an enable toggle
@@ -1970,6 +1972,7 @@ export function createGraphWorkflowIterationOrchestrator(
               input.contextId,
             ),
           collaborationContinuations: [],
+          charter: context.charter,
         });
         execLogger?.writePrompt(
           input.contextId,

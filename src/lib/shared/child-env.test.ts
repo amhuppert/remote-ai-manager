@@ -45,6 +45,31 @@ describe("buildChildEnv", () => {
     expect(merged.NODE_ENV).toBe("development");
     expect(merged.__NEXT_PRIVATE_ORIGIN).toBe("");
   });
+
+  it("strips inherited git location/index vars so child git commands use their own cwd", () => {
+    // Reproduces the pre-commit-hook leak: git runs hooks with GIT_DIR /
+    // GIT_INDEX_FILE / GIT_WORK_TREE exported, and any child `git` that inherits
+    // them would mutate the hook's repo instead of its own working directory.
+    process.env.GIT_DIR = "/real/repo/.git";
+    process.env.GIT_WORK_TREE = "/real/repo";
+    process.env.GIT_INDEX_FILE = "/real/repo/.git/index";
+    process.env.GIT_PREFIX = "subdir/";
+    process.env.GIT_COMMON_DIR = "/real/repo/.git";
+    process.env.GIT_OBJECT_DIRECTORY = "/real/repo/.git/objects";
+    process.env.GIT_ALTERNATE_OBJECT_DIRECTORIES = "/alt/objects";
+    process.env.GIT_NAMESPACE = "ns";
+
+    const env = buildChildEnv();
+
+    expect(env.GIT_DIR).toBeUndefined();
+    expect(env.GIT_WORK_TREE).toBeUndefined();
+    expect(env.GIT_INDEX_FILE).toBeUndefined();
+    expect(env.GIT_PREFIX).toBeUndefined();
+    expect(env.GIT_COMMON_DIR).toBeUndefined();
+    expect(env.GIT_OBJECT_DIRECTORY).toBeUndefined();
+    expect(env.GIT_ALTERNATE_OBJECT_DIRECTORIES).toBeUndefined();
+    expect(env.GIT_NAMESPACE).toBeUndefined();
+  });
 });
 
 describe("findNodeBinDir", () => {

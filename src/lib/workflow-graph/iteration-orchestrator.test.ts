@@ -232,6 +232,7 @@ function createExecutionWithPlanTasks(
         relativePath: "memory-bank/shared/plan.md",
         description: "Current implementation plan",
         readWhen: "Read before starting implementation tasks.",
+        kind: "shared",
         createdAt: "2026-03-27T15:00:00.000Z",
         updatedAt: "2026-03-27T15:00:00.000Z",
         lastUpdatedByConversationId: "conversation-seed",

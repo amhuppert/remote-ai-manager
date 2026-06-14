@@ -3,6 +3,7 @@ import type { WorkflowSemanticDefinition } from "@/lib/workflows/schemas";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import { createDefaultPlannerRunner } from "./planner";
 import type { ExecuteWorkflowTaskRunInput } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 
 const STUB_PORTABLE_MCP: PortableMcpConfig = {
   servers: [
@@ -17,6 +18,7 @@ const STUB_PORTABLE_MCP: PortableMcpConfig = {
 const submittedDefinition: WorkflowSemanticDefinition = {
   schemaVersion: 1,
   workflowConfig: {},
+  charter: makeTestCharter(),
   executionContexts: [
     {
       id: "context-plan",
@@ -188,13 +190,14 @@ describe("default planner runner — executeWorkflowTaskRun routing", () => {
       null,
     );
 
-    expect(result).toEqual({
-      schemaVersion: 1,
-      workflowConfig: {},
-      executionContexts: [],
-      tasks: [],
-      edges: [],
-    });
+    expect(result.schemaVersion).toBe(1);
+    expect(result.workflowConfig).toEqual({});
+    expect(result.executionContexts).toEqual([]);
+    expect(result.tasks).toEqual([]);
+    expect(result.edges).toEqual([]);
+    // The empty fallback still satisfies the now-required charter contract.
+    expect(result.charter.mission).toBeTruthy();
+    expect(result.charter.sourcesOfTruth.length).toBeGreaterThan(0);
   });
 
   it("still consumes/deletes the draft when executeWorkflowTaskRun returns an error result", async () => {

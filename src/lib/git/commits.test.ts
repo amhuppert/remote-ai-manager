@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { GitClient } from "./client";
 import { createCommitsOperations } from "./commits";
+import { buildChildEnv } from "../shared/child-env";
 
 const execFileAsync = promisify(execFile);
 
@@ -400,7 +401,10 @@ describe("collectChangeSummary (real git repo)", () => {
   let repoPath: string;
 
   async function gitIn(args: string[]): Promise<void> {
-    await execFileAsync("git", args, { cwd: repoPath });
+    // Use the sanitized child env (same as the production GitClient) so an
+    // inherited GIT_DIR / GIT_INDEX_FILE — e.g. when this suite runs inside a
+    // git pre-commit hook — cannot redirect these mutations at the real repo.
+    await execFileAsync("git", args, { cwd: repoPath, env: buildChildEnv() });
   }
 
   beforeEach(async () => {
@@ -434,6 +438,86 @@ describe("collectChangeSummary (real git repo)", () => {
   it("returns empty string for a clean worktree", async () => {
     const result = await realOps.collectChangeSummary(repoPath);
     expect(result).toBe("");
+  });
+});
+
+describe("real-git isolation under an inherited GIT_DIR (pre-commit hook safety)", () => {
+  // Regression: git runs hooks with GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE
+  // exported into the environment. This suite runs real `git` mutations
+  // (init/add/commit). When it executes inside the husky pre-commit hook (which
+  // runs `vitest run --project unit`), a git command that inherits those vars
+  // commits into the REAL repo instead of its temp fixture — observed as a
+  // stray "initial" commit (tree = {tracked.ts}) landing on the actual branch
+  // and corrupting HEAD. The fixture git helper must use the sanitized child
+  // env so it stays scoped to its own cwd.
+  let victimPath: string;
+  let sandboxPath: string;
+  const savedEnv: Record<string, string | undefined> = {};
+  const GIT_LEAK_KEYS = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"] as const;
+
+  async function gitRaw(cwd: string, args: string[]): Promise<string> {
+    // Reads use the sanitized env so they observe `cwd`, not a leaked GIT_DIR.
+    const { stdout } = await execFileAsync("git", args, {
+      cwd,
+      env: buildChildEnv(),
+    });
+    return stdout;
+  }
+
+  beforeEach(async () => {
+    victimPath = await mkdtemp(join(tmpdir(), "cc-victim-"));
+    sandboxPath = await mkdtemp(join(tmpdir(), "cc-sandbox-"));
+    // The "victim" stands in for the real repo a pre-commit hook would expose.
+    await gitRaw(victimPath, ["init"]);
+    await gitRaw(victimPath, ["config", "user.email", "victim@example.com"]);
+    await gitRaw(victimPath, ["config", "user.name", "Victim"]);
+    await writeFile(join(victimPath, "base.ts"), "export const v = 1;\n");
+    await gitRaw(victimPath, ["add", "-A"]);
+    await gitRaw(victimPath, ["commit", "-m", "victim base", "--no-verify"]);
+  });
+
+  afterEach(async () => {
+    for (const key of GIT_LEAK_KEYS) {
+      if (savedEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = savedEnv[key];
+    }
+    await rm(victimPath, { recursive: true, force: true });
+    await rm(sandboxPath, { recursive: true, force: true });
+  });
+
+  it("does not commit into the ambient repo when GIT_DIR/GIT_INDEX_FILE are inherited", async () => {
+    const victimHeadBefore = (
+      await gitRaw(victimPath, ["rev-parse", "HEAD"])
+    ).trim();
+
+    // Simulate the pre-commit hook leaking the real repo's git env.
+    for (const key of GIT_LEAK_KEYS) savedEnv[key] = process.env[key];
+    process.env.GIT_DIR = join(victimPath, ".git");
+    process.env.GIT_WORK_TREE = victimPath;
+    process.env.GIT_INDEX_FILE = join(victimPath, ".git", "index");
+
+    // Run the same mutating sequence the fixture setup uses, in a separate
+    // sandbox repo, via the sanitized-env helper. It must touch only sandbox.
+    const gitInSandbox = (args: string[]): Promise<string> =>
+      gitRaw(sandboxPath, args);
+    await gitInSandbox(["init"]);
+    await gitInSandbox(["config", "user.email", "test@example.com"]);
+    await gitInSandbox(["config", "user.name", "Test"]);
+    await writeFile(join(sandboxPath, "tracked.ts"), "export const a = 1;\n");
+    await gitInSandbox(["add", "-A"]);
+    await gitInSandbox(["commit", "-m", "initial", "--no-verify"]);
+
+    // The victim repo is untouched: HEAD unchanged and no "initial" commit.
+    const victimHeadAfter = (
+      await gitRaw(victimPath, ["rev-parse", "HEAD"])
+    ).trim();
+    const victimLog = await gitRaw(victimPath, ["log", "--format=%s"]);
+    expect(victimHeadAfter).toBe(victimHeadBefore);
+    expect(victimLog).not.toContain("initial");
+
+    // The sandbox repo got its own "initial" commit.
+    const sandboxLog = await gitRaw(sandboxPath, ["log", "--format=%s"]);
+    expect(sandboxLog).toContain("initial");
   });
 });
 

@@ -16,10 +16,12 @@ import {
   createDefaultPlannerRunner,
   createWorkflowPlannerService,
 } from "./planner";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 
 const FIXTURE_DRAFT: WorkflowSemanticDefinition = {
   schemaVersion: 1,
   workflowConfig: {},
+  charter: makeTestCharter(),
   executionContexts: [
     {
       id: "context-plan",
@@ -137,6 +139,45 @@ describe("planner workflow generation — fixture snapshot", () => {
     expect(draft).toMatchInlineSnapshot(`
       {
         "definition": {
+          "charter": {
+            "conventions": [
+              "Prefer early returns",
+              "Zod schemas are the source of truth",
+            ],
+            "knownAmbiguities": [
+              "scope of the AeroTrainer floor/round case",
+            ],
+            "mission": "Deliver the feature with a single authority model",
+            "nonGoals": [
+              "Backward compatibility with pre-charter records",
+            ],
+            "ownershipMap": "schemas owned by the platform team",
+            "sourcesOfTruth": [
+              {
+                "accessPolicy": "worktree-relative",
+                "appliesTo": "all execution contexts",
+                "description": "The authoritative architecture for this workflow",
+                "id": "design-doc",
+                "label": "Approved design document",
+                "locator": ".kiro/specs/workflow-charter/design.md",
+                "rank": 1,
+                "type": "document",
+              },
+              {
+                "accessPolicy": "worktree-relative",
+                "description": "Context-level criteria; defer to higher-ranked sources",
+                "id": "acceptance-criteria",
+                "label": "Per-context acceptance criteria",
+                "locator": "context.acceptanceCriteria",
+                "rank": 2,
+                "type": "spec",
+              },
+            ],
+            "testStrategy": "TDD red-green-refactor with round-trip durability contracts",
+            "vocabulary": [
+              "charter: the workflow-global source-of-truth brief",
+            ],
+          },
           "edges": [
             {
               "id": "edge-plan-to-impl",

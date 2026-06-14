@@ -1,5 +1,9 @@
 import { readConfig } from "@/lib/config/loader";
 import { graphWorkflowExecutionSchema } from "@/lib/workflows/schemas";
+import {
+  createWorkflowCharterService,
+  type WorkflowCharterService,
+} from "./charter/service";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import {
   buildInitialContextStates,
@@ -42,6 +46,7 @@ export interface GraphWorkflowExecutionRepositoryDeps {
   eventPublisher?: ReturnType<
     typeof createGraphWorkflowExecutionEventPublisher
   >;
+  charterService?: WorkflowCharterService;
   readConfig?: () => Promise<GlobalConfig>;
 }
 
@@ -73,6 +78,7 @@ async function createExecutionFromSeed(
     seedDefinitionId: seed.definitionId,
     seedDefinitionRevision: seed.definitionRevision,
     workingDefinition,
+    charter: seed.definition.charter,
     status: "pending",
     activeContextIds: [],
     activeTaskId: null,
@@ -93,6 +99,11 @@ export function createGraphWorkflowExecutionRepository(
 ) {
   const eventPublisher =
     deps.eventPublisher ?? createGraphWorkflowExecutionEventPublisher();
+  const charterService =
+    deps.charterService ??
+    createWorkflowCharterService({
+      publishCharterRegistered: eventPublisher.publishCharterRegistered,
+    });
   const readConfigDep = deps.readConfig ?? readConfig;
 
   async function getActive(
@@ -108,8 +119,36 @@ export function createGraphWorkflowExecutionRepository(
     sessionName: string,
     seed: GraphWorkflowExecutionSeed,
   ): Promise<GraphWorkflowExecution> {
-    const execution = await createExecutionFromSeed(seed, readConfigDep);
-    let storedExecution = execution;
+    const baseExecution = await createExecutionFromSeed(seed, readConfigDep);
+
+    const session = await deps.getSession(projectPath, sessionName);
+    if (!session) {
+      throw new Error(
+        `Cannot seed charter: session "${sessionName}" was not found for project "${projectPath}"`,
+      );
+    }
+    if (!session.worktreePath) {
+      throw new Error(
+        `Cannot seed charter: session "${sessionName}" has no worktree path`,
+      );
+    }
+
+    // Seed the charter before the first iteration: write charter.md inside the
+    // worktree, register the kind:"charter" shared-document entry, snapshot the
+    // charter onto the execution, and append the charter-registered event. A
+    // render/write/register failure throws here, halting the seed with no
+    // partial charter state.
+    const { nextExecution: seededExecution } = await charterService.seedCharter(
+      {
+        charter: baseExecution.charter,
+        worktreePath: session.worktreePath,
+        execution: baseExecution,
+        projectPath,
+        sessionName,
+      },
+    );
+
+    let storedExecution = seededExecution;
 
     await deps.mutateSession(
       projectPath,
@@ -120,7 +159,7 @@ export function createGraphWorkflowExecutionRepository(
           projectPath,
           sessionName,
           previousExecution: null,
-          nextExecution: execution,
+          nextExecution: seededExecution,
         });
         session.graphWorkflowExecution = storedExecution;
         session.lastActivityAt = seed.startedAt;

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { buildSessionContext, buildConversationContext } from "./copy-context";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -137,6 +138,7 @@ function makeGraphWorkflowExecution(
         { id: "e-1", sourceContextId: "ctx-1", targetContextId: "ctx-2" },
       ],
     },
+    charter: makeTestCharter(),
     status: "running",
     activeContextIds: ["ctx-1"],
     contextStates: {

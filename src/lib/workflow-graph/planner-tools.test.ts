@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GlobalConfig } from "@/lib/config/schemas";
-import type { WorkflowDefinitionRecord } from "@/lib/workflows/schemas";
+import type {
+  GraphWorkflowExecution,
+  WorkflowDefinitionRecord,
+} from "@/lib/workflows/schemas";
 import { registerPlannerTools, type PlannerToolDeps } from "./planner-tools";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
+import { computeCharterHash } from "./charter/render";
 
 const TOOLS_KEY = "__test_planner_tools";
 type ToolHandler = (args: unknown) => Promise<unknown>;
@@ -84,6 +89,7 @@ function createMockDeps(
     })),
     deleteWorkflow: vi.fn(async () => true),
     getActiveExecution: vi.fn(async () => null),
+    publishCharterUpdated: vi.fn(() => null),
     ...overrides,
   };
 }
@@ -91,6 +97,7 @@ function createMockDeps(
 const MINIMAL_INPUT = {
   name: "Add OAuth2",
   description: "Add OAuth2 support to the API",
+  charter: makeTestCharter(),
   executionContexts: [
     {
       id: "auth-setup",
@@ -508,6 +515,7 @@ describe("graph workflow planner tools", () => {
       definition: {
         schemaVersion: 1,
         workflowConfig: {},
+        charter: makeTestCharter(),
         executionContexts: [],
         tasks: [],
         edges: [],
@@ -583,5 +591,181 @@ describe("graph workflow planner tools", () => {
     })) as { isError?: boolean };
 
     expect(result.isError).toBe(true);
+  });
+
+  describe("charter requirement (task 3.2)", () => {
+    type CharterUpdatedInput = Parameters<
+      PlannerToolDeps["publishCharterUpdated"]
+    >[0];
+
+    function makePublishCharterUpdatedSpy() {
+      return vi.fn(
+        (_input: CharterUpdatedInput): GraphWorkflowExecution | null => null,
+      );
+    }
+
+    function makeRecordWithCharter(
+      charter: ReturnType<typeof makeTestCharter>,
+      revision = 1,
+    ): WorkflowDefinitionRecord {
+      return {
+        id: "wf-test-1",
+        name: "Existing",
+        description: null,
+        schemaVersion: 1,
+        revision,
+        definition: {
+          schemaVersion: 1,
+          workflowConfig: {},
+          charter,
+          executionContexts: [],
+          tasks: [],
+          edges: [],
+        },
+        layout: {
+          workflowId: "wf-test-1",
+          contextPositions: {},
+          viewport: { x: 0, y: 0, zoom: 1 },
+        },
+        createdAt: "2026-03-30T00:00:00.000Z",
+        updatedAt: "2026-03-30T00:00:00.000Z",
+      };
+    }
+
+    function withoutCharter(input: Record<string, unknown>) {
+      const { charter: _charter, ...rest } = input;
+      return rest;
+    }
+
+    const DUP_RANK_CHARTER = {
+      mission: "Deliver",
+      sourcesOfTruth: [
+        {
+          rank: 1,
+          id: "design-doc",
+          label: "Design",
+          type: "document" as const,
+          locator: "design.md",
+          description: "primary",
+          accessPolicy: "worktree-relative" as const,
+        },
+        {
+          rank: 1,
+          id: "acceptance-criteria",
+          label: "AC",
+          type: "spec" as const,
+          locator: "ac",
+          description: "secondary",
+          accessPolicy: "worktree-relative" as const,
+        },
+      ],
+    };
+
+    it("create_graph_workflow without a charter is rejected with charter_missing", async () => {
+      const deps = createMockDeps();
+      registerTools(deps);
+
+      const result = (await getHandler("create_graph_workflow")(
+        withoutCharter(MINIMAL_INPUT),
+      )) as { content: Array<{ text: string }>; isError?: boolean };
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text ?? "").toContain("charter_missing");
+      expect(deps.createWorkflow).not.toHaveBeenCalled();
+    });
+
+    it("create_graph_workflow with a duplicate-rank charter is rejected with charter_invalid naming the offending entry", async () => {
+      const deps = createMockDeps();
+      registerTools(deps);
+
+      const result = (await getHandler("create_graph_workflow")({
+        ...MINIMAL_INPUT,
+        charter: DUP_RANK_CHARTER,
+      })) as { content: Array<{ text: string }>; isError?: boolean };
+
+      expect(result.isError).toBe(true);
+      const text = result.content[0]?.text ?? "";
+      expect(text).toContain("charter_invalid");
+      expect(text).toContain("acceptance-criteria");
+      expect(deps.createWorkflow).not.toHaveBeenCalled();
+    });
+
+    it("replace_graph_workflow without a charter is rejected with charter_missing", async () => {
+      const deps = createMockDeps();
+      registerTools(deps);
+
+      const result = (await getHandler("replace_graph_workflow")(
+        withoutCharter({ workflowId: "wf-test-1", ...MINIMAL_INPUT }),
+      )) as { content: Array<{ text: string }>; isError?: boolean };
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text ?? "").toContain("charter_missing");
+      expect(deps.updateWorkflow).not.toHaveBeenCalled();
+    });
+
+    it("replace_graph_workflow with a duplicate-rank charter is rejected with charter_invalid", async () => {
+      const deps = createMockDeps();
+      registerTools(deps);
+
+      const result = (await getHandler("replace_graph_workflow")({
+        workflowId: "wf-test-1",
+        ...MINIMAL_INPUT,
+        charter: DUP_RANK_CHARTER,
+      })) as { content: Array<{ text: string }>; isError?: boolean };
+
+      expect(result.isError).toBe(true);
+      const text = result.content[0]?.text ?? "";
+      expect(text).toContain("charter_invalid");
+      expect(text).toContain("acceptance-criteria");
+      expect(deps.updateWorkflow).not.toHaveBeenCalled();
+    });
+
+    it("replace_graph_workflow that changes charter content emits charter.updated once with the new hash and revision", async () => {
+      const existingCharter = makeTestCharter();
+      const newCharter = makeTestCharter({
+        mission: "A materially different mission narrative",
+      });
+      const publishCharterUpdated = makePublishCharterUpdatedSpy();
+      const deps = createMockDeps({
+        getWorkflow: vi.fn(async () => makeRecordWithCharter(existingCharter)),
+        publishCharterUpdated,
+      });
+      registerTools(deps);
+
+      const result = (await getHandler("replace_graph_workflow")({
+        workflowId: "wf-test-1",
+        ...MINIMAL_INPUT,
+        charter: newCharter,
+      })) as { isError?: boolean };
+
+      expect(result.isError).toBeUndefined();
+      expect(publishCharterUpdated).toHaveBeenCalledOnce();
+      const call = publishCharterUpdated.mock.calls[0]![0];
+      expect(call.projectPath).toBe("/test");
+      expect(call.definitionId).toBe("wf-test-1");
+      // updateWorkflow mock returns revision 2.
+      expect(call.definitionRevision).toBe(2);
+      expect(call.charterHash).toBe(computeCharterHash(newCharter));
+      expect(call.charterHash).not.toBe(computeCharterHash(existingCharter));
+    });
+
+    it("replace_graph_workflow that does not change charter content does NOT emit charter.updated", async () => {
+      const existingCharter = makeTestCharter();
+      const publishCharterUpdated = makePublishCharterUpdatedSpy();
+      const deps = createMockDeps({
+        getWorkflow: vi.fn(async () => makeRecordWithCharter(existingCharter)),
+        publishCharterUpdated,
+      });
+      registerTools(deps);
+
+      const result = (await getHandler("replace_graph_workflow")({
+        workflowId: "wf-test-1",
+        ...MINIMAL_INPUT,
+        charter: existingCharter,
+      })) as { isError?: boolean };
+
+      expect(result.isError).toBeUndefined();
+      expect(publishCharterUpdated).not.toHaveBeenCalled();
+    });
   });
 });

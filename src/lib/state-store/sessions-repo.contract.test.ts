@@ -19,6 +19,7 @@ import {
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 type Db = InstanceType<typeof Database>;
 
 let db: Db;
@@ -69,6 +70,7 @@ function makeFullSession(overrides: Partial<SessionState> = {}): SessionState {
       seedDefinitionId: "seed-1",
       seedDefinitionRevision: 1,
       workingDefinition: {},
+      charter: makeTestCharter(),
       status: "pending",
       startedAt: "2026-01-01T00:00:00Z",
     },
@@ -78,6 +80,7 @@ function makeFullSession(overrides: Partial<SessionState> = {}): SessionState {
         seedDefinitionId: "seed-h",
         seedDefinitionRevision: 1,
         workingDefinition: {},
+        charter: makeTestCharter(),
         status: "completed",
         startedAt: "2025-12-01T00:00:00Z",
       },
@@ -694,6 +697,7 @@ function buildMaximalGraphWorkflowExecution(): unknown {
             maxIterations: 7,
             continuity: { enabled: false, contextLimitTokens: 90_000 },
           },
+          charter: makeTestCharter(),
         },
       ],
       tasks: [
@@ -715,6 +719,7 @@ function buildMaximalGraphWorkflowExecution(): unknown {
         },
       ],
     },
+    charter: makeTestCharter(),
     status: "running",
     activeContextIds: ["ctx-1"],
     contextStates: {
@@ -774,6 +779,7 @@ function buildMaximalGraphWorkflowExecution(): unknown {
         relativePath: "docs/plan.md",
         description: "the shared plan",
         readWhen: "before implementing",
+        kind: "charter",
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-02T00:00:00Z",
         lastUpdatedByConversationId: "conv-doc-1",

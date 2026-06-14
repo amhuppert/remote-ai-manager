@@ -1,3 +1,8 @@
+import {
+  CHARTER_DOCUMENT_PATH,
+  renderCharterPromptSection,
+} from "@/lib/workflow-graph/charter/render";
+import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
 import type {
   GraphWorkflowCollaborationContinuation,
   GraphWorkflowResolvedContext,
@@ -5,6 +10,13 @@ import type {
   GraphWorkflowTaskDefinition,
   GraphWorkflowTaskState,
 } from "@/lib/workflows/schemas";
+
+function buildCharterSection(charter: WorkflowCharter): string {
+  return renderCharterPromptSection(charter, [
+    "When resolving a source conflict or ambiguity while completing a task, cite the governing source-of-truth entry in your `complete_task` summary.",
+    "Sources marked outside the worktree are read-only: never read, write, or verify them; out-of-worktree access requires explicit human permission.",
+  ]);
+}
 interface LatestContextValidationFailureFeedbackIssue {
   title: string;
   description: string;
@@ -31,6 +43,7 @@ export interface BuildIterationPromptInput {
   contextValidationAcceptanceCriteria?: string;
   latestContextValidationFailure?: LatestContextValidationFailureFeedback;
   collaborationContinuations?: GraphWorkflowCollaborationContinuation[];
+  charter?: WorkflowCharter;
 }
 
 function buildTaskLines(
@@ -156,6 +169,11 @@ function buildCollaborationContinuationSection(
 export function buildIterationPrompt(input: BuildIterationPromptInput): string {
   const sections: string[] = [];
 
+  // Charter digest at the very top, before the context header (4.1, 4.3).
+  if (input.charter) {
+    sections.push(buildCharterSection(input.charter));
+  }
+
   // Context header
   sections.push(`# Execution Context: ${input.context.title}`);
   if (input.context.description) {
@@ -262,11 +280,15 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
 
   sections.push(toolDocs.join("\n"));
 
-  // Shared documents
+  // Shared documents — the charter has its own top section, so exclude its
+  // entry from the generic list.
+  const genericDocs = input.sharedDocuments.filter(
+    (doc) => doc.kind !== "charter",
+  );
   const docLines =
-    input.sharedDocuments.length === 0
+    genericDocs.length === 0
       ? ["- None registered."]
-      : input.sharedDocuments.map(
+      : genericDocs.map(
           (doc) =>
             `- \`${doc.relativePath}\`: ${doc.description} — Read when: ${doc.readWhen}`,
         );
@@ -283,6 +305,7 @@ export interface BuildFollowUpPromptInput {
   maxAttempts: number;
   latestContextValidationFailure?: LatestContextValidationFailureFeedback;
   collaborationContinuations?: GraphWorkflowCollaborationContinuation[];
+  charter?: WorkflowCharter;
 }
 
 export function buildFollowUpPrompt(input: BuildFollowUpPromptInput): string {
@@ -290,6 +313,14 @@ export function buildFollowUpPrompt(input: BuildFollowUpPromptInput): string {
   const sections = [
     `You still have ${input.remainingTasks.length} incomplete task(s):`,
   ];
+
+  // Compact charter reminder on every continuation turn (4.4). The full digest
+  // is re-presented when a fresh session is re-seeded via buildIterationPrompt.
+  if (input.charter) {
+    sections.push(
+      `Reminder: the workflow charter still governs — a higher-ranked source prevails over a lower-ranked one on conflict. Full charter: \`${CHARTER_DOCUMENT_PATH}\`.`,
+    );
+  }
 
   const latestContextValidationFailureSection =
     buildLatestContextValidationFailureSection(

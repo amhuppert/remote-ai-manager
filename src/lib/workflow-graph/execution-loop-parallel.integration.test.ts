@@ -31,6 +31,7 @@ import {
 import { createGraphWorkflowSignalHaltHandler } from "@/lib/workflow-graph/graph-workflow-signal-halt";
 import { createGraphWorkflowManager } from "./workflow-manager";
 import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 
 interface InMemoryExecutionRepository {
   getActive(
@@ -219,6 +220,7 @@ function createParallelDefinition(
   return {
     schemaVersion: 1,
     workflowConfig: {},
+    charter: makeTestCharter(),
     executionContexts: contextIds.map((id) => ({
       id,
       title: `Context ${id}`,
@@ -290,6 +292,7 @@ function createInitialExecution(
     seedDefinitionRevision: 1,
     workingDefinition:
       definition as unknown as ResolvedWorkflowSemanticDefinition,
+    charter: makeTestCharter(),
     status: "running",
     activeContextIds: [],
     contextStates,
@@ -1406,6 +1409,7 @@ describe("execution loop — parallel integration", () => {
     const definition: WorkflowSemanticDefinition = {
       schemaVersion: 1,
       workflowConfig: {},
+      charter: makeTestCharter(),
       executionContexts: contextIds.map((id) => ({
         id,
         title: `Context ${id}`,
@@ -1567,6 +1571,7 @@ describe("execution loop — parallel integration", () => {
     const definition: WorkflowSemanticDefinition = {
       schemaVersion: 1,
       workflowConfig: {},
+      charter: makeTestCharter(),
       executionContexts: contextIds.map((id) => ({
         id,
         title: `Context ${id}`,

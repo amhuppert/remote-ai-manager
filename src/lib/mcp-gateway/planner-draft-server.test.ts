@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 
 type CapturedTool = {
   options: Record<string, unknown>;
@@ -57,6 +58,7 @@ describe("mcp-gateway/planner-draft-server", () => {
     const definition = {
       schemaVersion: 1,
       workflowConfig: {},
+      charter: makeTestCharter(),
       executionContexts: [],
       tasks: [],
       edges: [],

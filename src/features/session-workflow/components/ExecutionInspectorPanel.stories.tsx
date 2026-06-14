@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
 import "@/components/workflow-graph/workflow-graph.css";
 import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import ExecutionInspectorPanel from "./ExecutionInspectorPanel";
 
 function makeExecution(
@@ -154,6 +155,7 @@ const createUserSchema = z.object({
         { id: "e-2", sourceContextId: "ctx-1", targetContextId: "ctx-2" },
       ],
     },
+    charter: makeTestCharter(),
     status: "running",
     activeContextIds: ["ctx-1"],
     contextStates: {
@@ -268,6 +270,7 @@ const createUserSchema = z.object({
         relativePath: ".kiro/specs/user-management/design.md",
         description: "User management design spec",
         readWhen: "Starting any user management task",
+        kind: "shared",
         createdAt: "2026-03-30T09:00:00Z",
         updatedAt: "2026-03-30T09:00:00Z",
         lastUpdatedByConversationId: null,

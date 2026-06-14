@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 
 describe("mcp-gateway/planner-draft-registry", () => {
   it("stores and consumes submitted drafts", async () => {
@@ -13,6 +14,7 @@ describe("mcp-gateway/planner-draft-registry", () => {
     const definition = {
       schemaVersion: 1,
       workflowConfig: {},
+      charter: makeTestCharter(),
       executionContexts: [],
       tasks: [],
       edges: [],

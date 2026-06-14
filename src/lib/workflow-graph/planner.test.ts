@@ -4,6 +4,7 @@ import type {
   WorkflowSemanticDefinition,
 } from "@/lib/workflows/schemas";
 import { createWorkflowDefinitionRecord } from "./test-fixtures";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 
 describe("workflow graph planner", () => {
   beforeEach(() => {
@@ -18,6 +19,7 @@ describe("workflow graph planner", () => {
         async (): Promise<WorkflowSemanticDefinition> => ({
           schemaVersion: 1,
           workflowConfig: {},
+          charter: makeTestCharter(),
           executionContexts: [
             {
               id: "context-plan",
@@ -107,6 +109,7 @@ describe("workflow graph planner", () => {
         async (): Promise<WorkflowSemanticDefinition> => ({
           schemaVersion: 1,
           workflowConfig: {},
+          charter: makeTestCharter(),
           executionContexts: [
             {
               id: "context-1",
@@ -160,6 +163,7 @@ describe("workflow graph planner", () => {
       async (): Promise<WorkflowSemanticDefinition> => ({
         schemaVersion: 1,
         workflowConfig: {},
+        charter: makeTestCharter(),
         executionContexts: [],
         tasks: [],
         edges: [],

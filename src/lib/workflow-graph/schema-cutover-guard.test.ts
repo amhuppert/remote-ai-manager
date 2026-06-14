@@ -4,6 +4,7 @@ import {
   assertDefinitionRecordSupported,
   assertExecutionSupported,
 } from "./schema-cutover-guard";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 
 const timestamp = "2026-04-04T00:00:00.000Z";
 
@@ -24,6 +25,7 @@ function makeValidDefinitionRecord() {
     definition: {
       schemaVersion: 1,
       workflowConfig: {},
+      charter: makeTestCharter(),
       executionContexts: [
         {
           id: "ctx-1",
@@ -63,6 +65,7 @@ function makeValidExecution() {
     startedAt: timestamp,
     completedAt: null,
     haltReason: null,
+    charter: makeTestCharter(),
     workingDefinition: {
       schemaVersion: 1,
       executionContexts: [

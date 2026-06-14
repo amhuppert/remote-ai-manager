@@ -16,8 +16,14 @@ import {
   graphWorkflowMutabilityPolicySchema,
   graphWorkflowScriptValidatorConfigSchema,
 } from "@/lib/workflows/schemas";
-import { workflowConfigOverrideSchema } from "@/lib/workflows/schemas";
+import {
+  workflowConfigOverrideSchema,
+  workflowSemanticDefinitionSchema,
+} from "@/lib/workflows/schemas";
+import { workflowCharterSchema } from "@/lib/workflows/charter-schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
+import { computeCharterHash } from "./charter/render";
+import { getExecutionLogger } from "./execution-logger";
 import { generateWorkflowLayout } from "./layout";
 import type {
   WorkflowDefinitionDraft,
@@ -144,6 +150,9 @@ const createWorkflowSchema = z.object({
     .describe(
       "Optional workflow-level config overrides. Omit unless the user explicitly asked for non-default workflow-wide settings.",
     ),
+  charter: workflowCharterSchema.describe(
+    "Workflow-global charter declaring the source-of-truth precedence hierarchy and mission/conventions narrative shared by every implementer and validator.",
+  ),
   executionContexts: z
     .array(executionContextInputSchema)
     .min(1)
@@ -184,6 +193,9 @@ const replaceWorkflowSchema = z.object({
     .describe(
       "Optional workflow-level config overrides. Omit unless the user explicitly asked for non-default workflow-wide settings.",
     ),
+  charter: workflowCharterSchema.describe(
+    "Workflow-global charter declaring the source-of-truth precedence hierarchy and mission/conventions narrative shared by every implementer and validator.",
+  ),
   executionContexts: z
     .array(executionContextInputSchema)
     .min(1)
@@ -257,13 +269,14 @@ function inflateToSemanticDefinition(
     targetContextId: edge.targetContextId,
   }));
 
-  return {
+  return workflowSemanticDefinitionSchema.parse({
     schemaVersion: 1,
     workflowConfig: input.workflowConfig ?? {},
+    charter: input.charter,
     executionContexts,
     tasks,
     edges,
-  };
+  });
 }
 
 function textResult(message: string) {
@@ -277,6 +290,41 @@ function errorResult(message: string) {
     content: [{ type: "text" as const, text: message }],
     isError: true,
   };
+}
+
+/**
+ * Friendly charter precheck shared by the create and replace handlers. Run
+ * before the generic schema parse so the two charter failure modes surface as
+ * clear, distinct errors that name the offending entry rather than a raw Zod
+ * dump:
+ * - charter absent in the raw tool args -> `charter_missing` (2.2)
+ * - charter present but invalid -> `charter_invalid` describing the first issue,
+ *   including the duplicate-rank entry the schema's superRefine names (1.4)
+ *
+ * Returns an `errorResult` to short-circuit the handler, or `null` to proceed.
+ */
+function precheckCharter(args: unknown): ReturnType<typeof errorResult> | null {
+  const rawCharter =
+    args !== null && typeof args === "object" && "charter" in args
+      ? (args as { charter: unknown }).charter
+      : undefined;
+
+  if (rawCharter === undefined || rawCharter === null) {
+    return errorResult(
+      "charter_missing: a workflow charter is required. Provide a charter with a non-empty `mission` and a ranked `sourcesOfTruth` list (each entry: rank, id, label, type, locator, description, accessPolicy) declaring the source-of-truth precedence hierarchy.",
+    );
+  }
+
+  const parsed = workflowCharterSchema.safeParse(rawCharter);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const where =
+      issue && issue.path.length > 0 ? ` (at ${issue.path.join(".")})` : "";
+    const detail = issue?.message ?? parsed.error.message;
+    return errorResult(`charter_invalid: ${detail}${where}`);
+  }
+
+  return null;
 }
 
 export interface PlannerToolDeps {
@@ -300,6 +348,14 @@ export interface PlannerToolDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<GraphWorkflowExecution | null>;
+  publishCharterUpdated(input: {
+    projectPath: string;
+    sessionName: string;
+    definitionId: string;
+    definitionRevision: number;
+    charterHash: string;
+    execution?: GraphWorkflowExecution | null;
+  }): GraphWorkflowExecution | null;
 }
 
 export interface PlannerToolContext {
@@ -329,6 +385,11 @@ function createCreateWorkflowHandler(
   deps: PlannerToolDeps,
 ) {
   return async (args: unknown) => {
+    const charterError = precheckCharter(args);
+    if (charterError) {
+      return charterError;
+    }
+
     const parsed = createWorkflowSchema.safeParse(args);
     if (!parsed.success) {
       return errorResult(
@@ -361,6 +422,11 @@ function createReplaceWorkflowHandler(
   deps: PlannerToolDeps,
 ) {
   return async (args: unknown) => {
+    const charterError = precheckCharter(args);
+    if (charterError) {
+      return charterError;
+    }
+
     const parsed = replaceWorkflowSchema.safeParse(args);
     if (!parsed.success) {
       return errorResult(
@@ -369,6 +435,15 @@ function createReplaceWorkflowHandler(
     }
 
     try {
+      const existing = await deps.getWorkflow(
+        context.projectPath,
+        parsed.data.workflowId,
+      );
+      const previousHash = existing
+        ? computeCharterHash(existing.definition.charter)
+        : null;
+      const nextHash = computeCharterHash(parsed.data.charter);
+
       const definition = inflateToSemanticDefinition(parsed.data);
       const layout = generateWorkflowLayout(definition);
       const record = await deps.updateWorkflow(
@@ -381,6 +456,29 @@ function createReplaceWorkflowHandler(
           layout,
         },
       );
+
+      if (nextHash !== previousHash) {
+        const activeExecution = await deps.getActiveExecution(
+          context.projectPath,
+          context.sessionName,
+        );
+        deps.publishCharterUpdated({
+          projectPath: context.projectPath,
+          sessionName: context.sessionName,
+          definitionId: parsed.data.workflowId,
+          definitionRevision: record.revision,
+          charterHash: nextHash,
+          execution: activeExecution,
+        });
+        if (activeExecution) {
+          getExecutionLogger(activeExecution.id)?.lifecycle("charter.updated", {
+            charterHash: nextHash,
+            definitionRevision: record.revision,
+            definitionId: parsed.data.workflowId,
+          });
+        }
+      }
+
       return textResult(
         `Workflow "${record.name}" replaced (revision: ${record.revision}). The user can review the changes in the visual workflow builder.`,
       );

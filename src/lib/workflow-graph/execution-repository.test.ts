@@ -1,42 +1,86 @@
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { GlobalConfig } from "@/lib/config/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
+import { computeCharterHash } from "./charter/render";
+import { createWorkflowCharterService } from "./charter/service";
+import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import {
   GraphWorkflowValidationError,
   createGraphWorkflowExecutionRepository,
 } from "./execution-repository";
 import { LegacyWorkflowSchemaError } from "./schema-cutover-guard";
 import { createWorkflowDefinition } from "./test-fixtures";
+import type { GraphWorkflowSSEEvent } from "@/lib/workflows/schemas";
+
+const WORKTREE_PATH = "/repo/.worktrees/session-1";
 
 function makeSession(): SessionState {
   return {
+    worktreePath: WORKTREE_PATH,
     graphWorkflowExecution: null,
     graphWorkflowExecutionHistory: [],
   } as unknown as SessionState;
 }
 
+interface CapturedWrite {
+  absolutePath: string;
+  contents: string;
+}
+
 function createInMemoryRepo(config: GlobalConfig = {} as GlobalConfig) {
   const sessions = new Map<string, SessionState>();
+  const broadcasts: GraphWorkflowSSEEvent[] = [];
+  const writes: CapturedWrite[] = [];
 
-  return createGraphWorkflowExecutionRepository({
-    async getSession(projectPath, sessionName) {
-      return sessions.get(`${projectPath}:${sessionName}`) ?? null;
+  // Real event publisher with a capturing broadcast, and a real charter
+  // service with an injected capturing fs — so create() exercises the real
+  // seed-propagation path (snapshot + kind:"charter" doc + charter-registered
+  // event) without touching the disk.
+  const eventPublisher = createGraphWorkflowExecutionEventPublisher({
+    broadcast(event) {
+      broadcasts.push(event);
     },
-    async mutateSession(projectPath, sessionName, _label, mutate) {
-      let session = sessions.get(`${projectPath}:${sessionName}`);
+  });
+  const charterService = createWorkflowCharterService({
+    writeFile: async (absolutePath, contents) => {
+      writes.push({ absolutePath, contents: String(contents) });
+    },
+    ensureDir: async () => {},
+    publishCharterRegistered: eventPublisher.publishCharterRegistered,
+  });
+
+  const repo = createGraphWorkflowExecutionRepository({
+    async getSession(projectPath, sessionName) {
+      const key = `${projectPath}:${sessionName}`;
+      let session = sessions.get(key);
       if (!session) {
         session = makeSession();
-        sessions.set(`${projectPath}:${sessionName}`, session);
+        sessions.set(key, session);
+      }
+      return session;
+    },
+    async mutateSession(projectPath, sessionName, _label, mutate) {
+      const key = `${projectPath}:${sessionName}`;
+      let session = sessions.get(key);
+      if (!session) {
+        session = makeSession();
+        sessions.set(key, session);
       }
       return mutate(session);
     },
+    eventPublisher,
+    charterService,
     readConfig: async () => config,
   });
+
+  return { repo, sessions, broadcasts, writes };
 }
 
 describe("createGraphWorkflowExecutionRepository.create", () => {
   it("rejects a seed definition that contains contextSoftLimitTokens", async () => {
-    const repo = createInMemoryRepo();
+    const { repo } = createInMemoryRepo();
     const legacyDefinition = {
       ...createWorkflowDefinition(),
       executionContexts: [
@@ -67,7 +111,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
   });
 
   it("rejects a seed definition that contains contextHardLimitTokens", async () => {
-    const repo = createInMemoryRepo();
+    const { repo } = createInMemoryRepo();
     const legacyDefinition = {
       ...createWorkflowDefinition(),
       executionContexts: [
@@ -98,7 +142,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
   });
 
   it("creates an execution successfully for a valid definition", async () => {
-    const repo = createInMemoryRepo();
+    const { repo } = createInMemoryRepo();
     const execution = await repo.create("/repo", "session-1", {
       definition: createWorkflowDefinition(),
       definitionId: "wf-1",
@@ -112,7 +156,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
   });
 
   it("seeds the lane plan from the resolved working definition at creation time", async () => {
-    const repo = createInMemoryRepo();
+    const { repo } = createInMemoryRepo();
     const execution = await repo.create("/repo", "session-1", {
       definition: createWorkflowDefinition(),
       definitionId: "wf-1",
@@ -133,7 +177,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
   });
 
   it("initializes context and task state to execution-start defaults", async () => {
-    const repo = createInMemoryRepo();
+    const { repo } = createInMemoryRepo();
     const execution = await repo.create("/repo", "session-1", {
       definition: createWorkflowDefinition(),
       definitionId: "wf-1",
@@ -145,7 +189,10 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
     expect(execution.activeContextIds).toEqual([]);
     expect(execution.haltReason).toBeNull();
     expect(execution.completedAt).toBeNull();
-    expect(execution.sharedDocuments).toEqual([]);
+    // The charter document is seeded at create, so the only shared document is
+    // the reserved kind:"charter" entry.
+    expect(execution.sharedDocuments).toHaveLength(1);
+    expect(execution.sharedDocuments[0]?.kind).toBe("charter");
     expect(execution.laneStates).toEqual({});
     expect(execution.machineSnapshot).toBeNull();
 
@@ -190,7 +237,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
   });
 
   it("stores a resolved workingDefinition with implementer populated even when the input omits it", async () => {
-    const repo = createInMemoryRepo();
+    const { repo } = createInMemoryRepo();
     const baseline = createWorkflowDefinition();
     const definition = {
       ...baseline,
@@ -218,7 +265,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
   });
 
   it("populates contextValidator from seeded defaults and leaves disabled overrides as null", async () => {
-    const repo = createInMemoryRepo();
+    const { repo } = createInMemoryRepo();
     const baseline = createWorkflowDefinition();
     const definition = {
       ...baseline,
@@ -253,7 +300,7 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
   });
 
   it("throws GraphWorkflowValidationError when resolved implementer uses an unsupported reasoning effort", async () => {
-    const repo = createInMemoryRepo();
+    const { repo } = createInMemoryRepo();
     const baseline = createWorkflowDefinition();
     const definition = {
       ...baseline,
@@ -279,5 +326,97 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         startedAt: "2026-04-04T00:00:00.000Z",
       }),
     ).rejects.toBeInstanceOf(GraphWorkflowValidationError);
+  });
+});
+
+describe("createGraphWorkflowExecutionRepository.create charter seed propagation", () => {
+  it("stores an execution whose charter snapshot is set and whose shared documents include a kind:'charter' entry", async () => {
+    const { repo, sessions } = createInMemoryRepo();
+    const definition = createWorkflowDefinition({ charter: makeTestCharter() });
+
+    await repo.create("/repo", "session-1", {
+      definition,
+      definitionId: "wf-1",
+      definitionRevision: 1,
+      executionId: "exec-1",
+      startedAt: "2026-04-04T00:00:00.000Z",
+    });
+
+    const stored = sessions.get("/repo:session-1")?.graphWorkflowExecution;
+    expect(stored).not.toBeNull();
+    expect(stored?.charter).toEqual(definition.charter);
+
+    const charterEntries =
+      stored?.sharedDocuments.filter((entry) => entry.kind === "charter") ?? [];
+    expect(charterEntries).toHaveLength(1);
+    expect(charterEntries[0]?.relativePath).toBe(
+      ".cc/graph-workflow-docs/charter.md",
+    );
+  });
+
+  it("writes charter.md inside the session worktree only", async () => {
+    const { repo, writes } = createInMemoryRepo();
+
+    await repo.create("/repo", "session-1", {
+      definition: createWorkflowDefinition(),
+      definitionId: "wf-1",
+      definitionRevision: 1,
+      executionId: "exec-1",
+      startedAt: "2026-04-04T00:00:00.000Z",
+    });
+
+    expect(writes).toHaveLength(1);
+    expect(writes[0]?.absolutePath).toBe(
+      path.join(WORKTREE_PATH, ".cc", "graph-workflow-docs", "charter.md"),
+    );
+  });
+
+  it("records and broadcasts a charter-registered event carrying the charter hash", async () => {
+    const charter = makeTestCharter();
+    const { repo, sessions, broadcasts } = createInMemoryRepo();
+
+    await repo.create("/repo", "session-1", {
+      definition: createWorkflowDefinition({ charter }),
+      definitionId: "wf-1",
+      definitionRevision: 2,
+      executionId: "exec-1",
+      startedAt: "2026-04-04T00:00:00.000Z",
+    });
+
+    const charterBroadcast = broadcasts.find(
+      (event) => event.type === "graph-workflow-charter-registered",
+    );
+    expect(charterBroadcast).toBeDefined();
+    expect(charterBroadcast).toMatchObject({
+      executionId: "exec-1",
+      definitionId: "wf-1",
+      definitionRevision: 2,
+      charterHash: computeCharterHash(charter),
+    });
+
+    const stored = sessions.get("/repo:session-1")?.graphWorkflowExecution;
+    const registeredEvent = stored?.history.find(
+      (entry) => entry.event.type === "graph-workflow-charter-registered",
+    );
+    expect(registeredEvent).toBeDefined();
+  });
+
+  it("throws when the session has no worktree path", async () => {
+    const { repo, sessions } = createInMemoryRepo();
+    sessions.set("/repo:session-1", {
+      worktreePath: "",
+      graphWorkflowExecution: null,
+      graphWorkflowExecutionHistory: [],
+    } as unknown as SessionState);
+
+    await expect(
+      repo.create("/repo", "session-1", {
+        definition: createWorkflowDefinition(),
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        executionId: "exec-1",
+        startedAt: "2026-04-04T00:00:00.000Z",
+      }),
+    ).rejects.toThrow(/worktree/);
   });
 });

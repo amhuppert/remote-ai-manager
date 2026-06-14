@@ -411,6 +411,8 @@ function normalizeEvent(
     case "graph-workflow-pending-halt-reason":
     case "graph-workflow-approval-pending":
     case "graph-workflow-approval-resolved":
+    case "graph-workflow-charter-registered":
+    case "graph-workflow-charter-updated":
       return null;
   }
 }

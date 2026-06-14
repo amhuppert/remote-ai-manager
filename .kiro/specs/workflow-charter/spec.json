@@ -1,0 +1,22 @@
+{
+  "feature_name": "workflow-charter",
+  "created_at": "2026-06-14T04:33:28Z",
+  "updated_at": "2026-06-14T06:57:07Z",
+  "language": "en",
+  "phase": "tasks-generated",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": true
+    },
+    "design": {
+      "generated": true,
+      "approved": true
+    },
+    "tasks": {
+      "generated": true,
+      "approved": true
+    }
+  },
+  "ready_for_implementation": true
+}

@@ -36,6 +36,7 @@ import type {
   RecordPendingHaltReasonResult,
   ScheduleEligibleContextsResult,
 } from "./workflow-manager";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 
 function createSingleContextDefinition(
   maxIterations: number,
@@ -43,6 +44,7 @@ function createSingleContextDefinition(
   return {
     schemaVersion: 1,
     workflowConfig: {},
+    charter: makeTestCharter(),
     executionContexts: [
       {
         id: "ctx-1",
@@ -83,6 +85,7 @@ function createRunningExecution(
     seedDefinitionRevision: 1,
     workingDefinition:
       definition as unknown as ResolvedWorkflowSemanticDefinition,
+    charter: makeTestCharter(),
     status: "running",
     activeContextIds: [],
     contextStates: {

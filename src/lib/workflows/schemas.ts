@@ -5,6 +5,7 @@ import {
   codexReasoningEffortSchema,
   effortLevelSchema,
 } from "@/lib/agent-backends/schemas";
+import { workflowCharterSchema } from "./charter-schemas";
 
 // ============================================================
 // Graph Workflow Agent Configuration Schemas
@@ -293,6 +294,7 @@ export type GraphWorkflowContextEdge = z.infer<
 export const workflowSemanticDefinitionSchema = z.object({
   schemaVersion: z.number().int().positive().default(1),
   workflowConfig: workflowConfigOverrideSchema.default({}),
+  charter: workflowCharterSchema,
   executionContexts: z
     .array(graphWorkflowExecutionContextDefinitionSchema)
     .default([]),
@@ -319,6 +321,7 @@ export const graphWorkflowResolvedContextSchema = z.object({
   mutability: graphWorkflowMutabilityPolicySchema,
   circuitBreaker: graphWorkflowCircuitBreakerPolicySchema,
   iterationPolicy: graphWorkflowIterationPolicySchema,
+  charter: workflowCharterSchema.optional(),
 });
 export type GraphWorkflowResolvedContext = z.infer<
   typeof graphWorkflowResolvedContextSchema
@@ -385,11 +388,14 @@ export const workflowAgentValidatorResultSchema = z.object({
   issues: z.array(workflowValidatorIssueSchema).default([]),
 });
 
-const graphWorkflowSharedDocumentEntrySchema = z.object({
+export const graphWorkflowSharedDocumentEntrySchema = z.object({
   id: z.string().trim().min(1),
   relativePath: z.string().trim().min(1),
   description: z.string().trim().min(1),
   readWhen: z.string().trim().min(1),
+  // Distinguishes the reserved charter document from ordinary shared docs.
+  // Entries persisted before this discriminator existed parse as "shared".
+  kind: z.enum(["shared", "charter"]).default("shared"),
   createdAt: z.string(),
   updatedAt: z.string(),
   lastUpdatedByConversationId: z.string().nullable().default(null),
@@ -1070,6 +1076,35 @@ export type GraphWorkflowApprovalResolvedEvent = z.infer<
   typeof graphWorkflowApprovalResolvedEventSchema
 >;
 
+export const graphWorkflowCharterRegisteredEventSchema = z.object({
+  type: z.literal("graph-workflow-charter-registered"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  executionId: z.string(),
+  definitionId: z.string(),
+  definitionRevision: z.number().int().min(1),
+  charterHash: z.string(),
+});
+export type GraphWorkflowCharterRegisteredEvent = z.infer<
+  typeof graphWorkflowCharterRegisteredEventSchema
+>;
+
+export const graphWorkflowCharterUpdatedEventSchema = z.object({
+  type: z.literal("graph-workflow-charter-updated"),
+  projectName: z.string(),
+  sessionName: z.string(),
+  // A charter replacement may occur with no active execution (a
+  // definition-level update), so the updated event carries a nullable
+  // executionId — unlike the registered event, which is always seeded with one.
+  executionId: z.string().nullable(),
+  definitionId: z.string(),
+  definitionRevision: z.number().int().min(1),
+  charterHash: z.string(),
+});
+export type GraphWorkflowCharterUpdatedEvent = z.infer<
+  typeof graphWorkflowCharterUpdatedEventSchema
+>;
+
 const graphWorkflowSseEventSchema = z.discriminatedUnion("type", [
   graphWorkflowStatusEventSchema,
   graphWorkflowContextStatusEventSchema,
@@ -1084,6 +1119,8 @@ const graphWorkflowSseEventSchema = z.discriminatedUnion("type", [
   graphWorkflowJoinStatusEventSchema,
   graphWorkflowApprovalPendingEventSchema,
   graphWorkflowApprovalResolvedEventSchema,
+  graphWorkflowCharterRegisteredEventSchema,
+  graphWorkflowCharterUpdatedEventSchema,
 ]);
 export type GraphWorkflowSSEEvent = z.infer<typeof graphWorkflowSseEventSchema>;
 
@@ -1164,6 +1201,7 @@ export const graphWorkflowExecutionSchema = z.object({
   seedDefinitionId: z.string().trim().min(1),
   seedDefinitionRevision: z.number().int().min(1),
   workingDefinition: resolvedWorkflowSemanticDefinitionSchema,
+  charter: workflowCharterSchema,
   status: graphWorkflowStatusSchema,
   activeContextIds: z.array(z.string()).default([]),
   contextStates: z

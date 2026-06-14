@@ -26,6 +26,7 @@ import {
   graphWorkflowMergeStatusEventSchema,
   graphWorkflowPendingHaltReasonEventSchema,
   graphWorkflowResolvedContextSchema,
+  graphWorkflowSharedDocumentEntrySchema,
   graphWorkflowSharedDocumentsUpdatedEventSchema,
   graphWorkflowStatusEventSchema,
   resetExecutionContextRequestSchema,
@@ -33,7 +34,9 @@ import {
   workflowConfigOverrideSchema,
   workflowDefinitionRecordSchema,
   workflowRuntimeEditRequestSchema,
+  workflowSemanticDefinitionSchema,
 } from "./schemas";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import {
   globalConfigSchema,
   workflowDefaultsSchema,
@@ -46,6 +49,7 @@ function createSemanticDefinition() {
   return {
     schemaVersion: 1,
     workflowConfig: {},
+    charter: makeTestCharter(),
     executionContexts: [
       {
         id: "context-1",
@@ -278,6 +282,7 @@ describe("workflow graph execution schemas", () => {
       seedDefinitionId: "workflow-1",
       seedDefinitionRevision: 4,
       workingDefinition: createResolvedDefinition(),
+      charter: makeTestCharter(),
       status: "running",
       activeContextIds: ["context-1"],
       activeTaskId: "task-1",
@@ -374,6 +379,92 @@ describe("workflow graph execution schemas", () => {
       expect(result.data.history[0]?.event.type).toBe(
         "graph-workflow-validation-result",
       );
+    }
+  });
+});
+
+describe("workflow charter requirement on persisted schemas", () => {
+  it("rejects a semantic definition that omits the charter", () => {
+    const def = createSemanticDefinition();
+    const { charter: _charter, ...withoutCharter } = def;
+    void _charter;
+
+    const result = workflowSemanticDefinitionSchema.safeParse(withoutCharter);
+
+    expect(result.success).toBe(false);
+  });
+
+  it("parses a semantic definition that includes a valid charter", () => {
+    const result = workflowSemanticDefinitionSchema.safeParse(
+      createSemanticDefinition(),
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.charter.sourcesOfTruth).toHaveLength(2);
+    }
+  });
+
+  it("rejects an execution snapshot that omits the charter", () => {
+    const result = graphWorkflowExecutionSchema.safeParse({
+      id: "execution-no-charter",
+      seedDefinitionId: "workflow-1",
+      seedDefinitionRevision: 1,
+      workingDefinition: createResolvedDefinition(),
+      status: "pending",
+      startedAt: timestamp,
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("parses an execution snapshot that includes a valid charter", () => {
+    const result = graphWorkflowExecutionSchema.safeParse({
+      id: "execution-with-charter",
+      seedDefinitionId: "workflow-1",
+      seedDefinitionRevision: 1,
+      workingDefinition: createResolvedDefinition(),
+      status: "pending",
+      startedAt: timestamp,
+      charter: makeTestCharter(),
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.charter.mission).toBe(makeTestCharter().mission);
+    }
+  });
+
+  it("defaults a shared-document entry without an explicit kind to 'shared'", () => {
+    const result = graphWorkflowSharedDocumentEntrySchema.safeParse({
+      id: "doc-1",
+      relativePath: ".cc/graph-workflow-docs/plan.md",
+      description: "Shared implementation plan",
+      readWhen: "Read before starting implementation work.",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.kind).toBe("shared");
+    }
+  });
+
+  it("accepts a shared-document entry with an explicit charter kind", () => {
+    const result = graphWorkflowSharedDocumentEntrySchema.safeParse({
+      id: "charter-doc",
+      relativePath: ".cc/graph-workflow-docs/charter.md",
+      description: "The governing charter",
+      readWhen: "Read before resolving any source conflict.",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      kind: "charter",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.kind).toBe("charter");
     }
   });
 });
@@ -1238,6 +1329,7 @@ describe("graphWorkflowExecutionSchema laneStates", () => {
         tasks: [],
         edges: [],
       },
+      charter: makeTestCharter(),
       status: "pending",
       startedAt: timestamp,
     });
@@ -1258,6 +1350,7 @@ describe("graphWorkflowExecutionSchema laneStates", () => {
         tasks: [],
         edges: [],
       },
+      charter: makeTestCharter(),
       status: "running",
       startedAt: timestamp,
       laneStates: {
@@ -1334,6 +1427,7 @@ describe("graphWorkflowExecutionSchema laneStates", () => {
         tasks: [],
         edges: [],
       },
+      charter: makeTestCharter(),
       status: "running",
       startedAt: timestamp,
       laneStates: {
@@ -1877,6 +1971,7 @@ describe("graphWorkflowExecutionSchema parallel-execution fields", () => {
       tasks: [],
       edges: [],
     },
+    charter: makeTestCharter(),
     status: "running" as const,
     startedAt: timestamp,
   };
@@ -1993,6 +2088,7 @@ describe("graphWorkflowExecutionSchema parallel-execution fields", () => {
         tasks: [],
         edges: [],
       },
+      charter: makeTestCharter(),
       status: "running" as const,
       activeContextIds: ["ctx-1", "ctx-2"],
       pendingHaltReason: {
@@ -2362,6 +2458,7 @@ describe("graphWorkflowExecutionSchema lane/join maps", () => {
       tasks: [],
       edges: [],
     },
+    charter: makeTestCharter(),
     status: "running" as const,
     startedAt: timestamp,
   };

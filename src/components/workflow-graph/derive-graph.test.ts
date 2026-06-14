@@ -15,6 +15,7 @@ import {
   getContextDisplayPhase,
   getDisplayValidators,
 } from "./derive-graph";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 
 function makeDefinition(
   overrides: Partial<WorkflowSemanticDefinition> = {},
@@ -22,6 +23,7 @@ function makeDefinition(
   return {
     schemaVersion: 1,
     workflowConfig: {},
+    charter: makeTestCharter(),
     executionContexts: [],
     tasks: [],
     edges: [],

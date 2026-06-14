@@ -31,6 +31,8 @@ import type {
   GraphWorkflowJoinStatusEvent,
   GraphWorkflowApprovalPendingEvent,
   GraphWorkflowApprovalResolvedEvent,
+  GraphWorkflowCharterRegisteredEvent,
+  GraphWorkflowCharterUpdatedEvent,
 } from "@/lib/workflows/schemas";
 import type { DevServerStatusEvent } from "@/lib/dev-server/schemas";
 import type {
@@ -116,6 +118,8 @@ export type SSEEvent =
   | GraphWorkflowJoinStatusEvent
   | GraphWorkflowApprovalPendingEvent
   | GraphWorkflowApprovalResolvedEvent
+  | GraphWorkflowCharterRegisteredEvent
+  | GraphWorkflowCharterUpdatedEvent
   | DevServerStatusEvent
   | DebugModeStatusEvent
   | DebugLogReceivedEvent

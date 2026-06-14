@@ -32,6 +32,26 @@ import { createLogger } from "@/lib/logging";
 
 const logger = createLogger("child-env");
 
+// Git exports these into the environment of any process it spawns — notably
+// hook scripts (pre-commit, etc.). A child that runs `git` and inherits them
+// would operate on the parent's repo/index/work-tree instead of its own cwd:
+// when CC's test suite runs inside the husky pre-commit hook, a fixture's
+// `git commit` inherited GIT_DIR and committed into the real repo, corrupting
+// HEAD. Strip them so every child `git` is scoped to its own cwd. Deletion
+// (not the empty-string override used below) is required because git treats an
+// empty GIT_DIR as the literal path "" rather than as unset; the git-running
+// consumers all spawn with replace-semantics env, so deletion takes effect.
+const INHERITED_GIT_ENV_KEYS = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_PREFIX",
+  "GIT_COMMON_DIR",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_NAMESPACE",
+] as const;
+
 export function buildChildEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
 
@@ -45,6 +65,10 @@ export function buildChildEnv(): NodeJS.ProcessEnv {
     ) {
       env[key] = "";
     }
+  }
+
+  for (const key of INHERITED_GIT_ENV_KEYS) {
+    delete env[key];
   }
 
   ensureNodeOnPath(env);

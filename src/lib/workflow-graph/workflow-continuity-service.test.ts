@@ -13,6 +13,7 @@ import type {
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
 } from "@/lib/workflows/schemas";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -25,6 +26,7 @@ function makeDefinition(
   return {
     schemaVersion: 1,
     workflowConfig: {},
+    charter: makeTestCharter(),
     executionContexts: [
       {
         id: "ctx-1",
@@ -65,6 +67,7 @@ function makeExecution(
     seedDefinitionRevision: 1,
     workingDefinition:
       makeDefinition() as unknown as ResolvedWorkflowSemanticDefinition,
+    charter: makeTestCharter(),
     status: "running",
     activeContextIds: ["ctx-1"],
     contextStates: {

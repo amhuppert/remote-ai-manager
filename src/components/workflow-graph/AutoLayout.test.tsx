@@ -3,6 +3,7 @@ import { render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import AutoLayout from "./AutoLayout";
 import type { WorkflowSemanticDefinition } from "@/lib/workflows/schemas";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 type MeasuredNode = {
   id: string;
   measured?: { width: number; height: number };
@@ -37,6 +38,7 @@ function makeDefinition(contextIds: string[]): WorkflowSemanticDefinition {
   return {
     schemaVersion: 1,
     workflowConfig: {},
+    charter: makeTestCharter(),
     executionContexts: contextIds.map(makeContext),
     tasks: [],
     edges: [],

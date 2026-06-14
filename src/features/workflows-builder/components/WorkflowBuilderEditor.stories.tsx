@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
 import { createWorkflowDefinitionRecord } from "@/lib/workflow-graph/test-fixtures";
+import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import WorkflowBuilderEditor from "./WorkflowBuilderEditor";
 
 const defaultRecord = createWorkflowDefinitionRecord();
@@ -29,6 +30,7 @@ export const EmptyWorkflow = {
       definition: {
         schemaVersion: 1,
         workflowConfig: {},
+        charter: makeTestCharter(),
         executionContexts: [],
         tasks: [],
         edges: [],

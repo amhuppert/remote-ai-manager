@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { getConfigDirPath } from "../config/loader";
@@ -25,6 +25,17 @@ const DB_FILE_NAME = "command-center.db";
  * cannot silently downgrade a newer database.
  */
 export const KNOWN_SCHEMA_VERSION = 0;
+
+/**
+ * Marker id for the one-time legacy graph-workflow purge. Tracked in the
+ * dedicated `applied_data_migrations` table — NOT in `schema_migrations` —
+ * so it never advances `MAX(version)` and therefore cannot trip the
+ * forward-only version gate. A new bookkeeping table is invisible to
+ * other-branch builds (KNOWN_SCHEMA_VERSION stays 0 for everyone), so this
+ * data reset does not brick older builds that share `command-center.db`.
+ */
+export const LEGACY_WORKFLOW_PURGE_MIGRATION_ID =
+  "graph-workflow-charter-legacy-purge";
 
 const NOTIFICATIONS_TABLE_DDL = `
   CREATE TABLE IF NOT EXISTS notifications (
@@ -86,6 +97,11 @@ const SCHEMA_DDL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
     version     INTEGER PRIMARY KEY,
     description TEXT NOT NULL,
+    applied_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS applied_data_migrations (
+    id          TEXT PRIMARY KEY,
     applied_at  TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -483,11 +499,86 @@ function migrateNotificationsTable(db: Db): void {
   db.exec(NOTIFICATIONS_INDEX_DDL);
 }
 
+/**
+ * One-time global purge of pre-charter graph-workflow records. The Workflow
+ * Charter feature makes a charter required on every workflow definition and
+ * execution, so legacy charter-less records cannot satisfy the schema. This
+ * runs once at app start — before any sessions-repo reader that would
+ * otherwise quarantine charter-less rows — and:
+ *   - nulls the embedded `graph_workflow_execution` and resets the history to
+ *     `'[]'` on every persisted session (executions live inside SessionState,
+ *     so a table drop is insufficient),
+ *   - deletes every workflow definition file under `<configDir>/workflows/`,
+ *   - records its marker so a repeat run is a no-op.
+ *
+ * `configDir` is derived from the open DB path by the caller (its directory),
+ * NOT from `getConfigDirPath()`, so tests over a temp DB never touch the real
+ * config dir. In production `path.dirname(dbPath) === getConfigDirPath()`. A
+ * `null` configDir (in-memory DB) skips the file-deletion step only; the
+ * SQLite-side reset still runs.
+ *
+ * Shared-database blast radius: `command-center.db` is shared across all
+ * branches/worktrees, so this delete removes definitions and executions for
+ * every session and branch. The operator confirmed this global reset is
+ * intended (see design.md "Migration Strategy").
+ */
+export function runLegacyWorkflowPurgeMigration(
+  db: Db,
+  configDir: string | null,
+): void {
+  // The marker insert IS the claim: `command-center.db` is shared across
+  // branches/worktrees and opened concurrently (Next.js build spawns many
+  // workers), so a SELECT-then-INSERT guard races — two connections both see
+  // the marker absent and the second INSERT violates the PRIMARY KEY. Claiming
+  // atomically with INSERT OR IGNORE lets only the winner (changes === 1) run
+  // the purge; losers (changes === 0) skip without touching files or logging.
+  const purge = db.transaction(() => {
+    const claim = db
+      .prepare("INSERT OR IGNORE INTO applied_data_migrations (id) VALUES (?)")
+      .run(LEGACY_WORKFLOW_PURGE_MIGRATION_ID);
+    if (claim.changes === 0) {
+      return null;
+    }
+    const result = db
+      .prepare(
+        `UPDATE sessions
+           SET graph_workflow_execution = NULL,
+               graph_workflow_execution_history = '[]'
+         WHERE graph_workflow_execution IS NOT NULL
+            OR graph_workflow_execution_history <> '[]'`,
+      )
+      .run();
+    return result.changes;
+  });
+
+  const sessionsCleared = purge();
+  if (sessionsCleared === null) {
+    return;
+  }
+
+  const workflowsDir = configDir ? path.join(configDir, "workflows") : null;
+  const workflowsDirRemoved = workflowsDir !== null && existsSync(workflowsDir);
+  if (workflowsDir !== null && workflowsDirRemoved) {
+    rmSync(workflowsDir, { recursive: true, force: true });
+  }
+
+  logger.info("state-store.legacy_workflow_purge", {
+    migrationId: LEGACY_WORKFLOW_PURGE_MIGRATION_ID,
+    sessionsCleared,
+    workflowsDirRemoved,
+    workflowsDir,
+  });
+}
+
 function initializeSchema(db: Db, dbPath: string): void {
   db.exec(SCHEMA_DDL);
   migrateNotificationsTable(db);
   db.exec(NOTIFICATIONS_INDEX_DDL);
   ensureAdditiveColumns(db);
+  // `:memory:` has no on-disk config dir; skip the file-deleting purge there.
+  // The SQLite-side reset still runs against the in-memory sessions table.
+  const configDir = dbPath === ":memory:" ? null : path.dirname(dbPath);
+  runLegacyWorkflowPurgeMigration(db, configDir);
   enforceForwardOnlyVersion(db, dbPath);
 }
 
