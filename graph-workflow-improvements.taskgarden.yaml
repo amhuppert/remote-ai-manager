@@ -2,6 +2,7 @@ version: 1
 plan_id: graph-workflow-improvements
 title: Graph Workflow Improvements
 last_updated: 2026-06-13
+estimate_unit: points
 summary: >
   Implement the finalized Graph Workflow improvement proposal: alignment as
   engine invariants (charter, contracts, typed deliverables), a stronger
@@ -51,7 +52,7 @@ work_items:
     priority: p1
     depends_on: []
     tags: [alignment, shared-documents, agent-prompt, validation]
-    estimate: { value: 5, unit: points }
+    estimate: 5
     deliverables:
       - Reserved kind "charter" in the shared-documents registry
       - Source-of-truth precedence list carried in the charter
@@ -75,7 +76,7 @@ work_items:
     priority: p1
     depends_on: []
     tags: [alignment, deterministic, validation]
-    estimate: { value: 8, unit: points }
+    estimate: 8
     deliverables:
       - deliverables + produces.contracts blocks on the resolved context schema
       - Deterministic existence/tsc/exit-code completion check
@@ -97,7 +98,7 @@ work_items:
     priority: p0
     depends_on: []
     tags: [alignment, agent-tool, observability]
-    estimate: { value: 3, unit: points }
+    estimate: 3
     deliverables:
       - Completion-report schema + execution-logger event
       - record_decision / propose_decision_change MCP tools
@@ -114,7 +115,7 @@ work_items:
     priority: nice_to_have
     depends_on: []
     tags: [alignment]
-    estimate: { value: 2, unit: points }
+    estimate: 2
     notes: Report §1.6. Optional alignment refinement.
 
   # ── Part 2 — Quality & Validation ─────────────────────────────────────
@@ -130,7 +131,7 @@ work_items:
     priority: p0
     depends_on: []
     tags: [deterministic, planner, friction]
-    estimate: { value: 3, unit: points }
+    estimate: 3
     deliverables:
       - Definition-accept-time lint in the create/replace handlers
     notes: Report §2.7. Highest leverage-to-effort item; catches config bugs at create time.
@@ -148,7 +149,7 @@ work_items:
     priority: p1
     depends_on: [charter]
     tags: [validation, agent-tool, approval-gate, collaboration]
-    estimate: { value: 5, unit: points }
+    estimate: 5
     deliverables:
       - GO/NO-GO/ESCALATE verdict + reason in codex-agent-schemas.ts
       - appeal_validation tool + severity routing
@@ -168,7 +169,7 @@ work_items:
     priority: p2
     depends_on: []
     tags: [validation, quality]
-    estimate: { value: 5, unit: points }
+    estimate: 5
     deliverables:
       - lenses/validators[] field on validator config
       - reality-check lens (advisory, never NO-GO)
@@ -185,7 +186,7 @@ work_items:
     priority: p1
     depends_on: [completion-reports, typed-contracts]
     tags: [validation, quality]
-    estimate: { value: 5, unit: points }
+    estimate: 5
     notes: Report §2.4. Makes the ad hoc final-verification pattern first-class; pins the review target.
 
   - id: diff-scoped-validation
@@ -198,7 +199,7 @@ work_items:
     priority: p1
     depends_on: []
     tags: [validation, token-economy]
-    estimate: { value: 2, unit: points }
+    estimate: 2
     notes: Report §2.5. Cuts validator tokens; per-context commits already exist.
 
   - id: quality-profiles
@@ -212,7 +213,7 @@ work_items:
     priority: p1
     depends_on: []
     tags: [quality, planner]
-    estimate: { value: 3, unit: points }
+    estimate: 3
     notes: Report §2.6. Makes the quality bar a declared artifact, not planner recall.
 
   # ── Part 3 — Friction & Reliability ───────────────────────────────────
@@ -227,7 +228,7 @@ work_items:
     priority: p0
     depends_on: []
     tags: [reliability, friction, deterministic]
-    estimate: { value: 5, unit: points }
+    estimate: 5
     deliverables:
       - Pre-flight probe with precise halt diagnostics
       - devServers config inference + approval-gated apply
@@ -244,7 +245,7 @@ work_items:
     priority: p0
     depends_on: []
     tags: [reliability]
-    estimate: { value: 3, unit: points }
+    estimate: 3
     notes: Report §3.2. Single highest-impact reliability fix; stops the 21-zombie-iteration class.
 
   - id: revision-resume
@@ -258,7 +259,7 @@ work_items:
     priority: p2
     depends_on: []
     tags: [dynamic, reliability]
-    estimate: { value: 5, unit: points }
+    estimate: 5
     deliverables:
       - Pending-subgraph editing in runtime-edits.ts
       - Prefix-preserving resume + working-definition revision diffs
@@ -275,7 +276,7 @@ work_items:
     priority: p0
     depends_on: []
     tags: [reliability, friction]
-    estimate: { value: 2, unit: points }
+    estimate: 2
     notes: Report §3.5. Makes the lazy path the correct path.
 
   - id: validator-transcripts
@@ -288,7 +289,7 @@ work_items:
     priority: p0
     depends_on: []
     tags: [friction, observability]
-    estimate: { value: 1, unit: points }
+    estimate: 1
     notes: Report §3.6. The validator is currently the least auditable component.
 
   - id: gate-and-steering
@@ -303,7 +304,7 @@ work_items:
     priority: p0
     depends_on: [completion-reports]
     tags: [friction, approval-gate, alignment]
-    estimate: { value: 5, unit: points }
+    estimate: 5
     deliverables:
       - Gate digest assembly
       - Approve-with-comments + no-halt pending-context steering injection
@@ -324,7 +325,7 @@ work_items:
     priority: p2
     depends_on: []
     tags: [dynamic, reliability]
-    estimate: { value: 5, unit: points }
+    estimate: 5
     deliverables:
       - Batch-policy fields + per-lane deadline in join-runner/lane-readiness
       - Partial-salvage + replacement-spawn paths
@@ -341,7 +342,7 @@ work_items:
     priority: p2
     depends_on: [revision-resume]
     tags: [dynamic, agent-tool]
-    estimate: { value: 8, unit: points }
+    estimate: 8
     deliverables:
       - propose_graph_patch MCP tool
       - Patch validator + safety-rule enforcement
@@ -360,7 +361,7 @@ work_items:
     priority: p2
     depends_on: [propose-context, liveness-policy]
     tags: [dynamic]
-    estimate: { value: 5, unit: points }
+    estimate: 5
     notes: Report §4.2. Declarative scout->fan-out; enables review-fix pipelines.
 
   - id: conditional-edges
@@ -374,7 +375,7 @@ work_items:
     priority: p2
     depends_on: [completion-reports]
     tags: [dynamic]
-    estimate: { value: 5, unit: points }
+    estimate: 5
     deliverables:
       - when-guard evaluation in the scheduler
       - Router context + skipped state
@@ -391,7 +392,7 @@ work_items:
     priority: p2
     depends_on: [validator-trust, liveness-policy]
     tags: [dynamic, validation, collaboration]
-    estimate: { value: 5, unit: points }
+    estimate: 5
     notes: Report §4.4. Generalizes per-finding verify into a durable, salvageable review.
 
   - id: remediation-subgraphs
@@ -405,7 +406,7 @@ work_items:
     priority: p2
     depends_on: [propose-context, integration-sweep]
     tags: [dynamic, reliability]
-    estimate: { value: 3, unit: points }
+    estimate: 3
     notes: Report §4.5. Converts bare halts into diagnosed, gated graph changes.
 
   - id: readonly-exploration
@@ -418,7 +419,7 @@ work_items:
     priority: p3
     depends_on: [propose-context]
     tags: [dynamic]
-    estimate: { value: 3, unit: points }
+    estimate: 3
     notes: Report §4.6. Investigation fan-out with no merge risk.
 
   - id: planner-in-loop
@@ -433,7 +434,7 @@ work_items:
     priority: p2
     depends_on: [revision-resume, propose-context]
     tags: [dynamic, planner]
-    estimate: { value: 5, unit: points }
+    estimate: 5
     notes: Report §4.7. Re-planning as a discrete, auditable, gated event.
 
   # ── Part 5 — Parallelism ──────────────────────────────────────────────
@@ -448,7 +449,7 @@ work_items:
     priority: p2
     depends_on: [typed-contracts]
     tags: [parallelism, deterministic]
-    estimate: { value: 3, unit: points }
+    estimate: 3
     notes: Report §5.1. Serialize only the spine, not everything; reuses the contract git-diff check.
 
   - id: registration-points
@@ -462,7 +463,7 @@ work_items:
     priority: p2
     depends_on: []
     tags: [parallelism, planner]
-    estimate: { value: 3, unit: points }
+    estimate: 3
     notes: Report §5.2. Eliminates shared-file contention by construction.
 
   # ── Part 6 — Cross-cutting ────────────────────────────────────────────
@@ -479,7 +480,7 @@ work_items:
     priority: p2
     depends_on: [spec-lint]
     tags: [token-economy, reliability]
-    estimate: { value: 5, unit: points }
+    estimate: 5
     deliverables:
       - Token-cost budget policy + UI/report surfacing
       - Context-window watch + handoff_and_continue tool
@@ -498,7 +499,7 @@ work_items:
     priority: p2
     depends_on: [script-validator-defaults, typed-contracts, validator-trust]
     tags: [token-economy, validation]
-    estimate: { value: 3, unit: points }
+    estimate: 3
     notes: Report §6.2. Recovers the ~46 min of codex spent ratifying first-try passes.
 
   - id: retrospectives
@@ -512,7 +513,7 @@ work_items:
     priority: nice_to_have
     depends_on: []
     tags: [cross-cutting, learning]
-    estimate: { value: 3, unit: points }
+    estimate: 3
     notes: Report §6.3. Closes the learning loop; this analysis is itself such a retrospective.
 
   - id: ui-legibility
@@ -526,5 +527,5 @@ work_items:
     priority: p2
     depends_on: [propose-context, conditional-edges]
     tags: [cross-cutting, ui]
-    estimate: { value: 5, unit: points }
+    estimate: 5
     notes: Report §6.4. Becomes load-bearing the moment any Part-4 dynamism ships.
