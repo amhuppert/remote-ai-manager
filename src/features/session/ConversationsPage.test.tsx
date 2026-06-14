@@ -161,6 +161,19 @@ describe("ConversationsPage", () => {
     useSessionDetailStore.getState().resetStore();
   });
 
+  describe("page-level layout hydration (§3.5, §3.6, §5.2)", () => {
+    it("hydrates the layout once on mount from the page-level key", () => {
+      window.localStorage.setItem("cc-conversations-layout", "panes");
+      renderPage({
+        url: "/conversations?c=conv-1",
+        active: activeData([sessionRow("conv-1", { name: "Alpha" })]),
+        lookups: [lookupItem("conv-1")],
+      });
+
+      expect(useSessionDetailStore.getState().layout).toBe("panes");
+    });
+  });
+
   describe("switching (§6.3, §1.2)", () => {
     it("switches via history.pushState, strips autoFocus, and never calls router navigation", async () => {
       renderPage({

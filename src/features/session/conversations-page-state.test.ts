@@ -4,6 +4,7 @@ import type { ActiveConversation } from "@/lib/active-conversations/schemas";
 import {
   resolveConversationsRenderState,
   selectAutoOpenCandidate,
+  selectInitialConversation,
   isConversationPresent,
   conversationSwitchUrl,
   autoOpenUrl,
@@ -210,6 +211,87 @@ describe("selectAutoOpenCandidate", () => {
 
   it("returns null for an empty list", () => {
     expect(selectAutoOpenCandidate([], null)).toBeNull();
+  });
+});
+
+describe("selectInitialConversation", () => {
+  it("prefers an explicit ?c= selection over every other source", () => {
+    const result = selectInitialConversation({
+      urlConversationId: "url-conv",
+      sessionFilter: { projectName: "repo", sessionName: "fix-bug" },
+      persistedLruLive: ["lru-conv"],
+      conversations: [sessionRow({ id: "auto-conv" })],
+    });
+    expect(result).toEqual({ kind: "url" });
+  });
+
+  it("auto-opens a session-filter candidate when one matches", () => {
+    const result = selectInitialConversation({
+      urlConversationId: null,
+      sessionFilter: { projectName: "repo", sessionName: "fix-bug" },
+      persistedLruLive: ["lru-conv"],
+      conversations: [
+        sessionRow({
+          id: "other-session",
+          sessionName: "other",
+          lastActivityAt: "2026-06-09T00:00:00Z",
+        }),
+        sessionRow({ id: "filtered", lastActivityAt: "2026-06-01T00:00:00Z" }),
+      ],
+    });
+    expect(result).toEqual({ kind: "auto", id: "filtered" });
+  });
+
+  it("yields none when a session filter is present but nothing matches it", () => {
+    const result = selectInitialConversation({
+      urlConversationId: null,
+      sessionFilter: { projectName: "elsewhere", sessionName: "nope" },
+      persistedLruLive: ["lru-conv"],
+      conversations: [sessionRow({ id: "a" })],
+    });
+    expect(result).toEqual({ kind: "none" });
+  });
+
+  it("restores the most-recently-active LRU tail, beating the generic most-recent row", () => {
+    const result = selectInitialConversation({
+      urlConversationId: null,
+      sessionFilter: null,
+      // least → most recent; the tail is the persisted last-active id.
+      persistedLruLive: ["lru-old", "lru-recent"],
+      conversations: [
+        // The generic auto-open would pick this newer row, but LRU restore wins.
+        sessionRow({ id: "newest", lastActivityAt: "2026-06-09T00:00:00Z" }),
+        sessionRow({
+          id: "lru-recent",
+          lastActivityAt: "2026-06-02T00:00:00Z",
+        }),
+        sessionRow({ id: "lru-old", lastActivityAt: "2026-06-01T00:00:00Z" }),
+      ],
+    });
+    expect(result).toEqual({ kind: "auto", id: "lru-recent" });
+  });
+
+  it("falls back to the most-recent row on a first visit with an empty LRU", () => {
+    const result = selectInitialConversation({
+      urlConversationId: null,
+      sessionFilter: null,
+      persistedLruLive: [],
+      conversations: [
+        sessionRow({ id: "old", lastActivityAt: "2026-06-01T00:00:00Z" }),
+        sessionRow({ id: "newest", lastActivityAt: "2026-06-03T00:00:00Z" }),
+      ],
+    });
+    expect(result).toEqual({ kind: "auto", id: "newest" });
+  });
+
+  it("yields none on a first visit with no LRU and no conversations", () => {
+    const result = selectInitialConversation({
+      urlConversationId: null,
+      sessionFilter: null,
+      persistedLruLive: [],
+      conversations: [],
+    });
+    expect(result).toEqual({ kind: "none" });
   });
 });
 

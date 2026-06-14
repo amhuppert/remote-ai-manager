@@ -22,6 +22,8 @@ describe("HOTKEY_REGISTRY", () => {
       "prevChange",
       "newSession",
       "focusCommandConsole",
+      "activateOpenTab",
+      "exitPanes",
     ];
     for (const id of expectedIds) {
       expect(HOTKEY_REGISTRY[id]).toBeDefined();
@@ -31,8 +33,11 @@ describe("HOTKEY_REGISTRY", () => {
   it("binds each key combo to a single entry except allow-listed route-exclusive duplicates", async () => {
     const { HOTKEY_REGISTRY } = await import("./hotkeys");
     // focusSidebarSearch + focusCommandConsole intentionally share mod+k; they
-    // are never mounted on the same route. Any other duplicate is a bug.
-    const ALLOWED_DUPLICATE_KEYS = new Set(["mod+k"]);
+    // are never mounted on the same route. clearInput + exitPanes intentionally
+    // share Escape; clearInput is enableOnFormTags (fires in the composer) while
+    // exitPanes is not and is gated to panes mode by its hook, so they never
+    // collide. Any other duplicate is a bug.
+    const ALLOWED_DUPLICATE_KEYS = new Set(["mod+k", "Escape"]);
     const idsByKeys = new Map<string, string[]>();
     for (const def of Object.values(HOTKEY_REGISTRY)) {
       const ids = idsByKeys.get(def.keys) ?? [];
@@ -92,6 +97,32 @@ describe("HOTKEY_REGISTRY", () => {
   it("clearInput has enableOnContentEditable so Escape clears the Tiptap prompt editor", async () => {
     const { HOTKEY_REGISTRY } = await import("./hotkeys");
     expect(HOTKEY_REGISTRY.clearInput.enableOnContentEditable).toBe(true);
+  });
+
+  it("activateOpenTab binds mod+1..mod+9 in the navigation category", async () => {
+    const { HOTKEY_REGISTRY } = await import("./hotkeys");
+    const def = HOTKEY_REGISTRY.activateOpenTab;
+    expect(def).toBeDefined();
+    expect(def.id).toBe("activateOpenTab");
+    expect(def.keys).toBe(
+      "mod+1,mod+2,mod+3,mod+4,mod+5,mod+6,mod+7,mod+8,mod+9",
+    );
+    expect(def.category).toBe("navigation");
+    // Must NOT be enableOnFormTags: activation only fires when focus is outside
+    // form fields.
+    expect(def.enableOnFormTags).toBeUndefined();
+  });
+
+  it("exitPanes binds Escape in the navigation category without enableOnFormTags", async () => {
+    const { HOTKEY_REGISTRY } = await import("./hotkeys");
+    const def = HOTKEY_REGISTRY.exitPanes;
+    expect(def).toBeDefined();
+    expect(def.id).toBe("exitPanes");
+    expect(def.keys).toBe("Escape");
+    expect(def.category).toBe("navigation");
+    // Must NOT be enableOnFormTags so Escape inside the composer falls through to
+    // the clearInput hotkey instead of exiting panes.
+    expect(def.enableOnFormTags).toBeUndefined();
   });
 
   it("non-modifier hotkeys do not have enableOnFormTags", async () => {

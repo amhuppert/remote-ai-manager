@@ -38,6 +38,9 @@ export interface PromptDesktopToolbarProps {
   sendTitle: string;
   sendButtonInner: React.ReactNode;
   onSendPrompt: () => void;
+  onModelOpenChange?: (open: boolean) => void;
+  onEffortOpenChange?: (open: boolean) => void;
+  onCapabilitiesOpenChange?: (open: boolean) => void;
 }
 
 export default function PromptDesktopToolbar({
@@ -68,10 +71,23 @@ export default function PromptDesktopToolbar({
   sendTitle,
   sendButtonInner,
   onSendPrompt,
+  onModelOpenChange,
+  onEffortOpenChange,
+  onCapabilitiesOpenChange,
 }: PromptDesktopToolbarProps): React.JSX.Element {
   return (
     <div className="prompt-toolbar">
-      <div className="prompt-toolbar-start">
+      {/* Clicking an in-flow control keeps the literal editor focused (focus
+          continuity for typing) via the established onMouseDown→preventDefault
+          idiom; the control still fires its own onClick. */}
+      <div
+        className="prompt-toolbar-start"
+        onMouseDown={(e) => {
+          if (e.target instanceof HTMLElement && e.target.closest("button")) {
+            e.preventDefault();
+          }
+        }}
+      >
         <button
           className="attachment-btn"
           onClick={onAttachClick}
@@ -103,6 +119,7 @@ export default function PromptDesktopToolbar({
           onChange={onModelChange}
           disabled={sending || isReadOnly}
           backend={selectedBackend}
+          onOpenChange={onModelOpenChange}
         />
         <ReasoningLevelSelector
           value={selectedEffort}
@@ -114,6 +131,7 @@ export default function PromptDesktopToolbar({
               ? "Reasoning level is only available for Opus and Sonnet models"
               : undefined
           }
+          onOpenChange={onEffortOpenChange}
         />
         <DebugModeToggle
           projectName={projectName}
@@ -127,6 +145,7 @@ export default function PromptDesktopToolbar({
           conversationId={conversationId}
           disabled={isReadOnly}
           disabledTooltip={isReadOnly ? "Session is read-only" : undefined}
+          onOpenChange={onCapabilitiesOpenChange}
         />
       </div>
       <div className="prompt-toolbar-end">

@@ -28,7 +28,9 @@ export type HotkeyId =
   | "nextChange"
   | "prevChange"
   | "newSession"
-  | "focusCommandConsole";
+  | "focusCommandConsole"
+  | "activateOpenTab"
+  | "exitPanes";
 
 export type HotkeyRegistry = Record<HotkeyId, HotkeyDefinition>;
 
@@ -167,6 +169,25 @@ export const HOTKEY_REGISTRY: HotkeyRegistry = {
     category: "general",
     enableOnFormTags: true,
     enableOnContentEditable: true,
+  },
+  activateOpenTab: {
+    id: "activateOpenTab",
+    keys: "mod+1,mod+2,mod+3,mod+4,mod+5,mod+6,mod+7,mod+8,mod+9", // comma-list: react-hotkeys-hook binds each; the hook reads event.key for the index
+    label: "Activate open conversation",
+    description:
+      "Switch to the Nth open conversation (1-9) in the tab/panes working set",
+    category: "navigation",
+  },
+  // exitPanes shares the Escape key with clearInput: clearInput is
+  // enableOnFormTags (fires while the composer has focus) whereas exitPanes is
+  // not and is gated to panes mode by its hook, so they never collide. Mirrors
+  // the focusSidebarSearch/focusCommandConsole mod+k co-existence above.
+  exitPanes: {
+    id: "exitPanes",
+    keys: "Escape",
+    label: "Exit panes layout",
+    description: "Leave the panes (split-screen) layout",
+    category: "navigation",
   },
 };
 

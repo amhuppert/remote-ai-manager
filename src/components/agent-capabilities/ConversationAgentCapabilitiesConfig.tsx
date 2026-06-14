@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { useOverlayScope } from "@/hooks/useOverlayScope";
@@ -16,6 +16,12 @@ interface ConversationAgentCapabilitiesConfigProps {
   conversationId: string;
   disabled?: boolean;
   disabledTooltip?: string;
+  /**
+   * Reports the drawer's open-state. The composer-focus hook uses it to hold
+   * `composerFocused` true while this portaled drawer (rendered outside the
+   * composer region) steals focus from the editor.
+   */
+  onOpenChange?: (open: boolean) => void;
 }
 
 export default function ConversationAgentCapabilitiesConfig({
@@ -24,9 +30,14 @@ export default function ConversationAgentCapabilitiesConfig({
   conversationId,
   disabled,
   disabledTooltip,
+  onOpenChange,
 }: ConversationAgentCapabilitiesConfigProps): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
+
+  useEffect(() => {
+    onOpenChange?.(open);
+  }, [open, onOpenChange]);
   // Project-level conversations (the `__project__` sentinel) cascade
   // global → project → conversation; there is no session layer to configure.
   const projectScoped = isProjectSentinel(sessionName);

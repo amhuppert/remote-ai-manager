@@ -21,8 +21,6 @@ export function autoFocusStrippedUrl(location: {
 }
 
 export interface UseSessionLifecycleArgs {
-  storageKey: string;
-  hydrateLayout: (key: string) => void;
   resetConversationState: () => void;
   clearConversationMessages: () => void;
   conversationId: string;
@@ -47,8 +45,6 @@ export interface UseSessionLifecycleArgs {
 }
 
 export function useSessionLifecycle({
-  storageKey,
-  hydrateLayout,
   resetConversationState,
   clearConversationMessages,
   conversationId,
@@ -64,10 +60,6 @@ export function useSessionLifecycle({
   effortSupported,
   selectedBackend,
 }: UseSessionLifecycleArgs): void {
-  useEffect(() => {
-    hydrateLayout(storageKey);
-  }, [hydrateLayout, storageKey]);
-
   useEffect(() => {
     return () => {
       resetConversationState();

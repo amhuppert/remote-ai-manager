@@ -7,6 +7,8 @@
 @import "./keyboard-shortcuts-modal.css";
 @import "./session.css";
 @import "./conversation.css";
+@import "./conversation-tabs.css";
+@import "./conversation-panes.css";
 @import "./prompt.css";
 @import "./sidebar.css";
 @import "./dialogs.css";

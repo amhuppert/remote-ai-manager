@@ -44,6 +44,12 @@ interface ModelSelectorProps {
   onChange(model: string): void;
   disabled?: boolean;
   backend?: AgentBackendId;
+  /**
+   * Reports the dropdown's open-state. The composer-focus hook uses it to hold
+   * `composerFocused` true while this portaled popup (rendered outside the
+   * composer region) steals focus from the editor.
+   */
+  onOpenChange?(open: boolean): void;
 }
 
 export default function ModelSelector({
@@ -51,6 +57,7 @@ export default function ModelSelector({
   onChange,
   disabled = false,
   backend = "claude",
+  onOpenChange,
 }: ModelSelectorProps): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -114,6 +121,10 @@ export default function ModelSelector({
   }, [open]);
 
   useOverlayScope(open);
+
+  useEffect(() => {
+    onOpenChange?.(open);
+  }, [open, onOpenChange]);
 
   const dropdown = (
     <div

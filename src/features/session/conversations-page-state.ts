@@ -7,6 +7,16 @@
 import type { ConversationListItem } from "@/lib/conversations/schemas";
 import type { ActiveConversation } from "@/lib/active-conversations/schemas";
 
+/**
+ * Single page-level layout key for /conversations. The page is a
+ * cross-conversation, cross-session surface, so the selected layout (incl.
+ * "panes") must persist for the page itself — not per active conversation.
+ * Keying it page-level lets the layout survive activating a pane from a
+ * different session, which would otherwise re-hydrate that session's saved
+ * layout and drop out of panes.
+ */
+export const CONVERSATIONS_LAYOUT_STORAGE_KEY = "cc-conversations-layout";
+
 export interface ConversationLookupSnapshot {
   isPending: boolean;
   isError: boolean;
@@ -76,6 +86,42 @@ export function selectAutoOpenCandidate(
     if (best === null || at > best.at) best = { id: row.id, at };
   }
   return best?.id ?? null;
+}
+
+export type InitialSelection =
+  | { kind: "url" }
+  | { kind: "auto"; id: string }
+  | { kind: "none" };
+
+/**
+ * Which conversation to select on page entry (§1.2, §1.8). First match wins:
+ * an explicit `?c=` is user-initiated and left as-is; a session-filter entry
+ * picks its session-scoped candidate; otherwise the live LRU tail (last-active)
+ * is restored — deliberately ahead of the generic most-recent auto-open, but
+ * never over an explicit URL or session filter. `auto` results are history-
+ * replacing; `url` is left untouched.
+ */
+export function selectInitialConversation(input: {
+  urlConversationId: string | null;
+  sessionFilter: SessionFilter | null;
+  persistedLruLive: string[];
+  conversations: ActiveConversation[];
+}): InitialSelection {
+  const { urlConversationId, sessionFilter, persistedLruLive, conversations } =
+    input;
+
+  if (urlConversationId !== null) return { kind: "url" };
+
+  if (sessionFilter !== null) {
+    const id = selectAutoOpenCandidate(conversations, sessionFilter);
+    return id !== null ? { kind: "auto", id } : { kind: "none" };
+  }
+
+  const lastId = persistedLruLive.at(-1);
+  if (lastId !== undefined) return { kind: "auto", id: lastId };
+
+  const id = selectAutoOpenCandidate(conversations, null);
+  return id !== null ? { kind: "auto", id } : { kind: "none" };
 }
 
 export function isConversationPresent(

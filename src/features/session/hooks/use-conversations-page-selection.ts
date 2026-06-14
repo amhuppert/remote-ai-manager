@@ -9,7 +9,11 @@ import {
 } from "@/stores/session-detail.store";
 import { useSidebarActiveListFilter } from "@/features/session/hooks/use-sidebar-persistent-filters";
 import {
-  selectAutoOpenCandidate,
+  useOpenTabs,
+  type OpenTabsApi,
+} from "@/features/session/tabs/use-open-tabs";
+import {
+  selectInitialConversation,
   isConversationPresent,
   conversationSwitchUrl,
   autoOpenUrl,
@@ -30,6 +34,7 @@ export function useConversationsPageSelection(
 ): {
   openConversation: (target: { conversationId: string }) => void;
   autoOpen: AutoOpenSnapshot;
+  openTabs: OpenTabsApi;
 } {
   const activeQuery = useActiveConversationsQuery();
   const storeSessionFilter = useSidebarSessionFilter();
@@ -68,21 +73,68 @@ export function useConversationsPageSelection(
     setActiveListFilter,
   ]);
 
-  const candidateId = useMemo(() => {
-    if (params.conversationId !== null || conversations === undefined) {
-      return null;
-    }
-    return selectAutoOpenCandidate(conversations, sessionFilter);
-  }, [params.conversationId, conversations, sessionFilter]);
+  const openConversation = useCallback((target: { conversationId: string }) => {
+    window.history.pushState(
+      null,
+      "",
+      conversationSwitchUrl(
+        new URLSearchParams(window.location.search),
+        target.conversationId,
+      ),
+    );
+  }, []);
 
+  // The working set is session-scoped only: project-scoped active conversations
+  // are not workspace-openable, so they never enter tabs/panes.
+  const sessionScoped = useMemo(
+    () => (conversations ?? []).filter((c) => c.scope === "session"),
+    [conversations],
+  );
+
+  const openTabs = useOpenTabs({
+    activeConversationId: params.conversationId ?? "",
+    activeConversations: sessionScoped,
+    // `sessionScoped` is `[]` both while the query loads AND when it genuinely
+    // returns no session conversations; `useOpenTabs` cannot tell them apart on
+    // its own. Pass the query-resolved signal so reconcile waits for the live
+    // list instead of wiping the persisted set against a not-yet-loaded empty
+    // list on first render (Requirement 1.8).
+    activeConversationsLoaded: conversations !== undefined,
+    onOpenConversation: openConversation,
+  });
+
+  // Initial-selection precedence (§1.2, §1.8): an explicit `?c=` is left as-is;
+  // a session-filter entry opens its session candidate; otherwise the persisted
+  // last-active (lru tail) is restored ahead of the generic most-recent. Gated
+  // on both the live list AND the persisted model so restore never loses a race
+  // to the generic auto-open before localStorage hydrates.
+  const initial = useMemo(() => {
+    if (conversations === undefined || !openTabs.hydrated) return null;
+    return selectInitialConversation({
+      urlConversationId: params.conversationId,
+      sessionFilter,
+      persistedLruLive: openTabs.persistedLruLive,
+      conversations,
+    });
+  }, [
+    conversations,
+    openTabs.hydrated,
+    openTabs.persistedLruLive,
+    params.conversationId,
+    sessionFilter,
+  ]);
+  const restoreId = initial?.kind === "auto" ? initial.id : null;
+
+  // Restore is non-user-initiated, so it MUST use replaceState (never
+  // pushState) — it adds no Back-history entry.
   useEffect(() => {
-    if (params.conversationId !== null || candidateId === null) return;
+    if (restoreId === null) return;
     window.history.replaceState(
       null,
       "",
-      autoOpenUrl(new URLSearchParams(window.location.search), candidateId),
+      autoOpenUrl(new URLSearchParams(window.location.search), restoreId),
     );
-  }, [params.conversationId, candidateId]);
+  }, [restoreId]);
 
   // Disappearance (§6.5) triggers only for a conversation previously seen in
   // the rail data — a deep link to an archived conversation is never in the
@@ -104,19 +156,15 @@ export function useConversationsPageSelection(
     );
   }, [params.conversationId, conversations]);
 
-  const openConversation = useCallback((target: { conversationId: string }) => {
-    window.history.pushState(
-      null,
-      "",
-      conversationSwitchUrl(
-        new URLSearchParams(window.location.search),
-        target.conversationId,
-      ),
-    );
-  }, []);
-
   return {
     openConversation,
-    autoOpen: { isResolved: conversations !== undefined, candidateId },
+    // `isResolved` waits for hydration too: the render-state machine shows
+    // loading (not the generic most-recent) until the persisted last-active
+    // restore has had its chance, so the page never flashes the wrong tab.
+    autoOpen: {
+      isResolved: conversations !== undefined && openTabs.hydrated,
+      candidateId: restoreId,
+    },
+    openTabs,
   };
 }

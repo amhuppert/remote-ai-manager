@@ -4,6 +4,8 @@ import {
   useSessionDetailStore,
   useSidebarFilter,
   useSetSidebarFilter,
+  useComposerFocused,
+  useSetComposerFocused,
 } from "./session-detail.store";
 
 function resetStore() {
@@ -44,6 +46,48 @@ describe("session-detail.store — sidebar UI slice", () => {
   it("selector hooks expose sidebar slice fields", () => {
     expect(useSidebarFilter).toBeTypeOf("function");
     expect(useSetSidebarFilter).toBeTypeOf("function");
+  });
+});
+
+describe("session-detail.store — composer focus slice", () => {
+  beforeEach(resetStore);
+
+  it("defaults composerFocused to false", () => {
+    expect(useSessionDetailStore.getState().composerFocused).toBe(false);
+  });
+
+  it("setComposerFocused(true) sets composerFocused true", () => {
+    useSessionDetailStore.getState().setComposerFocused(true);
+    expect(useSessionDetailStore.getState().composerFocused).toBe(true);
+  });
+
+  it("setComposerFocused(false) sets composerFocused back to false", () => {
+    useSessionDetailStore.getState().setComposerFocused(true);
+    expect(useSessionDetailStore.getState().composerFocused).toBe(true);
+
+    useSessionDetailStore.getState().setComposerFocused(false);
+    expect(useSessionDetailStore.getState().composerFocused).toBe(false);
+  });
+
+  it("setComposerFocused mutates only composerFocused", () => {
+    const before = useSessionDetailStore.getState();
+    useSessionDetailStore.getState().setComposerFocused(true);
+    const after = useSessionDetailStore.getState();
+    expect(after.composerFocused).toBe(true);
+    expect(after.layout).toBe(before.layout);
+    expect(after.sidebarFilter).toBe(before.sidebarFilter);
+    expect(after.sidebarCollapsed).toBe(before.sidebarCollapsed);
+  });
+
+  it("resetStore restores composerFocused to false", () => {
+    useSessionDetailStore.getState().setComposerFocused(true);
+    useSessionDetailStore.getState().resetStore();
+    expect(useSessionDetailStore.getState().composerFocused).toBe(false);
+  });
+
+  it("selector hooks expose composer focus slice fields", () => {
+    expect(useComposerFocused).toBeTypeOf("function");
+    expect(useSetComposerFocused).toBeTypeOf("function");
   });
 });
 
@@ -115,6 +159,42 @@ describe("session-detail.store — resetConversationState", () => {
       projectName: "p",
       sessionName: "sess",
     });
+  });
+
+  it("preserves the page-level layout across a workspace swap (req 3.5, 5.2)", () => {
+    const s = useSessionDetailStore.getState();
+    s.switchLayout("panes", "cc-conversations-layout");
+    expect(useSessionDetailStore.getState().layout).toBe("panes");
+
+    useSessionDetailStore.getState().resetConversationState();
+
+    expect(useSessionDetailStore.getState().layout).toBe("panes");
+  });
+
+  it("still resets conversation-scoped state while preserving layout", () => {
+    const s = useSessionDetailStore.getState();
+    s.switchLayout("panes", "cc-conversations-layout");
+    s.submitPrompt(textBlock("hello"), 7);
+    expect(useSessionDetailStore.getState().sending).toBe(true);
+    expect(useSessionDetailStore.getState().messageCountBeforeSubmit).toBe(7);
+
+    useSessionDetailStore.getState().resetConversationState();
+
+    const after = useSessionDetailStore.getState();
+    expect(after.layout).toBe("panes");
+    expect(after.sending).toBe(false);
+    expect(after.messageCountBeforeSubmit).toBe(0);
+    expect(after.optimisticMessages).toEqual([]);
+  });
+
+  it("resetStore still resets layout to the default (only resetConversationState preserves it)", () => {
+    const s = useSessionDetailStore.getState();
+    s.switchLayout("panes", "cc-conversations-layout");
+    expect(useSessionDetailStore.getState().layout).toBe("panes");
+
+    useSessionDetailStore.getState().resetStore();
+
+    expect(useSessionDetailStore.getState().layout).toBe("conversation");
   });
 });
 

@@ -13,8 +13,6 @@ function makeArgs(
   overrides: Partial<UseSessionLifecycleArgs> = {},
 ): UseSessionLifecycleArgs {
   return {
-    storageKey: "k",
-    hydrateLayout: vi.fn(),
     resetConversationState: vi.fn(),
     clearConversationMessages: vi.fn(),
     conversationId: "c",
@@ -54,10 +52,9 @@ const sessionWithObjective: SessionState = {
 };
 
 describe("useSessionLifecycle", () => {
-  it("hydrates layout and clears conversation messages on mount", () => {
+  it("clears conversation messages on mount", () => {
     const args = makeArgs();
     renderHook(() => useSessionLifecycle(args));
-    expect(args.hydrateLayout).toHaveBeenCalledWith("k");
     expect(args.clearConversationMessages).toHaveBeenCalled();
     expect(args.showQuestions).not.toHaveBeenCalled();
   });

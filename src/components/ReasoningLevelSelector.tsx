@@ -33,6 +33,12 @@ interface ReasoningLevelSelectorProps {
   disabledTooltip?: string;
   /** When provided, only these levels are shown in the dropdown. */
   availableLevels?: EffortLevel[];
+  /**
+   * Reports the dropdown's open-state. The composer-focus hook uses it to hold
+   * `composerFocused` true while this portaled popup (rendered outside the
+   * composer region) steals focus from the editor.
+   */
+  onOpenChange?(open: boolean): void;
 }
 
 export default function ReasoningLevelSelector({
@@ -41,6 +47,7 @@ export default function ReasoningLevelSelector({
   disabled = false,
   disabledTooltip,
   availableLevels,
+  onOpenChange,
 }: ReasoningLevelSelectorProps): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -113,6 +120,10 @@ export default function ReasoningLevelSelector({
   }, [open]);
 
   useOverlayScope(open);
+
+  useEffect(() => {
+    onOpenChange?.(open);
+  }, [open, onOpenChange]);
 
   const dropdown = (
     <div

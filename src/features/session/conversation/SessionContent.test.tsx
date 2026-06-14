@@ -5,6 +5,8 @@ import SessionContent from "@/features/session/conversation/SessionContent";
 import type { ComponentProps } from "react";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
+import type { OpenTabsApi } from "@/features/session/tabs/use-open-tabs";
 
 // Stub heavy child components — they have their own tests and their internals
 // are not part of SessionContent's behavior. We assert only on SessionContent's
@@ -20,6 +22,15 @@ vi.mock("@/features/session/conversation/ConversationPanelContainer", () => ({
 }));
 vi.mock("@/features/session/mobile/MobileInfoPanel", () => ({
   default: () => <div data-testid="stub-mobile-info-panel" />,
+}));
+vi.mock("@/features/session/tabs/ConversationTabStrip", () => ({
+  default: () => <div data-testid="stub-tab-strip" />,
+}));
+vi.mock("@/features/session/tabs/AddConversationMenu", () => ({
+  default: () => <div data-testid="stub-add-menu" />,
+}));
+vi.mock("@/features/session/panes/PanesGrid", () => ({
+  default: () => <div data-testid="stub-panes-grid" />,
 }));
 
 function makeSession(overrides: Partial<SessionState> = {}): SessionState {
@@ -77,6 +88,50 @@ function makeConversation(
     backendRef: null,
     unread: false,
     pendingQueue: [],
+    ...overrides,
+  };
+}
+
+function makeActiveConversation(
+  overrides: Partial<SessionActiveConversation> = {},
+): SessionActiveConversation {
+  return {
+    id: "conv-1",
+    scope: "session",
+    name: "Conversation one",
+    status: "new",
+    lastActivityAt: "2024-06-15T12:00:00Z",
+    projectName: "my-proj",
+    projectPath: "/proj",
+    agentBackend: "claude",
+    summary: null,
+    pendingQuestion: null,
+    pendingQuestionId: null,
+    pendingQuestions: null,
+    forkedFrom: null,
+    debugActive: false,
+    role: null,
+    worktreePath: "/proj/.worktrees/sess-1",
+    lastActivitySummary: null,
+    unread: false,
+    pendingApproval: null,
+    sessionName: "sess-1",
+    branchName: "csm/sess-1",
+    ...overrides,
+  };
+}
+
+function makeOpenTabs(overrides: Partial<OpenTabsApi> = {}): OpenTabsApi {
+  return {
+    workingSet: [makeActiveConversation()],
+    addableConversations: [],
+    activeId: "conv-1",
+    isAtCap: false,
+    persistedLruLive: [],
+    hydrated: true,
+    activate: vi.fn(),
+    closeTab: vi.fn(),
+    addTab: vi.fn(),
     ...overrides,
   };
 }
@@ -145,5 +200,175 @@ describe("SessionContent", () => {
     ).toBe(true);
     expect(container.querySelector("main.main")).toBeNull();
     expect(container.querySelector(".convo-sidebar")).toBeNull();
+  });
+
+  it("renders the prompt composer exactly once in a pinned row", () => {
+    const { container } = renderWithQuery(
+      <SessionContent
+        {...makeProps({
+          promptInputSlot: <div data-testid="composer-slot" />,
+        })}
+      />,
+    );
+    expect(
+      container.querySelectorAll('[data-testid="composer-slot"]').length,
+    ).toBe(1);
+    expect(container.querySelector(".pinned-composer-row")).not.toBeNull();
+  });
+
+  it("pins the composer as a sibling of the content area, not inside it", () => {
+    const { container } = renderWithQuery(
+      <SessionContent
+        {...makeProps({
+          promptInputSlot: <div data-testid="composer-slot" />,
+        })}
+      />,
+    );
+    const layout = container.querySelector(".session-detail-layout");
+    const contentArea = container.querySelector(".session-content-area");
+    const composerRow = container.querySelector(".pinned-composer-row");
+    const slot = container.querySelector('[data-testid="composer-slot"]');
+
+    expect(layout).not.toBeNull();
+    expect(contentArea).not.toBeNull();
+    expect(composerRow).not.toBeNull();
+    expect(slot).not.toBeNull();
+
+    // The composer lives in the pinned row, which is a child of the layout —
+    // never inside the content area (that is the lift contract, 7.1/7.4).
+    expect(composerRow!.contains(slot)).toBe(true);
+    expect(composerRow!.parentElement).toBe(layout);
+    expect(contentArea!.contains(slot)).toBe(false);
+  });
+
+  it.each(["default", "split", "conversation", "diff", "panes"] as const)(
+    "renders the shared composer in the %s layout",
+    (layout) => {
+      const { container } = renderWithQuery(
+        <SessionContent
+          {...makeProps({
+            layout,
+            promptInputSlot: <div data-testid="composer-slot" />,
+          })}
+        />,
+      );
+      expect(
+        container.querySelectorAll('[data-testid="composer-slot"]').length,
+      ).toBe(1);
+    },
+  );
+
+  it("preserves the composer's content verbatim in the pinned row (7.4)", () => {
+    const { container } = renderWithQuery(
+      <SessionContent
+        {...makeProps({
+          promptInputSlot: (
+            <button data-testid="composer-slot" type="button">
+              Send prompt
+            </button>
+          ),
+        })}
+      />,
+    );
+    const composerRow = container.querySelector(".pinned-composer-row");
+    const slot = composerRow?.querySelector('[data-testid="composer-slot"]');
+    expect(slot).not.toBeNull();
+    expect(slot!.tagName).toBe("BUTTON");
+    expect(slot!.textContent).toBe("Send prompt");
+  });
+
+  describe("tab strip + panes grid by layout", () => {
+    it("renders the tab strip above the content area in a non-panes layout with a non-empty working set (2.1)", () => {
+      const { container } = renderWithQuery(
+        <SessionContent
+          {...makeProps({ layout: "default", openTabs: makeOpenTabs() })}
+        />,
+      );
+      const strip = container.querySelector('[data-testid="stub-tab-strip"]');
+      const contentArea = container.querySelector(".session-content-area");
+      expect(strip).not.toBeNull();
+      expect(contentArea).not.toBeNull();
+      // The strip is a previous sibling of the content area — it precedes it in
+      // DOM order within the detail layout.
+      expect(
+        strip!.compareDocumentPosition(contentArea!) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      // The panel still renders inside the content area in a non-panes layout.
+      expect(
+        contentArea!.querySelector('[data-testid="stub-conversation-panel"]'),
+      ).not.toBeNull();
+      // No panes grid in a non-panes layout.
+      expect(
+        container.querySelector('[data-testid="stub-panes-grid"]'),
+      ).toBeNull();
+    });
+
+    it("renders the panes grid and not the panel/right-pane in the panes layout (3.2)", () => {
+      const { container } = renderWithQuery(
+        <SessionContent
+          {...makeProps({ layout: "panes", openTabs: makeOpenTabs() })}
+        />,
+      );
+      expect(
+        container.querySelector('[data-testid="stub-panes-grid"]'),
+      ).not.toBeNull();
+      expect(
+        container.querySelector('[data-testid="stub-conversation-panel"]'),
+      ).toBeNull();
+      expect(
+        container.querySelector('[data-testid="stub-right-pane"]'),
+      ).toBeNull();
+      // The tab strip is hidden while panes are active.
+      expect(
+        container.querySelector('[data-testid="stub-tab-strip"]'),
+      ).toBeNull();
+    });
+
+    it("renders neither strip nor grid and keeps the panel when openTabs is undefined (per-conversation route)", () => {
+      const { container } = renderWithQuery(
+        <SessionContent {...makeProps({ layout: "default" })} />,
+      );
+      expect(
+        container.querySelector('[data-testid="stub-tab-strip"]'),
+      ).toBeNull();
+      expect(
+        container.querySelector('[data-testid="stub-panes-grid"]'),
+      ).toBeNull();
+      expect(
+        container.querySelector('[data-testid="stub-conversation-panel"]'),
+      ).not.toBeNull();
+    });
+
+    it("does not render the strip when openTabs is present but the working set is empty", () => {
+      const { container } = renderWithQuery(
+        <SessionContent
+          {...makeProps({
+            layout: "default",
+            openTabs: makeOpenTabs({ workingSet: [] }),
+          })}
+        />,
+      );
+      expect(
+        container.querySelector('[data-testid="stub-tab-strip"]'),
+      ).toBeNull();
+    });
+
+    it("still renders the shared pinned composer in the panes layout (4.9 / 5.1)", () => {
+      const { container } = renderWithQuery(
+        <SessionContent
+          {...makeProps({
+            layout: "panes",
+            openTabs: makeOpenTabs(),
+            promptInputSlot: <div data-testid="composer-slot" />,
+          })}
+        />,
+      );
+      const composerRow = container.querySelector(".pinned-composer-row");
+      expect(composerRow).not.toBeNull();
+      expect(
+        composerRow!.querySelector('[data-testid="composer-slot"]'),
+      ).not.toBeNull();
+    });
   });
 });

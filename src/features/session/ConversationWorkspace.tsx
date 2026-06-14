@@ -28,6 +28,9 @@ import { useSessionPageViewProps } from "@/features/session/hooks/use-session-pa
 import { useApprovalGate } from "@/features/session/hooks/use-approval-gate";
 import { useEnqueuePromptErrorToast } from "@/stores/notification.store";
 import { selectLastUserTurnAgentSettings } from "@/lib/conversations/last-turn-agent-settings";
+import { CONVERSATIONS_LAYOUT_STORAGE_KEY } from "@/features/session/conversations-page-state";
+import { type OpenTabsApi } from "@/features/session/tabs/use-open-tabs";
+import { useTabPaneKeyboard } from "@/features/session/tabs/use-tab-pane-keyboard";
 
 export interface ConversationWorkspaceProps {
   projectName: string;
@@ -44,6 +47,12 @@ export interface ConversationWorkspaceProps {
    * the per-conversation route's `router.push`.
    */
   onOpenConversation?: (target: { conversationId: string }) => void;
+  /**
+   * The page-level open-tabs working set + operations, hosted by
+   * /conversations. Consumed by SessionContent to render the tab strip and
+   * panes grid; absent on the per-conversation route, which has no working set.
+   */
+  openTabs?: OpenTabsApi;
 }
 
 function hasCollabPrefix(text: string): boolean {
@@ -66,9 +75,9 @@ export default function ConversationWorkspace({
   defaultEffort = "high",
   autoFocus,
   onOpenConversation,
+  openTabs,
 }: ConversationWorkspaceProps): React.JSX.Element {
   const router = useRouter();
-  const storageKey = `cc-layout-${projectName}-${sessionName}`;
 
   const {
     sessionQuery,
@@ -215,8 +224,6 @@ export default function ConversationWorkspace({
   );
 
   useSessionLifecycle({
-    storageKey,
-    hydrateLayout: store.hydrateLayout,
     resetConversationState: store.resetConversationState,
     clearConversationMessages: store.clearConversationMessages,
     conversationId,
@@ -260,10 +267,20 @@ export default function ConversationWorkspace({
 
   const handleLayoutChange = useCallback(
     (mode: Parameters<typeof store.switchLayout>[0]) => {
-      store.switchLayout(mode, storageKey);
+      store.switchLayout(mode, CONVERSATIONS_LAYOUT_STORAGE_KEY);
     },
-    [store, storageKey],
+    [store],
   );
+
+  // Bind tab-activation (mod+1…9) and panes-exit (Escape) shortcuts. On the
+  // per-conversation route `openTabs` is undefined: the empty working set plus
+  // the non-panes layout make both shortcuts inert.
+  useTabPaneKeyboard({
+    workingSet: openTabs?.workingSet ?? [],
+    activate: openTabs?.activate ?? (() => {}),
+    layout: store.layout,
+    onExitPanes: () => handleLayoutChange("default"),
+  });
 
   const {
     handleSendPrompt,
@@ -344,6 +361,7 @@ export default function ConversationWorkspace({
         approvalGate,
         isInitConversation,
         targetBranch,
+        openTabs,
         store,
         local,
         collab,

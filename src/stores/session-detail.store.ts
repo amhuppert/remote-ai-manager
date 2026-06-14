@@ -58,6 +58,7 @@ interface SessionDetailState {
   currentQuestionIndex: number;
   specBrowserSelection: SpecBrowserSelection | null;
   selectedDocId: string | null;
+  composerFocused: boolean;
 }
 
 interface SessionDetailActions {
@@ -98,6 +99,7 @@ interface SessionDetailActions {
   hydrateSidebar: () => void;
   setSidebarFilter: (value: string) => void;
   setSidebarSessionFilter: (value: SidebarSessionFilter | null) => void;
+  setComposerFocused: (focused: boolean) => void;
   showQuestions: (questionId: string, questions: AskQuestionItem[]) => void;
   navigateQuestion: (index: number) => void;
   clearQuestions: () => void;
@@ -120,7 +122,13 @@ type SessionDetailStore = SessionDetailState & SessionDetailActions;
 const SIDEBAR_STORAGE_KEY = "cc-sidebar-collapsed";
 let cancelledTimer: ReturnType<typeof setTimeout> | null = null;
 
-const validLayouts: LayoutMode[] = ["conversation", "default", "split", "diff"];
+const validLayouts: LayoutMode[] = [
+  "conversation",
+  "default",
+  "split",
+  "panes",
+  "diff",
+];
 
 const initialState: SessionDetailState = {
   layout: "conversation",
@@ -144,6 +152,7 @@ const initialState: SessionDetailState = {
   currentQuestionIndex: 0,
   specBrowserSelection: null,
   selectedDocId: null,
+  composerFocused: false,
 };
 
 // ---------------------------------------------------------------------------
@@ -416,6 +425,11 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
         state.sidebarSessionFilter = value;
       }),
 
+    setComposerFocused: (focused) =>
+      set((state) => {
+        state.composerFocused = focused;
+      }),
+
     // -- AskUserQuestion --
 
     showQuestions: (questionId, questions) =>
@@ -478,7 +492,11 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
 
     // Reset everything scoped to a single conversation workspace. Rail-owned
     // state (collapse, mobile drawer, filters) belongs to the host shell, which
-    // stays mounted while workspaces swap, so it must survive this reset.
+    // stays mounted while workspaces swap, so it must survive this reset. The
+    // page-level layout is host-shell state too — it is hydrated once at the
+    // page and not re-read per conversation, so it must also survive the reset,
+    // otherwise activating another conversation silently reverts the rendered
+    // layout to the default (req 3.5, 5.2).
     resetConversationState: () =>
       set((state) => ({
         ...initialState,
@@ -486,6 +504,7 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
         mobileSidebarOpen: state.mobileSidebarOpen,
         sidebarFilter: state.sidebarFilter,
         sidebarSessionFilter: state.sidebarSessionFilter,
+        layout: state.layout,
       })),
 
     resetStore: () => set(() => ({ ...initialState })),
@@ -520,6 +539,8 @@ export const useSidebarFilter = () =>
   useSessionDetailStore((s) => s.sidebarFilter);
 export const useSidebarSessionFilter = () =>
   useSessionDetailStore((s) => s.sidebarSessionFilter);
+export const useComposerFocused = () =>
+  useSessionDetailStore((s) => s.composerFocused);
 export const useRightPaneTab = () =>
   useSessionDetailStore((s) => s.rightPaneTab);
 export const useSpecBrowserSelection = () =>
@@ -592,6 +613,8 @@ export const useSetSidebarFilter = () =>
   useSessionDetailStore((s) => s.setSidebarFilter);
 export const useSetSidebarSessionFilter = () =>
   useSessionDetailStore((s) => s.setSidebarSessionFilter);
+export const useSetComposerFocused = () =>
+  useSessionDetailStore((s) => s.setComposerFocused);
 export const useShowQuestions = () =>
   useSessionDetailStore((s) => s.showQuestions);
 export const useNavigateQuestion = () =>

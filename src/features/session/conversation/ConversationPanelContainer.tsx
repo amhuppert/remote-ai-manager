@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, type ReactNode } from "react";
+import { useCallback } from "react";
 import ConversationPanel from "@/components/conversation/ConversationPanel";
 import TypingIndicator from "@/components/conversation/TypingIndicator";
 import { useOpenMobileSidebar } from "@/stores/session-detail.store";
@@ -49,8 +49,6 @@ export interface ConversationPanelContainerProps {
 
   canStop: boolean;
   onStop: () => void;
-
-  promptInputSlot: ReactNode;
 }
 
 export default function ConversationPanelContainer({
@@ -77,7 +75,6 @@ export default function ConversationPanelContainer({
   collab,
   canStop,
   onStop,
-  promptInputSlot,
 }: ConversationPanelContainerProps): React.JSX.Element {
   const openMobileSidebar = useOpenMobileSidebar();
   const conversation = useSessionPageConversation({
@@ -151,7 +148,5 @@ export default function ConversationPanelContainer({
     onStop,
   });
 
-  return (
-    <ConversationPanel {...panelProps} promptInputSlot={promptInputSlot} />
-  );
+  return <ConversationPanel {...panelProps} promptInputSlot={undefined} />;
 }

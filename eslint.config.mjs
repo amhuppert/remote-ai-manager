@@ -19,6 +19,7 @@ const eslintConfig = defineConfig([
     ".worktrees/**",
     "memory-bank/**",
     "redesign-session-page-handoff/**",
+    "command-center-multi-tasking-ui-improvements/**",
     "next-env.d.ts",
   ]),
   ...storybook.configs["flat/recommended"],

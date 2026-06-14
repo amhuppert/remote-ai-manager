@@ -5,7 +5,7 @@
 .session-detail-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto 1fr auto;
   gap: 0;
   height: calc(100dvh - var(--topbar-height));
   min-height: 500px;
@@ -13,7 +13,25 @@
 }
 
 .session-detail-layout.finished {
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto auto 1fr auto;
+}
+
+/* The tab strip adds an auto-sized row above the content area; the content
+   area keeps the single flexible (1fr) row in every combination. */
+.session-detail-layout.has-tab-strip {
+  grid-template-rows: auto auto 1fr auto;
+}
+
+.session-detail-layout.finished.has-tab-strip {
+  grid-template-rows: auto auto auto 1fr auto;
+}
+
+/* Shared prompt composer pinned below the content area — serves every layout. */
+.pinned-composer-row {
+  flex-shrink: 0;
+  min-width: 0;
+  border-top: 1px solid var(--border-default);
+  background: var(--bg-base);
 }
 
 /* Session info strip — mission readout */
@@ -702,6 +720,19 @@
 
 .session-content-area[data-layout="diff"] .prompt-panel {
   display: none;
+}
+
+/* Panes layout: a single full-width child (PanesGrid owns its own internal
+   grid), so collapse the panel/diff split to one column. */
+.session-content-area[data-layout="panes"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Hosts the tab strip above the content area; relative so the open
+   AddConversationMenu popup anchors to the strip's `+` control. */
+.conversation-tab-strip-host {
+  position: relative;
+  flex-shrink: 0;
 }
 
 /* Layout switcher control */
@@ -2028,6 +2059,42 @@
   /* With finished banner, content area lives in row 3 (banner takes row 2). */
   .session-detail-layout.finished > .session-content-area {
     grid-row: 3 / 4;
+  }
+
+  /* The tab strip takes the phantom info-strip row (1); content area moves to
+     the flexible row below it. */
+  .session-detail-layout.has-tab-strip > .conversation-tab-strip-host {
+    grid-row: 1 / 2;
+  }
+
+  .session-detail-layout.has-tab-strip > .session-content-area {
+    grid-row: 3 / 4;
+  }
+
+  .session-detail-layout.finished.has-tab-strip > .conversation-tab-strip-host {
+    grid-row: 2 / 3;
+  }
+
+  .session-detail-layout.finished.has-tab-strip > .session-content-area {
+    grid-row: 4 / 5;
+  }
+
+  /* Composer follows the content area's pinned row so it stays at the bottom
+     even with the info-strip hidden (display:none) reserving row 1. */
+  .session-detail-layout > .pinned-composer-row {
+    grid-row: 3 / 4;
+  }
+
+  .session-detail-layout.finished > .pinned-composer-row {
+    grid-row: 4 / 5;
+  }
+
+  .session-detail-layout.has-tab-strip > .pinned-composer-row {
+    grid-row: 4 / 5;
+  }
+
+  .session-detail-layout.finished.has-tab-strip > .pinned-composer-row {
+    grid-row: 5 / 6;
   }
 
   /* Touch sizing for diff nav buttons */

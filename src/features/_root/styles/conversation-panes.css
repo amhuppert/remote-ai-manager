@@ -1,0 +1,349 @@
+/* Panes (split-screen) layout: toolbar, grid container, mini-cockpit pane,
+   shadow separator, active ring, composer-focus fade, and the compact message
+   row. */
+
+/* Panes toolbar: capacity count, focus hint, add-pane trigger, exit. */
+.panes-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+  padding: var(--space-xs) var(--space-sm);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-base);
+}
+
+.panes-toolbar__count {
+  flex-shrink: 0;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  font-weight: 500;
+}
+
+.panes-toolbar__hint {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+}
+
+.panes-toolbar__spacer {
+  flex: 1;
+}
+
+/* Anchor for the absolutely-positioned AddConversationMenu popup. */
+.panes-toolbar__add-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.panes-toolbar__add-wrap .add-conversation-menu {
+  top: calc(100% + var(--space-2xs));
+  right: 0;
+}
+
+.panes-toolbar__add,
+.panes-toolbar__exit {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 var(--space-sm);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.panes-toolbar__add:hover:not(:disabled),
+.panes-toolbar__exit:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.panes-toolbar__add:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.panes {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 1), 1fr);
+  grid-template-rows: repeat(var(--rows, 1), 1fr);
+  gap: var(--space-sm);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  padding: var(--space-sm);
+}
+
+/* 5 panes: top row three panes (each spans 2 of 6 columns), bottom row two
+   wider panes (each spans 3 of 6 columns). --cols/--rows set 6/2 by the grid. */
+.panes[data-shape="asym-5"] > .pane:nth-child(-n + 3) {
+  grid-column: span 2;
+}
+
+.panes[data-shape="asym-5"] > .pane:nth-child(n + 4) {
+  grid-column: span 3;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  padding: var(--space-sm);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  /* Shadow "separator" between panes (the only separator variant shipped). */
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  transition:
+    box-shadow 0.15s ease,
+    border-color 0.15s ease,
+    opacity 0.2s ease;
+}
+
+.pane[data-active="true"] {
+  border-color: var(--cyan);
+  box-shadow:
+    0 0 0 1px var(--cyan),
+    0 0 12px var(--cyan-glow);
+}
+
+/* Composer-focus fade (5.3): while the composer holds focus, de-emphasize the
+   inactive panes and intensify the active one. Reverts when the grid drops the
+   data-composer-focused flag (5.4). */
+.panes[data-composer-focused="true"] .pane:not([data-active="true"]) {
+  opacity: 0.45;
+}
+
+.panes[data-composer-focused="true"] .pane[data-active="true"] {
+  box-shadow:
+    0 0 0 1px var(--cyan),
+    0 0 18px var(--cyan-glow-strong);
+}
+
+/* Head: status dot, title, open-full, close. */
+.pane__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+.pane__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-tertiary);
+}
+
+.pane__dot[data-status="new"] {
+  background: var(--blue);
+  box-shadow: 0 0 6px var(--blue-glow);
+}
+
+.pane__dot[data-status="running"] {
+  background: var(--cyan);
+  box-shadow: 0 0 6px var(--cyan-glow-strong);
+}
+
+.pane__dot[data-status="waiting_for_input"] {
+  background: var(--amber);
+  box-shadow: 0 0 6px var(--amber-glow);
+}
+
+.pane__dot[data-status="awaiting"] {
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green-glow);
+}
+
+.pane__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.pane__open-full,
+.pane__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.pane__open-full:hover,
+.pane__close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* Meta line: status label · project / session · relative time. */
+.pane__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+}
+
+.pane__meta-loc {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane__meta-time {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* Pending-question banner (amber) — mirrors the sidebar row's pending-question
+   treatment. */
+.pane__banner {
+  flex-shrink: 0;
+  padding: var(--space-xs) var(--space-sm);
+  border-left: 2px solid var(--amber);
+  border-radius: var(--radius-sm);
+  background: var(--amber-glow);
+  color: var(--amber);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.pane__status-line {
+  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+/* Transcript tail — shrinks to fit (Req 3.4): scrolls inside the pane rather
+   than forcing the grid to overflow. */
+.pane__tail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.pane__earlier {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+
+.pane__tail-empty {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+}
+
+/* Compact transcript row: a role indicator, the text, and an optional single
+   collapsed tool line. CSS owns clamping. */
+.pane-message {
+  display: flex;
+  gap: var(--space-xs);
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.pane-message__role {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+}
+
+.pane-message[data-role="you"] .pane-message__role {
+  color: var(--cyan);
+}
+
+.pane-message__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pane-message__text {
+  color: var(--text-secondary);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.pane-message[data-compact="true"] .pane-message__text {
+  -webkit-line-clamp: 1;
+}
+
+.pane-message__tool {
+  display: flex;
+  gap: var(--space-xs);
+  min-width: 0;
+  color: var(--text-tertiary);
+  font-size: 0.68rem;
+}
+
+.pane-message__tool-name {
+  flex-shrink: 0;
+  color: var(--green);
+}
+
+.pane-message__tool-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

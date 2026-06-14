@@ -10,6 +10,7 @@ import DebugStatusStrip from "@/features/session/debug/DebugStatusStrip";
 import ImageAttachmentPreview from "@/components/ImageAttachmentPreview";
 import MobilePromptToolbar from "@/features/session/mobile/MobilePromptToolbar";
 import PromptDesktopToolbar from "@/features/session/prompt/PromptDesktopToolbar";
+import { useComposerFocus } from "@/features/session/prompt/use-composer-focus";
 import CollabConfigRow, {
   type CollabConfigRowConfig,
 } from "@/features/session/conversation/collab/CollabConfigRow";
@@ -221,6 +222,28 @@ export default function PromptComposer({
 }: PromptComposerProps): React.JSX.Element {
   const cancelOptimisticQueueEntry = useCancelOptimisticQueueEntry();
   const setQueueError = useSetQueueError();
+  const { containerRef, onFocus, onBlur, setControlActive } =
+    useComposerFocus();
+  // Portaled controls (model/effort dropdowns, capabilities drawer) render
+  // outside this region and move focus away from the editor; they report their
+  // open-state so the focus hook holds `composerFocused` true while open. Each
+  // reporter is memoized so the controls' onOpenChange effects don't re-fire.
+  const onModelOpenChange = useCallback(
+    (open: boolean) => setControlActive("model", open),
+    [setControlActive],
+  );
+  const onEffortOpenChange = useCallback(
+    (open: boolean) => setControlActive("effort", open),
+    [setControlActive],
+  );
+  const onCapabilitiesOpenChange = useCallback(
+    (open: boolean) => setControlActive("capabilities", open),
+    [setControlActive],
+  );
+  const onCapabilitiesMobileOpenChange = useCallback(
+    (open: boolean) => setControlActive("capabilities-mobile", open),
+    [setControlActive],
+  );
   const { disabled: sendDisabled, title: sendTitle } = computeSendButtonState({
     promptText,
     pendingImageCount: pendingImages.length,
@@ -279,7 +302,12 @@ export default function PromptComposer({
     );
 
   return (
-    <div className="prompt-input-area">
+    <div
+      className="prompt-input-area"
+      ref={containerRef}
+      onFocus={onFocus}
+      onBlur={onBlur}
+    >
       <div className="prompt-input-wrapper">
         {activeConversation && (
           <DebugStatusStrip
@@ -409,6 +437,9 @@ export default function PromptComposer({
           sendTitle={sendTitle}
           sendButtonInner={sendButtonInner}
           onSendPrompt={onSendPrompt}
+          onModelOpenChange={onModelOpenChange}
+          onEffortOpenChange={onEffortOpenChange}
+          onCapabilitiesOpenChange={onCapabilitiesOpenChange}
         />
         <MobilePromptToolbar
           modelOptions={getModelsForBackend(selectedBackend)}
@@ -444,6 +475,7 @@ export default function PromptComposer({
                 disabledTooltip={
                   isReadOnly ? "Session is read-only" : undefined
                 }
+                onOpenChange={onCapabilitiesMobileOpenChange}
               />
             </div>
           }

@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useMemo } from "react";
+import { Suspense, useEffect, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import Topbar from "@/components/Topbar";
 import ConversationWorkspace from "@/features/session/ConversationWorkspace";
@@ -13,11 +13,14 @@ import {
   useToggleSidebar,
   useMobileSidebarOpen,
   useCloseMobileSidebar,
+  useHydrateLayout,
 } from "@/stores/session-detail.store";
 import { type EffortLevel } from "@/lib/agent-backends/schemas";
+import { type OpenTabsApi } from "@/features/session/tabs/use-open-tabs";
 import { useConversationsPageSelection } from "./hooks/use-conversations-page-selection";
 import {
   resolveConversationsRenderState,
+  CONVERSATIONS_LAYOUT_STORAGE_KEY,
   type ConversationsRenderState,
 } from "./conversations-page-state";
 
@@ -48,6 +51,7 @@ function renderPanel(
   props: Props,
   autoFocus: boolean,
   onOpenConversation: (target: { conversationId: string }) => void,
+  openTabs: OpenTabsApi,
 ): React.JSX.Element {
   switch (state.kind) {
     case "workspace":
@@ -61,6 +65,7 @@ function renderPanel(
           defaultEffort={props.defaultEffort}
           autoFocus={autoFocus}
           onOpenConversation={onOpenConversation}
+          openTabs={openTabs}
         />
       );
     case "loading":
@@ -101,8 +106,17 @@ function ConversationsPageInner(props: Props): React.JSX.Element {
     [searchParams],
   );
 
+  // Layout is page-level for /conversations: hydrate once on mount from the
+  // single page-level key, not per active conversation, so activating a pane
+  // from a different session can't re-hydrate that session's layout (§3.5).
+  const hydrateLayout = useHydrateLayout();
+  useEffect(() => {
+    hydrateLayout(CONVERSATIONS_LAYOUT_STORAGE_KEY);
+  }, [hydrateLayout]);
+
   const lookupQuery = useConversationLookupQuery(params.conversationId);
-  const { openConversation, autoOpen } = useConversationsPageSelection(params);
+  const { openConversation, autoOpen, openTabs } =
+    useConversationsPageSelection(params);
   const renderState = resolveConversationsRenderState({
     conversationId: params.conversationId,
     lookup: {
@@ -171,7 +185,13 @@ function ConversationsPageInner(props: Props): React.JSX.Element {
           </button>
         )}
 
-        {renderPanel(renderState, props, params.autoFocus, openConversation)}
+        {renderPanel(
+          renderState,
+          props,
+          params.autoFocus,
+          openConversation,
+          openTabs,
+        )}
       </main>
     </div>
   );

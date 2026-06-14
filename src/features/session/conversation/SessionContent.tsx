@@ -1,11 +1,15 @@
 "use client";
 
-import { type ComponentProps, type ReactNode } from "react";
+import { useState, type ComponentProps, type ReactNode } from "react";
 import ConversationPanelContainer from "@/features/session/conversation/ConversationPanelContainer";
 import { FinishedBanner } from "@/components/conversation/ConversationBanners";
 import SessionInfoStrip from "@/features/session/conversation/SessionInfoStrip";
 import MobileInfoPanel from "@/features/session/mobile/MobileInfoPanel";
 import RightPane from "@/features/session/conversation/RightPane";
+import ConversationTabStrip from "@/features/session/tabs/ConversationTabStrip";
+import AddConversationMenu from "@/features/session/tabs/AddConversationMenu";
+import PanesGrid from "@/features/session/panes/PanesGrid";
+import type { OpenTabsApi } from "@/features/session/tabs/use-open-tabs";
 import type { SessionState, LayoutMode } from "@/lib/sessions/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 
@@ -31,8 +35,15 @@ export interface SessionContentProps {
   mobilePanel: MobilePanel;
   diff: RightPaneProps["diff"];
   commits: RightPaneProps["commits"];
-  panelContainerProps: Omit<PanelContainerProps, "promptInputSlot">;
+  panelContainerProps: PanelContainerProps;
   promptInputSlot: ReactNode;
+  /**
+   * Page-level open-tabs working set + operations, provided only on
+   * /conversations. Drives the tab strip (non-panes layouts) and the panes
+   * grid (panes layout). Absent on the per-conversation route, which has no
+   * working set — strip and grid are then never rendered.
+   */
+  openTabs?: OpenTabsApi;
 
   tddEnabled: boolean;
   onTddChange: (val: boolean) => void;
@@ -71,6 +82,7 @@ export default function SessionContent({
   commits,
   panelContainerProps,
   promptInputSlot,
+  openTabs,
   tddEnabled,
   onTddChange,
   tddDisabled,
@@ -89,9 +101,16 @@ export default function SessionContent({
   dsIsStoppingUnmanaged,
   onDelete,
 }: SessionContentProps): React.JSX.Element {
+  const isPanes = layout === "panes";
+  const workingSet = openTabs?.workingSet ?? [];
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const showTabStrip = !isPanes && !!openTabs && workingSet.length > 0;
+
   return (
     <div
-      className={`session-detail-layout stagger-in${isFinished ? " finished" : ""}`}
+      className={`session-detail-layout stagger-in${isFinished ? " finished" : ""}${
+        showTabStrip ? " has-tab-strip" : ""
+      }`}
     >
       <SessionInfoStrip
         session={session}
@@ -128,37 +147,82 @@ export default function SessionContent({
 
       {isFinished && <FinishedBanner targetBranch={targetBranch} />}
 
+      {showTabStrip && openTabs && (
+        <div className="conversation-tab-strip-host">
+          <ConversationTabStrip
+            workingSet={workingSet}
+            activeId={openTabs.activeId}
+            isAtCap={openTabs.isAtCap}
+            onActivate={openTabs.activate}
+            onClose={openTabs.closeTab}
+            onAddClick={() => setAddMenuOpen((o) => !o)}
+          />
+          {addMenuOpen && (
+            <AddConversationMenu
+              addableConversations={openTabs.addableConversations}
+              onAdd={(id) => {
+                openTabs.addTab(id);
+                setAddMenuOpen(false);
+              }}
+              onClose={() => setAddMenuOpen(false)}
+            />
+          )}
+        </div>
+      )}
+
       <div className="session-content-area" data-layout={layout}>
-        <ConversationPanelContainer
-          {...panelContainerProps}
-          promptInputSlot={promptInputSlot}
-        />
-
-        {(layout !== "conversation" ||
-          mobilePanel === "diff" ||
-          mobilePanel === "docs" ||
-          mobilePanel === "specs") && (
-          <RightPane
-            diff={diff}
-            commits={commits}
-            projectName={projectName}
-            sessionName={session.sessionName}
-            targetBranch={targetBranch}
+        {isPanes && openTabs ? (
+          // Panes replaces the single-conversation panel + diff with a
+          // full-width grid of every open conversation.
+          <PanesGrid
+            workingSet={workingSet}
+            activeId={openTabs.activeId}
+            isAtCap={openTabs.isAtCap}
+            addableConversations={openTabs.addableConversations}
+            onActivate={openTabs.activate}
+            onClose={openTabs.closeTab}
+            onAdd={openTabs.addTab}
+            // Open-full activates the conversation AND drops back to the
+            // single-conversation layout so it fills the view.
+            onOpenFull={(id) => {
+              openTabs.activate(id);
+              onLayoutChange("default");
+            }}
+            onExit={() => onLayoutChange("default")}
           />
-        )}
+        ) : (
+          <>
+            <ConversationPanelContainer {...panelContainerProps} />
 
-        {mobilePanel === "info" && (
-          <MobileInfoPanel
-            session={session}
-            activeConversation={activeConversation}
-            conversationId={conversationId}
-            statusDotClass={statusDotClass}
-            displayStatus={displayStatus}
-            contextPercent={contextPercent}
-            buildContext={buildContext}
-          />
+            {(layout !== "conversation" ||
+              mobilePanel === "diff" ||
+              mobilePanel === "docs" ||
+              mobilePanel === "specs") && (
+              <RightPane
+                diff={diff}
+                commits={commits}
+                projectName={projectName}
+                sessionName={session.sessionName}
+                targetBranch={targetBranch}
+              />
+            )}
+
+            {mobilePanel === "info" && (
+              <MobileInfoPanel
+                session={session}
+                activeConversation={activeConversation}
+                conversationId={conversationId}
+                statusDotClass={statusDotClass}
+                displayStatus={displayStatus}
+                contextPercent={contextPercent}
+                buildContext={buildContext}
+              />
+            )}
+          </>
         )}
       </div>
+
+      <div className="pinned-composer-row">{promptInputSlot}</div>
     </div>
   );
 }

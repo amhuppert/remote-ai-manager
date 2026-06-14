@@ -14,6 +14,7 @@ import type {
 } from "@/lib/conversations/schemas";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { CollabConfigDraft } from "@/stores/collaboration.store";
+import type { OpenTabsApi } from "@/features/session/tabs/use-open-tabs";
 
 type PromptComposerArgs = Parameters<typeof usePromptComposerProps>[0];
 type StoreBundle = ReturnType<typeof useSessionPageStoreBundle>;
@@ -41,6 +42,10 @@ export interface UseSessionPageViewPropsArgs {
   approvalGate: ConversationWorkspaceViewProps["promptInputSlotProps"]["approvalGate"];
   isInitConversation: boolean;
   targetBranch: string;
+
+  // Page-level open-tabs working set (present only on /conversations); flows
+  // into SessionContent's tab strip + panes grid.
+  openTabs?: OpenTabsApi;
 
   store: StoreBundle;
   local: LocalState;
@@ -218,6 +223,7 @@ export function useSessionPageViewProps(
       diff: args.diff,
       commits: args.commits,
       panelContainerProps,
+      openTabs: args.openTabs,
       tddEnabled: args.tddEnabled,
       onTddChange: args.onTddChange,
       tddDisabled: args.tddDisabled,

@@ -15,12 +15,49 @@ function buttonByTooltip(
 }
 
 describe("LayoutSwitcher", () => {
-  it("renders four layout mode buttons (Req 4.1)", () => {
+  it("renders five layout mode buttons (Req 3.1)", () => {
     const { container } = render(
       <LayoutSwitcher activeLayout="default" onLayoutChange={vi.fn()} />,
     );
     const buttons = container.querySelectorAll(".layout-btn");
-    expect(buttons.length).toBe(4);
+    expect(buttons.length).toBe(5);
+  });
+
+  it("orders panes after split and before diff (Req 3.1)", () => {
+    const { container } = render(
+      <LayoutSwitcher activeLayout="default" onLayoutChange={vi.fn()} />,
+    );
+    const tooltips = Array.from(container.querySelectorAll(".layout-btn")).map(
+      (b) => b.getAttribute("data-tooltip"),
+    );
+    expect(tooltips).toEqual([
+      "Conversation + Diff sidebar",
+      "Split 50/50",
+      "Panes (split-screen)",
+      "Conversation only",
+      "Diff only",
+    ]);
+  });
+
+  it("activates panes layout on click (Req 3.1)", () => {
+    const onLayoutChange = vi.fn();
+    const { container } = render(
+      <LayoutSwitcher activeLayout="default" onLayoutChange={onLayoutChange} />,
+    );
+    fireEvent.click(buttonByTooltip(container, "Panes (split-screen)"));
+    expect(onLayoutChange).toHaveBeenLastCalledWith("panes");
+  });
+
+  it("highlights the panes mode when active (Req 3.1)", () => {
+    const { container } = render(
+      <LayoutSwitcher activeLayout="panes" onLayoutChange={vi.fn()} />,
+    );
+    expect(
+      buttonByTooltip(container, "Panes (split-screen)").className,
+    ).toContain("active");
+    expect(buttonByTooltip(container, "Split 50/50").className).not.toContain(
+      "active",
+    );
   });
 
   it("calls onLayoutChange with correct mode on click (Req 4.4)", () => {
