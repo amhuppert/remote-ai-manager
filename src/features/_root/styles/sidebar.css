@@ -657,8 +657,8 @@
    ============================================================ */
 
 .convo-sidebar {
-  width: 308px;
-  min-width: 308px;
+  width: 616px;
+  min-width: 616px;
   background: var(--bg-base);
   border-right: 1px solid var(--border-default);
   border-radius: 0;
