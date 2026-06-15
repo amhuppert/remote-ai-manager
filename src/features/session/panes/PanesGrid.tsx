@@ -2,7 +2,7 @@
 
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
 import { useComposerFocused } from "@/stores/session-detail.store";
-import { gridShape, paneMessageLimit } from "./grid-shape";
+import { gridShape } from "./grid-shape";
 import PanesToolbar from "./PanesToolbar";
 import Pane from "./Pane";
 
@@ -31,8 +31,6 @@ export default function PanesGrid({
 }: PanesGridProps): React.JSX.Element {
   const panes = workingSet;
   const shape = gridShape(panes.length);
-  const compact = panes.length >= 3;
-  const messageLimit = paneMessageLimit(panes.length);
 
   // Read the focus flag directly (focused selector per PERFORMANCE.md) rather
   // than threading it as a prop. The CSS fade is driven solely by this
@@ -44,14 +42,7 @@ export default function PanesGrid({
   return (
     <div
       className="panes"
-      data-shape={shape.shape}
       data-composer-focused={composerFocused ? "true" : undefined}
-      // The `--cols`/`--rows` custom properties are not part of TS's
-      // CSSProperties type, so the cast is the established CSS-var idiom — not a
-      // type bypass.
-      style={
-        { "--cols": shape.cols, "--rows": shape.rows } as React.CSSProperties
-      }
     >
       <PanesToolbar
         count={panes.length}
@@ -60,18 +51,27 @@ export default function PanesGrid({
         onAdd={onAdd}
         onExit={onExit}
       />
-      {panes.map((c) => (
-        <Pane
-          key={c.id}
-          conversation={c}
-          active={c.id === activeId}
-          messageLimit={messageLimit}
-          compact={compact}
-          onActivate={onActivate}
-          onOpenFull={onOpenFull}
-          onClose={onClose}
-        />
-      ))}
+      <div
+        className="panes-grid"
+        data-shape={shape.shape}
+        // The `--cols`/`--rows` custom properties are not part of TS's
+        // CSSProperties type, so the cast is the established CSS-var idiom — not
+        // a type bypass.
+        style={
+          { "--cols": shape.cols, "--rows": shape.rows } as React.CSSProperties
+        }
+      >
+        {panes.map((c) => (
+          <Pane
+            key={c.id}
+            conversation={c}
+            active={c.id === activeId}
+            onActivate={onActivate}
+            onOpenFull={onOpenFull}
+            onClose={onClose}
+          />
+        ))}
+      </div>
     </div>
   );
 }

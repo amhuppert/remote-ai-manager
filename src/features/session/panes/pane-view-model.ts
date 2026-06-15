@@ -1,5 +1,4 @@
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
-import type { TranscriptMessage } from "@/lib/conversations/schemas";
 
 export interface PaneViewModel {
   id: string;
@@ -41,32 +40,5 @@ export function toPaneViewModel(
     pendingQuestion: c.pendingQuestion,
     statusLine: c.lastActivitySummary,
     relativeTime: formatRelativeTime(c.lastActivityAt, now),
-  };
-}
-
-function toolDetail(input: Record<string, unknown> | undefined): string {
-  if (!input || Object.keys(input).length === 0) return "";
-  return JSON.stringify(input).replace(/\s+/g, " ").trim();
-}
-
-export function summarizeMessage(m: TranscriptMessage): {
-  role: "you" | "cc";
-  text: string;
-  tool?: { name: string; detail: string };
-} {
-  // Notices are CC-authored informational entries, so they group on the cc
-  // side; the return type only models the two visual lanes ("you" | "cc").
-  const role: "you" | "cc" = m.role === "user" ? "you" : "cc";
-
-  const textBlock = m.content.find((block) => block.type === "text");
-  const text = textBlock ? textBlock.text.trim() : "";
-
-  const toolBlock = m.content.find((block) => block.type === "tool_use");
-  if (!toolBlock) return { role, text, tool: undefined };
-
-  return {
-    role,
-    text,
-    tool: { name: toolBlock.name, detail: toolDetail(toolBlock.input) },
   };
 }

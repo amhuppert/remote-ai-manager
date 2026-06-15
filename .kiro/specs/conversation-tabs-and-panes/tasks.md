@@ -7,15 +7,15 @@
   - Observable: the unit suite passes for all five behaviors and the set size never exceeds six in any sequence.
   - _Requirements: 1.5, 1.6, 1.7, 2.7_
   - _Boundary: open-tabs-model_
-- [x] 1.2 (P) Pane grid-shape and density helpers
-  - Pure helpers for the grid shape per pane count (single row for 1–3, 2×2 for 4, the asymmetric 3-over-2 for 5, 3×2 for 6), the visible-message limit (two panes → four messages, three or more → two), and message truncation.
-  - Observable: tests assert the exact shape for every count 1–6 (including the asymmetric 5) and the density thresholds.
-  - _Requirements: 3.3, 4.6_
+- [x] 1.2 (P) Pane grid-shape helper
+  - Pure helper for the grid shape per pane count (single row for 1–3, 2×2 for 4, the asymmetric 3-over-2 for 5, 3×2 for 6).
+  - Observable: tests assert the exact shape for every count 1–6 (including the asymmetric 5).
+  - _Requirements: 3.3_
   - _Boundary: grid-shape_
-- [x] 1.3 (P) Pane view-model and message summarization
-  - Pure mapping from an active conversation to its pane display fields (title, status, project/session, pending question, status line, relative time) and extraction of a transcript message into a role, text, and an optional collapsed tool line.
-  - Observable: tests cover the field mapping and message-block extraction for both a plain text message and one carrying a tool call.
-  - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5_
+- [x] 1.3 (P) Pane view-model
+  - Pure mapping from an active conversation to its pane display fields (title, status, project/session, pending question, status line, relative time).
+  - Observable: tests cover the field mapping with a deterministic relative time.
+  - _Requirements: 4.1, 4.2, 4.3, 4.4_
   - _Boundary: pane-view-model_
 - [x] 1.4 (P) Initial-selection precedence
   - Pure precedence function returning the conversation to select on page entry: explicit URL selection wins, else a session-filter entry's session-scoped candidate, else the live most-recently-active persisted tab, else the generic most-recent conversation, else none; the result also signals whether the selection is user-initiated or an automatic (history-replacing) one.
@@ -58,11 +58,11 @@
   - _Boundary: AddConversationMenu_
 
 - [x] 4. Core: panes surfaces, keyboard, and composer focus
-- [x] 4.1 (P) Pane mini-cockpit and message row
-  - Build the pane (head with status dot, title, open-full and close controls; meta line; the pending-question banner when waiting or the status line otherwise; a transcript tail from the per-conversation messages query enabled only in panes mode, sliced by the density limit, with a "+N earlier" summary) and the compact message row; style the panes, pane, active ring, shadow separator, and composer-focus fade.
-  - Observable: a pane renders its head, meta, banner-or-status, and the last N messages (N from density), with the active pane visibly ringed and no composer inside the pane.
-  - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.7, 4.8, 4.9, 5.1_
-  - _Boundary: Pane, PaneMessage_
+- [x] 4.1 (P) Pane and full-transcript body
+  - Build the pane (head with status dot, title, open-full and close controls; meta line; the pending-question banner when waiting or the status line otherwise) and its transcript body: the conversation's full message list from the per-conversation messages query (enabled only in panes mode), rendered read-only through the shared transcript list and message row (no fork affordance, no trailing debug card) and scrollable within the pane; style the panes, pane, active ring, shadow separator, and composer-focus fade.
+  - Observable: a pane renders its head, meta, banner-or-status, and its full scrollable transcript (empty state when the conversation has no messages), with the active pane visibly ringed and no composer inside the pane.
+  - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9, 5.1_
+  - _Boundary: Pane, PaneConversationBody_
   - _Depends: 1.3_
 - [x] 4.2 (P) Panes toolbar
   - Build the toolbar showing the current count out of six, the focus hint, the add-pane control (disabled at the cap with a limit tooltip), and an exit control.
@@ -71,8 +71,8 @@
   - _Boundary: PanesToolbar_
   - _Depends: 3.3_
 - [x] 4.3 Panes grid container
-  - Build the grid that resolves the working set, writes the column/row and shape variables and the composer-focused attribute, and renders the toolbar plus one pane per conversation; inactive panes fade and the active pane intensifies while composer-focused.
-  - Observable: changing the pane count reflows per the shape helper, and focusing the composer fades only the inactive panes.
+  - Build the container as an outer flex column: a fixed toolbar row above an inner grid element (so the toolbar never consumes a grid cell) that resolves the working set, writes the column/row and shape variables, and holds one pane per conversation; the composer-focused attribute on the outer container fades the inactive panes and intensifies the active one.
+  - Observable: changing the pane count reflows the inner grid per the shape helper with the toolbar as a separate top row, and focusing the composer fades only the inactive panes.
   - _Requirements: 3.2, 3.4, 5.3, 5.4, 5.5_
   - _Depends: 1.2, 4.1, 4.2_
 - [x] 4.4 (P) Tab and panes keyboard hook
@@ -153,9 +153,9 @@
   - _Requirements: 7.5_
   - _Depends: 7.2_
 - [x] 8.5 (P) Performance check in panes
-  - With six panes open, confirm the panes do not re-render on unrelated store or query churn (via render measurement) and the per-conversation message queries unmount when leaving panes mode.
-  - Observable: render-count and query-teardown observations are recorded with no event-loop stalls from the concurrent fetches.
-  - _Requirements: 4.5_
+  - With six panes open, confirm the panes do not re-render on unrelated store or query churn (via render measurement), each pane's transcript virtualizes so only visible rows render, and the per-conversation message queries unmount when leaving panes mode.
+  - Observable: render-count, virtualization, and query-teardown observations are recorded with no event-loop stalls from the concurrent fetches.
+  - _Requirements: 4.5, 4.6_
   - _Depends: 7.2_
 
 ## Implementation Notes
@@ -168,3 +168,13 @@
   1. Working-set wipe on full load/reload — `use-open-tabs` reconcile ran against an empty live list before the active-conversations query resolved. Fix: gate reconcile on a new `activeConversationsLoaded` flag (`conversations !== undefined`). (Req 1.8)
   2. Page-level layout reset on conversation switch — `resetConversationState` (run on the conversationId-keyed workspace's remount) reset `layout` to default. Fix: preserve `layout` across the reset like the other host-shell fields. (Req 3.5, 5.2)
 - Live deferrals (covered by unit tests, not live-exercised): the 6-tab add-disabled-at-cap (2.10) — covered by `open-tabs-model` eviction/`isAtCap` + `ConversationTabStrip`/`PanesToolbar` disabled-at-cap tests; the full 6-pane perf measurement (8.5) — the light 3–4-pane live check showed no event-loop stall + mount-scoped query teardown, with the `enabled`-by-mount design covering teardown. Verdict: GO.
+
+### Amendment — full-transcript panes (2026-06-15)
+
+After live use, Alex changed Requirement 4: a pane must show its conversation's **full, scrollable transcript** using the **same message-rendering section as the single-conversation layout**, not a compact "mini-cockpit" tail. This reverses the original Req 4.5/4.6 (recent-message tail + per-pane-count density limit) and the related shrink-to-fit framing of 3.4.
+
+- Req 3.4 → scroll-within-pane; Req 4 retitled "Per-pane conversation content"; Req 4.5 → full transcript via the shared renderer; Req 4.6 → same presentation regardless of pane count (no count-based slicing/compacting).
+- New `PaneConversationBody` fetches the conversation's messages and renders them **read-only** through the shared `ConversationVirtuosoList` + `MessageRow` (`onFork` omitted, `lastMessageExtras` null), built with the shared `useDisplayMessages` + `buildConversationRows`. The single shared composer (Req 7) still owns input for the active pane.
+- Deleted: `PaneMessage`, `pane-view-model`'s `summarizeMessage`, and `grid-shape`'s `paneMessageLimit`/`truncate` (all compact-tail-only), plus their tests. `gridShape` and `toPaneViewModel` are unchanged.
+- Also in this pass (separate from the transcript requirement, recorded for completeness): (a) `PanesToolbar` lifted out of the `.panes` CSS grid into a flex row above a new `.panes-grid` element — it was consuming a grid cell and squeezing a pane; (b) the `conversationId` `key` on `ConversationWorkspace` was removed so activating a tab/pane no longer remounts the workspace (and its panes grid) — the per-conversation reset that the remount provided is now reactive in `useSessionLifecycle` (`resetConversationState` + a new `clearDraftComposerState` on `conversationId` change; the `autoFocus` one-shot guard scoped per conversation).
+- Verification: 7968-test unit suite + typecheck + lint green; layout + full-transcript rendering live-verified via a new `PanesGrid.stories.tsx` (real grid at 2–6 panes, `MessageRow` content rendering, toolbar as a separate top row).

@@ -74,6 +74,12 @@ function panesContainer(container: HTMLElement): HTMLElement {
   return el;
 }
 
+function panesGrid(container: HTMLElement): HTMLElement {
+  const el = container.querySelector(".panes-grid");
+  if (!(el instanceof HTMLElement)) throw new Error("no .panes-grid container");
+  return el;
+}
+
 beforeEach(() => {
   useSessionDetailStore.getState().resetStore();
 });
@@ -126,10 +132,10 @@ describe("PanesGrid", () => {
       );
       const { container } = renderGrid({ workingSet, activeId: "c0" });
 
-      const panes = panesContainer(container);
-      expect(panes.getAttribute("data-shape")).toBe(shape);
-      expect(panes.style.getPropertyValue("--cols")).toBe(cols);
-      expect(panes.style.getPropertyValue("--rows")).toBe(rows);
+      const grid = panesGrid(container);
+      expect(grid.getAttribute("data-shape")).toBe(shape);
+      expect(grid.style.getPropertyValue("--cols")).toBe(cols);
+      expect(grid.style.getPropertyValue("--rows")).toBe(rows);
     },
   );
 

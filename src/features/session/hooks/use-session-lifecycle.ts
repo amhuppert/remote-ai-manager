@@ -22,6 +22,16 @@ export function autoFocusStrippedUrl(location: {
 
 export interface UseSessionLifecycleArgs {
   resetConversationState: () => void;
+  /**
+   * Clear the composer's volatile per-conversation draft state (attached
+   * images, inline image markers, the fire-and-forget voice flag). The
+   * workspace is no longer remounted per conversation (it is a multi-
+   * conversation surface), so this state — which a remount used to discard —
+   * must be reset reactively when the active conversation changes. The text
+   * draft is handled separately by usePendingPromptPersistence (persisted +
+   * rehydrated per conversation).
+   */
+  clearDraftComposerState: () => void;
   clearConversationMessages: () => void;
   conversationId: string;
   session: SessionState | undefined;
@@ -46,6 +56,7 @@ export interface UseSessionLifecycleArgs {
 
 export function useSessionLifecycle({
   resetConversationState,
+  clearDraftComposerState,
   clearConversationMessages,
   conversationId,
   session,
@@ -60,11 +71,18 @@ export function useSessionLifecycle({
   effortSupported,
   selectedBackend,
 }: UseSessionLifecycleArgs): void {
+  // Reset conversation-scoped store state AND the composer's local draft state
+  // when leaving a conversation (switch or unmount). `conversationId` is a dep
+  // so the cleanup fires on every active-conversation change — the workspace is
+  // not remounted, so this reactive reset is what gives each conversation a
+  // clean slate. resetConversationState preserves host-shell state (layout,
+  // sidebar), so this never drops out of the panes/tabs layout.
   useEffect(() => {
     return () => {
       resetConversationState();
+      clearDraftComposerState();
     };
-  }, [resetConversationState]);
+  }, [conversationId, resetConversationState, clearDraftComposerState]);
 
   useEffect(() => {
     clearConversationMessages();
@@ -107,10 +125,19 @@ export function useSessionLifecycle({
     clearQuestions,
   ]);
 
-  const autoFocusFired = useRef(false);
+  // Tracks the conversation the objective auto-prompt has already fired for.
+  // Keyed by id (not a bare boolean) because the workspace persists across
+  // conversation switches: a boolean guard would block the auto-prompt for a
+  // later conversation opened with autoFocus while the workspace stays mounted.
+  const autoFocusFiredFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!autoFocus || autoFocusFired.current || !session?.objective) return;
-    autoFocusFired.current = true;
+    if (
+      !autoFocus ||
+      autoFocusFiredFor.current === conversationId ||
+      !session?.objective
+    )
+      return;
+    autoFocusFiredFor.current = conversationId;
 
     // One-shot param: strip it shallowly so refresh/back can't re-trigger the
     // objective prompt. Must never be an App Router navigation (§1.2) — the

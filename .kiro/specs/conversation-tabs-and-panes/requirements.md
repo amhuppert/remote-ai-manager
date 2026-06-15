@@ -7,15 +7,15 @@ Operators on the Command Center `/conversations` page frequently juggle several 
 This feature adds two tightly-coupled capabilities to the `/conversations` page, both rendered off **one shared working set** of open conversations so they never diverge:
 
 1. **Conversation tabs** — a browser-style tab strip above the conversation pane holding the working set, switchable by click or hotkey.
-2. **Panes (split-screen) mode** — a new layout that lays the same working set out as 2–6 live, interactive mini-cockpits, so the operator can watch and triage the fleet without leaving the page.
+2. **Panes (split-screen) mode** — a new layout that lays the same working set out as 2–6 live conversation panes, each showing its full scrollable transcript, so the operator can watch and triage the fleet without leaving the page.
 
 A single prompt composer, shared across all layouts, always targets the active conversation so the destination of a reply is unmistakable.
 
 ## Boundary Context
 
-- **In scope**: the shared open-conversations working set (ordering, cap, eviction, persistence across reloads, active selection); the conversation tab strip and its interactions; the panes layout (a new layout-switcher option, grid arrangement, per-pane mini-cockpit content, panes toolbar); the active-pane indicator and composer-focus emphasis; relocating the single prompt composer to a shared pinned position; the tab/pane keyboard shortcuts.
+- **In scope**: the shared open-conversations working set (ordering, cap, eviction, persistence across reloads, active selection); the conversation tab strip and its interactions; the panes layout (a new layout-switcher option, grid arrangement, per-pane full-transcript content, panes toolbar); the active-pane indicator and composer-focus emphasis; relocating the single prompt composer to a shared pinned position; the tab/pane keyboard shortcuts.
 - **Out of scope** (consumed, not changed): the enriched Active Conversations sidebar, the peek popover, the sidebar row context menu, the conversation status data and its enum, and the composer's existing control toolbar — all already shipped. Also excluded: the separate project-cockpit conversation-tab surface (untouched); sparklines/activity histograms, a fleet event ticker, sticky/PiP peek, bulk row actions, and saved views; any per-pane composer; and any change to how agents execute, merge, or run.
-- **Adjacent expectations**: this feature relies on the existing active-conversations data (including the four-value status set and the agent's pending question when a conversation is waiting for input), the existing source of a conversation's recent messages (the same data the peek popover already reads for non-active conversations), the existing layout switcher and its layout set, and URL-based conversation selection. It does not own or modify those systems.
+- **Adjacent expectations**: this feature relies on the existing active-conversations data (including the four-value status set and the agent's pending question when a conversation is waiting for input), the existing source of a conversation's full message transcript (the same per-conversation messages the single-conversation view already reads), the existing transcript rendering components, the existing layout switcher and its layout set, and URL-based conversation selection. It does not own or modify those systems.
 
 ## Requirements
 
@@ -61,13 +61,13 @@ A single prompt composer, shared across all layouts, always targets the active c
 1. The Conversations Page shall offer a panes layout option in the layout switcher, positioned after the split layout and before the diff-only layout, while retaining the existing layout options.
 2. When the user selects the panes layout, the Conversations Page shall replace the single-conversation-and-diff view with a full-width grid containing one pane per conversation in the working set.
 3. While the panes layout is active, the Conversations Page shall arrange the panes by conversation count as follows: 1, 2, or 3 panes as a single row of equal full-height panes; 4 panes as a 2×2 grid; 5 panes as three panes on the top row and two wider panes on the bottom row; 6 panes as a 3×2 grid.
-4. While the panes layout is active, the Conversations Page shall size the grid so that message content within a pane shrinks to fit rather than forcing the grid to overflow.
+4. While the panes layout is active, the Conversations Page shall size the grid so that each pane's transcript scrolls within its own pane rather than forcing the grid to overflow.
 5. When the user exits the panes layout, the Conversations Page shall return to the default single-conversation layout with the active conversation unchanged.
 6. The Conversations Page shall persist the selected layout across reloads consistent with the existing layout-persistence behavior.
 
-### Requirement 4: Per-pane mini-cockpit content
+### Requirement 4: Per-pane conversation content
 
-**Objective:** As an operator, I want each pane to be a live, readable mini-cockpit, so that I can understand and act on each conversation without opening it.
+**Objective:** As an operator, I want each pane to show its conversation live and in full, so that I can read and follow each conversation without opening it.
 
 #### Acceptance Criteria
 
@@ -75,8 +75,8 @@ A single prompt composer, shared across all layouts, always targets the active c
 2. The Conversations Page shall render a meta line in each pane showing the status label, the project and session, and a relative time.
 3. While a pane's conversation is waiting for the user's input, the Conversations Page shall display the agent's pending question prominently in that pane.
 4. While a pane's conversation is not waiting for input, the Conversations Page shall display that conversation's latest status line in the pane.
-5. The Conversations Page shall display a tail of each pane's most recent messages, preceded by a summary indicating how many earlier messages are hidden.
-6. While exactly two panes are shown, the Conversations Page shall display up to four recent messages per pane; while three or more panes are shown, the Conversations Page shall display up to two recent messages per pane in a more compact form.
+5. The Conversations Page shall display each pane's complete conversation transcript, scrollable within the pane, rendered with the same message presentation as the single-conversation layout.
+6. The Conversations Page shall render every pane's transcript with this same message presentation regardless of pane count, and shall not limit, slice, or compact the messages shown based on the number of panes.
 7. When the user activates a pane's open-full control, the Conversations Page shall make that pane's conversation active and present it in a single-conversation layout.
 8. When the user activates a pane's close control, the Conversations Page shall remove that conversation from the working set without stopping its agent.
 9. The Conversations Page shall not render a prompt composer inside any pane.

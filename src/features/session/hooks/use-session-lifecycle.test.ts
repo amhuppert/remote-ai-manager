@@ -14,6 +14,7 @@ function makeArgs(
 ): UseSessionLifecycleArgs {
   return {
     resetConversationState: vi.fn(),
+    clearDraftComposerState: vi.fn(),
     clearConversationMessages: vi.fn(),
     conversationId: "c",
     session: undefined,
@@ -57,6 +58,38 @@ describe("useSessionLifecycle", () => {
     renderHook(() => useSessionLifecycle(args));
     expect(args.clearConversationMessages).toHaveBeenCalled();
     expect(args.showQuestions).not.toHaveBeenCalled();
+  });
+
+  it("resets conversation and draft composer state when the active conversation changes, not on initial mount", () => {
+    const resetConversationState = vi.fn();
+    const clearDraftComposerState = vi.fn();
+    const { rerender } = renderHook(
+      (props: UseSessionLifecycleArgs) => useSessionLifecycle(props),
+      {
+        initialProps: makeArgs({
+          conversationId: "a",
+          resetConversationState,
+          clearDraftComposerState,
+        }),
+      },
+    );
+
+    // The workspace is not remounted per conversation; the first mount has no
+    // prior conversation to leave, so nothing is reset yet.
+    expect(resetConversationState).not.toHaveBeenCalled();
+    expect(clearDraftComposerState).not.toHaveBeenCalled();
+
+    rerender(
+      makeArgs({
+        conversationId: "b",
+        resetConversationState,
+        clearDraftComposerState,
+      }),
+    );
+
+    // Switching the active conversation runs the leave-cleanup exactly once.
+    expect(resetConversationState).toHaveBeenCalledTimes(1);
+    expect(clearDraftComposerState).toHaveBeenCalledTimes(1);
   });
 
   describe("autoFocus objective kick-off", () => {
@@ -118,6 +151,35 @@ describe("useSessionLifecycle", () => {
         }),
       );
       await waitFor(() => expect(sendPrompt).toHaveBeenCalledTimes(1));
+    });
+
+    it("fires again for a different conversation opened with autoFocus while the workspace stays mounted", async () => {
+      const sendPrompt = vi.fn(() => Promise.resolve());
+      const { rerender } = renderHook(
+        (props: UseSessionLifecycleArgs) => useSessionLifecycle(props),
+        {
+          initialProps: makeArgs({
+            conversationId: "a",
+            autoFocus: true,
+            session: sessionWithObjective,
+            sendPrompt,
+          }),
+        },
+      );
+      await waitFor(() => expect(sendPrompt).toHaveBeenCalledTimes(1));
+
+      // The guard is keyed per conversation, not per workspace instance: a
+      // newly activated conversation with autoFocus must still kick off its
+      // objective even though the workspace was never remounted.
+      rerender(
+        makeArgs({
+          conversationId: "b",
+          autoFocus: true,
+          session: sessionWithObjective,
+          sendPrompt,
+        }),
+      );
+      await waitFor(() => expect(sendPrompt).toHaveBeenCalledTimes(2));
     });
   });
 });

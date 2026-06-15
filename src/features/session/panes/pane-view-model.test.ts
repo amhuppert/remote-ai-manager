@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
-import type { TranscriptMessage } from "@/lib/conversations/schemas";
-import { summarizeMessage, toPaneViewModel } from "./pane-view-model";
+import { toPaneViewModel } from "./pane-view-model";
 
 function makeConversation(
   overrides: Partial<SessionActiveConversation> = {},
@@ -108,92 +107,5 @@ describe("toPaneViewModel", () => {
         base + 2 * 86_400_000,
       ).relativeTime,
     ).toBe("2d ago");
-  });
-});
-
-describe("summarizeMessage", () => {
-  it("summarizes a plain user text message as a 'you' row with no tool", () => {
-    const message: TranscriptMessage = {
-      role: "user",
-      content: [{ type: "text", text: "  Please refactor this  " }],
-      timestamp: null,
-    };
-    expect(summarizeMessage(message)).toEqual({
-      role: "you",
-      text: "Please refactor this",
-      tool: undefined,
-    });
-  });
-
-  it("summarizes an assistant message with a tool call as a 'cc' row with a tool line", () => {
-    const message: TranscriptMessage = {
-      role: "assistant",
-      content: [
-        { type: "text", text: "Reading the file now" },
-        {
-          type: "tool_use",
-          name: "Read",
-          input: { file_path: "/repos/x/pane-view-model.ts" },
-        },
-      ],
-      timestamp: null,
-    };
-
-    const result = summarizeMessage(message);
-    expect(result.role).toBe("cc");
-    expect(result.text).toBe("Reading the file now");
-    expect(result.tool?.name).toBe("Read");
-    expect(result.tool?.detail).toContain("file_path");
-    expect(result.tool?.detail).toContain("/repos/x/pane-view-model.ts");
-    expect(result.tool?.detail).not.toMatch(/\n/);
-  });
-
-  it("groups notice messages on the cc side", () => {
-    const message: TranscriptMessage = {
-      role: "notice",
-      content: [{ type: "text", text: "Conversation forked" }],
-      timestamp: null,
-    };
-    expect(summarizeMessage(message).role).toBe("cc");
-  });
-
-  it("returns an empty text when no text block is present", () => {
-    const message: TranscriptMessage = {
-      role: "assistant",
-      content: [{ type: "tool_use", name: "Bash", input: { command: "ls" } }],
-      timestamp: null,
-    };
-    const result = summarizeMessage(message);
-    expect(result.text).toBe("");
-    expect(result.tool).toEqual({ name: "Bash", detail: '{"command":"ls"}' });
-  });
-
-  it("uses an empty detail when a tool call has no input", () => {
-    const message: TranscriptMessage = {
-      role: "assistant",
-      content: [{ type: "tool_use", name: "TodoWrite" }],
-      timestamp: null,
-    };
-    expect(summarizeMessage(message).tool).toEqual({
-      name: "TodoWrite",
-      detail: "",
-    });
-  });
-
-  it("collapses multiline / multispace input into a single line detail", () => {
-    const message: TranscriptMessage = {
-      role: "assistant",
-      content: [
-        {
-          type: "tool_use",
-          name: "Write",
-          input: { content: "line one\nline   two" },
-        },
-      ],
-      timestamp: null,
-    };
-    const detail = summarizeMessage(message).tool?.detail ?? "";
-    expect(detail).not.toMatch(/\n/);
-    expect(detail).not.toMatch(/ {2,}/);
   });
 });

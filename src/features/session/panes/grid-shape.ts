@@ -24,13 +24,3 @@ export function gridShape(n: number): GridShape {
       return { cols: 3, rows: 2, shape: "grid-3x2" };
   }
 }
-
-export function paneMessageLimit(paneCount: number): number {
-  if (paneCount === 2) return 4;
-  return 2;
-}
-
-export function truncate(s: string, n: number): string {
-  if (s.length <= n) return s;
-  return `${s.slice(0, n - 1)}…`;
-}

@@ -223,8 +223,19 @@ export default function ConversationWorkspace({
     conversationId,
   );
 
+  // Stable identity required: useSessionLifecycle's reset effect depends on it,
+  // and the three accessors are themselves stable (useCallback / setState /
+  // useRef), so destructuring keeps this callback from changing per render.
+  const { clearImages, setInlineMarkerIds, fireAndForgetRef } = local;
+  const clearDraftComposerState = useCallback(() => {
+    clearImages();
+    setInlineMarkerIds([]);
+    fireAndForgetRef.current = false;
+  }, [clearImages, setInlineMarkerIds, fireAndForgetRef]);
+
   useSessionLifecycle({
     resetConversationState: store.resetConversationState,
+    clearDraftComposerState,
     clearConversationMessages: store.clearConversationMessages,
     conversationId,
     session,

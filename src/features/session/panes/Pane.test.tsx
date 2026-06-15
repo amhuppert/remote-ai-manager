@@ -56,8 +56,6 @@ function renderPane(
   props: {
     conversation?: SessionActiveConversation;
     active?: boolean;
-    messageLimit?: number;
-    compact?: boolean;
     onActivate?: (id: string) => void;
     onOpenFull?: (id: string) => void;
     onClose?: (id: string) => void;
@@ -86,8 +84,6 @@ function renderPane(
       <Pane
         conversation={conversation}
         active={props.active ?? false}
-        messageLimit={props.messageLimit ?? 4}
-        compact={props.compact ?? false}
         onActivate={onActivate}
         onOpenFull={onOpenFull}
         onClose={onClose}
@@ -186,38 +182,26 @@ describe("Pane", () => {
     expect(container.querySelector(".pane__banner")).toBeNull();
   });
 
-  it("renders only the last messageLimit messages with a +N earlier summary (4.5)", () => {
-    renderPane({ messageLimit: 2 }, [
+  it("renders the empty state when the conversation has no messages", () => {
+    const { container } = renderPane({}, []);
+
+    expect(screen.getByText("No messages yet")).toBeInTheDocument();
+    expect(container.querySelector(".pane__body")).toBeNull();
+  });
+
+  it("renders the full transcript body when messages are present (2/3)", () => {
+    const { container } = renderPane({}, [
       textMessage(1, "first"),
       textMessage(2, "second"),
       textMessage(3, "third"),
-      textMessage(4, "fourth"),
-      textMessage(5, "fifth"),
     ]);
 
-    expect(document.querySelectorAll(".pane-message")).toHaveLength(2);
-    expect(screen.getByText("fourth")).toBeInTheDocument();
-    expect(screen.getByText("fifth")).toBeInTheDocument();
-    expect(screen.queryByText("first")).toBeNull();
-    expect(screen.getByText(/\+\s*3 earlier/)).toBeInTheDocument();
-  });
-
-  it("renders no +N earlier summary when messageLimit covers all messages (4.5)", () => {
-    renderPane({ messageLimit: 4 }, [
-      textMessage(1, "only"),
-      textMessage(2, "two"),
-    ]);
-
-    expect(document.querySelectorAll(".pane-message")).toHaveLength(2);
-    expect(document.querySelector(".pane__earlier")).toBeNull();
-  });
-
-  it("renders an inline empty tail without crashing when there are no messages", () => {
-    const { container } = renderPane({}, []);
-
-    expect(document.querySelectorAll(".pane-message")).toHaveLength(0);
-    expect(container.querySelector(".pane__tail")).not.toBeNull();
-    expect(container.querySelector(".pane__tail-empty")).not.toBeNull();
+    // The real message-rendering section mounts; the empty/compact-tail
+    // placeholders are gone (panes show the whole transcript, not a slice).
+    expect(container.querySelector(".pane__body")).not.toBeNull();
+    expect(screen.queryByText("No messages yet")).toBeNull();
+    expect(container.querySelector(".pane-message")).toBeNull();
+    expect(container.querySelector(".pane__tail")).toBeNull();
   });
 
   it("does not render a composer inside the pane (4.9)", () => {

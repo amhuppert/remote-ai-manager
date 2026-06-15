@@ -55,9 +55,16 @@ function renderPanel(
 ): React.JSX.Element {
   switch (state.kind) {
     case "workspace":
+      // Intentionally NOT keyed by conversationId. The page is a
+      // multi-conversation surface (tabs + panes): activating a tab/pane is a
+      // selection change, not a new workspace. Keying here would remount the
+      // entire workspace — including the panes grid and every pane — on each
+      // activation and replay the `.stagger-in` entrance animation (the
+      // "flash"). Per-conversation state is instead reset reactively on
+      // conversationId change (see useSessionLifecycle); the message list keeps
+      // its own `key={conversationId}` inside ConversationVirtuosoList.
       return (
         <ConversationWorkspace
-          key={state.conversation.conversationId}
           projectName={state.conversation.projectName}
           sessionName={state.conversation.sessionName}
           conversationId={state.conversation.conversationId}

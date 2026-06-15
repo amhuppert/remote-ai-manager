@@ -2,15 +2,12 @@
 
 import { useCallback } from "react";
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
-import { useConversationMessagesQuery } from "@/hooks/conversation/use-conversation-messages-query";
 import { toPaneViewModel } from "./pane-view-model";
-import PaneMessage from "./PaneMessage";
+import PaneConversationBody from "./PaneConversationBody";
 
 export interface PaneProps {
   conversation: SessionActiveConversation;
   active: boolean;
-  messageLimit: number;
-  compact: boolean;
   onActivate: (id: string) => void;
   onOpenFull: (id: string) => void;
   onClose: (id: string) => void;
@@ -29,21 +26,11 @@ const STATUS_LABEL: Record<SessionActiveConversation["status"], string> = {
 export default function Pane({
   conversation,
   active,
-  messageLimit,
-  compact,
   onActivate,
   onOpenFull,
   onClose,
 }: PaneProps): React.JSX.Element {
   const vm = toPaneViewModel(conversation);
-
-  // Enabled by mount: a Pane only renders inside the panes grid (panes mode), so
-  // leaving panes unmounts it and disables the query (perf 8.5). No explicit gate.
-  const { data, isLoading, isError } = useConversationMessagesQuery(
-    conversation.projectName,
-    conversation.sessionName,
-    conversation.id,
-  );
 
   const handleActivate = useCallback(() => {
     if (!active) onActivate(conversation.id);
@@ -65,10 +52,6 @@ export default function Pane({
     [conversation.id, onClose],
   );
 
-  const messages = data ?? [];
-  const tail = messages.slice(-messageLimit);
-  const hiddenCount = messages.length - tail.length;
-
   // Banner when the agent is blocked on the operator; otherwise the latest
   // status line. When neither applies, the slot renders nothing.
   const showBanner =
@@ -78,7 +61,6 @@ export default function Pane({
     <section
       className="pane"
       data-active={active ? "true" : undefined}
-      data-compact={compact ? "true" : undefined}
       onClick={handleActivate}
     >
       <header className="pane__head">
@@ -121,22 +103,12 @@ export default function Pane({
         <div className="pane__status-line">{vm.statusLine}</div>
       ) : null}
 
-      <div className="pane__tail">
-        {hiddenCount > 0 && (
-          <div className="pane__earlier">+ {hiddenCount} earlier</div>
-        )}
-        {isLoading ? (
-          <div className="pane__tail-empty">Loading…</div>
-        ) : isError ? (
-          <div className="pane__tail-empty">Could not load messages</div>
-        ) : tail.length === 0 ? (
-          <div className="pane__tail-empty">No messages yet</div>
-        ) : (
-          tail.map((m) => (
-            <PaneMessage key={m.seq} message={m} compact={compact} />
-          ))
-        )}
-      </div>
+      <PaneConversationBody
+        projectName={conversation.projectName}
+        sessionName={conversation.sessionName}
+        conversationId={conversation.id}
+        selectedBackend={conversation.agentBackend}
+      />
     </section>
   );
 }

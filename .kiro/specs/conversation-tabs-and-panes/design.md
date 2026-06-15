@@ -11,7 +11,7 @@
 ### Goals
 - One shared working set (`openTabs`, max 6) that drives both the tab strip and the panes grid; they never diverge.
 - Open-on-navigate semantics with LRU eviction at the cap; persistence across reloads (per browser).
-- A panes layout that renders 2–6 interactive mini-cockpits with adaptive density.
+- A panes layout that renders 2–6 interactive conversation panes, each showing its full scrollable transcript.
 - A single composer, shared across all layouts, that always targets the active conversation, with an unmistakable active-destination indication in panes.
 
 ### Non-Goals
@@ -23,7 +23,7 @@
 
 ### This Spec Owns
 - The `openTabs` working-set model and its persistence: ordering, the cap of 6, LRU eviction, reconcile-against-live, and the localStorage round-trip.
-- The tab strip and its components/interactions; the panes layout (grid, per-pane mini-cockpit, panes toolbar); the active-pane indicator and composer-focus emphasis.
+- The tab strip and its components/interactions; the panes layout (grid, per-pane full transcript, panes toolbar); the active-pane indicator and composer-focus emphasis.
 - The relocation of the existing composer to a shared pinned slot, and the `composerFocused` UI signal.
 - The `"panes"` value added to `LayoutMode` and the panes entry in the layout switcher.
 - The `⌘1–9` and panes-`Esc` keyboard handling for these surfaces.
@@ -33,7 +33,7 @@
 - The sidebar, peek, context menu, and the cockpit surface.
 
 ### Allowed Dependencies
-- Read: `useActiveConversationsQuery` — the **same active list the sidebar already consumes** (`.data.conversations: ActiveConversation[]`, rich: `pendingQuestion`, `lastActivitySummary`, status, scope); `useConversationMessagesQuery` (per-pane tails, keyed by a `SessionActiveConversation`'s project + session); `ActiveConversation`/`SessionActiveConversation`/`TranscriptMessage` schemas; `session-detail.store` layout state. (NOT `useAllConversationsQuery`, whose `{ items: ConversationListItem[] }` shape is too thin for panes.)
+- Read: `useActiveConversationsQuery` — the **same active list the sidebar already consumes** (`.data.conversations: ActiveConversation[]`, rich: `pendingQuestion`, `lastActivitySummary`, status, scope); `useConversationMessagesQuery` (per-pane **full transcripts**, keyed by a `SessionActiveConversation`'s project + session); the shared transcript renderers `ConversationVirtuosoList` + `MessageRow` and the `buildConversationRows` / `useDisplayMessages` builders (the **same message presentation the single-conversation panel uses**); `ActiveConversation`/`SessionActiveConversation`/`TranscriptMessage` schemas; `session-detail.store` layout state. (NOT `useAllConversationsQuery`, whose `{ items: ConversationListItem[] }` shape is too thin for panes.)
 - Invoke: `onOpenConversation({conversationId})` (the page's URL mutator) for all activation.
 - Extend (minimal, listed): `LayoutMode` union, `validLayouts`, `LayoutSwitcher` list, `HOTKEY_REGISTRY` (`hotkeys.ts`: `activateOpenTab` + `exitPanes`), `session-detail.store` (`composerFocused` + page-level layout key), the page-level layout hydration (`use-session-lifecycle`/`ConversationsPage`), `SessionContent`/`ConversationPanelContainer` for the composer lift, and `PromptComposer` for the focus signal (the shared `PromptEditor` is **not** touched).
 - Dependency direction (left → right, imports never go right→left): `schemas → open-tabs-model (pure) → use-open-tabs / store → presentational components → SessionContent (composition)`.
@@ -72,7 +72,9 @@ graph TB
     SessionContent -->|pinned below content| Composer[PromptInputSlot lifted]
 
     PanesGrid --> Pane
-    Pane --> PaneMessages[useConversationMessagesQuery]
+    Pane --> PaneBody[PaneConversationBody]
+    PaneBody --> PaneMessages[useConversationMessagesQuery]
+    PaneBody --> SharedRenderers[ConversationVirtuosoList + MessageRow]
     TabStrip -->|activate| OpenConv[onOpenConversation]
     PanesGrid -->|activate| OpenConv
     OpenConv -->|pushState| URL
@@ -108,13 +110,13 @@ src/features/session/
 │   ├── ConversationTab.tsx          # one tab: status dot, title, hotkey hint, close
 │   └── AddConversationMenu.tsx      # shared add-picker (active convos not in set) — tab "+" and panes "Add pane"
 ├── panes/
-│   ├── grid-shape.ts                # Pure: gridShape(n), paneMessageLimit(n), truncate()
-│   ├── grid-shape.test.ts           # Unit: shapes 1..6 incl asymmetric 5; limits
-│   ├── PanesGrid.tsx                 # grid container: shape vars, data-composer-focused
+│   ├── grid-shape.ts                # Pure: gridShape(n)
+│   ├── grid-shape.test.ts           # Unit: shapes 1..6 incl asymmetric 5
+│   ├── PanesGrid.tsx                 # outer flex: toolbar row + .panes-grid (shape vars, data-composer-focused)
 │   ├── PanesToolbar.tsx             # N/6 count, focus hint, Add pane, Exit
-│   ├── Pane.tsx                     # mini-cockpit: head, meta, banner/status, tail
-│   ├── PaneMessage.tsx             # compact transcript row (text + collapsed tool line)
-│   └── pane-view-model.ts          # Pure: ActiveConversation → pane fields; message block extraction
+│   ├── Pane.tsx                     # pane shell: head, meta, banner/status, transcript body
+│   ├── PaneConversationBody.tsx     # full scrollable transcript via the shared ConversationVirtuosoList + MessageRow (read-only)
+│   └── pane-view-model.ts          # Pure: ActiveConversation → pane fields (title/status/meta)
 └── (existing files modified — see below)
 
 src/features/_root/styles/
@@ -177,9 +179,9 @@ graph TB
 | 2.7–2.8 | close w/o stop; close-active→neighbor | `use-open-tabs.closeTab`, `open-tabs-model` |
 | 2.9–2.10, 6.2–6.3 | add control; disabled at cap | `AddConversationMenu`, `ConversationTabStrip`, `PanesToolbar` |
 | 3.1 | panes in switcher (keep split) | `LayoutSwitcher`, `LayoutMode`, `validLayouts` |
-| 3.2–3.4 | grid replaces split view; shapes; shrink-to-fit | `SessionContent`, `PanesGrid`, `grid-shape`, `conversation-panes.css` |
+| 3.2–3.4 | grid replaces split view; shapes; scroll-within-pane | `SessionContent`, `PanesGrid`, `grid-shape`, `conversation-panes.css` |
 | 3.5–3.6 | exit→default; layout persists (page-level, survives cross-session activation) | `use-tab-pane-keyboard`, `PanesToolbar`, page-level layout (`cc-conversations-layout`) |
-| 4.1–4.6 | pane head/meta/banner/status/tail/density | `Pane` (calls `useConversationMessagesQuery`), `PaneMessage`, `pane-view-model` |
+| 4.1–4.6 | pane head/meta/banner/status/full transcript | `Pane`, `PaneConversationBody` (calls `useConversationMessagesQuery` + the shared `ConversationVirtuosoList`/`MessageRow`), `pane-view-model` |
 | 4.7–4.9 | open-full; close; no per-pane composer | `Pane`, `PanesGrid` |
 | 5.1–5.2 | active-pane mark; click activate (stays in panes across sessions) | `Pane`, `conversation-panes.css`, page-level layout |
 | 5.3–5.5 | composer-focus fade (panes only) | `use-composer-focus` (in `PromptComposer`), `session-detail.store`, `PanesGrid` (`data-composer-focused`) |
@@ -198,8 +200,8 @@ graph TB
 | `use-tab-pane-keyboard` | hook | shortcuts | 8.x | onOpen, setLayout | — |
 | `ConversationTabStrip`/`ConversationTab` | UI | tab strip | 2.x | working set | — |
 | `AddConversationMenu` | UI | add-picker | 2.9,6.2 | addable list | — |
-| `PanesGrid`/`Pane`/`PaneMessage`/`PanesToolbar` | UI | panes | 3–6 | working set, messages | — |
-| `pane-view-model`/`grid-shape` | pure | derive + shape | 3.3,4.x | — | — |
+| `PanesGrid`/`Pane`/`PaneConversationBody`/`PanesToolbar` | UI | panes | 3–6 | working set, messages, shared transcript renderers | — |
+| `pane-view-model`/`grid-shape` | pure | derive + shape | 3.3,4.1–4.4 | — | — |
 | `session-detail.store` (+composerFocused) | state | focus signal + layout | 5.3,3.1 | — | State |
 
 ### Core logic
@@ -248,8 +250,6 @@ export function useOpenTabs(input: {
 ```typescript
 export interface GridShape { cols: number; rows: number; shape: string }
 export function gridShape(n: number): GridShape; // 1/2/3→row; 4→2x2; 5→6-col asym; 6→3x2
-export function paneMessageLimit(paneCount: number): number; // 2→4, else 2
-export function truncate(s: string, n: number): string;
 
 export interface PaneViewModel {
   id: string; title: string; status: ActiveConversation["status"];
@@ -257,16 +257,15 @@ export interface PaneViewModel {
   pendingQuestion: string | null; statusLine: string | null; relativeTime: string;
 }
 export function toPaneViewModel(c: SessionActiveConversation): PaneViewModel;
-// extract first text block + optional collapsed tool line from a TranscriptMessage
-export function summarizeMessage(m: TranscriptMessage): { role: "you" | "cc"; text: string; tool?: { name: string; detail: string } };
 ```
+The pane's transcript body itself is not a pure helper: `PaneConversationBody` fetches the conversation's messages (`useConversationMessagesQuery`), builds rows with the shared `useDisplayMessages` + `buildConversationRows`, and renders them read-only through `ConversationVirtuosoList` + `MessageRow` — no pane-specific message slicing, summarization, or truncation.
 
 ### UI (summary-only; presentational)
 
 - **ConversationTabStrip** (`role="tablist"`): maps `workingSet` → `ConversationTab` (active = `id === activeId`), then `AddConversationMenu` trigger disabled when `isAtCap` (tooltip "Tab limit reached (6) — close a tab first"). Hidden when `layout === "panes"` or set empty. _Implementation note_: status dot via `[data-status]`; `⌘{i+1}` hint for `i < 9`; close button `stopPropagation`.
 - **AddConversationMenu**: dropdown of `addableConversations` (status dot, title, project); selecting calls `onAdd`. Shared by the tab "+" and the panes toolbar.
-- **PanesGrid**: resolves `panes = workingSet`, computes `gridShape`/`compact = panes.length >= 3`, writes `--cols`/`--rows`, `data-shape`, and `data-composer-focused={useComposerFocused()}`. Renders `PanesToolbar` + one `Pane` per conversation. The shadow separator and active ring are CSS-only.
-- **Pane**: head (status dot, title, open-full `↗`, close `×`), meta (status label · project / session · relative time), then the amber pending-question banner _or_ the status line, then the transcript tail (`useConversationMessagesQuery` enabled only in panes mode, sliced to `paneMessageLimit`, with a "+ N earlier" summary). `onClick` activates when not active; close/open-full `stopPropagation`.
+- **PanesGrid**: an outer `.panes` flex column whose first child is `PanesToolbar` (a fixed row — **not** a grid cell) and whose second child is the `.panes-grid` element that carries `gridShape`'s `--cols`/`--rows` + `data-shape` and holds one `Pane` per conversation; `data-composer-focused={useComposerFocused()}` sits on the outer `.panes`. The shadow separator and active ring are CSS-only.
+- **Pane**: head (status dot, title, open-full `↗`, close `×`), meta (status label · project / session · relative time), then the amber pending-question banner _or_ the status line, then `PaneConversationBody` — the conversation's **full** transcript (`useConversationMessagesQuery` enabled only in panes mode), rendered read-only through the shared `ConversationVirtuosoList` + `MessageRow` (no `onFork`, no trailing debug card) and scrollable within the pane. `onClick` activates when not active; close/open-full `stopPropagation`.
 - **PanesToolbar**: `N / 6 panes`, focus hint, `AddConversationMenu` (disabled at cap), Exit control → `onExit` (sets layout to `default`).
 
 ### State additions
@@ -325,8 +324,8 @@ LRU restore (step 3) deliberately beats the generic most-recent auto-open (step 
 ## Error Handling
 - **localStorage unavailable / malformed** → fall back to `emptyModel()` (try/catch around parse), mirroring `switchLayout`'s guarded write. A malformed persisted value is discarded, not thrown.
 - **Active id not in live list** (deep link to archived/finished) → `reconcile` keeps it out of the set; the page's existing not-found/empty handling covers the workspace.
-- **Project-scoped active conversation** (no session) → excluded from the working set and the add-picker, since it is not workspace-openable and has no session for the tail fetch.
-- **Per-pane message fetch error** → the pane shows an inline empty/error tail; other panes are unaffected (independent queries).
+- **Project-scoped active conversation** (no session) → excluded from the working set and the add-picker, since it is not workspace-openable and has no session for the transcript fetch.
+- **Per-pane message fetch error** → the pane shows an inline empty/error state; other panes are unaffected (independent queries).
 
 ## Testing Strategy
 
@@ -334,8 +333,9 @@ LRU restore (step 3) deliberately beats the generic most-recent auto-open (step 
 - `open-tabs-model`: add-new; add-existing bumps recency without reordering `tabs`; evict least-recently-active inactive at cap (1.6); `reconcile` drops missing (1.7); `closeTab` removes from both arrays (2.7).
 - `selectInitialConversation`: each precedence branch — `?c=` wins; session-filter entry → session-scoped candidate; LRU restore beats generic auto-open; first-visit/empty falls back to most-recent; `none` when no conversations (1.2, 1.8).
 - `use-composer-focus`: `composerFocused` stays true across each control path (editor focus, model/effort dropdown, debug toggle, voice, capabilities drawer, mobile sheet); clears only when focus leaves the composer region + overlays (5.6).
-- `grid-shape`: shapes for n=1..6 incl. the asymmetric 5 (3.3); `paneMessageLimit` (2→4, 3+→2) (4.6); `truncate`.
-- `pane-view-model`: field mapping + `summarizeMessage` block extraction (4.1–4.5).
+- `grid-shape`: shapes for n=1..6 incl. the asymmetric 5 (3.3).
+- `pane-view-model`: field mapping (4.1–4.4).
+- `Pane`: renders the full-transcript body (`PaneConversationBody` mounts, no compact-tail placeholder) and an empty state when the conversation has no messages (4.5).
 
 ### Integration
 - `use-open-tabs`: localStorage round-trip + restore (1.8); active-id change adds/bumps (1.3); cap eviction end-to-end (1.6); close-active navigates to neighbor (2.8).
@@ -348,4 +348,4 @@ LRU restore (step 3) deliberately beats the generic most-recent auto-open (step 
 - react-scan a 6-pane view: confirm panes don't re-render on unrelated store/query churn (focused selectors); confirm `useConversationMessagesQuery` instances unmount (queries disabled) on exit from panes; verify no event-loop stalls from 6 concurrent fetches.
 
 ## Performance & Scalability
-Panes mount up to 6 `useConversationMessagesQuery` instances, each fetching a full transcript (no server tail param). Mitigations: queries `enabled` only while in panes mode; React Query dedup + `staleTime`; client-side tail slice (`paneMessageLimit`). A server-side tail/limit endpoint is a deferred optimization, not in scope.
+Panes mount up to 6 `useConversationMessagesQuery` instances, each fetching and rendering a full transcript. Mitigations: queries `enabled` only while in panes mode; React Query dedup + `staleTime` (the active pane shares the messages cache key with the single-conversation view, so activating a pane never refetches); and the shared `ConversationVirtuosoList` **virtualizes** each pane's transcript, so only the rows in a pane's viewport render regardless of transcript length. A server-side tail/limit endpoint is a deferred optimization, not in scope.

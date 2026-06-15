@@ -74,13 +74,24 @@
   cursor: not-allowed;
 }
 
+/* Outer panes container: a fixed toolbar row above a flexible grid. The
+   toolbar is intentionally NOT a grid item — keeping it inside the grid would
+   consume a cell and steal a conversation's slot. */
 .panes {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.panes-grid {
   display: grid;
   grid-template-columns: repeat(var(--cols, 1), 1fr);
   grid-template-rows: repeat(var(--rows, 1), 1fr);
   gap: var(--space-sm);
-  width: 100%;
-  height: 100%;
+  flex: 1;
   min-height: 0;
   min-width: 0;
   padding: var(--space-sm);
@@ -88,11 +99,11 @@
 
 /* 5 panes: top row three panes (each spans 2 of 6 columns), bottom row two
    wider panes (each spans 3 of 6 columns). --cols/--rows set 6/2 by the grid. */
-.panes[data-shape="asym-5"] > .pane:nth-child(-n + 3) {
+.panes-grid[data-shape="asym-5"] > .pane:nth-child(-n + 3) {
   grid-column: span 2;
 }
 
-.panes[data-shape="asym-5"] > .pane:nth-child(n + 4) {
+.panes-grid[data-shape="asym-5"] > .pane:nth-child(n + 4) {
   grid-column: span 3;
 }
 
@@ -263,87 +274,31 @@
   font-size: 0.72rem;
 }
 
-/* Transcript tail — shrinks to fit (Req 3.4): scrolls inside the pane rather
-   than forcing the grid to overflow. */
-.pane__tail {
+/* Full transcript — the same message-rendering section as the primary panel,
+   scrolling inside the pane (Req 3.4) rather than forcing the grid to overflow.
+   Text selection/scroll inside the body should not read as a click target even
+   though clicking the pane activates it. */
+.pane__body {
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs);
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  cursor: auto;
 }
 
-.pane__earlier {
-  flex-shrink: 0;
-  color: var(--text-tertiary);
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
+/* The shared `.conversation` thread inside a pane is denser than the primary
+   panel: tighter row gap so more transcript fits the smaller surface. */
+.pane__body > .conversation {
+  gap: var(--space-md);
 }
 
-.pane__tail-empty {
+.pane__body > .conversation > * + * {
+  margin-top: var(--space-md);
+}
+
+.pane__body-status {
   color: var(--text-tertiary);
   font-family: var(--font-mono);
   font-size: 0.7rem;
-}
-
-/* Compact transcript row: a role indicator, the text, and an optional single
-   collapsed tool line. CSS owns clamping. */
-.pane-message {
-  display: flex;
-  gap: var(--space-xs);
-  min-width: 0;
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  line-height: 1.4;
-}
-
-.pane-message__role {
-  flex-shrink: 0;
-  color: var(--text-tertiary);
-  text-transform: uppercase;
-  font-size: 0.62rem;
-  letter-spacing: 0.04em;
-}
-
-.pane-message[data-role="you"] .pane-message__role {
-  color: var(--cyan);
-}
-
-.pane-message__body {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.pane-message__text {
-  color: var(--text-secondary);
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-}
-
-.pane-message[data-compact="true"] .pane-message__text {
-  -webkit-line-clamp: 1;
-}
-
-.pane-message__tool {
-  display: flex;
-  gap: var(--space-xs);
-  min-width: 0;
-  color: var(--text-tertiary);
-  font-size: 0.68rem;
-}
-
-.pane-message__tool-name {
-  flex-shrink: 0;
-  color: var(--green);
-}
-
-.pane-message__tool-detail {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
