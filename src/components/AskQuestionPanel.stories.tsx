@@ -146,6 +146,66 @@ function Stage({
   );
 }
 
+/**
+ * Reproduces the real /conversations docked layout chain so the overlay's
+ * anchoring can be verified in the same CSS context it ships in:
+ * `.session-detail-layout` (grid) → `.conversation-docked-stage` (the positioned
+ * stage) → `.session-content-area` (tall conversation) + `.pinned-composer-row`
+ * (where the panel renders). Without the stage the overlay has no positioned
+ * ancestor and renders nowhere — the bug this story guards against.
+ */
+function DockedConversationLayout({ children }: { children: ReactNode }) {
+  return (
+    <div className="session-detail-layout has-tab-strip">
+      <div
+        className="session-info-strip"
+        style={{ padding: "var(--space-sm) var(--space-md)" }}
+      >
+        branch csm/demo · waiting_for_input
+      </div>
+      <div
+        className="conversation-tab-strip-host"
+        style={{
+          padding: "var(--space-xs) var(--space-md)",
+          borderBottom: "1px solid var(--border-default)",
+          fontFamily: "var(--font-mono)",
+          fontSize: "0.72rem",
+          color: "var(--text-tertiary)",
+        }}
+      >
+        Demo conversation 1 · 2 · 3
+      </div>
+      <div className="conversation-docked-stage">
+        <div className="session-content-area" data-layout="conversation">
+          <div className="prompt-panel" data-agent="claude">
+            <div className="conversation-stage">
+              <div className="panel-body">
+                {Array.from({ length: 14 }).map((_, i) => (
+                  <p
+                    key={i}
+                    style={{
+                      margin: "0 0 var(--space-lg)",
+                      color: "var(--text-secondary)",
+                      fontSize: "0.85rem",
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    Conversation message {i + 1} — the transcript scrolls behind
+                    the question panel. When the panel is maximized its scrim
+                    dims these lines; minimized, the banner sits where the
+                    composer was and the last line clears it.
+                  </p>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="pinned-composer-row">{children}</div>
+      </div>
+    </div>
+  );
+}
+
 const meta = {
   title: "Components/AskQuestionPanel",
   component: AskQuestionPanel,
@@ -214,6 +274,24 @@ export const AllOptional: Story = {
       <Stage>
         <Story />
       </Stage>
+    ),
+  ],
+};
+
+/**
+ * The panel inside the real /conversations docked layout — the context the
+ * reported bug occurred in. The overlay must anchor to `.conversation-docked-stage`,
+ * covering the conversation with its banner pinned to the bottom (where the
+ * composer was), not vanish or escape to the viewport.
+ */
+export const DockedInConversation: Story = {
+  args: { questions: SAMPLE_QUESTIONS },
+  parameters: { layout: "fullscreen" },
+  decorators: [
+    (Story) => (
+      <DockedConversationLayout>
+        <Story />
+      </DockedConversationLayout>
     ),
   ],
 };

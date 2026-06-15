@@ -224,21 +224,41 @@ describe("SessionContent", () => {
         })}
       />,
     );
-    const layout = container.querySelector(".session-detail-layout");
     const contentArea = container.querySelector(".session-content-area");
     const composerRow = container.querySelector(".pinned-composer-row");
     const slot = container.querySelector('[data-testid="composer-slot"]');
 
-    expect(layout).not.toBeNull();
     expect(contentArea).not.toBeNull();
     expect(composerRow).not.toBeNull();
     expect(slot).not.toBeNull();
 
-    // The composer lives in the pinned row, which is a child of the layout —
+    // The composer lives in the pinned row alongside the content area —
     // never inside the content area (that is the lift contract, 7.1/7.4).
     expect(composerRow!.contains(slot)).toBe(true);
-    expect(composerRow!.parentElement).toBe(layout);
+    expect(composerRow!.previousElementSibling).toBe(contentArea);
     expect(contentArea!.contains(slot)).toBe(false);
+  });
+
+  it("wraps the content area and composer in one positioned stage so the question overlay can anchor (the AskUserQuestion overlay is position:absolute and needs a positioned ancestor spanning the conversation)", () => {
+    const { container } = renderWithQuery(
+      <SessionContent
+        {...makeProps({
+          promptInputSlot: <div data-testid="composer-slot" />,
+        })}
+      />,
+    );
+    const layout = container.querySelector(".session-detail-layout");
+    const stage = container.querySelector(".conversation-docked-stage");
+    const contentArea = container.querySelector(".session-content-area");
+    const composerRow = container.querySelector(".pinned-composer-row");
+
+    expect(stage).not.toBeNull();
+    // The stage is a direct child of the layout and spans both the conversation
+    // content and the composer, so the absolutely-positioned overlay rendered in
+    // the composer row anchors to a box that covers the conversation.
+    expect(stage!.parentElement).toBe(layout);
+    expect(stage!.contains(contentArea)).toBe(true);
+    expect(stage!.contains(composerRow)).toBe(true);
   });
 
   it.each(["default", "split", "conversation", "diff", "panes"] as const)(

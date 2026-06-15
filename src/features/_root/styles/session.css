@@ -5,7 +5,7 @@
 .session-detail-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto 1fr;
   gap: 0;
   height: calc(100dvh - var(--topbar-height));
   min-height: 500px;
@@ -13,17 +13,29 @@
 }
 
 .session-detail-layout.finished {
-  grid-template-rows: auto auto 1fr auto;
+  grid-template-rows: auto auto 1fr;
 }
 
-/* The tab strip adds an auto-sized row above the content area; the content
-   area keeps the single flexible (1fr) row in every combination. */
+/* The tab strip adds an auto-sized row above the stage; the stage keeps the
+   single flexible (1fr) row in every combination. */
 .session-detail-layout.has-tab-strip {
-  grid-template-rows: auto auto 1fr auto;
+  grid-template-rows: auto auto 1fr;
 }
 
 .session-detail-layout.finished.has-tab-strip {
-  grid-template-rows: auto auto auto 1fr auto;
+  grid-template-rows: auto auto auto 1fr;
+}
+
+/* Positioned stage filling the flexible row: stacks the conversation content
+   over the shared composer, and gives the AskUserQuestion overlay (rendered
+   absolutely inside the composer slot) a positioned ancestor that spans the
+   conversation — mirroring `.peek__stage` and `.conversation-stage`. */
+.conversation-docked-stage {
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Shared prompt composer pinned below the content area — serves every layout. */
@@ -32,6 +44,16 @@
   min-width: 0;
   border-top: 1px solid var(--border-default);
   background: var(--bg-base);
+}
+
+/* Reserve room so the last message clears the minimized question banner that
+   overlays the bottom of the stage. */
+.conversation-docked-stage:has(.ask-question-overlay) .panel-body {
+  padding-bottom: 58px;
+}
+.conversation-docked-stage:has(.ask-question-overlay[data-compact="true"])
+  .panel-body {
+  padding-bottom: 66px;
 }
 
 /* Session info strip — mission readout */
@@ -693,6 +715,7 @@
 .session-content-area {
   display: grid;
   gap: 0;
+  flex: 1;
   min-height: 0;
   transition: grid-template-columns 0.25s ease;
 }
@@ -2050,24 +2073,25 @@
     display: none;
   }
 
-  /* Pin content area to grid row 2 — info-strip's display:none would
-     otherwise let it fall into the auto-sized row 1 and collapse panel-body. */
-  .session-detail-layout > .session-content-area {
+  /* Pin the stage to grid row 2 — info-strip's display:none would otherwise
+     let it fall into the auto-sized row 1 and collapse the conversation. The
+     stage carries the composer at its own flex-end, so no separate pin. */
+  .session-detail-layout > .conversation-docked-stage {
     grid-row: 2 / 3;
   }
 
-  /* With finished banner, content area lives in row 3 (banner takes row 2). */
-  .session-detail-layout.finished > .session-content-area {
+  /* With finished banner, the stage lives in row 3 (banner takes row 2). */
+  .session-detail-layout.finished > .conversation-docked-stage {
     grid-row: 3 / 4;
   }
 
-  /* The tab strip takes the phantom info-strip row (1); content area moves to
-     the flexible row below it. */
+  /* The tab strip takes the phantom info-strip row (1); the stage moves to the
+     flexible row below it. */
   .session-detail-layout.has-tab-strip > .conversation-tab-strip-host {
     grid-row: 1 / 2;
   }
 
-  .session-detail-layout.has-tab-strip > .session-content-area {
+  .session-detail-layout.has-tab-strip > .conversation-docked-stage {
     grid-row: 3 / 4;
   }
 
@@ -2075,26 +2099,8 @@
     grid-row: 2 / 3;
   }
 
-  .session-detail-layout.finished.has-tab-strip > .session-content-area {
+  .session-detail-layout.finished.has-tab-strip > .conversation-docked-stage {
     grid-row: 4 / 5;
-  }
-
-  /* Composer follows the content area's pinned row so it stays at the bottom
-     even with the info-strip hidden (display:none) reserving row 1. */
-  .session-detail-layout > .pinned-composer-row {
-    grid-row: 3 / 4;
-  }
-
-  .session-detail-layout.finished > .pinned-composer-row {
-    grid-row: 4 / 5;
-  }
-
-  .session-detail-layout.has-tab-strip > .pinned-composer-row {
-    grid-row: 4 / 5;
-  }
-
-  .session-detail-layout.finished.has-tab-strip > .pinned-composer-row {
-    grid-row: 5 / 6;
   }
 
   /* Touch sizing for diff nav buttons */

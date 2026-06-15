@@ -170,59 +170,67 @@ export default function SessionContent({
         </div>
       )}
 
-      <div className="session-content-area" data-layout={layout}>
-        {isPanes && openTabs ? (
-          // Panes replaces the single-conversation panel + diff with a
-          // full-width grid of every open conversation.
-          <PanesGrid
-            workingSet={workingSet}
-            activeId={openTabs.activeId}
-            isAtCap={openTabs.isAtCap}
-            addableConversations={openTabs.addableConversations}
-            onActivate={openTabs.activate}
-            onClose={openTabs.closeTab}
-            onAdd={openTabs.addTab}
-            // Open-full activates the conversation AND drops back to the
-            // single-conversation layout so it fills the view.
-            onOpenFull={(id) => {
-              openTabs.activate(id);
-              onLayoutChange("default");
-            }}
-            onExit={() => onLayoutChange("default")}
-          />
-        ) : (
-          <>
-            <ConversationPanelContainer {...panelContainerProps} />
+      {/* Positioned stage spanning the conversation content + composer. The
+          AskUserQuestion overlay is rendered (absolutely positioned) inside the
+          composer slot and anchors to this stage so its scrim covers the
+          conversation while its banner sits where the composer is — matching
+          the peek (`.peek__stage`) and per-panel (`.conversation-stage`)
+          stages. Without it the overlay has no positioned ancestor. */}
+      <div className="conversation-docked-stage">
+        <div className="session-content-area" data-layout={layout}>
+          {isPanes && openTabs ? (
+            // Panes replaces the single-conversation panel + diff with a
+            // full-width grid of every open conversation.
+            <PanesGrid
+              workingSet={workingSet}
+              activeId={openTabs.activeId}
+              isAtCap={openTabs.isAtCap}
+              addableConversations={openTabs.addableConversations}
+              onActivate={openTabs.activate}
+              onClose={openTabs.closeTab}
+              onAdd={openTabs.addTab}
+              // Open-full activates the conversation AND drops back to the
+              // single-conversation layout so it fills the view.
+              onOpenFull={(id) => {
+                openTabs.activate(id);
+                onLayoutChange("default");
+              }}
+              onExit={() => onLayoutChange("default")}
+            />
+          ) : (
+            <>
+              <ConversationPanelContainer {...panelContainerProps} />
 
-            {(layout !== "conversation" ||
-              mobilePanel === "diff" ||
-              mobilePanel === "docs" ||
-              mobilePanel === "specs") && (
-              <RightPane
-                diff={diff}
-                commits={commits}
-                projectName={projectName}
-                sessionName={session.sessionName}
-                targetBranch={targetBranch}
-              />
-            )}
+              {(layout !== "conversation" ||
+                mobilePanel === "diff" ||
+                mobilePanel === "docs" ||
+                mobilePanel === "specs") && (
+                <RightPane
+                  diff={diff}
+                  commits={commits}
+                  projectName={projectName}
+                  sessionName={session.sessionName}
+                  targetBranch={targetBranch}
+                />
+              )}
 
-            {mobilePanel === "info" && (
-              <MobileInfoPanel
-                session={session}
-                activeConversation={activeConversation}
-                conversationId={conversationId}
-                statusDotClass={statusDotClass}
-                displayStatus={displayStatus}
-                contextPercent={contextPercent}
-                buildContext={buildContext}
-              />
-            )}
-          </>
-        )}
+              {mobilePanel === "info" && (
+                <MobileInfoPanel
+                  session={session}
+                  activeConversation={activeConversation}
+                  conversationId={conversationId}
+                  statusDotClass={statusDotClass}
+                  displayStatus={displayStatus}
+                  contextPercent={contextPercent}
+                  buildContext={buildContext}
+                />
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="pinned-composer-row">{promptInputSlot}</div>
       </div>
-
-      <div className="pinned-composer-row">{promptInputSlot}</div>
     </div>
   );
 }
