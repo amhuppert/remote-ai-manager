@@ -108,6 +108,7 @@ export default function Pane({
         sessionName={conversation.sessionName}
         conversationId={conversation.id}
         selectedBackend={conversation.agentBackend}
+        isActive={active}
       />
     </section>
   );

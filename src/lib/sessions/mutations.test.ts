@@ -8,6 +8,7 @@ import {
   useGenericArchiveSessionMutation,
   useArchiveSessionMutation,
   useBulkSessionsMutation,
+  useCreateSessionMutation,
 } from "@/lib/sessions/mutations";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import { conversationKeys } from "@/lib/conversations/query-keys";
@@ -220,6 +221,50 @@ describe("useGenericArchiveSessionMutation", () => {
     const active = client.getQueryData<ActiveConversationsResponse>(activeKey);
     expect(sessions?.find((s) => s.sessionName === "s")?.archived).toBe(false);
     expect(active?.conversations.map((c) => c.id)).toEqual(["c1", "c3"]);
+  });
+});
+
+describe("useCreateSessionMutation", () => {
+  const fetchSpy = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const minimalSession = {
+    sessionName: "new-session",
+    worktreePath: "/w",
+    branchName: "csm/new-session",
+    createdAt: "2025-01-01T00:00:00.000Z",
+    lastActivityAt: "2025-01-01T00:00:00.000Z",
+  };
+
+  it("invalidates the active conversations feed on success so a new session's initial conversation appears in tabs/panes", async () => {
+    const client = makeClient();
+    const sessionListKey = sessionKeys.list("p");
+    const activeKey = conversationKeys.active();
+    client.setQueryData(sessionListKey, []);
+    client.setQueryData(activeKey, activeResponse([]));
+    fetchSpy.mockResolvedValue(jsonResponse(minimalSession));
+
+    const { result } = renderHook(() => useCreateSessionMutation("p"), {
+      wrapper: wrapperFor(client),
+    });
+
+    await result.current.mutateAsync({
+      mode: "fast",
+      sessionName: "new-session",
+    });
+
+    await waitFor(() => {
+      expect(client.getQueryState(sessionListKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(activeKey)?.isInvalidated).toBe(true);
+    });
   });
 });
 

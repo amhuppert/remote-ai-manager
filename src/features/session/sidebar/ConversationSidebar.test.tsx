@@ -544,6 +544,63 @@ describe("ConversationSidebar", () => {
       );
       expect(onOpenConversation).not.toHaveBeenCalled();
     });
+
+    it("opens a session conversation in a new tab through onOpenInTab from the context menu", () => {
+      const onOpenInTab = vi.fn();
+      renderSidebarWithActiveData(sessionActiveData, { onOpenInTab });
+
+      fireEvent.contextMenu(
+        screen.getByLabelText("Session conversation one — awaiting"),
+      );
+      fireEvent.click(screen.getByText("Open in New Tab"));
+
+      expect(onOpenInTab).toHaveBeenCalledWith({
+        conversationId: "session-convo-1",
+        projectName: "remote-ai-manager",
+        sessionName: "conversation-ui-overhaul",
+      });
+    });
+
+    it("opens a session conversation in a new pane through onOpenInPane from the context menu", () => {
+      const onOpenInPane = vi.fn();
+      renderSidebarWithActiveData(sessionActiveData, { onOpenInPane });
+
+      fireEvent.contextMenu(
+        screen.getByLabelText("Session conversation one — awaiting"),
+      );
+      fireEvent.click(screen.getByText("Open in New Pane"));
+
+      expect(onOpenInPane).toHaveBeenCalledWith({
+        conversationId: "session-convo-1",
+        projectName: "remote-ai-manager",
+        sessionName: "conversation-ui-overhaul",
+      });
+    });
+
+    it("omits the tab/pane actions for project-scoped rows", () => {
+      renderSidebarWithActiveData(sessionActiveData, {
+        onOpenInTab: vi.fn(),
+        onOpenInPane: vi.fn(),
+      });
+
+      fireEvent.contextMenu(
+        screen.getByLabelText("Current project cockpit — running"),
+      );
+
+      expect(screen.queryByText("Open in New Tab")).toBeNull();
+      expect(screen.queryByText("Open in New Pane")).toBeNull();
+    });
+
+    it("omits the tab/pane actions when the host does not provide the callbacks", () => {
+      renderSidebarWithActiveData(sessionActiveData);
+
+      fireEvent.contextMenu(
+        screen.getByLabelText("Session conversation one — awaiting"),
+      );
+
+      expect(screen.queryByText("Open in New Tab")).toBeNull();
+      expect(screen.queryByText("Open in New Pane")).toBeNull();
+    });
   });
 
   it("renders closed project conversations in Closed and excludes them from Needs/Run counts", () => {

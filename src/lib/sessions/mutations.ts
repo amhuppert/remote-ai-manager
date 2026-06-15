@@ -116,6 +116,14 @@ export function useCreateSessionMutation(projectName: string) {
       void queryClient.invalidateQueries({
         queryKey: sessionKeys.list(projectName),
       });
+      // Refresh the active-conversations feed so the new session's initial
+      // conversation surfaces immediately. The feed has a persistent observer
+      // (the Topbar), so without this it stays cached and the new conversation
+      // never appears in the /conversations tabs/panes until something else
+      // refetches it.
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.active(),
+      });
     },
   });
 }

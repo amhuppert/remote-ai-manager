@@ -92,6 +92,20 @@
   opacity: 0.7;
 }
 
+.conversation-tab__rename-input {
+  min-width: 0;
+  flex: 1;
+  padding: 1px 4px;
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  outline: none;
+}
+
 .conversation-tab__close {
   display: inline-flex;
   align-items: center;

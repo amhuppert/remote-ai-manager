@@ -15,6 +15,14 @@ export interface PaneConversationBodyProps {
   sessionName: string;
   conversationId: string;
   selectedBackend: AgentBackendId;
+  /**
+   * Whether this pane is the active conversation — the one the shared pinned
+   * composer targets. Only the active pane merges the page-level in-flight
+   * optimistic state; non-active panes show their server transcript alone so a
+   * pending submit doesn't echo into every pane (the optimistic store is not
+   * keyed per conversation).
+   */
+  isActive: boolean;
 }
 
 const noop = (): void => {};
@@ -33,6 +41,7 @@ export default function PaneConversationBody({
   sessionName,
   conversationId,
   selectedBackend,
+  isActive,
 }: PaneConversationBodyProps): React.JSX.Element {
   const { data, isLoading, isError } = useConversationMessagesQuery(
     projectName,
@@ -40,7 +49,9 @@ export default function PaneConversationBody({
     conversationId,
   );
 
-  const displayMessages = useDisplayMessages(data ?? []);
+  const displayMessages = useDisplayMessages(data ?? [], undefined, {
+    includeOptimistic: isActive,
+  });
   const rows = useMemo(
     () => buildConversationRows(displayMessages, undefined, null),
     [displayMessages],

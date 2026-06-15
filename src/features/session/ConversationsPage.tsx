@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo } from "react";
+import { Suspense, useCallback, useEffect, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import Topbar from "@/components/Topbar";
 import ConversationWorkspace from "@/features/session/ConversationWorkspace";
@@ -14,6 +14,8 @@ import {
   useMobileSidebarOpen,
   useCloseMobileSidebar,
   useHydrateLayout,
+  useSwitchLayout,
+  useLayout,
 } from "@/stores/session-detail.store";
 import { type EffortLevel } from "@/lib/agent-backends/schemas";
 import { type OpenTabsApi } from "@/features/session/tabs/use-open-tabs";
@@ -139,6 +141,33 @@ function ConversationsPageInner(props: Props): React.JSX.Element {
   const toggleSidebar = useToggleSidebar();
   const mobileSidebarOpen = useMobileSidebarOpen();
   const closeMobileSidebar = useCloseMobileSidebar();
+  const layout = useLayout();
+  const switchLayout = useSwitchLayout();
+
+  // Context-menu "Open in New Tab": the tab strip is shown in every non-panes
+  // layout, so only drop out of panes; never disturb an already tab-showing
+  // layout. Then open the conversation (which adds it to the working set).
+  const handleOpenInTab = useCallback(
+    (target: { conversationId: string }) => {
+      if (layout === "panes") {
+        switchLayout("default", CONVERSATIONS_LAYOUT_STORAGE_KEY);
+      }
+      openConversation({ conversationId: target.conversationId });
+    },
+    [layout, switchLayout, openConversation],
+  );
+
+  // Context-menu "Open in New Pane": switch into the split-screen panes layout
+  // unless already there, then open the conversation as a pane.
+  const handleOpenInPane = useCallback(
+    (target: { conversationId: string }) => {
+      if (layout !== "panes") {
+        switchLayout("panes", CONVERSATIONS_LAYOUT_STORAGE_KEY);
+      }
+      openConversation({ conversationId: target.conversationId });
+    },
+    [layout, switchLayout, openConversation],
+  );
 
   const resolved =
     renderState.kind === "workspace" ? renderState.conversation : null;
@@ -180,6 +209,8 @@ function ConversationsPageInner(props: Props): React.JSX.Element {
           onMobileClose={closeMobileSidebar}
           showNewConversationButton={resolved !== null}
           onOpenConversation={openConversation}
+          onOpenInTab={handleOpenInTab}
+          onOpenInPane={handleOpenInPane}
         />
 
         {sidebarCollapsed && (

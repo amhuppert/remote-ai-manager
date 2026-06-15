@@ -192,6 +192,27 @@ interface Props {
     projectName: string;
     sessionName: string;
   }) => void;
+  /**
+   * When provided, the context menu of a session-scoped row offers
+   * "Open in New Tab" — the host switches the /conversations layout to a
+   * tab-showing (non-panes) view and opens the conversation. Absent outside
+   * /conversations, where tabs/panes have no meaning.
+   */
+  onOpenInTab?: (target: {
+    conversationId: string;
+    projectName: string;
+    sessionName: string;
+  }) => void;
+  /**
+   * When provided, the context menu of a session-scoped row offers
+   * "Open in New Pane" — the host switches the /conversations layout to the
+   * panes (split-screen) view and opens the conversation.
+   */
+  onOpenInPane?: (target: {
+    conversationId: string;
+    projectName: string;
+    sessionName: string;
+  }) => void;
 }
 
 function ConversationSidebar({
@@ -204,6 +225,8 @@ function ConversationSidebar({
   showCollapseControl = true,
   enableSearchHotkey = true,
   onOpenConversation,
+  onOpenInTab,
+  onOpenInPane,
 }: Props): React.JSX.Element {
   const router = useRouter();
 
@@ -758,6 +781,38 @@ function ConversationSidebar({
           if (onMobileClose) onMobileClose();
         },
       },
+      ...(row.scope === "session" && onOpenInTab
+        ? [
+            {
+              kind: "item" as const,
+              label: "Open in New Tab",
+              onSelect: () => {
+                onOpenInTab({
+                  conversationId: row.id,
+                  projectName: row.projectName,
+                  sessionName: row.sessionName,
+                });
+                if (onMobileClose) onMobileClose();
+              },
+            },
+          ]
+        : []),
+      ...(row.scope === "session" && onOpenInPane
+        ? [
+            {
+              kind: "item" as const,
+              label: "Open in New Pane",
+              onSelect: () => {
+                onOpenInPane({
+                  conversationId: row.id,
+                  projectName: row.projectName,
+                  sessionName: row.sessionName,
+                });
+                if (onMobileClose) onMobileClose();
+              },
+            },
+          ]
+        : []),
       { kind: "divider" },
       {
         kind: "item",
@@ -865,6 +920,8 @@ function ConversationSidebar({
     handleCopyContext,
     handleRenameStart,
     onMobileClose,
+    onOpenInTab,
+    onOpenInPane,
     openSessionScopedConversation,
     router,
     setActiveListFilter,

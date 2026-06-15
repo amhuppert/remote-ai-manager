@@ -180,9 +180,28 @@ export function useOpenTabs(input: UseOpenTabsInput): OpenTabsApi {
   // resolves, still dropping genuinely-stale tabs (Requirement 1.7).
   useEffect(() => {
     if (!hydrated || !activeConversationsLoaded) return;
-    commit((base) => reconcile(base, liveIds));
+    // Never reconcile away the conversation the user is actively viewing. The
+    // live feed is eventually-consistent: a just-created conversation (e.g. a
+    // new session's initial conversation) can be the active id before it has
+    // propagated into the feed. Dropping it here would strand it out of the
+    // working set until the user re-navigates — the add-or-bump effect only
+    // re-runs when the active id changes, so a dropped active tab would never
+    // return on its own. Preserving it lets the tab/pane render the moment the
+    // feed catches up. A genuinely-gone active id is cleared upstream (the page
+    // strips ?c= on disappearance), after which reconcile drops it normally.
+    const preserved =
+      activeConversationId === ""
+        ? liveIds
+        : new Set(liveIds).add(activeConversationId);
+    commit((base) => reconcile(base, preserved));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrated, activeConversationsLoaded, liveIdsKey, commit]);
+  }, [
+    hydrated,
+    activeConversationsLoaded,
+    liveIdsKey,
+    activeConversationId,
+    commit,
+  ]);
 
   const byId = useMemo(
     () => new Map(activeConversations.map((c) => [c.id, c])),

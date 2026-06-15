@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { conversationKeys } from "@/lib/conversations/query-keys";
+import { useSessionDetailStore } from "@/stores/session-detail.store";
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
 import type { z } from "zod";
 import type { stampedTranscriptMessageSchema } from "@/lib/conversations/queries";
@@ -209,5 +210,35 @@ describe("Pane", () => {
 
     expect(container.querySelector("textarea")).toBeNull();
     expect(container.querySelector("form")).toBeNull();
+  });
+
+  describe("optimistic message isolation (split-screen)", () => {
+    beforeEach(() => useSessionDetailStore.getState().resetStore());
+    afterEach(() => useSessionDetailStore.getState().resetStore());
+
+    // The pane body is virtualized (react-virtuoso renders no items under
+    // jsdom), so message text isn't assertable. Instead we use an empty-server
+    // conversation: whether the in-flight optimistic row is merged flips the
+    // pane between its "No messages yet" empty state (no rows) and the
+    // transcript body (one optimistic row) — a non-virtualized DOM difference.
+    it("merges the in-flight optimistic message only into the active pane, not inactive panes", () => {
+      // The shared pinned composer submitted a message to the active
+      // conversation, setting the page-level optimistic state.
+      useSessionDetailStore
+        .getState()
+        .submitPrompt([{ type: "text", text: "pending to active convo" }], 0);
+
+      // An inactive pane (a different conversation in the split view) has no
+      // server messages and must NOT inherit the optimistic row → empty state.
+      const inactive = renderPane({ active: false }, []);
+      expect(screen.getByText("No messages yet")).toBeInTheDocument();
+      inactive.unmount();
+
+      // The active pane (the composer's target) merges the optimistic row, so
+      // it shows the transcript body, not the empty state.
+      const active = renderPane({ active: true }, []);
+      expect(screen.queryByText("No messages yet")).toBeNull();
+      expect(active.container.querySelector(".pane__body")).not.toBeNull();
+    });
   });
 });

@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import {
+  render,
+  screen,
+  fireEvent,
+  within,
+  waitFor,
+} from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
 import ConversationTabStrip, {
   type ConversationTabStripProps,
@@ -44,16 +51,21 @@ function renderStrip(overrides: Partial<ConversationTabStripProps> = {}): {
   const onActivate = vi.fn();
   const onClose = vi.fn();
   const onAddClick = vi.fn();
+  const queryClient = new QueryClient({
+    defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+  });
   render(
-    <ConversationTabStrip
-      workingSet={[convo("a"), convo("b"), convo("c")]}
-      activeId="a"
-      isAtCap={false}
-      onActivate={onActivate}
-      onClose={onClose}
-      onAddClick={onAddClick}
-      {...overrides}
-    />,
+    <QueryClientProvider client={queryClient}>
+      <ConversationTabStrip
+        workingSet={[convo("a"), convo("b"), convo("c")]}
+        activeId="a"
+        isAtCap={false}
+        onActivate={onActivate}
+        onClose={onClose}
+        onAddClick={onAddClick}
+        {...overrides}
+      />
+    </QueryClientProvider>,
   );
   return { onActivate, onClose, onAddClick };
 }
@@ -154,5 +166,74 @@ describe("ConversationTabStrip", () => {
     const add = screen.getByRole("button", { name: "Add conversation" });
     expect(add).toBeDisabled();
     expect(add.getAttribute("title")).toContain("Tab limit reached");
+  });
+
+  describe("right-click rename", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    function jsonOk(): Response {
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    it("opens a context menu with a Rename action on right-click", () => {
+      renderStrip();
+
+      fireEvent.contextMenu(screen.getAllByRole("tab")[0]!);
+
+      expect(screen.getByText("Rename…")).toBeInTheDocument();
+    });
+
+    it("renames a tab inline and PATCHes the rename endpoint on commit", async () => {
+      const fetchSpy = vi.fn<typeof fetch>().mockResolvedValue(jsonOk());
+      vi.stubGlobal("fetch", fetchSpy);
+
+      renderStrip();
+
+      fireEvent.contextMenu(screen.getAllByRole("tab")[0]!);
+      fireEvent.click(screen.getByText("Rename…"));
+
+      const input = screen.getByRole("textbox", {
+        name: "Rename conversation",
+      });
+      fireEvent.change(input, { target: { value: "Renamed A" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(fetchSpy).toHaveBeenCalledWith(
+          "/api/projects/proj/sessions/session-a/conversations/a/rename",
+          expect.objectContaining({
+            method: "PATCH",
+            body: JSON.stringify({ name: "Renamed A" }),
+          }),
+        );
+      });
+    });
+
+    it("cancels inline rename on Escape without calling the rename API", () => {
+      const fetchSpy = vi.fn<typeof fetch>().mockResolvedValue(jsonOk());
+      vi.stubGlobal("fetch", fetchSpy);
+
+      renderStrip();
+
+      fireEvent.contextMenu(screen.getAllByRole("tab")[0]!);
+      fireEvent.click(screen.getByText("Rename…"));
+
+      const input = screen.getByRole("textbox", {
+        name: "Rename conversation",
+      });
+      fireEvent.change(input, { target: { value: "Discarded" } });
+      fireEvent.keyDown(input, { key: "Escape" });
+
+      expect(
+        screen.queryByRole("textbox", { name: "Rename conversation" }),
+      ).toBeNull();
+      expect(screen.getByText("Conversation a")).toBeInTheDocument();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
   });
 });

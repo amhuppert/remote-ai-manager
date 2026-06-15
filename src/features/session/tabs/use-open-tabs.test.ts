@@ -349,6 +349,37 @@ describe("useOpenTabs", () => {
     expect(ids(result.current)).toEqual(["a"]);
   });
 
+  it("keeps the active conversation in the working set once the live feed catches up, even though it was absent when reconcile first ran (new-session race)", async () => {
+    // Repro for the live-found new-session bug: the user lands on a brand-new
+    // session's initial conversation (?c=new) before the active-conversations
+    // feed has propagated it. The feed IS loaded (other sessions are present)
+    // but does not yet include "new", so reconcile runs against a list missing
+    // it. The active conversation must NOT be reconciled away — when the feed
+    // catches up it must render as a tab/pane WITHOUT the user re-navigating
+    // (the add-or-bump effect only re-runs on an active-id change, so a dropped
+    // active tab would otherwise never return).
+    const onOpenConversation = vi.fn();
+    const { result, rerender } = renderHook(
+      ({ list }: { list: SessionActiveConversation[] }) =>
+        useOpenTabs({
+          activeConversationId: "new",
+          activeConversations: list,
+          activeConversationsLoaded: true,
+          onOpenConversation,
+        }),
+      { initialProps: { list: [convo("a")] } },
+    );
+
+    // Feed lacks "new" → it has no data to render yet, but it must not be
+    // permanently dropped from the model.
+    await waitFor(() => expect(ids(result.current)).toEqual([]));
+
+    // Feed catches up to include "new" → it must now appear without any
+    // re-navigation (activeConversationId never changed).
+    rerender({ list: [convo("a"), convo("new")] });
+    await waitFor(() => expect(ids(result.current)).toContain("new"));
+  });
+
   it("caps the working set at six, excludes open ones from addable, and no-ops addTab at cap (1.5)", () => {
     const onOpenConversation = vi.fn();
     const list = [

@@ -104,6 +104,52 @@ describe("useDisplayMessages", () => {
     ]);
   });
 
+  it("excludes optimistic messages when includeOptimistic is false (a non-active split-screen pane)", () => {
+    // The shared composer's in-flight submit targets only the active
+    // conversation; an inactive pane must render just its own server transcript
+    // even though the global optimistic state is set.
+    useSessionDetailStore
+      .getState()
+      .submitPrompt([{ type: "text", text: "to active convo" }], 1);
+
+    const serverMessages: TranscriptMessage[] = [
+      msg("user", "previous"),
+      msg("assistant", "reply"),
+    ];
+    const { result } = renderHook(() =>
+      useDisplayMessages(serverMessages, undefined, {
+        includeOptimistic: false,
+      }),
+    );
+
+    expect(result.current).toBe(serverMessages);
+  });
+
+  it("does not clear the active conversation's optimistic state from a non-active pane (includeOptimistic false)", () => {
+    // A non-active pane whose own transcript has more rows than the active
+    // conversation's submit point must NOT run the reconcile that clears the
+    // active conversation's optimistic message — otherwise the active pane's
+    // pending message flickers away before its real row lands.
+    useSessionDetailStore
+      .getState()
+      .submitPrompt([{ type: "text", text: "the prompt" }], 1);
+    useSessionDetailStore.getState().completePrompt();
+
+    const otherPaneMessages: TranscriptMessage[] = [
+      msg("user", "a"),
+      msg("assistant", "b"),
+      msg("user", "c"),
+      msg("assistant", "d"),
+    ];
+    renderHook(() =>
+      useDisplayMessages(otherPaneMessages, undefined, {
+        includeOptimistic: false,
+      }),
+    );
+
+    expect(useSessionDetailStore.getState().optimisticMessages).toHaveLength(1);
+  });
+
   it("reconciles by clearing optimistic when streaming finished and server caught up", () => {
     // Set up an in-flight submit at count=1
     useSessionDetailStore
