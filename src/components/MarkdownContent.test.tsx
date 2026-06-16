@@ -68,6 +68,19 @@ describe("MarkdownContent", () => {
     expect(copyBtn).toBeNull();
   });
 
+  it("renders links that open in a new tab with a safe rel", () => {
+    const md = "See [Example](https://example.com) for details.";
+    const { container } = render(<MarkdownContent content={md} />);
+
+    const link = container.querySelector("a");
+    expect(link).not.toBeNull();
+    expect(link?.getAttribute("href")).toBe("https://example.com");
+    expect(link?.getAttribute("target")).toBe("_blank");
+    const rel = link?.getAttribute("rel") ?? "";
+    expect(rel).toContain("noopener");
+    expect(rel).toContain("noreferrer");
+  });
+
   it("renders mermaid code blocks with MermaidDiagram component", async () => {
     const md = "```mermaid\ngraph LR\n    A --> B\n```";
     const { container } = render(<MarkdownContent content={md} />);

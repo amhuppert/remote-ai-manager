@@ -3,6 +3,7 @@
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import dynamic from "next/dynamic";
+import MarkdownLink from "./MarkdownLink";
 
 const MermaidDiagram = dynamic(() => import("./MermaidDiagram"), {
   ssr: false,
@@ -60,6 +61,7 @@ export default function MarkdownViewer({
         <Markdown
           remarkPlugins={[remarkGfm]}
           components={{
+            a: MarkdownLink,
             code({ className, children }) {
               const match = /language-(\w+)/.exec(className || "");
               if (match?.[1] === "mermaid") {

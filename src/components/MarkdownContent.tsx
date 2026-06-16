@@ -5,6 +5,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { PrismLight as SyntaxHighlighter } from "react-syntax-highlighter";
 import dynamic from "next/dynamic";
+import MarkdownLink from "./MarkdownLink";
 
 const MermaidDiagram = dynamic(() => import("./MermaidDiagram"), {
   ssr: false,
@@ -265,6 +266,7 @@ const MarkdownCodeRenderer: NonNullable<Components["code"]> =
 
 const MARKDOWN_COMPONENTS: Components = {
   code: MarkdownCodeRenderer,
+  a: MarkdownLink,
 };
 
 function MarkdownContent({ content }: Props): React.JSX.Element {
