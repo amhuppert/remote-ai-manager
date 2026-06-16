@@ -1,5 +1,6 @@
 "use client";
 
+import { cn } from "@/lib/ui/cn";
 import type { EdgeSpec, Point } from "./types";
 
 /**
@@ -152,13 +153,13 @@ export default function TransitionEdge({
   selected,
 }: TransitionEdgeProps): React.JSX.Element {
   const { d } = buildEdgePath(spec);
-  const classes = [
-    "mc-edge",
-    spec.dashed ? "mc-edge--dashed" : null,
-    selected ? "mc-edge--selected" : null,
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const classes = cn(
+    "fill-none transition-[stroke,stroke-width] duration-150 ease-[ease]",
+    selected
+      ? "stroke-cyan [stroke-width:2] [filter:drop-shadow(0_0_4px_var(--cyan-glow-strong))]"
+      : "stroke-text-tertiary [stroke-width:1.4]",
+    spec.dashed && "[stroke-dasharray:4_3]",
+  );
   return (
     <path
       className={classes}

@@ -15,7 +15,8 @@ CC styles itself with a CSS-custom-property token system. Tailwind v4 is the
 **authoring mechanism** over those tokens, not a redesign. New and migrated UI is
 written as **utilities** (layout + appearance) plus a small set of **React
 primitives** (`Button`, `Badge`, `StatusDot`, `Tabs`, `SectionHeader`,
-`ModalShell` — `src/components/ui/`) that own canonical recipes. State is
+`ModalShell`, `IconButton`, `EmptyState`, `FormField` — `src/components/ui/`)
+that own canonical recipes. State is
 expressed with `data-*` attributes mapped to **static class maps**. Tokens are
 exposed through `@theme` in `src/features/_root/styles/theme.css`; legacy
 `var(--…)` names keep resolving during the migration. Preflight is OFF — CC's
@@ -368,11 +369,112 @@ tool against the same "this surface is migrated" fact):
 
 Effect colors with no solid-color token (custom-alpha glows/shadows/translucent borders) live as `--cc-*` custom properties in `tokens.css`; reference them via `var(--cc-…)` inside the composite utility.
 
+## 8. Stage B feature-wave recipes (icon/toggle button, descendant variants, effects)
+
+Added by the shared-primitive-extension context for the parallel feature waves.
+
+### 8.1 Canonical icon/toggle-button recipe — the `IconButton` primitive
+
+`src/components/ui/IconButton.tsx` owns the icon/toggle-button recipe. Do **not**
+re-inline `.btn-icon-only` / `.cc-ibtn` / the pin-toggle pattern in a wave — use
+the primitive. Three parity variants:
+
+| `variant` | Legacy recipe | Shape | Toggle |
+|---|---|---|---|
+| `square` | `.btn-icon-only` | 30px square icon-only (`relative`, 0.85rem glyph); `size="touch"` → 44px/26px-svg; `tone="danger"` recolours hover | — |
+| `pill` | `.cc-ibtn` | icon+label, height 30 | `pressed` → cyan active (legacy `.cc-ibtn.active`) |
+| `ghost` | pin-toggle pilot | 24px borderless star, mobile touch-enlarge | `pressed` → amber pinned glow |
+
+**`square` enlarges on mobile — the primitive owns it.** `globals.css` has two
+global `@media (max-width: 768px)` rules that make **every** `.btn-icon-only` a
+44px touch target with a 1rem glyph (`min-width/min-height: 44px` + `width/height:
+44px` + `font-size: 1rem`), independent of `size`. `IconButton` bakes this in as
+`max-768:{w,h,min-w,min-h}-[44px] max-768:text-[1rem]`, so at the fixed 390×844
+mobile viewport a default `square` button renders 44×44/1rem — matching legacy.
+A wave must **not** try to reattach this via `layoutClassName`: `height`,
+`min-height`, and `font-size` are not in the allowlist (§8.1, allowlist gap), so
+the primitive carries the responsive enlargement and the call site needs nothing
+extra. (`size="touch"` is the always-44px desktop+mobile variant for controls
+that are touch-sized on desktop too, e.g. the legacy `[data-size="touch"]`.)
+
+- **State** is `pressed` → `data-pressed`. Appearance is partitioned out of the
+  shared box so no two utilities target one property; active-beats-hover is
+  expressed with mutually-exclusive `data-[pressed=true]:…` vs
+  `data-[pressed=false]:hover:…` gating (the Tabs idiom, §1.2) — no reliance on
+  variant emission order.
+- **`layoutClassName` is proven** by the primitive's `LayoutPlacement` story: a
+  parent flex container replicating `.cc-page-actions .cc-ibtn` positions the
+  control from the outside via `ml-auto` / `self-stretch` (external geometry
+  only), and the pill keeps its own appearance untouched.
+- **Allowlist gap to plan around:** the legacy mobile rule
+  `.cc-page-actions .cc-ibtn { height/min-height:44px; justify-content:center;
+  flex:1 }` is only **partly** expressible through `layoutClassName` — `flex:1`→
+  `grow` and `align-self`→`self-*` are allowed, but `height`/`min-height` and
+  `justify-content` are **not** in `LAYOUT_ALLOWED`
+  (`eslint-rules/tailwind-guardrails.mjs`). When a parent touch-enlarges an
+  `IconButton`, apply those from the **parent's own** flex/grid utilities (or a
+  wrapper), not the child's `layoutClassName`.
+
+`EmptyState` (`.empty-state*`) and `FormField` (`.form-*`) follow the same rules.
+Note `.form-input` is defined twice in `globals.css` (lines 989 & 7991); the
+primitive captures the merged effective recipe (later def wins overlapping
+properties; first contributes `::placeholder`).
+
+### 8.2 Arbitrary-descendant-variant idiom (legacy `.parent:hover .child`)
+
+A migrated child must **not** stay the target of a surviving legacy descendant
+selector (§1.3). When a legacy rule styles a child from a stateful parent, move
+the rule onto the child with `group` + a `group-*`/arbitrary variant — never
+resurrect a `.parent .child` selector:
+
+1. Put `group` on the parent, plus its state attribute (e.g. `data-activity`).
+2. `.parent[data-x=v] .child` → on the child: `group-data-[x=v]:<utility>`.
+3. `.parent[data-x=v]:hover .child` (parent-state **and** parent-hover → child) →
+   on the child use the **arbitrary variant** the pilot proved in `NAME_CLASS`:
+
+```tsx
+// legacy: .idle .project-name {…}  /  .idle:hover .project-name {…}
+"group-data-[activity=idle]:text-text-secondary " +
+"[.group[data-activity=idle]:hover_&]:text-text-primary"
+```
+
+The `_` inside the bracket is the descendant-combinator space; `&` is the styled
+child. This keeps the child fully utility-owned and leaves no legacy descendant
+rule alive to half-own it.
+
+### 8.3 Effects use arbitrary utilities over EXISTING tokens — never add tokens
+
+Parallel waves **MUST NOT add, rename, or remove** entries in `tokens.css` /
+`theme.css`. For shadows, glows, accent/translucent borders, and `drop-shadow`
+filters, reference an **existing** token/var inside an arbitrary utility:
+
+```tsx
+"focus:shadow-[0_0_0_3px_var(--cyan-glow)]"                  // focus ring
+"data-[pressed=true]:[filter:drop-shadow(0_0_4px_var(--cc-amber-a50))]" // glow
+"data-[pressed=true]:border-cyan-glow-strong"               // token-utility border
+```
+
+- The legacy `.cc-ibtn.active` cyan border `rgba(0,229,255,0.3)` is **exactly**
+  `--cyan-glow-strong` — reuse it (`border-cyan-glow-strong`), do not mint a token.
+- Raw `#hex` / `rgb()` / `rgba()` / `hsl()` literals in a class string fail
+  `no-hardcoded-color` (§7). If an effect colour has **no** existing token, that
+  is a signal to escalate to the token bridge — **not** to inline a literal or add
+  a feature-wave token.
+
+### 8.4 Single-side borders (reminder — Preflight is OFF)
+
+Preflight's border reset is still not loaded, so `border-solid` + a single-side
+width utility renders a ~3px box on the other three sides. **Zero them
+explicitly** (`border-x-0 border-b-0 border-t …`); a full-box `border` is
+unaffected. Full detail and example in **§1.5** — re-read it before authoring any
+single-side border in a wave.
+
 ## Pointers
 
 - `cn()` helper → `src/lib/ui/cn.ts` (built in the primitives context).
 - Guardrail rules → `eslint-rules/tailwind-guardrails.mjs` (+ `.test.mjs`); §7.
-- Primitives → `src/components/ui/{Button,Badge,StatusDot,Tabs,SectionHeader,ModalShell}.tsx` + stories.
+- Primitives → `src/components/ui/{Button,Badge,StatusDot,Tabs,SectionHeader,ModalShell,IconButton,EmptyState,FormField}.tsx` + stories.
+- Stage B-1 shared-primitive survey (which recipes are primitives vs wave-local) → `.cc/graph-workflow-docs/shared-primitive-survey.md`.
 - `@theme` token surface → `src/features/_root/styles/theme.css` (alias + extract lanes; frozen `max-*` variants).
 - Cascade backstops → `src/lib/shared/tailwind-cascade-order.test.ts` (unlayered legacy beats layered utilities) + `tailwind-reset-cascade.test.ts` (reset is in `@layer base`, below utilities).
 - CSS ownership + preserved-CSS catalog → `scripts/css-inventory.ts` → `docs/reports/css-inventory.md`.

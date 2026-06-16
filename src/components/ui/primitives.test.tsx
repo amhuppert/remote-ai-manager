@@ -13,6 +13,20 @@ import {
   SectionActions,
 } from "./SectionHeader";
 import { ModalShell, ModalTitle, ModalActions } from "./ModalShell";
+import { IconButton } from "./IconButton";
+import {
+  EmptyState,
+  EmptyStateIcon,
+  EmptyStateTitle,
+  EmptyStateDesc,
+} from "./EmptyState";
+import {
+  FormGroup,
+  FormLabel,
+  FormInput,
+  FormHint,
+  FormError,
+} from "./FormField";
 
 /** Render an element and return its root DOM node for className assertions. */
 function root(ui: React.ReactElement): HTMLElement {
@@ -439,5 +453,255 @@ describe("ModalShell and parts", () => {
     expect(title.tagName).toBe("H2");
     expectAll(title, ["font-display", "font-bold", "text-[1.2rem]", "mb-lg"]);
     expectAll(root(<ModalActions />), ["flex", "justify-end", "gap-sm"]);
+  });
+});
+
+describe("IconButton", () => {
+  const baseSet = [
+    "inline-flex",
+    "items-center",
+    "cursor-pointer",
+    "transition-all",
+    "duration-150",
+    "ease-[ease]",
+  ];
+
+  it("square md is the default variant/size (.btn-icon-only parity)", () => {
+    const el = root(<IconButton aria-label="settings" />);
+    expect(el.tagName).toBe("BUTTON");
+    expect(el.getAttribute("data-pressed")).toBe("false");
+    expectAll(el, [
+      ...baseSet,
+      "relative",
+      "justify-center",
+      "size-[30px]",
+      "[&>svg]:size-[18px]",
+      "rounded-sm",
+      "border",
+      "border-solid",
+      "border-border-default",
+      "bg-transparent",
+      "text-[0.85rem]",
+      "text-text-secondary",
+      "hover:bg-bg-hover",
+      "hover:text-text-primary",
+      "hover:border-border-strong",
+    ]);
+  });
+
+  it("square enlarges every default icon button to a 44px/1rem touch target on mobile (globals.css max-768 rules)", () => {
+    const el = root(<IconButton aria-label="settings" />);
+    expectAll(el, [
+      "max-768:w-[44px]",
+      "max-768:h-[44px]",
+      "max-768:min-w-[44px]",
+      "max-768:min-h-[44px]",
+      "max-768:text-[1rem]",
+    ]);
+  });
+
+  it("square touch enlarges the box and the glyph", () => {
+    const el = root(<IconButton size="touch" aria-label="x" />);
+    expectAll(el, ["size-[44px]", "[&>svg]:size-[26px]"]);
+    expect(el.className).not.toContain("size-[30px]");
+  });
+
+  it("square danger recolours only the hover state", () => {
+    const el = root(<IconButton tone="danger" aria-label="delete" />);
+    expectAll(el, [
+      "text-text-secondary",
+      "hover:bg-red-glow",
+      "hover:text-red",
+      "hover:border-red-dim",
+    ]);
+    expect(el.className).not.toContain("hover:bg-bg-hover");
+  });
+
+  it("pill maps to the .cc-ibtn icon+label recipe with rest-state colours", () => {
+    const el = root(<IconButton variant="pill">label</IconButton>);
+    expectAll(el, [
+      "gap-[6px]",
+      "h-[30px]",
+      "px-[10px]",
+      "rounded-md",
+      "border",
+      "border-solid",
+      "border-border-subtle",
+      "text-text-secondary",
+      "[&_svg]:text-text-tertiary",
+      "data-[pressed=false]:hover:bg-bg-hover",
+      "data-[pressed=false]:hover:text-text-primary",
+    ]);
+    expect(el.className).not.toContain("size-[30px]");
+  });
+
+  it("pill pressed adds the cyan active toggle (legacy .cc-ibtn.active)", () => {
+    const el = root(
+      <IconButton variant="pill" pressed>
+        label
+      </IconButton>,
+    );
+    expect(el.getAttribute("data-pressed")).toBe("true");
+    expectAll(el, [
+      "data-[pressed=true]:text-cyan",
+      "data-[pressed=true]:bg-cyan-glow",
+      "data-[pressed=true]:border-cyan-glow-strong",
+      "data-[pressed=true]:[&_svg]:text-cyan",
+    ]);
+  });
+
+  it("ghost replicates the pin-toggle pilot recipe (borderless, amber glow)", () => {
+    const el = root(
+      <IconButton variant="ghost" aria-label="pin">
+        ☆
+      </IconButton>,
+    );
+    expectAll(el, [
+      "size-[24px]",
+      "shrink-0",
+      "border-0",
+      "bg-transparent",
+      "text-text-tertiary",
+      "max-768:min-h-[44px]",
+      "max-768:min-w-[44px]",
+      "hover:text-amber",
+      "hover:[filter:drop-shadow(0_0_3px_var(--cc-amber-a40))]",
+    ]);
+  });
+
+  it("ghost pressed swaps to the pinned amber glow", () => {
+    const el = root(
+      <IconButton variant="ghost" pressed aria-label="unpin">
+        ★
+      </IconButton>,
+    );
+    expect(el.getAttribute("data-pressed")).toBe("true");
+    expectAll(el, [
+      "data-[pressed=true]:text-amber",
+      "data-[pressed=true]:[filter:drop-shadow(0_0_4px_var(--cc-amber-a50))]",
+      "data-[pressed=true]:hover:text-amber-dim",
+    ]);
+  });
+
+  it("appends layoutClassName last (layout-only, after appearance)", () => {
+    const el = root(
+      <IconButton variant="pill" layoutClassName="ml-auto">
+        x
+      </IconButton>,
+    );
+    expect(el.className.trim().endsWith("ml-auto")).toBe(true);
+  });
+
+  it("forwards native button attributes through the Omit", () => {
+    const el = root(
+      <IconButton type="submit" disabled aria-label="go">
+        <span>★</span>
+      </IconButton>,
+    );
+    expect(el.getAttribute("type")).toBe("submit");
+    expect(el.hasAttribute("disabled")).toBe(true);
+    expect(el.getAttribute("aria-label")).toBe("go");
+  });
+});
+
+describe("EmptyState", () => {
+  it("container is a centred column with the .empty-state padding", () => {
+    const el = root(<EmptyState>x</EmptyState>);
+    expectAll(el, [
+      "flex",
+      "flex-col",
+      "items-center",
+      "justify-center",
+      "px-xl",
+      "py-3xl",
+      "text-center",
+    ]);
+  });
+
+  it("icon, title, and desc carry their parity recipes", () => {
+    expectAll(root(<EmptyStateIcon>📭</EmptyStateIcon>), [
+      "text-[2.5rem]",
+      "mb-lg",
+      "opacity-30",
+    ]);
+    expectAll(root(<EmptyStateTitle>none</EmptyStateTitle>), [
+      "font-display",
+      "font-bold",
+      "text-[1.1rem]",
+      "text-text-secondary",
+      "mb-sm",
+    ]);
+    expectAll(root(<EmptyStateDesc>desc</EmptyStateDesc>), [
+      "font-mono",
+      "text-[0.78rem]",
+      "text-text-tertiary",
+      "max-w-[320px]",
+    ]);
+  });
+
+  it("appends layoutClassName last", () => {
+    const el = root(<EmptyState layoutClassName="mt-xl">x</EmptyState>);
+    expect(el.className.trim().endsWith("mt-xl")).toBe(true);
+  });
+});
+
+describe("FormField", () => {
+  it("input is the merged effective .form-input recipe", () => {
+    const el = root(<FormInput aria-label="name" />);
+    expect(el.tagName).toBe("INPUT");
+    expectAll(el, [
+      "w-full",
+      "px-[12px]",
+      "py-[9px]",
+      "bg-bg-base",
+      "border",
+      "border-solid",
+      "border-border-default",
+      "rounded-md",
+      "text-text-primary",
+      "font-mono",
+      "text-[0.82rem]",
+      "outline-0",
+      "placeholder:text-text-tertiary",
+      "hover:border-border-strong",
+      "focus:border-cyan",
+      "focus:shadow-[0_0_0_3px_var(--cyan-glow)]",
+    ]);
+  });
+
+  it("label is an uppercase mono block; group/hint/error carry their recipes", () => {
+    const label = root(<FormLabel htmlFor="n">Name</FormLabel>);
+    expect(label.tagName).toBe("LABEL");
+    expect(label.getAttribute("for")).toBe("n");
+    expectAll(label, [
+      "block",
+      "font-mono",
+      "text-[0.72rem]",
+      "font-semibold",
+      "uppercase",
+      "tracking-[0.08em]",
+      "text-text-secondary",
+      "mb-sm",
+    ]);
+    expectAll(root(<FormGroup>x</FormGroup>), ["mb-lg"]);
+    expectAll(root(<FormHint>h</FormHint>), [
+      "font-mono",
+      "text-[0.7rem]",
+      "text-text-tertiary",
+      "mt-xs",
+    ]);
+    expectAll(root(<FormError>e</FormError>), [
+      "font-mono",
+      "text-[0.72rem]",
+      "text-red",
+      "mt-xs",
+    ]);
+  });
+
+  it("input appends layoutClassName last (e.g. max-w from the parent)", () => {
+    const el = root(
+      <FormInput aria-label="n" layoutClassName="max-w-[240px]" />,
+    );
+    expect(el.className.trim().endsWith("max-w-[240px]")).toBe(true);
   });
 });

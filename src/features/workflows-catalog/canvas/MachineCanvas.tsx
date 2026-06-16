@@ -79,16 +79,19 @@ export default function MachineCanvas({
   }, [width, height, outerZoom]);
 
   return (
-    <div className="mc-viewport" ref={viewportRef}>
+    <div
+      className="flex h-full w-full items-center justify-center overflow-visible p-md"
+      ref={viewportRef}
+    >
       <div
-        className="mc-canvas-frame"
+        className="relative shrink-0"
         style={{
           width: `${width * scale}px`,
           height: `${height * scale}px`,
         }}
       >
         <div
-          className="mc-canvas"
+          className="absolute left-0 top-0"
           style={{
             width: `${width}px`,
             height: `${height}px`,
@@ -97,7 +100,7 @@ export default function MachineCanvas({
           }}
         >
           <svg
-            className="mc-edge-layer"
+            className="pointer-events-none absolute inset-0 overflow-visible"
             width={width}
             height={height}
             viewBox={`0 0 ${width} ${height}`}
@@ -143,7 +146,10 @@ export default function MachineCanvas({
               );
             })}
           </svg>
-          <div className="mc-label-layer" aria-hidden="false">
+          <div
+            className="pointer-events-none absolute inset-0"
+            aria-hidden="false"
+          >
             {edges.map((edge) => {
               if (!edge.label) return null;
               const { mid } = buildEdgePath(edge);
@@ -165,7 +171,7 @@ export default function MachineCanvas({
               );
             })}
           </div>
-          <div className="mc-node-layer">{children}</div>
+          <div className="pointer-events-none absolute inset-0">{children}</div>
         </div>
       </div>
     </div>

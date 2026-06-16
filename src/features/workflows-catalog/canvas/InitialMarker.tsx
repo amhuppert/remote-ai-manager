@@ -18,7 +18,7 @@ export default function InitialMarker({
 }: InitialMarkerProps): React.JSX.Element {
   return (
     <div
-      className="mc-initial-marker"
+      className="absolute h-[14px] w-[14px] rounded-full bg-cyan shadow-[0_0_12px_var(--cyan-glow-strong)]"
       style={{ left: `${x - 7}px`, top: `${y - 7}px` }}
       aria-hidden="true"
     />
