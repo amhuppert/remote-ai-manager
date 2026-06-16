@@ -479,6 +479,45 @@ describe("execution loop", () => {
     });
   });
 
+  it("halts instead of completing when a context is still incomplete and nothing is schedulable", async () => {
+    // Regression for the premature-completion bug: a context stranded as
+    // un-schedulable (here a scheduler that returns `none` while the context is
+    // non-terminal) must never be treated as done. The loop halts for human
+    // intervention rather than silently completing and dropping unfinished work.
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition);
+    initial.contextStates["ctx-1"]!.status = "ready";
+    const harness = buildHarness({
+      initialExecution: initial,
+      scheduleEligibleContexts: async () => ({
+        execution: harness.getCurrent(),
+        scheduled: { kind: "none" },
+      }),
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          throw new Error("a stranded context must not be scheduled");
+        },
+      },
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(result.status).toBe("halted");
+    expect(result.haltReason?.type).toBe("recovery_error");
+    expect(harness.sendSpy).not.toHaveBeenCalled();
+    expect(harness.drainAndHaltSpy).toHaveBeenCalled();
+    const recordedReason =
+      harness.recordPendingHaltReasonSpy.mock.calls[0]?.[0]?.reason;
+    expect(recordedReason?.type).toBe("recovery_error");
+    expect(recordedReason?.message).toContain("ctx-1");
+  });
+
   it("waits instead of completing while a collaboration is pending, then resumes the context when it clears", async () => {
     const definition = createSingleContextDefinition(5);
     const initial = createRunningExecution(definition, {

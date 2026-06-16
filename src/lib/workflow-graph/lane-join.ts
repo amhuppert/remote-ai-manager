@@ -190,11 +190,24 @@ export function planFinalPublishJoin(
     }
   }
 
+  // A lane whose currently-assigned context has not completed holds partial,
+  // unvalidated work and must never be folded into the session via the final
+  // publish. An interrupted parallel wave reset to `ready` still occupies its
+  // forked lane; publishing it would land half-finished work and let the loop
+  // converge to completion with the context's remaining tasks dropped.
+  const lanesWithIncompleteWork = new Set<string>();
+  for (const state of Object.values(execution.contextStates)) {
+    if (state.laneId === null) continue;
+    if (state.status === "completed") continue;
+    lanesWithIncompleteWork.add(state.laneId);
+  }
+
   const unpublishedSources: string[] = [];
   for (const lane of Object.values(execution.executionLanes)) {
     if (lane.laneId === sessionLaneId) continue;
     if (lane.kind === "session") continue;
     if (consumedLaneIds.has(lane.laneId)) continue;
+    if (lanesWithIncompleteWork.has(lane.laneId)) continue;
     const reachable = reachableLanesFrom(lane.laneId, execution);
     if (reachable.has(sessionLaneId)) continue;
     unpublishedSources.push(lane.laneId);

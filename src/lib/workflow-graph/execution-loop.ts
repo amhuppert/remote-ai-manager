@@ -1823,6 +1823,51 @@ export function createGraphWorkflowExecutionLoop(
           if (joinOutcome === "ran") {
             continue;
           }
+          // Completion invariant: the loop only reaches this point when nothing
+          // is schedulable and no join remains, which it treats as "all work
+          // done". That inference is only safe if no context still has
+          // uncompleted tasks. A context stranded with unfinished tasks (e.g. a
+          // forked lane reset to `ready` that the scheduler can no longer place,
+          // or a downstream that was never started) would otherwise be silently
+          // dropped. Refuse to complete and halt for human intervention instead
+          // — a graph workflow must never report `completed` while uncompleted
+          // tasks remain. The predicate is task-based, not status-based: a
+          // context whose tasks are all done but whose status has not yet been
+          // flipped to `completed` (e.g. parked awaiting collaboration delivery)
+          // is legitimately finished and must not block completion.
+          const incompleteContexts = Object.values(
+            execution.contextStates,
+          ).filter(
+            (contextState) =>
+              contextState.completedTaskCount < contextState.totalTaskCount,
+          );
+          if (incompleteContexts.length > 0) {
+            const incompleteContextIds = incompleteContexts.map(
+              (contextState) => contextState.contextId,
+            );
+            const summary = incompleteContexts
+              .map(
+                (contextState) =>
+                  `${contextState.contextId} (${contextState.completedTaskCount}/${contextState.totalTaskCount} tasks, ${contextState.status})`,
+              )
+              .join(", ");
+            logger.error("graph-workflow.loop.completion_blocked_incomplete", {
+              executionId: execution.id,
+              incompleteContextIds,
+            });
+            execLogger?.lifecycle("loop.completion_blocked_incomplete", {
+              incompleteContextIds,
+            });
+            await recordHalt({
+              type: "recovery_error",
+              message: `Refusing to complete: ${incompleteContexts.length} execution context(s) still have uncompleted tasks (${summary}). The scheduler found no eligible work and no remaining join, which would otherwise drop the unfinished work — halting instead. This indicates a scheduling defect.`,
+            });
+            execution = await deps.workflowManager.drainAndHalt({
+              projectPath: input.projectPath,
+              sessionName: input.sessionName,
+            });
+            break;
+          }
           execution = await deps.workflowManager.send(
             input.projectPath,
             input.sessionName,

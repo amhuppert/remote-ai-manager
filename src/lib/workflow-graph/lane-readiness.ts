@@ -59,6 +59,20 @@ export function isUpstreamVisibleToDownstream(
   if (!upstream || !downstream) return false;
   if (!isContextOutputCommittedToLane(upstream, execution)) return false;
 
+  // Fork ancestry: a downstream lane forked from the upstream's lane carries
+  // the upstream's committed output in its own branch history, recorded as the
+  // upstream context id in the fork lane's includedContextIds. This visibility
+  // is established at fork time and does not depend on any later join — without
+  // it, an interrupted forked context reset to `ready` is wrongly judged
+  // dependency-blocked and stranded as ineligible, so the scheduler never
+  // reschedules it and the loop completes with the work unfinished.
+  if (downstream.laneId !== null) {
+    const downstreamLane = execution.executionLanes[downstream.laneId];
+    if (downstreamLane?.includedContextIds.includes(upstreamId)) {
+      return true;
+    }
+  }
+
   if (upstream.laneId === null) {
     return downstream.laneId === null;
   }

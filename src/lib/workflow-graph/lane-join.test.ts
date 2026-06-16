@@ -398,6 +398,91 @@ describe("planFinalPublishJoin", () => {
     expect(plan!.sourceLaneIds).toEqual(["lane-a"]);
   });
 
+  it("excludes a lane whose currently-assigned context has not completed (never publishes partial work)", () => {
+    // Defense-in-depth for the premature-completion bug: an interrupted parallel
+    // wave reset to `ready` still occupies its forked worktree lane. That lane
+    // holds partial, unvalidated work and must never be folded into the session
+    // via the final publish.
+    const base = createWorkflowExecution();
+    const sessionLaneId = "session-lane";
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      executionLanes: {
+        [sessionLaneId]: makeLane({
+          laneId: sessionLaneId,
+          branchName: "csm/session",
+          kind: "session",
+          worktreePath: "/tmp/session",
+        }),
+        "lane-a": makeLane({
+          laneId: "lane-a",
+          branchName: "csm/test-a",
+          includedContextIds: ["context-plan"],
+        }),
+      },
+      contextStates: {
+        ...base.contextStates,
+        "context-implement": {
+          ...base.contextStates["context-implement"]!,
+          status: "ready",
+          isolation: "worktree",
+          laneId: "lane-a",
+        },
+      },
+    };
+
+    expect(
+      planFinalPublishJoin({
+        execution,
+        sessionLaneId,
+        now: () => t1,
+        generateJoinId: () => "join-final",
+      }),
+    ).toBeNull();
+  });
+
+  it("still publishes a lane once its occupant context completes", () => {
+    // Guards against the exclusion being too broad: a lane whose occupant has
+    // finished is safe to publish.
+    const base = createWorkflowExecution();
+    const sessionLaneId = "session-lane";
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      executionLanes: {
+        [sessionLaneId]: makeLane({
+          laneId: sessionLaneId,
+          branchName: "csm/session",
+          kind: "session",
+          worktreePath: "/tmp/session",
+        }),
+        "lane-a": makeLane({
+          laneId: "lane-a",
+          branchName: "csm/test-a",
+          includedContextIds: ["context-plan", "context-implement"],
+        }),
+      },
+      contextStates: {
+        ...base.contextStates,
+        "context-implement": {
+          ...base.contextStates["context-implement"]!,
+          status: "completed",
+          isolation: "worktree",
+          laneId: "lane-a",
+          mergeStatus: "merged-success",
+        },
+      },
+    };
+
+    const plan = planFinalPublishJoin({
+      execution,
+      sessionLaneId,
+      now: () => t1,
+      generateJoinId: () => "join-final",
+    });
+    expect(plan).not.toBeNull();
+    expect(plan!.sourceLaneIds).toEqual(["lane-a"]);
+  });
+
   it("plans a final publish for multiple non-session terminal lanes", () => {
     const base = createWorkflowExecution();
     const sessionLaneId = "session-lane";

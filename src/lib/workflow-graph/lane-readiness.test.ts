@@ -311,6 +311,55 @@ describe("isUpstreamVisibleToDownstream", () => {
     ).toBe(false);
   });
 
+  it("returns true when the downstream's forked lane already includes the upstream context (fork ancestry, no join)", () => {
+    // A parallel wave forks its worktree lane from the parent lane's committed
+    // head; the fork's branch history carries the parent's output, recorded as
+    // the parent context id in the fork lane's includedContextIds. This
+    // visibility holds with no join — without it, an interrupted forked context
+    // is wrongly judged dependency-blocked and stranded as ineligible on resume.
+    const base = createWorkflowExecution();
+    const upstreamLane = makeLane({
+      laneId: "lane-up",
+      branchName: "csm/test-up",
+      includedContextIds: ["context-plan"],
+    });
+    const forkedDownstreamLane = makeLane({
+      laneId: "lane-down",
+      branchName: "csm/test-down",
+      includedContextIds: ["context-plan"],
+    });
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      executionLanes: {
+        "lane-up": upstreamLane,
+        "lane-down": forkedDownstreamLane,
+      },
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": {
+          ...base.contextStates["context-plan"]!,
+          status: "completed",
+          isolation: "worktree",
+          laneId: "lane-up",
+          mergeStatus: "merged-success",
+        },
+        "context-implement": {
+          ...base.contextStates["context-implement"]!,
+          status: "ready",
+          isolation: "worktree",
+          laneId: "lane-down",
+        },
+      },
+    };
+    expect(
+      isUpstreamVisibleToDownstream(
+        "context-plan",
+        "context-implement",
+        execution,
+      ),
+    ).toBe(true);
+  });
+
   it("returns true when upstream landed on session (legacy) and downstream has no lane (session-bound)", () => {
     const base = createWorkflowExecution();
     const execution: GraphWorkflowExecution = {
@@ -732,6 +781,57 @@ describe("classifyContextSchedulability", () => {
     expect(result.kind).toBe("dependency-blocked");
     if (result.kind === "dependency-blocked") {
       expect(result.unmetUpstreamIds).toEqual(["context-plan"]);
+    }
+  });
+
+  it("classifies a forked context as schedulable when its lane already includes the upstream output (post-interruption re-schedule)", () => {
+    // Repro of the premature-completion bug: a parallel wave forked its lane
+    // from the parent's committed head, ran partway, then was interrupted and
+    // reset to `ready`. On re-schedule it must be schedulable on its own lane,
+    // not dependency-blocked, even though no join connects the parent lane to
+    // the fork. Otherwise the scheduler strands it and the loop completes with
+    // unfinished work.
+    const definition = createWorkflowDefinition();
+    const base = createWorkflowExecution();
+    const upstreamLane = makeLane({
+      laneId: "lane-up",
+      branchName: "csm/test-up",
+      includedContextIds: ["context-plan"],
+    });
+    const forkedLane = makeLane({
+      laneId: "lane-down",
+      branchName: "csm/test-down",
+      includedContextIds: ["context-plan"],
+    });
+    const execution: GraphWorkflowExecution = {
+      ...base,
+      executionLanes: { "lane-up": upstreamLane, "lane-down": forkedLane },
+      contextStates: {
+        ...base.contextStates,
+        "context-plan": {
+          ...base.contextStates["context-plan"]!,
+          status: "completed",
+          isolation: "worktree",
+          laneId: "lane-up",
+          mergeStatus: "merged-success",
+        },
+        "context-implement": {
+          ...base.contextStates["context-implement"]!,
+          status: "ready",
+          isolation: "worktree",
+          laneId: "lane-down",
+        },
+      },
+    };
+    const result = classifyContextSchedulability({
+      contextId: "context-implement",
+      definition,
+      execution,
+    });
+    expect(result.kind).toBe("schedulable");
+    if (result.kind === "schedulable") {
+      expect(result.targetLaneId).toBe("lane-down");
+      expect(result.requiresFork).toBe(false);
     }
   });
 
