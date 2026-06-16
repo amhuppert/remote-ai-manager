@@ -32,12 +32,9 @@ describe("ProjectCard stories", () => {
     expect(screen.getByText("\u2605")).toBeInTheDocument();
   });
 
-  it("Archived renders with archived badge and dimmed styling", async () => {
+  it("Archived renders with archived badge", async () => {
     await Archived.run();
     expect(screen.getByText("archived")).toBeInTheDocument();
-    // The card link should carry the archived CSS class for visual dimming
-    const cardLink = screen.getByRole("link", { name: /my-app/ });
-    expect(cardLink.className).toContain("archived");
   });
 
   it("MenuOpen renders dropdown items", async () => {

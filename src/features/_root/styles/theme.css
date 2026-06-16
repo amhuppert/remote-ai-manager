@@ -1,0 +1,217 @@
+/* ============================================================
+   Tailwind @theme token surface (Tailwind migration — Stage A)
+   ============================================================
+
+   The CC design-token surface, bridged onto Tailwind v4. Two lanes:
+
+   - ALIAS lane — categories that already exist as `tokens.css` custom
+     properties (backgrounds, borders, accents, text colors, spacing, radii,
+     fonts). Aliased 1:1 under their Tailwind namespace; the legacy `var(--…)`
+     name stays authoritative (Stage B removes the aliases). Text colors go
+     under `--color-text-*`, NEVER `--text-*` (Tailwind v4 reads `--text-*` as a
+     font-size scale). Radii and font families use `@theme inline` because their
+     legacy names (`--radius-*`, `--font-*`) collide with the Tailwind namespace
+     — a non-inline alias would self-reference; inline emits no token and lets the
+     utility resolve straight to the legacy custom property.
+
+   - EXTRACT lane — categories that do NOT exist as tokens today and live as
+     scattered literals: z-index tiers, breakpoints, and JSX-authored
+     animations. Centralized into new `@theme` tokens, preserving resolved
+     behavior. See the token namespace matrix in design.md and
+     docs/reports/theme-token-matrix.md.
+
+   Every legacy `var(--…)` reference keeps resolving identically — this file is
+   visually inert: it only makes utilities available, it does not restyle any
+   existing element.
+   ============================================================ */
+
+@theme {
+  /* ===== Alias lane: colors (under the --color-* namespace) ===== */
+
+  /* Backgrounds — 6 elevation levels (--bg-* → --color-bg-*) */
+  --color-bg-void: var(--bg-void);
+  --color-bg-base: var(--bg-base);
+  --color-bg-surface: var(--bg-surface);
+  --color-bg-raised: var(--bg-raised);
+  --color-bg-elevated: var(--bg-elevated);
+  --color-bg-hover: var(--bg-hover);
+
+  /* Borders — 4 intensity levels (--border-* → --color-border-*) */
+  --color-border-dim: var(--border-dim);
+  --color-border-subtle: var(--border-subtle);
+  --color-border-default: var(--border-default);
+  --color-border-strong: var(--border-strong);
+
+  /* Accent: Electric Cyan */
+  --color-cyan: var(--cyan);
+  --color-cyan-dim: var(--cyan-dim);
+  --color-cyan-glow: var(--cyan-glow);
+  --color-cyan-glow-strong: var(--cyan-glow-strong);
+  --color-cyan-glow-text: var(--cyan-glow-text);
+
+  /* Accent: Amber */
+  --color-amber: var(--amber);
+  --color-amber-dim: var(--amber-dim);
+  --color-amber-glow: var(--amber-glow);
+
+  /* Accent: Green */
+  --color-green: var(--green);
+  --color-green-dim: var(--green-dim);
+  --color-green-glow: var(--green-glow);
+
+  /* Accent: Blue */
+  --color-blue: var(--blue);
+  --color-blue-dim: var(--blue-dim);
+  --color-blue-glow: var(--blue-glow);
+
+  /* Accent: Red */
+  --color-red: var(--red);
+  --color-red-dim: var(--red-dim);
+  --color-red-glow: var(--red-glow);
+  --color-red-text: var(--red-text);
+
+  /* Accent: Violet (Codex agent identity) */
+  --color-violet: var(--violet);
+  --color-violet-dim: var(--violet-dim);
+  --color-violet-glow: var(--violet-glow);
+  --color-violet-glow-strong: var(--violet-glow-strong);
+
+  /* Rainbow glows (rgba single colors). The rainbow GRADIENT tokens are bridged
+     separately under the --background-image-* namespace below (a gradient is not
+     a color, so it cannot live under --color-*). */
+  --color-rainbow-glow: var(--rainbow-glow);
+  --color-rainbow-glow-strong: var(--rainbow-glow-strong);
+  --color-rainbow-glow-blue: var(--rainbow-glow-blue);
+
+  /* ===== Alias lane: background images (gradients) =====
+     The rainbow gradient tokens, under Tailwind's --background-image-* namespace
+     so `bg-rainbow` / `bg-rainbow-tint` utilities generate. Aliased 1:1 over the
+     legacy gradient vars, which keep resolving. */
+  --background-image-rainbow: var(--rainbow-gradient);
+  --background-image-rainbow-tint: var(--rainbow-tint);
+
+  /* Text — 4 levels. Under --color-text-* so COLOR utilities (text-text-*)
+     generate, NOT font-size utilities. */
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-text-inverse: var(--text-inverse);
+
+  /* ===== Alias lane: spacing (--space-* → --spacing-*) ===== */
+  --spacing-2xs: var(--space-2xs);
+  --spacing-xs: var(--space-xs);
+  --spacing-sm: var(--space-sm);
+  --spacing-md: var(--space-md);
+  --spacing-lg: var(--space-lg);
+  --spacing-xl: var(--space-xl);
+  --spacing-2xl: var(--space-2xl);
+  --spacing-3xl: var(--space-3xl);
+  /* Semantic spacing */
+  --spacing-section: var(--space-section);
+  --spacing-header-content: var(--space-header-content);
+  --spacing-item: var(--space-item);
+
+  /* ===== Alias lane: sizing floors =====
+     A DELIBERATE namespace separate from the font-size scale (`--text-*`):
+     these are MINIMUMS, not a type scale. They generate no utilities; the
+     legibility-floor guarantee asserts against them (design-system-guarantees). */
+  --cc-size-floor-font: var(--font-size-floor);
+  --cc-size-floor-icon: var(--icon-size-min);
+  --cc-size-floor-icon-btn: var(--icon-btn-min);
+  --cc-size-floor-touch: var(--touch-target-min);
+
+  /* ===== Extract lane: z-index tiers =====
+     An ORDERED named tier scale. Each tier maps to one of CC's actual distinct
+     stacking bands (verified against the legacy literals + their selectors); the
+     off-by-one adjacencies within a band collapse (89/90/91, 199/200/201,
+     1100/1110, 9998/9999) but the RELATIVE order ACROSS bands is preserved
+     exactly — collapsing further would reorder elements that stack against each
+     other. Values preserve relative order, not exact integers. Legacy literals
+     are NOT rewritten in Stage A — feature waves repoint them onto these tiers.
+
+     Mapping (low → high), tier ← legacy occupants:
+       base(0)        ← 0
+       raised(1)      ← 1,2,5 (local stacking contexts)
+       sticky(10)     ← 10,20 (sticky/affixed)
+       header(50)     ← 50,60 (sticky headers, autocompletes, action bars)
+       panel(90)      ← 89,90,91 (side panels + np/unified/ds slide-in sheets)
+       nav(100)       ← 100,150 (topbar; model-selector dropdown)
+       dropdown(200)  ← 199,200,201 (dropdowns, mobile action backdrop/sheet, cc-toast)
+       toast(300)     ← 300 (merge-toast) — ABOVE the dropdown band, still BELOW menus
+       menu(1000)     ← 1000 (context/kebab menus, mcp-config-popover)
+       popover(1100)  ← 1100,1110 (peek popover)
+       overlay(9999)  ← 9998,9999 (full-screen/atmospheric overlays, mermaid, skip-link)
+       tooltip(99999) ← 99999 (tooltips — top of the stack)
+
+     Namespace is `--z-index-*` (the Tailwind v4 z-index namespace, which
+     generates the `z-*` utility family — `--z-*` does NOT). */
+  --z-index-base: 0;
+  --z-index-raised: 1;
+  --z-index-sticky: 10;
+  --z-index-header: 50;
+  --z-index-panel: 90;
+  --z-index-nav: 100;
+  --z-index-dropdown: 200;
+  --z-index-toast: 300;
+  --z-index-menu: 1000;
+  --z-index-popover: 1100;
+  --z-index-overlay: 9999;
+  --z-index-tooltip: 99999;
+
+  /* ===== Extract lane: breakpoints =====
+     FROZEN desktop-first scale. CC authors `@media (max-width: …)` (desktop is
+     the default, narrower viewports override), so the canonical spine is 768px
+     with a 769px min-width companion for the few existing mobile-first rules.
+     Recurring one-off thresholds are tokenized; the desktop-first `max-*` custom
+     variants are registered below. NOT inverted to mobile-first. */
+  --breakpoint-640: 640px;
+  --breakpoint-768: 768px; /* canonical mobile/desktop spine */
+  --breakpoint-769: 769px; /* min-width companion for existing mobile-first rules */
+  --breakpoint-800: 800px;
+  --breakpoint-900: 900px;
+  --breakpoint-960: 960px;
+  --breakpoint-1080: 1080px;
+  --breakpoint-1100: 1100px;
+  --breakpoint-1180: 1180px;
+
+  /* ===== Extract lane: animations =====
+     Only the SHARED, JSX-authored keyframes are tokenized, with a canonical
+     duration chosen where a keyframe is invoked at many (pulse-dot spans
+     1.2–2.5s; 2.5s is the dominant cadence). The `@keyframes` themselves remain
+     in the legacy stylesheets (still resolving), so existing `animation:` rules
+     are untouched. Graph / atmospheric / vendor keyframes stay bespoke — see the
+     token matrix for the explicit bespoke list. */
+  --animate-pulse-dot: pulse-dot 2.5s ease-in-out infinite;
+  --animate-fade-in: fadeIn 0.3s ease;
+  --animate-bulk-float-in: bulk-float-in 0.18s ease;
+}
+
+/* ===== Alias lane: radii + font families (@theme inline) =====
+   The legacy names `--radius-*` and `--font-*` collide with the Tailwind
+   namespace, so a non-inline alias would self-reference. `inline` emits no
+   theme variable and inlines `var(--legacy)` into the utility, which resolves
+   to the (unlayered) legacy custom property — exact parity, no circular ref. */
+@theme inline {
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+
+  --font-display: var(--font-display);
+  --font-body: var(--font-body);
+  --font-mono: var(--font-mono);
+}
+
+/* ===== Extract lane: desktop-first max-width custom variants =====
+   Registered explicitly over `@media (max-width: …px)` so the boundary is
+   inclusive of the exact pixel (Tailwind's auto-generated `max-*` variants use
+   an exclusive `width < value`, which would shift CC's responsive boundaries by
+   a pixel). The 769px companion preserves the handful of mobile-first rules. */
+@custom-variant max-640 (@media (max-width: 640px));
+@custom-variant max-768 (@media (max-width: 768px));
+@custom-variant max-800 (@media (max-width: 800px));
+@custom-variant max-900 (@media (max-width: 900px));
+@custom-variant max-960 (@media (max-width: 960px));
+@custom-variant max-1080 (@media (max-width: 1080px));
+@custom-variant max-1100 (@media (max-width: 1100px));
+@custom-variant max-1180 (@media (max-width: 1180px));
+@custom-variant min-769 (@media (min-width: 769px));

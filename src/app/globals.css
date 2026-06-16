@@ -5,6 +5,38 @@
    The rules below will move to feature folders in PR-2..PR-8.
    ============================================================ */
 
+/* ------------------------------------------------------------
+   Tailwind v4 (Preflight OFF — CC's reset.css remains the base reset).
+   Import the theme + utilities layers only, OMITTING preflight. Three-tier
+   cascade (low → high precedence):
+     1. @layer base      — CC's reset.css (imported via _root/styles/index.css
+                            with layer(base)). Its universal `*{margin:0;padding:0}`
+                            sits here so it does NOT mask Tailwind spacing
+                            utilities on every element.
+     2. @layer utilities — Tailwind's utilities. Beat the layered reset, so
+                            `p-*`/`m-*`/`gap-*` authored on migrated elements take
+                            effect at parity.
+     3. unlayered         — all legacy feature/component CSS. Beats layered
+                            utilities, so a legacy `.project-card{padding}` rule
+                            still wins over `p-*` on the same element — the
+                            no-mixed-ownership backstop for un-migrated surfaces.
+   Verified by src/lib/shared/tailwind-cascade-order.test.ts (unlayered feature
+   CSS beats utilities) and src/lib/shared/tailwind-reset-cascade.test.ts
+   (utilities beat the layered reset; unlayered feature CSS still beats both).
+   `@theme` token surface lives in theme.css.
+
+   Visual inertness: Tailwind auto-scans the codebase and emits a utility for any
+   token it sees. A legacy className that matches a Tailwind utility name AND has
+   no legacy CSS rule would therefore start applying a style it never had — visual
+   drift. src/lib/shared/tailwind-utility-collisions.test.ts asserts there are
+   ZERO such collisions (it would catch a new one); per the migration protocol,
+   the colliding className is renamed to a non-utility BEM name in the same change.
+   ------------------------------------------------------------ */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "../features/_root/styles/theme.css";
+
 @import "../features/_root/styles/index.css";
 
 /* migrated in feature PRs (PR-2..PR-8) */
@@ -384,33 +416,6 @@
   font-size: 0.82rem;
   color: var(--text-secondary);
   font-weight: 400;
-}
-
-.stat {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.stat-value {
-  font-family: var(--font-mono);
-  font-weight: 700;
-  font-size: 1.2rem;
-  color: var(--text-primary);
-}
-
-.stat-value--empty {
-  color: var(--text-tertiary);
-  font-style: normal;
-}
-
-.stat-label {
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-tertiary);
 }
 
 /* ============================================================

@@ -115,4 +115,28 @@
 
   /* ---- Topbar ---- */
   --topbar-height: 48px;
+
+  /* ---- Translucent effect colors ----
+     Extracted from migrated component box-shadow / drop-shadow / translucent-border
+     literals so utilities reference tokens, not raw color values (Tailwind
+     migration guardrail R8.3). Alpha-suffixed because the same hue recurs at
+     several opacities across glows/borders that have no solid-color token; the
+     shadow/filter geometry stays inline in the utility, only the color is a token. */
+  --cc-shadow-soft: rgba(0, 0, 0, 0.4); /* card hover drop shadow */
+  --cc-cyan-a12: rgba(0, 229, 255, 0.12); /* active-card outer glow (rest) */
+  --cc-cyan-a18: rgba(0, 229, 255, 0.18); /* active-card outer glow (hover) */
+  --cc-cyan-a25: rgba(0, 229, 255, 0.25); /* active-card inner glow (hover) */
+  --cc-amber-a40: rgba(255, 179, 0, 0.4); /* pin-toggle glow (hover) */
+  --cc-amber-a50: rgba(255, 179, 0, 0.5); /* pin-toggle glow (pinned) */
+  --cc-amber-a60: rgba(255, 179, 0, 0.6); /* pin-toggle glow (pinned hover) */
+  --cc-amber-border: rgba(255, 183, 77, 0.25); /* pinned-card amber border */
+  --cc-amber-border-strong: rgba(
+    255,
+    183,
+    77,
+    0.4
+  ); /* pinned-card border (hover) */
+  --cc-red-border: rgba(255, 61, 90, 0.3); /* danger button border */
+  --cc-green-border: rgba(0, 230, 118, 0.3); /* success button border */
+  --cc-overlay-scrim: rgba(6, 9, 15, 0.8); /* modal overlay scrim */
 }
