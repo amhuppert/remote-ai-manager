@@ -43,6 +43,15 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}components${path.sep}ui${path.sep}`,
   // Pilot slice (design task 5.1): ProjectCard is fully utility-first.
   `${path.sep}features${path.sep}projects-index${path.sep}components${path.sep}ProjectCard.tsx`,
+  // Stage B-1 feature waves: each surface migrated wholesale to utilities +
+  // shared primitives (their feature `styles/*.css` dropped to its residual
+  // floor). composer/cockpit are subdirs of project-detail, so the still-legacy
+  // project-detail shell stays under the guard.
+  `${path.sep}features${path.sep}config${path.sep}`,
+  `${path.sep}features${path.sep}_root${path.sep}spawn-card${path.sep}`,
+  `${path.sep}features${path.sep}workflows-catalog${path.sep}`,
+  `${path.sep}features${path.sep}project-detail${path.sep}composer${path.sep}`,
+  `${path.sep}features${path.sep}project-detail${path.sep}cockpit${path.sep}`,
 ];
 
 function srcFiles(ext: string): string[] {

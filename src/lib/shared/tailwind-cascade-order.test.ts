@@ -57,6 +57,33 @@ function flexIsInUtilitiesLayer(root: postcss.Root): boolean {
   return found;
 }
 
+/**
+ * Extract a minimal but faithful cascade probe from the compiled output: the
+ * `@layer` ordering declaration plus the REAL compiled `.flex` rule still wrapped
+ * in its own `@layer utilities`. Feeding the whole compiled `globals.css`
+ * (~450 KB / thousands of utility rules once the feature waves are migrated) into
+ * jsdom overflows its CSSOM cascade resolver; this keeps the probe to the rules
+ * that actually decide the cascade, so the assertion exercises the same layered
+ * `.flex` `next build` emits without depending on jsdom scaling to the full sheet.
+ */
+function layeredFlexProbeCss(root: postcss.Root): string {
+  let ordering = "";
+  let layeredFlex = "";
+  root.walkAtRules("layer", (layerRule) => {
+    if (!layerRule.nodes) {
+      ordering += `@layer ${layerRule.params};\n`;
+      return;
+    }
+    if (!/(^|[\s,])utilities(\s|,|$)/.test(layerRule.params)) return;
+    layerRule.walkRules((rule) => {
+      if (rule.selector === ".flex") {
+        layeredFlex += `@layer ${layerRule.params} { ${rule.toString()} }\n`;
+      }
+    });
+  });
+  return ordering + layeredFlex;
+}
+
 describe("Tailwind cascade-order backstop (no mixed ownership)", () => {
   it("emits Tailwind utilities into @layer utilities so unlayered legacy CSS wins on the same element (committed integration)", async () => {
     const globals = readFileSync(globalsPath, "utf8");
@@ -73,7 +100,8 @@ describe("Tailwind cascade-order backstop (no mixed ownership)", () => {
 
     // Behavior: on one element carrying both the layered utility class and the
     // unlayered legacy class, the unlayered legacy rule wins the real cascade.
-    expect(computeDisplay(result.css, "flex cc-cascade-probe-legacy")).toBe(
+    const probeCss = `${layeredFlexProbeCss(result.root)}.cc-cascade-probe-legacy { display: block; }\n`;
+    expect(computeDisplay(probeCss, "flex cc-cascade-probe-legacy")).toBe(
       "block",
     );
   }, 20000);
