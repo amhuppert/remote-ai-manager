@@ -13,6 +13,7 @@ import { buildImplementerCollaborationContext } from "@/lib/workflow-graph/imple
 import { coerceGlobalDefaults } from "@/lib/workflow-graph/resolve-config";
 import { createGraphWorkflowRuntimeEditService } from "@/lib/workflow-graph/runtime-edits";
 import { createGraphWorkflowSharedDocumentRegistryService } from "@/lib/workflow-graph/shared-documents";
+import { createSharedDocumentStore } from "@/lib/workflow-graph/shared-document-store";
 import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
 import { createParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
 import { createGraphWorkflowCollaborationCoordinator } from "@/lib/workflow-graph/workflow-collaboration-coordinator";
@@ -110,8 +111,13 @@ const workflowCollaborationCoordinator =
   });
 
 const runtimeEditService = createGraphWorkflowRuntimeEditService();
-const sharedDocumentRegistry =
-  createGraphWorkflowSharedDocumentRegistryService();
+const sharedDocumentStore = createSharedDocumentStore();
+const sharedDocumentRegistry = createGraphWorkflowSharedDocumentRegistryService(
+  {
+    captureDocumentContent: (input) =>
+      sharedDocumentStore.captureFromWorktree(input),
+  },
+);
 const executionTargetResolver = createExecutionTargetResolver();
 const executionToolContextFactory = createGraphWorkflowExecutionToolContext({
   workflowManager,

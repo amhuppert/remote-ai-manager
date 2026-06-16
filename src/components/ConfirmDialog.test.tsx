@@ -86,6 +86,14 @@ describe("ConfirmDialog", () => {
     expect(screen.getByText("No, keep")).toBeInTheDocument();
   });
 
+  it("hides the cancel button when hideCancel=true (acknowledge-only)", () => {
+    render(
+      <ConfirmDialog {...defaultProps} hideCancel confirmLabel="Got it" />,
+    );
+    expect(screen.getByText("Got it")).toBeInTheDocument();
+    expect(screen.queryByText("Cancel")).not.toBeInTheDocument();
+  });
+
   it("focuses the confirm button when opened", () => {
     render(<ConfirmDialog {...defaultProps} confirmLabel="Send anyway" />);
     expect(document.activeElement).toBe(screen.getByText("Send anyway"));

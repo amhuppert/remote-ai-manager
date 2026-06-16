@@ -129,6 +129,68 @@ describe("graph workflow shared document registry service", () => {
     ]);
   });
 
+  it("captures the registered document's content into the central store using the canonical path", async () => {
+    const captured: Array<{
+      executionId: string;
+      worktreePath: string;
+      relativePath: string;
+    }> = [];
+    const service = createGraphWorkflowSharedDocumentRegistryService({
+      now() {
+        return "2026-03-27T18:00:00.000Z";
+      },
+      createDocumentId() {
+        return "doc-1";
+      },
+      async captureDocumentContent(input) {
+        captured.push(input);
+      },
+    });
+    const execution = createWorkflowExecution({ id: "execution-9" });
+
+    await service.upsert("/worktree", execution, {
+      relativePath: ".cc/graph-workflow-docs/./plan.md",
+      description: "Plan",
+      readWhen: "before work",
+      conversationId: "conversation-9",
+    });
+
+    expect(captured).toEqual([
+      {
+        executionId: "execution-9",
+        worktreePath: "/worktree",
+        relativePath: ".cc/graph-workflow-docs/plan.md",
+      },
+    ]);
+  });
+
+  it("still registers the document when content capture fails", async () => {
+    const service = createGraphWorkflowSharedDocumentRegistryService({
+      now() {
+        return "2026-03-27T18:00:00.000Z";
+      },
+      createDocumentId() {
+        return "doc-1";
+      },
+      async captureDocumentContent() {
+        throw new Error("source file missing");
+      },
+    });
+    const execution = createWorkflowExecution({ id: "execution-9" });
+
+    const updated = await service.upsert("/worktree", execution, {
+      relativePath: ".cc/graph-workflow-docs/plan.md",
+      description: "Plan",
+      readWhen: "before work",
+      conversationId: "conversation-9",
+    });
+
+    expect(updated.sharedDocuments).toHaveLength(1);
+    expect(updated.sharedDocuments[0]?.relativePath).toBe(
+      ".cc/graph-workflow-docs/plan.md",
+    );
+  });
+
   it("fails the workflow with ArtifactRequiredFailure when a required upsert path escapes the shared directory", async () => {
     const service = createGraphWorkflowSharedDocumentRegistryService();
     const execution = createWorkflowExecution();

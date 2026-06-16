@@ -1,6 +1,14 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { GitClient } from "./client";
-import { createWorktreeOperations, parseDirtyPaths } from "./worktree";
+import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
+import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { defaultGitClient, type GitClient } from "./client";
+import {
+  createWorktreeOperations,
+  parseDirtyPaths,
+  ensureGraphWorkflowDocsExcluded,
+  GRAPH_WORKFLOW_DOCS_IGNORE_PATTERN,
+} from "./worktree";
 
 const gitMock = vi.fn();
 
@@ -730,5 +738,47 @@ describe("parseDirtyPaths", () => {
       { path: "b.ts", statusCode: "??", tracked: false },
       { path: "c.ts", statusCode: "M ", tracked: true },
     ]);
+  });
+});
+
+describe("ensureGraphWorkflowDocsExcluded (real git)", () => {
+  let repo: string;
+
+  beforeEach(async () => {
+    repo = await mkdtemp(path.join(tmpdir(), "cc-docs-exclude-"));
+    await defaultGitClient.git(["init"], repo);
+  });
+
+  afterEach(async () => {
+    await rm(repo, { recursive: true, force: true });
+  });
+
+  it("makes the graph-workflow-docs dir git-ignored and is idempotent", async () => {
+    const docPath = path.join(repo, ".cc", "graph-workflow-docs", "charter.md");
+    await mkdir(path.dirname(docPath), { recursive: true });
+    await writeFile(docPath, "charter", "utf-8");
+
+    const before = await defaultGitClient.git(["status", "--porcelain"], repo);
+    expect(before.stdout).toContain(".cc/");
+
+    await ensureGraphWorkflowDocsExcluded(repo);
+
+    const excludePath = path.join(repo, ".git", "info", "exclude");
+    expect(await readFile(excludePath, "utf-8")).toContain(
+      GRAPH_WORKFLOW_DOCS_IGNORE_PATTERN,
+    );
+
+    // git now genuinely ignores the docs dir.
+    const after = await defaultGitClient.git(["status", "--porcelain"], repo);
+    expect(after.stdout).not.toContain(".cc/");
+
+    // A second call does not duplicate the rule.
+    await ensureGraphWorkflowDocsExcluded(repo);
+    const lineCount = (await readFile(excludePath, "utf-8"))
+      .split("\n")
+      .filter(
+        (line) => line.trim() === GRAPH_WORKFLOW_DOCS_IGNORE_PATTERN,
+      ).length;
+    expect(lineCount).toBe(1);
   });
 });

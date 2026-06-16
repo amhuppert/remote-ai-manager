@@ -54,9 +54,13 @@ import {
   type DrainAndHaltInput,
 } from "@/lib/workflow-graph/workflow-manager";
 import { toHaltReason } from "@/lib/workflow-graph/errors";
+import type { DirtyPath } from "@/lib/workflow-graph/errors";
+import { readWorktreeDirtyPaths } from "@/lib/git/worktree";
 import { createWorkflowContinuityService } from "@/lib/workflow-graph/workflow-continuity-service";
 import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
 import { createParallelWorktrees } from "./parallel-worktrees";
+import { createSharedDocumentStore } from "./shared-document-store";
+import { createWorkflowDocumentMaterializer } from "./document-materialization";
 import { createPerSessionMergeMutex } from "./per-session-merge-mutex";
 import { createSessionGitLock } from "./session-git-lock";
 import { createGraphWorkflowMergeRunner } from "./graph-merge-runner";
@@ -227,12 +231,18 @@ const scriptValidatorService = createGraphWorkflowRouteScriptValidatorService({
   runScriptValidator: scriptValidatorRunner.runScriptValidator,
 });
 
+const sharedDocumentMaterializer = createWorkflowDocumentMaterializer({
+  store: createSharedDocumentStore(),
+});
+
 const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
   executionRepository: workflowManager,
   createConversation,
   continuityService,
   eventPublisher,
   signalHalt: createGraphWorkflowSignalHaltHandler(workflowManager),
+  materializeWorkflowDocuments: (input) =>
+    sharedDocumentMaterializer.materialize(input).then(() => undefined),
   createToolServer: (input) => ({
     server: buildGraphWorkflowPortableMcp(
       input.projectName,
@@ -387,6 +397,16 @@ export interface GraphWorkflowExecutionRouteDeps {
   recordApprovalDecision(
     input: RecordDecisionInput,
   ): Promise<RecordDecisionResult>;
+  /**
+   * Read the uncommitted (tracked + untracked, non-ignored) changes in the
+   * session worktree. Defaults to a real `git status --porcelain` reader.
+   * START uses this to refuse a workflow whose session worktree is dirty:
+   * lanes fork from the committed session branch, so uncommitted files (e.g.
+   * a freshly-written, never-committed Kiro spec) are invisible to them.
+   */
+  readSessionWorktreeDirtyPaths?(
+    sessionWorktreePath: string,
+  ): Promise<DirtyPath[]>;
 }
 
 const approvalGateService = createApprovalGateService({
@@ -419,6 +439,8 @@ const defaultDeps: GraphWorkflowExecutionRouteDeps = {
     workflowManager.recordPendingHaltReason(input),
   drainAndHalt: (input) => workflowManager.drainAndHalt(input),
   recordApprovalDecision: (input) => approvalGateService.recordDecision(input),
+  readSessionWorktreeDirtyPaths: (sessionWorktreePath) =>
+    readWorktreeDirtyPaths(sessionWorktreePath),
 };
 
 function isTerminalStatus(status: GraphWorkflowStatus): boolean {
@@ -763,6 +785,46 @@ export function createGraphWorkflowExecutionRouteHandlers(
           { status: 409 },
         );
       }
+    }
+
+    // Lanes fork from the committed session branch, so any uncommitted change
+    // in the session worktree (e.g. a freshly-written, never-committed Kiro
+    // spec — which is untracked) would be missing from every lane. Refuse the
+    // start and tell the user to commit. Checked after the active-execution
+    // guard so an already-running workflow reports the more specific message.
+    const readSessionDirty =
+      deps.readSessionWorktreeDirtyPaths ??
+      ((sessionWorktreePath: string) =>
+        readWorktreeDirtyPaths(sessionWorktreePath));
+    let dirtyPaths: DirtyPath[] = [];
+    try {
+      dirtyPaths = (await readSessionDirty(session.worktreePath)) ?? [];
+    } catch (error) {
+      // Don't wedge a legitimate start if the status probe itself fails; the
+      // dirty gate is a guard, not a hard precondition we can always evaluate.
+      logger.warn("graph-workflow.start.dirty_check_failed", {
+        projectPath,
+        sessionName,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    if (dirtyPaths.length > 0) {
+      logger.info("graph-workflow.start.blocked_uncommitted_changes", {
+        projectPath,
+        sessionName,
+        dirtyCount: dirtyPaths.length,
+      });
+      return NextResponse.json(
+        {
+          error: `Cannot start the workflow while the session worktree has ${dirtyPaths.length} uncommitted change(s). Workflow lanes are created from the committed branch, so uncommitted files would be missing. Commit your changes and try again.`,
+          code: "uncommitted_changes",
+          details: {
+            totalCount: dirtyPaths.length,
+            paths: dirtyPaths.slice(0, 20).map((entry) => entry.path),
+          },
+        } satisfies ApiError,
+        { status: 409 },
+      );
     }
 
     try {

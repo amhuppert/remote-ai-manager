@@ -72,6 +72,7 @@ describe("graph workflow execution route handlers", () => {
   const recordPendingHaltReason = vi.fn();
   const drainAndHalt = vi.fn();
   const recordApprovalDecision = vi.fn();
+  const readSessionWorktreeDirtyPaths = vi.fn();
 
   const handlers = createGraphWorkflowExecutionRouteHandlers({
     resolveProjectPath,
@@ -88,6 +89,7 @@ describe("graph workflow execution route handlers", () => {
     recordPendingHaltReason,
     drainAndHalt,
     recordApprovalDecision,
+    readSessionWorktreeDirtyPaths,
   });
 
   beforeEach(() => {
@@ -142,6 +144,39 @@ describe("graph workflow execution route handlers", () => {
         archived: false,
       },
     });
+  });
+
+  it("blocks the start with a 409 when the session worktree has uncommitted changes", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+    readSessionWorktreeDirtyPaths.mockResolvedValue([
+      {
+        path: ".kiro/specs/new-feature/requirements.md",
+        statusCode: "??",
+        tracked: false,
+      },
+      { path: "src/edited.ts", statusCode: " M", tracked: true },
+    ]);
+
+    const response = await handlers.START(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow",
+        "POST",
+        { definitionId: "workflow-1" },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "uncommitted_changes",
+      details: { totalCount: 2 },
+    });
+    expect(readSessionWorktreeDirtyPaths).toHaveBeenCalledWith(
+      "/repo/.worktrees/session-1",
+    );
+    expect(startExecution).not.toHaveBeenCalled();
+    expect(kickOffExecutionLoop).not.toHaveBeenCalled();
   });
 
   it("records an execution_loop_failed halt reason when the kickoff promise rejects", async () => {

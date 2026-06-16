@@ -8,6 +8,8 @@ import type {
 } from "@/lib/workflows/schemas";
 import { useWorkflowDefinitionsQuery } from "@/lib/workflows/queries";
 import { useStartGraphWorkflowMutation } from "@/lib/workflows/mutations";
+import { ApiCallError } from "@/lib/api/errors";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 interface GraphWorkflowCardProps {
   projectName: string;
@@ -241,26 +243,56 @@ function ConnectedLauncherCard({
 }): React.JSX.Element {
   const definitionsQuery = useWorkflowDefinitionsQuery(projectName);
   const startMutation = useStartGraphWorkflowMutation(projectName, sessionName);
+  const [uncommittedMessage, setUncommittedMessage] = useState<string | null>(
+    null,
+  );
+
+  const startError = startMutation.error;
+  const isUncommittedBlock =
+    startError instanceof ApiCallError &&
+    startError.code === "uncommitted_changes";
 
   return (
-    <GraphWorkflowLauncher
-      projectName={projectName}
-      definitions={(definitionsQuery.data ?? []).map((d) => ({
-        id: d.id,
-        name: d.name,
-        revision: d.revision,
-      }))}
-      loading={definitionsQuery.isPending}
-      starting={startMutation.isPending}
-      error={
-        startMutation.isError
-          ? startMutation.error instanceof Error
-            ? startMutation.error.message
-            : "Failed to start workflow"
-          : null
-      }
-      onRun={(definitionId) => startMutation.mutate(definitionId)}
-    />
+    <>
+      <GraphWorkflowLauncher
+        projectName={projectName}
+        definitions={(definitionsQuery.data ?? []).map((d) => ({
+          id: d.id,
+          name: d.name,
+          revision: d.revision,
+        }))}
+        loading={definitionsQuery.isPending}
+        starting={startMutation.isPending}
+        error={
+          startMutation.isError && !isUncommittedBlock
+            ? startError instanceof Error
+              ? startError.message
+              : "Failed to start workflow"
+            : null
+        }
+        onRun={(definitionId) =>
+          startMutation.mutate(definitionId, {
+            onError: (error) => {
+              if (
+                error instanceof ApiCallError &&
+                error.code === "uncommitted_changes"
+              ) {
+                setUncommittedMessage(error.message);
+              }
+            },
+          })
+        }
+      />
+      <ConfirmDialog
+        open={uncommittedMessage !== null}
+        title="Commit changes before starting"
+        message={uncommittedMessage ?? ""}
+        confirmLabel="Got it"
+        hideCancel
+        onConfirm={() => setUncommittedMessage(null)}
+        onCancel={() => setUncommittedMessage(null)}
+      />
+    </>
   );
 }
 

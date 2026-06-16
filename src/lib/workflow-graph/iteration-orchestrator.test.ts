@@ -364,6 +364,132 @@ describe("graph workflow iteration orchestrator", () => {
     });
   });
 
+  it("materializes workflow documents into a worktree-isolation lane before the agent runs", async () => {
+    const repository = createRepository(
+      createExecutionWithPlanTasks({
+        "task-plan-1": "pending",
+        "task-plan-2": "pending",
+      }),
+    );
+    const createConversation = vi.fn(async () => ({ id: "conversation-1" }));
+    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+    const materializeCalls: Array<{
+      executionId: string;
+      worktreePath: string;
+    }> = [];
+    const runAgentIteration = vi.fn(async () => {
+      // The materializer must have run before the agent turn.
+      expect(materializeCalls).toHaveLength(1);
+      const current = structuredClone(repository.read());
+      current.taskStates["task-plan-1"] = {
+        ...current.taskStates["task-plan-1"]!,
+        status: "completed",
+        summary: "done",
+        completedAt: "2026-03-27T16:02:00.000Z",
+      };
+      current.contextStates["context-plan"] = {
+        ...current.contextStates["context-plan"]!,
+        completedTaskCount: 1,
+      };
+      await repository.mutateActive("/repo", "session-1", () => current);
+      return {
+        conversationId: "conversation-1",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      materializeWorkflowDocuments: async ({ execution, worktreePath }) => {
+        materializeCalls.push({ executionId: execution.id, worktreePath });
+      },
+      now() {
+        return "2026-03-27T16:00:00.000Z";
+      },
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+      executionTarget: {
+        worktreePath: "/repo/.worktrees/session-1.context-plan",
+        branchName: "csm/session-1-context-plan",
+        isolation: "worktree",
+        laneId: "lane-1",
+      },
+    });
+
+    expect(materializeCalls).toEqual([
+      {
+        executionId: "execution-1",
+        worktreePath: "/repo/.worktrees/session-1.context-plan",
+      },
+    ]);
+  });
+
+  it("does not materialize documents for a session-isolation lane", async () => {
+    const repository = createRepository(
+      createExecutionWithPlanTasks({
+        "task-plan-1": "pending",
+        "task-plan-2": "pending",
+      }),
+    );
+    const createConversation = vi.fn(async () => ({ id: "conversation-1" }));
+    const createToolServer = vi.fn(() => ({ server: { id: "tool-server" } }));
+    const materializeWorkflowDocuments = vi.fn(async () => {});
+    const runAgentIteration = vi.fn(async () => {
+      const current = structuredClone(repository.read());
+      current.taskStates["task-plan-1"] = {
+        ...current.taskStates["task-plan-1"]!,
+        status: "completed",
+        summary: "done",
+        completedAt: "2026-03-27T16:02:00.000Z",
+      };
+      current.contextStates["context-plan"] = {
+        ...current.contextStates["context-plan"]!,
+        completedTaskCount: 1,
+      };
+      await repository.mutateActive("/repo", "session-1", () => current);
+      return {
+        conversationId: "conversation-1",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      materializeWorkflowDocuments,
+      now() {
+        return "2026-03-27T16:00:00.000Z";
+      },
+    });
+
+    await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+      executionTarget: {
+        worktreePath: "/repo/.worktrees/session-1",
+        branchName: "csm/session-1",
+        isolation: "session",
+        laneId: null,
+      },
+    });
+
+    expect(materializeWorkflowDocuments).not.toHaveBeenCalled();
+  });
+
   it("handles interrupted tasks by presenting them first", async () => {
     const repository = createRepository(
       createExecutionWithPlanTasks({

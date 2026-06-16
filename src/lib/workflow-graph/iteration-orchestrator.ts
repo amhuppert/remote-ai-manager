@@ -185,6 +185,17 @@ export interface GraphWorkflowIterationOrchestratorDeps {
   runCircuitBreakerGate?: (
     input: RunCircuitBreakerGateInput,
   ) => CircuitBreakerGateResult;
+  /**
+   * Optional hook that copies the execution's charter + shared documents into a
+   * lane worktree before the agent runs. Invoked only for worktree-isolation
+   * lanes (which fork from the committed session branch and therefore lack any
+   * uncommitted alignment docs). Best-effort: a failure warns and continues,
+   * since the charter digest is also inlined into the prompt.
+   */
+  materializeWorkflowDocuments?(input: {
+    execution: GraphWorkflowExecution;
+    worktreePath: string;
+  }): Promise<void>;
 }
 
 export interface GraphWorkflowIterationInput {
@@ -1414,6 +1425,30 @@ export function createGraphWorkflowIterationOrchestrator(
     );
     const context = getContextDefinition(initialExecution, input.contextId);
     const execLogger = getExecutionLogger(initialExecution.id);
+
+    // Lane worktrees fork from the committed session branch, so charter +
+    // shared documents (often uncommitted) are absent until materialized.
+    // Session-lane contexts run in the session worktree where these files
+    // already live, so they are skipped to avoid dirtying it.
+    if (
+      input.executionTarget?.isolation === "worktree" &&
+      deps.materializeWorkflowDocuments
+    ) {
+      try {
+        await deps.materializeWorkflowDocuments({
+          execution: initialExecution,
+          worktreePath: input.executionTarget.worktreePath,
+        });
+      } catch (err) {
+        logger.warn("graph-workflow.iteration.materialize_failed", {
+          executionId: initialExecution.id,
+          contextId: input.contextId,
+          worktreePath: input.executionTarget.worktreePath,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     const incompleteTasks = getIncompleteTasks(
       initialExecution,
       input.contextId,

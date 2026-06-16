@@ -24,6 +24,17 @@ export interface SharedDocumentUpsertInput {
 export interface GraphWorkflowSharedDocumentRegistryServiceDeps {
   now(): string;
   createDocumentId(): string;
+  /**
+   * Copy the just-registered document's content from the registering lane's
+   * worktree into the central per-execution store, so it can be materialized
+   * into other lane worktrees. Defaults to a no-op; production wires the real
+   * {@link createSharedDocumentStore} capture at the composition root.
+   */
+  captureDocumentContent(input: {
+    executionId: string;
+    worktreePath: string;
+    relativePath: string;
+  }): Promise<void>;
 }
 
 export type SharedDocumentUpsertOptionalOutcome =
@@ -36,6 +47,9 @@ const defaultDeps: GraphWorkflowSharedDocumentRegistryServiceDeps = {
   },
   createDocumentId() {
     return `doc-${randomUUID()}`;
+  },
+  async captureDocumentContent() {
+    // No-op by default; the composition root injects the real central store.
   },
 };
 
@@ -143,7 +157,7 @@ export function createGraphWorkflowSharedDocumentRegistryService(
       now: resolvedDeps.now(),
     });
 
-    await registry.register({
+    const record = await registry.register({
       kind: "graph_shared_document",
       worktreePath,
       relativePath: input.relativePath,
@@ -151,6 +165,24 @@ export function createGraphWorkflowSharedDocumentRegistryService(
       readWhen: input.readWhen,
       source: { workflowId: execution.id },
     });
+
+    // Best-effort: capture the agent-written file into the central store so it
+    // survives the worktree and reaches other lanes. A missing/unreadable file
+    // (e.g. the agent registered a path it never wrote) degrades to a warning
+    // rather than failing the registration.
+    try {
+      await resolvedDeps.captureDocumentContent({
+        executionId: nextExecution.id,
+        worktreePath,
+        relativePath: record.relativePath,
+      });
+    } catch (err) {
+      logger.warn("graph-workflow.shared_document.capture_failed", {
+        executionId: nextExecution.id,
+        relativePath: record.relativePath,
+        warning: err instanceof Error ? err.message : String(err),
+      });
+    }
 
     return nextExecution;
   }

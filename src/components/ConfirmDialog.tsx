@@ -10,6 +10,8 @@ interface ConfirmDialogProps {
   confirmLabel?: string;
   cancelLabel?: string;
   danger?: boolean;
+  /** Hide the cancel button to render an acknowledge-only (info) dialog. */
+  hideCancel?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -21,6 +23,7 @@ export default function ConfirmDialog({
   confirmLabel = "Confirm",
   cancelLabel = "Cancel",
   danger = false,
+  hideCancel = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps): React.JSX.Element | null {
@@ -59,9 +62,11 @@ export default function ConfirmDialog({
         <h2 className="modal-title">{title}</h2>
         <p className="confirm-message">{message}</p>
         <div className="modal-actions">
-          <button className="btn btn-sm" onClick={onCancel}>
-            {cancelLabel}
-          </button>
+          {!hideCancel && (
+            <button className="btn btn-sm" onClick={onCancel}>
+              {cancelLabel}
+            </button>
+          )}
           <button
             ref={confirmButtonRef}
             className={`btn btn-sm ${danger ? "btn-danger" : "btn-primary"}`}

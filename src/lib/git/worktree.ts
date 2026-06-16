@@ -1,3 +1,5 @@
+import { appendFile, mkdir, readFile } from "node:fs/promises";
+import path from "node:path";
 import { defaultGitClient, type GitClient } from "./client";
 import { createLogger } from "../logging";
 import type { DirtyPath } from "@/lib/workflow-graph/errors";
@@ -5,6 +7,15 @@ import type { DirtyPath } from "@/lib/workflow-graph/errors";
 const logger = createLogger("git-worktree");
 
 const MAX_BUFFER = 10 * 1024 * 1024;
+
+/**
+ * Worktree-relative directory CC uses for graph-workflow alignment documents
+ * (charter + materialized shared docs). It must stay git-ignored: the files are
+ * ephemeral (the charter renders from the DB, shared docs flow through the
+ * central store), so committing them only churns the session worktree — which
+ * trips the dirty-start gate and halts the final join.
+ */
+export const GRAPH_WORKFLOW_DOCS_IGNORE_PATTERN = ".cc/graph-workflow-docs/";
 
 /**
  * Parse output of `git status --porcelain` into structured dirty-path entries.
@@ -28,6 +39,65 @@ export function parseDirtyPaths(porcelain: string): DirtyPath[] {
     });
   }
   return out;
+}
+
+/**
+ * Read the uncommitted (tracked and untracked) changes in a worktree via
+ * `git status --porcelain`. Git omits ignored files by default, so the result
+ * is every non-ignored change. Used as a pre-flight gate: a graph workflow lane
+ * worktree forks from the committed session branch, so any uncommitted change
+ * in the session worktree is invisible to lanes.
+ */
+export async function readWorktreeDirtyPaths(
+  worktreePath: string,
+  client: GitClient = defaultGitClient,
+): Promise<DirtyPath[]> {
+  const { stdout } = await client.git(["status", "--porcelain"], worktreePath);
+  return parseDirtyPaths(stdout);
+}
+
+/**
+ * Ensure {@link GRAPH_WORKFLOW_DOCS_IGNORE_PATTERN} is git-ignored for the repo
+ * owning `worktreePath` by appending it to the repo's local `info/exclude`. We
+ * use `info/exclude` rather than a tracked `.gitignore` so the rule never
+ * itself appears as an uncommitted change, and because it lives in the shared
+ * common git dir it covers the session worktree and every forked lane worktree
+ * at once. Idempotent.
+ */
+export async function ensureGraphWorkflowDocsExcluded(
+  worktreePath: string,
+  client: GitClient = defaultGitClient,
+): Promise<void> {
+  const { stdout } = await client.git(
+    ["rev-parse", "--git-common-dir"],
+    worktreePath,
+  );
+  const commonDir = stdout.trim();
+  const absoluteCommonDir = path.isAbsolute(commonDir)
+    ? commonDir
+    : path.join(worktreePath, commonDir);
+  const excludePath = path.join(absoluteCommonDir, "info", "exclude");
+
+  let current = "";
+  try {
+    current = await readFile(excludePath, "utf-8");
+  } catch {
+    // info/exclude may not exist yet; we create it below.
+  }
+
+  const alreadyExcluded = current
+    .split("\n")
+    .some((line) => line.trim() === GRAPH_WORKFLOW_DOCS_IGNORE_PATTERN);
+  if (alreadyExcluded) {
+    return;
+  }
+
+  const needsLeadingNewline = current.length > 0 && !current.endsWith("\n");
+  await mkdir(path.dirname(excludePath), { recursive: true });
+  await appendFile(
+    excludePath,
+    `${needsLeadingNewline ? "\n" : ""}${GRAPH_WORKFLOW_DOCS_IGNORE_PATTERN}\n`,
+  );
 }
 
 export type MergeMainResult =

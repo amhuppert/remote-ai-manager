@@ -1,4 +1,6 @@
 import { readConfig } from "@/lib/config/loader";
+import { createLogger } from "@/lib/logging";
+import { ensureGraphWorkflowDocsExcluded } from "@/lib/git/worktree";
 import { graphWorkflowExecutionSchema } from "@/lib/workflows/schemas";
 import {
   createWorkflowCharterService,
@@ -23,6 +25,8 @@ import type {
   WorkflowSemanticDefinition,
 } from "@/lib/workflows/schemas";
 export { GraphWorkflowValidationError } from "./validation";
+
+const logger = createLogger("graph-workflow-execution-repository");
 
 export interface GraphWorkflowExecutionSeed {
   definition: WorkflowSemanticDefinition;
@@ -131,6 +135,22 @@ export function createGraphWorkflowExecutionRepository(
       throw new Error(
         `Cannot seed charter: session "${sessionName}" has no worktree path`,
       );
+    }
+
+    // Keep CC's managed docs dir git-ignored before any file lands in it, so the
+    // charter and materialized shared docs are never committed by a lane and
+    // never churn the session worktree (which would trip the dirty-start gate
+    // and the final-join precondition). Best-effort: a failure here must not
+    // block starting the workflow.
+    try {
+      await ensureGraphWorkflowDocsExcluded(session.worktreePath);
+    } catch (err) {
+      logger.warn("graph-workflow.docs_exclude_failed", {
+        projectPath,
+        sessionName,
+        worktreePath: session.worktreePath,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
     // Seed the charter before the first iteration: write charter.md inside the
