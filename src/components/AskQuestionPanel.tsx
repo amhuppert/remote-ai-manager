@@ -266,6 +266,9 @@ function QuestionCard({
           tabIndex={0}
           onClick={() => onToggleOption(OTHER_SENTINEL)}
           onKeyDown={(e) => {
+            // Keys typed in the nested free-text input bubble here; only the
+            // option row itself should toggle on Enter/Space.
+            if (e.target !== e.currentTarget) return;
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
               onToggleOption(OTHER_SENTINEL);
@@ -458,11 +461,13 @@ export default function AskQuestionPanel({
         }
         return;
       }
+      // While typing, only the submit chord above is honored; every other
+      // shortcut (Escape, 1–9, ↑↓/jk) must fall through as plain text input.
+      if (typing) return;
       if (e.key === "Escape") {
         setView("banner");
         return;
       }
-      if (typing) return;
       const current = questions[active];
       if (/^[1-9]$/.test(e.key) && current) {
         const optIndex = Number.parseInt(e.key, 10) - 1;

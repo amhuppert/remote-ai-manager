@@ -124,6 +124,80 @@ describe("AskQuestionPanel", () => {
     expect(screen.getAllByText("Which store?").length).toBeGreaterThan(0);
   });
 
+  it("lets Space type into the Other free-text field instead of toggling the option", () => {
+    render(
+      <AskQuestionPanel
+        questions={[makeQuestion()]}
+        questionId="batch-1"
+        currentIndex={0}
+        onNavigate={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    // Reveal the free-text input by picking "Something else…".
+    fireEvent.click(screen.getByText(/something else/i));
+    const input = screen.getByPlaceholderText(/type your own answer/i);
+
+    // Space must reach the input as text: not cancelled, and the option
+    // (hence the input) must stay selected rather than toggling off.
+    const notCancelled = fireEvent.keyDown(input, { key: " " });
+    expect(notCancelled).toBe(true);
+    expect(
+      screen.queryByPlaceholderText(/type your own answer/i),
+    ).not.toBeNull();
+  });
+
+  it("does not minimize on Escape while a text field is focused", () => {
+    render(
+      <AskQuestionPanel
+        questions={[makeQuestion()]}
+        questionId="batch-1"
+        currentIndex={0}
+        onNavigate={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("SQLite"));
+    fireEvent.click(screen.getByText(/add a note/i));
+    const note = screen.getByPlaceholderText(/go with sqlite/i);
+
+    fireEvent.keyDown(note, { key: "Escape" });
+
+    // Still maximized — the question is visible and no banner appeared.
+    expect(screen.queryAllByText("Which store?").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Agent needs your input")).toBeNull();
+  });
+
+  it("suppresses selection and navigation hotkeys while a text field is focused", () => {
+    const onNavigate = vi.fn();
+    render(
+      <AskQuestionPanel
+        questions={[
+          makeQuestion(),
+          makeQuestion({ id: "b", question: "Second?" }),
+        ]}
+        questionId="batch-1"
+        currentIndex={0}
+        onNavigate={onNavigate}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("SQLite"));
+    fireEvent.click(screen.getByText(/add a note/i));
+    const note = screen.getByPlaceholderText(/go with sqlite/i);
+
+    fireEvent.keyDown(note, { key: "2" });
+    fireEvent.keyDown(note, { key: "j" });
+    fireEvent.keyDown(note, { key: "ArrowDown" });
+
+    expect(onNavigate).not.toHaveBeenCalled();
+    const redis = screen.getByText("Redis").closest('[role="radio"]');
+    expect(redis?.getAttribute("aria-checked")).toBe("false");
+  });
+
   it("drives the active question through onNavigate (controlled), not internal state", () => {
     const onNavigate = vi.fn();
     const questions = [
