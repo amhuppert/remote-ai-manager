@@ -1736,6 +1736,54 @@ describe("graph workflow manager", () => {
     });
   });
 
+  it("resumes a halted execution, resetting the failure counter of the context the breaker bumped to ready", async () => {
+    // The context that trips the circuit breaker is active+running at halt, so
+    // the halt transition (markActiveContextReady) bumps it to `ready`, not
+    // `halted`. Resume must still clear its consecutiveFailureCount, otherwise
+    // the breaker re-trips almost immediately and resume makes no progress.
+    const baseExecution = createWorkflowExecution();
+    const repository = createRepository(
+      createWorkflowExecution({
+        ...baseExecution,
+        status: "halted",
+        activeContextIds: ["context-plan"],
+        completedAt: "2026-03-27T15:30:00.000Z",
+        haltReason: {
+          type: "circuit_breaker",
+          contextId: "context-plan",
+          condition: "retry_exhaustion",
+          summary: "tests failed",
+          failureCount: 3,
+        },
+        contextStates: {
+          ...baseExecution.contextStates,
+          "context-plan": {
+            ...baseExecution.contextStates["context-plan"]!,
+            status: "ready",
+            iterationCount: 3,
+            consecutiveFailureCount: 3,
+          },
+        },
+      }),
+    );
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    const execution = await manager.resume("/repo", "session-1");
+
+    expect(execution.status).toBe("running");
+    expect(execution.haltReason).toBeNull();
+    expect(execution.contextStates["context-plan"]).toMatchObject({
+      status: "ready",
+      consecutiveFailureCount: 0,
+    });
+  });
+
   it("resume preserves merged-failed contexts and populates pendingMergeRetry", async () => {
     const baseExecution = createWorkflowExecution();
     const repository = createRepository(

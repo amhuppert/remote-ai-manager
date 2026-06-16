@@ -564,8 +564,16 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
             retryIds.push(contextState.contextId);
             continue;
           }
+          // A context that tripped the circuit breaker is active+running at
+          // halt, so the halt transition (markActiveContextReady) bumps it to
+          // `ready`, not `halted`. Handling only `halted` here would leave its
+          // consecutiveFailureCount intact and the breaker would re-trip almost
+          // immediately on resume. Resume is a manual retry decision, so clear
+          // the failure counter for every retryable context.
           if (contextState.status === "halted") {
             contextState.status = "ready";
+          }
+          if (contextState.status === "ready") {
             contextState.consecutiveFailureCount = 0;
           }
         }
