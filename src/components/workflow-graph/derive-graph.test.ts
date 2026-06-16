@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   GraphWorkflowContextStatus,
   GraphWorkflowExecution,
+  GraphWorkflowExecutionContextDefinition,
   GraphWorkflowExecutionContextState,
   GraphWorkflowResolvedContext,
   GraphWorkflowTaskState,
@@ -13,6 +14,7 @@ import {
   deriveEdges,
   deriveNodes,
   getContextDisplayPhase,
+  getDisplayApprovalGate,
   getDisplayValidators,
 } from "./derive-graph";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
@@ -569,6 +571,25 @@ describe("getDisplayValidators", () => {
     };
   }
 
+  function makeBuilderContext(
+    overrides: Partial<GraphWorkflowExecutionContextDefinition> = {},
+  ): GraphWorkflowExecutionContextDefinition {
+    return {
+      id: "ctx-1",
+      title: "Ctx",
+      acceptanceCriteria: "AC",
+      implementer: {
+        backend: "claude",
+        model: "sonnet",
+        reasoningEffort: "medium",
+      },
+      mutability: { allowAgentTaskAdd: false },
+      circuitBreaker: {},
+      iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+      ...overrides,
+    };
+  }
+
   it("returns no validators when both script is disabled and context validator is null", () => {
     expect(getDisplayValidators(makeResolved())).toEqual({
       script: false,
@@ -652,6 +673,128 @@ describe("getDisplayValidators", () => {
       script: true,
       agent: "claude",
     });
+  });
+
+  it("surfaces a claude agent validator from a per-context 'use' override", () => {
+    const ctx = makeBuilderContext({
+      contextValidator: {
+        kind: "use",
+        value: {
+          type: "claude",
+          enabled: true,
+          continuity: { enabled: true },
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
+        },
+      },
+    });
+    expect(getDisplayValidators(ctx)).toEqual({
+      script: false,
+      agent: "claude",
+    });
+  });
+
+  it("surfaces a codex agent validator from a per-context 'use' override", () => {
+    const ctx = makeBuilderContext({
+      contextValidator: {
+        kind: "use",
+        value: {
+          type: "codex",
+          enabled: true,
+          continuity: { enabled: true },
+          codex: { model: "gpt-5.5", reasoningEffort: "medium" },
+        },
+      },
+    });
+    expect(getDisplayValidators(ctx)).toEqual({
+      script: false,
+      agent: "codex",
+    });
+  });
+
+  it("hides the agent validator when a 'use' override is present but disabled", () => {
+    const ctx = makeBuilderContext({
+      contextValidator: {
+        kind: "use",
+        value: {
+          type: "claude",
+          enabled: false,
+          continuity: { enabled: true },
+          agent: {
+            backend: "claude",
+            model: "sonnet",
+            reasoningEffort: "medium",
+          },
+        },
+      },
+    });
+    expect(getDisplayValidators(ctx)).toEqual({
+      script: false,
+      agent: null,
+    });
+  });
+
+  it("returns no agent validator for an explicitly 'disabled' override", () => {
+    const ctx = makeBuilderContext({
+      contextValidator: { kind: "disabled" },
+    });
+    expect(getDisplayValidators(ctx)).toEqual({
+      script: false,
+      agent: null,
+    });
+  });
+});
+
+describe("getDisplayApprovalGate", () => {
+  function makeResolved(
+    overrides: Partial<GraphWorkflowResolvedContext> = {},
+  ): GraphWorkflowResolvedContext {
+    return {
+      id: "ctx-1",
+      title: "Ctx",
+      acceptanceCriteria: "AC",
+      implementer: {
+        backend: "claude",
+        model: "sonnet",
+        reasoningEffort: "medium",
+      },
+      contextValidator: null,
+      scriptValidator: { enabled: false },
+      humanApprovalGate: { enabled: false },
+      mutability: { allowAgentTaskAdd: false },
+      circuitBreaker: { consecutiveFailureThreshold: 3 },
+      iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+      ...overrides,
+    };
+  }
+
+  it("returns false when the human approval gate is disabled", () => {
+    expect(getDisplayApprovalGate(makeResolved())).toBe(false);
+  });
+
+  it("returns true when the human approval gate is enabled", () => {
+    const ctx = makeResolved({ humanApprovalGate: { enabled: true } });
+    expect(getDisplayApprovalGate(ctx)).toBe(true);
+  });
+
+  it("returns false for a builder context with no gate override", () => {
+    const ctx: GraphWorkflowExecutionContextDefinition = {
+      id: "ctx-1",
+      title: "Ctx",
+      acceptanceCriteria: "AC",
+      implementer: {
+        backend: "claude",
+        model: "sonnet",
+        reasoningEffort: "medium",
+      },
+      mutability: { allowAgentTaskAdd: false },
+      circuitBreaker: {},
+      iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+    };
+    expect(getDisplayApprovalGate(ctx)).toBe(false);
   });
 });
 

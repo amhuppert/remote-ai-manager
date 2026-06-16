@@ -657,6 +657,64 @@ export const ValidatorsInheritedScriptAndCodex: Story = {
   },
 };
 
+export const ApprovalGate: Story = {
+  args: {
+    data: {
+      context: makeContext({
+        humanApprovalGate: { enabled: true },
+      }),
+      tasks: makeTasks(3),
+      mode: "builder",
+    },
+  },
+};
+
+export const ApprovalGateWithScript: Story = {
+  args: {
+    data: {
+      context: makeContext({
+        scriptValidator: { enabled: true },
+        humanApprovalGate: { enabled: true },
+      }),
+      tasks: makeTasks(3),
+      mode: "builder",
+    },
+  },
+};
+
+export const ApprovalGateWithValidators: Story = {
+  args: {
+    data: {
+      context: {
+        id: "ctx-1",
+        title: "API Integration",
+        description:
+          "Script + Codex validators run first; a human then signs off before this context can complete.",
+        acceptanceCriteria:
+          "All REST endpoints exist and pass integration tests.",
+        implementer: {
+          backend: "claude",
+          model: "sonnet",
+          reasoningEffort: "medium",
+        },
+        contextValidator: {
+          type: "codex",
+          enabled: true,
+          continuity: { enabled: true },
+          codex: { model: "gpt-5.5", reasoningEffort: "medium" },
+        },
+        scriptValidator: { enabled: true },
+        humanApprovalGate: { enabled: true },
+        mutability: { allowAgentTaskAdd: false },
+        circuitBreaker: { consecutiveFailureThreshold: 3 },
+        iterationPolicy: { maxIterations: 3, continuity: { enabled: true } },
+      },
+      tasks: makeTasks(3),
+      mode: "builder",
+    },
+  },
+};
+
 export const ImplementerCodex: Story = {
   args: {
     data: {

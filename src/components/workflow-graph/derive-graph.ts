@@ -51,16 +51,27 @@ export function getDisplayValidators(
   context: ExecutionContextNodeData["context"],
 ): DisplayValidators {
   const script = context.scriptValidator?.enabled === true;
-  const validator = context.contextValidator;
-  if (
-    validator &&
-    "enabled" in validator &&
-    "type" in validator &&
-    validator.enabled === true
-  ) {
-    return { script, agent: validator.type };
+  return { script, agent: getDisplayAgentValidator(context.contextValidator) };
+}
+
+function getDisplayAgentValidator(
+  validator: ExecutionContextNodeData["context"]["contextValidator"],
+): "claude" | "codex" | null {
+  if (!validator) return null;
+  // Per-context override form carried by an unresolved builder/definition
+  // context; the cascade unwraps this to the flat form before execution.
+  if ("kind" in validator) {
+    if (validator.kind === "disabled") return null;
+    return validator.value.enabled ? validator.value.type : null;
   }
-  return { script, agent: null };
+  // Flat resolved form (post-cascade builder contexts and execution contexts).
+  return validator.enabled ? validator.type : null;
+}
+
+export function getDisplayApprovalGate(
+  context: ExecutionContextNodeData["context"],
+): boolean {
+  return context.humanApprovalGate?.enabled === true;
 }
 
 export function getContextDisplayPhase(

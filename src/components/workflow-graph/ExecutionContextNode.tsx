@@ -7,7 +7,11 @@ import type {
   DisplayValidators,
   ExecutionContextNodeData,
 } from "./derive-graph";
-import { getContextDisplayPhase, getDisplayValidators } from "./derive-graph";
+import {
+  getContextDisplayPhase,
+  getDisplayApprovalGate,
+  getDisplayValidators,
+} from "./derive-graph";
 import type { ContextWaitState } from "./derive-wait-state";
 
 type ExecutionContextNodeType = Node<
@@ -117,55 +121,67 @@ type ValidatorInfo =
   | { kind: "agent"; backend: AgentBackend }
   | { kind: "script" };
 
-function ValidatorPills({ validators }: { validators: DisplayValidators }) {
+function ValidatorPills({
+  validators,
+  approvalGate,
+}: {
+  validators: DisplayValidators;
+  approvalGate: boolean;
+}) {
   const pills: ValidatorInfo[] = [];
   if (validators.script) pills.push({ kind: "script" });
   if (validators.agent)
     pills.push({ kind: "agent", backend: validators.agent });
 
-  if (pills.length === 0) {
-    return (
-      <div className="graph-node-validators">
-        <div className="graph-node-validators-label">Validators</div>
-        <div className="graph-node-validator-pills">
-          <span className="graph-node-validator-pill graph-node-validator-pill--empty">
-            none
-          </span>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="graph-node-validators">
       <div className="graph-node-validators-label">Validators</div>
       <div className="graph-node-validator-pills">
-        {pills.map((pill, idx) =>
-          pill.kind === "script" ? (
-            <span
-              key={`script-${idx}`}
-              className="graph-node-validator-pill graph-node-validator-pill--script"
-              title="Script validator enabled"
-            >
-              <span className="graph-node-validator-glyph" aria-hidden="true">
-                ▣
+        {pills.length === 0 ? (
+          <span className="graph-node-validator-pill graph-node-validator-pill--empty">
+            none
+          </span>
+        ) : (
+          pills.map((pill, idx) =>
+            pill.kind === "script" ? (
+              <span
+                key={`script-${idx}`}
+                className="graph-node-validator-pill graph-node-validator-pill--script"
+                title="Script validator enabled"
+              >
+                <span className="graph-node-validator-glyph" aria-hidden="true">
+                  ▣
+                </span>
+                Script
               </span>
-              Script
-            </span>
-          ) : (
-            <span
-              key={`agent-${idx}`}
-              className={`graph-node-validator-pill graph-node-validator-pill--${pill.backend}`}
-              title={`Agent validator: ${pill.backend === "codex" ? "Codex" : "Claude"}`}
-            >
-              <span className="graph-node-validator-glyph" aria-hidden="true">
-                ◆
+            ) : (
+              <span
+                key={`agent-${idx}`}
+                className={`graph-node-validator-pill graph-node-validator-pill--${pill.backend}`}
+                title={`Agent validator: ${pill.backend === "codex" ? "Codex" : "Claude"}`}
+              >
+                <span className="graph-node-validator-glyph" aria-hidden="true">
+                  ◆
+                </span>
+                {pill.backend === "codex" ? "Codex" : "Claude"}
               </span>
-              {pill.backend === "codex" ? "Codex" : "Claude"}
-            </span>
-          ),
+            ),
+          )
         )}
       </div>
+      {approvalGate && (
+        <div className="graph-node-gate">
+          <span
+            className="graph-node-validator-pill graph-node-validator-pill--approval"
+            title="Human approval gate — requires manual sign-off before this context can complete"
+          >
+            <span className="graph-node-validator-glyph" aria-hidden="true">
+              ✓
+            </span>
+            Human approval
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -200,6 +216,7 @@ export default function ExecutionContextNode({
   const implementerBackend: AgentBackend = implementer?.backend ?? "claude";
 
   const validators = getDisplayValidators(context);
+  const approvalGate = getDisplayApprovalGate(context);
 
   const nodeClassName = [
     "graph-node",
@@ -250,7 +267,7 @@ export default function ExecutionContextNode({
         </div>
       </div>
 
-      <ValidatorPills validators={validators} />
+      <ValidatorPills validators={validators} approvalGate={approvalGate} />
 
       <div className="graph-node-progress">
         <div

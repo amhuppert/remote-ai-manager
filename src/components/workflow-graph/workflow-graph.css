@@ -473,6 +473,35 @@
   line-height: 1;
 }
 
+/* ---- Node Human Approval Gate ---- */
+
+/* A human gate runs after the automated validators, so it sits in its own
+   sub-row set apart by a hairline amber edge — mirroring the amber top edge
+   on the ApprovalGatePanel. Amber carries the "awaiting you" meaning the gate
+   shares with its runtime "Awaiting Approval" state. */
+.graph-node-gate {
+  position: relative;
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+.graph-node-gate::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, var(--amber-dim), transparent 70%);
+  opacity: 0.6;
+}
+
+.graph-node-validator-pill--approval {
+  color: var(--amber);
+  border-color: var(--amber-dim);
+  background: var(--amber-glow);
+}
+
 /* ---- Node Progress Bar ---- */
 
 .graph-node-progress {
