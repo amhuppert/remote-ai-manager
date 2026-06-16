@@ -12,14 +12,19 @@ export function SettingsPage({
   children: ReactNode;
 }): React.JSX.Element {
   return (
-    <section className="config-settings-page">
-      <header className="config-settings-page__head">
-        <h1 className="config-settings-page__title">
-          {title} <span>{accent}</span>
+    <section className="max-w-[880px]">
+      <header className="mb-xl">
+        <h1 className="m-0 font-display text-[2rem] font-extrabold leading-[1.05] tracking-normal text-text-primary">
+          {title}{" "}
+          <span className="text-cyan [text-shadow:0_0_18px_var(--cyan-glow-text)]">
+            {accent}
+          </span>
         </h1>
-        <p className="config-settings-page__subtitle">{sub}</p>
+        <p className="mt-[6px] text-text-secondary font-mono text-[0.78rem]">
+          {sub}
+        </p>
       </header>
-      <div className="config-settings-page__body">{children}</div>
+      <div className="flex flex-col gap-md">{children}</div>
     </section>
   );
 }

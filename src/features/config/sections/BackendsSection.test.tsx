@@ -21,7 +21,7 @@ describe("BackendsSection", () => {
     render(<BackendsSection controller={controller} />);
     const toggle = screen
       .getByText("Enable Codex")
-      .closest(".config-field")!
+      .closest("[data-field]")!
       .querySelector('[role="switch"]')! as HTMLElement;
     fireEvent.click(toggle);
     expect(getState().codex?.enabled).toBe(true);

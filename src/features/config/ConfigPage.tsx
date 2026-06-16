@@ -1,8 +1,13 @@
 "use client";
 
-import "./styles/config-editor.css";
 import { useState } from "react";
 import Topbar from "@/components/Topbar";
+import {
+  EmptyState,
+  EmptyStateDesc,
+  EmptyStateTitle,
+} from "@/components/ui/EmptyState";
+import { cn } from "@/lib/ui/cn";
 import { useFullConfigQuery } from "@/lib/config/queries";
 import { useUpdateConfigMutation } from "@/lib/config/mutations";
 import { ConfigSaveBar } from "./components/ConfigSaveBar";
@@ -37,6 +42,16 @@ const CONFIG_NAV: Array<{ id: ConfigNavSection; label: string }> = [
   { id: "notifications", label: "Notifications" },
 ];
 
+const NAV_ITEM_BASE =
+  "flex items-center gap-[8px] w-full min-h-[34px] px-[10px] py-[8px] rounded-sm font-mono text-[0.76rem] text-left whitespace-nowrap cursor-pointer transition-all duration-150 ease-[ease] max-900:flex-[0_0_auto] max-900:w-auto";
+
+// The config route's main region: the shell's flex-1 scroll box (flex-1/w-full/
+// min-h-0) with the shared fadeIn page-transition, run full-bleed with no padding,
+// clipped, on the base background. Authored as utilities so the route owns its own
+// layout rather than a feature-CSS override of the shared `.main`.
+const MAIN_CLASS =
+  "flex-1 w-full min-h-0 overflow-hidden p-0 bg-bg-base animate-[fadeIn_0.2s_ease]";
+
 export default function ConfigPage(): React.JSX.Element {
   const configQuery = useFullConfigQuery();
   const mutation = useUpdateConfigMutation();
@@ -49,10 +64,10 @@ export default function ConfigPage(): React.JSX.Element {
     return (
       <div className="app" data-page="config">
         <Topbar breadcrumbs={[{ label: "config" }]} page="projects" />
-        <main className="main">
-          <div className="empty-state">
-            <div className="empty-state-title">Loading configuration...</div>
-          </div>
+        <main className={MAIN_CLASS}>
+          <EmptyState>
+            <EmptyStateTitle>Loading configuration...</EmptyStateTitle>
+          </EmptyState>
         </main>
       </div>
     );
@@ -62,15 +77,13 @@ export default function ConfigPage(): React.JSX.Element {
     return (
       <div className="app" data-page="config">
         <Topbar breadcrumbs={[{ label: "config" }]} page="projects" />
-        <main className="main">
-          <div className="empty-state">
-            <div className="empty-state-title">
-              Failed to load configuration
-            </div>
-            <div className="empty-state-desc">
+        <main className={MAIN_CLASS}>
+          <EmptyState>
+            <EmptyStateTitle>Failed to load configuration</EmptyStateTitle>
+            <EmptyStateDesc>
               {configQuery.error?.message ?? "Unknown error"}
-            </div>
-          </div>
+            </EmptyStateDesc>
+          </EmptyState>
         </main>
       </div>
     );
@@ -89,35 +102,54 @@ export default function ConfigPage(): React.JSX.Element {
   return (
     <div className="app" data-page="config">
       <Topbar breadcrumbs={[{ label: "config" }]} page="projects" />
-      <main className="main">
-        <div className="config-shell" data-active-section={activeSection}>
-          <aside className="config-shell__side">
-            <nav className="config-shell__nav" aria-label="Settings">
-              {CONFIG_NAV.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={activeSection === item.id}
-                  className={
-                    activeSection === item.id
-                      ? "config-shell__nav-item active"
-                      : "config-shell__nav-item"
-                  }
-                  onClick={() => setActiveSection(item.id)}
-                >
-                  <span>{item.label}</span>
-                  {item.id === "capabilities" ? (
-                    <span className="config-shell__nav-badge">cascading</span>
-                  ) : null}
-                </button>
-              ))}
+      <main className={MAIN_CLASS}>
+        <div
+          className="grid grid-cols-[248px_minmax(0,1fr)] h-full min-h-0 bg-bg-base max-900:grid-cols-[1fr]"
+          data-active-section={activeSection}
+        >
+          <aside className="border-y-0 border-l-0 border-r border-solid border-border-subtle px-lg py-xl bg-bg-void overflow-y-auto max-900:border-r-0 max-900:border-b max-900:p-md">
+            <nav
+              className="flex flex-col gap-[2px] max-900:flex-row max-900:overflow-x-auto"
+              aria-label="Settings"
+            >
+              {CONFIG_NAV.map((item) => {
+                const isActive = activeSection === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    className={cn(
+                      NAV_ITEM_BASE,
+                      isActive
+                        ? "bg-bg-raised text-cyan shadow-[inset_2px_0_0_var(--cyan)]"
+                        : "bg-transparent text-text-secondary hover:bg-bg-base hover:text-text-primary",
+                    )}
+                    onClick={() => setActiveSection(item.id)}
+                  >
+                    <span className="flex-1 min-w-0 overflow-hidden text-ellipsis">
+                      {item.label}
+                    </span>
+                    {item.id === "capabilities" ? (
+                      <span className="ml-auto px-[6px] py-px rounded-full bg-cyan-glow text-cyan text-[0.7rem] tracking-[0.05em]">
+                        cascading
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
             </nav>
           </aside>
-          <div
-            className={`config-shell__content${contentIsCapabilities ? " config-shell__content--capabilities" : ""}`}
-          >
-            <div className="config-shell__scroll">
+          <div className="relative flex flex-col min-w-0 min-h-0 overflow-hidden bg-bg-base">
+            <div
+              className={cn(
+                "flex-auto min-h-0",
+                contentIsCapabilities
+                  ? "grid overflow-hidden"
+                  : "overflow-y-auto p-2xl",
+              )}
+            >
               {activeSection === "general" && (
                 <GeneralSection controller={controller} />
               )}

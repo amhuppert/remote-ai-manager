@@ -100,7 +100,7 @@ export default function MachineDetail({
 
   return (
     <div
-      className="app"
+      className="app group"
       data-page="workflows"
       data-page-variant="detail"
       data-mobile-panel={mobilePanel}
@@ -113,28 +113,22 @@ export default function MachineDetail({
         ]}
       />
       <div
-        className="cc-tabs workflow-mobile-tabs"
+        className="hidden gap-[2px] rounded-md border border-solid border-border-default bg-bg-surface p-[3px] max-1100:mx-lg max-1100:mt-sm max-1100:flex max-1100:self-center max-768:mx-md max-768:self-stretch"
         role="tablist"
         aria-label="Workflow view"
       >
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mobilePanel === "diagram"}
-          className={`cc-tab${mobilePanel === "diagram" ? " active" : ""}`}
+        <PanelTab
+          active={mobilePanel === "diagram"}
           onClick={() => setMobilePanel("diagram")}
         >
           Diagram
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mobilePanel === "info"}
-          className={`cc-tab${mobilePanel === "info" ? " active" : ""}`}
+        </PanelTab>
+        <PanelTab
+          active={mobilePanel === "info"}
           onClick={() => setMobilePanel("info")}
         >
           Info
-        </button>
+        </PanelTab>
       </div>
       <main className="main workflow-detail-main">
         <WorkflowCanvasShell
@@ -160,5 +154,37 @@ export default function MachineDetail({
         />
       </main>
     </div>
+  );
+}
+
+/**
+ * Mobile diagram/info panel switch. Replicates the canonical tab recipe as
+ * wave-local utilities rather than the shared `Tabs` primitive: this switcher's
+ * mobile parity requires per-tab `justify-content: center`, a 44px touch
+ * `min-height`, and a 0.78rem `font-size` (legacy `.workflow-mobile-tabs .cc-tab`
+ * overrides), none of which the appearance-locked `Tab` primitive can carry —
+ * and editing the shared primitive is out of this wave's scope. Active beats
+ * hover via mutually-exclusive `data-active` gating (the Tabs idiom).
+ */
+function PanelTab({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      data-active={active}
+      onClick={onClick}
+      className="flex min-h-[28px] cursor-pointer items-center gap-[4px] whitespace-nowrap rounded-sm border-0 bg-transparent px-[10px] py-[5px] font-mono text-[0.72rem] font-medium uppercase tracking-[0.05em] text-text-secondary transition-all duration-150 ease-[ease] data-[active=true]:bg-cyan data-[active=true]:text-text-inverse data-[active=false]:hover:bg-bg-hover data-[active=false]:hover:text-text-primary max-1100:min-w-[90px] max-1100:justify-center max-768:min-h-[44px] max-768:grow max-768:text-[0.78rem]"
+    >
+      {children}
+    </button>
   );
 }

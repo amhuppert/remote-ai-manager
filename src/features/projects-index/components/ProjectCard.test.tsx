@@ -23,6 +23,11 @@ const defaultProps = {
 describe("ProjectCard", () => {
   // =========================================================================
   // 6.3 – ProjectCard (Req 1.2–1.4)
+  //
+  // Behavioral coverage only. The Tailwind migration deleted the legacy
+  // `.project-card` / `.cc-badge` class-structure assertions per requirement
+  // 5.1; per-state badge appearance is now exercised by the parity stories
+  // (ProjectCard.stories.tsx / ProjectCard.stories.test.tsx).
   // =========================================================================
 
   it("displays project name, path, and session count (Req 1.2)", () => {
@@ -58,93 +63,6 @@ describe("ProjectCard", () => {
     );
     const link = container.querySelector("a");
     expect(link?.getAttribute("href")).toBe("/projects/my-project");
-  });
-
-  it("shows active badge when a session is running (Req 1.4)", () => {
-    const { container } = render(
-      <ProjectCard
-        {...defaultProps}
-        project={{
-          name: "proj",
-          path: "/path",
-          activeSessions: 2,
-          hasRunningSession: true,
-        }}
-      />,
-    );
-    const badge = container.querySelector(".cc-badge");
-    expect(badge?.getAttribute("data-status")).toBe("running");
-    expect(badge?.textContent).toBe("running");
-  });
-
-  it("shows active badge when sessions exist but none running (Req 1.4)", () => {
-    const { container } = render(
-      <ProjectCard
-        {...defaultProps}
-        project={{
-          name: "proj",
-          path: "/path",
-          activeSessions: 2,
-          hasRunningSession: false,
-        }}
-      />,
-    );
-    const badge = container.querySelector(".cc-badge");
-    expect(badge?.getAttribute("data-status")).toBe("active");
-    expect(badge?.textContent).toBe("2 sessions");
-  });
-
-  it("shows singular session text for 1 session", () => {
-    const { container } = render(
-      <ProjectCard
-        {...defaultProps}
-        project={{
-          name: "proj",
-          path: "/path",
-          activeSessions: 1,
-          hasRunningSession: false,
-        }}
-      />,
-    );
-    const badge = container.querySelector(".cc-badge");
-    expect(badge?.getAttribute("data-status")).toBe("active");
-    expect(badge?.textContent).toBe("1 session");
-  });
-
-  it("shows idle badge when no sessions (Req 1.4)", () => {
-    const { container } = render(
-      <ProjectCard
-        {...defaultProps}
-        project={{
-          name: "proj",
-          path: "/path",
-          activeSessions: 0,
-          hasRunningSession: false,
-        }}
-      />,
-    );
-    const badge = container.querySelector(".cc-badge");
-    expect(badge?.getAttribute("data-status")).toBe("idle");
-    expect(badge?.textContent).toBe("idle");
-  });
-
-  it("shows archived badge and dashed border when archived (Req 11.6)", () => {
-    const { container } = render(
-      <ProjectCard
-        {...defaultProps}
-        archived={true}
-        project={{
-          name: "proj",
-          path: "/path",
-          activeSessions: 0,
-          hasRunningSession: false,
-        }}
-      />,
-    );
-    const card = container.querySelector(".project-card");
-    expect(card?.className).toContain("archived");
-    const badge = container.querySelector(".cc-badge");
-    expect(badge?.textContent).toBe("archived");
   });
 
   it("renders context menu trigger button (Req 12.1)", () => {

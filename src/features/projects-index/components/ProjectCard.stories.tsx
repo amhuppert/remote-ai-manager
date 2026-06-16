@@ -64,6 +64,14 @@ export const Pinned = {
   },
 } satisfies Story;
 
+export const PinnedActive = {
+  args: {
+    project: { ...baseProject, hasRunningSession: true },
+    archived: false,
+    pinned: true,
+  },
+} satisfies Story;
+
 export const Archived = {
   args: {
     project: baseProject,

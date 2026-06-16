@@ -1,12 +1,29 @@
 "use client";
 
-import type { MachineSpec, StateInfo } from "../machine-spec-types";
+import { cn } from "@/lib/ui/cn";
+import type {
+  MachineSpec,
+  StateInfo,
+  StateStatus,
+} from "../machine-spec-types";
 
 interface DetailRailProps {
   spec: MachineSpec;
   selectedStateId: string | null;
   onClearSelection: () => void;
 }
+
+const railTagBase =
+  "rounded-sm border border-solid px-[8px] py-[2px] font-mono text-[0.7rem] uppercase tracking-[0.08em]";
+
+/** Status → tag color triplet (text/bg/border). `neutral` is the violet default. */
+const railTagToneClass: Record<StateStatus, string> = {
+  neutral: "border-violet-dim bg-violet-glow text-violet",
+  initial: "border-cyan-dim bg-cyan-glow text-cyan",
+  success: "border-green-dim bg-green-glow text-green",
+  warning: "border-amber-dim bg-amber-glow text-amber",
+  failure: "border-red-dim bg-red-glow text-red",
+};
 
 /**
  * Right-side panel on the detail page. Two modes:
@@ -26,7 +43,7 @@ export default function DetailRail({
     : undefined;
 
   return (
-    <aside className="workflow-rail">
+    <aside className="flex min-h-0 flex-col gap-md overflow-y-auto rounded-lg border border-solid border-border-subtle bg-bg-surface p-md max-1100:group-data-[mobile-panel=diagram]:hidden">
       {selected ? (
         <SelectedStatePane state={selected} onClear={onClearSelection} />
       ) : (
@@ -39,24 +56,38 @@ export default function DetailRail({
 function MachinePane({ spec }: { spec: MachineSpec }): React.JSX.Element {
   return (
     <>
-      <div className="workflow-rail-section">
-        <div className="workflow-rail-eyebrow">About this workflow</div>
-        <p className="workflow-rail-desc">{spec.description}</p>
-        <div className="workflow-rail-meta">
-          <span className="workflow-rail-machine-id">id: {spec.machineId}</span>
+      <div className="flex flex-col gap-sm">
+        <div className="font-mono text-[0.7rem] uppercase tracking-[0.08em] text-text-tertiary">
+          About this workflow
         </div>
-        <div className="workflow-rail-filepath">
-          <span className="workflow-rail-filepath-label">source</span>
-          <code>{spec.filePath}</code>
+        <p className="text-[0.9rem] leading-[1.55] text-text-secondary">
+          {spec.description}
+        </p>
+        <div className="flex flex-wrap items-center gap-sm">
+          <span className="font-mono text-[0.7rem] text-text-tertiary">
+            id: {spec.machineId}
+          </span>
+        </div>
+        <div className="flex flex-col gap-[2px] font-mono text-[0.7rem]">
+          <span className="uppercase tracking-[0.08em] text-text-tertiary">
+            source
+          </span>
+          <code className="break-all rounded-sm bg-bg-base px-[8px] py-[4px] text-cyan-dim">
+            {spec.filePath}
+          </code>
         </div>
       </div>
 
       {spec.actors.length > 0 && (
         <RailListSection title="Actors" hint="invoke.src">
           {spec.actors.map((actor) => (
-            <li key={actor.name} className="workflow-rail-item">
-              <div className="workflow-rail-item-name">{actor.name}</div>
-              <div className="workflow-rail-item-desc">{actor.description}</div>
+            <li key={actor.name} className="flex flex-col gap-[2px]">
+              <div className="font-mono text-[0.85rem] text-cyan">
+                {actor.name}
+              </div>
+              <div className="text-[0.85rem] leading-[1.5] text-text-secondary">
+                {actor.description}
+              </div>
             </li>
           ))}
         </RailListSection>
@@ -65,9 +96,13 @@ function MachinePane({ spec }: { spec: MachineSpec }): React.JSX.Element {
       {spec.guards.length > 0 && (
         <RailListSection title="Guards" hint="conditional transitions">
           {spec.guards.map((guard) => (
-            <li key={guard.name} className="workflow-rail-item">
-              <div className="workflow-rail-item-name">{guard.name}</div>
-              <div className="workflow-rail-item-desc">{guard.description}</div>
+            <li key={guard.name} className="flex flex-col gap-[2px]">
+              <div className="font-mono text-[0.85rem] text-cyan">
+                {guard.name}
+              </div>
+              <div className="text-[0.85rem] leading-[1.5] text-text-secondary">
+                {guard.description}
+              </div>
             </li>
           ))}
         </RailListSection>
@@ -76,9 +111,11 @@ function MachinePane({ spec }: { spec: MachineSpec }): React.JSX.Element {
       {spec.actions.length > 0 && (
         <RailListSection title="Actions" hint="side effects">
           {spec.actions.map((action) => (
-            <li key={action.name} className="workflow-rail-item">
-              <div className="workflow-rail-item-name">{action.name}</div>
-              <div className="workflow-rail-item-desc">
+            <li key={action.name} className="flex flex-col gap-[2px]">
+              <div className="font-mono text-[0.85rem] text-cyan">
+                {action.name}
+              </div>
+              <div className="text-[0.85rem] leading-[1.5] text-text-secondary">
                 {action.description}
               </div>
             </li>
@@ -86,7 +123,7 @@ function MachinePane({ spec }: { spec: MachineSpec }): React.JSX.Element {
         </RailListSection>
       )}
 
-      <div className="workflow-rail-hint">
+      <div className="border-x-0 border-b-0 border-t border-solid border-border-subtle pt-md text-[0.8rem] italic text-text-tertiary">
         Click any state in the diagram to inspect it.
       </div>
     </>
@@ -102,36 +139,44 @@ function SelectedStatePane({
 }): React.JSX.Element {
   return (
     <>
-      <button type="button" className="workflow-rail-back" onClick={onClear}>
+      <button
+        type="button"
+        className="inline-flex cursor-pointer items-center gap-[6px] self-start rounded-sm border border-solid border-border-subtle bg-transparent px-[10px] py-[4px] font-mono text-[0.7rem] text-text-secondary transition-all duration-150 ease-[ease] hover:border-border-strong hover:bg-bg-hover hover:text-text-primary"
+        onClick={onClear}
+      >
         ← Back to overview
       </button>
-      <div className="workflow-rail-section">
-        <div className="workflow-rail-eyebrow">{state.kind} state</div>
-        <h2 className="workflow-rail-title">{state.label}</h2>
-        <div className="workflow-rail-meta">
+      <div className="flex flex-col gap-sm">
+        <div className="font-mono text-[0.7rem] uppercase tracking-[0.08em] text-text-tertiary">
+          {state.kind} state
+        </div>
+        <h2 className="font-display text-[1.5rem] tracking-[-0.01em] text-text-primary">
+          {state.label}
+        </h2>
+        <div className="flex flex-wrap items-center gap-sm">
           {state.status && (
-            <span
-              className={`workflow-rail-tag workflow-rail-tag--${state.status}`}
-            >
+            <span className={cn(railTagBase, railTagToneClass[state.status])}>
               {state.status}
             </span>
           )}
           {state.parentId && (
-            <span className="workflow-rail-machine-id">
+            <span className="font-mono text-[0.7rem] text-text-tertiary">
               parent: {state.parentId}
             </span>
           )}
         </div>
         {state.description && (
-          <p className="workflow-rail-desc">{state.description}</p>
+          <p className="text-[0.9rem] leading-[1.55] text-text-secondary">
+            {state.description}
+          </p>
         )}
       </div>
 
       {state.invokes && state.invokes.length > 0 && (
         <RailListSection title="Invokes" hint="actor src">
           {state.invokes.map((name) => (
-            <li key={name} className="workflow-rail-item">
-              <div className="workflow-rail-item-name">{name}</div>
+            <li key={name} className="flex flex-col gap-[2px]">
+              <div className="font-mono text-[0.85rem] text-cyan">{name}</div>
             </li>
           ))}
         </RailListSection>
@@ -140,8 +185,8 @@ function SelectedStatePane({
       {state.entryActions && state.entryActions.length > 0 && (
         <RailListSection title="Entry actions">
           {state.entryActions.map((name) => (
-            <li key={name} className="workflow-rail-item">
-              <div className="workflow-rail-item-name">{name}</div>
+            <li key={name} className="flex flex-col gap-[2px]">
+              <div className="font-mono text-[0.85rem] text-cyan">{name}</div>
             </li>
           ))}
         </RailListSection>
@@ -152,24 +197,22 @@ function SelectedStatePane({
           {state.events.map((evt, i) => (
             <li
               key={`${evt.event}-${evt.target ?? "internal"}-${i}`}
-              className="workflow-rail-item workflow-rail-event"
+              className="flex flex-col gap-[2px]"
             >
-              <div className="workflow-rail-event-row">
-                <span className="workflow-rail-event-name">{evt.event}</span>
-                {evt.target && (
-                  <span className="workflow-rail-event-arrow">→</span>
-                )}
-                {evt.target && (
-                  <span className="workflow-rail-event-target">
-                    {evt.target}
-                  </span>
-                )}
+              <div className="flex items-center gap-[6px] font-mono text-[0.85rem]">
+                <span className="text-text-primary">{evt.event}</span>
+                {evt.target && <span className="text-text-tertiary">→</span>}
+                {evt.target && <span className="text-cyan">{evt.target}</span>}
               </div>
               {evt.guard && (
-                <div className="workflow-rail-event-guard">[{evt.guard}]</div>
+                <div className="font-mono text-[0.7rem] text-amber">
+                  [{evt.guard}]
+                </div>
               )}
               {evt.description && (
-                <div className="workflow-rail-item-desc">{evt.description}</div>
+                <div className="text-[0.85rem] leading-[1.5] text-text-secondary">
+                  {evt.description}
+                </div>
               )}
             </li>
           ))}
@@ -189,12 +232,18 @@ function RailListSection({
   children: React.ReactNode;
 }): React.JSX.Element {
   return (
-    <div className="workflow-rail-section">
-      <div className="workflow-rail-section-header">
-        <h3 className="workflow-rail-section-title">{title}</h3>
-        {hint && <span className="workflow-rail-section-hint">{hint}</span>}
+    <div className="flex flex-col gap-sm">
+      <div className="flex items-baseline justify-between border-x-0 border-b-0 border-t border-solid border-border-subtle pt-md">
+        <h3 className="font-mono text-[0.85rem] uppercase tracking-[0.08em] text-text-primary">
+          {title}
+        </h3>
+        {hint && (
+          <span className="font-mono text-[0.7rem] text-text-tertiary">
+            {hint}
+          </span>
+        )}
       </div>
-      <ul className="workflow-rail-list">{children}</ul>
+      <ul className="m-0 flex list-none flex-col gap-sm p-0">{children}</ul>
     </div>
   );
 }

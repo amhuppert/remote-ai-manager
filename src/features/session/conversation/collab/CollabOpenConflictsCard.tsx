@@ -205,7 +205,16 @@ export default function CollabOpenConflictsCard(
                 <p className="collab-open-conflicts-card-question-text">
                   {q.question}
                 </p>
-                <label className="sr-only" htmlFor={`collab-answer-${q.id}`}>
+                {/* a11y label. The conventional "screen reader only" utility
+                    class name is also a Tailwind utility; using it here would let
+                    the Tailwind integration hide this label, which had no CSS rule
+                    and rendered visibly. Kept as a BEM class to preserve that
+                    baseline; the visually-hidden treatment is restored when this
+                    card migrates to Tailwind. */}
+                <label
+                  className="collab-open-conflicts-card-answer-label"
+                  htmlFor={`collab-answer-${q.id}`}
+                >
                   Answer for {q.id}
                 </label>
                 <textarea

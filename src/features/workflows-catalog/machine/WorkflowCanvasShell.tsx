@@ -414,20 +414,24 @@ export default function WorkflowCanvasShell({
   const cursor = isPanning ? "grabbing" : canPan ? "grab" : "default";
 
   return (
-    <section className="workflow-canvas-shell">
-      <header className="workflow-canvas-header">
-        <div className="workflow-canvas-title-group">
-          <h1 className="workflow-canvas-title">{title}</h1>
-          <span className="workflow-canvas-character">{character}</span>
+    <section className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-solid border-border-subtle bg-bg-surface max-1100:group-data-[mobile-panel=info]:hidden">
+      <header className="flex shrink-0 items-center justify-between gap-md border-x-0 border-t-0 border-b border-solid border-border-subtle bg-bg-raised px-md py-sm max-768:flex-col max-768:items-stretch max-768:gap-sm">
+        <div className="flex min-w-0 items-baseline gap-sm">
+          <h1 className="overflow-hidden text-ellipsis whitespace-nowrap font-display text-[1.4rem] font-bold tracking-[-0.01em] text-text-primary">
+            {title}
+          </h1>
+          <span className="shrink-0 rounded-sm border border-solid border-violet-dim bg-violet-glow px-[8px] py-[2px] font-mono text-[0.7rem] uppercase tracking-[0.08em] text-violet">
+            {character}
+          </span>
         </div>
         <div
-          className="workflow-canvas-controls"
+          className="flex shrink-0 items-center gap-[2px] rounded-md border border-solid border-border-subtle bg-bg-base p-[3px] max-768:self-end"
           role="group"
           aria-label="Canvas zoom"
         >
           <button
             type="button"
-            className="workflow-canvas-control"
+            className="relative inline-flex h-[26px] min-w-[28px] cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent px-[8px] font-mono text-[0.95rem] leading-none text-text-secondary transition-all duration-150 ease-[ease] enabled:hover:bg-bg-hover enabled:hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-35 max-768:h-[36px] max-768:min-w-[44px]"
             onClick={zoomOut}
             data-tooltip="Zoom out (−)"
             aria-label="Zoom out"
@@ -435,12 +439,15 @@ export default function WorkflowCanvasShell({
           >
             −
           </button>
-          <span className="workflow-canvas-zoom-readout" aria-live="polite">
+          <span
+            className="min-w-[42px] text-center font-mono text-[0.72rem] tabular-nums text-text-secondary"
+            aria-live="polite"
+          >
             {zoomReadout}
           </span>
           <button
             type="button"
-            className="workflow-canvas-control"
+            className="relative inline-flex h-[26px] min-w-[28px] cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent px-[8px] font-mono text-[0.95rem] leading-none text-text-secondary transition-all duration-150 ease-[ease] enabled:hover:bg-bg-hover enabled:hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-35 max-768:h-[36px] max-768:min-w-[44px]"
             onClick={zoomIn}
             data-tooltip="Zoom in (+)"
             aria-label="Zoom in"
@@ -450,7 +457,7 @@ export default function WorkflowCanvasShell({
           </button>
           <button
             type="button"
-            className="workflow-canvas-control"
+            className="relative inline-flex h-[26px] min-w-[28px] cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent px-[8px] font-mono text-[0.95rem] leading-none text-text-secondary transition-all duration-150 ease-[ease] enabled:hover:bg-bg-hover enabled:hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-35 max-768:h-[36px] max-768:min-w-[44px]"
             onClick={reset}
             data-tooltip="Reset (0)"
             aria-label="Reset zoom and pan"
@@ -461,12 +468,12 @@ export default function WorkflowCanvasShell({
       </header>
       <div
         ref={surfaceRef}
-        className="workflow-canvas-surface"
+        className="relative min-h-0 flex-1 select-none overflow-hidden [touch-action:none]"
         onMouseDown={onMouseDown}
         style={{ cursor }}
       >
         <div
-          className="workflow-canvas-transform"
+          className="h-full w-full will-change-transform [transform-origin:center_center]"
           style={{
             transform: `translate(${pan.x}px, ${pan.y}px)`,
           }}
@@ -476,10 +483,10 @@ export default function WorkflowCanvasShell({
           </CanvasZoomContext.Provider>
         </div>
       </div>
-      <footer className="workflow-canvas-footer">
+      <footer className="flex shrink-0 items-center justify-between gap-sm border-x-0 border-b-0 border-t border-solid border-border-subtle bg-bg-raised px-md py-xs">
         <button
           type="button"
-          className="workflow-canvas-nav"
+          className="relative inline-flex max-w-[45%] cursor-pointer items-center gap-[8px] overflow-hidden rounded-sm border border-solid border-border-subtle bg-transparent px-[12px] py-[6px] font-mono text-[0.78rem] text-text-secondary transition-all duration-150 ease-[ease] enabled:hover:border-border-strong enabled:hover:bg-bg-hover enabled:hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-35 max-768:min-h-[44px]"
           onClick={onPrev}
           disabled={!prev}
           data-tooltip={prev ? `Previous: ${prev.name} ([)` : undefined}
@@ -487,31 +494,37 @@ export default function WorkflowCanvasShell({
             prev ? `Previous workflow: ${prev.name}` : "No previous workflow"
           }
         >
-          <span className="workflow-canvas-nav-arrow" aria-hidden="true">
+          <span
+            className="shrink-0 text-[0.85rem] text-cyan"
+            aria-hidden="true"
+          >
             ◀
           </span>
-          <span className="workflow-canvas-nav-label">
+          <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
             {prev ? prev.name : "—"}
           </span>
         </button>
         <span
-          className="workflow-canvas-counter"
+          className="font-mono text-[0.7rem] tabular-nums tracking-[0.06em] text-text-tertiary"
           aria-label={`Workflow ${index} of ${total}`}
         >
           {index} / {total}
         </span>
         <button
           type="button"
-          className="workflow-canvas-nav workflow-canvas-nav--next"
+          className="relative inline-flex max-w-[45%] cursor-pointer items-center gap-[8px] overflow-hidden rounded-sm border border-solid border-border-subtle bg-transparent px-[12px] py-[6px] font-mono text-[0.78rem] text-text-secondary transition-all duration-150 ease-[ease] enabled:hover:border-border-strong enabled:hover:bg-bg-hover enabled:hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-35 max-768:min-h-[44px]"
           onClick={onNext}
           disabled={!next}
           data-tooltip={next ? `Next: ${next.name} (])` : undefined}
           aria-label={next ? `Next workflow: ${next.name}` : "No next workflow"}
         >
-          <span className="workflow-canvas-nav-label">
+          <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
             {next ? next.name : "—"}
           </span>
-          <span className="workflow-canvas-nav-arrow" aria-hidden="true">
+          <span
+            className="shrink-0 text-[0.85rem] text-cyan"
+            aria-hidden="true"
+          >
             ▶
           </span>
         </button>

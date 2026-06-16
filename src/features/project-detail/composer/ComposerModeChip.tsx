@@ -1,3 +1,4 @@
+import { cn } from "@/lib/ui/cn";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ComposerMode } from "./detect-composer-mode";
 
@@ -12,11 +13,21 @@ const AGENT_LABEL: Record<AgentBackendId, string> = {
   codex: "Codex",
 };
 
+const chipBase =
+  "inline-flex items-center gap-2xs shrink-0 h-6 px-sm rounded-full border border-solid font-mono text-[0.72rem] font-medium whitespace-nowrap transition-[color,border-color,background] duration-150 ease-[ease]";
+
+type ChipTone = "cyan" | "violet" | "amber";
+
+const toneClass: Record<ChipTone, string> = {
+  cyan: "bg-cyan-glow border-cyan-glow text-cyan",
+  violet: "bg-violet-glow border-violet-glow text-violet",
+  amber: "bg-amber-glow border-amber-glow text-amber",
+};
+
 /**
- * Left-anchored mode indicator for the unified composer. It recolors the field
- * by routing mode and agent identity via `data-mode` / `data-agent` (the CSS
- * owns the color): chat → `› <agent>` (cyan Claude / violet Codex), command →
- * `/` (violet), filter → `⊟` (amber).
+ * Left-anchored mode indicator for the unified composer. It recolors itself by
+ * routing mode and agent identity to a tone: chat → `› <agent>` (cyan Claude /
+ * violet Codex), command → `/` (violet), filter → `⊟` (amber).
  */
 export default function ComposerModeChip({
   mode,
@@ -25,17 +36,21 @@ export default function ComposerModeChip({
   const { glyph, label, aria } = describe(mode, agent);
   return (
     <span
-      className="plc-mode-chip"
-      data-mode={mode}
-      data-agent={agent}
+      className={cn(chipBase, toneClass[toneFor(mode, agent)])}
       aria-label={aria}
     >
-      <span className="plc-mode-chip-glyph" aria-hidden="true">
+      <span className="font-semibold" aria-hidden="true">
         {glyph}
       </span>
-      {label && <span className="plc-mode-chip-label">{label}</span>}
+      {label && <span>{label}</span>}
     </span>
   );
+}
+
+function toneFor(mode: ComposerMode, agent: AgentBackendId): ChipTone {
+  if (mode === "filter") return "amber";
+  if (mode === "command") return "violet";
+  return agent === "claude" ? "cyan" : "violet";
 }
 
 function describe(

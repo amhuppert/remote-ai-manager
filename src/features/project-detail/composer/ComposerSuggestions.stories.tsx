@@ -3,7 +3,6 @@ import { fn } from "storybook/test";
 import { useState } from "react";
 import ComposerSuggestions from "./ComposerSuggestions";
 import type { Suggestion } from "../components/command-suggestions";
-import "./styles/composer.css";
 
 const commandSuggestions: Suggestion[] = [
   { kind: "action", id: "new", label: "Create session", grp: "Actions" },

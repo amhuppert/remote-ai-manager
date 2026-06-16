@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { FormError, FormInput } from "@/components/ui/FormField";
 import {
   msToMinutes,
   minutesToMs,
@@ -54,15 +55,14 @@ export function ConfigNumericInput({
 
   return (
     <>
-      <input
-        className={`form-input${error ? " form-input-error" : ""}`}
+      <FormInput
         type="text"
         inputMode="decimal"
         value={localStr}
         onChange={(e) => handleInput(e.target.value)}
         placeholder={placeholder}
       />
-      {error && <div className="form-error">{error}</div>}
+      {error && <FormError>{error}</FormError>}
     </>
   );
 }

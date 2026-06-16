@@ -49,7 +49,7 @@ describe("ProjectTranscriptHost", () => {
   });
 
   it("renders the transcript surface (not the empty state) when messages exist", () => {
-    const { container } = renderSeeded(
+    renderSeeded(
       <ProjectTranscriptHost
         projectName="proj"
         conversationId="c1"
@@ -58,7 +58,6 @@ describe("ProjectTranscriptHost", () => {
       [[projectConversationKeys.messages("proj", "c1"), messages]],
     );
     expect(screen.queryByText("No messages yet")).toBeNull();
-    expect(container.querySelector(".plc-transcript")).not.toBeNull();
   });
 
   it("shows the shared typing indicator (not a bespoke text status) while running with no messages", () => {

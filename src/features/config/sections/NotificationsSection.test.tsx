@@ -25,7 +25,7 @@ describe("NotificationsSection", () => {
     render(<NotificationsSection controller={controller} />);
     const input = screen
       .getByText("Topic")
-      .closest(".config-field")!
+      .closest("[data-field]")!
       .querySelector("input")! as HTMLInputElement;
     fireEvent.change(input, { target: { value: "abc123" } });
     expect(getState().pushNotification?.topic).toBe("abc123");
@@ -36,7 +36,7 @@ describe("NotificationsSection", () => {
     render(<NotificationsSection controller={controller} />);
     const toggle = screen
       .getByText(/Workflow Halted/i)
-      .closest(".config-field")!
+      .closest("[data-field]")!
       .querySelector('[role="switch"]')! as HTMLElement;
     fireEvent.click(toggle);
     expect(getState().pushNotification?.triggers?.workflowHalted).toBe(false);

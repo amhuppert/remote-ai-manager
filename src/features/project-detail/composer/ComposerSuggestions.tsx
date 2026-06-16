@@ -28,13 +28,20 @@ export default function ComposerSuggestions({
   if (suggestions.length === 0) return null;
 
   return (
-    <ul className="plc-suggestions" role="listbox" aria-label="Suggestions">
+    <ul
+      className="m-0 max-h-72 list-none overflow-y-auto rounded-md border border-solid border-border-default bg-bg-elevated p-2xs shadow-[0_12px_32px_rgba(0,0,0,0.35)]"
+      role="listbox"
+      aria-label="Suggestions"
+    >
       {suggestions.map((s, index) => {
         const showGroup = index === 0 || suggestions[index - 1]?.grp !== s.grp;
         return (
           <li key={suggestionKey(s)} role="presentation">
             {showGroup && (
-              <div className="plc-suggestions-group" aria-hidden="true">
+              <div
+                className="px-sm pt-xs pb-2xs font-mono text-[0.66rem] font-semibold uppercase tracking-[0.08em] text-text-tertiary"
+                aria-hidden="true"
+              >
                 {s.grp}
               </div>
             )}
@@ -42,7 +49,7 @@ export default function ComposerSuggestions({
               role="option"
               aria-selected={index === activeIndex}
               data-active={index === activeIndex}
-              className="plc-suggestion"
+              className={SUGGESTION_CLASS}
               onMouseEnter={() => onHoverIndex?.(index)}
               onMouseDown={(e) => {
                 // Prevent the composer textarea from losing focus before apply.
@@ -52,15 +59,19 @@ export default function ComposerSuggestions({
             >
               {s.kind === "action" ? (
                 <>
-                  <span className="plc-suggestion-key">/{s.id}</span>
-                  <span className="plc-suggestion-meta">{s.label}</span>
+                  <span className="text-text-primary">/{s.id}</span>
+                  <span className="ml-auto text-[0.7rem] text-text-tertiary">
+                    {s.label}
+                  </span>
                 </>
               ) : (
                 <>
-                  <span className="plc-suggestion-key">
+                  <span className="text-text-primary">
                     {s.key}:{s.value}
                   </span>
-                  <span className="plc-suggestion-meta">{s.label}</span>
+                  <span className="ml-auto text-[0.7rem] text-text-tertiary">
+                    {s.label}
+                  </span>
                 </>
               )}
             </div>
@@ -70,3 +81,11 @@ export default function ComposerSuggestions({
     </ul>
   );
 }
+
+// The keyboard-driven active row and pointer hover share one highlight; the
+// active override is gated to `data-active=false` so exactly one variant writes
+// `background`/`color` on a row at any time (active wins, never both at once).
+const SUGGESTION_CLASS =
+  "flex items-center gap-sm rounded-sm px-sm py-xs font-mono text-[0.78rem] text-text-secondary cursor-pointer transition-[background,color] duration-150 ease-[ease] " +
+  "data-[active=true]:bg-bg-hover data-[active=true]:text-text-primary " +
+  "data-[active=false]:hover:bg-bg-hover data-[active=false]:hover:text-text-primary";

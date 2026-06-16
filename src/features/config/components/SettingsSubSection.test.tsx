@@ -15,12 +15,18 @@ describe("SettingsSubSection", () => {
     expect(screen.getByTestId("body")).toHaveTextContent("contents");
   });
 
-  it("omits hint element when hint is not provided", () => {
-    const { container } = render(
+  it("renders the hint only when provided", () => {
+    const { rerender } = render(
       <SettingsSubSection title="Infrastructure">
         <span />
       </SettingsSubSection>,
     );
-    expect(container.querySelector(".config-section-hint")).toBeNull();
+    expect(screen.queryByText("Where repos live")).toBeNull();
+    rerender(
+      <SettingsSubSection title="Infrastructure" hint="Where repos live">
+        <span />
+      </SettingsSubSection>,
+    );
+    expect(screen.getByText("Where repos live")).toBeVisible();
   });
 });

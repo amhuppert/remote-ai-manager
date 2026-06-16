@@ -146,9 +146,6 @@ describe("UnifiedComposer shared prompt input", () => {
     );
     expect(document.querySelector(".prompt-toolbar")).not.toBeNull();
     expect(document.querySelector(".send-btn")?.textContent).toBe("▶");
-    expect(document.querySelector(".plc-uc")).toBeNull();
-    expect(document.querySelector(".plc-uc-field")).toBeNull();
-    expect(document.querySelector(".plc-uc-send")).toBeNull();
     expect(screen.queryByLabelText("Project composer")).toBeNull();
     // Tiptap attaches the EditorView in an async effect after render, so the
     // .ProseMirror node appears a tick later; allow extra time for that mount

@@ -22,7 +22,9 @@ export function BackendsSection({
         title="Claude"
         hint="Claude SDK is bundled. Per-conversation defaults live under Agent defaults."
       >
-        <div className="config-readout">SDK is bundled and ready.</div>
+        <div className="inline-flex items-center w-fit px-md py-[8px] rounded-md border border-solid border-border-subtle bg-bg-base text-text-secondary font-mono text-[0.76rem]">
+          SDK is bundled and ready.
+        </div>
       </SettingsSubSection>
       <SettingsSubSection title="Codex">
         <ConfigField

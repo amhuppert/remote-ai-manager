@@ -1,12 +1,15 @@
 "use client";
 
+import { cn } from "@/lib/ui/cn";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { StatusDot, type StatusDotTone } from "@/components/ui/StatusDot";
 import type { ProposalValidation } from "@/lib/chat-spawning/proposal-validator";
 import type { SpawnProposal } from "@/lib/chat-spawning/schemas";
 import type { DerivedSessionStatus } from "@/lib/sessions/schemas";
 import SpawnCardRow from "./SpawnCardRow";
 import SpawnCardEditForm from "./SpawnCardEditForm";
 import { useSpawnCard } from "./useSpawnCard";
-import "./spawn-card.css";
 
 export interface SpawnedSessionStatus {
   sessionName: string;
@@ -25,12 +28,23 @@ export interface SpawnCardProps {
   spawnedStatuses?: SpawnedSessionStatus[];
 }
 
-function statusDotClass(status: DerivedSessionStatus): string {
-  if (status === "running") return "status-dot cyan";
-  if (status === "awaiting" || status === "waiting_for_input") {
-    return "status-dot amber";
-  }
-  return "status-dot idle";
+// Card shell; the left-border colour distinguishes valid (cyan) from invalid (amber).
+const CARD_BASE =
+  "flex flex-col gap-md bg-bg-surface border border-solid border-border-subtle border-l-[3px] rounded-lg p-lg my-sm font-mono";
+const CARD_HEADER = "flex items-center gap-sm";
+const CARD_TITLE =
+  "font-mono text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-text-secondary";
+const LIST_RESET = "list-none m-0 p-0 flex flex-col gap-xs";
+// Below the mobile spine the action buttons grow to a 44px touch target: the row
+// supplies the height from its own flex box (min-height + stretch), since a
+// primitive's box height is not reattachable through layoutClassName.
+const CARD_ACTIONS =
+  "flex items-center justify-end gap-sm max-768:items-stretch max-768:min-h-[44px]";
+
+function statusDotTone(status: DerivedSessionStatus): StatusDotTone {
+  if (status === "running") return "cyan";
+  if (status === "awaiting" || status === "waiting_for_input") return "amber";
+  return "green";
 }
 
 /**
@@ -44,15 +58,15 @@ export default function SpawnCard(props: SpawnCardProps): React.JSX.Element {
   if (props.validation.kind === "invalid") {
     return (
       <section
-        className="spawn-card spawn-card--invalid"
+        className={cn(CARD_BASE, "border-l-amber")}
         aria-label="Spawn proposal"
       >
-        <header className="spawn-card__header">
-          <span className="spawn-card__title">Invalid spawn proposal</span>
+        <header className={CARD_HEADER}>
+          <span className={CARD_TITLE}>Invalid spawn proposal</span>
         </header>
-        <ul className="spawn-card__issues">
+        <ul className={LIST_RESET}>
           {props.validation.issues.map((issue, i) => (
-            <li key={i} className="spawn-card__issue">
+            <li key={i} className="text-amber text-[0.75rem]">
               {issue}
             </li>
           ))}
@@ -90,15 +104,16 @@ function ValidSpawnCard({
   const submitted = card.result !== undefined;
 
   return (
-    <section className="spawn-card" aria-label="Spawn proposal">
-      <header className="spawn-card__header">
-        <span className="spawn-card__title">Proposed sessions</span>
-        <span className="cc-badge cc-badge--count spawn-card__count">
-          {count}
-        </span>
+    <section
+      className={cn(CARD_BASE, "border-l-cyan")}
+      aria-label="Spawn proposal"
+    >
+      <header className={CARD_HEADER}>
+        <span className={CARD_TITLE}>Proposed sessions</span>
+        <Badge tier="count">{count}</Badge>
       </header>
 
-      <div className="spawn-card__rows">
+      <div className="flex flex-col gap-sm">
         {card.editing
           ? card.draft.map((session, i) => (
               <SpawnCardEditForm
@@ -114,55 +129,47 @@ function ValidSpawnCard({
       </div>
 
       {!submitted && (
-        <div className="spawn-card__actions">
+        <div className={CARD_ACTIONS}>
           {card.editing ? (
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={card.cancelEditing}
-            >
+            <Button variant="ghost" size="sm" onClick={card.cancelEditing}>
               Done editing
-            </button>
+            </Button>
           ) : (
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={card.startEditing}
-            >
+            <Button variant="ghost" size="sm" onClick={card.startEditing}>
               Edit
-            </button>
+            </Button>
           )}
-          <button
-            type="button"
-            className="btn btn-primary btn-sm spawn-card__create"
+          <Button
+            variant="primary"
+            size="sm"
+            layoutClassName="ml-xs"
             onClick={card.submit}
             disabled={card.isPending}
           >
             {card.isPending ? "Creating…" : createLabel}
-          </button>
+          </Button>
         </div>
       )}
 
       {submitted && (
-        <div className="spawn-card__result">
+        <div className="flex flex-col gap-sm">
           {created.length > 0 && (
-            <ul className="spawn-card__created">
+            <ul className={LIST_RESET}>
               {created.map((c) => {
                 const live = spawnedStatuses?.find(
                   (s) => s.sessionName === c.sessionName,
                 );
                 return (
-                  <li key={c.sessionName} className="spawn-card__created-row">
-                    <span
-                      className={
-                        live
-                          ? statusDotClass(live.derivedStatus)
-                          : "status-dot idle"
-                      }
+                  <li
+                    key={c.sessionName}
+                    className="flex items-center gap-sm text-[0.75rem]"
+                  >
+                    <StatusDot
+                      tone={live ? statusDotTone(live.derivedStatus) : "green"}
                       aria-hidden
                     />
-                    <span className="spawn-card__created-name">{c.name}</span>
-                    <span className="spawn-card__created-status">
+                    <span className="text-text-primary">{c.name}</span>
+                    <span className="ml-auto text-text-tertiary uppercase tracking-[0.04em] text-[0.7rem]">
                       {live ? live.derivedStatus : "created"}
                     </span>
                   </li>
@@ -171,11 +178,14 @@ function ValidSpawnCard({
             </ul>
           )}
           {failed.length > 0 && (
-            <ul className="spawn-card__failed">
+            <ul className={LIST_RESET}>
               {failed.map((f) => (
-                <li key={f.name} className="spawn-card__failed-row">
-                  <span className="spawn-card__failed-name">{f.name}</span>
-                  <span className="spawn-card__failed-error">{f.error}</span>
+                <li
+                  key={f.name}
+                  className="flex items-center gap-sm text-[0.75rem]"
+                >
+                  <span className="text-text-primary">{f.name}</span>
+                  <span className="text-red">{f.error}</span>
                 </li>
               ))}
             </ul>
@@ -184,7 +194,7 @@ function ValidSpawnCard({
       )}
 
       {card.isError && (
-        <div className="spawn-card__error" role="alert">
+        <div className="text-red text-[0.75rem]" role="alert">
           Failed to create sessions. Try again.
         </div>
       )}

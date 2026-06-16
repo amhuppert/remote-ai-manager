@@ -26,7 +26,8 @@ npm-debug.log*
 
 # local dev state (CC_CONFIG_DIR)
 .config/
-.cc/workflow/*.log
+.cc/workflow/
+.cc/graph-workflow-docs/
 
 # voice/prompt (local dev)
 .voice-last.json

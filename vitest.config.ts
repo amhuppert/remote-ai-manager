@@ -94,7 +94,13 @@ export default defineConfig({
         test: {
           name: "unit",
           environment: "node",
-          include: ["src/**/*.test.{ts,tsx}", "scripts/**/*.test.{ts,tsx}"],
+          include: [
+            "src/**/*.test.{ts,tsx}",
+            "scripts/**/*.test.{ts,tsx}",
+            // Guardrail ESLint rules + their RuleTester suite are authored in
+            // .mjs (matching the eslint-plugin module format; excluded from tsc).
+            "eslint-rules/**/*.test.{ts,tsx,mjs}",
+          ],
           setupFiles: ["vitest.setup.ts"],
           testTimeout: 15000,
           env: {

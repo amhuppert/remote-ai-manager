@@ -169,17 +169,11 @@ describe("ConfigPage — Workflow Defaults", () => {
     expect(
       screen.queryByRole("button", { name: /Workflow Defaults/i }),
     ).not.toBeInTheDocument();
-    expect(container.querySelectorAll(".config-section")).toHaveLength(0);
-    expect(container.querySelectorAll(".config-section-header")).toHaveLength(
-      0,
-    );
     expect(
       screen.queryByRole("button", { name: /Implementer/i }),
     ).not.toBeInTheDocument();
     expect(screen.getByText(/^Implementer$/i)).toBeVisible();
-    expect(
-      container.querySelectorAll(".config-subsection.collapsed"),
-    ).toHaveLength(0);
+    expect(container.querySelectorAll("[data-subsection]")).toHaveLength(7);
   });
 
   it("renders all seven workflow default blocks at the page top level", () => {
@@ -200,26 +194,21 @@ describe("ConfigPage — Workflow Defaults", () => {
     }
   });
 
-  it("applies the .config-subsection class to every sub-section", () => {
+  it("renders every workflow block as a sub-section", () => {
     const { container } = renderWithQuery(<ConfigPage />);
     expandWorkflowDefaults();
 
-    const subs = container.querySelectorAll(".config-subsection");
-    expect(subs.length).toBe(7);
-    for (const el of subs) {
-      expect(el.className).toMatch(/config-subsection/);
-    }
+    expect(container.querySelectorAll("[data-subsection]")).toHaveLength(7);
   });
 
   it("shows [DEFAULT] on every sub-section when all fields match seeded defaults", () => {
     const { container } = renderWithQuery(<ConfigPage />);
     expandWorkflowDefaults();
 
-    const subs = container.querySelectorAll(".config-subsection");
+    const subs = container.querySelectorAll("[data-subsection]");
     for (const el of subs) {
-      expect(el.className).toContain("config-subsection--default");
-      const badge = el.querySelector(".config-subsection-badge");
-      expect(badge?.textContent).toBe("DEFAULT");
+      expect(el.textContent).toContain("DEFAULT");
+      expect(el.textContent).not.toContain("MODIFIED");
     }
   });
 
@@ -244,15 +233,14 @@ describe("ConfigPage — Workflow Defaults", () => {
 
     const iteration = container.querySelector(
       '[data-subsection="iterationPolicy"]',
-    );
-    expect(iteration?.className).toContain("config-subsection--modified");
-    const badge = iteration?.querySelector(".config-subsection-badge");
-    expect(badge?.textContent).toBe("MODIFIED");
+    )!;
+    expect(iteration.textContent).toContain("MODIFIED");
 
     const implementer = container.querySelector(
       '[data-subsection="implementer"]',
-    );
-    expect(implementer?.className).toContain("config-subsection--default");
+    )!;
+    expect(implementer.textContent).toContain("DEFAULT");
+    expect(implementer.textContent).not.toContain("MODIFIED");
   });
 
   it("never surfaces a 'disabled' kind in the Context validator sub-section", () => {
@@ -264,8 +252,7 @@ describe("ConfigPage — Workflow Defaults", () => {
     );
     expect(validator).toBeTruthy();
     // The word "disabled" must not appear as an option / pill in the sub-section.
-    const pillLabels = validator!.querySelectorAll(".config-pill-btn");
-    const texts = Array.from(pillLabels).map((el) =>
+    const texts = Array.from(validator!.querySelectorAll("button")).map((el) =>
       (el.textContent ?? "").trim().toLowerCase(),
     );
     expect(texts).not.toContain("disabled");
@@ -280,7 +267,7 @@ describe("ConfigPage — Workflow Defaults", () => {
     const implementer = container.querySelector(
       '[data-subsection="implementer"]',
     ) as HTMLElement;
-    expect(implementer.className).toContain("config-subsection--default");
+    expect(implementer.textContent).toContain("DEFAULT");
 
     // Open the ModelSelector dropdown (portal-rendered into document.body).
     // Edit implementer.model from "opus" → "sonnet" via ModelSelector.
@@ -296,9 +283,7 @@ describe("ConfigPage — Workflow Defaults", () => {
     }
     expect(clicked).toBeGreaterThan(0);
 
-    expect(implementer.className).toContain("config-subsection--modified");
-    const badge = implementer.querySelector(".config-subsection-badge");
-    expect(badge?.textContent).toBe("MODIFIED");
+    expect(implementer.textContent).toContain("MODIFIED");
   });
 
   it("switching the implementer model to Haiku does not crash and disables effort editing", () => {
@@ -349,7 +334,7 @@ describe("ConfigPage — Workflow Defaults", () => {
       }
     }
 
-    expect(implementer.className).toContain("config-subsection--modified");
+    expect(implementer.textContent).toContain("MODIFIED");
 
     const saveBtn = screen.getByRole("button", {
       name: /Save Changes/i,
@@ -372,14 +357,14 @@ describe("ConfigPage — Workflow Defaults", () => {
     const scriptValidator = container.querySelector(
       '[data-subsection="scriptValidator"]',
     ) as HTMLElement;
-    expect(scriptValidator.className).toContain("config-subsection--default");
+    expect(scriptValidator.textContent).toContain("DEFAULT");
 
     const toggle = scriptValidator.querySelector(
       '[role="switch"]',
     ) as HTMLElement;
     fireEvent.click(toggle);
 
-    expect(scriptValidator.className).toContain("config-subsection--modified");
+    expect(scriptValidator.textContent).toContain("MODIFIED");
 
     const saveBtn = screen.getByRole("button", {
       name: /Save Changes/i,
