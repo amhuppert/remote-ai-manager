@@ -112,6 +112,29 @@ export const ChildSessions = {
   },
 } satisfies Story;
 
+/**
+ * An archived row above a normal row. Archived rows are dimmed, but the dim must
+ * not wrap the open kebab popup: open the archived row's menu and it must be fully
+ * opaque and paint above the next row's controls (e.g. its TDD toggle).
+ */
+export const Archived = {
+  args: {
+    sessions: [
+      makeSession({
+        sessionName: "archived-experiment",
+        branchName: "csm/archived-experiment",
+        archived: true,
+        lastActivityAt: now,
+      }),
+      makeSession({
+        sessionName: "active-below",
+        branchName: "csm/active-below",
+        lastActivityAt: hourAgo,
+      }),
+    ],
+  },
+} satisfies Story;
+
 /** Empty rows */
 export const Empty = {
   args: {

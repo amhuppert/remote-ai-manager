@@ -474,10 +474,22 @@
 .v3-row.selected {
   background: rgba(0, 229, 255, 0.05);
 }
-.v3-row.archived {
+/*
+ * Dim archived rows everywhere EXCEPT the open kebab popup. Putting opacity on
+ * the row (or on .v3-actions / .kebab-host) would wrap .kebab-menu in an opacity
+ * layer: that both makes the popup semi-transparent and creates a stacking
+ * context that traps its z-index, so the next row's content paints over the part
+ * of the menu that drops below the row. Scoping the dim to the popup's siblings
+ * keeps the menu fully opaque and on top.
+ */
+.v3-row.archived > :not(.v3-actions),
+.v3-row.archived .v3-actions > :not(.kebab-host),
+.v3-row.archived .kebab-trigger {
   opacity: 0.5;
 }
-.v3-row.archived:hover {
+.v3-row.archived:hover > :not(.v3-actions),
+.v3-row.archived:hover .v3-actions > :not(.kebab-host),
+.v3-row.archived:hover .kebab-trigger {
   opacity: 0.92;
 }
 .v3-row .rail {
