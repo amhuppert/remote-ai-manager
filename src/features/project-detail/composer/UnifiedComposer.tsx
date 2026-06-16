@@ -6,6 +6,7 @@ import type { PromptEditorHandle } from "@/features/session/prompt/PromptEditor"
 import { useVoiceWiring } from "@/features/session/hooks/use-voice-wiring";
 import { useClearInputHotkey } from "@/features/session/hooks/use-clear-input-hotkey";
 import { getModelsForBackend } from "@/components/ModelSelector";
+import { Button } from "@/components/ui/Button";
 import { useImageAttachments } from "@/hooks/use-image-attachments";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import {
@@ -22,7 +23,6 @@ import type { ProjectPromptError } from "@/lib/project-conversations-client/muta
 import type { FilterToken } from "../components/filter-tokens";
 import { detectComposerMode } from "./detect-composer-mode";
 import { parseFilterDraft, replaceTokenByCat } from "./parse-filter-draft";
-import "./styles/composer.css";
 
 export interface UnifiedComposerSendInput {
   text: string;
@@ -365,16 +365,15 @@ export default function UnifiedComposer({
         debugTogglePending={false}
       />
       {visibleError && (
-        <div className="plc-uc-error" role="alert">
+        <div
+          className="flex items-center gap-sm font-mono text-[0.72rem] text-red"
+          role="alert"
+        >
           <span>{visibleError}</span>
           {error && onDismissError && (
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={onDismissError}
-            >
+            <Button variant="ghost" size="sm" onClick={onDismissError}>
               Dismiss
-            </button>
+            </Button>
           )}
         </div>
       )}

@@ -1,6 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import ComposerModeChip from "./ComposerModeChip";
-import "./styles/composer.css";
 
 const meta: Meta<typeof ComposerModeChip> = {
   title: "Project Cockpit/Composer/ModeChip",
