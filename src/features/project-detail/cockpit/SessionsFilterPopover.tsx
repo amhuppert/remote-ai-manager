@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Button } from "@/components/ui/Button";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { FilterToken } from "../components/filter-tokens";
 
@@ -9,6 +10,34 @@ export interface SessionsFilterPopoverProps {
   onTokensChange: (next: FilterToken[]) => void;
   sessions: SessionListItem[];
 }
+
+// The popover menu shadow uses the design-system popovers/menus black drop
+// shadow (rgba(0,0,0,0.35)); there is no solid-color token for it, so the
+// established black-drop-shadow exception is referenced inline for exact parity.
+const MENU_CLASS =
+  "absolute right-0 top-[calc(100%+var(--space-xs))] z-sticky min-w-[220px] p-sm " +
+  "bg-bg-elevated border border-solid border-border-default rounded-md " +
+  "shadow-[0_12px_32px_rgba(0,0,0,0.35)] flex flex-col gap-sm";
+
+const GROUP_LABEL_CLASS =
+  "font-mono text-[0.66rem] font-semibold tracking-[0.08em] uppercase text-text-tertiary";
+
+const OPT_CLASS =
+  "px-sm py-2xs rounded-sm border border-solid border-border-subtle bg-bg-surface " +
+  "text-text-secondary font-mono text-[0.72rem] cursor-pointer " +
+  "data-[on=true]:border-cyan data-[on=true]:text-cyan data-[on=true]:bg-cyan-glow";
+
+// CONFLICT (recorded per the charter source-of-truth protocol): globals.css has a
+// global `@media (max-width:768px) .btn-sm { min-height:44px; padding:10px 16px }`
+// touch-target enlargement that the shared Button primitive (read-only here) does
+// NOT bake in — unlike IconButton, which bakes in its mobile enlargement. Without
+// it the migrated Filter button renders 27px tall at the 390px mobile viewport vs
+// the legacy 44px, shifting the popover. Requirement-level visual parity (rank 1)
+// outranks the design's layoutClassName-only rule (rank 2): the enlargement is
+// reattached here via layoutClassName (min-height + padding override; padding owns
+// the box, so this is the documented parity exception) pending the Button primitive
+// gaining the global `.btn-sm` mobile touch sizing (flagged for integration).
+const FILTER_BTN_LAYOUT = "max-768:min-h-[44px] max-768:px-[16px]";
 
 function toggleToken(
   tokens: FilterToken[],
@@ -63,21 +92,23 @@ export default function SessionsFilterPopover({
   }, [open]);
 
   return (
-    <div className="plc-filter-pop" ref={ref}>
-      <button
+    <div className="relative" ref={ref}>
+      <Button
         type="button"
-        className="btn btn-ghost btn-sm"
+        variant="ghost"
+        size="sm"
+        layoutClassName={FILTER_BTN_LAYOUT}
         aria-haspopup="true"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
         Filter
-      </button>
+      </Button>
       {open && (
-        <div className="plc-filter-pop-menu" role="menu">
+        <div className={MENU_CLASS} role="menu">
           <div>
-            <div className="plc-filter-group-label">Status</div>
-            <div className="plc-filter-options">
+            <div className={GROUP_LABEL_CLASS}>Status</div>
+            <div className="flex flex-wrap gap-xs">
               {statuses.map((status) => (
                 <button
                   key={status}
@@ -85,7 +116,7 @@ export default function SessionsFilterPopover({
                   role="menuitemcheckbox"
                   aria-checked={isActive(tokens, "status", status)}
                   data-on={isActive(tokens, "status", status)}
-                  className="plc-filter-opt"
+                  className={OPT_CLASS}
                   onClick={() =>
                     onTokensChange(
                       toggleToken(tokens, {
@@ -103,8 +134,8 @@ export default function SessionsFilterPopover({
           </div>
 
           <div>
-            <div className="plc-filter-group-label">Target</div>
-            <div className="plc-filter-options">
+            <div className={GROUP_LABEL_CLASS}>Target</div>
+            <div className="flex flex-wrap gap-xs">
               {targets.map((target) => (
                 <button
                   key={target}
@@ -112,7 +143,7 @@ export default function SessionsFilterPopover({
                   role="menuitemcheckbox"
                   aria-checked={isActive(tokens, "target", target)}
                   data-on={isActive(tokens, "target", target)}
-                  className="plc-filter-opt"
+                  className={OPT_CLASS}
                   onClick={() =>
                     onTokensChange(
                       toggleToken(tokens, {
@@ -130,14 +161,14 @@ export default function SessionsFilterPopover({
           </div>
 
           <div>
-            <div className="plc-filter-group-label">Archived</div>
-            <div className="plc-filter-options">
+            <div className={GROUP_LABEL_CLASS}>Archived</div>
+            <div className="flex flex-wrap gap-xs">
               <button
                 type="button"
                 role="menuitemcheckbox"
                 aria-checked={isActive(tokens, "archived", "include")}
                 data-on={isActive(tokens, "archived", "include")}
-                className="plc-filter-opt"
+                className={OPT_CLASS}
                 onClick={() =>
                   onTokensChange(
                     toggleToken(tokens, {

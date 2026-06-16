@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import { Badge } from "@/components/ui/Badge";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationStatus } from "@/lib/conversations/schemas";
 import { presentConversationStatus } from "./conversation-status";
 import DiffSlideover from "./DiffSlideover";
-import "./styles/cockpit.css";
 
 /** Live +/− summary of the main worktree, shown on the review chip. */
 export interface MainWorktreeDiffStat {
@@ -33,10 +33,29 @@ export interface ConversationPaneProps {
   diffStat?: MainWorktreeDiffStat | null;
 }
 
+// The pane fills the workspace column (legacy `.plc-workspace-pane > .plc-pane`
+// flex:1). data-agent is retained for the composer's Codex identity; the legacy
+// codex border-bottom-color rule was inert (the pane carries no border width).
+const PANE_CLASS =
+  "flex-1 flex flex-col min-h-0 min-w-0 h-full bg-bg-surface overflow-hidden";
+
+const PANE_HEADER_CLASS =
+  "flex items-center gap-sm h-[36px] px-md border-x-0 border-t-0 border-b border-solid border-border-dim " +
+  "font-mono text-[0.72rem] text-text-secondary shrink-0";
+
+const WORKTREE_BTN_CLASS =
+  "group inline-flex items-center gap-xs px-sm py-2xs border border-solid border-border-subtle rounded-sm " +
+  "bg-bg-base text-text-secondary font-mono text-[0.72rem] cursor-pointer " +
+  "transition-[border-color,background,color] duration-150 ease-[ease] " +
+  "hover:border-border-strong hover:bg-bg-surface hover:text-text-primary";
+
+const WORKTREE_STAT_CLASS =
+  "inline-flex gap-2xs ml-2xs pl-xs border-y-0 border-r-0 border-l border-solid border-border-subtle";
+
 function ExternalGlyph(): React.JSX.Element {
   return (
     <svg
-      className="plc-worktree-view"
+      className="inline-flex text-text-tertiary group-hover:text-cyan"
       width="12"
       height="12"
       viewBox="0 0 24 24"
@@ -73,46 +92,49 @@ export default function ConversationPane({
   const hasDiff = diffSurface !== undefined && diffSurface !== null;
 
   return (
-    <section className="plc-pane" data-agent={agentBackend}>
+    <section className={PANE_CLASS} data-agent={agentBackend}>
       {tabs}
-      <header className="plc-pane-header">
+      <header className={PANE_HEADER_CLASS}>
         {hasDiff ? (
           <button
             type="button"
-            className="plc-worktree-btn"
+            className={WORKTREE_BTN_CLASS}
             onClick={() => setDiffOpen(true)}
             aria-haspopup="dialog"
             title="Review uncommitted changes on main"
           >
-            <span className="plc-pane-ctx">main</span>
-            <span className="plc-pane-ctx-sep">·</span>
+            <span className="text-text-primary">main</span>
+            <span className="text-text-tertiary">·</span>
             <span>worktree</span>
             {diffStat && diffStat.fileCount > 0 && (
-              <span className="plc-worktree-stat">
-                <span className="add">+{diffStat.additions}</span>
-                <span className="del">−{diffStat.deletions}</span>
+              <span className={WORKTREE_STAT_CLASS}>
+                <span className="text-green">+{diffStat.additions}</span>
+                <span className="text-red">−{diffStat.deletions}</span>
               </span>
             )}
             <ExternalGlyph />
           </button>
         ) : (
           <>
-            <span className="plc-pane-ctx">main</span>
-            <span className="plc-pane-ctx-sep">·</span>
+            <span className="text-text-primary">main</span>
+            <span className="text-text-tertiary">·</span>
             <span>worktree</span>
           </>
         )}
         {statusPresentation?.badgeStatus && (
-          <span
-            className="cc-badge cc-badge--status plc-pane-status"
-            data-status={statusPresentation.badgeStatus}
+          <Badge
+            tier="status"
+            status={statusPresentation.badgeStatus}
+            layoutClassName="ml-sm"
           >
             {statusPresentation.label}
-          </span>
+          </Badge>
         )}
       </header>
-      <div className="plc-pane-body">{transcript}</div>
-      <div className="plc-pane-composer">{composer}</div>
+      <div className="flex-1 min-h-0 flex flex-col">{transcript}</div>
+      <div className="shrink-0 px-md py-md max-768:py-sm border-x-0 border-b-0 border-t border-solid border-border-dim bg-bg-base">
+        {composer}
+      </div>
       {hasDiff && (
         <DiffSlideover
           open={diffOpen}

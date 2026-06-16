@@ -1,4 +1,5 @@
 import { CloseIcon, PlusIcon } from "@/components/icons";
+import { StatusDot } from "@/components/ui/StatusDot";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationStatus } from "@/lib/conversations/schemas";
 import { presentConversationStatus } from "./conversation-status";
@@ -20,6 +21,31 @@ export interface ConversationTabsProps {
   onNewChat: () => void;
 }
 
+const TAB_STRIP_CLASS =
+  "flex items-stretch gap-2xs p-2xs border-x-0 border-t-0 border-b border-solid border-border-dim overflow-x-auto shrink-0";
+
+// Active beats hover (legacy source order). Gated on mutually-exclusive
+// data-active values so the result is independent of utility emission order. The
+// cyan top-edge is the active ::before bar.
+const TAB_CLASS =
+  "relative inline-flex items-center gap-xs px-sm py-xs rounded-sm border-0 bg-transparent " +
+  "font-mono text-[0.74rem] font-medium text-text-secondary cursor-pointer whitespace-nowrap " +
+  "transition-[background,color] duration-150 ease-[ease] " +
+  "data-[active=false]:hover:bg-bg-hover data-[active=false]:hover:text-text-primary " +
+  "data-[active=true]:bg-bg-raised data-[active=true]:text-text-primary " +
+  "data-[active=true]:before:content-[''] data-[active=true]:before:absolute data-[active=true]:before:inset-x-0 " +
+  "data-[active=true]:before:top-0 data-[active=true]:before:h-[2px] data-[active=true]:before:bg-cyan data-[active=true]:before:rounded-t-sm";
+
+const TAB_CLOSE_CLASS =
+  "inline-flex items-center justify-center size-[16px] border-0 bg-transparent text-text-tertiary " +
+  "cursor-pointer rounded-sm hover:bg-bg-elevated hover:text-text-primary";
+
+const TAB_NEWCHAT_CLASS =
+  "inline-flex items-center gap-2xs px-sm py-xs rounded-sm border border-dashed border-border-subtle " +
+  "bg-transparent text-text-secondary font-mono text-[0.74rem] cursor-pointer " +
+  "transition-[background,color,border-color] duration-150 ease-[ease] " +
+  "hover:bg-bg-hover hover:text-text-primary hover:border-border-default";
+
 /**
  * The conversation-pane tab strip: one tab per open project conversation, the
  * active tab marked with a cyan top-edge, a non-active tab with unread activity
@@ -35,7 +61,7 @@ export default function ConversationTabs({
   onNewChat,
 }: ConversationTabsProps): React.JSX.Element {
   return (
-    <div className="plc-tabs" role="tablist" aria-label="Conversations">
+    <div className={TAB_STRIP_CLASS} role="tablist" aria-label="Conversations">
       {tabs.map((tab) => {
         const active = tab.id === activeTabId;
         const status = presentConversationStatus(tab.status);
@@ -48,21 +74,26 @@ export default function ConversationTabs({
             data-active={active}
             data-agent={tab.agent}
             data-status={tab.status}
-            className="plc-tab"
+            className={TAB_CLASS}
             onClick={() => onSelect(tab.id)}
           >
             {status.dotClass && (
-              <span
-                className={`status-dot ${status.dotClass}`}
+              <StatusDot
+                tone={status.dotClass}
                 aria-label={status.label ?? undefined}
               />
             )}
             {!active && tab.unread && (
-              <span className="plc-tab-unread" aria-label="Unread activity" />
+              <span
+                className="size-[6px] rounded-full bg-amber shrink-0"
+                aria-label="Unread activity"
+              />
             )}
-            <span className="plc-tab-name">{tab.name}</span>
+            <span className="max-w-[14ch] overflow-hidden text-ellipsis">
+              {tab.name}
+            </span>
             <span
-              className="plc-tab-close"
+              className={TAB_CLOSE_CLASS}
               role="button"
               tabIndex={0}
               aria-label={`Close ${tab.name}`}
@@ -85,7 +116,7 @@ export default function ConversationTabs({
       })}
       <button
         type="button"
-        className="plc-tab-newchat"
+        className={TAB_NEWCHAT_CLASS}
         onClick={onNewChat}
         aria-label="New chat"
       >

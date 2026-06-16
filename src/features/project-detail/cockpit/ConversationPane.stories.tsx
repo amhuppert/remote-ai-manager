@@ -1,10 +1,15 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
+import {
+  EmptyState,
+  EmptyStateTitle,
+  EmptyStateDesc,
+} from "@/components/ui/EmptyState";
 import ConversationPane from "./ConversationPane";
 import "./styles/cockpit.css";
 
 function FakeTranscript() {
   return (
-    <div className="plc-transcript" style={{ padding: 16 }}>
+    <div className="flex-1 min-h-0 flex flex-col p-lg">
       <div className="message user">
         <div className="message-role">You</div>
         <div className="message-content">Refactor the auth module.</div>
@@ -36,10 +41,10 @@ function FakeComposer() {
 
 function FakeDiff() {
   return (
-    <div className="plc-diff-empty empty-state">
-      <div className="empty-state-title">No changes</div>
-      <div className="empty-state-desc">Main worktree is clean.</div>
-    </div>
+    <EmptyState layoutClassName="grow">
+      <EmptyStateTitle>No changes</EmptyStateTitle>
+      <EmptyStateDesc>Main worktree is clean.</EmptyStateDesc>
+    </EmptyState>
   );
 }
 

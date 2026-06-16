@@ -11,6 +11,9 @@ import type { ConversationState } from "@/lib/conversations/schemas";
 import { selectLastUserTurnAgentSettings } from "@/lib/conversations/last-turn-agent-settings";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import { Tabs, Tab, TabCount } from "@/components/ui/Tabs";
+import { IconButton } from "@/components/ui/IconButton";
+import { cn } from "@/lib/ui/cn";
 import {
   useSendProjectPrompt,
   useCreateProjectConversation,
@@ -39,6 +42,8 @@ import {
   useToggleRail,
   useSetRailCollapsed,
 } from "./use-cockpit-view-state";
+// Imported for the preserved `plc-rise-fade` entry keyframe (referenced by the
+// cockpit's entry-animation utility) and the preserved diff slide-over residual.
 import "./styles/cockpit.css";
 
 export interface ProjectCockpitProps {
@@ -65,6 +70,87 @@ const MOBILE_PANES: { id: MobilePane; label: string }[] = [
   { id: "chat", label: "Chat" },
   { id: "rail", label: "List" },
 ];
+
+// Shell grid: a primary view switch across the top and either the sessions
+// table or the rail+conversation workspace below. `--plc-rail-w` collapses the
+// rail column; the sessions view drops to a single column. The ≤768px spine
+// flips to a single-panel flex column (desktop-first `max-768:`). `group` lets
+// the panes read the cockpit's data-* state.
+const COCKPIT_CLASS =
+  "group grid flex-1 min-h-0 h-full items-stretch " +
+  "[--plc-rail-w:308px] [grid-template-columns:var(--plc-rail-w)_minmax(0,1fr)] " +
+  "[grid-template-rows:auto_minmax(0,1fr)] [grid-template-areas:'view_view'_'rail_conversation'] " +
+  "data-[rail-collapsed=true]:[--plc-rail-w:48px] " +
+  "data-[workspace-view=sessions]:[grid-template-columns:minmax(0,1fr)] " +
+  "data-[workspace-view=sessions]:[grid-template-areas:'view'_'sessions'] " +
+  "max-768:flex max-768:flex-col max-768:min-h-0";
+
+// 8px rise + fade over .2s; `forwards` is required because the cockpit is a
+// `.stagger-in > *` child with a resting opacity:0 — without it the cockpit
+// reverts to invisible once the animation ends. Reduced motion settles visible.
+const ENTER_CLASS =
+  "animate-[plc-rise-fade_0.2s_ease_forwards] motion-reduce:animate-none motion-reduce:opacity-100";
+
+const VIEW_SWITCH_LAYOUT =
+  "col-start-1 col-span-2 row-start-1 justify-self-start mx-md mb-sm max-768:self-stretch max-768:shrink-0";
+
+// CONFLICT (recorded per the charter source-of-truth protocol): the legacy
+// `.plc-view-switch .cc-tab` / `.plc-mobile-switch .cc-tab` mobile rules size
+// each tab to a centred, full-width, 36px touch target via `flex: 1`. The
+// `flex: 1` shorthand is `1 1 0%` (zero basis → equal 50/50 split regardless of
+// label width); it is reproduced allowlist-cleanly with `grow shrink basis-0`
+// (NOT `grow` alone — its `basis:auto` would weight tab widths by label length,
+// the parity drift the validator caught). `justify-content`/`min-height` are not
+// on the layoutClassName allowlist and the Tabs primitive (read-only here) has
+// no fill/touch mode, so requirement-level visual parity (rank 1) outranks the
+// design's layoutClassName-only rule (rank 2): they are applied here pending a
+// Tabs primitive fill/touch capability (flagged for the integration context).
+const TAB_FILL_LAYOUT =
+  "max-768:grow max-768:shrink max-768:basis-0 max-768:justify-center max-768:min-h-[36px]";
+
+const MOBILE_SWITCH_WRAP =
+  "hidden max-768:group-data-[workspace-view=conversations]:block mx-md mb-sm shrink-0";
+
+const RAIL_CLASS =
+  "[grid-area:rail] flex flex-col min-w-0 min-h-0 h-full overflow-hidden " +
+  "border-y-0 border-l-0 border-r border-solid border-border-subtle bg-bg-base " +
+  "[&>.convo-sidebar]:flex-1 [&>.convo-sidebar]:min-h-0 [&>.convo-sidebar]:h-auto " +
+  "max-768:hidden max-768:group-data-[mobile-pane=rail]:flex " +
+  "max-768:group-data-[mobile-pane=rail]:flex-1 max-768:group-data-[mobile-pane=rail]:w-full " +
+  "max-768:group-data-[mobile-pane=rail]:border-r-0 " +
+  // The embedded rail is an in-flow cockpit pane, not the session page's
+  // slide-out drawer — undo the fixed-position drawer treatment on the injected
+  // ConversationSidebar at the mobile rail pane.
+  "max-768:group-data-[mobile-pane=rail]:[&_.convo-sidebar]:static " +
+  "max-768:group-data-[mobile-pane=rail]:[&_.convo-sidebar]:transform-none " +
+  "max-768:group-data-[mobile-pane=rail]:[&_.convo-sidebar]:transition-none " +
+  "max-768:group-data-[mobile-pane=rail]:[&_.convo-sidebar]:flex-1 " +
+  "max-768:group-data-[mobile-pane=rail]:[&_.convo-sidebar]:min-h-0 " +
+  "max-768:group-data-[mobile-pane=rail]:[&_.convo-sidebar]:w-full " +
+  "max-768:group-data-[mobile-pane=rail]:[&_.convo-sidebar]:min-w-0 " +
+  "max-768:group-data-[mobile-pane=rail]:[&_.convo-sidebar]:h-auto " +
+  "max-768:group-data-[mobile-pane=rail]:[&_.convo-sidebar]:border-r-0 " +
+  "max-768:group-data-[mobile-pane=rail]:[&_.convo-sidebar]:z-auto " +
+  // The host-owned collapse toggle and the drawer close button are meaningless
+  // when the rail is the only visible pane.
+  "max-768:group-data-[mobile-pane=rail]:[&_.convo-sidebar-close]:hidden";
+
+const RAIL_TOGGLE_ROW_CLASS =
+  "flex justify-end shrink-0 max-768:group-data-[mobile-pane=rail]:hidden";
+
+const WORKSPACE_PANE_CLASS =
+  "[grid-area:conversation] flex min-w-0 min-h-0 h-full overflow-hidden " +
+  "max-768:hidden max-768:group-data-[mobile-pane=chat]:flex " +
+  "max-768:group-data-[mobile-pane=chat]:flex-1 max-768:group-data-[mobile-pane=chat]:min-h-0";
+
+const PANE_CLASS =
+  "flex-1 flex flex-col min-h-0 min-w-0 h-full bg-bg-surface overflow-hidden";
+
+const PANE_EMPTY_CLASS =
+  "flex-1 min-h-0 flex flex-col items-center justify-center gap-xs px-lg py-xl text-center";
+
+const PANE_COMPOSER_CLASS =
+  "shrink-0 px-md py-md max-768:py-sm border-x-0 border-b-0 border-t border-solid border-border-dim bg-bg-base";
 
 function ChevronGlyph({ dir }: { dir: "left" | "right" }): React.JSX.Element {
   return (
@@ -298,15 +384,17 @@ export default function ProjectCockpit({
         diffSurface={<MainDiffSurface projectName={projectName} />}
       />
     ) : (
-      <section className="plc-pane plc-pane--empty" data-agent={agentBackend}>
-        <div className="plc-pane-empty">
-          <p className="plc-pane-empty-title">No open conversations</p>
-          <p className="plc-pane-empty-hint">
+      <section className={PANE_CLASS} data-agent={agentBackend}>
+        <div className={PANE_EMPTY_CLASS}>
+          <p className="m-0 font-semibold text-text-secondary">
+            No open conversations
+          </p>
+          <p className="m-0 max-w-[42ch] leading-[1.5] text-text-tertiary">
             Send a prompt to start a new conversation, or reopen a closed one
             from the rail.
           </p>
         </div>
-        <div className="plc-pane-composer">{composer}</div>
+        <div className={PANE_COMPOSER_CLASS}>{composer}</div>
       </section>
     );
   const showingConversations = workspaceView === "conversations";
@@ -314,88 +402,93 @@ export default function ProjectCockpit({
 
   return (
     <div
-      className={`plc-cockpit${entering ? " plc-enter" : ""}`}
+      className={cn(COCKPIT_CLASS, entering && ENTER_CLASS)}
       data-rail-collapsed={railCollapsed}
       data-workspace-view={workspaceView}
       data-mobile-pane={mobilePane}
     >
-      <div
-        className="plc-view-switch cc-tabs"
+      <Tabs
         role="tablist"
         aria-label="Project view"
+        layoutClassName={VIEW_SWITCH_LAYOUT}
       >
-        <button
+        <Tab
           type="button"
           role="tab"
           aria-selected={workspaceView === "sessions"}
           aria-controls="plc-sessions-panel"
-          className={`cc-tab${workspaceView === "sessions" ? " active" : ""}`}
+          active={workspaceView === "sessions"}
           onClick={() => setWorkspaceView("sessions")}
+          layoutClassName={TAB_FILL_LAYOUT}
         >
           Sessions
-          <span className="cc-tab-count">{sessions.length}</span>
-        </button>
-        <button
+          <TabCount active={workspaceView === "sessions"}>
+            {sessions.length}
+          </TabCount>
+        </Tab>
+        <Tab
           type="button"
           role="tab"
           aria-selected={workspaceView === "conversations"}
           aria-controls="plc-conversation-workspace"
-          className={`cc-tab${workspaceView === "conversations" ? " active" : ""}`}
+          active={workspaceView === "conversations"}
           onClick={() => setWorkspaceView("conversations")}
+          layoutClassName={TAB_FILL_LAYOUT}
         >
           Conversations
-          <span className="cc-tab-count">{openConversations.length}</span>
-        </button>
-      </div>
-      <div
-        className="plc-mobile-switch cc-tabs"
-        role="tablist"
-        aria-label="Conversation pane"
-      >
-        {MOBILE_PANES.map((pane) => (
-          <button
-            key={pane.id}
-            type="button"
-            role="tab"
-            aria-selected={mobilePane === pane.id}
-            className={`cc-tab${mobilePane === pane.id ? " active" : ""}`}
-            onClick={() => handleMobilePane(pane.id)}
-          >
-            {pane.label}
-          </button>
-        ))}
+          <TabCount active={workspaceView === "conversations"}>
+            {openConversations.length}
+          </TabCount>
+        </Tab>
+      </Tabs>
+      <div className={MOBILE_SWITCH_WRAP}>
+        <Tabs role="tablist" aria-label="Conversation pane">
+          {MOBILE_PANES.map((pane) => (
+            <Tab
+              key={pane.id}
+              type="button"
+              role="tab"
+              aria-selected={mobilePane === pane.id}
+              active={mobilePane === pane.id}
+              onClick={() => handleMobilePane(pane.id)}
+              layoutClassName={TAB_FILL_LAYOUT}
+            >
+              {pane.label}
+            </Tab>
+          ))}
+        </Tabs>
       </div>
       {showingConversations && (
         <>
           <div
-            className="plc-rail"
+            className={RAIL_CLASS}
             id="plc-conversation-list"
             data-collapsed={railCollapsed}
           >
             {railCollapsed ? (
-              <div className="plc-rail-collapsed">
-                <button
+              <div className="flex flex-col items-center py-sm">
+                <IconButton
                   type="button"
-                  className="btn-icon-only"
+                  variant="square"
                   aria-label="Expand conversations rail"
                   data-tooltip="Expand rail"
                   onClick={toggleRail}
                 >
                   <ChevronGlyph dir="right" />
-                </button>
+                </IconButton>
               </div>
             ) : (
               <>
-                <div className="plc-rail-toggle-row">
-                  <button
+                <div className={RAIL_TOGGLE_ROW_CLASS}>
+                  <IconButton
                     type="button"
-                    className="btn-icon-only"
+                    variant="square"
                     aria-label="Collapse conversations rail"
                     data-tooltip="Collapse rail"
                     onClick={toggleRail}
                   >
                     <ChevronGlyph dir="left" />
-                  </button>
+                  </IconButton>
                 </div>
                 {rail}
               </>
@@ -403,7 +496,7 @@ export default function ProjectCockpit({
           </div>
           <div
             id="plc-conversation-workspace"
-            className="plc-workspace-pane"
+            className={WORKSPACE_PANE_CLASS}
             role="tabpanel"
             aria-label="Conversations"
           >

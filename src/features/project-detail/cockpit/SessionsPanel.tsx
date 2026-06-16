@@ -2,6 +2,11 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { CloseIcon } from "@/components/icons";
+import {
+  EmptyState,
+  EmptyStateTitle,
+  EmptyStateDesc,
+} from "@/components/ui/EmptyState";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import { useBulkSessionsMutation } from "@/lib/sessions/mutations";
 import { applyFilters } from "../components/apply-filters";
@@ -16,7 +21,6 @@ import {
 } from "../components/bulk-selection";
 import type { FilterToken } from "../components/filter-tokens";
 import SessionsFilterPopover from "./SessionsFilterPopover";
-import "./styles/cockpit.css";
 
 export interface SessionsPanelProps {
   id?: string;
@@ -28,6 +32,34 @@ export interface SessionsPanelProps {
   onTokensChange: (next: FilterToken[]) => void;
   onBranch?: (sessionName: string) => void;
 }
+
+// Grid `sessions` area in the cockpit; visible only in the sessions workspace
+// view. On the ≤768px spine the cockpit becomes a single-panel flex column, so
+// the panel hides unless sessions is the active view (data driven from the
+// cockpit `group`). Desktop-first `max-768:` transcribes the legacy media rules.
+const ROOT_CLASS =
+  "[grid-area:sessions] flex flex-col min-h-0 min-w-0 h-full bg-bg-base overflow-hidden " +
+  "group-data-[workspace-view=conversations]:hidden " +
+  "max-768:hidden max-768:group-data-[workspace-view=sessions]:flex " +
+  "max-768:group-data-[workspace-view=sessions]:flex-1 max-768:group-data-[workspace-view=sessions]:min-h-0";
+
+const HEADER_CLASS =
+  "flex flex-col gap-sm p-md border-x-0 border-t-0 border-b border-solid border-border-dim shrink-0";
+
+const SEARCH_CLASS =
+  "flex-1 min-w-0 bg-bg-surface border border-solid border-border-subtle rounded-md px-sm py-xs " +
+  "text-text-primary font-mono text-[0.78rem] focus:outline-none focus:border-cyan " +
+  "focus:shadow-[0_0_0_1px_var(--color-cyan-glow)]";
+
+const CHIP_CLASS =
+  "inline-flex items-center gap-2xs px-xs py-2xs rounded-full bg-amber-glow border border-solid " +
+  "border-amber-glow text-amber font-mono text-[0.7rem]";
+
+const CHIP_REMOVE_CLASS =
+  "inline-flex border-0 bg-transparent text-inherit cursor-pointer p-0 leading-none";
+
+const CHIP_CLEAR_CLASS =
+  "border-0 bg-transparent text-text-tertiary font-mono text-[0.7rem] cursor-pointer hover:text-text-primary";
 
 /**
  * The cockpit's sessions column (and the full-width first-run table): a
@@ -116,16 +148,16 @@ export default function SessionsPanel({
   return (
     <div
       id={id}
-      className="plc-sessions"
+      className={ROOT_CLASS}
       role="tabpanel"
       aria-label="Sessions"
       hidden={hidden}
     >
-      <div className="plc-sessions-header">
-        <div className="plc-sessions-searchrow">
+      <div className={HEADER_CLASS}>
+        <div className="flex gap-sm items-center">
           <input
             type="search"
-            className="plc-sessions-search"
+            className={SEARCH_CLASS}
             placeholder="Search name or branch"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -138,13 +170,13 @@ export default function SessionsPanel({
           />
         </div>
         {hasTokens && (
-          <div className="plc-chips">
+          <div className="flex flex-wrap gap-xs items-center">
             {tokens.map((token) => (
-              <span key={`${token.cat}:${token.value}`} className="plc-chip">
+              <span key={`${token.cat}:${token.value}`} className={CHIP_CLASS}>
                 {token.key}:{token.value}
                 <button
                   type="button"
-                  className="plc-chip-remove"
+                  className={CHIP_REMOVE_CLASS}
                   aria-label={`Remove ${token.key}:${token.value} filter`}
                   onClick={() => removeToken(token)}
                 >
@@ -154,7 +186,7 @@ export default function SessionsPanel({
             ))}
             <button
               type="button"
-              className="plc-chip-clear"
+              className={CHIP_CLEAR_CLASS}
               onClick={() => onTokensChange([])}
             >
               Clear all
@@ -187,25 +219,25 @@ export default function SessionsPanel({
         onClose={() => setConfirmKind(null)}
       />
 
-      <div className="plc-sessions-body">
+      <div className="flex-1 min-h-0 overflow-y-auto p-sm">
         {noSessionsAtAll ? (
-          <div className="empty-state">
-            <div className="empty-state-title">No sessions yet</div>
-            <div className="empty-state-desc">
+          <EmptyState>
+            <EmptyStateTitle>No sessions yet</EmptyStateTitle>
+            <EmptyStateDesc>
               Create a session to start working in this project.
-            </div>
-          </div>
+            </EmptyStateDesc>
+          </EmptyState>
         ) : emptyAfterFilter ? (
-          <div className="empty-state">
-            <div className="empty-state-title">No sessions match</div>
-            <div className="empty-state-desc">
+          <EmptyState>
+            <EmptyStateTitle>No sessions match</EmptyStateTitle>
+            <EmptyStateDesc>
               {hasSearch && hasTokens
                 ? `Nothing matches “${search}” with the active filters.`
                 : hasSearch
                   ? `Nothing matches “${search}”.`
                   : "Nothing matches the active filters."}
-            </div>
-          </div>
+            </EmptyStateDesc>
+          </EmptyState>
         ) : (
           <SessionRows
             sessions={filtered}

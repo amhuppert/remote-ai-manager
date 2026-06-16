@@ -19,7 +19,16 @@ import {
   type RenderSpawnCardRow,
   type SpawnCardRowData,
 } from "./spawn-card-slot";
-import "./styles/cockpit.css";
+import {
+  EmptyState,
+  EmptyStateTitle,
+  EmptyStateDesc,
+} from "@/components/ui/EmptyState";
+
+// Matches the session transcript body inset (.panel-body) so per-message
+// spacing comes from the shared ConversationVirtuosoItem; tightens to the
+// mobile gutter at the ≤768px spine.
+const TRANSCRIPT_CLASS = "flex-1 min-h-0 flex flex-col p-lg max-768:p-md";
 
 export interface ProjectTranscriptHostProps {
   projectName: string;
@@ -103,7 +112,7 @@ export default function ProjectTranscriptHost({
 
   if (!messagesQuery.isPending && messages.length === 0 && cards.length === 0) {
     return (
-      <div className="plc-transcript">
+      <div className={TRANSCRIPT_CLASS}>
         {running ? (
           <TypingIndicator
             selectedBackend={selectedBackend}
@@ -111,19 +120,19 @@ export default function ProjectTranscriptHost({
             hasAssistantOptimistic={false}
           />
         ) : (
-          <div className="plc-transcript-empty empty-state">
-            <div className="empty-state-title">No messages yet</div>
-            <div className="empty-state-desc">
+          <EmptyState layoutClassName="grow">
+            <EmptyStateTitle>No messages yet</EmptyStateTitle>
+            <EmptyStateDesc>
               Send a prompt to start this conversation.
-            </div>
-          </div>
+            </EmptyStateDesc>
+          </EmptyState>
         )}
       </div>
     );
   }
 
   return (
-    <div className="plc-transcript">
+    <div className={TRANSCRIPT_CLASS}>
       <Virtuoso
         key={conversationId}
         data={rows}

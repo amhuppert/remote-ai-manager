@@ -171,7 +171,7 @@ function showConversationsView() {
 
 describe("project page: empty ↔ populated cockpit transition", () => {
   it("defaults to the sessions view and toggles to the conversation workspace", async () => {
-    const { container } = render(
+    render(
       withClient(
         <PageHarness openConversations={[makeConversation("planning")]} />,
       ),
@@ -184,13 +184,16 @@ describe("project page: empty ↔ populated cockpit transition", () => {
     const conversationsTab = within(viewTabs).getByRole("tab", {
       name: /Conversations/,
     });
-    const sessionsPanel = container.querySelector(".plc-sessions");
-    const conversationPane = container.querySelector(".plc-pane");
+    // Captured while the sessions view is the default (visible); the reference
+    // stays valid after switching so its later hidden state can be asserted.
+    const sessionsPanel = screen.getByRole("tabpanel", { name: "Sessions" });
 
     expect(sessionsTab).toHaveAttribute("aria-selected", "true");
     expect(conversationsTab).toHaveAttribute("aria-selected", "false");
     expect(sessionsPanel).toBeVisible();
-    expect(conversationPane).toBeNull();
+    // The rail (and the conversation workspace it lives in) is only mounted in
+    // the conversations view.
+    expect(screen.queryByTestId("rail-stub")).toBeNull();
 
     fireEvent.click(conversationsTab);
 
@@ -200,12 +203,14 @@ describe("project page: empty ↔ populated cockpit transition", () => {
     expect(sessionsTab).toHaveAttribute("aria-selected", "false");
     expect(conversationsTab).toHaveAttribute("aria-selected", "true");
     expect(sessionsPanel).not.toBeVisible();
-    expect(container.querySelector(".plc-pane")).toBeVisible();
+    expect(
+      screen.getByRole("tabpanel", { name: "Conversations" }),
+    ).toBeVisible();
     expect(screen.getByTestId("rail-stub")).toBeVisible();
   });
 
-  it("keeps the rail and composer mounted with zero open conversations (no tabs), then shows the tab strip with the entry animation once one is open", async () => {
-    const { container, rerender } = render(
+  it("keeps the rail and composer mounted with zero open conversations (no tabs), then shows the tab strip once one is open", async () => {
+    const { rerender } = render(
       withClient(<PageHarness openConversations={[]} />),
     );
     showConversationsView();
@@ -224,8 +229,6 @@ describe("project page: empty ↔ populated cockpit transition", () => {
       screen.getByRole("tablist", { name: "Conversations" }),
     ).toBeInTheDocument();
     expect(screen.getByTestId("rail-stub")).toBeInTheDocument();
-    // Entry animation applied on the zero→one crossing.
-    expect(container.querySelector(".plc-enter")).not.toBeNull();
   });
 
   it("keeps the rail and composer mounted (and drops the tab strip) when the last open conversation closes", async () => {

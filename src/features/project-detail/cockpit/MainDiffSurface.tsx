@@ -1,14 +1,20 @@
 "use client";
 
 import DiffPanel from "@/features/session/git/DiffPanel";
+import {
+  EmptyState,
+  EmptyStateTitle,
+  EmptyStateDesc,
+} from "@/components/ui/EmptyState";
 import { useMainWorktreeDiffQuery } from "@/lib/git/queries";
-import "./styles/cockpit.css";
 
 export interface MainDiffSurfaceProps {
   projectName: string;
   /** Scopes the diff navigation hotkeys to when the surface is visible. */
   active?: boolean;
 }
+
+const SURFACE_CLASS = "flex flex-col min-h-0 flex-1";
 
 /**
  * Read-only diff/review surface for the project's main worktree. Mounts the
@@ -25,10 +31,10 @@ export default function MainDiffSurface({
 
   if (diffQuery.isPending) {
     return (
-      <div className="plc-diff">
-        <div className="plc-diff-empty empty-state">
-          <div className="empty-state-title">Loading diff…</div>
-        </div>
+      <div className={SURFACE_CLASS}>
+        <EmptyState layoutClassName="grow">
+          <EmptyStateTitle>Loading diff…</EmptyStateTitle>
+        </EmptyState>
       </div>
     );
   }
@@ -38,19 +44,19 @@ export default function MainDiffSurface({
 
   if (!hasChanges) {
     return (
-      <div className="plc-diff">
-        <div className="plc-diff-empty empty-state">
-          <div className="empty-state-title">No changes</div>
-          <div className="empty-state-desc">
+      <div className={SURFACE_CLASS}>
+        <EmptyState layoutClassName="grow">
+          <EmptyStateTitle>No changes</EmptyStateTitle>
+          <EmptyStateDesc>
             The main worktree has no uncommitted changes.
-          </div>
-        </div>
+          </EmptyStateDesc>
+        </EmptyState>
       </div>
     );
   }
 
   return (
-    <div className="plc-diff">
+    <div className={SURFACE_CLASS}>
       <DiffPanel
         diff={diff}
         projectName={projectName}

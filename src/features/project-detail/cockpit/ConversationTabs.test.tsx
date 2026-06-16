@@ -44,8 +44,8 @@ describe("ConversationTabs", () => {
     // Beta is non-active + unread → dot; Gamma is active → no dot even though unread.
     const beta = screen.getByRole("tab", { name: /Beta/ });
     const gamma = screen.getByRole("tab", { name: /Gamma/ });
-    expect(beta.querySelector(".plc-tab-unread")).not.toBeNull();
-    expect(gamma.querySelector(".plc-tab-unread")).toBeNull();
+    expect(beta.querySelector('[aria-label="Unread activity"]')).not.toBeNull();
+    expect(gamma.querySelector('[aria-label="Unread activity"]')).toBeNull();
   });
 
   it("renders a per-tab status indicator reflecting the turn status", () => {
@@ -62,9 +62,11 @@ describe("ConversationTabs", () => {
     const alpha = screen.getByRole("tab", { name: /Alpha/ }); // running
     const beta = screen.getByRole("tab", { name: /Beta/ }); // new
     const gamma = screen.getByRole("tab", { name: /Gamma/ }); // awaiting
-    expect(alpha.querySelector(".status-dot.cyan")).not.toBeNull();
-    expect(gamma.querySelector(".status-dot.amber")).not.toBeNull();
-    expect(beta.querySelector(".status-dot")).toBeNull();
+    // The StatusDot primitive exposes its tone via `data-tone`; running → cyan,
+    // awaiting → amber, and the resting 'new' status renders no dot.
+    expect(alpha.querySelector('[data-tone="cyan"]')).not.toBeNull();
+    expect(gamma.querySelector('[data-tone="amber"]')).not.toBeNull();
+    expect(beta.querySelector("[data-tone]")).toBeNull();
   });
 
   it("selects a tab on click", () => {
