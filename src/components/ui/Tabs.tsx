@@ -26,21 +26,35 @@ const tabBase =
 const tabState =
   "text-text-secondary data-[active=true]:bg-cyan data-[active=true]:text-text-inverse data-[active=false]:hover:bg-bg-hover data-[active=false]:hover:text-text-primary";
 
+// Fill/touch mode: on the mobile spine each tab centers its label and grows to a
+// 36px touch target. The parent supplies the equal-split geometry
+// (`grow shrink basis-0`) via `layoutClassName`; the primitive owns the
+// appearance (`justify-center`/`min-h`), which the layout-only allowlist forbids
+// in `layoutClassName` (docs/tailwind-conventions.md §2).
+const tabFill = "max-768:justify-center max-768:min-h-[36px]";
+
 export type TabProps = Omit<
   ButtonHTMLAttributes<HTMLButtonElement>,
   "className" | "style"
 > & {
   active?: boolean;
+  /** Mobile-spine fill/touch treatment: center the label, 36px min-height. */
+  fill?: boolean;
   /** External-geometry utilities only; appended after appearance. */
   layoutClassName?: string;
 };
 
-export function Tab({ active = false, layoutClassName, ...rest }: TabProps) {
+export function Tab({
+  active = false,
+  fill = false,
+  layoutClassName,
+  ...rest
+}: TabProps) {
   return (
     <button
       {...rest}
       data-active={active}
-      className={cn(tabBase, tabState, layoutClassName)}
+      className={cn(tabBase, tabState, fill && tabFill, layoutClassName)}
     />
   );
 }

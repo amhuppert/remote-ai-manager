@@ -16,6 +16,14 @@ export type ButtonProps = Omit<
   variant?: ButtonVariant;
   size?: ButtonSize;
   /**
+   * Opt-in mobile-spine touch sizing: 44px min-height + enlarged horizontal
+   * padding below 768px (mirrors the global `.btn-sm` mobile touch target the
+   * primitive otherwise does not bake in). The primitive owns this box
+   * appearance; the layout-only allowlist forbids `min-h`/padding in
+   * `layoutClassName` (docs/tailwind-conventions.md §2).
+   */
+  touch?: boolean;
+  /**
    * External-geometry utilities applied by the parent (margin, grid/flex
    * placement, order, self-align, width/basis). Appended after the appearance
    * utilities and never overrides them. NOT for appearance — the primitive owns
@@ -23,6 +31,8 @@ export type ButtonProps = Omit<
    */
   layoutClassName?: string;
 };
+
+const touchClass = "max-768:min-h-[44px] max-768:px-[16px]";
 
 // Invariant box only: layout, border width/style, radius, font family, gap,
 // transition. Background, border-color, text color, and font-weight vary by
@@ -54,6 +64,7 @@ const sizeClass: Record<ButtonSize, string> = {
 export function Button({
   variant = "default",
   size = "md",
+  touch = false,
   layoutClassName,
   ...rest
 }: ButtonProps) {
@@ -64,6 +75,7 @@ export function Button({
         base,
         variantClass[variant],
         sizeClass[size],
+        touch && touchClass,
         layoutClassName,
       )}
     />

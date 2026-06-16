@@ -141,6 +141,19 @@ describe("Button", () => {
     expect(el.className.trim().endsWith("ml-auto")).toBe(true);
   });
 
+  it("touch adds the mobile-spine 44px touch sizing (off by default)", () => {
+    const plain = root(<Button size="sm">x</Button>);
+    expect(plain.className).not.toContain("max-768:min-h-[44px]");
+    expect(plain.className).not.toContain("max-768:px-[16px]");
+
+    const el = root(
+      <Button size="sm" touch>
+        x
+      </Button>,
+    );
+    expectAll(el, ["max-768:min-h-[44px]", "max-768:px-[16px]"]);
+  });
+
   it("forwards native button attributes (children/onClick survive the Omit)", () => {
     const el = root(
       <Button type="submit" disabled aria-label="go">
@@ -329,6 +342,15 @@ describe("Tabs / Tab / TabCount", () => {
 
     const active = root(<Tab active>One</Tab>);
     expect(active.getAttribute("data-active")).toBe("true");
+  });
+
+  it("fill adds the mobile-spine centre + 36px touch sizing (off by default)", () => {
+    const plain = root(<Tab>One</Tab>);
+    expect(plain.className).not.toContain("max-768:justify-center");
+    expect(plain.className).not.toContain("max-768:min-h-[36px]");
+
+    const filled = root(<Tab fill>One</Tab>);
+    expectAll(filled, ["max-768:justify-center", "max-768:min-h-[36px]"]);
   });
 
   it("TabCount opacity steps with active", () => {

@@ -27,18 +27,6 @@ const OPT_CLASS =
   "text-text-secondary font-mono text-[0.72rem] cursor-pointer " +
   "data-[on=true]:border-cyan data-[on=true]:text-cyan data-[on=true]:bg-cyan-glow";
 
-// CONFLICT (recorded per the charter source-of-truth protocol): globals.css has a
-// global `@media (max-width:768px) .btn-sm { min-height:44px; padding:10px 16px }`
-// touch-target enlargement that the shared Button primitive (read-only here) does
-// NOT bake in — unlike IconButton, which bakes in its mobile enlargement. Without
-// it the migrated Filter button renders 27px tall at the 390px mobile viewport vs
-// the legacy 44px, shifting the popover. Requirement-level visual parity (rank 1)
-// outranks the design's layoutClassName-only rule (rank 2): the enlargement is
-// reattached here via layoutClassName (min-height + padding override; padding owns
-// the box, so this is the documented parity exception) pending the Button primitive
-// gaining the global `.btn-sm` mobile touch sizing (flagged for integration).
-const FILTER_BTN_LAYOUT = "max-768:min-h-[44px] max-768:px-[16px]";
-
 function toggleToken(
   tokens: FilterToken[],
   candidate: FilterToken,
@@ -97,7 +85,7 @@ export default function SessionsFilterPopover({
         type="button"
         variant="ghost"
         size="sm"
-        layoutClassName={FILTER_BTN_LAYOUT}
+        touch
         aria-haspopup="true"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}

@@ -94,19 +94,14 @@ const ENTER_CLASS =
 const VIEW_SWITCH_LAYOUT =
   "col-start-1 col-span-2 row-start-1 justify-self-start mx-md mb-sm max-768:self-stretch max-768:shrink-0";
 
-// CONFLICT (recorded per the charter source-of-truth protocol): the legacy
-// `.plc-view-switch .cc-tab` / `.plc-mobile-switch .cc-tab` mobile rules size
-// each tab to a centred, full-width, 36px touch target via `flex: 1`. The
-// `flex: 1` shorthand is `1 1 0%` (zero basis → equal 50/50 split regardless of
-// label width); it is reproduced allowlist-cleanly with `grow shrink basis-0`
-// (NOT `grow` alone — its `basis:auto` would weight tab widths by label length,
-// the parity drift the validator caught). `justify-content`/`min-height` are not
-// on the layoutClassName allowlist and the Tabs primitive (read-only here) has
-// no fill/touch mode, so requirement-level visual parity (rank 1) outranks the
-// design's layoutClassName-only rule (rank 2): they are applied here pending a
-// Tabs primitive fill/touch capability (flagged for the integration context).
-const TAB_FILL_LAYOUT =
-  "max-768:grow max-768:shrink max-768:basis-0 max-768:justify-center max-768:min-h-[36px]";
+// On the mobile spine the view/pane tabs become a centred, equal-width, 36px
+// touch target (legacy `.plc-view-switch .cc-tab` / `.plc-mobile-switch .cc-tab`
+// at max-768). The equal-split geometry is `flex: 1` = `1 1 0%`, reproduced as
+// `grow shrink basis-0` (NOT `grow` alone — its `basis:auto` would weight tab
+// widths by label length). The centring + 36px min-height are appearance the Tab
+// primitive owns via its `fill` prop; `layoutClassName` carries only this
+// allowlisted external geometry (docs/tailwind-conventions.md §2).
+const TAB_FILL_LAYOUT = "max-768:grow max-768:shrink max-768:basis-0";
 
 const MOBILE_SWITCH_WRAP =
   "hidden max-768:group-data-[workspace-view=conversations]:block mx-md mb-sm shrink-0";
@@ -419,6 +414,7 @@ export default function ProjectCockpit({
           aria-controls="plc-sessions-panel"
           active={workspaceView === "sessions"}
           onClick={() => setWorkspaceView("sessions")}
+          fill
           layoutClassName={TAB_FILL_LAYOUT}
         >
           Sessions
@@ -433,6 +429,7 @@ export default function ProjectCockpit({
           aria-controls="plc-conversation-workspace"
           active={workspaceView === "conversations"}
           onClick={() => setWorkspaceView("conversations")}
+          fill
           layoutClassName={TAB_FILL_LAYOUT}
         >
           Conversations
@@ -451,6 +448,7 @@ export default function ProjectCockpit({
               aria-selected={mobilePane === pane.id}
               active={mobilePane === pane.id}
               onClick={() => handleMobilePane(pane.id)}
+              fill
               layoutClassName={TAB_FILL_LAYOUT}
             >
               {pane.label}
