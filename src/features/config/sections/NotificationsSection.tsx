@@ -1,3 +1,4 @@
+import { FormInput } from "@/components/ui/FormField";
 import { ConfigField } from "../components/ConfigField";
 import { ConfigPillGroup } from "../components/ConfigPillGroup";
 import { ConfigToggle } from "../components/ConfigToggle";
@@ -60,8 +61,7 @@ export function NotificationsSection({
           isDefault={isDefault("pushNotification.serverUrl")}
           isModified={isModified("pushNotification.serverUrl")}
         >
-          <input
-            className="form-input"
+          <FormInput
             type="text"
             value={formState.pushNotification?.serverUrl ?? ""}
             onChange={(e) =>
@@ -77,8 +77,7 @@ export function NotificationsSection({
           isModified={isModified("pushNotification.topic")}
           hint="A long random string keeps your notification stream private."
         >
-          <input
-            className="form-input"
+          <FormInput
             type="text"
             value={formState.pushNotification?.topic ?? ""}
             onChange={(e) =>

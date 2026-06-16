@@ -20,7 +20,7 @@ describe("GeneralSection", () => {
     render(<GeneralSection controller={controller} />);
     const baseDir = screen
       .getByText("Base directory")
-      .closest(".config-field")!
+      .closest("[data-field]")!
       .querySelector("input")!;
     fireEvent.change(baseDir, { target: { value: "/new/path" } });
     expect(getState().baseDir).toBe("/new/path");
@@ -31,7 +31,7 @@ describe("GeneralSection", () => {
     render(<GeneralSection controller={controller} />);
     const toggle = screen
       .getByText("Tailscale enabled")
-      .closest(".config-field")!
+      .closest("[data-field]")!
       .querySelector('[role="switch"]')! as HTMLElement;
     fireEvent.click(toggle);
     expect(getState().tailscaleEnabled).toBe(true);
@@ -42,8 +42,9 @@ describe("GeneralSection", () => {
     render(<GeneralSection controller={controller} />);
     expect(screen.getByText("node_modules")).toBeVisible();
     expect(screen.getByText(".next")).toBeVisible();
+    // Read-only is surfaced behaviorally by the LOCKED badge on the field.
     expect(
-      screen.getByText("Ignore patterns").closest(".config-field")?.className,
-    ).toContain("config-field-readonly");
+      screen.getByText("Ignore patterns").closest("[data-field]")!.textContent,
+    ).toContain("LOCKED");
   });
 });

@@ -18,9 +18,12 @@ describe("DefaultsSection", () => {
   it("clicking the codex pill switches the backend and clears claude model/effort", () => {
     const { controller, getState } = makeController();
     render(<DefaultsSection controller={controller} />);
-    const codexBtn = screen
-      .getAllByRole("button", { name: "codex" })
-      .find((b) => b.className.includes("config-pill-btn"))!;
+    const backendField = screen
+      .getByText("Backend")
+      .closest('[data-field="defaultAgentBackend"]')!;
+    const codexBtn = [...backendField.querySelectorAll("button")].find(
+      (b) => b.textContent === "codex",
+    )!;
     fireEvent.click(codexBtn);
     const state = getState();
     expect(state.defaultAgentBackend).toBe("codex");

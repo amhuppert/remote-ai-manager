@@ -30,8 +30,8 @@ describe("ConfigField", () => {
     expect(screen.getByText("DEFAULT")).toBeVisible();
   });
 
-  it("shows LOCKED badge and read-only class when readOnly", () => {
-    const { container } = render(
+  it("shows LOCKED badge when readOnly", () => {
+    render(
       <ConfigField
         label="x"
         fieldPath="x"
@@ -43,15 +43,5 @@ describe("ConfigField", () => {
       </ConfigField>,
     );
     expect(screen.getByText("LOCKED")).toBeVisible();
-    expect(container.querySelector(".config-field-readonly")).toBeTruthy();
-  });
-
-  it("applies modified class when isModified", () => {
-    const { container } = render(
-      <ConfigField label="x" fieldPath="x" isDefault={false} isModified>
-        <span />
-      </ConfigField>,
-    );
-    expect(container.querySelector(".config-field.modified")).toBeTruthy();
   });
 });

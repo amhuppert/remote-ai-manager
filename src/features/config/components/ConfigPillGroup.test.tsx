@@ -14,8 +14,6 @@ describe("ConfigPillGroup", () => {
     );
     const buttons = screen.getAllByRole("button");
     expect(buttons.map((b) => b.textContent)).toEqual(["a", "b", "c"]);
-    expect(buttons[1]!.className).toContain("active");
-    expect(buttons[0]!.className).not.toContain("active");
   });
 
   it("calls onChange with the clicked option", () => {

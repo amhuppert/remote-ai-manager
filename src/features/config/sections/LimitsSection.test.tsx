@@ -21,7 +21,7 @@ describe("LimitsSection", () => {
     render(<LimitsSection controller={controller} />);
     const input = screen
       .getByText("Claude timeout")
-      .closest(".config-field")!
+      .closest("[data-field]")!
       .querySelector("input")! as HTMLInputElement;
     fireEvent.change(input, { target: { value: "30" } });
     expect(getState().claudeTimeoutMs).toBe(1_800_000);
@@ -32,7 +32,7 @@ describe("LimitsSection", () => {
     render(<LimitsSection controller={controller} />);
     const input = screen
       .getByText("Max turns")
-      .closest(".config-field")!
+      .closest("[data-field]")!
       .querySelector("input")! as HTMLInputElement;
     fireEvent.change(input, { target: { value: "" } });
     expect(getState().maxTurns).toBeUndefined();

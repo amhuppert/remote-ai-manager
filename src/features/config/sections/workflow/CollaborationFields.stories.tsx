@@ -1,7 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { useState } from "react";
 import { fn } from "storybook/test";
-import "@/features/config/styles/config-editor.css";
 import type { WorkflowCollaborationConfig } from "@/lib/workflows/schemas";
 import { ConfigSubsection } from "../../components/ConfigSubsection";
 import { CollaborationFields } from "./CollaborationFields";

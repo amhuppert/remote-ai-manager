@@ -1,3 +1,4 @@
+import { FormInput } from "@/components/ui/FormField";
 import { ConfigField } from "../components/ConfigField";
 import { ConfigToggle } from "../components/ConfigToggle";
 import { SettingsPage } from "../components/SettingsPage";
@@ -27,8 +28,7 @@ export function GeneralSection({
           isModified={isModified("baseDir")}
           hint="Repositories must live under this path."
         >
-          <input
-            className="form-input"
+          <FormInput
             type="text"
             value={formState.baseDir}
             onChange={(e) => handleChange("baseDir", e.target.value)}
@@ -41,8 +41,7 @@ export function GeneralSection({
           isModified={isModified("branchPrefix")}
           hint='Used when creating session branches (default: "csm").'
         >
-          <input
-            className="form-input"
+          <FormInput
             type="text"
             value={formState.branchPrefix ?? ""}
             onChange={(e) =>
@@ -61,9 +60,12 @@ export function GeneralSection({
           readOnly
           hint="Directories and globs excluded from worktree operations and indexing."
         >
-          <div className="config-tags">
+          <div className="flex flex-wrap gap-[6px] min-h-[44px] px-[10px] py-[8px] rounded-md border border-solid border-border-default bg-bg-base">
             {formState.ignorePatterns.map((pattern) => (
-              <span key={pattern} className="config-tag">
+              <span
+                key={pattern}
+                className="inline-flex items-center px-[9px] py-[3px] rounded-sm border border-solid border-border-subtle bg-bg-raised text-text-primary font-mono text-[0.74rem]"
+              >
                 {pattern}
               </span>
             ))}

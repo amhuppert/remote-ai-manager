@@ -1,4 +1,15 @@
 import type { ReactNode } from "react";
+import { cn } from "@/lib/ui/cn";
+import { FormHint } from "@/components/ui/FormField";
+
+const FIELD_BASE =
+  "relative flex flex-col gap-[5px] min-w-0 mb-lg last:mb-0 " +
+  "border-y-0 border-r-0 border-l-2 border-solid " +
+  "transition-[border-color,padding-left] duration-150 ease-[ease]";
+const FIELD_LABEL =
+  "font-mono text-[0.7rem] font-semibold tracking-[0.06em] uppercase text-text-secondary whitespace-nowrap";
+const FIELD_BADGE_BASE =
+  "ml-auto px-[7px] py-[2px] rounded-full border border-solid border-border-subtle text-text-tertiary font-mono text-[0.7rem] font-semibold tracking-[0.08em] uppercase";
 
 export function ConfigField({
   label,
@@ -17,23 +28,31 @@ export function ConfigField({
   hint?: string;
   children: ReactNode;
 }) {
-  const cls = [
-    "config-field",
-    isModified ? "modified" : "",
-    readOnly ? "config-field-readonly" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-
   return (
-    <div className={cls} data-field={fieldPath}>
-      <div className="config-field-header">
-        <span className="config-field-label">{label}</span>
-        {readOnly && <span className="config-field-lock">LOCKED</span>}
-        {isDefault && <span className="config-badge-default">DEFAULT</span>}
+    <div
+      className={cn(
+        FIELD_BASE,
+        isModified ? "border-l-cyan pl-md" : "border-l-transparent",
+        readOnly && "opacity-60",
+      )}
+      data-field={fieldPath}
+    >
+      <div className="flex items-center gap-sm mb-sm min-h-[18px]">
+        <span className={FIELD_LABEL}>{label}</span>
+        {readOnly && <span className={FIELD_BADGE_BASE}>LOCKED</span>}
+        {isDefault && (
+          <span
+            className={cn(
+              FIELD_BADGE_BASE,
+              "inline-flex items-center bg-bg-raised",
+            )}
+          >
+            DEFAULT
+          </span>
+        )}
       </div>
       {children}
-      {hint && <div className="form-hint">{hint}</div>}
+      {hint && <FormHint>{hint}</FormHint>}
     </div>
   );
 }

@@ -22,10 +22,11 @@ describe("WorkflowSection", () => {
     for (const title of expected) {
       expect(screen.getByText(new RegExp(`^${title}$`))).toBeVisible();
     }
-    const subs = container.querySelectorAll(".config-subsection");
+    const subs = container.querySelectorAll("[data-subsection]");
     expect(subs.length).toBe(7);
     for (const el of subs) {
-      expect(el.className).toContain("config-subsection--default");
+      expect(el.textContent).toContain("DEFAULT");
+      expect(el.textContent).not.toContain("MODIFIED");
     }
   });
 
@@ -44,15 +45,15 @@ describe("WorkflowSection", () => {
 
     const collaboration = container.querySelector(
       '[data-subsection="collaboration"]',
-    );
-    expect(collaboration?.className).toContain("config-subsection--modified");
+    )!;
+    expect(collaboration.textContent).toContain("MODIFIED");
 
-    const threshold = collaboration!.querySelector(
+    const threshold = collaboration.querySelector(
       '[data-field="workflowDefaults.collaboration.autonomousResolutionThreshold"]',
     )!;
-    const blockingPill = Array.from(
-      threshold.querySelectorAll(".config-pill-btn"),
-    ).find((el) => (el.textContent ?? "").trim() === "blocking") as HTMLElement;
+    const blockingPill = Array.from(threshold.querySelectorAll("button")).find(
+      (el) => (el.textContent ?? "").trim() === "blocking",
+    ) as HTMLElement;
     fireEvent.click(blockingPill);
 
     expect(
@@ -72,15 +73,13 @@ describe("WorkflowSection", () => {
     const { container } = render(<WorkflowSection controller={controller} />);
     const iteration = container.querySelector(
       '[data-subsection="iterationPolicy"]',
-    );
-    expect(iteration?.className).toContain("config-subsection--modified");
-    expect(
-      iteration?.querySelector(".config-subsection-badge")?.textContent,
-    ).toBe("MODIFIED");
+    )!;
+    expect(iteration.textContent).toContain("MODIFIED");
     const implementer = container.querySelector(
       '[data-subsection="implementer"]',
-    );
-    expect(implementer?.className).toContain("config-subsection--default");
+    )!;
+    expect(implementer.textContent).toContain("DEFAULT");
+    expect(implementer.textContent).not.toContain("MODIFIED");
   });
 
   it("toggling the Script validator updates only that block via the controller", () => {
@@ -101,9 +100,8 @@ describe("WorkflowSection", () => {
     const { container } = render(<WorkflowSection controller={controller} />);
     const validator = container.querySelector(
       '[data-subsection="contextValidator"]',
-    );
-    const pillLabels = validator!.querySelectorAll(".config-pill-btn");
-    const texts = Array.from(pillLabels).map((el) =>
+    )!;
+    const texts = Array.from(validator.querySelectorAll("button")).map((el) =>
       (el.textContent ?? "").trim().toLowerCase(),
     );
     expect(texts).not.toContain("disabled");
