@@ -11,6 +11,23 @@ export interface DiffSlideoverProps {
   children: ReactNode;
 }
 
+const HEADER_CLASS =
+  "flex items-center gap-md px-lg py-sm border-x-0 border-t-0 border-b border-solid border-border-default bg-bg-base shrink-0";
+
+const CONTEXT_CLASS =
+  "inline-flex items-center gap-xs font-mono font-semibold text-[0.76rem] text-text-primary";
+
+const CONTEXT_DOT_CLASS = "w-[6px] h-[6px] rounded-full bg-green";
+
+const SUBTITLE_CLASS = "font-mono text-[0.66rem] text-text-tertiary";
+
+const CLOSE_CLASS =
+  "ml-auto inline-flex items-center justify-center w-[28px] h-[28px] rounded-sm " +
+  "border border-solid border-border-subtle bg-bg-surface text-text-secondary cursor-pointer " +
+  "transition-[border-color,color] duration-150 ease-[ease] hover:border-red hover:text-red";
+
+const BODY_CLASS = "flex flex-1 min-h-0 flex-col";
+
 function CloseGlyph(): React.JSX.Element {
   return (
     <svg
@@ -65,16 +82,16 @@ export default function DiffSlideover({
         aria-label="Main worktree diff"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <header className="plc-diff-top">
-          <span className="plc-diff-ctx">
-            <span className="plc-diff-ctx-dot" aria-hidden />
+        <header className={HEADER_CLASS}>
+          <span className={CONTEXT_CLASS}>
+            <span className={CONTEXT_DOT_CLASS} aria-hidden />
             {projectName ? `${projectName} · ` : ""}main · worktree
           </span>
-          <span className="plc-diff-sub">Read-only review</span>
+          <span className={SUBTITLE_CLASS}>Read-only review</span>
           <button
             ref={closeRef}
             type="button"
-            className="plc-diff-close"
+            className={CLOSE_CLASS}
             onClick={onClose}
             aria-label="Close diff"
             title="Close (Esc)"
@@ -82,7 +99,7 @@ export default function DiffSlideover({
             <CloseGlyph />
           </button>
         </header>
-        <div className="plc-diff-slideover-body">{children}</div>
+        <div className={BODY_CLASS}>{children}</div>
       </div>
     </div>
   );

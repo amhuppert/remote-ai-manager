@@ -2,14 +2,16 @@
  * Project-conversation cockpit — preserved residual only.
  *
  * The cockpit shell, panes, tabs, transcript, sessions, chips, filter popover,
- * and main-diff surface are authored as Tailwind utilities + the shared UI
- * primitives (Tailwind migration, Stage B). What remains here is the
- * preserved-CSS residual the inventory/ratchet keeps scoped forever:
+ * main-diff surface, and the diff slide-over's authored header/body chrome are
+ * authored as Tailwind utilities + the shared UI primitives (Tailwind
+ * migration, Stage B). What remains here is the preserved-CSS residual the
+ * inventory/ratchet keeps scoped forever:
  *   - the `plc-rise-fade` entry keyframe (referenced by the cockpit's
  *     entry-animation utility),
  *   - the read-only diff slide-over portal/overlay positioning + slide
- *     animations (`.plc-diff-*`, rendered by DiffSlideover.tsx),
- *   - the diff slide-over `prefers-reduced-motion` block.
+ *     animations (`.plc-diff-overlay`, `.plc-diff-slideover`),
+ *   - the diff slide-over `prefers-reduced-motion` block and its mobile
+ *     full-width override.
  */
 
 /* ── Entry animation keyframe (referenced from JSX via a utility) ────────── */
@@ -25,7 +27,7 @@
   }
 }
 
-/* ── Diff slide-over (right-anchored, read-only review overlay) ─────────── */
+/* ── Diff slide-over portal (right-anchored, read-only review overlay) ───── */
 
 .plc-diff-overlay {
   position: fixed;
@@ -57,61 +59,6 @@
   from {
     transform: translateX(100%);
   }
-}
-.plc-diff-top {
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
-  padding: var(--space-sm) var(--space-lg);
-  border-bottom: 1px solid var(--border-default);
-  background: var(--bg-base);
-  flex-shrink: 0;
-}
-.plc-diff-ctx {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  font-family: var(--font-mono);
-  font-weight: 600;
-  font-size: 0.76rem;
-  color: var(--text-primary);
-}
-.plc-diff-ctx-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 9999px;
-  background: var(--green);
-}
-.plc-diff-sub {
-  font-family: var(--font-mono);
-  font-size: 0.66rem;
-  color: var(--text-tertiary);
-}
-.plc-diff-close {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-surface);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition:
-    border-color 0.15s ease,
-    color 0.15s ease;
-}
-.plc-diff-close:hover {
-  border-color: var(--red);
-  color: var(--red);
-}
-.plc-diff-slideover-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
 }
 
 @media (prefers-reduced-motion: reduce) {
