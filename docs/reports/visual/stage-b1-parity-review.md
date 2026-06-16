@@ -121,10 +121,25 @@ non-conversations desktop capture with no before pair — informational only.)
 - `plc-sessions-panel` / `plc-conversation-workspace` / `plc-conversation-list`
   are element `id=` / `aria-controls=` values (ARIA wiring), not styling classes.
 - Inline `rgba(0,0,0,0.35)` filter-menu shadow in `SessionsFilterPopover.tsx`
-  retained for parity (no `--cc-shadow-menu` token yet). The view-switch /
-  mobile-switch tabs pass `justify-center` + `min-h` via `layoutClassName`
-  because the shared `Tabs` primitive lacks a fill/touch mode. Token + Tabs
-  fill-mode + allowlist registration are deferred to Stage B-2.
+  retained for parity (no `--cc-shadow-menu` token yet).
+- **Two `layoutClassName` contract exceptions** (charter-sanctioned: rank-1
+  visual parity chosen over the rank-2 layout-only `layoutClassName` rule, with
+  the appearance reattached via `layoutClassName` pending a shared-primitive
+  capability — both are recorded in-code as CONFLICT and tracked by the added
+  remediation task `remediate-cockpit-layoutclassname-conflicts`):
+  - **View-switch / mobile-switch tabs** (`ProjectCockpit.tsx:108`,
+    `TAB_FILL_LAYOUT`) pass `max-768:justify-center` + `max-768:min-h-[36px]`
+    through `layoutClassName` because the shared `Tabs` primitive lacks a
+    fill/touch mode (the geometry tokens `grow shrink basis-0` are allowlist-clean).
+  - **Filter Button** (`SessionsFilterPopover.tsx:40`, `FILTER_BTN_LAYOUT`) passes
+    `max-768:min-h-[44px]` + `max-768:px-[16px]` (padding) through `layoutClassName`
+    to reattach the global `.btn-sm` mobile 44px touch target, which the shared
+    `Button` primitive does not bake in (unlike `IconButton`). Without it the
+    button renders 27px tall at 390px and shifts the popover.
+  These tokens are outside the `docs/tailwind-conventions.md` §2 layout-only
+  allowlist; resolving them (Tabs fill-mode + Button mobile touch sizing) needs
+  shared-primitive edits deferred to Stage B-2, which also blocks cockpit's
+  eslint guardrail allowlist registration.
 
 ## 5. spawn-card — `docs/reports/visual/spawn-card/`
 
@@ -180,5 +195,11 @@ alias-bridge removal), these are NOT done here and are carried forward:
    intentional inline parity shadows.
 2. Extract `--cc-shadow-dropdown` (composer suggestions) and `--cc-shadow-menu`
    (cockpit filter popover) tokens and swap the inline `rgba(0,0,0,0.35)` literals.
-3. Add a fill / touch mode to the shared `Tabs` primitive so cockpit's
-   view-switch / mobile-switch tabs no longer pass appearance via `layoutClassName`.
+3. Resolve cockpit's two `layoutClassName` appearance exceptions (tracked by the
+   added remediation task `remediate-cockpit-layoutclassname-conflicts`): add a
+   fill / touch mode to the shared `Tabs` primitive (view-switch / mobile-switch
+   tabs) and bake the global `.btn-sm` mobile touch sizing into the shared
+   `Button` primitive (filter Button), then drop the appearance tokens from
+   `TAB_FILL_LAYOUT` / `FILTER_BTN_LAYOUT`. Both edit `src/components/ui`
+   primitives, which is why they are deferred and why cockpit cannot yet pass
+   `no-appearance-in-layout-classname` for allowlist registration.
