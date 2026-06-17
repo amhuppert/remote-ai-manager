@@ -9,6 +9,10 @@ import type {
   AgentTaskRunner,
 } from "../task";
 import type { AgentBackendId } from "../types";
+import {
+  toRawTranscriptEntries,
+  type AgentTranscriptEntry,
+} from "../transcript";
 import { translatePortableMcpToCodex } from "./mcp-translation";
 import {
   buildCodexMcpServersConfig,
@@ -23,25 +27,34 @@ import { toStringEnv } from "./shared";
 
 const logger = createLogger("codex:task-runner");
 
+interface CodexTurnUsage {
+  input_tokens: number;
+  cached_input_tokens: number;
+  output_tokens: number;
+}
+
+interface CodexTaskTurn {
+  finalResponse?: string;
+  items?: unknown[];
+  usage?: CodexTurnUsage | null;
+  error?: string | null;
+}
+
+interface CodexTaskThread {
+  readonly id: string | null;
+  run(
+    input: string,
+    options?: { outputSchema?: unknown; signal?: AbortSignal },
+  ): Promise<CodexTaskTurn>;
+  runStreamed?(
+    input: string,
+    options?: { outputSchema?: unknown; signal?: AbortSignal },
+  ): Promise<{ events: AsyncIterable<unknown> }>;
+}
+
 interface CodexTaskRunnerClient {
-  startThread(options?: ThreadOptions): {
-    readonly id: string | null;
-    run(
-      input: string,
-      options?: { outputSchema?: unknown; signal?: AbortSignal },
-    ): Promise<{
-      finalResponse?: string;
-      usage?: {
-        input_tokens: number;
-        cached_input_tokens: number;
-        output_tokens: number;
-      };
-    }>;
-  };
-  resumeThread(
-    id: string,
-    options?: ThreadOptions,
-  ): ReturnType<CodexTaskRunnerClient["startThread"]>;
+  startThread(options?: ThreadOptions): CodexTaskThread;
+  resumeThread(id: string, options?: ThreadOptions): CodexTaskThread;
 }
 
 export interface CodexTaskRunnerDeps {
@@ -74,6 +87,68 @@ function buildPrompt(input: AgentTaskRequest): string {
   parts.push(input.prompt);
 
   return parts.join("\n\n");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function eventMessage(value: unknown): string | null {
+  if (!isRecord(value)) return null;
+  const message = value.message;
+  return typeof message === "string" ? message : null;
+}
+
+async function runCodexTurn(
+  thread: CodexTaskThread,
+  prompt: string,
+  options: { outputSchema?: unknown; signal?: AbortSignal },
+): Promise<CodexTaskTurn> {
+  if (typeof thread.runStreamed !== "function") {
+    return thread.run(prompt, options);
+  }
+
+  const streamed = await thread.runStreamed(prompt, options);
+  const items: unknown[] = [];
+  let finalResponse = "";
+  let usage: CodexTurnUsage | null = null;
+  let error: string | null = null;
+
+  for await (const event of streamed.events) {
+    if (!isRecord(event) || typeof event.type !== "string") continue;
+
+    if (event.type === "item.completed") {
+      const item = event.item;
+      items.push(item);
+      if (
+        isRecord(item) &&
+        item.type === "agent_message" &&
+        typeof item.text === "string"
+      ) {
+        finalResponse = item.text;
+      }
+      continue;
+    }
+
+    if (event.type === "turn.completed") {
+      usage = isRecord(event.usage)
+        ? (event.usage as unknown as CodexTurnUsage)
+        : null;
+      continue;
+    }
+
+    if (event.type === "turn.failed") {
+      error = eventMessage(event.error) ?? "Codex turn failed";
+      break;
+    }
+
+    if (event.type === "error") {
+      error = eventMessage(event) ?? "Codex stream failed";
+      break;
+    }
+  }
+
+  return { items, finalResponse, usage, error };
 }
 
 // ============================================================
@@ -209,6 +284,7 @@ export class CodexTaskRunner implements AgentTaskRunner {
     let text: string | null = null;
     let structuredOutput: unknown;
     let usageResult: AgentTaskResult["usage"] = null;
+    let transcript: AgentTranscriptEntry[] | undefined;
     let error: string | null = null;
 
     try {
@@ -224,17 +300,29 @@ export class CodexTaskRunner implements AgentTaskRunner {
         thread = codex.startThread(threadOptions);
       }
 
-      const turn = await thread.run(prompt, {
+      const turn = await runCodexTurn(thread, prompt, {
         ...(input.outputSchema ? { outputSchema: input.outputSchema } : {}),
         signal: abortController.signal,
       });
 
       threadId = thread.id;
 
+      if (turn.items && turn.items.length > 0) {
+        transcript = toRawTranscriptEntries("codex", turn.items);
+      }
+
+      if (turn.error) {
+        error = turn.error;
+        logger.warn("codex-task-runner.turn_failed", {
+          workingDirectory: input.workingDirectory,
+          error,
+        });
+      }
+
       if (turn.finalResponse) {
         text = turn.finalResponse;
 
-        if (input.outputSchema) {
+        if (input.outputSchema && !turn.error) {
           try {
             structuredOutput = JSON.parse(turn.finalResponse);
           } catch {
@@ -283,6 +371,7 @@ export class CodexTaskRunner implements AgentTaskRunner {
       text,
       structuredOutput,
       usage: usageResult,
+      ...(transcript ? { transcript } : {}),
       error: error ?? (timedOut ? "Task timed out" : null),
       timedOut,
     };

@@ -20,6 +20,7 @@ import type {
   AgentBackendId,
   AgentSessionRef,
 } from "@/lib/agent-backends/types";
+import type { AgentTranscriptEntry } from "@/lib/agent-backends/transcript";
 import type { GraphWorkflowContextValidatorInput } from "./execution-validation";
 import type {
   ResolveValidatorCallInput,
@@ -421,6 +422,7 @@ function getContextTaskIds(index: ExecutionIndex, contextId: string): string[] {
 interface ValidatorTaskResult {
   text: string | null;
   structuredOutput?: unknown;
+  transcript?: AgentTranscriptEntry[];
   error: string | null;
   timedOut: boolean;
   backendRef: AgentSessionRef | null;
@@ -495,6 +497,9 @@ function taskRunResultToValidatorTaskResult(
   if (result.kind === "error") {
     return {
       text: null,
+      ...(result.transcript !== undefined
+        ? { transcript: result.transcript }
+        : {}),
       error: result.error,
       timedOut: /timed out after/i.test(result.error),
       backendRef: result.backendRef ?? null,
@@ -505,6 +510,9 @@ function taskRunResultToValidatorTaskResult(
     return {
       text: result.text.length > 0 ? result.text : null,
       structuredOutput: result.structuredOutput,
+      ...(result.transcript !== undefined
+        ? { transcript: result.transcript }
+        : {}),
       error: null,
       timedOut: false,
       backendRef: result.backendRef ?? null,
@@ -513,6 +521,9 @@ function taskRunResultToValidatorTaskResult(
   }
   return {
     text: result.text,
+    ...(result.transcript !== undefined
+      ? { transcript: result.transcript }
+      : {}),
     error: null,
     timedOut: false,
     backendRef: result.backendRef ?? null,
@@ -666,6 +677,14 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
         ),
       });
 
+      if (taskResult.transcript) {
+        execLogger?.writeValidatorTranscript(
+          contextId,
+          { lane, engine: validatorType },
+          taskResult.transcript,
+        );
+      }
+
       if (taskResult.error) {
         const outcome: ValidatorOutcome = {
           kind: "infra_error",
@@ -762,6 +781,14 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       sessionName,
       conversationId: dispatchConversationId,
     });
+
+    if (taskResult.transcript) {
+      execLogger?.writeValidatorTranscript(
+        contextId,
+        { lane, engine: validatorType },
+        taskResult.transcript,
+      );
+    }
 
     if (taskResult.backendRef) {
       backendRefCache.set(

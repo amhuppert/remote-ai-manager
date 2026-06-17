@@ -2288,6 +2288,9 @@ export async function runTaskRunTurnForMachine(
       ...(result.outcome.structuredOutput !== undefined
         ? { structuredOutput: result.outcome.structuredOutput }
         : {}),
+      ...(result.outcome.transcript !== undefined
+        ? { transcript: result.outcome.transcript }
+        : {}),
       aborted: false,
       error: null,
     };
@@ -2314,6 +2317,9 @@ export async function runTaskRunTurnForMachine(
       outputTokens: usage.outputTokens ?? null,
       cachedInputTokens: usage.cachedInputTokens ?? null,
       contentBlocks: [],
+      ...(result.outcome.transcript !== undefined
+        ? { transcript: result.outcome.transcript }
+        : {}),
       aborted: failureKind === "aborted",
       error: errorMsg,
     };

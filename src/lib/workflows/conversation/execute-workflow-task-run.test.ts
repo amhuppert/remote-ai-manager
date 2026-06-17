@@ -350,6 +350,41 @@ describe("executeWorkflowTaskRun", () => {
     }
   });
 
+  it("preserves a captured transcript on failed task_run results", async () => {
+    const transcript = [
+      {
+        seq: 0,
+        backend: "claude" as const,
+        type: "assistant",
+        raw: { type: "assistant", text: "partial analysis" },
+      },
+    ];
+    const callPromise = executeWorkflowTaskRun({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      kind: "task_run",
+      prompt: "will-error",
+      timeoutMs: 5000,
+    });
+
+    const invocation = await nextPendingInvocation();
+    invocation.resolve(
+      defaultResult({
+        contentBlocks: [],
+        transcript,
+        error: "backend error",
+      }),
+    );
+
+    const result = await callPromise;
+    expect(result.kind).toBe("error");
+    if (result.kind === "error") {
+      expect(result.error).toBe("backend error");
+      expect(result.transcript).toEqual(transcript);
+    }
+  });
+
   it("serializes concurrent calls so a second call only starts after the first finalizes", async () => {
     let firstSettled = false;
 

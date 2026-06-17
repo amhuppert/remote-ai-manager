@@ -8,6 +8,7 @@
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
 import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import type { AgentTranscriptEntry } from "@/lib/agent-backends/transcript";
 import type {
   ConversationStatus,
   ConversationRole,
@@ -277,6 +278,12 @@ export interface PromptActorResult {
   cachedInputTokens: number | null;
   contentBlocks: MessageContentBlock[];
   structuredOutput?: unknown;
+  /**
+   * Full backend-native turn transcript, forwarded from the AgentCall result.
+   * Present only for completed `task_run` turns whose backend surfaced
+   * intermediate items; consumed by the graph-workflow validator path.
+   */
+  transcript?: AgentTranscriptEntry[];
   aborted: boolean;
   error: string | null;
   /**

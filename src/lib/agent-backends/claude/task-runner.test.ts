@@ -428,6 +428,43 @@ describe("ClaudeTaskRunner", () => {
     expect(result.error).toBeNull();
   });
 
+  it("captures the full SDK message stream as a lossless transcript", async () => {
+    const assistantMsg = {
+      type: "assistant",
+      session_id: "session-abc",
+      message: {
+        content: [
+          { type: "text", text: "checking the diff" },
+          { type: "tool_use", name: "Bash", input: { command: "ls" } },
+        ],
+      },
+    };
+    const toolResultMsg = {
+      type: "user",
+      session_id: "session-abc",
+      message: { content: [{ type: "tool_result", content: "file.ts" }] },
+    };
+    mockQuery.mockReturnValue(
+      makeStream([
+        assistantMsg,
+        toolResultMsg,
+        successResultMessage("session-abc"),
+      ]) as ReturnType<typeof query>,
+    );
+
+    const result = await runner.run(makeRequest());
+
+    expect(
+      result.transcript?.map((e) => ({ seq: e.seq, type: e.type })),
+    ).toEqual([
+      { seq: 0, type: "assistant" },
+      { seq: 1, type: "user" },
+      { seq: 2, type: "result" },
+    ]);
+    // Tool calls survive verbatim inside the assistant entry's raw payload.
+    expect(result.transcript?.[0]!.raw).toBe(assistantMsg);
+  });
+
   it("has backend identifier 'claude'", () => {
     expect(runner.backend).toBe("claude");
   });

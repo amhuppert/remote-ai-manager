@@ -3,6 +3,7 @@ import type {
   AgentSessionRef,
   ConversationToolingOverrides,
 } from "./types";
+import type { AgentTranscriptEntry } from "./transcript";
 
 export interface AgentTaskRequest {
   workingDirectory: string;
@@ -34,6 +35,14 @@ export interface AgentTaskResult {
   } | null;
   error: string | null;
   timedOut: boolean;
+  /**
+   * Full backend-native turn transcript (codex `ThreadItem`s / claude
+   * `SDKMessage`s) wrapped in lossless envelopes. Present when the backend
+   * surfaced intermediate items; absent for turns that produced none (e.g. a
+   * timed-out or errored run). Consumed by the graph-workflow validator path
+   * to persist auditable validator transcripts.
+   */
+  transcript?: AgentTranscriptEntry[];
 }
 
 export interface AgentTaskRunner {

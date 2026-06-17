@@ -162,6 +162,9 @@ export async function dispatchTaskRun(
       failureKind: "timeout",
       message: `task timed out after ${taskRequest.timeoutMs}ms`,
       usage,
+      ...(runResult.transcript !== undefined
+        ? { transcript: runResult.transcript }
+        : {}),
     });
   }
 
@@ -179,6 +182,9 @@ export async function dispatchTaskRun(
       failureKind: "backend_error",
       message: runResult.error,
       usage,
+      ...(runResult.transcript !== undefined
+        ? { transcript: runResult.transcript }
+        : {}),
     });
   }
 
@@ -199,6 +205,9 @@ export async function dispatchTaskRun(
       ...(runResult.structuredOutput !== undefined
         ? { structuredOutput: runResult.structuredOutput }
         : {}),
+      ...(runResult.transcript !== undefined
+        ? { transcript: runResult.transcript }
+        : {}),
     },
   };
 }
@@ -216,6 +225,7 @@ interface BuildFailureResultInput {
     | "capability_unavailable";
   message: string;
   usage?: AgentCallUsageMetrics;
+  transcript?: AgentTaskResult["transcript"];
 }
 
 function buildFailureResult(input: BuildFailureResultInput): AgentCallResult {
@@ -227,6 +237,9 @@ function buildFailureResult(input: BuildFailureResultInput): AgentCallResult {
     artifacts: [...(input.artifacts ?? [])],
     outcome: {
       kind: "failed",
+      ...(input.transcript !== undefined
+        ? { transcript: input.transcript }
+        : {}),
       error: {
         failureKind: input.failureKind,
         backend: input.backend,

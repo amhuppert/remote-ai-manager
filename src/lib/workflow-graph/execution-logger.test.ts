@@ -233,6 +233,147 @@ describe("writeValidatorResponse", () => {
   });
 });
 
+describe("writeValidatorTranscript", () => {
+  it("appends a begin-marker followed by one item event per entry", () => {
+    const logger = createTestLogger();
+    logger.writeValidatorTranscript(
+      "ctx-1",
+      { lane: "context_validator", engine: "codex" },
+      [
+        {
+          seq: 0,
+          backend: "codex",
+          type: "reasoning",
+          raw: { type: "reasoning", text: "weigh AC vs prototype" },
+        },
+        {
+          seq: 1,
+          backend: "codex",
+          type: "agent_message",
+          raw: { type: "agent_message", text: "GO" },
+        },
+      ],
+    );
+
+    const entries = readJsonl(
+      path.join(
+        logger.logDir,
+        "contexts",
+        "ctx-1",
+        "validation-transcript.jsonl",
+      ),
+    );
+    expect(entries).toHaveLength(3);
+    expect(entries[0]).toMatchObject({
+      event: "validator.transcript_begin",
+      executionId: logger.executionId,
+      contextId: "ctx-1",
+      lane: "context_validator",
+      engine: "codex",
+      attempt: 0,
+      entryCount: 2,
+    });
+    expect(entries[1]).toMatchObject({
+      event: "validator.transcript_item",
+      contextId: "ctx-1",
+      seq: 0,
+      backend: "codex",
+      itemType: "reasoning",
+      raw: { type: "reasoning", text: "weigh AC vs prototype" },
+    });
+    expect(entries[2]).toMatchObject({ seq: 1, itemType: "agent_message" });
+  });
+
+  it("increments attempt per (context, lane) across re-validations", () => {
+    const logger = createTestLogger();
+    const entry = {
+      seq: 0,
+      backend: "codex" as const,
+      type: "agent_message",
+      raw: { type: "agent_message", text: "x" },
+    };
+    logger.writeValidatorTranscript(
+      "ctx-1",
+      { lane: "context_validator", engine: "codex" },
+      [entry],
+    );
+    logger.writeValidatorTranscript(
+      "ctx-1",
+      { lane: "context_validator", engine: "codex" },
+      [entry],
+    );
+
+    const begins = readJsonl(
+      path.join(
+        logger.logDir,
+        "contexts",
+        "ctx-1",
+        "validation-transcript.jsonl",
+      ),
+    ).filter((e) => e.event === "validator.transcript_begin");
+    expect(begins.map((b) => b.attempt)).toEqual([0, 1]);
+  });
+
+  it("continues attempt numbering when a new logger appends to an existing transcript log", () => {
+    const executionId = uniqueId();
+    const entry = {
+      seq: 0,
+      backend: "codex" as const,
+      type: "agent_message",
+      raw: { type: "agent_message", text: "x" },
+    };
+    const firstLogger = createExecutionLogger(executionId, {
+      configDir: TEST_DIR,
+      now: fixedNow,
+    });
+    firstLogger.writeValidatorTranscript(
+      "ctx-1",
+      { lane: "context_validator", engine: "codex" },
+      [entry],
+    );
+
+    const resumedLogger = createExecutionLogger(executionId, {
+      configDir: TEST_DIR,
+      now: fixedNow,
+    });
+    resumedLogger.writeValidatorTranscript(
+      "ctx-1",
+      { lane: "context_validator", engine: "codex" },
+      [entry],
+    );
+
+    const begins = readJsonl(
+      path.join(
+        resumedLogger.logDir,
+        "contexts",
+        "ctx-1",
+        "validation-transcript.jsonl",
+      ),
+    ).filter((e) => e.event === "validator.transcript_begin");
+    expect(begins.map((b) => b.attempt)).toEqual([0, 1]);
+  });
+
+  it("writes nothing when there are no entries", () => {
+    const logger = createTestLogger();
+    logger.writeValidatorTranscript(
+      "ctx-1",
+      { lane: "context_validator", engine: "claude" },
+      [],
+    );
+
+    expect(
+      existsSync(
+        path.join(
+          logger.logDir,
+          "contexts",
+          "ctx-1",
+          "validation-transcript.jsonl",
+        ),
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("decision", () => {
   it("writes to decisions.jsonl", () => {
     const logger = createTestLogger();
@@ -303,6 +444,11 @@ describe("silent failure", () => {
       logger.validation("ctx-1", "test.event");
       logger.decision("test.event");
       logger.writePrompt("ctx-1", "test.md", "content");
+      logger.writeValidatorTranscript(
+        "ctx-1",
+        { lane: "context_validator", engine: "codex" },
+        [{ seq: 0, backend: "codex", type: "agent_message", raw: {} }],
+      );
     }).not.toThrow();
   });
 });

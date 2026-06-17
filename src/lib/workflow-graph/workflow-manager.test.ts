@@ -4695,6 +4695,7 @@ describe("graph workflow manager", () => {
           validation() {},
           writePrompt() {},
           writeValidatorResponse() {},
+          writeValidatorTranscript() {},
           decision(event, data) {
             calls.push({ kind: "decision", event, data });
           },

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const startThreadMock = vi.fn();
 const resumeThreadMock = vi.fn();
 const runMock = vi.fn();
+const runStreamedMock = vi.fn();
 
 vi.mock("@openai/codex-sdk", () => ({
   Codex: vi.fn().mockImplementation(() => ({
@@ -212,6 +213,64 @@ describe("CodexTaskRunner", () => {
     expect(codexCalls).toHaveLength(1);
     const passedOptions = codexCalls[0]![0]!;
     expect(passedOptions).not.toHaveProperty("config");
+  });
+
+  it("captures turn.items as a lossless transcript", async () => {
+    const items = [
+      { type: "reasoning", text: "weigh AC vs prototype" },
+      { type: "command_execution", command: "npm run verify", exit_code: 0 },
+      { type: "agent_message", text: "GO" },
+    ];
+    runMock.mockResolvedValue({
+      finalResponse: "GO",
+      usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1 },
+      items,
+    });
+
+    const result = await runner.run(makeRequest());
+
+    expect(result.transcript).toEqual([
+      { seq: 0, backend: "codex", type: "reasoning", raw: items[0] },
+      { seq: 1, backend: "codex", type: "command_execution", raw: items[1] },
+      { seq: 2, backend: "codex", type: "agent_message", raw: items[2] },
+    ]);
+  });
+
+  it("captures streamed items before a failed Codex turn", async () => {
+    const items = [
+      { type: "reasoning", text: "checking the repo" },
+      { type: "command_execution", command: "npm run verify", exit_code: 1 },
+    ];
+    async function* events() {
+      yield { type: "item.completed", item: items[0] };
+      yield { type: "item.completed", item: items[1] };
+      yield {
+        type: "turn.failed",
+        error: { message: "command failed" },
+      };
+    }
+    runStreamedMock.mockResolvedValue({ events: events() });
+    startThreadMock.mockReturnValue({
+      id: "thread-abc",
+      run: runMock,
+      runStreamed: runStreamedMock,
+    });
+
+    const result = await runner.run(makeRequest());
+
+    expect(runStreamedMock).toHaveBeenCalled();
+    expect(runMock).not.toHaveBeenCalled();
+    expect(result.error).toBe("command failed");
+    expect(result.transcript).toEqual([
+      { seq: 0, backend: "codex", type: "reasoning", raw: items[0] },
+      { seq: 1, backend: "codex", type: "command_execution", raw: items[1] },
+    ]);
+  });
+
+  it("omits transcript when the turn returned no items", async () => {
+    // Default runMock has no `items`.
+    const result = await runner.run(makeRequest());
+    expect(result.transcript).toBeUndefined();
   });
 
   it("does not abort immediately when timeoutMs is 0 (no timeout)", async () => {

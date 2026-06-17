@@ -18,23 +18,28 @@ references:
 lanes:
   - id: alignment
     label: Agent Alignment
-    description: Shared contracts and source-of-truth so implementers and validators
+    description:
+      Shared contracts and source-of-truth so implementers and validators
       resolve conflicts identically.
   - id: quality
     label: Output Quality & Validation
-    description: Validator verdicts, adversarial verification, lenses, integration
+    description:
+      Validator verdicts, adversarial verification, lenses, integration
       sweep, spec lint.
   - id: friction
     label: Friction & Reliability
-    description: Pre-flight, failure taxonomy, resume, script-validator hardening,
+    description:
+      Pre-flight, failure taxonomy, resume, script-validator hardening,
       gate ergonomics.
   - id: dynamic
     label: Dynamic Structure
-    description: Typed graph-mutation proposals, expansion nodes, conditional edges,
+    description:
+      Typed graph-mutation proposals, expansion nodes, conditional edges,
       review/remediation subgraphs.
   - id: parallelism
     label: Parallelism
-    description: File-ownership maps and registration points to remove shared-file
+    description:
+      File-ownership maps and registration points to remove shared-file
       contention.
   - id: crosscutting
     label: Cross-cutting
@@ -54,7 +59,7 @@ work_items:
     status: done
     priority: p1
     depends_on: []
-    tags: [ alignment, shared-documents, agent-prompt, validation ]
+    tags: [alignment, shared-documents, agent-prompt, validation]
     estimate:
       value: 5
       unit: points
@@ -80,7 +85,7 @@ work_items:
     status: planned
     priority: p1
     depends_on: []
-    tags: [ alignment, deterministic, validation ]
+    tags: [alignment, deterministic, validation]
     estimate:
       value: 8
       unit: points
@@ -105,7 +110,7 @@ work_items:
     status: ready
     priority: p0
     depends_on: []
-    tags: [ alignment, agent-tool, observability ]
+    tags: [alignment, agent-tool, observability]
     estimate:
       value: 3
       unit: points
@@ -113,7 +118,8 @@ work_items:
       - Completion-report schema + execution-logger event
       - record_decision / propose_decision_change MCP tools
       - Decision-log injection into downstream prompts
-    notes: Report §1.5. Foundation for gate digest, integration sweep, conditional
+    notes:
+      Report §1.5. Foundation for gate digest, integration sweep, conditional
       edges.
 
   - id: shared-rubric
@@ -125,7 +131,7 @@ work_items:
     status: future
     priority: nice_to_have
     depends_on: []
-    tags: [ alignment ]
+    tags: [alignment]
     estimate:
       value: 2
       unit: points
@@ -143,7 +149,7 @@ work_items:
     status: ready
     priority: p0
     depends_on: []
-    tags: [ deterministic, planner, friction ]
+    tags: [deterministic, planner, friction]
     estimate:
       value: 3
       unit: points
@@ -163,8 +169,8 @@ work_items:
     lane: quality
     status: planned
     priority: p1
-    depends_on: [ charter ]
-    tags: [ validation, agent-tool, approval-gate, collaboration ]
+    depends_on: [charter]
+    tags: [validation, agent-tool, approval-gate, collaboration]
     estimate:
       value: 5
       unit: points
@@ -186,7 +192,7 @@ work_items:
     status: planned
     priority: p2
     depends_on: []
-    tags: [ validation, quality ]
+    tags: [validation, quality]
     estimate:
       value: 5
       unit: points
@@ -204,8 +210,8 @@ work_items:
     lane: quality
     status: planned
     priority: p1
-    depends_on: [ completion-reports, typed-contracts ]
-    tags: [ validation, quality ]
+    depends_on: [completion-reports, typed-contracts]
+    tags: [validation, quality]
     estimate:
       value: 5
       unit: points
@@ -221,7 +227,7 @@ work_items:
     status: planned
     priority: p1
     depends_on: []
-    tags: [ validation, token-economy ]
+    tags: [validation, token-economy]
     estimate:
       value: 2
       unit: points
@@ -237,7 +243,7 @@ work_items:
     status: planned
     priority: p1
     depends_on: []
-    tags: [ quality, planner ]
+    tags: [quality, planner]
     estimate:
       value: 3
       unit: points
@@ -254,14 +260,15 @@ work_items:
     status: ready
     priority: p0
     depends_on: []
-    tags: [ reliability, friction, deterministic ]
+    tags: [reliability, friction, deterministic]
     estimate:
       value: 5
       unit: points
     deliverables:
       - Pre-flight probe with precise halt diagnostics
       - devServers config inference + approval-gated apply
-    notes: Report §3.1. Prevents run-1-style config write-offs and ensure_dev_server
+    notes:
+      Report §3.1. Prevents run-1-style config write-offs and ensure_dev_server
       noise.
 
   - id: failure-taxonomy
@@ -274,7 +281,7 @@ work_items:
     status: ready
     priority: p0
     depends_on: []
-    tags: [ reliability ]
+    tags: [reliability]
     estimate:
       value: 3
       unit: points
@@ -291,7 +298,7 @@ work_items:
     status: planned
     priority: p2
     depends_on: []
-    tags: [ dynamic, reliability ]
+    tags: [dynamic, reliability]
     estimate:
       value: 5
       unit: points
@@ -310,7 +317,7 @@ work_items:
     status: ready
     priority: p0
     depends_on: []
-    tags: [ reliability, friction ]
+    tags: [reliability, friction]
     estimate:
       value: 2
       unit: points
@@ -322,14 +329,20 @@ work_items:
       Persist full agent-validator transcripts alongside each context's
       validation.jsonl, not just the final verdict JSON.
     lane: friction
-    status: ready
+    status: done
     priority: p0
     depends_on: []
-    tags: [ friction, observability ]
+    tags: [friction, observability]
     estimate:
       value: 1
       unit: points
-    notes: Report §3.6. The validator is currently the least auditable component.
+    notes: >
+      Report §3.6. Implemented as contexts/<ctx>/validation-transcript.jsonl
+      (begin-marker + per-item events) for both codex (turn.items) and claude
+      (SDK message stream); codex previously discarded turn.items entirely.
+      Actual cost ~3pts (data was discarded at the SDK boundary, not merely
+      unwritten), threaded through AgentTaskResult → AgentCallResult →
+      PromptActorResult → TaskRunResult → validator-runner.
 
   - id: gate-and-steering
     title: Approval-gate ergonomics + steering channel
@@ -341,8 +354,8 @@ work_items:
     lane: friction
     status: planned
     priority: p0
-    depends_on: [ completion-reports ]
-    tags: [ friction, approval-gate, alignment ]
+    depends_on: [completion-reports]
+    tags: [friction, approval-gate, alignment]
     estimate:
       value: 5
       unit: points
@@ -365,14 +378,15 @@ work_items:
     status: planned
     priority: p2
     depends_on: []
-    tags: [ dynamic, reliability ]
+    tags: [dynamic, reliability]
     estimate:
       value: 5
       unit: points
     deliverables:
       - Batch-policy fields + per-lane deadline in join-runner/lane-readiness
       - Partial-salvage + replacement-spawn paths
-    notes: Report §4.0. Imports fan-out without the dynamic workflow's hung-barrier
+    notes:
+      Report §4.0. Imports fan-out without the dynamic workflow's hung-barrier
       risk.
 
   - id: propose-context
@@ -384,8 +398,8 @@ work_items:
     lane: dynamic
     status: planned
     priority: p2
-    depends_on: [ revision-resume ]
-    tags: [ dynamic, agent-tool ]
+    depends_on: [revision-resume]
+    tags: [dynamic, agent-tool]
     estimate:
       value: 8
       unit: points
@@ -405,8 +419,8 @@ work_items:
     lane: dynamic
     status: planned
     priority: p2
-    depends_on: [ propose-context, liveness-policy ]
-    tags: [ dynamic ]
+    depends_on: [propose-context, liveness-policy]
+    tags: [dynamic]
     estimate:
       value: 5
       unit: points
@@ -421,8 +435,8 @@ work_items:
     lane: dynamic
     status: planned
     priority: p2
-    depends_on: [ completion-reports ]
-    tags: [ dynamic ]
+    depends_on: [completion-reports]
+    tags: [dynamic]
     estimate:
       value: 5
       unit: points
@@ -441,12 +455,13 @@ work_items:
     lane: dynamic
     status: planned
     priority: p2
-    depends_on: [ validator-trust, liveness-policy ]
-    tags: [ dynamic, validation, collaboration ]
+    depends_on: [validator-trust, liveness-policy]
+    tags: [dynamic, validation, collaboration]
     estimate:
       value: 5
       unit: points
-    notes: Report §4.4. Generalizes per-finding verify into a durable, salvageable
+    notes:
+      Report §4.4. Generalizes per-finding verify into a durable, salvageable
       review.
 
   - id: remediation-subgraphs
@@ -458,8 +473,8 @@ work_items:
     lane: dynamic
     status: planned
     priority: p2
-    depends_on: [ propose-context, integration-sweep ]
-    tags: [ dynamic, reliability ]
+    depends_on: [propose-context, integration-sweep]
+    tags: [dynamic, reliability]
     estimate:
       value: 3
       unit: points
@@ -473,8 +488,8 @@ work_items:
     lane: dynamic
     status: planned
     priority: p3
-    depends_on: [ propose-context ]
-    tags: [ dynamic ]
+    depends_on: [propose-context]
+    tags: [dynamic]
     estimate:
       value: 3
       unit: points
@@ -490,8 +505,8 @@ work_items:
     lane: dynamic
     status: planned
     priority: p2
-    depends_on: [ revision-resume, propose-context ]
-    tags: [ dynamic, planner ]
+    depends_on: [revision-resume, propose-context]
+    tags: [dynamic, planner]
     estimate:
       value: 5
       unit: points
@@ -507,8 +522,8 @@ work_items:
     lane: parallelism
     status: planned
     priority: p2
-    depends_on: [ typed-contracts ]
-    tags: [ parallelism, deterministic ]
+    depends_on: [typed-contracts]
+    tags: [parallelism, deterministic]
     estimate:
       value: 3
       unit: points
@@ -525,7 +540,7 @@ work_items:
     status: planned
     priority: p2
     depends_on: []
-    tags: [ parallelism, planner ]
+    tags: [parallelism, planner]
     estimate:
       value: 3
       unit: points
@@ -543,8 +558,8 @@ work_items:
     lane: crosscutting
     status: planned
     priority: p2
-    depends_on: [ spec-lint ]
-    tags: [ token-economy, reliability ]
+    depends_on: [spec-lint]
+    tags: [token-economy, reliability]
     estimate:
       value: 5
       unit: points
@@ -565,8 +580,8 @@ work_items:
     lane: crosscutting
     status: planned
     priority: p2
-    depends_on: [ script-validator-defaults, typed-contracts, validator-trust ]
-    tags: [ token-economy, validation ]
+    depends_on: [script-validator-defaults, typed-contracts, validator-trust]
+    tags: [token-economy, validation]
     estimate:
       value: 3
       unit: points
@@ -583,7 +598,7 @@ work_items:
     status: future
     priority: nice_to_have
     depends_on: []
-    tags: [ cross-cutting, learning ]
+    tags: [cross-cutting, learning]
     estimate:
       value: 3
       unit: points
@@ -599,8 +614,8 @@ work_items:
     lane: crosscutting
     status: planned
     priority: p2
-    depends_on: [ propose-context, conditional-edges ]
-    tags: [ cross-cutting, ui ]
+    depends_on: [propose-context, conditional-edges]
+    tags: [cross-cutting, ui]
     estimate:
       value: 5
       unit: points

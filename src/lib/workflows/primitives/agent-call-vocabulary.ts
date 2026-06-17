@@ -14,6 +14,7 @@
 
 import { z } from "zod";
 import { agentSessionRefSchema } from "@/lib/agent-backends/schemas";
+import { agentTranscriptEntrySchema } from "@/lib/agent-backends/transcript";
 import { agentBackendSchema, type AgentBackendId } from "@/lib/shared/schemas";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 
@@ -141,6 +142,7 @@ const agentCallOutcomeSchema = z.discriminatedUnion("kind", [
     kind: z.literal("completed"),
     text: z.string().nullable(),
     structuredOutput: z.unknown().optional(),
+    transcript: agentTranscriptEntrySchema.array().optional(),
   }),
   z.object({
     kind: z.literal("paused"),
@@ -150,6 +152,7 @@ const agentCallOutcomeSchema = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("failed"),
+    transcript: agentTranscriptEntrySchema.array().optional(),
     error: normalizedAgentCallErrorSchema,
   }),
 ]);

@@ -1,3 +1,5 @@
+import { readFileSync, rmSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   buildContextValidationPrompt,
@@ -6,6 +8,11 @@ import {
   parseValidatorResponse,
   VALIDATOR_OUTPUT_SCHEMA,
 } from "./validator-runner";
+import {
+  createExecutionLogger,
+  registerExecutionLogger,
+  unregisterExecutionLogger,
+} from "./execution-logger";
 import type {
   ExecuteWorkflowTaskRunInput,
   TaskRunResult,
@@ -601,6 +608,166 @@ describe("createValidatorRunner", () => {
     expect(result.result.kind).toBe("pass");
   });
 
+  it("runContextValidator persists the agent transcript alongside validation.jsonl", async () => {
+    const TEST_DIR = path.join(__dirname, "__test-logs-validator-transcript__");
+    const transcript = [
+      {
+        seq: 0,
+        backend: "claude" as const,
+        type: "reasoning",
+        raw: { type: "reasoning", text: "weigh AC vs prototype" },
+      },
+      {
+        seq: 1,
+        backend: "claude" as const,
+        type: "agent_message",
+        raw: { type: "agent_message", text: "GO" },
+      },
+    ];
+    const executeWorkflowTaskRun = vi.fn(
+      async (_input: ExecuteWorkflowTaskRunInput): Promise<TaskRunResult> => ({
+        kind: "text",
+        text: JSON.stringify({ summary: "ok", issues: [] }),
+        transcript,
+        usage: emptyUsage,
+        backendRef: null,
+      }),
+    );
+    const runner = createValidatorRunner({
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
+    });
+
+    const execution = buildExecutionWithContextValidation();
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    )!;
+    const logger = createExecutionLogger(execution.id, { configDir: TEST_DIR });
+    registerExecutionLogger(logger);
+
+    try {
+      await runner.runContextValidator({
+        projectPath: "/repo",
+        sessionName: "session-1",
+        execution,
+        context: contextDef,
+        validator: contextDef.contextValidator!,
+      });
+
+      const transcriptPath = path.join(
+        logger.logDir,
+        "contexts",
+        "context-plan",
+        "validation-transcript.jsonl",
+      );
+      const entries = readFileSync(transcriptPath, "utf-8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+
+      expect(entries[0]).toMatchObject({
+        event: "validator.transcript_begin",
+        lane: "context_validator",
+        engine: contextDef.contextValidator!.type,
+        attempt: 0,
+        entryCount: 2,
+      });
+      expect(
+        entries
+          .filter((e) => e.event === "validator.transcript_item")
+          .map((e) => e.itemType),
+      ).toEqual(["reasoning", "agent_message"]);
+    } finally {
+      unregisterExecutionLogger(execution.id);
+      try {
+        rmSync(TEST_DIR, { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
+    }
+  });
+
+  it("runContextValidator persists a captured transcript when the task run returns an infra error", async () => {
+    const TEST_DIR = path.join(
+      __dirname,
+      "__test-logs-validator-error-transcript__",
+    );
+    const transcript = [
+      {
+        seq: 0,
+        backend: "claude" as const,
+        type: "assistant",
+        raw: { type: "assistant", text: "partial validation" },
+      },
+    ];
+    const executeWorkflowTaskRun = vi.fn(
+      async (_input: ExecuteWorkflowTaskRunInput): Promise<TaskRunResult> => ({
+        kind: "error",
+        error: "validator backend failed",
+        aborted: false,
+        transcript,
+        usage: emptyUsage,
+        backendRef: null,
+      }),
+    );
+    const runner = createValidatorRunner({
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
+    });
+
+    const execution = buildExecutionWithContextValidation();
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    )!;
+    const logger = createExecutionLogger(execution.id, { configDir: TEST_DIR });
+    registerExecutionLogger(logger);
+
+    try {
+      const result = await runner.runContextValidator({
+        projectPath: "/repo",
+        sessionName: "session-1",
+        execution,
+        context: contextDef,
+        validator: contextDef.contextValidator!,
+      });
+
+      expect(result.result.kind).toBe("infra_error");
+      const entries = readFileSync(
+        path.join(
+          logger.logDir,
+          "contexts",
+          "context-plan",
+          "validation-transcript.jsonl",
+        ),
+        "utf-8",
+      )
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+
+      expect(entries[0]).toMatchObject({
+        event: "validator.transcript_begin",
+        entryCount: 1,
+      });
+      expect(entries[1]).toMatchObject({
+        event: "validator.transcript_item",
+        itemType: "assistant",
+        raw: { type: "assistant", text: "partial validation" },
+      });
+    } finally {
+      unregisterExecutionLogger(execution.id);
+      try {
+        rmSync(TEST_DIR, { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
+    }
+  });
+
   it("runContextValidator passes the context charter into the prompt so it begins with the digest", async () => {
     const agentResponse = JSON.stringify({
       summary: "Context completed correctly",
@@ -987,6 +1154,109 @@ describe("context validator continuity runtime integration", () => {
       engine: "codex",
       threadId: "thread-real-1",
     });
+  });
+
+  it("persists the Codex validator transcript on the continuity path", async () => {
+    const TEST_DIR = path.join(
+      __dirname,
+      "__test-logs-codex-validator-transcript__",
+    );
+    const codexValidator: GraphWorkflowAgentValidatorConfig = {
+      type: "codex",
+      enabled: true,
+      continuity: { enabled: true },
+      codex: {},
+    };
+    const execution = buildExecutionWithContextValidation(codexValidator);
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    )!;
+    const repo = createInMemoryRepo(execution);
+
+    const continuityService = createWorkflowContinuityService({
+      createConversation: vi.fn(),
+      getConversation: vi.fn(),
+      startCodexThread: vi.fn(async () => ({ threadId: "thread-placeholder" })),
+      resumeCodexThread: vi.fn(async (id: string) => ({ threadId: id })),
+      now: () => NOW,
+    });
+
+    const transcript = [
+      {
+        seq: 0,
+        backend: "codex" as const,
+        type: "reasoning",
+        raw: { type: "reasoning", text: "compare against ~/.aerospace.toml" },
+      },
+      {
+        seq: 1,
+        backend: "codex" as const,
+        type: "command_execution",
+        raw: { type: "command_execution", command: "npm run verify" },
+      },
+    ];
+    const executeWorkflowTaskRun = vi.fn(
+      async (_input: ExecuteWorkflowTaskRunInput): Promise<TaskRunResult> => ({
+        kind: "text",
+        text: passResponseJson,
+        transcript,
+        usage: emptyUsage,
+        backendRef: { backend: "codex", threadId: "thread-real-1" },
+      }),
+    );
+
+    const runner = createValidatorRunner({
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+      continuityService,
+      executionRepository: repo,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
+    });
+
+    const logger = createExecutionLogger(execution.id, { configDir: TEST_DIR });
+    registerExecutionLogger(logger);
+
+    try {
+      await runner.runContextValidator({
+        projectPath: "/repo",
+        sessionName: "session-1",
+        execution,
+        context: contextDef,
+        validator: codexValidator,
+      });
+
+      const entries = readFileSync(
+        path.join(
+          logger.logDir,
+          "contexts",
+          "context-plan",
+          "validation-transcript.jsonl",
+        ),
+        "utf-8",
+      )
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+
+      expect(entries[0]).toMatchObject({
+        event: "validator.transcript_begin",
+        engine: "codex",
+        entryCount: 2,
+      });
+      expect(
+        entries
+          .filter((e) => e.event === "validator.transcript_item")
+          .map((e) => e.itemType),
+      ).toEqual(["reasoning", "command_execution"]);
+    } finally {
+      unregisterExecutionLogger(execution.id);
+      try {
+        rmSync(TEST_DIR, { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
+    }
   });
 
   it("marks the Codex lane for rotation after a failed turn so phantom threads are not reused", async () => {

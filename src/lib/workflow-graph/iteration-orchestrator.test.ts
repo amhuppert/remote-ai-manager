@@ -4270,6 +4270,7 @@ describe("background-task wait lifecycle (task 4.2)", () => {
       validation() {},
       writePrompt() {},
       writeValidatorResponse() {},
+      writeValidatorTranscript() {},
       decision() {},
     };
     return { logger, iterationCalls };

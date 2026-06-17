@@ -229,6 +229,32 @@ describe("dispatchTaskRun", () => {
     }
   });
 
+  it("preserves a captured transcript on runner-reported errors", async () => {
+    const transcript = [
+      {
+        seq: 0,
+        backend: "claude" as const,
+        type: "assistant",
+        raw: { type: "assistant", text: "partial analysis" },
+      },
+    ];
+    const { runner } = makeStubRunner("claude", {
+      result: { error: "runner exploded", text: null, transcript },
+    });
+    const result = await dispatchTaskRun(
+      { kind: "task_run", backend: "claude", prompt: "go" },
+      {
+        runner,
+        capabilityView: CLAUDE_TASK_VIEW,
+        workingDirectory: "/tmp/wt",
+      },
+    );
+    expect(result.outcome.kind).toBe("failed");
+    if (result.outcome.kind === "failed") {
+      expect(result.outcome.transcript).toEqual(transcript);
+    }
+  });
+
   it("normalizes a thrown runner exception", async () => {
     const { runner } = makeStubRunner("codex", {
       throws: new Error("connection reset"),

@@ -398,6 +398,7 @@ describe("createRequestCollaborationHandler", () => {
       }),
       writePrompt: vi.fn(),
       writeValidatorResponse: vi.fn(),
+      writeValidatorTranscript: vi.fn(),
       decision: vi.fn((event) => {
         recorder.push(`decision:${event}`);
       }),
@@ -583,6 +584,7 @@ describe("createRequestCollaborationHandler", () => {
         validation: vi.fn(),
         writePrompt: vi.fn(),
         writeValidatorResponse: vi.fn(),
+        writeValidatorTranscript: vi.fn(),
         decision: vi.fn(),
       };
       return { logger, tasks };

@@ -19,6 +19,7 @@
 
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import type { AgentTranscriptEntry } from "@/lib/agent-backends/transcript";
 import type { TranscriptMessageOrigin } from "@/lib/conversations/schemas";
 import { createLogger } from "@/lib/logging";
 import type { ConversationActorRef } from "./machine";
@@ -88,12 +89,16 @@ export type TaskRunResult =
       /** Joined text blocks emitted alongside the structured payload, when
        *  the runner returned both. May be the empty string. */
       text: string;
+      /** Full backend-native turn transcript, when the backend surfaced one. */
+      transcript?: AgentTranscriptEntry[];
       usage: TaskRunUsage;
       backendRef: AgentSessionRef | null;
     }
   | {
       kind: "text";
       text: string;
+      /** Full backend-native turn transcript, when the backend surfaced one. */
+      transcript?: AgentTranscriptEntry[];
       usage: TaskRunUsage;
       backendRef: AgentSessionRef | null;
     }
@@ -101,6 +106,8 @@ export type TaskRunResult =
       kind: "error";
       error: string;
       aborted: boolean;
+      /** Full backend-native turn transcript, when the backend surfaced one. */
+      transcript?: AgentTranscriptEntry[];
       usage: TaskRunUsage;
       backendRef: AgentSessionRef | null;
     };
@@ -309,12 +316,15 @@ function mapToTaskRunResult(
     cachedInputTokens: result?.cachedInputTokens ?? null,
   };
   const backendRef: AgentSessionRef | null = result?.backendRef ?? null;
+  const transcriptFields =
+    result?.transcript !== undefined ? { transcript: result.transcript } : {};
 
   if (error !== null && (result === null || result.error !== null)) {
     return {
       kind: "error",
       error: error ?? result?.error ?? "task_run failed",
       aborted: result?.aborted === true,
+      ...transcriptFields,
       usage,
       backendRef,
     };
@@ -335,6 +345,7 @@ function mapToTaskRunResult(
       kind: "error",
       error: result.error,
       aborted: result.aborted,
+      ...transcriptFields,
       usage,
       backendRef,
     };
@@ -352,10 +363,11 @@ function mapToTaskRunResult(
       kind: "structured",
       structuredOutput: result.structuredOutput,
       text,
+      ...transcriptFields,
       usage,
       backendRef,
     };
   }
 
-  return { kind: "text", text, usage, backendRef };
+  return { kind: "text", text, ...transcriptFields, usage, backendRef };
 }

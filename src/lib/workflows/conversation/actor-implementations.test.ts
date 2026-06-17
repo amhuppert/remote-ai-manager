@@ -3516,6 +3516,64 @@ describe("runTaskRunTurnForMachine", () => {
     ).not.toHaveBeenCalled();
   });
 
+  it("task_run failure preserves captured backend transcript without appending an assistant message", async () => {
+    const runner = makeMockTaskRunner(async () => ({
+      backendRef: null,
+      text: null,
+      usage: null,
+      error: "backend error",
+      timedOut: false,
+    }));
+    const transcript = [
+      {
+        seq: 0,
+        backend: "claude" as const,
+        type: "assistant",
+        raw: { type: "assistant", text: "partial analysis" },
+      },
+    ];
+
+    const executeAgentCallSpy = vi.fn(async () => ({
+      backend: "claude" as const,
+      backendRef: null,
+      capabilities: {
+        backend: "claude" as const,
+        nativeStructuredOutput: false,
+        nativeAskUserQuestion: false,
+        nativeSessionResumption: false,
+        portableMcpScope: "between_turns" as const,
+        forkSemantics: "synthetic_seed" as const,
+      },
+      usage: {},
+      artifacts: [],
+      outcome: {
+        kind: "failed" as const,
+        transcript,
+        error: {
+          failureKind: "backend_error" as const,
+          backend: "claude" as const,
+          message: "backend error",
+        },
+      },
+    }));
+
+    mockDeps = createMockDeps({
+      getTaskRunner: vi.fn(() => runner),
+      executeAgentCall: executeAgentCallSpy as unknown as ReturnType<
+        typeof vi.fn
+      >,
+    } as unknown as Partial<ActorImplementationDeps>);
+    setActorDeps(mockDeps);
+
+    const result = await runTaskRunTurnForMachine(makeRunTaskRunInput());
+
+    expect(result.error).toBe("backend error");
+    expect(result.transcript).toEqual(transcript);
+    expect(
+      vi.mocked(mockDeps.safeAppendTranscriptEntry),
+    ).not.toHaveBeenCalled();
+  });
+
   it("task_run with origin: stamps origin on the appended assistant TranscriptEntry", async () => {
     const runner = makeMockTaskRunner(async () => ({
       backendRef: null,

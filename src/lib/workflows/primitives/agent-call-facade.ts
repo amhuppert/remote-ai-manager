@@ -336,6 +336,10 @@ function failWithSchemaValidation(
     ...dispatchResult,
     outcome: {
       kind: "failed",
+      ...(dispatchResult.outcome.kind === "completed" &&
+      dispatchResult.outcome.transcript !== undefined
+        ? { transcript: dispatchResult.outcome.transcript }
+        : {}),
       error: {
         failureKind: "schema_validation",
         backend: dispatchResult.backend,

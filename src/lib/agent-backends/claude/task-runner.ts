@@ -18,6 +18,10 @@ import type {
 import type { AgentBackendId } from "../types";
 import { translatePortableMcpToClaude } from "../mcp-translation";
 import {
+  toRawTranscriptEntries,
+  type AgentTranscriptEntry,
+} from "../transcript";
+import {
   claudeEffortLevelSchema,
   type ClaudeEffortLevel,
 } from "@/lib/agent-backends/schemas";
@@ -151,6 +155,7 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
 
     let sessionId: string | null = null;
     const textBlocks: string[] = [];
+    const rawMessages: unknown[] = [];
     let structuredOutput: unknown;
     let usageResult: AgentTaskResult["usage"] = null;
     let error: string | null = null;
@@ -193,6 +198,7 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
 
       for await (const message of stream) {
         const msg = message as SDKMessage;
+        rawMessages.push(message);
 
         if (msg.type === "system") {
           const sysMsg = msg as SDKSystemMessage;
@@ -245,6 +251,11 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
       ? { backend: "claude" as const, sessionId }
       : null;
 
+    const transcript: AgentTranscriptEntry[] | undefined =
+      rawMessages.length > 0
+        ? toRawTranscriptEntries("claude", rawMessages)
+        : undefined;
+
     logger.info("claude-task-runner.complete", {
       workingDirectory: input.workingDirectory,
       sessionId,
@@ -257,6 +268,7 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
       text: textBlocks.length > 0 ? textBlocks.join("") : null,
       structuredOutput,
       usage: usageResult,
+      ...(transcript ? { transcript } : {}),
       error: error ?? (timedOut ? "Task timed out" : null),
       timedOut,
     };
