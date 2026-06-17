@@ -8,7 +8,9 @@ import LayoutSwitcher from "@/features/session/conversation/LayoutSwitcher";
 import DevServersButton from "@/features/session/conversation/DevServersButton";
 import SessionActionsMenu from "@/features/session/conversation/SessionActionsMenu";
 import InfoDetailsPopover from "@/features/session/conversation/InfoDetailsPopover";
+import CopyableId from "@/components/CopyableId";
 import { deriveSessionPromptCount } from "@/lib/sessions/derived";
+import { shortenWorktreePath } from "@/lib/sessions/worktree-path";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionState, LayoutMode } from "@/lib/sessions/schemas";
 import type { DevServerRuntimeState } from "@/lib/dev-server/schemas";
@@ -103,10 +105,11 @@ function SessionInfoStrip({
         <span className="si-val">{session.branchName}</span>
       </div>
       <div className="si-details">
-        <div className="si-item">
-          <span className="si-label">branch</span>
-          <span className="si-val si-val--bright">{session.branchName}</span>
-        </div>
+        <CopyableId
+          label="worktree"
+          value={session.worktreePath}
+          displayValue={shortenWorktreePath(session.worktreePath)}
+        />
         <span className="si-sep" />
         <div
           className={`session-status ${statusDotClass.replace("status-dot-", "")}`}

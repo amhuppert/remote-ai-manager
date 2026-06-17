@@ -8,6 +8,28 @@ import ModelSelector from "@/components/ModelSelector";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import ConversationNav from "@/components/ConversationNav";
 import { ContextFillIndicator } from "@/components/ContextFillIndicator";
+import MobileInfoPanel from "@/features/session/mobile/MobileInfoPanel";
+import { sessionStateSchema } from "@/lib/sessions/schemas";
+import { conversationStateSchema } from "@/lib/conversations/schemas";
+
+const infoPanelConversation = conversationStateSchema.parse({
+  id: "9d0b1290-c2a6-4d9d-b62f-6e6637442d1e",
+  transcriptPath: null,
+  status: "awaiting",
+  promptCount: 7,
+  createdAt: "2026-03-18T14:30:00Z",
+  lastActivityAt: "2026-03-18T14:30:00Z",
+  backendRef: { backend: "claude", sessionId: "sess_abc123xyz456" },
+});
+
+const infoPanelSession = sessionStateSchema.parse({
+  sessionName: "fix-authentication-flow-issue",
+  worktreePath: "/home/user/projects/my-app/.worktrees/fix-auth",
+  branchName: "csm/fix-authentication-flow-issue",
+  createdAt: "2026-03-18T14:30:00Z",
+  lastActivityAt: "2026-03-18T14:30:00Z",
+  conversations: [infoPanelConversation],
+});
 
 /**
  * Full mobile session view mockup demonstrating the optimized mobile layout:
@@ -303,67 +325,15 @@ function MobileSessionViewDemo({
 
             {/* Info panel */}
             {panel === "info" && (
-              <div className="mobile-info-panel" style={{ display: "flex" }}>
-                <div className="mobile-info-row">
-                  <span className="mobile-info-label">Status</span>
-                  <span className="mobile-info-value">
-                    <span
-                      className="status-dot"
-                      style={{
-                        width: 6,
-                        height: 6,
-                        display: "inline-block",
-                        marginRight: 6,
-                      }}
-                    />
-                    awaiting
-                  </span>
-                </div>
-                <div className="mobile-info-row">
-                  <span className="mobile-info-label">Branch</span>
-                  <span className="mobile-info-value">
-                    csm/fix-authentication-flow-issue
-                  </span>
-                </div>
-                <div className="mobile-info-row">
-                  <span className="mobile-info-label">Created</span>
-                  <span className="mobile-info-value">Mar 18, 2:30 PM</span>
-                </div>
-                <div className="mobile-info-row">
-                  <span className="mobile-info-label">Prompts</span>
-                  <span className="mobile-info-value">7</span>
-                </div>
-                <div className="mobile-info-row">
-                  <span className="mobile-info-label">Worktree</span>
-                  <span className="mobile-info-value">
-                    /home/user/projects/my-app/.worktrees/fix-auth
-                  </span>
-                </div>
-                <div className="mobile-info-row">
-                  <span className="mobile-info-label">Conv ID</span>
-                  <span className="mobile-info-value">
-                    9d0b1290-c2a6-4d9d-b62f-6e6637442d1e
-                  </span>
-                </div>
-                <div className="mobile-info-row">
-                  <span className="mobile-info-label">Context</span>
-                  <span className="mobile-info-value">
-                    <ContextFillIndicator percentage={42} />
-                  </span>
-                </div>
-                <div className="mobile-info-actions">
-                  <button
-                    className="btn btn-sm"
-                    style={{
-                      display: "flex",
-                      width: "100%",
-                      justifyContent: "center",
-                    }}
-                  >
-                    {"\u2398"} Copy Context
-                  </button>
-                </div>
-              </div>
+              <MobileInfoPanel
+                session={infoPanelSession}
+                activeConversation={infoPanelConversation}
+                conversationId={infoPanelConversation.id}
+                statusDotClass="amber"
+                displayStatus="awaiting"
+                contextPercent={contextPercent}
+                buildContext={() => "Mobile session context"}
+              />
             )}
           </div>
         </div>

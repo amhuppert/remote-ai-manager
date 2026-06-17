@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useState } from "react";
 import { ContextFillIndicator } from "@/components/ContextFillIndicator";
+import CopyableId from "@/components/CopyableId";
 import { deriveSessionPromptCount } from "@/lib/sessions/derived";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
@@ -16,25 +17,14 @@ function formatDate(iso: string): string {
 }
 
 function MobileInfoCopyRow({ label, value }: { label: string; value: string }) {
-  const [copied, setCopied] = useState(false);
   return (
-    <div
+    <CopyableId
+      label={label}
+      value={value}
+      truncateAt={999}
       className="mobile-info-row mobile-info-copyable"
-      onClick={() => {
-        void navigator.clipboard.writeText(value).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        });
-      }}
-      role="button"
-      tabIndex={0}
-    >
-      <span className="mobile-info-label">{label}</span>
-      <span className="mobile-info-value">{value}</span>
-      <span className="mobile-info-copy-icon">
-        {copied ? "\u2713" : "\u2398"}
-      </span>
-    </div>
+      ariaLabel={`Copy ${label}`}
+    />
   );
 }
 

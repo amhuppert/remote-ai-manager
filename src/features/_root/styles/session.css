@@ -312,7 +312,7 @@
 
 .info-details-row {
   display: grid;
-  grid-template-columns: 110px 1fr auto;
+  grid-template-columns: 110px 1fr;
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
@@ -340,26 +340,22 @@
   white-space: nowrap;
 }
 
-.info-details-copy {
-  width: 22px;
-  height: 22px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  font-size: 12px;
-  transition:
-    color 0.15s ease,
-    background 0.15s ease;
+/* Copyable value cell inside an info-details row — fills the value column and
+   pushes the copy icon to the right edge. */
+.info-details-copyable {
+  display: flex;
+  width: 100%;
+  min-width: 0;
 }
 
-.info-details-copy:hover {
-  color: var(--cyan);
-  background: var(--bg-hover);
+.info-details-copyable .copyable-id-val {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.72rem;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .info-details-footer {
@@ -392,6 +388,9 @@
 
 /* Copyable ID — clickable metadata value with copy-to-clipboard */
 .copyable-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   cursor: pointer;
   position: relative;
   border-radius: var(--radius-sm);
@@ -410,13 +409,22 @@
 }
 
 .copyable-id-icon {
-  font-size: 0.72rem;
+  display: inline-flex;
+  align-items: center;
   color: var(--text-secondary);
   opacity: 0;
-  transition: opacity 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    color 0.15s ease;
 }
 
 .copyable-id:hover .copyable-id-icon {
+  color: var(--cyan);
+  opacity: 1;
+}
+
+.copyable-id.copied .copyable-id-icon {
+  color: var(--green);
   opacity: 1;
 }
 
@@ -2231,6 +2239,7 @@
 
   .mobile-info-copyable {
     cursor: pointer;
+    margin: 0;
     transition: background 0.1s ease;
   }
 
@@ -2238,12 +2247,37 @@
     background: var(--bg-hover);
   }
 
-  .mobile-info-copy-icon {
-    flex-shrink: 0;
+  /* CopyableId internals adopt the mobile row layout. */
+  .mobile-info-copyable .si-label {
     color: var(--text-tertiary);
-    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 0.7rem;
+    flex-shrink: 0;
+    min-width: 80px;
+  }
+
+  .mobile-info-copyable .copyable-id-val {
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    flex: 1;
+  }
+
+  /* Touch has no hover, so the copy icon is always visible. */
+  .mobile-info-copyable .copyable-id-icon {
+    flex-shrink: 0;
     width: 20px;
-    text-align: center;
+    justify-content: center;
+    opacity: 1;
+    color: var(--text-tertiary);
+  }
+
+  .mobile-info-copyable.copied .copyable-id-icon {
+    color: var(--green);
   }
 
   .mobile-info-actions {

@@ -686,11 +686,12 @@
 }
 
 /* Branch chip */
-.s-branch {
-  display: inline-flex;
-  align-items: center;
+/* Branch chip — pill-styled CopyableId. Compound selectors win over the
+   .copyable-id base styling defined in session.css. */
+.copyable-id.s-branch {
   gap: 6px;
   padding: 3px 8px 3px 9px;
+  margin: 0;
   background: var(--bg-base);
   border: 1px solid var(--border-subtle);
   border-radius: 9999px;
@@ -698,42 +699,41 @@
   font-size: 0.7rem;
   color: var(--text-secondary);
   max-width: 240px;
-  cursor: pointer;
   transition:
     background 0.12s ease,
     border-color 0.12s ease,
     color 0.12s ease;
 }
-.s-branch:hover {
+.copyable-id.s-branch:hover {
   background: var(--bg-hover);
   border-color: var(--border-default);
   color: var(--text-primary);
 }
-.s-branch.copied {
+.copyable-id.s-branch.copied {
   color: var(--green);
   border-color: var(--green);
 }
-.s-branch .branch-name {
+.s-branch .copyable-id-val {
+  font-size: 0.7rem;
+  color: inherit;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
   min-width: 0;
 }
-.s-branch .branch-copy {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.copyable-id.s-branch .copyable-id-icon {
   width: 16px;
   height: 16px;
+  justify-content: center;
   flex-shrink: 0;
+  opacity: 1;
   color: var(--text-tertiary);
-  transition: color 0.12s ease;
 }
-.s-branch:hover .branch-copy {
+.copyable-id.s-branch:hover .copyable-id-icon {
   color: var(--text-primary);
 }
-.s-branch .branch-copy.copied {
+.copyable-id.s-branch.copied .copyable-id-icon {
   color: var(--green);
 }
 

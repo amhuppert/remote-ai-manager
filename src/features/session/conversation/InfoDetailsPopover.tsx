@@ -2,6 +2,8 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useOverlayScope } from "@/hooks/useOverlayScope";
+import CopyableId from "@/components/CopyableId";
+import { shortenWorktreePath } from "@/lib/sessions/worktree-path";
 import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
 
 interface InfoDetailsPopoverProps {
@@ -34,13 +36,6 @@ function formatCreatedDate(iso: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function shortenWorktreePath(fullPath: string): string {
-  const marker = ".worktrees/";
-  const idx = fullPath.indexOf(marker);
-  if (idx === -1) return fullPath;
-  return fullPath.slice(idx + marker.length);
 }
 
 interface Row {
@@ -119,13 +114,6 @@ export default function InfoDetailsPopover({
       const next = !prev;
       setOpen(next);
       return next;
-    });
-  }, []);
-
-  const copyVal = useCallback((key: string, value: string) => {
-    void navigator.clipboard?.writeText(value).then(() => {
-      setCopied(key);
-      setTimeout(() => setCopied(null), 1400);
     });
   }, []);
 
@@ -232,21 +220,17 @@ export default function InfoDetailsPopover({
             {rows.map((r) => (
               <div key={r.key} className="info-details-row">
                 <span className="info-details-label">{r.label}</span>
-                <span className="info-details-value" title={r.value}>
-                  {r.value}
-                </span>
-                {r.copyable && (
-                  <button
-                    type="button"
-                    className="info-details-copy"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      copyVal(r.key, r.copyValue ?? r.value);
-                    }}
-                    aria-label={`Copy ${r.label}`}
-                  >
-                    {copied === r.key ? "\u2713" : "\u2398"}
-                  </button>
+                {r.copyable ? (
+                  <CopyableId
+                    value={r.copyValue ?? r.value}
+                    displayValue={r.value}
+                    className="info-details-copyable"
+                    ariaLabel={`Copy ${r.label}`}
+                  />
+                ) : (
+                  <span className="info-details-value" title={r.value}>
+                    {r.value}
+                  </span>
                 )}
               </div>
             ))}
