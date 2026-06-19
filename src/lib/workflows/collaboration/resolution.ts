@@ -111,7 +111,7 @@ export async function runProposedChangesStep(
       }),
     };
   }
-  trackArtifact(tracker, proposedChanges.value);
+  await trackArtifact(tracker, proposedChanges.value);
   await persistArtifactsSnapshot(input, deps, now, tracker);
 
   return { kind: "ok", proposedChanges: proposedChanges.value };
@@ -200,7 +200,7 @@ export async function runResolutionDecisionStep(
       }),
     };
   }
-  trackArtifact(tracker, resolution.value);
+  await trackArtifact(tracker, resolution.value);
   await persistArtifactsSnapshot(input, deps, now, tracker);
 
   return { kind: "ok", resolution: resolution.value };

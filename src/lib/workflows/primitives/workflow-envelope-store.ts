@@ -116,16 +116,19 @@ function clone(envelope: WorkflowEnvelope): WorkflowEnvelope {
 
 export interface SessionStateWorkflowEnvelopeStoreDeps {
   /**
-   * Atomic session-state mutator. In production this is the `mutateSession`
-   * exported from `src/lib/state.ts`; the store wraps it so envelope writes
-   * inherit the same write queue that serializes every other session-state
-   * mutation.
+   * Focused single-column mutator of the session's `workflow_envelopes` map. In
+   * production this is `mutateSessionWorkflowEnvelopes` from `@/lib/state-store`,
+   * which loads only the target session and persists the one column — skipping
+   * the whole-state read/validate/diff cycle the generic `mutateSession` runs.
+   * Envelope writes still inherit the session-state write queue that serializes
+   * every other session-state mutation. The callback receives the envelopes map
+   * directly (mutated in place).
    */
-  mutateSession: <T>(
+  mutateEnvelopes: <T>(
     projectPath: string,
     sessionName: string,
     label: string,
-    mutate: (session: SessionStateLike) => T | Promise<T>,
+    mutate: (envelopes: Record<string, unknown>) => T | Promise<T>,
   ) => Promise<T>;
   /**
    * Read-only accessor used by `read()` and `listAll()`. Returns `null` when
@@ -151,7 +154,7 @@ export interface SessionStateLike {
 export function createSessionStateWorkflowEnvelopeStore(
   deps: SessionStateWorkflowEnvelopeStoreDeps,
 ): WorkflowEnvelopeStore {
-  const { mutateSession, getSession, projectPath, sessionName } = deps;
+  const { mutateEnvelopes, getSession, projectPath, sessionName } = deps;
 
   return {
     async read(workflowId) {
@@ -162,13 +165,12 @@ export function createSessionStateWorkflowEnvelopeStore(
     },
 
     async upsert(workflowId, mutator) {
-      return mutateSession(
+      return mutateEnvelopes(
         projectPath,
         sessionName,
         `workflow-envelope.upsert[${workflowId}]`,
-        async (session) => {
-          if (!session.workflowEnvelopes) session.workflowEnvelopes = {};
-          const rawExisting = session.workflowEnvelopes[workflowId];
+        async (envelopes) => {
+          const rawExisting = envelopes[workflowId];
           const existing =
             rawExisting === undefined
               ? null
@@ -180,7 +182,7 @@ export function createSessionStateWorkflowEnvelopeStore(
               `Mutator returned an envelope with workflowId "${parsed.workflowId}" but upsert was called with "${workflowId}"`,
             );
           }
-          session.workflowEnvelopes[parsed.workflowId] = parsed;
+          envelopes[parsed.workflowId] = parsed;
           logger.debug("workflow-envelope.store.upsert", {
             workflowId: parsed.workflowId,
             workflowType: parsed.workflowType,
@@ -194,14 +196,13 @@ export function createSessionStateWorkflowEnvelopeStore(
     },
 
     async delete(workflowId) {
-      await mutateSession(
+      await mutateEnvelopes(
         projectPath,
         sessionName,
         `workflow-envelope.delete[${workflowId}]`,
-        (session) => {
-          if (!session.workflowEnvelopes) return;
-          if (workflowId in session.workflowEnvelopes) {
-            delete session.workflowEnvelopes[workflowId];
+        (envelopes) => {
+          if (workflowId in envelopes) {
+            delete envelopes[workflowId];
             logger.debug("workflow-envelope.store.delete", {
               workflowId,
               backing: "session-state",

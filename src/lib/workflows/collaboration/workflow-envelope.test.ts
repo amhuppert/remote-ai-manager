@@ -16,6 +16,7 @@ import {
 import {
   collaborationFeatureSnapshotSchema,
   type CollaborationFeatureSnapshotWorkflow,
+  type CollaborationWorkflowArtifactEntry,
 } from "./feature-snapshot";
 import {
   createWorkflowCollaborationEnvelope,
@@ -179,9 +180,13 @@ function makeRoundOutput(resolution: CollaborationResolutionDecisionOutput): {
 function buildBaselineDeps(overrides?: {
   policyDecide?: WorkflowCollaborationEnvelopeDeps["policyDecide"];
   collaboratorCaller?: WorkflowCollaborationEnvelopeDeps["collaboratorCaller"];
+  appendArtifact?: WorkflowCollaborationEnvelopeDeps["appendArtifact"];
 }): WorkflowCollaborationEnvelopeDeps {
   const envelopeStore = createInMemoryWorkflowEnvelopeStore();
   return {
+    ...(overrides?.appendArtifact
+      ? { appendArtifact: overrides.appendArtifact }
+      : {}),
     envelopeStore,
     policyDecide:
       overrides?.policyDecide ??
@@ -504,17 +509,16 @@ describe("createWorkflowCollaborationEnvelope", () => {
   });
 
   describe("artifact stream persistence", () => {
-    it("appends every phase output to the workflow snapshot in order on the converged path", async () => {
-      const deps = buildBaselineDeps();
+    it("appends every phase output to the sidecar in order on the converged path, and keeps them out of the persisted envelope blob", async () => {
+      const appended: CollaborationWorkflowArtifactEntry[] = [];
+      const deps = buildBaselineDeps({
+        appendArtifact: async (_workflowId, entry) => {
+          appended.push(entry);
+        },
+      });
       await createWorkflowCollaborationEnvelope(deps).start(START_ARGS);
 
-      const persisted = await deps.envelopeStore.read("wf-collab-test-1");
-      const parsed = collaborationFeatureSnapshotSchema.parse(
-        persisted?.featureSnapshot,
-      );
-      if (parsed.origin !== "workflow") throw new Error("expected workflow");
-
-      expect(parsed.artifacts.map((a) => a.kind)).toEqual([
+      expect(appended.map((a) => a.kind)).toEqual([
         "initial_draft",
         "initial_draft",
         "cross_review",
@@ -524,23 +528,26 @@ describe("createWorkflowCollaborationEnvelope", () => {
         "final_answer",
       ]);
 
-      const initialDrafts = parsed.artifacts.filter(
-        (a) => a.kind === "initial_draft",
-      );
+      const initialDrafts = appended.filter((a) => a.kind === "initial_draft");
       expect(initialDrafts.map((a) => a.agent).sort()).toEqual([
         "agent_one",
         "agent_two",
       ]);
 
-      const finalAnswer = parsed.artifacts.find(
-        (a) => a.kind === "final_answer",
-      );
+      const finalAnswer = appended.find((a) => a.kind === "final_answer");
       if (!finalAnswer || finalAnswer.kind !== "final_answer") {
         throw new Error("expected final_answer artifact");
       }
       expect(finalAnswer.value.answer).toBe(
         "Adopt Postgres for the new service tier.",
       );
+
+      // The unbounded artifact stream must no longer ride inside the envelope
+      // blob — that round-trip cost is exactly what the sidecar removes.
+      const persisted = await deps.envelopeStore.read("wf-collab-test-1");
+      expect(
+        (persisted?.featureSnapshot as Record<string, unknown>)["artifacts"],
+      ).toBeUndefined();
     });
 
     it("appends per-round artifacts with monotonic round numbers across multiple rounds", async () => {
@@ -550,8 +557,12 @@ describe("createWorkflowCollaborationEnvelope", () => {
         if (callCount < 2) return { kind: "continue_negotiation" };
         return { kind: "final" };
       });
+      const appended: CollaborationWorkflowArtifactEntry[] = [];
       const deps = buildBaselineDeps({
         policyDecide,
+        appendArtifact: async (_workflowId, entry) => {
+          appended.push(entry);
+        },
         collaboratorCaller: {
           runInitialDrafts: vi.fn(async () => ({
             agentOneDraft: AGENT_ONE_DRAFT,
@@ -569,30 +580,28 @@ describe("createWorkflowCollaborationEnvelope", () => {
 
       await createWorkflowCollaborationEnvelope(deps).start(START_ARGS);
 
-      const persisted = await deps.envelopeStore.read("wf-collab-test-1");
-      const parsed = collaborationFeatureSnapshotSchema.parse(
-        persisted?.featureSnapshot,
-      );
-      if (parsed.origin !== "workflow") throw new Error("expected workflow");
-
-      const proposedRounds = parsed.artifacts
+      const proposedRounds = appended
         .filter((a) => a.kind === "proposed_changes")
         .map((a) => (a.kind === "proposed_changes" ? a.round : -1));
       expect(proposedRounds).toEqual([1, 2]);
 
-      const counterRounds = parsed.artifacts
+      const counterRounds = appended
         .filter((a) => a.kind === "counter_proposal")
         .map((a) => (a.kind === "counter_proposal" ? a.round : -1));
       expect(counterRounds).toEqual([1, 2]);
 
-      const resolutionRounds = parsed.artifacts
+      const resolutionRounds = appended
         .filter((a) => a.kind === "resolution_decision")
         .map((a) => (a.kind === "resolution_decision" ? a.round : -1));
       expect(resolutionRounds).toEqual([1, 2]);
     });
 
     it("omits the final_answer artifact when the run terminates without a final answer", async () => {
+      const appended: CollaborationWorkflowArtifactEntry[] = [];
       const deps = buildBaselineDeps({
+        appendArtifact: async (_workflowId, entry) => {
+          appended.push(entry);
+        },
         policyDecide: vi.fn(
           () =>
             ({
@@ -619,14 +628,7 @@ describe("createWorkflowCollaborationEnvelope", () => {
 
       await createWorkflowCollaborationEnvelope(deps).start(START_ARGS);
 
-      const persisted = await deps.envelopeStore.read("wf-collab-test-1");
-      const parsed = collaborationFeatureSnapshotSchema.parse(
-        persisted?.featureSnapshot,
-      );
-      if (parsed.origin !== "workflow") throw new Error("expected workflow");
-      expect(parsed.artifacts.some((a) => a.kind === "final_answer")).toBe(
-        false,
-      );
+      expect(appended.some((a) => a.kind === "final_answer")).toBe(false);
     });
   });
 

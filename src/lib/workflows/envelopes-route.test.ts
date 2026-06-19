@@ -86,7 +86,7 @@ function buildHandlers() {
       return createDefaultSessionWorkflowEnvelopeRepository({
         projectPath,
         sessionName,
-        mutateSession: manager.mutateSession,
+        mutateEnvelopes: manager.mutateSessionWorkflowEnvelopes,
         getSession: manager.getSession,
       });
     },
@@ -99,7 +99,7 @@ describe("GET /api/projects/[name]/sessions/[session]/workflow-envelopes", () =>
     const repo = createDefaultSessionWorkflowEnvelopeRepository({
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
-      mutateSession: seedManager.mutateSession,
+      mutateEnvelopes: seedManager.mutateSessionWorkflowEnvelopes,
       getSession: seedManager.getSession,
     });
     await repo.create(buildEnvelope({ workflowId: "wf-running" }));
@@ -204,7 +204,7 @@ describe("GET /api/projects/[name]/sessions/[session]/workflow-envelopes", () =>
     const repo = createDefaultSessionWorkflowEnvelopeRepository({
       projectPath: PROJECT_PATH,
       sessionName: encodedSessionName,
-      mutateSession: seedManager.mutateSession,
+      mutateEnvelopes: seedManager.mutateSessionWorkflowEnvelopes,
       getSession: seedManager.getSession,
     });
     await repo.create(buildEnvelope({ workflowId: "wf-encoded" }));

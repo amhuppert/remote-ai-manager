@@ -59,6 +59,10 @@ export const archiveActiveGraphWorkflowExecution =
   defaultStore.archiveActiveGraphWorkflowExecution;
 export const markGraphWorkflowContextEventsPreReset =
   defaultStore.markGraphWorkflowContextEventsPreReset;
+export const mutateSessionWorkflowLanes =
+  defaultStore.mutateSessionWorkflowLanes;
+export const mutateSessionWorkflowEnvelopes =
+  defaultStore.mutateSessionWorkflowEnvelopes;
 export const getGraphWorkflowEventsTail =
   defaultStore.getGraphWorkflowEventsTail;
 export const findLatestGraphWorkflowContextEvent =

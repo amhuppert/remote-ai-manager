@@ -40,6 +40,7 @@ import {
 import type { ArtifactRegistry } from "../workflows/primitives/artifact-registry";
 import { createSessionArtifactRegistryForProduction } from "../workflows/primitives/default-session-artifact-registry";
 import { createLaneWorktreeSweep } from "./lane-worktree-sweep";
+import { deleteCollaborationArtifacts } from "../workflows/collaboration/artifacts-store";
 
 const logger = createLogger("sessions");
 
@@ -731,6 +732,22 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
           sessionName,
           conversationId: conv.id,
           transcriptPath: conv.transcriptPath,
+          error: getErrorMessage(err),
+        });
+      }
+    }
+
+    // Collaboration artifact streams live in per-workflow JSONL sidecars under
+    // $configDir/collab-artifacts/, also outside the worktree, so they need
+    // the same explicit purge as transcripts. The keys of `workflowEnvelopes`
+    // are the workflow ids whose sidecars to remove.
+    for (const workflowId of Object.keys(session.workflowEnvelopes ?? {})) {
+      try {
+        await deleteCollaborationArtifacts(workflowId);
+      } catch (err) {
+        logger.warn("session.collab_artifacts_remove_failure", {
+          sessionName,
+          workflowId,
           error: getErrorMessage(err),
         });
       }

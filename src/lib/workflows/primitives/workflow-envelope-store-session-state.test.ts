@@ -47,7 +47,7 @@ async function seedSession(): Promise<void> {
 function buildStore(): WorkflowEnvelopeStore {
   const stateManager = createTestStateManager();
   return createSessionStateWorkflowEnvelopeStore({
-    mutateSession: stateManager.mutateSession,
+    mutateEnvelopes: stateManager.mutateSessionWorkflowEnvelopes,
     getSession: stateManager.getSession,
     projectPath: PROJECT_PATH,
     sessionName: SESSION_NAME,
@@ -269,6 +269,13 @@ describe("createSessionStateWorkflowEnvelopeStore — durable session-state pers
 
     const stateManager = createTestStateManager();
 
+    // The concurrent non-envelope write targets `objective` rather than
+    // `lastActivityAt`: the focused envelope setter restamps `lastActivityAt`
+    // on every write (mirroring `setActiveGraphWorkflowExecution`), so a
+    // manually-set timestamp would be legitimately overwritten by the later
+    // envelope update. `objective` is a field the focused envelope path never
+    // touches, so it faithfully witnesses that the generic mutation landed and
+    // was not lost when interleaved with the envelope writes.
     await Promise.all([
       repo.update("wf-1", { phase: "envelope-side" }),
       stateManager.mutateSession(
@@ -276,7 +283,7 @@ describe("createSessionStateWorkflowEnvelopeStore — durable session-state pers
         SESSION_NAME,
         "concurrent-non-envelope-write",
         (session) => {
-          session.lastActivityAt = "2026-04-28T11:00:00.000Z";
+          session.objective = "concurrent-objective";
         },
       ),
       repo.update("wf-1", { featureSnapshot: { counter: 42 } }),
@@ -288,6 +295,6 @@ describe("createSessionStateWorkflowEnvelopeStore — durable session-state pers
     expect(fetched?.featureSnapshot).toEqual({ counter: 42 });
 
     const session = await stateManager.getSession(PROJECT_PATH, SESSION_NAME);
-    expect(session?.lastActivityAt).toBe("2026-04-28T11:00:00.000Z");
+    expect(session?.objective).toBe("concurrent-objective");
   });
 });

@@ -110,7 +110,7 @@ export async function runCounterProposalStep(
       }),
     };
   }
-  trackArtifact(tracker, counterProposal.value);
+  await trackArtifact(tracker, counterProposal.value);
   await persistArtifactsSnapshot(input, deps, now, tracker);
 
   return { kind: "ok", counterProposal: counterProposal.value };

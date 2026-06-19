@@ -34,6 +34,7 @@ import {
   type AsymmetricCollaborationSliceInput,
 } from "./envelope";
 import type {
+  CollaborationArtifact,
   CollaborationCounterProposalOutput,
   CollaborationCrossReviewOutput,
   CollaborationFinalAnswerOutput,
@@ -203,6 +204,13 @@ interface BuiltDeps {
   capturedPushDispatches: Array<
     Parameters<NonNullable<AsymmetricCollaborationSliceDeps["dispatchPush"]>>[0]
   >;
+  /**
+   * In-memory stand-in for the durable JSONL artifacts sidecar, keyed by
+   * workflowId. `appendArtifact` pushes here; `readArtifacts` reads back in
+   * append order. Tests seed it to drive the resume path and read it to assert
+   * the artifact stream now lives in the sidecar, not the envelope blob.
+   */
+  artifactSidecar: Map<string, CollaborationArtifact[]>;
 }
 
 async function buildDeps(
@@ -240,6 +248,8 @@ async function buildDeps(
     Parameters<NonNullable<AsymmetricCollaborationSliceDeps["dispatchPush"]>>[0]
   > = [];
 
+  const artifactSidecar = new Map<string, CollaborationArtifact[]>();
+
   const deps: AsymmetricCollaborationSliceDeps = {
     callAgent: programmed.callAgent,
     laneService,
@@ -250,6 +260,14 @@ async function buildDeps(
     dispatchPush: (info) => {
       capturedPushDispatches.push(info);
     },
+    appendArtifact: async (workflowId, artifact) => {
+      const existing = artifactSidecar.get(workflowId) ?? [];
+      existing.push(artifact);
+      artifactSidecar.set(workflowId, existing);
+    },
+    readArtifacts: async (workflowId) => [
+      ...(artifactSidecar.get(workflowId) ?? []),
+    ],
     ...(options.appendTranscriptEntry
       ? { appendTranscriptEntry: options.appendTranscriptEntry }
       : {}),
@@ -267,6 +285,7 @@ async function buildDeps(
     envelopeStore,
     capturedPushDispatches,
     laneService,
+    artifactSidecar,
   };
 }
 
@@ -949,8 +968,8 @@ describe("runAsymmetricCollaborationSlice — agent failures", () => {
   });
 });
 
-describe("runAsymmetricCollaborationSlice — feature snapshot artifact persistence", () => {
-  it("captures every emitted artifact on the envelope feature snapshot in chronological order on completed_final", async () => {
+describe("runAsymmetricCollaborationSlice — artifact sidecar persistence", () => {
+  it("appends every emitted artifact to the sidecar in chronological order on completed_final, and keeps the envelope blob free of the artifacts array", async () => {
     const programmed = makeProgrammedCallAgent({
       claude: [
         makeBackendResult("claude", makeAgentOneInitialDraft()),
@@ -981,14 +1000,13 @@ describe("runAsymmetricCollaborationSlice — feature snapshot artifact persiste
     if (!stored) return;
 
     const snapshot = stored.featureSnapshot as Record<string, unknown>;
-    const artifacts = snapshot["artifacts"];
-    expect(Array.isArray(artifacts)).toBe(true);
-    if (!Array.isArray(artifacts)) return;
+    expect(snapshot["artifacts"]).toBeUndefined();
 
-    const kindsAndAgents = artifacts.map((a) => {
-      const wrapped = a as { kind: string; agent?: string };
-      return { kind: wrapped.kind, agent: wrapped.agent ?? null };
-    });
+    const artifacts = built.artifactSidecar.get("wf-asym") ?? [];
+    const kindsAndAgents = artifacts.map((a) => ({
+      kind: a.kind,
+      agent: "agent" in a ? a.agent : null,
+    }));
     expect(kindsAndAgents).toEqual([
       { kind: "initial_draft", agent: "agent_one" },
       { kind: "initial_draft", agent: "agent_two" },
@@ -1063,10 +1081,9 @@ describe("runAsymmetricCollaborationSlice — feature snapshot artifact persiste
     if (!stored) throw new Error("envelope missing");
     expect(stored.status).toBe("failed");
     const snapshot = stored.featureSnapshot as Record<string, unknown>;
-    const artifacts = snapshot["artifacts"];
-    expect(Array.isArray(artifacts)).toBe(true);
-    if (!Array.isArray(artifacts)) return;
-    const kinds = artifacts.map((a) => (a as { kind: string }).kind);
+    expect(snapshot["artifacts"]).toBeUndefined();
+    const artifacts = built.artifactSidecar.get("wf-asym") ?? [];
+    const kinds = artifacts.map((a) => a.kind);
     expect(kinds).toEqual([
       "initial_draft",
       "initial_draft",
@@ -1102,13 +1119,12 @@ describe("runAsymmetricCollaborationSlice — feature snapshot artifact persiste
     if (!stored) throw new Error("envelope missing");
     expect(stored.status).toBe("failed");
     const snapshot = stored.featureSnapshot as Record<string, unknown>;
-    const artifacts = snapshot["artifacts"];
-    expect(Array.isArray(artifacts)).toBe(true);
-    if (!Array.isArray(artifacts)) return;
-    const summary = artifacts.map((a) => {
-      const wrapped = a as { kind: string; agent?: string };
-      return { kind: wrapped.kind, agent: wrapped.agent ?? null };
-    });
+    expect(snapshot["artifacts"]).toBeUndefined();
+    const artifacts = built.artifactSidecar.get("wf-asym") ?? [];
+    const summary = artifacts.map((a) => ({
+      kind: a.kind,
+      agent: "agent" in a ? a.agent : null,
+    }));
     expect(summary).toEqual([{ kind: "initial_draft", agent: "agent_two" }]);
   });
 
@@ -1132,13 +1148,12 @@ describe("runAsymmetricCollaborationSlice — feature snapshot artifact persiste
     if (!stored) throw new Error("envelope missing");
     expect(stored.status).toBe("failed");
     const snapshot = stored.featureSnapshot as Record<string, unknown>;
-    const artifacts = snapshot["artifacts"];
-    expect(Array.isArray(artifacts)).toBe(true);
-    if (!Array.isArray(artifacts)) return;
-    const summary = artifacts.map((a) => {
-      const wrapped = a as { kind: string; agent?: string };
-      return { kind: wrapped.kind, agent: wrapped.agent ?? null };
-    });
+    expect(snapshot["artifacts"]).toBeUndefined();
+    const artifacts = built.artifactSidecar.get("wf-asym") ?? [];
+    const summary = artifacts.map((a) => ({
+      kind: a.kind,
+      agent: "agent" in a ? a.agent : null,
+    }));
     expect(summary).toEqual([{ kind: "initial_draft", agent: "agent_one" }]);
   });
 
@@ -1178,10 +1193,9 @@ describe("runAsymmetricCollaborationSlice — feature snapshot artifact persiste
     const stored = await built.envelopeStore.read("wf-asym");
     if (!stored) throw new Error("envelope missing");
     const snapshot = stored.featureSnapshot as Record<string, unknown>;
-    const artifacts = snapshot["artifacts"];
-    expect(Array.isArray(artifacts)).toBe(true);
-    if (!Array.isArray(artifacts)) return;
-    const kinds = artifacts.map((a) => (a as { kind: string }).kind);
+    expect(snapshot["artifacts"]).toBeUndefined();
+    const artifacts = built.artifactSidecar.get("wf-asym") ?? [];
+    const kinds = artifacts.map((a) => a.kind);
     expect(kinds).toEqual(["initial_draft", "initial_draft", "cross_review"]);
   });
 
@@ -1231,11 +1245,11 @@ describe("runAsymmetricCollaborationSlice — feature snapshot artifact persiste
     expect(disagreements.length).toBeGreaterThan(0);
     expect(disagreements[0]?.category).toBe("objective");
 
-    const artifacts = snapshot["artifacts"];
-    if (!Array.isArray(artifacts)) {
-      throw new Error("expected snapshot.artifacts to be an array");
-    }
-    const kinds = artifacts.map((a) => (a as { kind: string }).kind);
+    // The artifact stream — including the open_conflicts beat — now lives in
+    // the sidecar, not the envelope blob.
+    expect(snapshot["artifacts"]).toBeUndefined();
+    const sidecar = built.artifactSidecar.get("wf-asym") ?? [];
+    const kinds = sidecar.map((a) => a.kind);
     expect(kinds).toContain("open_conflicts");
   });
 });
@@ -1330,6 +1344,11 @@ describe("runAsymmetricCollaborationSlice — resume short-circuit from paused o
     });
     const built = await buildDeps(programmed);
 
+    // The paused artifact stream now lives in the durable sidecar; seed it
+    // there (not in the envelope blob) so the resume path rehydrates from
+    // storage exactly as production does after a process restart.
+    built.artifactSidecar.set("wf-asym", [...seededArtifacts]);
+
     await built.envelopeStore.upsert("wf-asym", () => ({
       workflowId: "wf-asym",
       workflowType: "collaboration",
@@ -1352,7 +1371,6 @@ describe("runAsymmetricCollaborationSlice — resume short-circuit from paused o
         negotiationRounds: 3,
         negotiationRoundsCompleted: 1,
         autonomousResolutionThreshold: "major",
-        artifacts: seededArtifacts,
         userAnswersByQuestionId: {},
         currentOpenConflicts: openConflicts,
       },
@@ -1378,13 +1396,10 @@ describe("runAsymmetricCollaborationSlice — resume short-circuit from paused o
 
     expect(result.kind).toBe("completed_final");
 
-    const stored = await built.envelopeStore.read("wf-asym");
-    if (!stored) throw new Error("envelope missing");
-    const snapshot = stored.featureSnapshot as {
-      artifacts: Array<{ kind: string }>;
-      userAnswersByQuestionId: Record<string, string>;
-    };
-    expect(snapshot.artifacts.map((a) => a.kind)).toEqual([
+    // The rehydrated stream plus the newly appended final_answer land in the
+    // sidecar, preserving append order; the blob never carries artifacts.
+    const sidecar = built.artifactSidecar.get("wf-asym") ?? [];
+    expect(sidecar.map((a) => a.kind)).toEqual([
       "initial_draft",
       "initial_draft",
       "cross_review",
@@ -1394,6 +1409,14 @@ describe("runAsymmetricCollaborationSlice — resume short-circuit from paused o
       "open_conflicts",
       "final_answer",
     ]);
+
+    const stored = await built.envelopeStore.read("wf-asym");
+    if (!stored) throw new Error("envelope missing");
+    const snapshot = stored.featureSnapshot as {
+      artifacts?: unknown;
+      userAnswersByQuestionId: Record<string, string>;
+    };
+    expect(snapshot.artifacts).toBeUndefined();
     expect(snapshot.userAnswersByQuestionId).toEqual({
       "Q-1": "design document",
     });

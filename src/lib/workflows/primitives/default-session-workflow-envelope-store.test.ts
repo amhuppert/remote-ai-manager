@@ -78,7 +78,7 @@ describe("createDefaultSessionWorkflowEnvelopeStore — production factory", () 
     const store = createDefaultSessionWorkflowEnvelopeStore({
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
-      mutateSession: manager.mutateSession,
+      mutateEnvelopes: manager.mutateSessionWorkflowEnvelopes,
       getSession: manager.getSession,
     });
 
@@ -93,7 +93,7 @@ describe("createDefaultSessionWorkflowEnvelopeStore — production factory", () 
     const fresh = createDefaultSessionWorkflowEnvelopeStore({
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
-      mutateSession: reloaded.mutateSession,
+      mutateEnvelopes: reloaded.mutateSessionWorkflowEnvelopes,
       getSession: reloaded.getSession,
     });
     const fetched = await fresh.read("wf-default-1");
@@ -110,7 +110,7 @@ describe("createDefaultSessionWorkflowEnvelopeStore — production factory", () 
     const repo = createDefaultSessionWorkflowEnvelopeRepository({
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
-      mutateSession: manager.mutateSession,
+      mutateEnvelopes: manager.mutateSessionWorkflowEnvelopes,
       getSession: manager.getSession,
     });
 

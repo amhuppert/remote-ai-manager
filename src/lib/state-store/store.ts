@@ -386,6 +386,8 @@ export function createStateStore(deps: StateStoreDeps = {}) {
       setters.archiveActiveGraphWorkflowExecution,
     markGraphWorkflowContextEventsPreReset:
       setters.markGraphWorkflowContextEventsPreReset,
+    mutateSessionWorkflowLanes: setters.mutateSessionWorkflowLanes,
+    mutateSessionWorkflowEnvelopes: setters.mutateSessionWorkflowEnvelopes,
     createReferenceDocument: setters.createReferenceDocument,
     deleteReferenceDocument: setters.deleteReferenceDocument,
   };
