@@ -1,7 +1,9 @@
 import { readState } from "./lib/state-store";
+import { getDb } from "./lib/state-store/state-db";
+import { runMigrations } from "./lib/state-store/migrator";
 import { initialize as initNotificationDb } from "./lib/notifications/repo";
 import { setConfigReader } from "./lib/push-notification/dispatcher";
-import { readConfig } from "./lib/config/loader";
+import { readConfig, getConfigDirPath } from "./lib/config/loader";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger, runAsTrace } from "./lib/logging";
 import { recoverActiveWorkflowEnvelopes } from "./lib/workflows/primitives/recover-workflow-envelopes";
@@ -13,6 +15,7 @@ export interface StartupDeps {
   loadConversationManager(): Promise<{
     rehydrateConversationActors(): Promise<number>;
   }>;
+  runStateMigrations(): Promise<string[]>;
   initNotificationDb: typeof initNotificationDb;
   setConfigReader: typeof setConfigReader;
   readConfig: typeof readConfig;
@@ -21,6 +24,8 @@ export interface StartupDeps {
 
 const defaultStartupDeps: StartupDeps = {
   loadConversationManager: () => import("./lib/workflows/conversation/manager"),
+  runStateMigrations: () =>
+    runMigrations({ db: getDb(), configDir: getConfigDirPath() }),
   initNotificationDb,
   setConfigReader,
   readConfig,
@@ -31,6 +36,25 @@ export function createStartupRegistrar(
   deps: StartupDeps = defaultStartupDeps,
 ): () => Promise<void> {
   return async () => {
+    // Apply state-store migrations before any step reads or writes the DB. The
+    // synchronous schema floor runs on DB open; this applies the async,
+    // ledgered migrations (see state-store/migrator.ts).
+    try {
+      const applied = await runAsTrace(
+        "startup:state-migrations",
+        deps.runStateMigrations,
+      );
+      if (applied.length > 0) {
+        logger.info("startup.state_migrations_applied", {
+          migrations: applied,
+        });
+      }
+    } catch (err) {
+      logger.error("startup.state_migrations_failed", {
+        error: getErrorMessage(err),
+      });
+    }
+
     // Rehydrate conversation actors from persisted machine snapshots
     try {
       const { rehydrateConversationActors } =

@@ -17,6 +17,7 @@ afterEach(() => {
 
 const EXPECTED_TABLES = [
   "schema_migrations",
+  "applied_migrations",
   "projects",
   "sessions",
   "conversations",

@@ -105,6 +105,16 @@ const SCHEMA_DDL = `
     applied_at  TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
+  -- Ledger for the Umzug-driven migration runner (see migrator.ts): one row per
+  -- applied migration, keyed by name. Distinct from schema_migrations (the
+  -- forward-only compatibility-version gate for breaking changes) and from
+  -- applied_data_migrations (the legacy one-off purge marker). New migrations
+  -- go here.
+  CREATE TABLE IF NOT EXISTS applied_migrations (
+    name        TEXT PRIMARY KEY,
+    applied_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS projects (
     root_path                  TEXT PRIMARY KEY,
     archived                   INTEGER NOT NULL DEFAULT 0,
@@ -263,9 +273,6 @@ const SCHEMA_DDL = `
   );
 
   CREATE INDEX IF NOT EXISTS idx_job_records_status ON job_records(status);
-
-  DROP INDEX IF EXISTS idx_roadmap_items_project;
-  DROP TABLE IF EXISTS roadmap_items;
 `;
 
 class SchemaVersionConflictError extends Error {

@@ -28,6 +28,19 @@ z.record(valueSchema);              // ❌ v4 treats single arg as key schema
 
 Each domain owns its schemas in `src/lib/<domain>/schemas.ts`; types are derived via `z.infer` and exported from the same file. No central `src/lib/schemas.ts`. Cross-domain shared primitives (rare) live in `src/lib/shared/schemas.ts`. See `structure.md`.
 
+## Database schema migrations
+
+Two layers manage `command-center.db` as the schema evolves (`src/lib/state-store/`):
+
+- **Synchronous schema floor** (`state-db.ts`): `CREATE … IF NOT EXISTS` DDL + idempotent additive-column back-fills + structural rebuilds that must hold the instant the DB opens. Runs on **every** connection, so it must stay idempotent. Keeps fresh / `:memory:` DBs current with no async step — contract-test fixtures depend on this.
+- **Umzug runner** (`migrator.ts` + `migrations/`): ordered, ledgered migrations for **data migrations, one-time cleanups, and future ordered changes**. Async, so it runs once at server startup from `instrumentation.node.ts`'s `register()` — NOT from the synchronous `getDb()` open path.
+
+**Where a change goes:** structural shape that must hold at open time → floor; everything else → a new Umzug migration. Migrations MUST be idempotent (the ledger write is a separate step from `up`, so a crash replays). A **breaking** change (an older build can no longer read the data) additionally bumps `KNOWN_SCHEMA_VERSION` and inserts a `schema_migrations` row so the forward-only gate stops older builds from opening the upgraded DB.
+
+Three bookkeeping tables, kept distinct: `applied_migrations` (Umzug ledger, by name — branch-friendly), `schema_migrations` (forward-only compat-version gate), `applied_data_migrations` (legacy purge marker).
+
+**To add a migration:** follow `src/lib/state-store/migrations/README.md` — drop a `NNNN-name.ts`, append it to `index.ts`, keep it idempotent, add a test beside `migrator.test.ts`.
+
 ## Commands
 
 ```bash

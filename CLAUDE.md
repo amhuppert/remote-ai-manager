@@ -118,6 +118,11 @@ Rule #1: If you want exception to ANY rule, YOU MUST STOP and get explicit permi
 - Before touching the state store, write a per-request handler, or add a new repo, read `PERFORMANCE.md` in the project root. It records the perf issues we've already hit, the durable patterns we now follow to prevent regressions (focused accessors over `readState`, focused setters over `mutate*`, parsed-row caches with monotonic invalidation, event-loop starvation awareness), and the verification tooling.
 - When you fix a performance issue, **add an entry to `PERFORMANCE.md`** (symptom → root cause → fix → lesson) so the pattern survives. When you add new code in an area a pattern covers, follow it; if you find yourself violating one, stop and ask why.
 
+### Database schema changes
+
+- Before changing the `command-center.db` schema (new table/column, data migration, one-time cleanup), read the "Database schema migrations" section of `.kiro/steering/tech.md` and `src/lib/state-store/migrations/README.md`. Decide which layer the change belongs in (synchronous schema floor vs. Umzug migration) and keep migrations idempotent.
+- Never advance schema in a way that bricks an older build: additive/forward-compatible by default; only bump `KNOWN_SCHEMA_VERSION` for genuinely breaking changes.
+
 ### Control Flow
 
 - Prefer early returns over nested conditionals for readability.

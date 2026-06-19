@@ -12,6 +12,10 @@ describe("createStartupRegistrar", () => {
           return 0;
         },
       }),
+      runStateMigrations: async () => {
+        calls.push("migrations");
+        return [];
+      },
       initNotificationDb: () => {
         calls.push("notifications");
       },
@@ -38,6 +42,9 @@ describe("createStartupRegistrar", () => {
 
     await register();
 
+    expect(calls.indexOf("migrations")).toBeLessThan(
+      calls.indexOf("rehydrate"),
+    );
     expect(calls.indexOf("rehydrate")).toBeLessThan(
       calls.indexOf("envelope-recovery"),
     );
@@ -54,6 +61,7 @@ describe("createStartupRegistrar", () => {
           return 0;
         },
       }),
+      runStateMigrations: async () => [],
       initNotificationDb: () => {},
       setConfigReader: () => {},
       readConfig: async () => ({}) as never,
@@ -86,6 +94,7 @@ describe("createStartupRegistrar", () => {
       loadConversationManager: async () => ({
         rehydrateConversationActors: async () => 0,
       }),
+      runStateMigrations: async () => [],
       initNotificationDb: () => {
         calls.push("notifications");
       },
