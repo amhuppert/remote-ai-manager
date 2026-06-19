@@ -78,28 +78,35 @@ function cloneState(state: LaneState): LaneState {
 }
 
 export interface SessionStateLaneStoreDeps {
-  mutateSession: <T>(
+  /**
+   * Focused single-column mutator of the session's `workflow_lanes` map. In
+   * production this is `mutateSessionWorkflowLanes` from `@/lib/state-store`,
+   * which loads only the target session and persists the one column — skipping
+   * the whole-state read/validate/diff cycle the generic `mutateSession` runs.
+   * The callback receives the lanes map directly (mutated in place).
+   */
+  mutateLanes: <T>(
     projectPath: string,
     sessionName: string,
     label: string,
-    mutate: (session: SessionStateLaneStoreSessionLike) => T | Promise<T>,
+    mutate: (lanes: Record<string, unknown>) => T | Promise<T>,
   ) => Promise<T>;
   getSession: (
     projectPath: string,
     sessionName: string,
-  ) => Promise<SessionStateLaneStoreSessionLike | null>;
+  ) => Promise<SessionStateLaneCollection | null>;
   projectPath: string;
   sessionName: string;
 }
 
-export interface SessionStateLaneStoreSessionLike {
+export interface SessionStateLaneCollection {
   workflowLanes?: Record<string, unknown>;
 }
 
 export function createSessionStateLaneStore(
   deps: SessionStateLaneStoreDeps,
 ): LaneStore {
-  const { mutateSession, getSession, projectPath, sessionName } = deps;
+  const { mutateLanes, getSession, projectPath, sessionName } = deps;
 
   return {
     async read(ref) {
@@ -115,13 +122,12 @@ export function createSessionStateLaneStore(
         workflowId: parsed.workflowId,
         laneId: parsed.laneId,
       });
-      await mutateSession(
+      await mutateLanes(
         projectPath,
         sessionName,
         `workflow-lane.write[${parsed.workflowId}/${parsed.laneId}]`,
-        (session) => {
-          if (!session.workflowLanes) session.workflowLanes = {};
-          session.workflowLanes[key] = parsed;
+        (lanes) => {
+          lanes[key] = parsed;
           logger.debug("lane.store.write", {
             workflowId: parsed.workflowId,
             laneId: parsed.laneId,
@@ -134,14 +140,13 @@ export function createSessionStateLaneStore(
 
     async delete(ref) {
       const key = laneStorageKey(ref);
-      await mutateSession(
+      await mutateLanes(
         projectPath,
         sessionName,
         `workflow-lane.delete[${ref.workflowId}/${ref.laneId}]`,
-        (session) => {
-          if (!session.workflowLanes) return;
-          if (key in session.workflowLanes) {
-            delete session.workflowLanes[key];
+        (lanes) => {
+          if (key in lanes) {
+            delete lanes[key];
             logger.debug("lane.store.delete", {
               workflowId: ref.workflowId,
               laneId: ref.laneId,
@@ -168,7 +173,7 @@ export function createSessionStateLaneStore(
 }
 
 interface StateModuleAccessors {
-  mutateSession: SessionStateLaneStoreDeps["mutateSession"];
+  mutateSessionWorkflowLanes: SessionStateLaneStoreDeps["mutateLanes"];
   getSession: (
     projectPath: string,
     sessionName: string,
@@ -178,7 +183,7 @@ interface StateModuleAccessors {
 async function loadStateAccessors(): Promise<StateModuleAccessors> {
   const stateModule: StateModuleAccessors = await import("@/lib/state-store");
   return {
-    mutateSession: stateModule.mutateSession,
+    mutateSessionWorkflowLanes: stateModule.mutateSessionWorkflowLanes,
     getSession: stateModule.getSession,
   };
 }
@@ -190,11 +195,11 @@ export function createSessionLaneStoreForProduction(input: {
   return createSessionStateLaneStore({
     projectPath: input.projectPath,
     sessionName: input.sessionName,
-    mutateSession: async (...args) =>
-      (await loadStateAccessors()).mutateSession(...args),
+    mutateLanes: async (...args) =>
+      (await loadStateAccessors()).mutateSessionWorkflowLanes(...args),
     getSession: async (...args) =>
       (await loadStateAccessors()).getSession(
         ...args,
-      ) as Promise<SessionStateLaneStoreSessionLike | null>,
+      ) as Promise<SessionStateLaneCollection | null>,
   });
 }

@@ -27,6 +27,7 @@ import {
 } from "./manager";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
+import type { CollaborationArtifact } from "./types";
 import type {
   AsymmetricCollaborationSliceDeps,
   AsymmetricCollaborationSliceInput,
@@ -79,6 +80,13 @@ interface ScriptedDepsOptions {
   sliceDepsOverride?: AsymmetricCollaborationSliceDeps;
   resolveCodexModelConfigResult?: { model: string; reasoningEffort?: string };
   resolveClaudeModelConfigResult?: { model: string; reasoningEffort?: string };
+  /**
+   * In-memory stand-in for the durable artifacts sidecar keyed by workflowId.
+   * The manager's `getEnvelope`/`listActive`/`listAll` read from here to
+   * re-inject `featureSnapshot.artifacts`, so a test can assert the
+   * client-visible hydration without touching the filesystem.
+   */
+  artifactSidecar?: Map<string, CollaborationArtifact[]>;
 }
 
 function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
@@ -210,6 +218,8 @@ function buildScriptedDeps(options: ScriptedDepsOptions = {}): {
     },
     createEnvelopeRepository: () =>
       createWorkflowEnvelopeRepository({ store: envelopeStore }),
+    readArtifacts: async (workflowId) =>
+      options.artifactSidecar?.get(workflowId) ?? [],
     publishStatus: (input) => {
       publishedStatuses.push(input);
     },
@@ -632,6 +642,120 @@ describe("createCollaborationManager.getEnvelope / listActive", () => {
     });
 
     expect(env?.workflowId).toBe("wf-known");
+  });
+
+  it("hydrates featureSnapshot.artifacts from the sidecar so the client-visible shape is unchanged", async () => {
+    const envelopeStore = createInMemoryWorkflowEnvelopeStore();
+    const repo = createWorkflowEnvelopeRepository({ store: envelopeStore });
+    await repo.create(
+      buildEnvelope({
+        workflowId: "wf-hydrate",
+        featureSnapshot: { brief: "design X", conversationId: "conv-1" },
+      }),
+    );
+
+    const sidecar = new Map<string, CollaborationArtifact[]>([
+      [
+        "wf-hydrate",
+        [
+          {
+            kind: "final_answer",
+            agent: "agent_one",
+            answer: "ship it",
+            report: "r",
+            supporting: [],
+          },
+        ],
+      ],
+    ]);
+
+    const { deps } = buildScriptedDeps({
+      envelopeStoreOverride: envelopeStore,
+      artifactSidecar: sidecar,
+    });
+    const manager = createCollaborationManager(deps);
+
+    const env = await manager.getEnvelope({
+      projectPath: "/p",
+      sessionName: "s",
+      workflowId: "wf-hydrate",
+    });
+
+    const snapshot = env?.featureSnapshot as Record<string, unknown>;
+    // Existing bounded blob fields survive, and the stream is spliced back in.
+    expect(snapshot["brief"]).toBe("design X");
+    const artifacts = snapshot["artifacts"] as Array<{ kind: string }>;
+    expect(artifacts.map((a) => a.kind)).toEqual(["final_answer"]);
+  });
+
+  it("skips hydration for workflow-origin collaboration envelopes so the durable stream is not dropped by the user schema", async () => {
+    const envelopeStore = createInMemoryWorkflowEnvelopeStore();
+    const repo = createWorkflowEnvelopeRepository({ store: envelopeStore });
+    await repo.create(
+      buildEnvelope({
+        workflowId: "wf-graph-collab",
+        featureSnapshot: { origin: "workflow", executionContextId: "ctx-1" },
+      }),
+    );
+
+    // The workflow path persists a differently-shaped artifact wrapper to the
+    // sidecar; the user schema would reject it, so hydration MUST be skipped
+    // rather than silently emptying the stream onto the snapshot.
+    const sidecar = new Map<string, CollaborationArtifact[]>([
+      [
+        "wf-graph-collab",
+        [
+          {
+            kind: "final_answer",
+            agent: "agent_one",
+            answer: "x",
+            report: "r",
+            supporting: [],
+          },
+        ],
+      ],
+    ]);
+
+    const { deps } = buildScriptedDeps({
+      envelopeStoreOverride: envelopeStore,
+      artifactSidecar: sidecar,
+    });
+    const manager = createCollaborationManager(deps);
+
+    const env = await manager.getEnvelope({
+      projectPath: "/p",
+      sessionName: "s",
+      workflowId: "wf-graph-collab",
+    });
+
+    const snapshot = env?.featureSnapshot as Record<string, unknown>;
+    expect(snapshot["origin"]).toBe("workflow");
+    expect(snapshot["artifacts"]).toBeUndefined();
+  });
+
+  it("does not inject an artifacts field into non-collaboration envelopes from getEnvelope", async () => {
+    const envelopeStore = createInMemoryWorkflowEnvelopeStore();
+    const repo = createWorkflowEnvelopeRepository({ store: envelopeStore });
+    await repo.create(
+      buildEnvelope({
+        workflowId: "wf-graph",
+        workflowType: "graph_workflow",
+        featureSnapshot: { someField: "v" },
+      }),
+    );
+
+    const { deps } = buildScriptedDeps({ envelopeStoreOverride: envelopeStore });
+    const manager = createCollaborationManager(deps);
+
+    const env = await manager.getEnvelope({
+      projectPath: "/p",
+      sessionName: "s",
+      workflowId: "wf-graph",
+    });
+
+    const snapshot = env?.featureSnapshot as Record<string, unknown>;
+    expect(snapshot["someField"]).toBe("v");
+    expect("artifacts" in snapshot).toBe(false);
   });
 
   it("filters listActive to collaboration envelopes only", async () => {

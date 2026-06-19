@@ -31,6 +31,7 @@ import {
 import { createCollaborationProductionAgentCaller } from "@/lib/workflows/collaboration/agent-caller-production";
 import { decideCollaborationNextStep } from "@/lib/workflows/collaboration/policy";
 import { createWorkflowCollaborationEnvelope } from "@/lib/workflows/collaboration/workflow-envelope";
+import { appendCollaborationArtifact } from "@/lib/workflows/collaboration/artifacts-store";
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
 import { createSessionLaneStoreForProduction } from "@/lib/workflows/primitives/lane-store";
 import { createStatusBus } from "@/lib/workflows/primitives/status-bus";
@@ -285,6 +286,8 @@ const defaultWorkflowExecutionMcpServerDeps: WorkflowExecutionMcpServerDeps = {
                   laneService,
                 }),
                 statusBus,
+                appendArtifact: (workflowId, entry) =>
+                  appendCollaborationArtifact(workflowId, entry),
                 appendTranscriptEntry: (conversationId, entry) =>
                   safeAppendTranscriptEntry(
                     conversationId,

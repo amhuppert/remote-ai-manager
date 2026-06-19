@@ -53,7 +53,12 @@ import {
   type AgentSessionRef,
 } from "@/lib/agent-backends/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
-import { collaborationAutonomousResolutionThresholdSchema } from "./types";
+import {
+  collaborationArtifactSchema,
+  collaborationAutonomousResolutionThresholdSchema,
+  type CollaborationArtifact,
+} from "./types";
+import { readCollaborationArtifacts } from "./artifacts-store";
 import { dispatchPushForCollaborationEvent } from "@/lib/push-notification/dispatcher";
 import {
   publishScopedStatusEvent,
@@ -343,6 +348,16 @@ export interface CollaborationManagerDeps {
     sessionName: string;
   }): WorkflowEnvelopeRepository;
 
+  /**
+   * Reads a workflow's artifact stream back from its durable JSONL sidecar so
+   * `getEnvelope`/`listActive`/`listAll` can re-inject it into the envelope's
+   * `featureSnapshot.artifacts`, keeping the client-visible response shape
+   * unchanged. The sidecar is the durable store; the blob carries only bounded
+   * lifecycle/config state. Defaults to the production
+   * `readCollaborationArtifacts`; tests inject a deterministic reader.
+   */
+  readArtifacts(workflowId: string): Promise<CollaborationArtifact[]>;
+
   publishStatus(
     input: Omit<
       PublishScopedStatusEventInput,
@@ -484,6 +499,9 @@ const defaultDeps: CollaborationManagerDeps = {
       projectPath: input.projectPath,
       sessionName: input.sessionName,
     });
+  },
+  readArtifacts(workflowId) {
+    return readCollaborationArtifacts(workflowId, collaborationArtifactSchema);
   },
   publishStatus(input) {
     const projectName = path.basename(input.projectPath);
@@ -1085,7 +1103,9 @@ export function createCollaborationManager(
         projectPath: input.projectPath,
         sessionName: input.sessionName,
       });
-      return repo.get(input.workflowId);
+      const envelope = await repo.get(input.workflowId);
+      if (!envelope) return null;
+      return hydrateEnvelopeArtifacts(envelope, deps.readArtifacts);
     },
 
     async listActive(input) {
@@ -1094,7 +1114,14 @@ export function createCollaborationManager(
         sessionName: input.sessionName,
       });
       const all = await repo.listActive();
-      return all.filter((env) => env.workflowType === "collaboration");
+      const collaboration = all.filter(
+        (env) => env.workflowType === "collaboration",
+      );
+      return Promise.all(
+        collaboration.map((env) =>
+          hydrateEnvelopeArtifacts(env, deps.readArtifacts),
+        ),
+      );
     },
 
     async listAll(input) {
@@ -1103,7 +1130,47 @@ export function createCollaborationManager(
         sessionName: input.sessionName,
       });
       const all = await repo.listAll();
-      return all.filter((env) => env.workflowType === "collaboration");
+      const collaboration = all.filter(
+        (env) => env.workflowType === "collaboration",
+      );
+      return Promise.all(
+        collaboration.map((env) =>
+          hydrateEnvelopeArtifacts(env, deps.readArtifacts),
+        ),
+      );
+    },
+  };
+}
+
+/**
+ * Re-injects the durable artifact stream into a user-invoked collaboration
+ * envelope's `featureSnapshot.artifacts` so the client-visible response shape is
+ * unchanged (the client `envelope-adapter.ts` keeps reading
+ * `featureSnapshot.artifacts` and never touches the filesystem). Hydration is
+ * confined to the user path: non-collaboration envelopes carry no artifact
+ * stream, and workflow-invoked collaborations (`origin: "workflow"`) persist a
+ * differently-shaped artifact wrapper to the sidecar for durability only and
+ * never read it back through the manager — hydrating those with the user schema
+ * would silently drop every entry.
+ */
+async function hydrateEnvelopeArtifacts(
+  envelope: WorkflowEnvelope,
+  readArtifacts: (workflowId: string) => Promise<CollaborationArtifact[]>,
+): Promise<WorkflowEnvelope> {
+  if (envelope.workflowType !== "collaboration") return envelope;
+  const snapshot = envelope.featureSnapshot;
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    return envelope;
+  }
+  if ((snapshot as Record<string, unknown>).origin === "workflow") {
+    return envelope;
+  }
+  const artifacts = await readArtifacts(envelope.workflowId);
+  return {
+    ...envelope,
+    featureSnapshot: {
+      ...(snapshot as Record<string, unknown>),
+      artifacts,
     },
   };
 }

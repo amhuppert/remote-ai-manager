@@ -71,6 +71,34 @@ export interface SessionsRepo {
     execution: GraphWorkflowExecution | null,
     lastActivityAt: string,
   ): boolean;
+  /**
+   * Focused write of the `workflow_lanes` column plus `last_activity_at`
+   * (Pattern 2: no whole-state read). Serializes the opaque lane map using the
+   * same `jsonOrNull(session.workflowLanes)` serialization as the full-row
+   * upsert, so there is no column-level drift, without deep-validating it —
+   * validation stays in the primitive store layer.
+   * Bumps the findAll cache version. Returns whether a row was updated.
+   */
+  setSessionWorkflowLanes(
+    projectPath: string,
+    sessionName: string,
+    lanes: Record<string, unknown> | undefined,
+    lastActivityAt: string,
+  ): boolean;
+  /**
+   * Focused write of the `workflow_envelopes` column plus `last_activity_at`
+   * (Pattern 2: no whole-state read). Serializes the opaque envelope map using
+   * the same `jsonOrNull(session.workflowEnvelopes)` serialization as the
+   * full-row upsert, so there is no column-level drift, without deep-validating
+   * it — validation stays in the primitive store layer.
+   * Bumps the findAll cache version. Returns whether a row was updated.
+   */
+  setSessionWorkflowEnvelopes(
+    projectPath: string,
+    sessionName: string,
+    envelopes: Record<string, unknown> | undefined,
+    lastActivityAt: string,
+  ): boolean;
 }
 
 /**
@@ -690,6 +718,16 @@ export function createSessionsRepo(db: Db): SessionsRepo {
         SET graph_workflow_execution = ?, last_activity_at = ?
       WHERE project_path = ? AND session_name = ?`,
   );
+  const setSessionWorkflowLanesStmt = db.prepare(
+    `UPDATE sessions
+        SET workflow_lanes = ?, last_activity_at = ?
+      WHERE project_path = ? AND session_name = ?`,
+  );
+  const setSessionWorkflowEnvelopesStmt = db.prepare(
+    `UPDATE sessions
+        SET workflow_envelopes = ?, last_activity_at = ?
+      WHERE project_path = ? AND session_name = ?`,
+  );
 
   function applyGraphWorkflowExecutionMigration(
     projectPath: string,
@@ -830,6 +868,40 @@ export function createSessionsRepo(db: Db): SessionsRepo {
               : graphWorkflowExecutionSchema.parse(execution);
           const info = setActiveGraphWorkflowExecutionStmt.run(
             jsonOrNull(validated),
+            lastActivityAt,
+            projectPath,
+            sessionName,
+          );
+          cacheVersion += 1;
+          return info.changes > 0;
+        },
+      );
+    },
+    setSessionWorkflowLanes(projectPath, sessionName, lanes, lastActivityAt) {
+      return timed("setSessionWorkflowLanes", projectPath, sessionName, () => {
+        const info = setSessionWorkflowLanesStmt.run(
+          jsonOrNull(lanes),
+          lastActivityAt,
+          projectPath,
+          sessionName,
+        );
+        cacheVersion += 1;
+        return info.changes > 0;
+      });
+    },
+    setSessionWorkflowEnvelopes(
+      projectPath,
+      sessionName,
+      envelopes,
+      lastActivityAt,
+    ) {
+      return timed(
+        "setSessionWorkflowEnvelopes",
+        projectPath,
+        sessionName,
+        () => {
+          const info = setSessionWorkflowEnvelopesStmt.run(
+            jsonOrNull(envelopes),
             lastActivityAt,
             projectPath,
             sessionName,

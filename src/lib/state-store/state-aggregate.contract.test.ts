@@ -261,6 +261,8 @@ describe("state-aggregate.readAll", () => {
         delete: () => {},
         setSpawnedFrom: () => false,
         setActiveGraphWorkflowExecution: () => false,
+        setSessionWorkflowLanes: () => false,
+        setSessionWorkflowEnvelopes: () => false,
       },
       conversations: {
         findById: () => null,

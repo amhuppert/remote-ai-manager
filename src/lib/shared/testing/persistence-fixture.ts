@@ -15,6 +15,7 @@
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import type { SessionState } from "@/lib/sessions/schemas";
 import { createConversationsRepo } from "@/lib/state-store/conversations-repo";
 import { createGraphWorkflowArchivedExecutionsRepo } from "@/lib/state-store/graph-workflow-archived-executions-repo";
 import { createGraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
@@ -57,7 +58,11 @@ export interface PersistenceFixture {
   readonly graphWorkflowEvents: GraphWorkflowEventsRepo;
   readonly graphWorkflowArchivedExecutions: GraphWorkflowArchivedExecutionsRepo;
   seedProject(rootPath: string): void;
-  seedSession(projectPath: string, sessionName: string): void;
+  seedSession(
+    projectPath: string,
+    sessionName: string,
+    overrides?: Partial<SessionState>,
+  ): void;
   seedConversation(
     projectPath: string,
     sessionName: string,
@@ -67,13 +72,18 @@ export interface PersistenceFixture {
   close(): void;
 }
 
-function buildSeedSession(projectPath: string, sessionName: string) {
+function buildSeedSession(
+  projectPath: string,
+  sessionName: string,
+  overrides: Partial<SessionState> = {},
+) {
   return sessionStateSchema.parse({
     sessionName,
     worktreePath: `${projectPath}/.worktrees/${sessionName}`,
     branchName: `csm/${sessionName}`,
     createdAt: "2026-01-01T00:00:00Z",
     lastActivityAt: "2026-01-01T00:00:00Z",
+    ...overrides,
   });
 }
 
@@ -111,10 +121,10 @@ export function createPersistenceFixture(): PersistenceFixture {
     seedProject(rootPath) {
       repos.projects.upsert({ rootPath });
     },
-    seedSession(projectPath, sessionName) {
+    seedSession(projectPath, sessionName, overrides) {
       repos.sessions.upsert(
         projectPath,
-        buildSeedSession(projectPath, sessionName),
+        buildSeedSession(projectPath, sessionName, overrides),
       );
     },
     async seedConversation(projectPath, sessionName, conversation) {

@@ -103,7 +103,7 @@ export async function runCrossReviewPhase(
       }),
     };
   }
-  trackArtifact(tracker, crossReview.value);
+  await trackArtifact(tracker, crossReview.value);
   await persistArtifactsSnapshot(input, deps, now, tracker);
 
   return { kind: "ok", crossReview: crossReview.value };

@@ -112,11 +112,11 @@ export async function runInitialDraftsPhase(
       : null;
 
   if (agentOneDraft && agentOneDraft.success) {
-    trackArtifact(tracker, agentOneDraft.value);
+    await trackArtifact(tracker, agentOneDraft.value);
     await persistArtifactsSnapshot(input, deps, now, tracker);
   }
   if (agentTwoDraft && agentTwoDraft.success) {
-    trackArtifact(tracker, agentTwoDraft.value);
+    await trackArtifact(tracker, agentTwoDraft.value);
     await persistArtifactsSnapshot(input, deps, now, tracker);
   }
 

@@ -27,15 +27,31 @@ import type {
 } from "./types";
 
 export interface ArtifactTracker {
+  /**
+   * In-memory accumulator and the in-run source of truth: the negotiation
+   * loop composes each round's prompt from these prior-round artifacts. The
+   * sidecar file (`appendSink`) is the durability sink, not the in-run read
+   * path, so the loop never round-trips through storage.
+   */
   artifacts: CollaborationArtifact[];
   negotiationRoundsCompleted: number;
+  /**
+   * Durability sink invoked once per tracked artifact, in append order. The
+   * production sink appends the artifact to the workflow's JSONL sidecar; the
+   * push to `artifacts` happens regardless so an unconfigured sink (no-op)
+   * still keeps the in-run accumulator correct.
+   */
+  appendSink?: (artifact: CollaborationArtifact) => Promise<void>;
 }
 
-export function trackArtifact(
+export async function trackArtifact(
   tracker: ArtifactTracker,
   artifact: CollaborationArtifact,
-): void {
+): Promise<void> {
   tracker.artifacts.push(artifact);
+  if (tracker.appendSink) {
+    await tracker.appendSink(artifact);
+  }
 }
 
 // ============================================================

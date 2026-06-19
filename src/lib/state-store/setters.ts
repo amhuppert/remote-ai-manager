@@ -505,6 +505,83 @@ export function createSetters(core: StateStoreCore, mutations: MutationFns) {
     );
   }
 
+  /**
+   * Focused single-column write of the session's `workflow_lanes` map. Loads
+   * only the target session, hands the mutator the existing lane map (mutated
+   * in place), and persists via the repo's focused setter — skipping the
+   * whole-state read / clone / Zod-validate / sibling-canonicalize cycle that
+   * `mutateSession` runs and the full-row re-serialization of every other
+   * session column (including the large `graph_workflow_execution` blob). Stays
+   * inside the write queue so concurrent same-session writes serialize.
+   */
+  async function mutateSessionWorkflowLanes<T = void>(
+    projectPath: string,
+    sessionName: string,
+    label: string,
+    mutate: (lanes: Record<string, unknown>) => T | Promise<T>,
+  ): Promise<T> {
+    return writeQueue.withWriteQueue(`${label}[${sessionName}]`, async () =>
+      timed(
+        logger,
+        "state.mutate",
+        { label, projectPath, sessionName },
+        async () => {
+          const session = repos.sessions.findByKey(projectPath, sessionName);
+          if (!session) {
+            throw new Error(
+              `Session "${sessionName}" not found in project "${projectPath}" during ${label}`,
+            );
+          }
+          const lanes = session.workflowLanes ?? {};
+          const result = await mutate(lanes);
+          repos.sessions.setSessionWorkflowLanes(
+            projectPath,
+            sessionName,
+            lanes,
+            new Date().toISOString(),
+          );
+          return result;
+        },
+      ),
+    );
+  }
+
+  /**
+   * Focused single-column write of the session's `workflow_envelopes` map.
+   * Same focused-write rationale as `mutateSessionWorkflowLanes`.
+   */
+  async function mutateSessionWorkflowEnvelopes<T = void>(
+    projectPath: string,
+    sessionName: string,
+    label: string,
+    mutate: (envelopes: Record<string, unknown>) => T | Promise<T>,
+  ): Promise<T> {
+    return writeQueue.withWriteQueue(`${label}[${sessionName}]`, async () =>
+      timed(
+        logger,
+        "state.mutate",
+        { label, projectPath, sessionName },
+        async () => {
+          const session = repos.sessions.findByKey(projectPath, sessionName);
+          if (!session) {
+            throw new Error(
+              `Session "${sessionName}" not found in project "${projectPath}" during ${label}`,
+            );
+          }
+          const envelopes = session.workflowEnvelopes ?? {};
+          const result = await mutate(envelopes);
+          repos.sessions.setSessionWorkflowEnvelopes(
+            projectPath,
+            sessionName,
+            envelopes,
+            new Date().toISOString(),
+          );
+          return result;
+        },
+      ),
+    );
+  }
+
   async function createReferenceDocument(
     projectPath: string,
     sessionName: string,
@@ -571,6 +648,8 @@ export function createSetters(core: StateStoreCore, mutations: MutationFns) {
     mutateActiveGraphWorkflowExecution,
     archiveActiveGraphWorkflowExecution,
     markGraphWorkflowContextEventsPreReset,
+    mutateSessionWorkflowLanes,
+    mutateSessionWorkflowEnvelopes,
     createReferenceDocument,
     deleteReferenceDocument,
   };

@@ -14,7 +14,6 @@ function buildUserSnapshotWithoutOrigin(): Record<string, unknown> {
     negotiationRounds: 3,
     negotiationRoundsCompleted: 1,
     autonomousResolutionThreshold: "minor",
-    artifacts: [],
     userAnswersByQuestionId: {},
   };
 }

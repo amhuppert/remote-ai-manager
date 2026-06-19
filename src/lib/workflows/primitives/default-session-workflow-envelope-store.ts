@@ -30,7 +30,7 @@ import {
 export interface DefaultSessionWorkflowEnvelopeStoreDeps {
   projectPath: string;
   sessionName: string;
-  mutateSession: SessionStateWorkflowEnvelopeStoreDeps["mutateSession"];
+  mutateEnvelopes: SessionStateWorkflowEnvelopeStoreDeps["mutateEnvelopes"];
   getSession: (
     projectPath: string,
     sessionName: string,
@@ -43,7 +43,7 @@ export function createDefaultSessionWorkflowEnvelopeStore(
   return createSessionStateWorkflowEnvelopeStore({
     projectPath: deps.projectPath,
     sessionName: deps.sessionName,
-    mutateSession: deps.mutateSession,
+    mutateEnvelopes: deps.mutateEnvelopes,
     getSession: async (projectPath, sessionName) => {
       const session = await deps.getSession(projectPath, sessionName);
       return session as SessionStateLike | null;
@@ -60,7 +60,7 @@ export function createDefaultSessionWorkflowEnvelopeRepository(
 }
 
 interface StateModuleAccessors {
-  mutateSession: SessionStateWorkflowEnvelopeStoreDeps["mutateSession"];
+  mutateSessionWorkflowEnvelopes: SessionStateWorkflowEnvelopeStoreDeps["mutateEnvelopes"];
   getSession: (
     projectPath: string,
     sessionName: string,
@@ -72,7 +72,7 @@ function loadStateAccessors(): StateModuleAccessors {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     require("@/lib/state-store");
   return {
-    mutateSession: stateModule.mutateSession,
+    mutateSessionWorkflowEnvelopes: stateModule.mutateSessionWorkflowEnvelopes,
     getSession: stateModule.getSession,
   };
 }
@@ -84,7 +84,8 @@ export function createSessionWorkflowEnvelopeStoreForProduction(input: {
   return createDefaultSessionWorkflowEnvelopeStore({
     projectPath: input.projectPath,
     sessionName: input.sessionName,
-    mutateSession: (...args) => loadStateAccessors().mutateSession(...args),
+    mutateEnvelopes: (...args) =>
+      loadStateAccessors().mutateSessionWorkflowEnvelopes(...args),
     getSession: (...args) => loadStateAccessors().getSession(...args),
   });
 }

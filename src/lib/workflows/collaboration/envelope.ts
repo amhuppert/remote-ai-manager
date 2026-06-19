@@ -217,6 +217,23 @@ export interface AsymmetricCollaborationSliceDeps {
     conversationId: string,
     ref: AgentSessionRef,
   ): Promise<unknown>;
+  /**
+   * Appends one artifact to the workflow's durable JSONL sidecar. Called once
+   * per tracked artifact (via the tracker's append sink). The persisted
+   * envelope blob carries only bounded lifecycle/config state; the sidecar is
+   * the durable record. Omit in tests that do not assert on the sidecar.
+   */
+  appendArtifact?(
+    workflowId: string,
+    artifact: CollaborationArtifact,
+  ): Promise<void>;
+  /**
+   * Reads the workflow's artifact stream back from the sidecar in append
+   * order. Load-bearing on resume: `initializeEnvelope` rehydrates the prior
+   * `open_conflicts`-bearing stream from here (the slice may re-enter in a
+   * fresh process). Omit in tests that never resume.
+   */
+  readArtifacts?(workflowId: string): Promise<CollaborationArtifact[]>;
   now?: () => string;
 }
 
@@ -241,6 +258,12 @@ export async function runAsymmetricCollaborationSlice(
   const tracker: ArtifactTracker = {
     artifacts: [],
     negotiationRoundsCompleted: 0,
+    ...(deps.appendArtifact
+      ? {
+          appendSink: (artifact: CollaborationArtifact) =>
+            deps.appendArtifact!(input.workflowId, artifact),
+        }
+      : {}),
   };
 
   await initializeLanes(input, deps, now);
@@ -609,6 +632,16 @@ async function initializeEnvelope(
   },
 ): Promise<InitializeEnvelopeOutcome> {
   const timestamp = now();
+
+  // Resume rehydrate reads the prior artifact stream from the durable sidecar,
+  // not the envelope blob. The slice may re-enter in a fresh process after a
+  // pause, so this read MUST come from durable storage. Read before the upsert
+  // so the synchronous mutator can decide the short-circuit from already-loaded
+  // data.
+  const previousArtifacts: CollaborationArtifact[] = deps.readArtifacts
+    ? await deps.readArtifacts(input.workflowId)
+    : [];
+
   let resumeArtifacts: CollaborationArtifact[] | null = null;
   let resumeNegotiationRoundsCompleted = 0;
 
@@ -617,12 +650,6 @@ async function initializeEnvelope(
       string,
       unknown
     >;
-    const previousArtifactsRaw = previousSnapshot["artifacts"];
-    const previousArtifacts: CollaborationArtifact[] = Array.isArray(
-      previousArtifactsRaw,
-    )
-      ? (previousArtifactsRaw as CollaborationArtifact[])
-      : [];
     const previousRoundsRaw = previousSnapshot["negotiationRoundsCompleted"];
     const previousRoundsCompleted =
       typeof previousRoundsRaw === "number" ? previousRoundsRaw : 0;
@@ -661,7 +688,6 @@ async function initializeEnvelope(
         negotiationRounds: input.negotiationRounds,
         negotiationRoundsCompleted: previousRoundsCompleted,
         autonomousResolutionThreshold: input.autonomousResolutionThreshold,
-        artifacts: previousArtifacts,
         userAnswersByQuestionId: mergedAnswers,
         ...(input.conversationId !== undefined
           ? { conversationId: input.conversationId }
@@ -717,7 +743,6 @@ export async function persistArtifactsSnapshot(
       ...existing,
       featureSnapshot: {
         ...previous,
-        artifacts: [...tracker.artifacts],
         negotiationRoundsCompleted: tracker.negotiationRoundsCompleted,
       },
       updatedAt: now(),
@@ -788,7 +813,6 @@ export async function failRun(
     const featureSnapshot = tracker
       ? {
           ...previous,
-          artifacts: [...tracker.artifacts],
           negotiationRoundsCompleted: tracker.negotiationRoundsCompleted,
         }
       : previous;
@@ -861,7 +885,7 @@ async function pauseForUserInput(
     disagreements: latestResolutionDecision.remainingDisagreements,
     questions: latestResolutionDecision.userQuestions,
   };
-  trackArtifact(tracker, openConflicts);
+  await trackArtifact(tracker, openConflicts);
   await updateEnvelope(input, deps, now, (existing) => {
     const previous = (existing.featureSnapshot ?? {}) as Record<
       string,
@@ -882,7 +906,6 @@ async function pauseForUserInput(
       },
       featureSnapshot: {
         ...previous,
-        artifacts: [...tracker.artifacts],
         negotiationRoundsCompleted: tracker.negotiationRoundsCompleted,
         currentOpenConflicts: openConflicts,
       },
@@ -928,7 +951,7 @@ export async function finalizeFinal(
 > {
   const { input, deps, now, finalAnswer, negotiationRoundsCompleted, tracker } =
     ctx;
-  trackArtifact(tracker, finalAnswer);
+  await trackArtifact(tracker, finalAnswer);
 
   // Transcript writeback runs first so the user-facing answer survives any
   // downstream failure: `finalAnswer.report` and `supporting` are inline
@@ -1001,7 +1024,6 @@ export async function finalizeFinal(
       phase: "asymmetric_completed_final",
       featureSnapshot: {
         ...previous,
-        artifacts: [...tracker.artifacts],
         negotiationRoundsCompleted: tracker.negotiationRoundsCompleted,
       },
       completedAt: now(),
@@ -1083,7 +1105,6 @@ async function finalizeUserStopped(
       phase: "asymmetric_user_stopped",
       featureSnapshot: {
         ...previous,
-        artifacts: [...tracker.artifacts],
         negotiationRoundsCompleted: tracker.negotiationRoundsCompleted,
       },
       completedAt: timestamp,

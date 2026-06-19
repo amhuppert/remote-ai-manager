@@ -29,10 +29,11 @@
  *    of the originating conversation transcript see the collaboration result
  *    inline.
  *  - Artifact stream persistence — every phase output is appended to the
- *    workflow `featureSnapshot.artifacts` array (parsed through the
- *    discriminated `CollaborationFeatureSnapshotWorkflow` schema) so the
- *    persisted record carries the full negotiation trail, not just the
- *    workflow-origin metadata.
+ *    workflow's durable per-workflow JSONL sidecar
+ *    (`@/lib/workflows/collaboration/artifacts-store`) so the persisted record
+ *    carries the full negotiation trail. The envelope blob keeps only bounded
+ *    lifecycle/config state (`CollaborationFeatureSnapshotWorkflow`), not the
+ *    unbounded stream.
  *
  * Terminal status is computed by composing the existing `decideCollaborationNextStep`
  * (policy) with `decisionToWorkflowResult` (translator), so the four-value
@@ -173,6 +174,16 @@ export interface WorkflowCollaborationEnvelopeDeps {
   policyDecide: WorkflowCollaborationPolicyDecide;
   collaboratorCaller: WorkflowCollaborationCollaboratorCaller;
   /**
+   * Appends one artifact entry to the workflow's durable JSONL sidecar. The
+   * envelope blob carries only bounded lifecycle/config state; the sidecar is
+   * the durable negotiation trail. Omit in tests that do not assert on the
+   * sidecar.
+   */
+  appendArtifact?(
+    workflowId: string,
+    entry: CollaborationWorkflowArtifactEntry,
+  ): Promise<void>;
+  /**
    * Optional in-process status bus the envelope publishes phase events
    * through. Production callers wire the same bus the rest of the dashboard
    * consumes so consumers can subscribe to `scope: "workflow_collaboration"`
@@ -234,7 +245,19 @@ export function createWorkflowCollaborationEnvelope(
       const autonomousResolutionThreshold =
         resolvedConfig.autonomousResolutionThreshold.value;
 
-      const artifacts: CollaborationWorkflowArtifactEntry[] = [];
+      // The negotiation loop threads explicit drafts/reviews/resolutions
+      // through locals (`resolutions`, `latestCounterProposal`, …), so prior
+      // artifacts are never read back from an accumulator here — unlike the
+      // user path. Each artifact is therefore appended straight to the durable
+      // JSONL sidecar; the persisted envelope blob carries only bounded state;
+      // the sidecar carries the stream.
+      async function pushArtifact(
+        entry: CollaborationWorkflowArtifactEntry,
+      ): Promise<void> {
+        if (deps.appendArtifact) {
+          await deps.appendArtifact(workflowId, entry);
+        }
+      }
 
       function snapshot(): CollaborationFeatureSnapshotWorkflow {
         return {
@@ -243,7 +266,6 @@ export function createWorkflowCollaborationEnvelope(
           executionContextId: args.executionContextId,
           conversationId: args.conversationId,
           resolvedConfig,
-          artifacts: [...artifacts],
         };
       }
 
@@ -272,12 +294,12 @@ export function createWorkflowCollaborationEnvelope(
       // Phase 1: Initial drafts (parallel).
       const { agentOneDraft, agentTwoDraft } =
         await deps.collaboratorCaller.runInitialDrafts({ brief: args.brief });
-      artifacts.push({
+      await pushArtifact({
         kind: "initial_draft",
         agent: "agent_one",
         value: agentOneDraft,
       });
-      artifacts.push({
+      await pushArtifact({
         kind: "initial_draft",
         agent: "agent_two",
         value: agentTwoDraft,
@@ -299,7 +321,7 @@ export function createWorkflowCollaborationEnvelope(
           agentOneDraft,
           agentTwoDraft,
         });
-      artifacts.push({
+      await pushArtifact({
         kind: "cross_review",
         agent: "agent_two",
         value: agentTwoCrossReview,
@@ -338,19 +360,19 @@ export function createWorkflowCollaborationEnvelope(
         latestCounterProposal = roundOutput.counterProposal;
         latestResolutionDecision = roundOutput.resolution;
         resolutions.push(roundOutput.resolution);
-        artifacts.push({
+        await pushArtifact({
           kind: "proposed_changes",
           agent: "agent_one",
           round,
           value: roundOutput.proposedChanges,
         });
-        artifacts.push({
+        await pushArtifact({
           kind: "counter_proposal",
           agent: "agent_two",
           round,
           value: roundOutput.counterProposal,
         });
-        artifacts.push({
+        await pushArtifact({
           kind: "resolution_decision",
           agent: "agent_one",
           round,
@@ -410,7 +432,7 @@ export function createWorkflowCollaborationEnvelope(
           latestResolutionDecision,
         });
         finalAnswer = fa.finalAnswer.answer;
-        artifacts.push({
+        await pushArtifact({
           kind: "final_answer",
           agent: "agent_one",
           value: fa.finalAnswer,

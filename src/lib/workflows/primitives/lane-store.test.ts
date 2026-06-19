@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createInMemoryLaneStore,
   createSessionStateLaneStore,
-  type SessionStateLaneStoreSessionLike,
+  type SessionStateLaneCollection,
 } from "./lane-store";
 import type { LaneState } from "./lane-vocabulary";
 
@@ -129,36 +129,57 @@ describe("createInMemoryLaneStore", () => {
   });
 });
 
+/**
+ * Backs the focused `mutateLanes` seam with an in-memory lane map shared with
+ * `getSession`, so a `write`/`delete` and a subsequent `read`/`listByWorkflow`
+ * observe the same collection (mirroring the focused single-column setter
+ * loading the session's `workflowLanes` map, mutating it, and persisting it).
+ */
+function createFakeLaneSeam() {
+  const session: SessionStateLaneCollection = {};
+  const labels: string[] = [];
+  return {
+    session,
+    labels,
+    getSession: async () => session,
+    mutateLanes: async <T>(
+      _projectPath: string,
+      _sessionName: string,
+      label: string,
+      mutate: (lanes: Record<string, unknown>) => T | Promise<T>,
+    ): Promise<T> => {
+      labels.push(label);
+      if (!session.workflowLanes) session.workflowLanes = {};
+      return mutate(session.workflowLanes);
+    },
+  };
+}
+
 describe("createSessionStateLaneStore", () => {
   it("persists lane state in the session workflowLanes collection", async () => {
-    const session: SessionStateLaneStoreSessionLike = {};
-    const labels: string[] = [];
+    const seam = createFakeLaneSeam();
     const store = createSessionStateLaneStore({
       projectPath: "/project",
       sessionName: "session-1",
-      getSession: async () => session,
-      mutateSession: async (_projectPath, _sessionName, label, mutate) => {
-        labels.push(label);
-        return mutate(session);
-      },
+      getSession: seam.getSession,
+      mutateLanes: seam.mutateLanes,
     });
 
     await store.write(claudeLane());
 
     const read = await store.read({ workflowId: "wf-A", laneId: "primary" });
     expect(read).toEqual(claudeLane());
-    expect(Object.keys(session.workflowLanes ?? {})).toHaveLength(1);
-    expect(labels[0]).toBe("workflow-lane.write[wf-A/primary]");
+    expect(Object.keys(seam.session.workflowLanes ?? {})).toHaveLength(1);
+    expect(seam.labels[0]).toBe("workflow-lane.write[wf-A/primary]");
   });
 
   it("preserves workflow scoping when listing session-backed lanes", async () => {
-    const session: SessionStateLaneStoreSessionLike = {};
+    const seam = createFakeLaneSeam();
     const store = createSessionStateLaneStore({
       projectPath: "/project",
       sessionName: "session-1",
-      getSession: async () => session,
-      mutateSession: async (_projectPath, _sessionName, _label, mutate) =>
-        mutate(session),
+      getSession: seam.getSession,
+      mutateLanes: seam.mutateLanes,
     });
 
     await store.write(claudeLane({ workflowId: "wf-A", laneId: "alpha" }));
@@ -170,13 +191,12 @@ describe("createSessionStateLaneStore", () => {
   });
 
   it("deletes only the requested lane from session state", async () => {
-    const session: SessionStateLaneStoreSessionLike = {};
+    const seam = createFakeLaneSeam();
     const store = createSessionStateLaneStore({
       projectPath: "/project",
       sessionName: "session-1",
-      getSession: async () => session,
-      mutateSession: async (_projectPath, _sessionName, _label, mutate) =>
-        mutate(session),
+      getSession: seam.getSession,
+      mutateLanes: seam.mutateLanes,
     });
 
     await store.write(claudeLane({ workflowId: "wf-A", laneId: "keep" }));

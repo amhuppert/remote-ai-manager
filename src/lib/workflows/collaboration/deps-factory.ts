@@ -42,6 +42,11 @@ import {
 import { publishScopedStatusEvent } from "@/lib/workflows/primitives/default-session-status-bus";
 import { safeAppendTranscriptEntry } from "@/lib/prompt/transcript";
 import { dispatchPushForCollaborationEvent } from "@/lib/push-notification/dispatcher";
+import {
+  appendCollaborationArtifact,
+  readCollaborationArtifacts,
+} from "./artifacts-store";
+import { collaborationArtifactSchema } from "./types";
 import type { AsymmetricCollaborationSliceDeps } from "./envelope";
 import { mutateConversation as defaultMutateConversation } from "@/lib/state-store";
 import { publishSessionStatus as defaultPublishSessionStatus } from "@/lib/workflows/primitives/default-session-status-bus";
@@ -228,5 +233,9 @@ export function createCollaborationDeps(
           conversation.backendRef = ref;
         },
       ),
+    appendArtifact: (workflowId, artifact) =>
+      appendCollaborationArtifact(workflowId, artifact),
+    readArtifacts: (workflowId) =>
+      readCollaborationArtifacts(workflowId, collaborationArtifactSchema),
   };
 }

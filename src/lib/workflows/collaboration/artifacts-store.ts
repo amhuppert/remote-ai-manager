@@ -1,0 +1,168 @@
+/**
+ * Per-workflow collaboration artifacts sidecar store.
+ *
+ * Collaboration phase outputs (`initial_draft`, `cross_review`,
+ * `proposed_changes`, `counter_proposal`, `resolution_decision`,
+ * `open_conflicts`, `final_answer`) form an unbounded append-only stream over
+ * a run. Persisting that stream inside the SQLite envelope blob means every
+ * lifecycle `upsert` re-serializes the whole array — the root of the
+ * `workflow_envelopes` write cost. This module moves the stream out to a
+ * durable per-workflow JSONL sidecar file, mirroring how conversation
+ * transcripts already work (`@/lib/prompt/transcript`): the file lives under
+ * the OS config dir (`<configDir>/collab-artifacts/<workflowId>.jsonl`),
+ * OUTSIDE the session worktree, so it is durable across worktree removal and
+ * process restart.
+ *
+ * The envelope blob keeps only bounded lifecycle/config state; consumers that
+ * need the stream read it back from the sidecar.
+ *
+ * The store is generic over the entry shape because the two collaboration
+ * paths persist different shapes:
+ *
+ *  - the user-invoked path (`envelope.ts`) appends raw `CollaborationArtifact`
+ *    values (including `open_conflicts`, which is load-bearing for resume),
+ *  - the graph-workflow path (`workflow-envelope.ts`) appends
+ *    `CollaborationWorkflowArtifactEntry` wrappers.
+ *
+ * Readers supply the schema for the shape they expect; malformed lines are
+ * skipped (and logged) rather than failing the whole read.
+ */
+
+import { appendFile, readFile, mkdir, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import type { z } from "zod";
+import { getConfigDirPath } from "@/lib/config/loader";
+import { createLogger } from "@/lib/logging";
+import { getErrorMessage } from "@/lib/shared/errors";
+
+const logger = createLogger("workflows.collaboration.artifacts");
+
+const ARTIFACTS_DIRNAME = "collab-artifacts";
+
+function getCollaborationArtifactsDir(configDir?: string): string {
+  return path.join(configDir ?? getConfigDirPath(), ARTIFACTS_DIRNAME);
+}
+
+async function ensureCollaborationArtifactsDir(configDir?: string): Promise<void> {
+  const dir = getCollaborationArtifactsDir(configDir);
+  if (!existsSync(dir)) {
+    await mkdir(dir, { recursive: true });
+  }
+}
+
+/**
+ * Absolute path to the sidecar JSONL file for a workflow's artifact stream.
+ * Lives under `<configDir>/collab-artifacts/` so it survives worktree removal
+ * exactly like transcripts. Ensures the parent directory exists.
+ */
+export async function getCollaborationArtifactsPath(
+  workflowId: string,
+  configDir?: string,
+): Promise<string> {
+  await ensureCollaborationArtifactsDir(configDir);
+  return path.join(
+    getCollaborationArtifactsDir(configDir),
+    `${workflowId}.jsonl`,
+  );
+}
+
+/**
+ * Append a single artifact entry to the workflow's sidecar as one JSONL line.
+ * The append is the durability sink; the run keeps its own in-memory
+ * accumulator as the in-run source of truth (see `envelope.ts`).
+ */
+export async function appendCollaborationArtifact(
+  workflowId: string,
+  entry: unknown,
+  configDir?: string,
+): Promise<void> {
+  const filePath = await getCollaborationArtifactsPath(workflowId, configDir);
+  const line = JSON.stringify(entry) + "\n";
+  await appendFile(filePath, line, "utf-8");
+  logger.debug("collaboration.artifacts.appended", {
+    workflowId,
+    bytes: line.length,
+  });
+}
+
+/**
+ * Read a workflow's artifact stream back from its sidecar, in append order.
+ *
+ * Returns `[]` when the file is absent (no artifacts written yet, or the run
+ * never produced any). Each non-empty line is parsed and validated through
+ * `schema`; malformed lines are skipped and logged rather than failing the
+ * whole read, so a single corrupt line cannot strand a resume or hydration.
+ */
+export async function readCollaborationArtifacts<T>(
+  workflowId: string,
+  schema: z.ZodType<T>,
+  configDir?: string,
+): Promise<T[]> {
+  const filePath = await getCollaborationArtifactsPath(workflowId, configDir);
+  if (!existsSync(filePath)) return [];
+
+  let raw: string;
+  try {
+    raw = await readFile(filePath, "utf-8");
+  } catch (err) {
+    logger.warn("collaboration.artifacts.read_failed", {
+      workflowId,
+      filePath,
+      error: getErrorMessage(err),
+    });
+    return [];
+  }
+
+  const entries: T[] = [];
+  const lines = raw.split("\n");
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex];
+    if (!line || line.trim().length === 0) continue;
+
+    let json: unknown;
+    try {
+      json = JSON.parse(line);
+    } catch (err) {
+      logger.warn("collaboration.artifacts.line_parse_failed", {
+        workflowId,
+        lineIndex,
+        error: getErrorMessage(err),
+      });
+      continue;
+    }
+
+    const parsed = schema.safeParse(json);
+    if (!parsed.success) {
+      logger.warn("collaboration.artifacts.line_invalid", {
+        workflowId,
+        lineIndex,
+        issues: parsed.error.issues
+          .map((issue) => `${issue.path.join(".") || "$"}: ${issue.message}`)
+          .join("; "),
+      });
+      continue;
+    }
+    entries.push(parsed.data);
+  }
+
+  logger.debug("collaboration.artifacts.read", {
+    workflowId,
+    entryCount: entries.length,
+  });
+  return entries;
+}
+
+/**
+ * Remove a workflow's sidecar file. Best-effort and idempotent: a missing
+ * file is not an error. Invoked from session deletion alongside transcript
+ * removal so artifact files do not outlive their session.
+ */
+export async function deleteCollaborationArtifacts(
+  workflowId: string,
+  configDir?: string,
+): Promise<void> {
+  const filePath = await getCollaborationArtifactsPath(workflowId, configDir);
+  await rm(filePath, { force: true });
+  logger.debug("collaboration.artifacts.deleted", { workflowId });
+}

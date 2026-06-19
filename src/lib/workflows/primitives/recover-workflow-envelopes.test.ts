@@ -91,7 +91,7 @@ describe("recoverActiveWorkflowEnvelopes", () => {
     const repo = createDefaultSessionWorkflowEnvelopeRepository({
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
-      mutateSession: before.mutateSession,
+      mutateEnvelopes: before.mutateSessionWorkflowEnvelopes,
       getSession: before.getSession,
     });
     await repo.create(buildEnvelope({ workflowId: "wf-running" }));
@@ -122,7 +122,7 @@ describe("recoverActiveWorkflowEnvelopes", () => {
         createDefaultSessionWorkflowEnvelopeRepository({
           projectPath,
           sessionName,
-          mutateSession: afterRestart.mutateSession,
+          mutateEnvelopes: afterRestart.mutateSessionWorkflowEnvelopes,
           getSession: afterRestart.getSession,
         }),
       isWorkerActive: () => false,
@@ -136,7 +136,7 @@ describe("recoverActiveWorkflowEnvelopes", () => {
     const verifyRepo = createDefaultSessionWorkflowEnvelopeRepository({
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
-      mutateSession: verifyManager.mutateSession,
+      mutateEnvelopes: verifyManager.mutateSessionWorkflowEnvelopes,
       getSession: verifyManager.getSession,
     });
 
@@ -157,7 +157,7 @@ describe("recoverActiveWorkflowEnvelopes", () => {
     const repo = createDefaultSessionWorkflowEnvelopeRepository({
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
-      mutateSession: before.mutateSession,
+      mutateEnvelopes: before.mutateSessionWorkflowEnvelopes,
       getSession: before.getSession,
     });
     await repo.create(
@@ -171,7 +171,7 @@ describe("recoverActiveWorkflowEnvelopes", () => {
         createDefaultSessionWorkflowEnvelopeRepository({
           projectPath,
           sessionName,
-          mutateSession: afterRestart.mutateSession,
+          mutateEnvelopes: afterRestart.mutateSessionWorkflowEnvelopes,
           getSession: afterRestart.getSession,
         }),
       isWorkerActive: (workflowId) => workflowId === "wf-still-running",
@@ -184,7 +184,7 @@ describe("recoverActiveWorkflowEnvelopes", () => {
     const verifyRepo = createDefaultSessionWorkflowEnvelopeRepository({
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
-      mutateSession: verifyManager.mutateSession,
+      mutateEnvelopes: verifyManager.mutateSessionWorkflowEnvelopes,
       getSession: verifyManager.getSession,
     });
     const fetched = await verifyRepo.get("wf-still-running");
@@ -200,7 +200,7 @@ describe("recoverActiveWorkflowEnvelopes", () => {
         createDefaultSessionWorkflowEnvelopeRepository({
           projectPath,
           sessionName,
-          mutateSession: manager.mutateSession,
+          mutateEnvelopes: manager.mutateSessionWorkflowEnvelopes,
           getSession: manager.getSession,
         }),
       isWorkerActive: () => false,

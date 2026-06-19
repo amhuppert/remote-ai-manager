@@ -96,7 +96,7 @@ describe("durable workflow wiring through production factory", () => {
     const repo = createDefaultSessionWorkflowEnvelopeRepository({
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
-      mutateSession: before.mutateSession,
+      mutateEnvelopes: before.mutateSessionWorkflowEnvelopes,
       getSession: before.getSession,
     });
 
@@ -118,7 +118,7 @@ describe("durable workflow wiring through production factory", () => {
     const afterRepo = createDefaultSessionWorkflowEnvelopeRepository({
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
-      mutateSession: afterRestart.mutateSession,
+      mutateEnvelopes: afterRestart.mutateSessionWorkflowEnvelopes,
       getSession: afterRestart.getSession,
     });
 
@@ -134,7 +134,7 @@ describe("durable workflow wiring through production factory", () => {
     const finalRepo = createDefaultSessionWorkflowEnvelopeRepository({
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
-      mutateSession: finalManager.mutateSession,
+      mutateEnvelopes: finalManager.mutateSessionWorkflowEnvelopes,
       getSession: finalManager.getSession,
     });
     const completed = await finalRepo.get("wf-collab-1");
@@ -153,7 +153,7 @@ describe("durable workflow wiring through production factory", () => {
     const store = createDefaultSessionWorkflowEnvelopeStore({
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
-      mutateSession: manager.mutateSession,
+      mutateEnvelopes: manager.mutateSessionWorkflowEnvelopes,
       getSession: manager.getSession,
     });
 
@@ -170,7 +170,7 @@ describe("durable workflow wiring through production factory", () => {
     const freshStore = createDefaultSessionWorkflowEnvelopeStore({
       projectPath: PROJECT_PATH,
       sessionName: SESSION_NAME,
-      mutateSession: fresh.mutateSession,
+      mutateEnvelopes: fresh.mutateSessionWorkflowEnvelopes,
       getSession: fresh.getSession,
     });
     const list = await freshStore.listAll();

@@ -12,15 +12,15 @@
  *                discriminator to `"user"` when absent on read.
  *  - `"workflow"` — the agent-invoked shape: carries
  *                `parentImplementerTurnId`, `executionContextId`,
- *                `conversationId`, the resolved collaboration config (each
- *                resolved field carries `value` + `source` per the cascade),
- *                and the `artifacts` stream — the ordered list of
- *                collaboration phase outputs produced during the run. The
- *                artifacts array is the persisted negotiation trail; the
- *                envelope appends every initial draft, cross-review,
- *                proposed-changes, counter-proposal, resolution-decision, and
- *                final-answer artifact so consumers of the persisted record
- *                can replay the run end-to-end.
+ *                `conversationId`, and the resolved collaboration config (each
+ *                resolved field carries `value` + `source` per the cascade).
+ *                The ordered artifact stream (initial drafts, cross-reviews,
+ *                proposed/counter changes, resolutions, final answer) lives in
+ *                a per-workflow JSONL sidecar
+ *                (`@/lib/workflows/collaboration/artifacts-store`), not in this
+ *                blob, so the envelope holds only bounded lifecycle/config
+ *                state. The element shape persisted there is
+ *                `CollaborationWorkflowArtifactEntry`.
  */
 
 import { z } from "zod";
@@ -40,7 +40,9 @@ const collaborationFeatureSnapshotUserSchema = z
   })
   .passthrough();
 
-const collaborationWorkflowArtifactEntrySchema = z.discriminatedUnion("kind", [
+export const collaborationWorkflowArtifactEntrySchema = z.discriminatedUnion(
+  "kind",
+  [
   z.object({
     kind: z.literal("initial_draft"),
     agent: z.enum(["agent_one", "agent_two"]),
@@ -74,7 +76,8 @@ const collaborationWorkflowArtifactEntrySchema = z.discriminatedUnion("kind", [
     agent: z.literal("agent_one"),
     value: collaborationFinalAnswerOutputSchema,
   }),
-]);
+  ],
+);
 export type CollaborationWorkflowArtifactEntry = z.infer<
   typeof collaborationWorkflowArtifactEntrySchema
 >;
@@ -85,7 +88,6 @@ const collaborationFeatureSnapshotWorkflowSchema = z.object({
   executionContextId: z.string().trim().min(1),
   conversationId: z.string().trim().min(1),
   resolvedConfig: resolvedCollaborationConfigSchema,
-  artifacts: z.array(collaborationWorkflowArtifactEntrySchema).default([]),
 });
 
 const discriminatedUnion = z.discriminatedUnion("origin", [
