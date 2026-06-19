@@ -18,6 +18,7 @@ import {
 } from "@/lib/workflow-graph/test-fixtures";
 import { graphWorkflowExecutionSchema } from "@/lib/workflows/schemas";
 import {
+  appendFailureHistory,
   createGraphWorkflowIterationOrchestrator,
   IterationHaltedError,
 } from "./iteration-orchestrator";
@@ -5078,5 +5079,39 @@ describe("human approval gate at finalization", () => {
         (entry) => entry.event.type === "graph-workflow-approval-pending",
       ),
     ).toBe(false);
+  });
+});
+
+describe("appendFailureHistory (cap)", () => {
+  const failure = (n: number) => ({
+    message: `failure ${n}`,
+    timestamp: `2026-06-19T00:00:${String(n).padStart(2, "0")}Z`,
+  });
+
+  it("appends to an empty/undefined history", () => {
+    expect(appendFailureHistory(undefined, failure(1))).toEqual([failure(1)]);
+    expect(appendFailureHistory([], failure(1))).toEqual([failure(1)]);
+  });
+
+  it("keeps only the most recent 10 entries, dropping the oldest", () => {
+    let history = appendFailureHistory(undefined, failure(0));
+    for (let n = 1; n < 15; n += 1) {
+      history = appendFailureHistory(history, failure(n));
+    }
+
+    expect(history).toHaveLength(10);
+    // Oldest (failure 0..4) dropped; the most recent 10 (failure 5..14) retained, in order.
+    expect(history.map((f) => f.message)).toEqual([
+      "failure 5",
+      "failure 6",
+      "failure 7",
+      "failure 8",
+      "failure 9",
+      "failure 10",
+      "failure 11",
+      "failure 12",
+      "failure 13",
+      "failure 14",
+    ]);
   });
 });

@@ -13,6 +13,7 @@ import type {
   GraphWorkflowSSEEvent,
   GraphWorkflowSharedDocumentEntry,
   GraphWorkflowTaskDefinition,
+  GraphWorkflowTaskValidationFailure,
   GraphWorkflowValidationResultEvent,
   WorkflowValidatorIssue,
 } from "@/lib/workflows/schemas";
@@ -262,6 +263,25 @@ function cloneExecution(
   execution: GraphWorkflowExecution,
 ): GraphWorkflowExecution {
   return structuredClone(execution);
+}
+
+/**
+ * Cap for a task's append-only `failureHistory`. The sole consumer renders the
+ * full array into the retry prompt (`iteration-prompt.ts`), where only the most
+ * recent failures matter; the cap is a guardrail against a pathological
+ * validation loop growing the persisted execution blob without bound.
+ */
+const MAX_FAILURE_HISTORY = 10;
+
+/**
+ * Append one validation failure to a task's history, keeping only the most
+ * recent {@link MAX_FAILURE_HISTORY} entries. Pure.
+ */
+export function appendFailureHistory(
+  existing: GraphWorkflowTaskValidationFailure[] | undefined,
+  entry: GraphWorkflowTaskValidationFailure,
+): GraphWorkflowTaskValidationFailure[] {
+  return [...(existing ?? []), entry].slice(-MAX_FAILURE_HISTORY);
 }
 
 function getNow(deps: GraphWorkflowIterationOrchestratorDeps): string {
@@ -751,13 +771,10 @@ export function createGraphWorkflowIterationOrchestrator(
           taskState.summary = null;
           taskState.completedAt = null;
           taskState.failureMessage = failureMessage;
-          taskState.failureHistory = [
-            ...(taskState.failureHistory ?? []),
-            {
-              message: failureMessage,
-              timestamp: failureTimestamp,
-            },
-          ];
+          taskState.failureHistory = appendFailureHistory(
+            taskState.failureHistory,
+            { message: failureMessage, timestamp: failureTimestamp },
+          );
 
           execLogger?.task(input.contextId, "task.reopened", {
             taskId,
@@ -860,12 +877,10 @@ export function createGraphWorkflowIterationOrchestrator(
           completedAt: null,
           lastConversationId: null,
           failureMessage: input.outcome.summary,
-          failureHistory: [
-            {
-              message: input.outcome.summary,
-              timestamp: failureTimestamp,
-            },
-          ],
+          failureHistory: appendFailureHistory(undefined, {
+            message: input.outcome.summary,
+            timestamp: failureTimestamp,
+          }),
         };
 
         const contextState = nextExecution.contextStates[input.contextId];
@@ -1606,23 +1621,25 @@ export function createGraphWorkflowIterationOrchestrator(
       if (collaborationContinuationWorkflowIds.length === 0) {
         return;
       }
-      const deliveredAt = getNow(deps);
       await deps.executionRepository.mutateActive(
         input.projectPath,
         input.sessionName,
         (latest) => {
           const next = cloneExecution(latest);
-          const continuations =
-            next.collaborationContinuations?.[input.contextId] ?? [];
           next.collaborationContinuations ??= {};
+          const continuations =
+            next.collaborationContinuations[input.contextId] ?? [];
           const workflowIdSet = new Set(collaborationContinuationWorkflowIds);
-          next.collaborationContinuations[input.contextId] = continuations.map(
-            (continuation) =>
-              workflowIdSet.has(continuation.workflowId) &&
-              continuation.deliveredAt === null
-                ? { ...continuation, deliveredAt }
-                : continuation,
+          // Delivered continuations are consumed — drop them so the per-context
+          // array stays bounded (nothing reads a delivered continuation again).
+          const remaining = continuations.filter(
+            (continuation) => !workflowIdSet.has(continuation.workflowId),
           );
+          if (remaining.length === 0) {
+            delete next.collaborationContinuations[input.contextId];
+          } else {
+            next.collaborationContinuations[input.contextId] = remaining;
+          }
           return next;
         },
       );

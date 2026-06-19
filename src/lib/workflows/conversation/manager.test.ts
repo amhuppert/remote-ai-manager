@@ -1451,15 +1451,16 @@ describe("conversation manager", () => {
           },
         ]);
         expect(commandRowStatusDuringRun).toEqual(["delivering"]);
-        // Read back the RELOADED state: command delivered, trailing text pending.
+        // Read back the RELOADED state: command delivered then pruned, trailing
+        // text still pending.
         const afterCommand = await fixture.deps.getConversation(
           projectPath,
           sessionName,
           conversationId,
         );
         expect(
-          afterCommand?.pendingQueue.find((r) => r.id === command.id)?.status,
-        ).toBe("delivered");
+          afterCommand?.pendingQueue.find((r) => r.id === command.id),
+        ).toBeUndefined();
         expect(
           afterCommand?.pendingQueue.find((r) => r.id === last.id)?.status,
         ).toBe("pending");

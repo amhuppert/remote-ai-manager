@@ -247,10 +247,8 @@ describe("Codex next-turn coalescing flow (integration)", () => {
     const activeAfterDelivered = await service.listActive(KEY);
     // No leftover pending entries.
     expect(activeAfterDelivered).toEqual([]);
-    expect(store.conversation?.pendingQueue.map((r) => r.status)).toEqual([
-      "delivered",
-      "delivered",
-    ]);
+    // Delivered entries are pruned from the persisted queue.
+    expect(store.conversation?.pendingQueue).toEqual([]);
 
     // --- Step 4: exactly ONE coalesced payload was produced for the turn ---
     // The single SUBMIT_PROMPT carried one coalesced prompt; there was no

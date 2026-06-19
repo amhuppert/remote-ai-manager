@@ -301,13 +301,11 @@ describe("Task 7.3 Scenario B — cancellation excludes the entry from the next 
     const activeAfterCancel = await service.listActive(KEY);
     expect(activeAfterCancel.map((e) => e.id)).toEqual([b.id]);
 
-    // A's persisted row is `cancelled` (terminal), B is still `pending`.
+    // A's row is pruned on cancel (terminal entries are not retained); B is
+    // still `pending`.
     const rowsAfterCancel = store.conversation?.pendingQueue ?? [];
-    const aRow = rowsAfterCancel.find((r) => r.id === a.id);
-    const bRow = rowsAfterCancel.find((r) => r.id === b.id);
-    expect(aRow?.status).toBe("cancelled");
-    expect(aRow?.cancelledAt).toBe(NOW);
-    expect(bRow?.status).toBe("pending");
+    expect(rowsAfterCancel.find((r) => r.id === a.id)).toBeUndefined();
+    expect(rowsAfterCancel.find((r) => r.id === b.id)?.status).toBe("pending");
 
     // --- Step 3: drain the next turn — only B is delivered (req 9.2) ---
     const batch = await service.claimNextTurnBatch(KEY);
@@ -322,7 +320,8 @@ describe("Task 7.3 Scenario B — cancellation excludes the entry from the next 
     // A never appears in the next turn: it stays cancelled, only B went
     // delivering under the claim.
     const rowsAfterClaim = store.conversation?.pendingQueue ?? [];
-    expect(rowsAfterClaim.find((r) => r.id === a.id)?.status).toBe("cancelled");
+    // A was pruned on cancel and never reappears; only B went delivering.
+    expect(rowsAfterClaim.find((r) => r.id === a.id)).toBeUndefined();
     expect(rowsAfterClaim.find((r) => r.id === b.id)?.status).toBe(
       "delivering",
     );
@@ -347,9 +346,10 @@ describe("Task 7.3 Scenario B — cancellation excludes the entry from the next 
     const cancelB = await service.cancel({ ...KEY, id: b.id });
     expect(cancelB).toBe("not_cancellable");
 
-    // The already-cancelled A is likewise not re-cancellable.
+    // A was pruned on cancel, so re-cancelling it now returns `not_found` (the
+    // terminal entry is no longer retained).
     const recancelA = await service.cancel({ ...KEY, id: a.id });
-    expect(recancelA).toBe("not_cancellable");
+    expect(recancelA).toBe("not_found");
 
     // B remains `delivering` — the failed cancel did not mutate its status.
     const bRow = store.conversation?.pendingQueue.find((r) => r.id === b.id);

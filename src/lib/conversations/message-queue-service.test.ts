@@ -453,8 +453,11 @@ describe("delivery result transforms", () => {
     );
 
     expect(affected.map((e) => e.id)).toEqual(["m1"]);
-    expect(next.find((e) => e.id === "m1")?.status).toBe("delivered");
-    expect(next.find((e) => e.id === "m1")?.deliveredAt).toBe(NOW);
+    // The delivered row is pruned from the queue; its terminal status rides on
+    // `affected` for the broadcast.
+    expect(next.find((e) => e.id === "m1")).toBeUndefined();
+    expect(affected[0]?.status).toBe("delivered");
+    expect(affected[0]?.deliveredAt).toBe(NOW);
     // Mismatched attempt left unchanged.
     expect(next.find((e) => e.id === "m2")?.status).toBe("delivering");
     expect(queue[0]?.status).toBe("delivering");
@@ -493,7 +496,10 @@ describe("delivery result transforms", () => {
     );
 
     expect(affected.map((e) => e.id)).toEqual(["m1"]);
-    const row = next.find((e) => e.id === "m1");
+    // The failed row is pruned from the queue; its terminal status rides on
+    // `affected` for the broadcast.
+    expect(next.find((e) => e.id === "m1")).toBeUndefined();
+    const row = affected[0];
     expect(row?.status).toBe("failed");
     expect(row?.failedAt).toBe(NOW);
     expect(row?.error).toBe("terminal failure");
@@ -561,7 +567,9 @@ describe("cancelTransform", () => {
     expect(cancelled?.status).toBe("cancelled");
     expect(cancelled?.cancelledAt).toBe(LATER);
     expect(cancelled?.updatedAt).toBe(LATER);
-    expect(next.find((e) => e.id === "m1")?.status).toBe("cancelled");
+    // The cancelled row is pruned from the queue; its terminal status rides on
+    // the returned `cancelled` entry for the broadcast.
+    expect(next.find((e) => e.id === "m1")).toBeUndefined();
     // The other row is untouched.
     expect(next.find((e) => e.id === "m2")?.status).toBe("pending");
     // Input not mutated.
@@ -969,11 +977,18 @@ describe("messageQueueService delivery results", () => {
       ids: ["p1"],
       deliveryAttemptId: attemptId,
     });
-    expect(store.conversation?.pendingQueue[0]?.status).toBe("delivered");
-    expect(store.conversation?.pendingQueue[0]?.deliveredAt).toBe(NOW);
+    // The delivered row is pruned from the queue; the broadcast carries the
+    // terminal view.
+    expect(store.conversation?.pendingQueue).toHaveLength(0);
+    const delivered = broadcasts.filter(
+      (e) => e.type === "message-queue-updated",
+    );
+    expect(delivered).toHaveLength(1);
     expect(
-      broadcasts.filter((e) => e.type === "message-queue-updated"),
-    ).toHaveLength(1);
+      delivered[0]?.type === "message-queue-updated"
+        ? delivered[0].message.status
+        : null,
+    ).toBe("delivered");
   });
 
   it("markPending returns a delivering row to pending with an error", async () => {
@@ -999,16 +1014,17 @@ describe("messageQueueService delivery results", () => {
     expect(row?.error).toBe("transient");
   });
 
-  it("markFailed sets a delivering row to failed", async () => {
+  it("markFailed prunes the failed row and broadcasts the failed outcome", async () => {
     const store: FakeStore = {
       conversation: conversationWith([
         makeEntry({ id: "p1", status: "pending" }),
       ]),
     };
-    const { deps } = makeDeps(store);
+    const { deps, broadcasts } = makeDeps(store);
     const service = createMessageQueueService(deps);
 
     const claimed = await service.claimLiveDelivery({ ...KEY, id: "p1" });
+    broadcasts.length = 0;
     await service.markFailed({
       ...KEY,
       ids: ["p1"],
@@ -1016,10 +1032,18 @@ describe("messageQueueService delivery results", () => {
       error: "boom",
     });
 
-    const row = store.conversation?.pendingQueue[0];
-    expect(row?.status).toBe("failed");
-    expect(row?.failedAt).toBe(NOW);
-    expect(row?.error).toBe("boom");
+    // The failed row is pruned from the queue; its terminal outcome rides on
+    // the broadcast.
+    expect(store.conversation?.pendingQueue).toHaveLength(0);
+    const updates = broadcasts.filter(
+      (e) => e.type === "message-queue-updated",
+    );
+    expect(updates).toHaveLength(1);
+    const msg =
+      updates[0]?.type === "message-queue-updated" ? updates[0].message : null;
+    expect(msg?.status).toBe("failed");
+    expect(msg?.failedAt).toBe(NOW);
+    expect(msg?.error).toBe("boom");
   });
 });
 
@@ -1077,7 +1101,7 @@ describe("messageQueueService.recoverAbandonedDeliveries", () => {
 });
 
 describe("messageQueueService.cancel", () => {
-  it("cancels a pending row, persists the cancelled status, and broadcasts exactly one update", async () => {
+  it("cancels a pending row, prunes it, and broadcasts exactly one update", async () => {
     const store: FakeStore = {
       conversation: conversationWith([
         makeEntry({ id: "p1", status: "pending" }),
@@ -1091,8 +1115,8 @@ describe("messageQueueService.cancel", () => {
 
     expect(result).toBe("cancelled");
     const rows = store.conversation?.pendingQueue ?? [];
-    expect(rows.find((r) => r.id === "p1")?.status).toBe("cancelled");
-    expect(rows.find((r) => r.id === "p1")?.cancelledAt).toBe(NOW);
+    // The cancelled row is pruned; its terminal outcome rides on the broadcast.
+    expect(rows.find((r) => r.id === "p1")).toBeUndefined();
     // The other pending row is untouched.
     expect(rows.find((r) => r.id === "p2")?.status).toBe("pending");
 

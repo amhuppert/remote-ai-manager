@@ -332,13 +332,14 @@ describe("Task 7.4 Scenario A — queued image delivered with its text in one tu
     const serializedEntry = JSON.stringify(delivered);
     expect(serializedEntry).not.toContain(IMAGE.base64Data);
 
-    // The queue row reached `delivered`, only after the append succeeded.
+    // The queue row was delivered (only after the append succeeded) and then
+    // pruned — terminal entries are not retained.
     const finalRow = store.conversation?.pendingQueue.find(
       (r) => r.id === result.entry.id,
     );
-    expect(finalRow?.status).toBe("delivered");
+    expect(finalRow).toBeUndefined();
 
-    // listActive is now empty — the delivered entry is no longer pending.
+    // listActive is now empty — the delivered entry is gone.
     const active = await service.listActive(KEY);
     expect(active).toEqual([]);
 

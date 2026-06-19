@@ -213,21 +213,27 @@ function applyDeliveryResult(
   ids: readonly string[],
   attemptId: string,
   update: (entry: PendingQueuedMessage) => PendingQueuedMessage,
+  prune: boolean,
 ): { queue: PendingQueuedMessage[]; affected: PendingQueuedMessage[] } {
   const idSet = new Set(ids);
   const affected: PendingQueuedMessage[] = [];
-  const next = queue.map((entry) => {
+  const next: PendingQueuedMessage[] = [];
+  for (const entry of queue) {
     if (
       !idSet.has(entry.id) ||
       entry.status !== "delivering" ||
       entry.deliveryAttemptId !== attemptId
     ) {
-      return entry;
+      next.push(entry);
+      continue;
     }
     const updated = update(entry);
     affected.push(updated);
-    return updated;
-  });
+    // Terminal results (delivered/failed) are pruned from the persisted queue:
+    // nothing reads a terminal entry and retaining them grows the row
+    // unboundedly. markPending is a retry (back to pending) and must be kept.
+    if (!prune) next.push(updated);
+  }
   return { queue: next, affected };
 }
 
@@ -238,12 +244,18 @@ export function markDeliveredTransform(
   attemptId: string,
   now: string,
 ): { queue: PendingQueuedMessage[]; affected: PendingQueuedMessage[] } {
-  return applyDeliveryResult(queue, ids, attemptId, (entry) => ({
-    ...entry,
-    status: "delivered",
-    deliveredAt: now,
-    updatedAt: now,
-  }));
+  return applyDeliveryResult(
+    queue,
+    ids,
+    attemptId,
+    (entry) => ({
+      ...entry,
+      status: "delivered",
+      deliveredAt: now,
+      updatedAt: now,
+    }),
+    true,
+  );
 }
 
 /**
@@ -258,14 +270,20 @@ export function markPendingTransform(
   error: string,
   now: string,
 ): { queue: PendingQueuedMessage[]; affected: PendingQueuedMessage[] } {
-  return applyDeliveryResult(queue, ids, attemptId, (entry) => ({
-    ...entry,
-    status: "pending",
-    deliveryAttemptId: null,
-    deliveryStartedAt: null,
-    error,
-    updatedAt: now,
-  }));
+  return applyDeliveryResult(
+    queue,
+    ids,
+    attemptId,
+    (entry) => ({
+      ...entry,
+      status: "pending",
+      deliveryAttemptId: null,
+      deliveryStartedAt: null,
+      error,
+      updatedAt: now,
+    }),
+    false,
+  );
 }
 
 /** Terminal failure: mark matching delivering rows `failed`. Pure. */
@@ -276,13 +294,19 @@ export function markFailedTransform(
   error: string,
   now: string,
 ): { queue: PendingQueuedMessage[]; affected: PendingQueuedMessage[] } {
-  return applyDeliveryResult(queue, ids, attemptId, (entry) => ({
-    ...entry,
-    status: "failed",
-    failedAt: now,
-    error,
-    updatedAt: now,
-  }));
+  return applyDeliveryResult(
+    queue,
+    ids,
+    attemptId,
+    (entry) => ({
+      ...entry,
+      status: "failed",
+      failedAt: now,
+      error,
+      updatedAt: now,
+    }),
+    true,
+  );
 }
 
 /**
@@ -336,18 +360,21 @@ export function cancelTransform(
   }
 
   let cancelled: PendingQueuedMessage | null = null;
-  const next = queue.map((entry) => {
+  const next: PendingQueuedMessage[] = [];
+  for (const entry of queue) {
     if (entry.id !== id) {
-      return entry;
+      next.push(entry);
+      continue;
     }
+    // Pruned: returned as `cancelled` for the broadcast but dropped from the
+    // persisted queue (a terminal entry is never read again).
     cancelled = {
       ...entry,
       status: "cancelled",
       cancelledAt: now,
       updatedAt: now,
     };
-    return cancelled;
-  });
+  }
   return { queue: next, result: "cancelled", cancelled };
 }
 

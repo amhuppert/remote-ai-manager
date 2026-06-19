@@ -191,15 +191,12 @@ describe("Claude in-turn live-delivery flow (integration)", () => {
       deps: queueDeps,
     });
 
-    // --- Step 2: durable row persisted by enqueue; the durable queue — not the
-    //     JSONL transcript — owns the message. `queueMessage` returns the row as
-    //     `pending` from enqueue (acceptance/delivery happens afterwards), and
-    //     the row exists in the in-memory queue.
+    // --- Step 2: the durable queue — not the JSONL transcript — owns the
+    //     message. `queueMessage` returns the row as `pending` from enqueue; the
+    //     in-turn flow then delivers it and prunes the terminal entry, so the
+    //     durable queue is empty once the flow completes.
     expect(result.entry.status).toBe("pending");
-    const enqueuedRow = store.conversation?.pendingQueue.find(
-      (r) => r.id === result.entry.id,
-    );
-    expect(enqueuedRow).toBeDefined();
+    expect(store.conversation?.pendingQueue).toEqual([]);
     // Exactly one transcript append occurred across the whole flow, and Step 5
     // pins that it happened only AFTER backend acceptance — never at enqueue.
     expect(appendedEntries).toHaveLength(1);
@@ -227,12 +224,13 @@ describe("Claude in-turn live-delivery flow (integration)", () => {
       { type: "text", text: "live message" },
     ]);
 
-    // The queue row transitioned to `delivered` (the pending entry reaches
-    // delivered, shown by its transcript row).
+    // The queue row transitioned to `delivered` (shown by its transcript row
+    // and the markDelivered call in Step 5) and was then pruned — terminal
+    // entries are not retained, so the durable queue holds it no longer.
     const finalRow = store.conversation?.pendingQueue.find(
       (r) => r.id === result.entry.id,
     );
-    expect(finalRow?.status).toBe("delivered");
+    expect(finalRow).toBeUndefined();
 
     // `listActive` is now EMPTY — the pending entry is gone because it is
     // delivered (req 4.1: the queue is source of truth only until confirmed).

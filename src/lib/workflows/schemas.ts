@@ -783,6 +783,9 @@ const graphWorkflowTaskValidationFailureSchema = z.object({
   message: z.string(),
   timestamp: z.string(),
 });
+export type GraphWorkflowTaskValidationFailure = z.infer<
+  typeof graphWorkflowTaskValidationFailureSchema
+>;
 const graphWorkflowTaskStateSchema = z.object({
   taskId: z.string().trim().min(1),
   contextId: z.string().trim().min(1),
