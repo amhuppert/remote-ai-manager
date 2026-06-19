@@ -112,7 +112,6 @@ function makeState(
             targetBranch: "main",
             parentSessionName: null,
             graphWorkflowExecution,
-            graphWorkflowExecutionHistory: [],
             referenceDocuments: [],
           },
         },

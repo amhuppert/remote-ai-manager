@@ -110,7 +110,6 @@ function makeExecution(
     joins: {},
     lanePlan: { continuationMap: {}, longestDownstreamPath: {} },
     machineSnapshot: null,
-    history: [],
     startedAt: NOW,
     completedAt: null,
     haltReason: null,

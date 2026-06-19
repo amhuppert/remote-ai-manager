@@ -40,7 +40,6 @@ async function seedSession(): Promise<void> {
     targetBranch: "main",
     parentSessionName: null,
     graphWorkflowExecution: null,
-    graphWorkflowExecutionHistory: [],
     referenceDocuments: [],
   });
 }

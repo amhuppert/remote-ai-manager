@@ -10,15 +10,16 @@ import type {
 } from "@/lib/workflows/schemas";
 function executionWithHistory(
   history: Array<Omit<GraphWorkflowExecutionEvent, "preReset">>,
-): GraphWorkflowExecution {
-  return createWorkflowExecution({
-    history: history.map((entry) => ({ ...entry, preReset: false })),
-  });
+): { execution: GraphWorkflowExecution; events: GraphWorkflowExecutionEvent[] } {
+  return {
+    execution: createWorkflowExecution(),
+    events: history.map((entry) => ({ ...entry, preReset: false })),
+  };
 }
 
 describe("WorkflowEventLog rendering of lane/join events", () => {
   it("renders a graph-workflow-lane-status event title with lane identity so operators can read lane progress in the activity log", () => {
-    const execution = executionWithHistory([
+    const { execution, events } = executionWithHistory([
       {
         occurredAt: "2026-04-02T08:00:00.000Z",
         event: {
@@ -37,7 +38,7 @@ describe("WorkflowEventLog rendering of lane/join events", () => {
       },
     ]);
 
-    render(<WorkflowEventLog execution={execution} />);
+    render(<WorkflowEventLog execution={execution} events={events} />);
 
     expect(
       screen.getByText(/Lane merged · lane-plan \(csm\/feature-lane-plan\)/),
@@ -46,7 +47,7 @@ describe("WorkflowEventLog rendering of lane/join events", () => {
 
   it("reveals lane member contexts and last-committer in expanded detail so operators can drill into a lane event", async () => {
     const user = userEvent.setup();
-    const execution = executionWithHistory([
+    const { execution, events } = executionWithHistory([
       {
         occurredAt: "2026-04-02T08:00:00.000Z",
         event: {
@@ -65,7 +66,7 @@ describe("WorkflowEventLog rendering of lane/join events", () => {
       },
     ]);
 
-    render(<WorkflowEventLog execution={execution} />);
+    render(<WorkflowEventLog execution={execution} events={events} />);
 
     await user.click(screen.getByText(/Lane merged · lane-plan/));
 
@@ -74,7 +75,7 @@ describe("WorkflowEventLog rendering of lane/join events", () => {
   });
 
   it("renders a graph-workflow-join-status event title with status and id so operators can read join progress in the activity log", () => {
-    const execution = executionWithHistory([
+    const { execution, events } = executionWithHistory([
       {
         occurredAt: "2026-04-02T08:01:00.000Z",
         event: {
@@ -95,14 +96,14 @@ describe("WorkflowEventLog rendering of lane/join events", () => {
       },
     ]);
 
-    render(<WorkflowEventLog execution={execution} />);
+    render(<WorkflowEventLog execution={execution} events={events} />);
 
     expect(screen.getByText(/Join running · join-1/)).toBeInTheDocument();
   });
 
   it("reveals source->target and merged-source progress in expanded detail when a running join row is opened", async () => {
     const user = userEvent.setup();
-    const execution = executionWithHistory([
+    const { execution, events } = executionWithHistory([
       {
         occurredAt: "2026-04-02T08:01:00.000Z",
         event: {
@@ -123,7 +124,7 @@ describe("WorkflowEventLog rendering of lane/join events", () => {
       },
     ]);
 
-    render(<WorkflowEventLog execution={execution} />);
+    render(<WorkflowEventLog execution={execution} events={events} />);
 
     await user.click(screen.getByText(/Join running · join-1/));
 
@@ -135,7 +136,7 @@ describe("WorkflowEventLog rendering of lane/join events", () => {
 
   it("surfaces the failure error message in expanded detail when a join-status event reports a conflicts outcome", async () => {
     const user = userEvent.setup();
-    const execution = executionWithHistory([
+    const { execution, events } = executionWithHistory([
       {
         occurredAt: "2026-04-02T08:02:00.000Z",
         event: {
@@ -159,7 +160,7 @@ describe("WorkflowEventLog rendering of lane/join events", () => {
       },
     ]);
 
-    render(<WorkflowEventLog execution={execution} />);
+    render(<WorkflowEventLog execution={execution} events={events} />);
 
     expect(screen.getByText(/Join conflicts · join-2/)).toBeInTheDocument();
 

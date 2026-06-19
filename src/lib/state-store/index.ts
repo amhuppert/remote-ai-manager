@@ -53,5 +53,17 @@ export const setProjectConversationOpen =
 export const setProjectPinned = defaultStore.setProjectPinned;
 export const setSessionSpawnedFrom = defaultStore.setSessionSpawnedFrom;
 export const addPlcSpawnedSessionIds = defaultStore.addPlcSpawnedSessionIds;
+export const mutateActiveGraphWorkflowExecution =
+  defaultStore.mutateActiveGraphWorkflowExecution;
+export const archiveActiveGraphWorkflowExecution =
+  defaultStore.archiveActiveGraphWorkflowExecution;
+export const markGraphWorkflowContextEventsPreReset =
+  defaultStore.markGraphWorkflowContextEventsPreReset;
+export const getGraphWorkflowEventsTail =
+  defaultStore.getGraphWorkflowEventsTail;
+export const findLatestGraphWorkflowContextEvent =
+  defaultStore.findLatestGraphWorkflowContextEvent;
+export const listArchivedGraphWorkflowExecutions =
+  defaultStore.listArchivedGraphWorkflowExecutions;
 export const createReferenceDocument = defaultStore.createReferenceDocument;
 export const deleteReferenceDocument = defaultStore.deleteReferenceDocument;

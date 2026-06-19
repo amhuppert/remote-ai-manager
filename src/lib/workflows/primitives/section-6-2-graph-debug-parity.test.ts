@@ -798,7 +798,11 @@ describe("section 6.2 — graph + debug workflow parity (Task 6.2)", () => {
         recordPendingHaltReason: recordPendingHaltReasonSpy,
         drainAndHalt: drainAndHaltSpy,
         async mutateActive(_p, _s, fn) {
-          currentExecution = await fn(currentExecution);
+          const result = await fn(currentExecution);
+          currentExecution =
+            "execution" in result && "events" in result
+              ? result.execution
+              : result;
           return currentExecution;
         },
         async getActive() {

@@ -42,7 +42,12 @@ function createServices() {
     }),
     repository: createGraphWorkflowExecutionRepository({
       getSession: stateManager.getSession,
-      mutateSession: stateManager.mutateSession,
+      mutateActiveGraphWorkflowExecution:
+        stateManager.mutateActiveGraphWorkflowExecution,
+      archiveActiveGraphWorkflowExecution:
+        stateManager.archiveActiveGraphWorkflowExecution,
+      markGraphWorkflowContextEventsPreReset:
+        stateManager.markGraphWorkflowContextEventsPreReset,
       eventPublisher,
       charterService,
       readConfig: () => configReader.readConfig(),
@@ -139,7 +144,6 @@ describe("graph workflow execution repository", () => {
       targetBranch: "main",
       parentSessionName: null,
       graphWorkflowExecution: null,
-      graphWorkflowExecutionHistory: [],
       referenceDocuments: [],
     });
 
@@ -166,6 +170,12 @@ describe("graph workflow execution repository", () => {
 
     const session = await stateManager.getSession("/repo", "session-1");
     expect(session?.graphWorkflowExecution).toBeNull();
-    expect(session?.graphWorkflowExecutionHistory).toHaveLength(1);
+
+    const archived = await stateManager.listArchivedGraphWorkflowExecutions(
+      "/repo",
+      "session-1",
+    );
+    expect(archived).toHaveLength(1);
+    expect(archived[0]?.id).toBe("execution-1");
   });
 });

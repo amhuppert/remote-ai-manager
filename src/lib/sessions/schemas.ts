@@ -64,9 +64,6 @@ export const sessionStateSchema = z.object({
   targetBranch: z.string().default("main"),
   parentSessionName: z.string().nullable().default(null),
   graphWorkflowExecution: graphWorkflowExecutionSchema.nullable().default(null),
-  graphWorkflowExecutionHistory: z
-    .array(graphWorkflowExecutionSchema)
-    .default([]),
   referenceDocuments: z.array(referenceDocumentSchema).default([]),
   // Workflow envelope durable persistence for the workflow primitive layer.
   // Stored as opaque records here to avoid pulling primitive-layer schemas into

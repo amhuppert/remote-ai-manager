@@ -12,6 +12,7 @@ import ContextHaltCard from "@/components/workflow-graph/ContextHaltCard";
 import WorkflowEventLog from "@/components/workflow-graph/WorkflowEventLog";
 import type {
   GraphWorkflowExecution,
+  GraphWorkflowExecutionEvent,
   GraphWorkflowValidationResultEvent,
   GraphWorkflowCircuitBreakerEvent,
   GraphWorkflowLaneKind,
@@ -21,6 +22,7 @@ import { isTaskConversationLive, isTaskEditable } from "./task-runtime-state";
 
 interface ExecutionInspectorPanelProps {
   execution: GraphWorkflowExecution;
+  events: GraphWorkflowExecutionEvent[];
   selectedContextId: string | null;
   onSelectContext?: (contextId: string) => void;
   onDeselectContext: () => void;
@@ -82,10 +84,10 @@ function getContextTasks(execution: GraphWorkflowExecution, contextId: string) {
 }
 
 function getHistoryEntries(
-  execution: GraphWorkflowExecution,
+  events: GraphWorkflowExecutionEvent[],
   contextId?: string,
 ) {
-  const validationEvents = execution.history
+  const validationEvents = events
     .filter(
       (
         entry,
@@ -105,7 +107,7 @@ function getHistoryEntries(
       }),
     )
     .reverse();
-  const circuitBreakerEvents = execution.history
+  const circuitBreakerEvents = events
     .filter(
       (
         entry,
@@ -437,10 +439,12 @@ function ValidationCard({
 
 function OverviewView({
   execution,
+  events,
   onSelectContext,
   onViewConversation,
 }: {
   execution: GraphWorkflowExecution;
+  events: GraphWorkflowExecutionEvent[];
   onSelectContext?: (contextId: string) => void;
   onViewConversation?: ExecutionInspectorPanelProps["onViewConversation"];
 }) {
@@ -455,7 +459,7 @@ function OverviewView({
   const edgeCount = execution.workingDefinition.edges.length;
   const mergeCounts = countMerges(execution);
 
-  const history = useMemo(() => getHistoryEntries(execution), [execution]);
+  const history = useMemo(() => getHistoryEntries(events), [events]);
 
   return (
     <aside className="wb-inspector">
@@ -500,6 +504,7 @@ function OverviewView({
           <div className="wb-overview-section-title">Events</div>
           <WorkflowEventLog
             execution={execution}
+            events={events}
             onSelectContext={onSelectContext}
           />
         </section>
@@ -571,6 +576,7 @@ function OverviewView({
 
 function DetailView({
   execution,
+  events,
   contextId,
   onSelectContext,
   onDeselectContext,
@@ -585,6 +591,7 @@ function DetailView({
   onViewConversation,
 }: {
   execution: GraphWorkflowExecution;
+  events: GraphWorkflowExecutionEvent[];
   contextId: string;
   onSelectContext?: (contextId: string) => void;
   onDeselectContext: () => void;
@@ -618,8 +625,8 @@ function DetailView({
     [execution, contextId],
   );
   const history = useMemo(
-    () => getHistoryEntries(execution, contextId),
-    [execution, contextId],
+    () => getHistoryEntries(events, contextId),
+    [events, contextId],
   );
   const contextHaltReason = useMemo(
     () => findContextHaltReason(execution, contextId),
@@ -954,6 +961,7 @@ function DetailView({
               <div className="wb-overview-section-title">Events</div>
               <WorkflowEventLog
                 execution={execution}
+                events={events}
                 contextId={contextId}
                 onSelectContext={onSelectContext}
               />
@@ -1029,6 +1037,7 @@ function DetailView({
 
 export default function ExecutionInspectorPanel({
   execution,
+  events,
   selectedContextId,
   onSelectContext,
   onDeselectContext,
@@ -1052,6 +1061,7 @@ export default function ExecutionInspectorPanel({
     return (
       <OverviewView
         execution={execution}
+        events={events}
         onSelectContext={onSelectContext}
         onViewConversation={onViewConversation}
       />
@@ -1061,6 +1071,7 @@ export default function ExecutionInspectorPanel({
   return (
     <DetailView
       execution={execution}
+      events={events}
       contextId={selectedContextId}
       onSelectContext={onSelectContext}
       onDeselectContext={onDeselectContext}

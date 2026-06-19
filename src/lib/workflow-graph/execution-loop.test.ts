@@ -13,6 +13,7 @@ import type { SessionState } from "@/lib/sessions/schemas";
 import type {
   GraphWorkflowApprovalResolvedEvent,
   GraphWorkflowExecution,
+  GraphWorkflowExecutionEvent,
   GraphWorkflowHaltReason,
   ResolvedWorkflowSemanticDefinition,
   WorkflowSemanticDefinition,
@@ -128,7 +129,6 @@ function createRunningExecution(
     joins: {},
     lanePlan: { continuationMap: {}, longestDownstreamPath: {} },
     machineSnapshot: null,
-    history: [],
     startedAt: "2026-03-27T12:00:00.000Z",
     completedAt: null,
     haltReason: null,
@@ -165,6 +165,7 @@ interface LoopHarness {
   deps: GraphWorkflowExecutionLoopDeps;
   getCurrent: () => GraphWorkflowExecution;
   setCurrent: (execution: GraphWorkflowExecution) => void;
+  appendedEvents: GraphWorkflowExecutionEvent[];
   recordPendingHaltReasonSpy: ReturnType<typeof vi.fn>;
   drainAndHaltSpy: ReturnType<typeof vi.fn>;
   sendSpy: ReturnType<typeof vi.fn>;
@@ -195,6 +196,7 @@ interface BuildHarnessInput {
 
 function buildHarness(input: BuildHarnessInput): LoopHarness {
   let current = input.initialExecution;
+  const appendedEvents: GraphWorkflowExecutionEvent[] = [];
   const getCurrent = () => current;
   const setCurrent = (e: GraphWorkflowExecution) => {
     current = e;
@@ -288,9 +290,14 @@ function buildHarness(input: BuildHarnessInput): LoopHarness {
 
   const mutateActive: GraphWorkflowExecutionLoopWorkflowManager["mutateActive"] =
     async (_p, _s, fn) => {
-      const next = await fn(getCurrent());
-      setCurrent(next);
-      return next;
+      const result = await fn(getCurrent());
+      if ("execution" in result && "events" in result) {
+        setCurrent(result.execution);
+        appendedEvents.push(...result.events);
+        return result.execution;
+      }
+      setCurrent(result);
+      return result;
     };
 
   const getActive: GraphWorkflowExecutionLoopWorkflowManager["getActive"] =
@@ -387,6 +394,7 @@ function buildHarness(input: BuildHarnessInput): LoopHarness {
     deps,
     getCurrent,
     setCurrent,
+    appendedEvents,
     recordPendingHaltReasonSpy,
     drainAndHaltSpy,
     sendSpy,
@@ -2644,9 +2652,9 @@ describe("execution loop", () => {
     );
 
     function findApprovalResolvedEvents(
-      execution: GraphWorkflowExecution,
+      events: GraphWorkflowExecutionEvent[],
     ): GraphWorkflowApprovalResolvedEvent[] {
-      return execution.history
+      return events
         .map((entry) => entry.event)
         .filter(
           (event): event is GraphWorkflowApprovalResolvedEvent =>
@@ -2723,7 +2731,7 @@ describe("execution loop", () => {
       // The commit phase must run inside the held lock window.
       expect(ordered).toEqual(["lock-acquired", "commit", "lock-released"]);
 
-      const resolvedEvents = findApprovalResolvedEvents(result);
+      const resolvedEvents = findApprovalResolvedEvents(harness.appendedEvents);
       expect(resolvedEvents).toHaveLength(1);
       expect(resolvedEvents[0]).toMatchObject({
         contextId: "ctx-1",
@@ -2851,7 +2859,7 @@ describe("execution loop", () => {
       expect(cs.iterationCount).toBe(2);
       expect(cs.consecutiveFailureCount).toBe(0);
 
-      const resolvedEvents = findApprovalResolvedEvents(result);
+      const resolvedEvents = findApprovalResolvedEvents(harness.appendedEvents);
       expect(resolvedEvents).toHaveLength(1);
       expect(resolvedEvents[0]).toMatchObject({
         contextId: "ctx-1",
@@ -2998,7 +3006,7 @@ describe("execution loop", () => {
         });
         expect(acquireConversationLock).not.toHaveBeenCalled();
         expect(soloCommit).not.toHaveBeenCalled();
-        expect(findApprovalResolvedEvents(result)).toHaveLength(0);
+        expect(findApprovalResolvedEvents(harness.appendedEvents)).toHaveLength(0);
         expect(broadcast).not.toHaveBeenCalled();
         expect(harness.sendSpy).not.toHaveBeenCalled();
       },
@@ -3070,7 +3078,7 @@ describe("execution loop", () => {
       expect(iterationCallCount).toBe(1);
       expect(release).toHaveBeenCalledTimes(1);
       expect(soloCommit).not.toHaveBeenCalled();
-      expect(findApprovalResolvedEvents(result)).toHaveLength(0);
+      expect(findApprovalResolvedEvents(harness.appendedEvents)).toHaveLength(0);
       expect(broadcast).not.toHaveBeenCalled();
       expect(harness.sendSpy).not.toHaveBeenCalled();
     });
@@ -3173,9 +3181,9 @@ describe("execution loop", () => {
     }
 
     function findApprovalResolvedEvents(
-      execution: GraphWorkflowExecution,
+      events: GraphWorkflowExecutionEvent[],
     ): GraphWorkflowApprovalResolvedEvent[] {
-      return execution.history
+      return events
         .map((entry) => entry.event)
         .filter(
           (event): event is GraphWorkflowApprovalResolvedEvent =>
@@ -3249,7 +3257,7 @@ describe("execution loop", () => {
       // The commit phase runs inside the held conversation lock window.
       expect(ordered).toEqual(["lock-acquired", "commit", "lock-released"]);
 
-      const resolvedEvents = findApprovalResolvedEvents(result);
+      const resolvedEvents = findApprovalResolvedEvents(harness.appendedEvents);
       expect(resolvedEvents).toHaveLength(1);
       expect(resolvedEvents[0]).toMatchObject({
         contextId: "ctx-1",
@@ -3357,7 +3365,7 @@ describe("execution loop", () => {
       expect(cs.totalTaskCount).toBe(2);
       expect(cs.iterationCount).toBe(2);
 
-      const resolvedEvents = findApprovalResolvedEvents(result);
+      const resolvedEvents = findApprovalResolvedEvents(harness.appendedEvents);
       expect(resolvedEvents).toHaveLength(1);
       expect(resolvedEvents[0]).toMatchObject({
         contextId: "ctx-1",

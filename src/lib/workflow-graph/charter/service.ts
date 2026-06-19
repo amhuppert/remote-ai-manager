@@ -9,7 +9,10 @@ import { createArtifactRegistry } from "@/lib/workflows/primitives/artifact-regi
 import type { ArtifactRegistry } from "@/lib/workflows/primitives/artifact-registry";
 import { workflowCharterSchema } from "@/lib/workflows/charter-schemas";
 import type { WorkflowCharter } from "@/lib/workflows/charter-schemas";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowExecutionEvent,
+} from "@/lib/workflows/schemas";
 
 const logger = createLogger("graph-workflow-charter-service");
 
@@ -39,7 +42,7 @@ export interface WorkflowCharterServiceDeps {
   ensureDir(absolutePath: string): Promise<void>;
   publishCharterRegistered(
     input: PublishCharterRegisteredInput,
-  ): GraphWorkflowExecution;
+  ): GraphWorkflowExecutionEvent[];
 }
 
 export interface SeedCharterInput {
@@ -53,6 +56,7 @@ export interface SeedCharterInput {
 export interface SeedCharterResult {
   nextExecution: GraphWorkflowExecution;
   charterHash: string;
+  events: GraphWorkflowExecutionEvent[];
 }
 
 export interface WorkflowCharterService {
@@ -197,7 +201,7 @@ export function createWorkflowCharterService(
       charterHash,
     });
 
-    const published = deps.publishCharterRegistered({
+    const events = deps.publishCharterRegistered({
       projectPath: input.projectPath,
       sessionName: input.sessionName,
       execution: nextExecution,
@@ -206,7 +210,7 @@ export function createWorkflowCharterService(
       charterHash,
     });
 
-    return { nextExecution: published, charterHash };
+    return { nextExecution, charterHash, events };
   }
 
   return { seedCharter };

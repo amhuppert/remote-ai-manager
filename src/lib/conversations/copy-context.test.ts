@@ -58,7 +58,6 @@ function makeSession(overrides: Record<string, unknown> = {}): SessionState {
     targetBranch: "main",
     parentSessionName: null,
     graphWorkflowExecution: null,
-    graphWorkflowExecutionHistory: [],
     referenceDocuments: [],
     ...overrides,
   } as SessionState;

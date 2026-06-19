@@ -12,7 +12,10 @@ import {
 } from "./execution-repository";
 import { LegacyWorkflowSchemaError } from "./schema-cutover-guard";
 import { createWorkflowDefinition } from "./test-fixtures";
-import type { GraphWorkflowSSEEvent } from "@/lib/workflows/schemas";
+import type {
+  GraphWorkflowExecutionEvent,
+  GraphWorkflowSSEEvent,
+} from "@/lib/workflows/schemas";
 
 const WORKTREE_PATH = "/repo/.worktrees/session-1";
 
@@ -20,7 +23,6 @@ function makeSession(): SessionState {
   return {
     worktreePath: WORKTREE_PATH,
     graphWorkflowExecution: null,
-    graphWorkflowExecutionHistory: [],
   } as unknown as SessionState;
 }
 
@@ -51,31 +53,49 @@ function createInMemoryRepo(config: GlobalConfig = {} as GlobalConfig) {
     publishCharterRegistered: eventPublisher.publishCharterRegistered,
   });
 
+  const appendedEvents: GraphWorkflowExecutionEvent[] = [];
+
+  function getOrCreateSession(projectPath: string, sessionName: string) {
+    const key = `${projectPath}:${sessionName}`;
+    let session = sessions.get(key);
+    if (!session) {
+      session = makeSession();
+      sessions.set(key, session);
+    }
+    return session;
+  }
+
   const repo = createGraphWorkflowExecutionRepository({
     async getSession(projectPath, sessionName) {
-      const key = `${projectPath}:${sessionName}`;
-      let session = sessions.get(key);
-      if (!session) {
-        session = makeSession();
-        sessions.set(key, session);
-      }
-      return session;
+      return getOrCreateSession(projectPath, sessionName);
     },
-    async mutateSession(projectPath, sessionName, _label, mutate) {
-      const key = `${projectPath}:${sessionName}`;
-      let session = sessions.get(key);
-      if (!session) {
-        session = makeSession();
-        sessions.set(key, session);
-      }
-      return mutate(session);
+    async mutateActiveGraphWorkflowExecution(
+      projectPath,
+      sessionName,
+      _label,
+      mutate,
+    ) {
+      const session = getOrCreateSession(projectPath, sessionName);
+      const { execution, events } = await mutate(
+        session.graphWorkflowExecution,
+      );
+      session.graphWorkflowExecution = execution;
+      appendedEvents.push(...events);
+      return execution;
+    },
+    async archiveActiveGraphWorkflowExecution(projectPath, sessionName) {
+      const session = getOrCreateSession(projectPath, sessionName);
+      session.graphWorkflowExecution = null;
+    },
+    async markGraphWorkflowContextEventsPreReset() {
+      return 0;
     },
     eventPublisher,
     charterService,
     readConfig: async () => config,
   });
 
-  return { repo, sessions, broadcasts, writes };
+  return { repo, sessions, broadcasts, writes, appendedEvents };
 }
 
 describe("createGraphWorkflowExecutionRepository.create", () => {
@@ -373,7 +393,7 @@ describe("createGraphWorkflowExecutionRepository.create charter seed propagation
 
   it("records and broadcasts a charter-registered event carrying the charter hash", async () => {
     const charter = makeTestCharter();
-    const { repo, sessions, broadcasts } = createInMemoryRepo();
+    const { repo, broadcasts, appendedEvents } = createInMemoryRepo();
 
     await repo.create("/repo", "session-1", {
       definition: createWorkflowDefinition({ charter }),
@@ -394,8 +414,7 @@ describe("createGraphWorkflowExecutionRepository.create charter seed propagation
       charterHash: computeCharterHash(charter),
     });
 
-    const stored = sessions.get("/repo:session-1")?.graphWorkflowExecution;
-    const registeredEvent = stored?.history.find(
+    const registeredEvent = appendedEvents.find(
       (entry) => entry.event.type === "graph-workflow-charter-registered",
     );
     expect(registeredEvent).toBeDefined();
@@ -406,7 +425,6 @@ describe("createGraphWorkflowExecutionRepository.create charter seed propagation
     sessions.set("/repo:session-1", {
       worktreePath: "",
       graphWorkflowExecution: null,
-      graphWorkflowExecutionHistory: [],
     } as unknown as SessionState);
 
     await expect(

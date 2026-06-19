@@ -77,7 +77,6 @@ function stateWithAllScopes(): ManagerState {
             targetBranch: "main",
             parentSessionName: null,
             graphWorkflowExecution: null,
-            graphWorkflowExecutionHistory: [],
             referenceDocuments: [],
           },
         },

@@ -6,7 +6,6 @@ import { recomputeLanePlanForSubgraph } from "@/lib/workflow-graph/lane-plan";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionContextState,
-  GraphWorkflowExecutionEvent,
   GraphWorkflowLaneKind,
   GraphWorkflowAgentSessionState,
   GraphWorkflowTaskState,
@@ -20,27 +19,6 @@ export class ResetExecutionContextError extends Error {
 
 const RESET_ELIGIBLE_STATUSES: ReadonlySet<GraphWorkflowExecution["status"]> =
   new Set(["paused", "halted"]);
-
-function eventTargetsContext(
-  event: GraphWorkflowExecutionEvent["event"],
-  contextId: string,
-): boolean {
-  if ("contextId" in event && event.contextId === contextId) {
-    return true;
-  }
-  if (event.type === "graph-workflow-status") {
-    if (event.activeContextIds.includes(contextId)) return true;
-    const haltReason = event.haltReason;
-    if (
-      haltReason &&
-      "contextId" in haltReason &&
-      haltReason.contextId === contextId
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
 
 export function resetExecutionContext(
   execution: GraphWorkflowExecution,
@@ -101,14 +79,6 @@ export function resetExecutionContext(
     nextLaneStates[ctxKey] = contextLanes;
   }
 
-  const nextHistory = execution.history.map(
-    (row): GraphWorkflowExecutionEvent => {
-      if (row.preReset) return row;
-      if (!eventTargetsContext(row.event, contextId)) return row;
-      return { ...row, preReset: true };
-    },
-  );
-
   const nextLanePlan = recomputeLanePlanForSubgraph({
     definition: execution.workingDefinition,
     previousPlan: execution.lanePlan,
@@ -122,7 +92,6 @@ export function resetExecutionContext(
     contextStates: nextContextStates,
     taskStates: nextTaskStates,
     laneStates: nextLaneStates,
-    history: nextHistory,
     haltReason: null,
     completedAt: null,
     machineSnapshot: null,

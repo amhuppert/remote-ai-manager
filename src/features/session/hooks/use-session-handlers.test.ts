@@ -20,7 +20,6 @@ const fakeSession: SessionState = {
   targetBranch: "main",
   parentSessionName: null,
   graphWorkflowExecution: null,
-  graphWorkflowExecutionHistory: [],
   referenceDocuments: [],
 };
 

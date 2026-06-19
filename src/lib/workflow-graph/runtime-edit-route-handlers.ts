@@ -4,7 +4,9 @@ import { workflowRuntimeEditRequestSchema } from "@/lib/workflows/schemas";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import {
   getSession as defaultGetSession,
-  mutateSession,
+  mutateActiveGraphWorkflowExecution,
+  archiveActiveGraphWorkflowExecution,
+  markGraphWorkflowContextEventsPreReset,
 } from "@/lib/state-store";
 import type { ApiError } from "@/lib/api/errors";
 import type { SessionState } from "@/lib/sessions/schemas";
@@ -27,7 +29,9 @@ type RouteContext = {
 
 const executionRepository = createGraphWorkflowExecutionRepository({
   getSession: defaultGetSession,
-  mutateSession,
+  mutateActiveGraphWorkflowExecution,
+  archiveActiveGraphWorkflowExecution,
+  markGraphWorkflowContextEventsPreReset,
 });
 const workflowStorage = createWorkflowStorageService();
 const workflowManager = createGraphWorkflowManager({

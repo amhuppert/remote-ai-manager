@@ -58,6 +58,19 @@ export interface SessionsRepo {
     sessionName: string,
     spawnedFrom: SpawnedFrom | null,
   ): boolean;
+  /**
+   * Focused write of the active graph-workflow execution blob (history-free)
+   * plus `last_activity_at` (Pattern 2: no whole-state read). Used by the
+   * execution repository's focused write path, which appends the computed
+   * append-only events to `graph_workflow_events` separately. Bumps the
+   * findAll cache version. Returns whether a row was updated.
+   */
+  setActiveGraphWorkflowExecution(
+    projectPath: string,
+    sessionName: string,
+    execution: GraphWorkflowExecution | null,
+    lastActivityAt: string,
+  ): boolean;
 }
 
 /**
@@ -81,7 +94,6 @@ const sessionsTableRowSchema = z.object({
   target_branch: z.string(),
   parent_session_name: z.string().nullable(),
   graph_workflow_execution: z.string().nullable(),
-  graph_workflow_execution_history: z.string(),
   workflow_envelopes: z.string().nullable(),
   workflow_lanes: z.string().nullable(),
   mcp_overrides: z.string().nullable(),
@@ -106,7 +118,6 @@ interface SqlBindRow {
   target_branch: string;
   parent_session_name: string | null;
   graph_workflow_execution: string | null;
-  graph_workflow_execution_history: string;
   workflow_envelopes: string | null;
   workflow_lanes: string | null;
   mcp_overrides: string | null;
@@ -163,9 +174,6 @@ function sessionToSqlBind(
     target_branch: session.targetBranch,
     parent_session_name: session.parentSessionName,
     graph_workflow_execution: jsonOrNull(session.graphWorkflowExecution),
-    graph_workflow_execution_history: stableStringify(
-      session.graphWorkflowExecutionHistory,
-    ),
     workflow_envelopes: jsonOrNull(session.workflowEnvelopes),
     workflow_lanes: jsonOrNull(session.workflowLanes),
     mcp_overrides: jsonOrNull(session.mcpOverrides),
@@ -274,9 +282,6 @@ function logColumnQuarantine(
 }
 
 const opaqueRecordSchema = z.record(z.string(), z.unknown());
-const graphWorkflowExecutionHistoryArraySchema = z.array(
-  graphWorkflowExecutionSchema,
-);
 
 interface GraphWorkflowExecutionMigration {
   upgradedJson: string;
@@ -427,25 +432,6 @@ function rowToDomain(rawRow: unknown): {
     );
   }
 
-  let graphWorkflowExecutionHistory: GraphWorkflowExecution[] = [];
-  const gwHistory = parseJsonColumn(
-    "graphWorkflowExecutionHistory",
-    row.graph_workflow_execution_history,
-    graphWorkflowExecutionHistoryArraySchema,
-    "default",
-    [],
-  );
-  if (gwHistory.ok) {
-    graphWorkflowExecutionHistory = gwHistory.value ?? [];
-  } else {
-    logColumnQuarantine(
-      row.project_path,
-      row.session_name,
-      "graphWorkflowExecutionHistory",
-      gwHistory.issues,
-    );
-  }
-
   let workflowEnvelopes: z.infer<typeof opaqueRecordSchema> | undefined;
   const envelopes = parseJsonColumn(
     "workflowEnvelopes",
@@ -554,7 +540,6 @@ function rowToDomain(rawRow: unknown): {
     targetBranch: row.target_branch,
     parentSessionName: row.parent_session_name,
     graphWorkflowExecution,
-    graphWorkflowExecutionHistory,
     conversations: [],
     referenceDocuments: [],
     spawnedFrom,
@@ -657,7 +642,7 @@ export function createSessionsRepo(db: Db): SessionsRepo {
        created_at, last_activity_at, archived, finished, source,
        objective, creation_mode, tdd_enabled, target_branch,
        parent_session_name, graph_workflow_execution,
-       graph_workflow_execution_history, workflow_envelopes,
+       workflow_envelopes,
        workflow_lanes, mcp_overrides, agent_capability_overrides,
        spawned_from
      ) VALUES (
@@ -665,7 +650,7 @@ export function createSessionsRepo(db: Db): SessionsRepo {
        @created_at, @last_activity_at, @archived, @finished, @source,
        @objective, @creation_mode, @tdd_enabled, @target_branch,
        @parent_session_name, @graph_workflow_execution,
-       @graph_workflow_execution_history, @workflow_envelopes,
+       @workflow_envelopes,
        @workflow_lanes, @mcp_overrides, @agent_capability_overrides,
        @spawned_from
      )
@@ -683,7 +668,6 @@ export function createSessionsRepo(db: Db): SessionsRepo {
        target_branch                    = excluded.target_branch,
        parent_session_name              = excluded.parent_session_name,
        graph_workflow_execution         = excluded.graph_workflow_execution,
-       graph_workflow_execution_history = excluded.graph_workflow_execution_history,
        workflow_envelopes               = excluded.workflow_envelopes,
        workflow_lanes                   = excluded.workflow_lanes,
        mcp_overrides                    = excluded.mcp_overrides,
@@ -700,6 +684,11 @@ export function createSessionsRepo(db: Db): SessionsRepo {
   const updateGraphWorkflowExecutionStmt = db.prepare(
     `UPDATE sessions SET graph_workflow_execution = ?
      WHERE project_path = ? AND session_name = ?`,
+  );
+  const setActiveGraphWorkflowExecutionStmt = db.prepare(
+    `UPDATE sessions
+        SET graph_workflow_execution = ?, last_activity_at = ?
+      WHERE project_path = ? AND session_name = ?`,
   );
 
   function applyGraphWorkflowExecutionMigration(
@@ -823,6 +812,32 @@ export function createSessionsRepo(db: Db): SessionsRepo {
         );
         return info.changes > 0;
       });
+    },
+    setActiveGraphWorkflowExecution(
+      projectPath,
+      sessionName,
+      execution,
+      lastActivityAt,
+    ) {
+      return timed(
+        "setActiveGraphWorkflowExecution",
+        projectPath,
+        sessionName,
+        () => {
+          const validated =
+            execution === null
+              ? null
+              : graphWorkflowExecutionSchema.parse(execution);
+          const info = setActiveGraphWorkflowExecutionStmt.run(
+            jsonOrNull(validated),
+            lastActivityAt,
+            projectPath,
+            sessionName,
+          );
+          cacheVersion += 1;
+          return info.changes > 0;
+        },
+      );
     },
   };
 }

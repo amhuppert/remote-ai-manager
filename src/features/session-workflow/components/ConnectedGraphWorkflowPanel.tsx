@@ -1,7 +1,10 @@
 "use client";
 
 import { useCallback } from "react";
-import { useWorkflowDefinitionQuery } from "@/lib/workflows/queries";
+import {
+  useGraphWorkflowEventsQuery,
+  useWorkflowDefinitionQuery,
+} from "@/lib/workflows/queries";
 import { useSessionQuery } from "@/lib/sessions/queries";
 import {
   useAbortGraphWorkflowMutation,
@@ -128,6 +131,11 @@ export default function ConnectedGraphWorkflowPanel({
   );
 
   const executionId = session?.graphWorkflowExecution?.id ?? null;
+  const eventsQuery = useGraphWorkflowEventsQuery(
+    projectName,
+    sessionName,
+    executionId,
+  );
   const handleResetContext = useCallback(
     (contextId: string) => {
       if (!executionId) return;
@@ -141,7 +149,8 @@ export default function ConnectedGraphWorkflowPanel({
       projectName={projectName}
       sessionName={sessionName}
       execution={session?.graphWorkflowExecution ?? null}
-      archivedExecutions={session?.graphWorkflowExecutionHistory ?? []}
+      events={eventsQuery.data ?? []}
+      archivedExecutions={[]}
       layout={seedDefinitionQuery.data?.item.layout ?? null}
       onPause={() => pauseMutation.mutate()}
       onResume={() => resumeMutation.mutate()}

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GlobalConfig } from "@/lib/config/schemas";
 import type {
-  GraphWorkflowExecution,
+  GraphWorkflowExecutionEvent,
   WorkflowDefinitionRecord,
 } from "@/lib/workflows/schemas";
 import { registerPlannerTools, type PlannerToolDeps } from "./planner-tools";
@@ -89,7 +89,7 @@ function createMockDeps(
     })),
     deleteWorkflow: vi.fn(async () => true),
     getActiveExecution: vi.fn(async () => null),
-    publishCharterUpdated: vi.fn(() => null),
+    publishCharterUpdated: vi.fn(() => []),
     ...overrides,
   };
 }
@@ -600,7 +600,7 @@ describe("graph workflow planner tools", () => {
 
     function makePublishCharterUpdatedSpy() {
       return vi.fn(
-        (_input: CharterUpdatedInput): GraphWorkflowExecution | null => null,
+        (_input: CharterUpdatedInput): GraphWorkflowExecutionEvent[] => [],
       );
     }
 

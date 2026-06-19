@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type {
   GraphWorkflowExecution,
+  GraphWorkflowExecutionEvent,
   GraphWorkflowHaltReason,
 } from "@/lib/workflows/schemas";
 import {
@@ -12,6 +13,10 @@ import {
   type GraphWorkflowIterationToolServerInput,
 } from "@/lib/workflow-graph/iteration-orchestrator";
 
+type MutateActiveReturn =
+  | GraphWorkflowExecution
+  | { execution: GraphWorkflowExecution; events: GraphWorkflowExecutionEvent[] };
+
 interface InMemoryExecutionRepository {
   getActive(
     projectPath: string,
@@ -22,8 +27,12 @@ interface InMemoryExecutionRepository {
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+    ) => MutateActiveReturn | Promise<MutateActiveReturn>,
   ): Promise<GraphWorkflowExecution>;
+  findLatestContextValidationEvent(
+    executionId: string,
+    contextId: string,
+  ): Promise<GraphWorkflowExecutionEvent | null>;
 }
 
 function createRepository(
@@ -31,9 +40,11 @@ function createRepository(
 ): InMemoryExecutionRepository & {
   read(): GraphWorkflowExecution;
   write(execution: GraphWorkflowExecution): void;
+  appendedEvents: GraphWorkflowExecutionEvent[];
 } {
   let activeExecution = initialExecution;
   let lock: Promise<void> = Promise.resolve();
+  const appendedEvents: GraphWorkflowExecutionEvent[] = [];
 
   return {
     async getActive() {
@@ -47,12 +58,31 @@ function createRepository(
       });
       try {
         await previous;
-        const next = await fn(structuredClone(activeExecution));
-        activeExecution = next;
-        return next;
+        const result = await fn(structuredClone(activeExecution));
+        if ("execution" in result && "events" in result) {
+          activeExecution = result.execution;
+          appendedEvents.push(...result.events);
+        } else {
+          activeExecution = result;
+        }
+        return activeExecution;
       } finally {
         release();
       }
+    },
+    async findLatestContextValidationEvent(_executionId, contextId) {
+      for (let i = appendedEvents.length - 1; i >= 0; i -= 1) {
+        const entry = appendedEvents[i]!;
+        const event = entry.event;
+        if (
+          event.type === "graph-workflow-validation-result" &&
+          "contextId" in event &&
+          event.contextId === contextId
+        ) {
+          return entry;
+        }
+      }
+      return null;
     },
     read() {
       return activeExecution;
@@ -60,6 +90,7 @@ function createRepository(
     write(execution) {
       activeExecution = execution;
     },
+    appendedEvents,
   };
 }
 
@@ -195,6 +226,8 @@ describe("graph workflow iteration context validation integration", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: async () => ({ id: "conversation-1" }),
       createToolServer: (input) => {
         toolInput = input;
@@ -251,7 +284,7 @@ describe("graph workflow iteration context validation integration", () => {
       result.execution.taskStates["task-plan-2"]?.failureHistory,
     ).toHaveLength(1);
 
-    const validationEvent = result.execution.history.find(
+    const validationEvent = repository.appendedEvents.find(
       (entry) => entry.event.type === "graph-workflow-validation-result",
     );
     expect(validationEvent?.event).toMatchObject({
@@ -270,6 +303,8 @@ describe("graph workflow iteration context validation integration", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: async () => ({ id: "conversation-1" }),
       createToolServer: (input) => {
         toolInput = input;
@@ -325,6 +360,8 @@ describe("graph workflow iteration context validation integration", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: async () => ({ id: "conversation-1" }),
       createToolServer: (input) => {
         toolInput = input;
@@ -401,6 +438,8 @@ describe("graph workflow iteration context validation integration", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: async () => ({ id: "conversation-1" }),
       createToolServer: (input) => {
         toolInput = input;
@@ -494,6 +533,8 @@ describe("graph workflow iteration context validation integration", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: async () => ({ id: "conversation-1" }),
       createToolServer: (input) => {
         toolInput = input;

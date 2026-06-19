@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { GlobalConfig } from "@/lib/config/schemas";
 import type {
   GraphWorkflowExecution,
+  GraphWorkflowExecutionEvent,
   WorkflowDefinitionRecord,
   WorkflowSemanticDefinition,
 } from "@/lib/workflows/schemas";
@@ -355,7 +356,7 @@ export interface PlannerToolDeps {
     definitionRevision: number;
     charterHash: string;
     execution?: GraphWorkflowExecution | null;
-  }): GraphWorkflowExecution | null;
+  }): GraphWorkflowExecutionEvent[];
 }
 
 export interface PlannerToolContext {

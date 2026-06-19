@@ -305,7 +305,6 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       targetBranch: opts.targetBranch ?? "main",
       parentSessionName: opts.parentSessionName ?? null,
       graphWorkflowExecution: null,
-      graphWorkflowExecutionHistory: [],
       referenceDocuments: [],
     };
 

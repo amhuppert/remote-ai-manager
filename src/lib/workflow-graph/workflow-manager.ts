@@ -23,6 +23,7 @@ import {
   type ProvisionResult,
 } from "@/lib/workflow-graph/parallel-worktrees";
 import type { SessionState } from "@/lib/sessions/schemas";
+import type { MutateActiveResult } from "@/lib/workflow-graph/execution-repository";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
@@ -53,8 +54,17 @@ interface GraphWorkflowExecutionRepository {
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+    ) =>
+      | MutateActiveResult
+      | GraphWorkflowExecution
+      | Promise<MutateActiveResult | GraphWorkflowExecution>,
   ): Promise<GraphWorkflowExecution>;
+  markContextEventsPreReset(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+    contextId: string,
+  ): Promise<number>;
 }
 
 export type GraphWorkflowRecoveryMode =
@@ -1564,6 +1574,23 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
   ): Promise<GraphWorkflowExecution> {
     let previousStatus: GraphWorkflowStatus | null = null;
 
+    // Mark every event filed under the context up to the current insertion
+    // boundary as pre-reset before the reset write appends its own status-change
+    // events, so those new events stay visible post-reset (the old in-memory
+    // history.map ran before the reset's appendEvents for the same reason).
+    const active = await deps.executionRepository.getActive(
+      projectPath,
+      sessionName,
+    );
+    if (active) {
+      await deps.executionRepository.markContextEventsPreReset(
+        projectPath,
+        sessionName,
+        active.id,
+        contextId,
+      );
+    }
+
     const nextExecution = await deps.executionRepository.mutateActive(
       projectPath,
       sessionName,
@@ -1614,7 +1641,10 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+    ) =>
+      | MutateActiveResult
+      | GraphWorkflowExecution
+      | Promise<MutateActiveResult | GraphWorkflowExecution>,
   ): Promise<GraphWorkflowExecution> {
     return deps.executionRepository.mutateActive(projectPath, sessionName, fn);
   }

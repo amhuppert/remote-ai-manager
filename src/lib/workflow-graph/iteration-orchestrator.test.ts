@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   GraphWorkflowExecution,
+  GraphWorkflowExecutionEvent,
   GraphWorkflowAgentSessionState,
   GraphWorkflowSSEEvent,
 } from "@/lib/workflows/schemas";
@@ -28,6 +29,10 @@ import type {
 } from "./workflow-continuity-service";
 import { createWorkflowContinuityService } from "./workflow-continuity-service";
 
+type MutateActiveReturn =
+  | GraphWorkflowExecution
+  | { execution: GraphWorkflowExecution; events: GraphWorkflowExecutionEvent[] };
+
 interface InMemoryExecutionRepository {
   getActive(
     projectPath: string,
@@ -38,15 +43,36 @@ interface InMemoryExecutionRepository {
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+    ) => MutateActiveReturn | Promise<MutateActiveReturn>,
   ): Promise<GraphWorkflowExecution>;
+  findLatestContextValidationEvent(
+    executionId: string,
+    contextId: string,
+  ): Promise<GraphWorkflowExecutionEvent | null>;
+}
+
+function isResultWithEvents(
+  value: MutateActiveReturn,
+): value is {
+  execution: GraphWorkflowExecution;
+  events: GraphWorkflowExecutionEvent[];
+} {
+  return (
+    "events" in value &&
+    "execution" in value &&
+    Array.isArray((value as { events: unknown }).events)
+  );
 }
 
 function createRepository(
   initialExecution: GraphWorkflowExecution,
-): InMemoryExecutionRepository & { read(): GraphWorkflowExecution } {
+): InMemoryExecutionRepository & {
+  read(): GraphWorkflowExecution;
+  appendedEvents: GraphWorkflowExecutionEvent[];
+} {
   let activeExecution = initialExecution;
   let lock: Promise<void> = Promise.resolve();
+  const appendedEvents: GraphWorkflowExecutionEvent[] = [];
 
   return {
     async getActive() {
@@ -60,16 +86,36 @@ function createRepository(
       });
       try {
         await previous;
-        const next = await fn(structuredClone(activeExecution));
-        activeExecution = next;
-        return next;
+        const result = await fn(structuredClone(activeExecution));
+        if (isResultWithEvents(result)) {
+          activeExecution = result.execution;
+          appendedEvents.push(...result.events);
+        } else {
+          activeExecution = result;
+        }
+        return activeExecution;
       } finally {
         release();
       }
     },
+    async findLatestContextValidationEvent(_executionId, contextId) {
+      for (let i = appendedEvents.length - 1; i >= 0; i -= 1) {
+        const entry = appendedEvents[i]!;
+        const event = entry.event;
+        if (
+          event.type === "graph-workflow-validation-result" &&
+          "contextId" in event &&
+          event.contextId === contextId
+        ) {
+          return entry;
+        }
+      }
+      return null;
+    },
     read() {
       return activeExecution;
     },
+    appendedEvents,
   };
 }
 
@@ -241,8 +287,9 @@ function createExecutionWithPlanTasks(
   });
 }
 
-function appendFailedContextValidationEvent(
-  execution: GraphWorkflowExecution,
+function seedFailedContextValidationEvent(
+  repository: { appendedEvents: GraphWorkflowExecutionEvent[] },
+  executionId: string,
   overrides: Partial<{
     summary: string;
     reopenTaskIds: string[];
@@ -252,14 +299,14 @@ function appendFailedContextValidationEvent(
       description: string;
     }>;
   }> = {},
-): GraphWorkflowExecution {
-  execution.history.push({
+): void {
+  repository.appendedEvents.push({
     occurredAt: "2026-03-27T15:55:00.000Z",
     event: {
       type: "graph-workflow-validation-result",
       projectName: "repo",
       sessionName: "session-1",
-      executionId: execution.id,
+      executionId,
       contextId: "context-plan",
       validatorType: "context",
       pass: false,
@@ -279,7 +326,6 @@ function appendFailedContextValidationEvent(
     },
     preReset: false,
   });
-  return execution;
 }
 
 describe("graph workflow iteration orchestrator", () => {
@@ -316,6 +362,8 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -401,6 +449,8 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -465,6 +515,8 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -522,6 +574,8 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -578,6 +632,8 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -640,6 +696,8 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -699,6 +757,8 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -758,6 +818,8 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -829,6 +891,8 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -883,6 +947,8 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -974,6 +1040,8 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -1029,6 +1097,8 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -1097,6 +1167,8 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -1184,6 +1256,8 @@ describe("graph workflow iteration orchestrator", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -1281,6 +1355,8 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -1381,6 +1457,8 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: vi.fn(),
       createToolServer,
       runAgentIteration,
@@ -1468,6 +1546,8 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: vi.fn(),
       createToolServer,
       runAgentIteration,
@@ -1563,6 +1643,8 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: vi.fn(),
       createToolServer,
       runAgentIteration,
@@ -1615,6 +1697,8 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: vi.fn(),
       createToolServer,
       runAgentIteration,
@@ -1702,6 +1786,8 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: vi.fn(),
       createToolServer,
       runAgentIteration,
@@ -1760,6 +1846,8 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: vi.fn(),
       createToolServer,
       runAgentIteration,
@@ -1851,6 +1939,8 @@ describe("task validation event publishing (fix-30388517)", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -1869,8 +1959,7 @@ describe("task validation event publishing (fix-30388517)", () => {
       contextId: "context-plan",
     });
 
-    const final = repository.read();
-    const validationHistoryEntry = final.history.find(
+    const validationHistoryEntry = repository.appendedEvents.find(
       (entry) => entry.event.type === "graph-workflow-validation-result",
     );
     expect(validationHistoryEntry).toBeDefined();
@@ -1944,6 +2033,8 @@ describe("task validation failure handling (circuit breaker)", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -1980,17 +2071,18 @@ describe("task validation failure handling (circuit breaker)", () => {
 
   it("includes the latest failed context validation feedback in both initial and follow-up prompts during a retry", async () => {
     const repository = createRepository(
-      appendFailedContextValidationEvent(
-        createExecutionWithPlanTasks({
-          "task-plan-1": "pending",
-          "task-plan-2": "pending",
-        }),
-      ),
+      createExecutionWithPlanTasks({
+        "task-plan-1": "pending",
+        "task-plan-2": "pending",
+      }),
     );
+    seedFailedContextValidationEvent(repository, repository.read().id);
     const prompts: string[] = [];
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-retry" })),
       createToolServer: vi.fn(() => ({ server: {} })),
       runAgentIteration: vi.fn(async (agentInput) => {
@@ -2072,6 +2164,8 @@ describe("task validation failure handling (circuit breaker)", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -2111,6 +2205,8 @@ describe("task validation failure handling (circuit breaker)", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-null" })),
       createToolServer: vi.fn(() => ({ server: {} })),
       runAgentIteration: vi.fn(async (agentInput) => {
@@ -2158,6 +2254,8 @@ describe("task validation failure handling (circuit breaker)", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-disabled" })),
       createToolServer: vi.fn(() => ({ server: {} })),
       runAgentIteration: vi.fn(async (agentInput) => {
@@ -2205,6 +2303,8 @@ describe("task validation failure handling (circuit breaker)", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-enabled" })),
       createToolServer: vi.fn(() => ({ server: {} })),
       runAgentIteration: vi.fn(async (agentInput) => {
@@ -2380,6 +2480,8 @@ describe("codex implementer continuity", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -2465,6 +2567,8 @@ describe("codex implementer continuity", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -2524,6 +2628,8 @@ describe("codex implementer continuity", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: vi.fn(),
       createToolServer,
       runAgentIteration,
@@ -2633,6 +2739,8 @@ describe("mid-iteration halt via signalHalt", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -2743,6 +2851,8 @@ describe("mid-iteration halt via signalHalt", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -2855,6 +2965,8 @@ describe("mid-iteration halt via signalHalt", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -2945,6 +3057,8 @@ describe("mid-iteration halt via signalHalt", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -3024,6 +3138,8 @@ describe("mid-iteration halt via signalHalt", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -3095,6 +3211,8 @@ describe("mid-iteration halt via signalHalt", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -3180,6 +3298,8 @@ describe("mid-iteration halt via signalHalt", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -3276,6 +3396,8 @@ describe("mid-iteration halt via signalHalt", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -3359,6 +3481,8 @@ describe("mid-iteration halt via signalHalt", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -3428,6 +3552,8 @@ describe("runIteration when all tasks are already completed on entry", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -3456,7 +3582,7 @@ describe("runIteration when all tasks are already completed on entry", () => {
       consecutiveFailureCount: 0,
     });
 
-    const validationEvent = result.execution.history.find(
+    const validationEvent = repository.appendedEvents.find(
       (entry) => entry.event.type === "graph-workflow-validation-result",
     );
     expect(validationEvent?.event).toMatchObject({
@@ -3499,6 +3625,8 @@ describe("runIteration when all tasks are already completed on entry", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -3561,6 +3689,8 @@ describe("runIteration when all tasks are already completed on entry", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -3690,6 +3820,8 @@ describe("script validator integration", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -3744,6 +3876,8 @@ describe("script validator integration", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -3798,6 +3932,8 @@ describe("script validator integration", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -3886,6 +4022,8 @@ describe("script validator integration", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -3958,6 +4096,8 @@ describe("script validator integration", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -4034,6 +4174,8 @@ describe("script validator integration", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -4115,6 +4257,8 @@ describe("script validator integration", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation,
       createToolServer,
       runAgentIteration,
@@ -4179,6 +4323,8 @@ describe("iteration failure with partial turn progress", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-progress" })),
       createToolServer: vi.fn(() => ({ server: {} })),
       runAgentIteration,
@@ -4219,6 +4365,8 @@ describe("iteration failure with partial turn progress", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-fail" })),
       createToolServer: vi.fn(() => ({ server: {} })),
       runAgentIteration,
@@ -4331,6 +4479,8 @@ describe("background-task wait lifecycle (task 4.2)", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-1" })),
       createToolServer: vi.fn(() => ({ server: { id: "tool-server" } })),
       runAgentIteration,
@@ -4409,6 +4559,8 @@ describe("background-task wait lifecycle (task 4.2)", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-1" })),
       createToolServer: vi.fn(() => ({ server: { id: "tool-server" } })),
       runAgentIteration,
@@ -4482,6 +4634,8 @@ describe("background-task wait lifecycle (task 4.2)", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-1" })),
       createToolServer: vi.fn(() => ({ server: { id: "tool-server" } })),
       runAgentIteration,
@@ -4544,6 +4698,8 @@ describe("background-task wait lifecycle (task 4.2)", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-1" })),
       createToolServer: vi.fn(() => ({ server: { id: "tool-server" } })),
       runAgentIteration,
@@ -4604,6 +4760,8 @@ describe("background-task wait lifecycle (task 4.2)", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-1" })),
       createToolServer: vi.fn(() => ({ server: { id: "tool-server" } })),
       runAgentIteration,
@@ -4728,6 +4886,8 @@ describe("human approval gate at finalization", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-gate" })),
       createToolServer: vi.fn(() => ({ server: {} })),
       runAgentIteration: completeAllPlanTasks(repository),
@@ -4783,7 +4943,7 @@ describe("human approval gate at finalization", () => {
     });
 
     // History entry persists in the repository, not only on the returned clone.
-    const persistedHistoryEvent = persisted.history.find(
+    const persistedHistoryEvent = repository.appendedEvents.find(
       (entry) => entry.event.type === "graph-workflow-approval-pending",
     );
     expect(persistedHistoryEvent?.event).toMatchObject({
@@ -4793,7 +4953,7 @@ describe("human approval gate at finalization", () => {
       requestedAt: NOW,
     });
     expect(
-      result.execution.history.some(
+      repository.appendedEvents.some(
         (entry) => entry.event.type === "graph-workflow-approval-pending",
       ),
     ).toBe(true);
@@ -4817,6 +4977,8 @@ describe("human approval gate at finalization", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-gate" })),
       createToolServer: vi.fn(() => ({ server: {} })),
       runAgentIteration: completeAllPlanTasks(repository),
@@ -4843,7 +5005,7 @@ describe("human approval gate at finalization", () => {
     expect(approvalPendingEvents(broadcast.mock.calls)).toEqual([]);
     expect(dispatchPush).not.toHaveBeenCalled();
     expect(
-      persisted.history.some(
+      repository.appendedEvents.some(
         (entry) => entry.event.type === "graph-workflow-approval-pending",
       ),
     ).toBe(false);
@@ -4884,6 +5046,8 @@ describe("human approval gate at finalization", () => {
 
     const orchestrator = createGraphWorkflowIterationOrchestrator({
       executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
       createConversation: vi.fn(async () => ({ id: "conversation-gate" })),
       createToolServer: vi.fn(() => ({ server: {} })),
       runAgentIteration: completeAllPlanTasks(repository),
@@ -4910,7 +5074,7 @@ describe("human approval gate at finalization", () => {
     expect(approvalPendingEvents(broadcast.mock.calls)).toEqual([]);
     expect(dispatchPush).not.toHaveBeenCalled();
     expect(
-      persisted.history.some(
+      repository.appendedEvents.some(
         (entry) => entry.event.type === "graph-workflow-approval-pending",
       ),
     ).toBe(false);

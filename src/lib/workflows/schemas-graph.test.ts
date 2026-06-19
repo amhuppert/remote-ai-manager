@@ -276,7 +276,7 @@ describe("workflow graph definition schemas", () => {
 });
 
 describe("workflow graph execution schemas", () => {
-  it("parses an active execution with working definition, task state, and history", () => {
+  it("parses an active execution with working definition, task state, and shared documents", () => {
     const result = graphWorkflowExecutionSchema.safeParse({
       id: "execution-1",
       seedDefinitionId: "workflow-1",
@@ -341,30 +341,6 @@ describe("workflow graph execution schemas", () => {
           lastUpdatedByConversationId: "conversation-1",
         },
       ],
-      history: [
-        {
-          occurredAt: timestamp,
-          event: {
-            type: "graph-workflow-validation-result",
-            projectName: "remote-ai-manager",
-            sessionName: "validator-loop-design-f93878",
-            executionId: "execution-1",
-            contextId: "context-1",
-            validatorType: "context",
-            pass: false,
-            summary: "Validation requested fixes",
-            reopenTaskIds: ["task-1"],
-            issues: [
-              {
-                taskId: "task-1",
-                title: "Missing assertions",
-                description:
-                  "The schema tests do not cover session persistence.",
-              },
-            ],
-          },
-        },
-      ],
       machineSnapshot: {
         state: "running",
       },
@@ -376,9 +352,6 @@ describe("workflow graph execution schemas", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.sharedDocuments).toHaveLength(1);
-      expect(result.data.history[0]?.event.type).toBe(
-        "graph-workflow-validation-result",
-      );
     }
   });
 });
@@ -594,7 +567,6 @@ describe("workflow graph session state and SSE schemas", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.graphWorkflowExecution).toBe(null);
-      expect(result.data.graphWorkflowExecutionHistory).toEqual([]);
     }
   });
 

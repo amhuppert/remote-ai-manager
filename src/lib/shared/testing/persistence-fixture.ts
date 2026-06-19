@@ -16,9 +16,13 @@ import { conversationStateSchema } from "@/lib/conversations/schemas";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { createConversationsRepo } from "@/lib/state-store/conversations-repo";
+import { createGraphWorkflowArchivedExecutionsRepo } from "@/lib/state-store/graph-workflow-archived-executions-repo";
+import { createGraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
 import { createProjectsRepo } from "@/lib/state-store/projects-repo";
 import { createSessionsRepo } from "@/lib/state-store/sessions-repo";
 import type { ConversationsRepo } from "@/lib/state-store/conversations-repo";
+import type { GraphWorkflowArchivedExecutionsRepo } from "@/lib/state-store/graph-workflow-archived-executions-repo";
+import type { GraphWorkflowEventsRepo } from "@/lib/state-store/graph-workflow-events-repo";
 import type { ProjectsRepo } from "@/lib/state-store/projects-repo";
 import type { SessionsRepo } from "@/lib/state-store/sessions-repo";
 import type { Db } from "@/lib/state-store/schemas";
@@ -50,6 +54,8 @@ export interface PersistenceFixture {
   readonly db: Db;
   readonly store: StateStore;
   readonly deps: ConversationSeamDeps;
+  readonly graphWorkflowEvents: GraphWorkflowEventsRepo;
+  readonly graphWorkflowArchivedExecutions: GraphWorkflowArchivedExecutionsRepo;
   seedProject(rootPath: string): void;
   seedSession(projectPath: string, sessionName: string): void;
   seedConversation(
@@ -78,10 +84,15 @@ export function createPersistenceFixture(): PersistenceFixture {
     projects: createProjectsRepo(db),
     sessions: createSessionsRepo(db),
     conversations: createConversationsRepo(db),
+    graphWorkflowEvents: createGraphWorkflowEventsRepo(db),
+    graphWorkflowArchivedExecutions:
+      createGraphWorkflowArchivedExecutionsRepo(db),
   } satisfies {
     projects: ProjectsRepo;
     sessions: SessionsRepo;
     conversations: ConversationsRepo;
+    graphWorkflowEvents: GraphWorkflowEventsRepo;
+    graphWorkflowArchivedExecutions: GraphWorkflowArchivedExecutionsRepo;
   };
 
   const store = createStateStore({ db, writeQueue, repos });
@@ -95,6 +106,8 @@ export function createPersistenceFixture(): PersistenceFixture {
     db,
     store,
     deps,
+    graphWorkflowEvents: repos.graphWorkflowEvents,
+    graphWorkflowArchivedExecutions: repos.graphWorkflowArchivedExecutions,
     seedProject(rootPath) {
       repos.projects.upsert({ rootPath });
     },

@@ -8,6 +8,23 @@ export const workflowDefinitionKeys = {
     [...workflowDefinitionKeys.details(), projectName, workflowId] as const,
 };
 
+export const graphWorkflowEventsKeys = {
+  all: ["graph-workflow-events"] as const,
+  list: (projectName: string, sessionName: string, executionId: string) =>
+    [
+      ...graphWorkflowEventsKeys.all,
+      projectName,
+      sessionName,
+      executionId,
+    ] as const,
+};
+
+export const graphWorkflowHistoryKeys = {
+  all: ["graph-workflow-history"] as const,
+  list: (projectName: string, sessionName: string) =>
+    [...graphWorkflowHistoryKeys.all, projectName, sessionName] as const,
+};
+
 export const collaborationKeys = {
   all: ["collaboration"] as const,
   lists: () => [...collaborationKeys.all, "list"] as const,

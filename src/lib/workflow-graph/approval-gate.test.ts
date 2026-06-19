@@ -395,7 +395,12 @@ describe("createApprovalGateService.recordDecision", () => {
   function buildService() {
     const repo = createGraphWorkflowExecutionRepository({
       getSession: fixture.store.getSession,
-      mutateSession: fixture.store.mutateSession,
+      mutateActiveGraphWorkflowExecution:
+        fixture.store.mutateActiveGraphWorkflowExecution,
+      archiveActiveGraphWorkflowExecution:
+        fixture.store.archiveActiveGraphWorkflowExecution,
+      markGraphWorkflowContextEventsPreReset:
+        fixture.store.markGraphWorkflowContextEventsPreReset,
       eventPublisher: createGraphWorkflowExecutionEventPublisher({
         broadcast: () => {},
         dispatchPush: () => {},

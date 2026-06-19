@@ -12,7 +12,12 @@ import { createLogger, withTracing } from "@/lib/logging";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import {
   getSession as defaultGetSession,
-  mutateSession,
+  mutateActiveGraphWorkflowExecution,
+  archiveActiveGraphWorkflowExecution,
+  markGraphWorkflowContextEventsPreReset,
+  findLatestGraphWorkflowContextEvent,
+  listArchivedGraphWorkflowExecutions,
+  getGraphWorkflowEventsTail,
 } from "@/lib/state-store";
 import { resolveConfiguredTimeoutMs } from "@/lib/agent-backends/timeout";
 import type { ApiError } from "@/lib/api/errors";
@@ -20,6 +25,7 @@ import type { SessionState } from "@/lib/sessions/schemas";
 import type {
   GraphWorkflowCleanupStatusValue,
   GraphWorkflowExecution,
+  GraphWorkflowExecutionEvent,
   GraphWorkflowExecutionJoinKind,
   GraphWorkflowExecutionJoinStatus,
   GraphWorkflowHaltReason,
@@ -99,13 +105,18 @@ const resolveApprovalSchema = z.discriminatedUnion("decision", [
 
 const logger = createLogger("graph-workflow-route-handlers");
 
+const GRAPH_WORKFLOW_EVENTS_DEFAULT_LIMIT = 500;
+const GRAPH_WORKFLOW_EVENTS_MAX_LIMIT = 2000;
+
 const eventPublisher = createGraphWorkflowExecutionEventPublisher({
   dispatchPush: dispatchPushForGraphWorkflowEvent,
 });
 
 const executionRepository = createGraphWorkflowExecutionRepository({
   getSession: defaultGetSession,
-  mutateSession,
+  mutateActiveGraphWorkflowExecution,
+  archiveActiveGraphWorkflowExecution,
+  markGraphWorkflowContextEventsPreReset,
   eventPublisher,
 });
 
@@ -237,6 +248,12 @@ const sharedDocumentMaterializer = createWorkflowDocumentMaterializer({
 
 const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
   executionRepository: workflowManager,
+  findLatestContextValidationEvent: (executionId, contextId) =>
+    findLatestGraphWorkflowContextEvent(
+      executionId,
+      contextId,
+      "graph-workflow-validation-result",
+    ),
   createConversation,
   continuityService,
   eventPublisher,
@@ -407,6 +424,22 @@ export interface GraphWorkflowExecutionRouteDeps {
   readSessionWorktreeDirtyPaths?(
     sessionWorktreePath: string,
   ): Promise<DirtyPath[]>;
+  /**
+   * List the session's archived (terminal, moved-out) graph-workflow
+   * executions. Defaults to the real archived-executions repo via the store.
+   */
+  listArchivedExecutions?(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<GraphWorkflowExecution[]>;
+  /**
+   * Read the bounded tail of the persisted append-only event log for an
+   * execution. Defaults to the real `graph_workflow_events` repo via the store.
+   */
+  getEventsTail?(
+    executionId: string,
+    limit: number,
+  ): Promise<GraphWorkflowExecutionEvent[]>;
 }
 
 const approvalGateService = createApprovalGateService({
@@ -441,6 +474,10 @@ const defaultDeps: GraphWorkflowExecutionRouteDeps = {
   recordApprovalDecision: (input) => approvalGateService.recordDecision(input),
   readSessionWorktreeDirtyPaths: (sessionWorktreePath) =>
     readWorktreeDirtyPaths(sessionWorktreePath),
+  listArchivedExecutions: (projectPath, sessionName) =>
+    listArchivedGraphWorkflowExecutions(projectPath, sessionName),
+  getEventsTail: (executionId, limit) =>
+    getGraphWorkflowEventsTail(executionId, limit),
 };
 
 function isTerminalStatus(status: GraphWorkflowStatus): boolean {
@@ -555,12 +592,16 @@ function summarizeExecution(
   };
 }
 
-function summarizeHistory(
+async function summarizeHistory(
+  deps: GraphWorkflowExecutionRouteDeps,
+  projectPath: string,
+  sessionName: string,
   session: SessionState,
-): GraphWorkflowExecutionSummary[] {
-  const items = session.graphWorkflowExecutionHistory.map((execution) =>
-    summarizeExecution(execution, true),
-  );
+): Promise<GraphWorkflowExecutionSummary[]> {
+  const listArchived =
+    deps.listArchivedExecutions ?? listArchivedGraphWorkflowExecutions;
+  const archived = await listArchived(projectPath, sessionName);
+  const items = archived.map((execution) => summarizeExecution(execution, true));
 
   if (
     session.graphWorkflowExecution &&
@@ -884,10 +925,17 @@ export function createGraphWorkflowExecutionRouteHandlers(
     const execution =
       normalizedExecution ?? resolved.session.graphWorkflowExecution;
 
+    const listArchived =
+      deps.listArchivedExecutions ?? listArchivedGraphWorkflowExecutions;
+    const archived = await listArchived(
+      resolved.projectPath,
+      resolved.sessionName,
+    );
+
     return NextResponse.json({
       execution: execution ? summarizeExecution(execution, false) : null,
-      archivedExecutions: resolved.session.graphWorkflowExecutionHistory.map(
-        (entry) => summarizeExecution(entry, true),
+      archivedExecutions: archived.map((entry) =>
+        summarizeExecution(entry, true),
       ),
     });
   }
@@ -902,8 +950,43 @@ export function createGraphWorkflowExecutionRouteHandlers(
     }
 
     return NextResponse.json({
-      items: summarizeHistory(resolved.session),
+      items: await summarizeHistory(
+        deps,
+        resolved.projectPath,
+        resolved.sessionName,
+        resolved.session,
+      ),
     });
+  }
+
+  async function EVENTS(
+    request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSession(context, deps);
+    if ("error" in resolved) {
+      return resolved.error;
+    }
+
+    const url = new URL(request.url);
+    const executionId =
+      url.searchParams.get("executionId") ??
+      resolved.session.graphWorkflowExecution?.id ??
+      null;
+    if (!executionId) {
+      return NextResponse.json({ events: [] });
+    }
+
+    const limitParam = url.searchParams.get("limit");
+    const parsedLimit = limitParam !== null ? Number(limitParam) : NaN;
+    const limit =
+      Number.isInteger(parsedLimit) && parsedLimit > 0
+        ? Math.min(parsedLimit, GRAPH_WORKFLOW_EVENTS_MAX_LIMIT)
+        : GRAPH_WORKFLOW_EVENTS_DEFAULT_LIMIT;
+
+    const getEventsTail = deps.getEventsTail ?? getGraphWorkflowEventsTail;
+    const events = await getEventsTail(executionId, limit);
+    return NextResponse.json({ events });
   }
 
   async function PAUSE(
@@ -1150,6 +1233,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
     START,
     STATUS,
     HISTORY,
+    EVENTS,
     PAUSE,
     RESUME,
     ABORT,
@@ -1170,6 +1254,9 @@ export const getGraphWorkflowExecutionStatus = withTracing(
 );
 export const getGraphWorkflowExecutionHistory = withTracing(
   defaultGraphWorkflowExecutionHandlers.HISTORY,
+);
+export const getGraphWorkflowExecutionEvents = withTracing(
+  defaultGraphWorkflowExecutionHandlers.EVENTS,
 );
 export const pauseGraphWorkflowExecution = withTracing(
   defaultGraphWorkflowExecutionHandlers.PAUSE,

@@ -1,13 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
+import { z } from "zod";
 import { apiFetch } from "@/lib/api/fetcher";
 import {
   workflowDefinitionKeys,
+  graphWorkflowEventsKeys,
+  graphWorkflowHistoryKeys,
   collaborationKeys,
 } from "@/lib/workflows/query-keys";
 import {
   workflowDefinitionsResponseSchema,
   workflowDefinitionGetResponseSchema,
 } from "@/lib/workflow-definitions/schemas";
+import { graphWorkflowExecutionEventsResponseSchema } from "@/lib/workflows/schemas";
 import { collaborationListResponseSchema } from "@/lib/collaboration/schemas";
 
 export function useWorkflowDefinitionsQuery(projectName: string) {
@@ -36,6 +40,55 @@ export function useWorkflowDefinitionQuery(
       );
     },
     enabled: workflowId != null,
+  });
+}
+
+/**
+ * Tail of the persisted append-only graph-workflow event log for the active
+ * execution. Replaces reading `execution.history` in the UI; the server reads
+ * a bounded tail from `graph_workflow_events` rather than loading the full log.
+ */
+export function useGraphWorkflowEventsQuery(
+  projectName: string,
+  sessionName: string,
+  executionId: string | null,
+) {
+  return useQuery({
+    queryKey: graphWorkflowEventsKeys.list(
+      projectName,
+      sessionName,
+      executionId ?? "",
+    ),
+    queryFn: () =>
+      apiFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/events?executionId=${encodeURIComponent(executionId!)}`,
+        graphWorkflowExecutionEventsResponseSchema,
+      ).then((r) => r.events),
+    enabled: executionId != null,
+  });
+}
+
+const graphWorkflowHistoryResponseSchema = z.object({
+  items: z.array(z.object({ executionId: z.string() }).loose()),
+});
+
+/**
+ * Summaries of the session's archived (and terminal active) graph-workflow
+ * executions. The session blob no longer carries the execution-history array;
+ * archived runs live in `graph_workflow_archived_executions` and are surfaced
+ * through the HISTORY endpoint.
+ */
+export function useGraphWorkflowHistoryQuery(
+  projectName: string,
+  sessionName: string,
+) {
+  return useQuery({
+    queryKey: graphWorkflowHistoryKeys.list(projectName, sessionName),
+    queryFn: () =>
+      apiFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/history`,
+        graphWorkflowHistoryResponseSchema,
+      ).then((r) => r.items),
   });
 }
 

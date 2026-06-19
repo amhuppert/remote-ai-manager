@@ -43,7 +43,6 @@ function makePlannerSession(
     targetBranch: "main",
     parentSessionName: null,
     graphWorkflowExecution: null,
-    graphWorkflowExecutionHistory: [],
     referenceDocuments: [],
     conversations: [
       {

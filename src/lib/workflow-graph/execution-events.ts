@@ -133,12 +133,6 @@ export interface GraphWorkflowExecutionEventPublisherDeps {
   dispatchPush?(info: GraphWorkflowPushInfo): void;
 }
 
-function cloneExecution(
-  execution: GraphWorkflowExecution,
-): GraphWorkflowExecution {
-  return structuredClone(execution);
-}
-
 function getNow(deps: GraphWorkflowExecutionEventPublisherDeps): string {
   return deps.now?.() ?? new Date().toISOString();
 }
@@ -396,26 +390,17 @@ function mergeFieldsChanged(
   );
 }
 
-function appendEvents(
-  execution: GraphWorkflowExecution,
+function buildEvents(
   occurredAt: string,
   events: GraphWorkflowSSEEvent[],
-): GraphWorkflowExecution {
-  if (events.length === 0) {
-    return execution;
-  }
-
-  const nextExecution = cloneExecution(execution);
-  nextExecution.history.push(
-    ...events.map(
-      (event): GraphWorkflowExecutionEvent => ({
-        occurredAt,
-        event,
-        preReset: false,
-      }),
-    ),
+): GraphWorkflowExecutionEvent[] {
+  return events.map(
+    (event): GraphWorkflowExecutionEvent => ({
+      occurredAt,
+      event,
+      preReset: false,
+    }),
   );
-  return nextExecution;
 }
 
 function publishEvents(
@@ -500,7 +485,7 @@ export function createGraphWorkflowExecutionEventPublisher(
 ) {
   function publishExecutionUpdate(
     input: PublishExecutionUpdateInput,
-  ): GraphWorkflowExecution {
+  ): GraphWorkflowExecutionEvent[] {
     const projectName = getProjectName(input.projectPath);
     const previousExecution = input.previousExecution;
     const nextExecution = input.nextExecution;
@@ -780,12 +765,12 @@ export function createGraphWorkflowExecutionEventPublisher(
     const occurredAt = getNow(deps);
     publishEvents(deps, events);
     dispatchPushNotifications(deps, events, input, nextExecution, nextIndex);
-    return appendEvents(nextExecution, occurredAt, events);
+    return buildEvents(occurredAt, events);
   }
 
   function publishValidationResult(
     input: PublishValidationResultInput,
-  ): GraphWorkflowExecution {
+  ): GraphWorkflowExecutionEvent[] {
     const event: GraphWorkflowValidationResultEvent = {
       type: "graph-workflow-validation-result",
       projectName: getProjectName(input.projectPath),
@@ -802,12 +787,12 @@ export function createGraphWorkflowExecutionEventPublisher(
     };
 
     publishEvents(deps, [event]);
-    return appendEvents(input.execution, getNow(deps), [event]);
+    return buildEvents(getNow(deps), [event]);
   }
 
   function publishApprovalPending(
     input: PublishApprovalPendingInput,
-  ): GraphWorkflowExecution {
+  ): GraphWorkflowExecutionEvent[] {
     const projectName = getProjectName(input.projectPath);
     const index = createExecutionIndex(
       input.execution.workingDefinition,
@@ -833,12 +818,12 @@ export function createGraphWorkflowExecutionEventPublisher(
       sessionName: input.sessionName,
       contextTitle: contextTitle ?? input.contextId,
     });
-    return appendEvents(input.execution, getNow(deps), [event]);
+    return buildEvents(getNow(deps), [event]);
   }
 
   function publishApprovalResolved(
     input: PublishApprovalResolvedInput,
-  ): GraphWorkflowExecution {
+  ): GraphWorkflowExecutionEvent[] {
     const event: GraphWorkflowApprovalResolvedEvent = {
       type: "graph-workflow-approval-resolved",
       projectName: getProjectName(input.projectPath),
@@ -852,12 +837,12 @@ export function createGraphWorkflowExecutionEventPublisher(
     };
 
     publishEvents(deps, [event]);
-    return appendEvents(input.execution, getNow(deps), [event]);
+    return buildEvents(getNow(deps), [event]);
   }
 
   function publishCharterRegistered(
     input: PublishCharterRegisteredInput,
-  ): GraphWorkflowExecution {
+  ): GraphWorkflowExecutionEvent[] {
     const event: GraphWorkflowCharterRegisteredEvent = {
       type: "graph-workflow-charter-registered",
       projectName: getProjectName(input.projectPath),
@@ -869,12 +854,12 @@ export function createGraphWorkflowExecutionEventPublisher(
     };
 
     publishEvents(deps, [event]);
-    return appendEvents(input.execution, getNow(deps), [event]);
+    return buildEvents(getNow(deps), [event]);
   }
 
   function publishCharterUpdated(
     input: PublishCharterUpdatedInput,
-  ): GraphWorkflowExecution | null {
+  ): GraphWorkflowExecutionEvent[] {
     const event: GraphWorkflowCharterUpdatedEvent = {
       type: "graph-workflow-charter-updated",
       projectName: getProjectName(input.projectPath),
@@ -886,12 +871,7 @@ export function createGraphWorkflowExecutionEventPublisher(
     };
 
     publishEvents(deps, [event]);
-    // A definition-level charter replacement with no active execution has no
-    // history to append to — broadcast only.
-    if (!input.execution) {
-      return null;
-    }
-    return appendEvents(input.execution, getNow(deps), [event]);
+    return buildEvents(getNow(deps), [event]);
   }
 
   return {

@@ -58,7 +58,6 @@ async function seedSession() {
     targetBranch: "main",
     parentSessionName: null,
     graphWorkflowExecution: null,
-    graphWorkflowExecutionHistory: [],
     referenceDocuments: [],
   });
 }
@@ -200,7 +199,6 @@ describe("GET /api/projects/[name]/sessions/[session]/workflow-envelopes", () =>
       targetBranch: "main",
       parentSessionName: null,
       graphWorkflowExecution: null,
-      graphWorkflowExecutionHistory: [],
       referenceDocuments: [],
     });
     const repo = createDefaultSessionWorkflowEnvelopeRepository({

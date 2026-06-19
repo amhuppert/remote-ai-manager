@@ -8,6 +8,7 @@ import {
 import ExecutionInspectorPanel from "./ExecutionInspectorPanel";
 import type {
   GraphWorkflowExecution,
+  GraphWorkflowExecutionEvent,
   GraphWorkflowValidationResultEvent,
 } from "@/lib/workflows/schemas";
 const baseHandlers = {
@@ -41,18 +42,21 @@ function makeValidationEvent(
 
 function makeExecutionWithHistory(
   events: GraphWorkflowValidationResultEvent[],
-): GraphWorkflowExecution {
+): {
+  execution: GraphWorkflowExecution;
+  events: GraphWorkflowExecutionEvent[];
+} {
   const history = events.map((event, i) => ({
     occurredAt: `2026-03-27T10:0${i}:00.000Z`,
     event,
     preReset: false,
   }));
-  return createWorkflowExecution({ history });
+  return { execution: createWorkflowExecution(), events: history };
 }
 
 describe("ExecutionInspectorPanel — ValidationCard markdown formatting", () => {
   it("renders summary with markdown inline code for any validator", async () => {
-    const execution = makeExecutionWithHistory([
+    const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
         summary: "All 23 tests passed via `bunx vitest run`",
         sessionRef: {
@@ -66,6 +70,7 @@ describe("ExecutionInspectorPanel — ValidationCard markdown formatting", () =>
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId={null}
         {...baseHandlers}
       />,
@@ -81,7 +86,7 @@ describe("ExecutionInspectorPanel — ValidationCard markdown formatting", () =>
   });
 
   it("renders issue descriptions as markdown for any validator", async () => {
-    const execution = makeExecutionWithHistory([
+    const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
         pass: false,
         summary: "Failed",
@@ -103,6 +108,7 @@ describe("ExecutionInspectorPanel — ValidationCard markdown formatting", () =>
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId={null}
         {...baseHandlers}
       />,
@@ -115,7 +121,7 @@ describe("ExecutionInspectorPanel — ValidationCard markdown formatting", () =>
 
 describe("ExecutionInspectorPanel — ValidationCard lane and engine badges", () => {
   it("renders Context badge for context_validator lane", () => {
-    const execution = makeExecutionWithHistory([
+    const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
         sessionRef: {
           engine: "claude",
@@ -128,6 +134,7 @@ describe("ExecutionInspectorPanel — ValidationCard lane and engine badges", ()
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId={null}
         {...baseHandlers}
       />,
@@ -137,7 +144,7 @@ describe("ExecutionInspectorPanel — ValidationCard lane and engine badges", ()
   });
 
   it("renders engine badge showing claude", () => {
-    const execution = makeExecutionWithHistory([
+    const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
         sessionRef: {
           engine: "claude",
@@ -150,6 +157,7 @@ describe("ExecutionInspectorPanel — ValidationCard lane and engine badges", ()
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId={null}
         {...baseHandlers}
       />,
@@ -159,7 +167,7 @@ describe("ExecutionInspectorPanel — ValidationCard lane and engine badges", ()
   });
 
   it("renders engine badge showing codex", () => {
-    const execution = makeExecutionWithHistory([
+    const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
         reviewArtifact: {
           engine: "codex",
@@ -178,6 +186,7 @@ describe("ExecutionInspectorPanel — ValidationCard lane and engine badges", ()
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId={null}
         {...baseHandlers}
       />,
@@ -190,7 +199,7 @@ describe("ExecutionInspectorPanel — ValidationCard lane and engine badges", ()
 describe("ExecutionInspectorPanel — View Transcript button", () => {
   it("shows View Transcript button for claude validation when handler is provided", () => {
     const onViewConversation = vi.fn();
-    const execution = makeExecutionWithHistory([
+    const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
         sessionRef: {
           engine: "claude",
@@ -203,6 +212,7 @@ describe("ExecutionInspectorPanel — View Transcript button", () => {
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId={null}
         onViewConversation={onViewConversation}
         {...baseHandlers}
@@ -216,7 +226,7 @@ describe("ExecutionInspectorPanel — View Transcript button", () => {
 
   it("calls onViewConversation with correct args when View Transcript is clicked", () => {
     const onViewConversation = vi.fn();
-    const execution = makeExecutionWithHistory([
+    const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
         contextId: "context-plan",
         sessionRef: {
@@ -230,6 +240,7 @@ describe("ExecutionInspectorPanel — View Transcript button", () => {
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId={null}
         onViewConversation={onViewConversation}
         {...baseHandlers}
@@ -246,7 +257,7 @@ describe("ExecutionInspectorPanel — View Transcript button", () => {
   });
 
   it("does not show View Transcript button when onViewConversation is not provided", () => {
-    const execution = makeExecutionWithHistory([
+    const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
         sessionRef: {
           engine: "claude",
@@ -259,6 +270,7 @@ describe("ExecutionInspectorPanel — View Transcript button", () => {
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId={null}
         {...baseHandlers}
       />,
@@ -272,7 +284,7 @@ describe("ExecutionInspectorPanel — View Transcript button", () => {
 
 describe("ExecutionInspectorPanel — Codex review artifact", () => {
   it("displays codex thread ID in artifact section", () => {
-    const execution = makeExecutionWithHistory([
+    const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
         reviewArtifact: {
           engine: "codex",
@@ -291,6 +303,7 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId={null}
         {...baseHandlers}
       />,
@@ -300,7 +313,7 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
   });
 
   it("displays codex response text in artifact section", async () => {
-    const execution = makeExecutionWithHistory([
+    const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
         reviewArtifact: {
           engine: "codex",
@@ -319,6 +332,7 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId={null}
         {...baseHandlers}
       />,
@@ -335,7 +349,7 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
       summary: "Validated with `bunx vitest run` command. All 23 tests passed.",
       issues: [],
     });
-    const execution = makeExecutionWithHistory([
+    const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
         reviewArtifact: {
           engine: "codex",
@@ -354,6 +368,7 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId={null}
         {...baseHandlers}
       />,
@@ -382,7 +397,7 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
         },
       ],
     });
-    const execution = makeExecutionWithHistory([
+    const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
         reviewArtifact: {
           engine: "codex",
@@ -401,6 +416,7 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId={null}
         {...baseHandlers}
       />,
@@ -415,7 +431,7 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
   });
 
   it("renders non-JSON codex response as markdown", () => {
-    const execution = makeExecutionWithHistory([
+    const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
         reviewArtifact: {
           engine: "codex",
@@ -434,6 +450,7 @@ describe("ExecutionInspectorPanel — Codex review artifact", () => {
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId={null}
         {...baseHandlers}
       />,
@@ -474,11 +491,13 @@ describe("ExecutionInspectorPanel — continued session badge", () => {
         preReset: false,
       },
     ];
-    const execution = createWorkflowExecution({ history });
+    const execution = createWorkflowExecution();
+    const events = history;
 
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId={null}
         {...baseHandlers}
       />,
@@ -515,11 +534,13 @@ describe("ExecutionInspectorPanel — continued session badge", () => {
         preReset: false,
       },
     ];
-    const execution = createWorkflowExecution({ history });
+    const execution = createWorkflowExecution();
+    const events = history;
 
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId={null}
         {...baseHandlers}
       />,
@@ -560,11 +581,13 @@ describe("ExecutionInspectorPanel — continued session badge", () => {
         preReset: false,
       },
     ];
-    const execution = createWorkflowExecution({ history });
+    const execution = createWorkflowExecution();
+    const events = history;
 
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId={null}
         onViewConversation={onViewConversation}
         {...baseHandlers}
@@ -589,7 +612,7 @@ describe("ExecutionInspectorPanel — continued session badge", () => {
 
 describe("ExecutionInspectorPanel — reopened tasks", () => {
   it("renders reopened task ids for failed context validation", () => {
-    const execution = makeExecutionWithHistory([
+    const { execution, events } = makeExecutionWithHistory([
       makeValidationEvent({
         pass: false,
         reopenTaskIds: ["task-plan-1", "task-implement-1"],
@@ -604,6 +627,7 @@ describe("ExecutionInspectorPanel — reopened tasks", () => {
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId={null}
         {...baseHandlers}
       />,
@@ -691,10 +715,12 @@ describe("ExecutionInspectorPanel — shared implementer session task history", 
         },
       },
     });
+    const events: GraphWorkflowExecutionEvent[] = [];
 
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId="context-plan"
         {...baseHandlers}
         onViewTask={onViewTask}
@@ -770,10 +796,12 @@ describe("ExecutionInspectorPanel — live implementer viewing", () => {
         hasLiveIteration: true,
       },
     });
+    const events: GraphWorkflowExecutionEvent[] = [];
 
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId="context-plan"
         {...baseHandlers}
         onViewTask={onViewTask}
@@ -798,10 +826,12 @@ describe("ExecutionInspectorPanel — task editability", () => {
         },
       },
     });
+    const events: GraphWorkflowExecutionEvent[] = [];
 
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId="context-plan"
         {...baseHandlers}
       />,
@@ -839,10 +869,12 @@ describe("ExecutionInspectorPanel — task editability", () => {
         hasLiveIteration: true,
       },
     });
+    const events: GraphWorkflowExecutionEvent[] = [];
 
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId="context-plan"
         {...baseHandlers}
       />,
@@ -933,10 +965,12 @@ describe("ExecutionInspectorPanel — task editability", () => {
         },
       },
     });
+    const events: GraphWorkflowExecutionEvent[] = [];
 
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId="context-plan"
         {...baseHandlers}
         onReorderTask={onReorderTask}
@@ -966,10 +1000,12 @@ describe("ExecutionInspectorPanel — awaiting-approval status badge", () => {
         },
       },
     });
+    const events: GraphWorkflowExecutionEvent[] = [];
 
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId="context-plan"
         {...baseHandlers}
       />,
@@ -984,10 +1020,12 @@ describe("ExecutionInspectorPanel — awaiting-approval status badge", () => {
 describe("ExecutionInspectorPanel — Reset Context", () => {
   it("shows a Reset button when execution is paused and context is not completed", () => {
     const execution = createWorkflowExecution({ status: "paused" });
+    const events: GraphWorkflowExecutionEvent[] = [];
 
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId="context-plan"
         {...baseHandlers}
         onResetContext={vi.fn()}
@@ -1001,10 +1039,12 @@ describe("ExecutionInspectorPanel — Reset Context", () => {
 
   it("shows a Reset button when execution is halted and context is not completed", () => {
     const execution = createWorkflowExecution({ status: "halted" });
+    const events: GraphWorkflowExecutionEvent[] = [];
 
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId="context-plan"
         {...baseHandlers}
         onResetContext={vi.fn()}
@@ -1018,10 +1058,12 @@ describe("ExecutionInspectorPanel — Reset Context", () => {
 
   it("hides the Reset button when execution is running", () => {
     const execution = createWorkflowExecution({ status: "running" });
+    const events: GraphWorkflowExecutionEvent[] = [];
 
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId="context-plan"
         {...baseHandlers}
         onResetContext={vi.fn()}
@@ -1045,10 +1087,12 @@ describe("ExecutionInspectorPanel — Reset Context", () => {
         },
       },
     });
+    const events: GraphWorkflowExecutionEvent[] = [];
 
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId="context-plan"
         {...baseHandlers}
         onResetContext={vi.fn()}
@@ -1062,10 +1106,12 @@ describe("ExecutionInspectorPanel — Reset Context", () => {
 
   it("hides the Reset button when no onResetContext handler is provided", () => {
     const execution = createWorkflowExecution({ status: "paused" });
+    const events: GraphWorkflowExecutionEvent[] = [];
 
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId="context-plan"
         {...baseHandlers}
       />,
@@ -1079,10 +1125,12 @@ describe("ExecutionInspectorPanel — Reset Context", () => {
   it("opens a confirmation dialog on Reset and calls onResetContext after confirming", () => {
     const onResetContext = vi.fn();
     const execution = createWorkflowExecution({ status: "paused" });
+    const events: GraphWorkflowExecutionEvent[] = [];
 
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId="context-plan"
         {...baseHandlers}
         onResetContext={onResetContext}
@@ -1101,10 +1149,12 @@ describe("ExecutionInspectorPanel — Reset Context", () => {
   it("does not call onResetContext when the confirmation dialog is cancelled", () => {
     const onResetContext = vi.fn();
     const execution = createWorkflowExecution({ status: "paused" });
+    const events: GraphWorkflowExecutionEvent[] = [];
 
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId="context-plan"
         {...baseHandlers}
         onResetContext={onResetContext}
@@ -1127,25 +1177,24 @@ describe("ExecutionInspectorPanel — Reset Context", () => {
       contextId: "context-plan",
       summary: "Discarded by reset",
     });
-    const execution = createWorkflowExecution({
-      status: "paused",
-      history: [
-        {
-          occurredAt: "2026-03-27T10:00:00.000Z",
-          event: hiddenEvent,
-          preReset: true,
-        },
-        {
-          occurredAt: "2026-03-27T10:01:00.000Z",
-          event: visibleEvent,
-          preReset: false,
-        },
-      ],
-    });
+    const execution = createWorkflowExecution({ status: "paused" });
+    const events = [
+      {
+        occurredAt: "2026-03-27T10:00:00.000Z",
+        event: hiddenEvent,
+        preReset: true,
+      },
+      {
+        occurredAt: "2026-03-27T10:01:00.000Z",
+        event: visibleEvent,
+        preReset: false,
+      },
+    ];
 
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId="context-plan"
         {...baseHandlers}
       />,
@@ -1166,25 +1215,24 @@ describe("ExecutionInspectorPanel — Reset Context", () => {
       contextId: "context-plan",
       summary: "Discarded by reset",
     });
-    const execution = createWorkflowExecution({
-      status: "paused",
-      history: [
-        {
-          occurredAt: "2026-03-27T10:00:00.000Z",
-          event: hiddenEvent,
-          preReset: true,
-        },
-        {
-          occurredAt: "2026-03-27T10:01:00.000Z",
-          event: visibleEvent,
-          preReset: false,
-        },
-      ],
-    });
+    const execution = createWorkflowExecution({ status: "paused" });
+    const events = [
+      {
+        occurredAt: "2026-03-27T10:00:00.000Z",
+        event: hiddenEvent,
+        preReset: true,
+      },
+      {
+        occurredAt: "2026-03-27T10:01:00.000Z",
+        event: visibleEvent,
+        preReset: false,
+      },
+    ];
 
     render(
       <ExecutionInspectorPanel
         execution={execution}
+        events={events}
         selectedContextId={null}
         {...baseHandlers}
       />,

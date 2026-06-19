@@ -273,6 +273,42 @@ const SCHEMA_DDL = `
   );
 
   CREATE INDEX IF NOT EXISTS idx_job_records_status ON job_records(status);
+
+  CREATE TABLE IF NOT EXISTS graph_workflow_events (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_path  TEXT NOT NULL,
+    session_name  TEXT NOT NULL,
+    execution_id  TEXT NOT NULL,
+    occurred_at   TEXT NOT NULL,
+    event_type    TEXT NOT NULL,
+    context_id    TEXT,
+    pre_reset     INTEGER NOT NULL DEFAULT 0,
+    event_json    TEXT NOT NULL,
+    FOREIGN KEY (project_path, session_name)
+      REFERENCES sessions(project_path, session_name) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_graph_workflow_events_execution
+    ON graph_workflow_events(execution_id, id);
+  CREATE INDEX IF NOT EXISTS idx_graph_workflow_events_context
+    ON graph_workflow_events(execution_id, context_id, event_type);
+
+  CREATE TABLE IF NOT EXISTS graph_workflow_archived_executions (
+    project_path    TEXT NOT NULL,
+    session_name    TEXT NOT NULL,
+    execution_id    TEXT NOT NULL,
+    archived_at     TEXT NOT NULL,
+    status          TEXT NOT NULL,
+    started_at      TEXT NOT NULL,
+    completed_at    TEXT,
+    execution_json  TEXT NOT NULL,
+    PRIMARY KEY (project_path, session_name, execution_id),
+    FOREIGN KEY (project_path, session_name)
+      REFERENCES sessions(project_path, session_name) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_graph_workflow_archived_executions_session
+    ON graph_workflow_archived_executions(project_path, session_name, archived_at);
 `;
 
 class SchemaVersionConflictError extends Error {

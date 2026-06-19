@@ -52,6 +52,7 @@ import type {
 import { DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD } from "./constants";
 import { hasPartialIterationProgress } from "./iteration-failure-with-progress";
 import type { GraphWorkflowIterationResult } from "./iteration-orchestrator";
+import type { MutateActiveResult } from "./execution-repository";
 import type {
   GraphWorkflowLifecycleSnapshot,
   RecordPendingHaltReasonResult,
@@ -99,7 +100,10 @@ export interface GraphWorkflowExecutionLoopWorkflowManager {
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+    ) =>
+      | MutateActiveResult
+      | GraphWorkflowExecution
+      | Promise<MutateActiveResult | GraphWorkflowExecution>,
   ): Promise<GraphWorkflowExecution>;
   getActive(
     projectPath: string,
@@ -618,8 +622,9 @@ export function createGraphWorkflowExecutionLoop(
       execution = await deps.workflowManager.mutateActive(
         input.projectPath,
         input.sessionName,
-        (latest) =>
-          eventPublisher.publishApprovalResolved({
+        (latest) => ({
+          execution: latest,
+          events: eventPublisher.publishApprovalResolved({
             projectPath: input.projectPath,
             sessionName: input.sessionName,
             execution: latest,
@@ -629,6 +634,7 @@ export function createGraphWorkflowExecutionLoop(
             message: decision.type === "rejected" ? decision.message : null,
             decidedAt: decision.decidedAt,
           }),
+        }),
       );
     }
 

@@ -50,7 +50,6 @@ async function seedSession() {
     targetBranch: "main",
     parentSessionName: null,
     graphWorkflowExecution: null,
-    graphWorkflowExecutionHistory: [],
     referenceDocuments: [],
   });
   return manager;

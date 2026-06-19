@@ -42,6 +42,7 @@ describe("GraphWorkflowPanel", () => {
     render(
       <GraphWorkflowPanel
         execution={null}
+        events={[]}
         archivedExecutions={[]}
         {...noopCallbacks}
       />,
@@ -90,6 +91,7 @@ describe("GraphWorkflowPanel", () => {
     render(
       <GraphWorkflowPanel
         execution={execution}
+        events={[]}
         archivedExecutions={[]}
         {...noopCallbacks}
       />,
@@ -109,6 +111,7 @@ describe("GraphWorkflowPanel", () => {
     render(
       <GraphWorkflowPanel
         execution={createWorkflowExecution({ status: "running" })}
+        events={[]}
         archivedExecutions={[]}
         {...noopCallbacks}
         onPause={onPause}
@@ -133,6 +136,7 @@ describe("GraphWorkflowPanel", () => {
     render(
       <GraphWorkflowPanel
         execution={createWorkflowExecution({ status: "paused" })}
+        events={[]}
         archivedExecutions={[]}
         {...noopCallbacks}
         onResume={onResume}
@@ -150,6 +154,7 @@ describe("GraphWorkflowPanel", () => {
     render(
       <GraphWorkflowPanel
         execution={createWorkflowExecution({ status: "completed" })}
+        events={[]}
         archivedExecutions={[]}
         {...noopCallbacks}
       />,
@@ -178,6 +183,7 @@ describe("GraphWorkflowPanel", () => {
             failureCount: 2,
           },
         })}
+        events={[]}
         archivedExecutions={[]}
         {...noopCallbacks}
         onResume={onResume}
@@ -204,6 +210,7 @@ describe("GraphWorkflowPanel", () => {
           completedAt: "2026-03-28T10:00:00.000Z",
           haltReason: { type: "aborted" },
         })}
+        events={[]}
         archivedExecutions={[]}
         {...noopCallbacks}
       />,
@@ -465,6 +472,7 @@ describe("GraphWorkflowPanel — codex transcript viewing path (mount)", () => {
     render(
       <GraphWorkflowPanel
         execution={execution}
+        events={[]}
         archivedExecutions={[]}
         {...noopCallbacks}
       />,

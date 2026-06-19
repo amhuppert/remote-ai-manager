@@ -7,6 +7,7 @@ import path from "node:path";
 import type { GlobalConfig } from "@/lib/config/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type {
+  GraphWorkflowExecutionEvent,
   GraphWorkflowSSEEvent,
   WorkflowSemanticDefinition,
 } from "@/lib/workflows/schemas";
@@ -107,7 +108,7 @@ function setupAcceptance() {
         definitionId: input.definitionId,
         charterHash: input.charterHash,
       });
-      return null;
+      return [];
     },
   };
 
@@ -403,7 +404,6 @@ function makeSession(): SessionState {
   return {
     worktreePath: WORKTREE_PATH,
     graphWorkflowExecution: null,
-    graphWorkflowExecutionHistory: [],
   } as unknown as SessionState;
 }
 
@@ -415,6 +415,7 @@ function makeSession(): SessionState {
 function setupObservability() {
   const sessions = new Map<string, SessionState>();
   const broadcasts: GraphWorkflowSSEEvent[] = [];
+  const appendedEvents: GraphWorkflowExecutionEvent[] = [];
 
   const eventPublisher = createGraphWorkflowExecutionEventPublisher({
     broadcast(event) {
@@ -437,21 +438,39 @@ function setupObservability() {
       }
       return session;
     },
-    async mutateSession(projectPath, sessionName, _label, mutate) {
+    async mutateActiveGraphWorkflowExecution(
+      projectPath,
+      sessionName,
+      _label,
+      mutate,
+    ) {
       const key = `${projectPath}:${sessionName}`;
       let session = sessions.get(key);
       if (!session) {
         session = makeSession();
         sessions.set(key, session);
       }
-      return mutate(session);
+      const { execution, events } = await mutate(
+        session.graphWorkflowExecution,
+      );
+      session.graphWorkflowExecution = execution;
+      appendedEvents.push(...events);
+      return execution;
+    },
+    async archiveActiveGraphWorkflowExecution(projectPath, sessionName) {
+      const key = `${projectPath}:${sessionName}`;
+      const session = sessions.get(key);
+      if (session) session.graphWorkflowExecution = null;
+    },
+    async markGraphWorkflowContextEventsPreReset() {
+      return 0;
     },
     eventPublisher,
     charterService,
     readConfig: async () => ({}) as GlobalConfig,
   });
 
-  return { repo, sessions, broadcasts };
+  return { repo, sessions, broadcasts, appendedEvents };
 }
 
 describe("charter lifecycle integration — Observability", () => {
@@ -460,7 +479,8 @@ describe("charter lifecycle integration — Observability", () => {
     const definition: WorkflowSemanticDefinition = createWorkflowDefinition({
       charter,
     });
-    const { repo, sessions, broadcasts } = setupObservability();
+    const { repo, sessions, broadcasts, appendedEvents } =
+      setupObservability();
 
     await repo.create("/repo", "session-1", {
       definition,
@@ -486,7 +506,7 @@ describe("charter lifecycle integration — Observability", () => {
     const stored = sessions.get("/repo:session-1")?.graphWorkflowExecution;
     expect(stored).not.toBeNull();
     expect(stored?.charter).toEqual(charter);
-    const recorded = stored?.history.find(
+    const recorded = appendedEvents.find(
       (entry) => entry.event.type === "graph-workflow-charter-registered",
     );
     expect(recorded).toBeDefined();

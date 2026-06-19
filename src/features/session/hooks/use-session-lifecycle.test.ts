@@ -48,7 +48,6 @@ const sessionWithObjective: SessionState = {
   creationMode: "focus",
   tddEnabled: false,
   graphWorkflowExecution: null,
-  graphWorkflowExecutionHistory: [],
   referenceDocuments: [],
 };
 

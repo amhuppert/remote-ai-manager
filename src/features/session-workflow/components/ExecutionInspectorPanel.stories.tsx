@@ -1,9 +1,170 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
 import "@/components/workflow-graph/workflow-graph.css";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowExecutionEvent,
+} from "@/lib/workflows/schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import ExecutionInspectorPanel from "./ExecutionInspectorPanel";
+
+const overviewEvents: GraphWorkflowExecutionEvent[] = [
+      {
+        occurredAt: "2026-03-30T09:30:00Z",
+        event: {
+          type: "graph-workflow-validation-result" as const,
+          projectName: "test",
+          sessionName: "test",
+          executionId: "exec-1",
+          contextId: "ctx-3",
+          validatorType: "context" as const,
+          pass: true,
+          summary: "All database migrations applied successfully",
+          issues: [],
+          reopenTaskIds: [],
+          sessionRef: {
+            engine: "claude" as const,
+            lane: "context_validator" as const,
+            conversationId: "conv-val-1",
+          },
+        },
+        preReset: false,
+      },
+      {
+        occurredAt: "2026-03-30T10:00:00Z",
+        preReset: false,
+        event: {
+          type: "graph-workflow-validation-result" as const,
+          projectName: "test",
+          sessionName: "test",
+          executionId: "exec-1",
+          contextId: "ctx-1",
+          validatorType: "context" as const,
+          pass: false,
+          summary: "Context validation failed: missing error handling",
+          issues: [
+            {
+              taskId: "task-1",
+              title: "Missing error handler",
+              description:
+                "POST /api/users does not handle duplicate email errors. The endpoint should return 409 Conflict with a descriptive message.",
+            },
+            {
+              taskId: "task-2",
+              title: "Missing input validation",
+              description:
+                "Email format validation is not strict enough — accepts strings without TLD",
+            },
+          ],
+          reopenTaskIds: ["task-1", "task-2"],
+          sessionRef: {
+            engine: "codex" as const,
+            lane: "context_validator" as const,
+            threadId: "thread-abc123",
+          },
+          reviewArtifact: {
+            engine: "codex" as const,
+            threadId: "thread-abc123",
+            response:
+              "Reviewed the POST /api/users endpoint. Found missing error handling for duplicate emails and insufficient input validation.",
+            usage: {
+              inputTokens: 1240,
+              cachedInputTokens: 800,
+              outputTokens: 312,
+            },
+          },
+        },
+      },
+];
+
+const haltedEvents: GraphWorkflowExecutionEvent[] = [
+      {
+        occurredAt: "2026-03-30T09:30:00Z",
+        preReset: false,
+        event: {
+          type: "graph-workflow-validation-result",
+          projectName: "test",
+          sessionName: "test",
+          executionId: "exec-1",
+          contextId: "ctx-3",
+          validatorType: "context",
+          pass: true,
+          summary: "Migrations passed",
+          issues: [],
+          reopenTaskIds: [],
+        },
+      },
+      {
+        occurredAt: "2026-03-30T10:00:00Z",
+        preReset: false,
+        event: {
+          type: "graph-workflow-validation-result",
+          projectName: "test",
+          sessionName: "test",
+          executionId: "exec-1",
+          contextId: "ctx-1",
+          validatorType: "context",
+          pass: false,
+          summary: "Missing error handling in endpoints",
+          issues: [
+            {
+              taskId: "task-2",
+              title: "Missing error handler",
+              description: "POST /api/users does not handle duplicate emails",
+            },
+          ],
+          reopenTaskIds: ["task-2"],
+        },
+      },
+      {
+        occurredAt: "2026-03-30T10:20:00Z",
+        preReset: false,
+        event: {
+          type: "graph-workflow-validation-result",
+          projectName: "test",
+          sessionName: "test",
+          executionId: "exec-1",
+          contextId: "ctx-1",
+          validatorType: "context",
+          pass: false,
+          summary: "JWT middleware still broken",
+          issues: [
+            {
+              taskId: "task-2",
+              title: "Dependency missing",
+              description: "jsonwebtoken not installed",
+            },
+            {
+              taskId: "task-2",
+              title: "Token verification incomplete",
+              description:
+                "Middleware does not check token expiration or validate issuer claim",
+            },
+            {
+              taskId: "task-3",
+              title: "Missing auth error responses",
+              description:
+                "Endpoints return 500 instead of 401 when token is invalid",
+            },
+          ],
+          reopenTaskIds: ["task-2", "task-3"],
+        },
+      },
+      {
+        occurredAt: "2026-03-30T10:30:00Z",
+        preReset: false,
+        event: {
+          type: "graph-workflow-circuit-breaker",
+          projectName: "test",
+          sessionName: "test",
+          executionId: "exec-1",
+          contextId: "ctx-1",
+          condition: "retry_exhaustion",
+          failureCount: 3,
+          summary: null,
+        },
+      },
+];
 
 function makeExecution(
   overrides: Partial<GraphWorkflowExecution> = {},
@@ -281,74 +442,6 @@ const createUserSchema = z.object({
     joins: {},
     lanePlan: { continuationMap: {}, longestDownstreamPath: {} },
     machineSnapshot: null,
-    history: [
-      {
-        occurredAt: "2026-03-30T09:30:00Z",
-        event: {
-          type: "graph-workflow-validation-result" as const,
-          projectName: "test",
-          sessionName: "test",
-          executionId: "exec-1",
-          contextId: "ctx-3",
-          validatorType: "context" as const,
-          pass: true,
-          summary: "All database migrations applied successfully",
-          issues: [],
-          reopenTaskIds: [],
-          sessionRef: {
-            engine: "claude" as const,
-            lane: "context_validator" as const,
-            conversationId: "conv-val-1",
-          },
-        },
-        preReset: false,
-      },
-      {
-        occurredAt: "2026-03-30T10:00:00Z",
-        preReset: false,
-        event: {
-          type: "graph-workflow-validation-result" as const,
-          projectName: "test",
-          sessionName: "test",
-          executionId: "exec-1",
-          contextId: "ctx-1",
-          validatorType: "context" as const,
-          pass: false,
-          summary: "Context validation failed: missing error handling",
-          issues: [
-            {
-              taskId: "task-1",
-              title: "Missing error handler",
-              description:
-                "POST /api/users does not handle duplicate email errors. The endpoint should return 409 Conflict with a descriptive message.",
-            },
-            {
-              taskId: "task-2",
-              title: "Missing input validation",
-              description:
-                "Email format validation is not strict enough — accepts strings without TLD",
-            },
-          ],
-          reopenTaskIds: ["task-1", "task-2"],
-          sessionRef: {
-            engine: "codex" as const,
-            lane: "context_validator" as const,
-            threadId: "thread-abc123",
-          },
-          reviewArtifact: {
-            engine: "codex" as const,
-            threadId: "thread-abc123",
-            response:
-              "Reviewed the POST /api/users endpoint. Found missing error handling for duplicate emails and insufficient input validation.",
-            usage: {
-              inputTokens: 1240,
-              cachedInputTokens: 800,
-              outputTokens: 312,
-            },
-          },
-        },
-      },
-    ],
     startedAt: "2026-03-30T09:00:00Z",
     completedAt: null,
     haltReason: null,
@@ -479,94 +572,6 @@ function makeHaltedExecution(): GraphWorkflowExecution {
         failureHistory: [],
       },
     },
-    history: [
-      {
-        occurredAt: "2026-03-30T09:30:00Z",
-        preReset: false,
-        event: {
-          type: "graph-workflow-validation-result",
-          projectName: "test",
-          sessionName: "test",
-          executionId: "exec-1",
-          contextId: "ctx-3",
-          validatorType: "context",
-          pass: true,
-          summary: "Migrations passed",
-          issues: [],
-          reopenTaskIds: [],
-        },
-      },
-      {
-        occurredAt: "2026-03-30T10:00:00Z",
-        preReset: false,
-        event: {
-          type: "graph-workflow-validation-result",
-          projectName: "test",
-          sessionName: "test",
-          executionId: "exec-1",
-          contextId: "ctx-1",
-          validatorType: "context",
-          pass: false,
-          summary: "Missing error handling in endpoints",
-          issues: [
-            {
-              taskId: "task-2",
-              title: "Missing error handler",
-              description: "POST /api/users does not handle duplicate emails",
-            },
-          ],
-          reopenTaskIds: ["task-2"],
-        },
-      },
-      {
-        occurredAt: "2026-03-30T10:20:00Z",
-        preReset: false,
-        event: {
-          type: "graph-workflow-validation-result",
-          projectName: "test",
-          sessionName: "test",
-          executionId: "exec-1",
-          contextId: "ctx-1",
-          validatorType: "context",
-          pass: false,
-          summary: "JWT middleware still broken",
-          issues: [
-            {
-              taskId: "task-2",
-              title: "Dependency missing",
-              description: "jsonwebtoken not installed",
-            },
-            {
-              taskId: "task-2",
-              title: "Token verification incomplete",
-              description:
-                "Middleware does not check token expiration or validate issuer claim",
-            },
-            {
-              taskId: "task-3",
-              title: "Missing auth error responses",
-              description:
-                "Endpoints return 500 instead of 401 when token is invalid",
-            },
-          ],
-          reopenTaskIds: ["task-2", "task-3"],
-        },
-      },
-      {
-        occurredAt: "2026-03-30T10:30:00Z",
-        preReset: false,
-        event: {
-          type: "graph-workflow-circuit-breaker",
-          projectName: "test",
-          sessionName: "test",
-          executionId: "exec-1",
-          contextId: "ctx-1",
-          condition: "retry_exhaustion",
-          failureCount: 3,
-          summary: null,
-        },
-      },
-    ],
   });
 }
 
@@ -615,6 +620,7 @@ type Story = StoryObj<typeof meta>;
 export const Overview: Story = {
   args: {
     execution: makeExecution(),
+    events: overviewEvents,
     selectedContextId: null,
     ...sharedHandlers,
   },
@@ -623,6 +629,7 @@ export const Overview: Story = {
 export const OverviewHalted: Story = {
   args: {
     execution: makeHaltedExecution(),
+    events: haltedEvents,
     selectedContextId: null,
     ...sharedHandlers,
   },
@@ -631,6 +638,7 @@ export const OverviewHalted: Story = {
 export const ContextRunning: Story = {
   args: {
     execution: makeExecution(),
+    events: overviewEvents,
     selectedContextId: "ctx-1",
     ...sharedHandlers,
   },
@@ -639,6 +647,7 @@ export const ContextRunning: Story = {
 export const ContextCompleted: Story = {
   args: {
     execution: makeExecution(),
+    events: overviewEvents,
     selectedContextId: "ctx-3",
     ...sharedHandlers,
   },
@@ -647,6 +656,7 @@ export const ContextCompleted: Story = {
 export const ContextPending: Story = {
   args: {
     execution: makeExecution(),
+    events: overviewEvents,
     selectedContextId: "ctx-2",
     ...sharedHandlers,
   },
@@ -655,6 +665,7 @@ export const ContextPending: Story = {
 export const ContextHalted: Story = {
   args: {
     execution: makeHaltedExecution(),
+    events: haltedEvents,
     selectedContextId: "ctx-1",
     ...sharedHandlers,
   },
@@ -664,6 +675,7 @@ export const ContextHistoryTab: Story = {
   name: "Context — History Tab",
   args: {
     execution: makeHaltedExecution(),
+    events: haltedEvents,
     selectedContextId: "ctx-1",
     ...sharedHandlers,
   },

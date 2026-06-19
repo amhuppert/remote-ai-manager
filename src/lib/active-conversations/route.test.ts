@@ -84,7 +84,6 @@ function makeState(
       creationMode: "fast",
       tddEnabled: true,
       graphWorkflowExecution: s.graphWorkflowExecution ?? null,
-      graphWorkflowExecutionHistory: [],
       ...(s.workflowEnvelopes
         ? { workflowEnvelopes: s.workflowEnvelopes }
         : {}),

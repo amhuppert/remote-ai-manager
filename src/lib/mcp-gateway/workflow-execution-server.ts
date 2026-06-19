@@ -3,7 +3,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { readConfig } from "@/lib/config/loader";
 import { createLogger } from "@/lib/logging";
 import { resolveProjectPath } from "@/lib/projects/resolver";
-import { getSession, mutateSession } from "@/lib/state-store";
+import {
+  getSession,
+  mutateActiveGraphWorkflowExecution,
+  archiveActiveGraphWorkflowExecution,
+  markGraphWorkflowContextEventsPreReset,
+} from "@/lib/state-store";
 import { dispatchPushForGraphWorkflowEvent } from "@/lib/push-notification/dispatcher";
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import { createGraphWorkflowExecutionRepository } from "@/lib/workflow-graph/execution-repository";
@@ -93,7 +98,9 @@ const eventPublisher = createGraphWorkflowExecutionEventPublisher({
 
 const executionRepository = createGraphWorkflowExecutionRepository({
   getSession,
-  mutateSession,
+  mutateActiveGraphWorkflowExecution,
+  archiveActiveGraphWorkflowExecution,
+  markGraphWorkflowContextEventsPreReset,
   eventPublisher,
 });
 

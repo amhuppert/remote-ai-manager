@@ -7,8 +7,10 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
   GraphWorkflowCollaborationContinuation,
   GraphWorkflowExecution,
+  GraphWorkflowExecutionEvent,
   GraphWorkflowResolvedContext,
   GraphWorkflowHaltReason,
+  GraphWorkflowSSEEvent,
   GraphWorkflowSharedDocumentEntry,
   GraphWorkflowTaskDefinition,
   GraphWorkflowValidationResultEvent,
@@ -45,6 +47,7 @@ import {
   type RunCircuitBreakerGateInput,
 } from "@/lib/workflows/primitives/circuit-breaker-gate";
 import type { GraphWorkflowLifecycleSnapshot } from "./workflow-manager";
+import type { MutateActiveResult } from "./execution-repository";
 
 interface GraphWorkflowIterationExecutionRepository {
   getActive(
@@ -56,7 +59,10 @@ interface GraphWorkflowIterationExecutionRepository {
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+    ) =>
+      | MutateActiveResult
+      | GraphWorkflowExecution
+      | Promise<MutateActiveResult | GraphWorkflowExecution>,
   ): Promise<GraphWorkflowExecution>;
 }
 
@@ -152,6 +158,16 @@ interface IterationOrchestratorScriptValidatorService {
 
 export interface GraphWorkflowIterationOrchestratorDeps {
   executionRepository: GraphWorkflowIterationExecutionRepository;
+  /**
+   * Latest persisted `graph-workflow-validation-result` event filed under the
+   * context, or null. Replaces the backward scan over `execution.history` — the
+   * orchestrator only ever needs the most recent validation event, which the
+   * context index resolves in a single row lookup.
+   */
+  findLatestContextValidationEvent(
+    executionId: string,
+    contextId: string,
+  ): Promise<GraphWorkflowExecutionEvent | null>;
   createConversation(
     projectPath: string,
     sessionName: string,
@@ -339,43 +355,48 @@ function bindConversationToIncompleteTasks(
   }
 }
 
-function getLatestFailedContextValidationEvent(
+/**
+ * The latest persisted validation-result event for a context is the failure
+ * that reopened its tasks: a passing validation completes the context and the
+ * loop never re-enters to build this feedback. We therefore read just the most
+ * recent validation event (via the context index) and apply the failure
+ * predicate, rather than scanning the full event log.
+ */
+function isReopeningFailure(
+  event: GraphWorkflowSSEEvent,
+): event is GraphWorkflowValidationResultEvent {
+  return (
+    event.type === "graph-workflow-validation-result" &&
+    event.validatorType === "context" &&
+    event.pass === false &&
+    event.reopenTaskIds.length > 0
+  );
+}
+
+async function resolveLatestContextValidationFailureFeedback(
+  deps: GraphWorkflowIterationOrchestratorDeps,
   execution: GraphWorkflowExecution,
   contextId: string,
-): GraphWorkflowValidationResultEvent | null {
-  for (let index = execution.history.length - 1; index >= 0; index -= 1) {
-    const entry = execution.history[index];
-    if (!entry) {
-      continue;
-    }
-
-    const { event } = entry;
-    if (
-      event.type === "graph-workflow-validation-result" &&
-      event.contextId === contextId &&
-      event.validatorType === "context" &&
-      event.pass === false &&
-      event.reopenTaskIds.length > 0
-    ) {
-      return event;
-    }
+): Promise<LatestContextValidationFailureFeedback | undefined> {
+  const latest = await deps.findLatestContextValidationEvent(
+    execution.id,
+    contextId,
+  );
+  if (!latest || !isReopeningFailure(latest.event)) {
+    return undefined;
   }
-
-  return null;
+  return buildLatestContextValidationFailureFeedback(
+    execution,
+    contextId,
+    latest.event,
+  );
 }
 
 function buildLatestContextValidationFailureFeedback(
   execution: GraphWorkflowExecution,
   contextId: string,
+  latestFailure: GraphWorkflowValidationResultEvent,
 ): LatestContextValidationFailureFeedback | undefined {
-  const latestFailure = getLatestFailedContextValidationEvent(
-    execution,
-    contextId,
-  );
-  if (!latestFailure) {
-    return undefined;
-  }
-
   const contextTasks = getContextTasks(execution, contextId);
   const taskTitles = new Map(
     contextTasks.map((task) => [task.id, task.title] as const),
@@ -697,7 +718,7 @@ export function createGraphWorkflowIterationOrchestrator(
     taskFailureMessages: Record<string, string>;
     publishValidationEvent?: (
       execution: GraphWorkflowExecution,
-    ) => GraphWorkflowExecution;
+    ) => GraphWorkflowExecutionEvent[];
   }): Promise<GraphWorkflowExecution> {
     return deps.executionRepository.mutateActive(
       input.projectPath,
@@ -764,9 +785,12 @@ export function createGraphWorkflowIterationOrchestrator(
           true,
         );
 
-        return input.publishValidationEvent
-          ? input.publishValidationEvent(nextExecution)
-          : nextExecution;
+        return {
+          execution: nextExecution,
+          events: input.publishValidationEvent
+            ? input.publishValidationEvent(nextExecution)
+            : [],
+        };
       },
     );
   }
@@ -1057,8 +1081,9 @@ export function createGraphWorkflowIterationOrchestrator(
       await deps.executionRepository.mutateActive(
         input.projectPath,
         input.sessionName,
-        (latest) =>
-          eventPublisher.publishValidationResult({
+        (latest) => ({
+          execution: latest,
+          events: eventPublisher.publishValidationResult({
             projectPath: input.projectPath,
             sessionName: input.sessionName,
             execution: latest,
@@ -1071,6 +1096,7 @@ export function createGraphWorkflowIterationOrchestrator(
             sessionRef: null,
             reviewArtifact: null,
           }),
+        }),
       );
       const haltReason: GraphWorkflowHaltReason = {
         type: "validator_infra_error",
@@ -1173,19 +1199,22 @@ export function createGraphWorkflowIterationOrchestrator(
         }
         contextState.consecutiveFailureCount = 0;
         reset.machineSnapshot = buildMachineSnapshot(reset, true);
-        return eventPublisher.publishValidationResult({
-          projectPath: input.projectPath,
-          sessionName: input.sessionName,
+        return {
           execution: reset,
-          contextId: input.contextId,
-          validatorType: "context",
-          pass: true,
-          summary: validation.summary,
-          issues: [],
-          reopenTaskIds: [],
-          sessionRef: validation.sessionRef ?? null,
-          reviewArtifact: validation.reviewArtifact ?? null,
-        });
+          events: eventPublisher.publishValidationResult({
+            projectPath: input.projectPath,
+            sessionName: input.sessionName,
+            execution: reset,
+            contextId: input.contextId,
+            validatorType: "context",
+            pass: true,
+            summary: validation.summary,
+            issues: [],
+            reopenTaskIds: [],
+            sessionRef: validation.sessionRef ?? null,
+            reviewArtifact: validation.reviewArtifact ?? null,
+          }),
+        };
       },
     );
   }
@@ -1306,8 +1335,9 @@ export function createGraphWorkflowIterationOrchestrator(
         await deps.executionRepository.mutateActive(
           input.projectPath,
           input.sessionName,
-          (latest) =>
-            eventPublisher.publishApprovalPending({
+          (latest) => ({
+            execution: latest,
+            events: eventPublisher.publishApprovalPending({
               projectPath: input.projectPath,
               sessionName: input.sessionName,
               execution: latest,
@@ -1315,6 +1345,7 @@ export function createGraphWorkflowIterationOrchestrator(
               conversationId,
               requestedAt,
             }),
+          }),
         );
       return {
         conversationId,
@@ -1467,7 +1498,8 @@ export function createGraphWorkflowIterationOrchestrator(
     }
 
     const latestContextValidationFailure =
-      buildLatestContextValidationFailureFeedback(
+      await resolveLatestContextValidationFailureFeedback(
+        deps,
         initialExecution,
         input.contextId,
       );
@@ -2002,7 +2034,8 @@ export function createGraphWorkflowIterationOrchestrator(
           attemptNumber: attempt,
           maxAttempts: MAX_FOLLOW_UPS,
           latestContextValidationFailure:
-            buildLatestContextValidationFailureFeedback(
+            await resolveLatestContextValidationFailureFeedback(
+              deps,
               midExecution,
               input.contextId,
             ),

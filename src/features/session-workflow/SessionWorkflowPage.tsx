@@ -4,6 +4,7 @@ import { useParams } from "next/navigation";
 import "@/components/workflow-graph/workflow-graph.css";
 import "./styles/session-workflow.css";
 import { useSessionQuery } from "@/lib/sessions/queries";
+import { useGraphWorkflowHistoryQuery } from "@/lib/workflows/queries";
 import Topbar from "@/components/Topbar";
 import { useWorkflowMobilePanel } from "@/components/workflow-graph/useWorkflowMobilePanel";
 import { WorkflowMobileTabBar } from "@/components/workflow-graph/WorkflowMobileTabBar";
@@ -25,9 +26,10 @@ export default function SessionWorkflowPage() {
 
   const sessionQuery = useSessionQuery(projectName, sessionName);
   const session = sessionQuery.data ?? null;
+  const historyQuery = useGraphWorkflowHistoryQuery(projectName, sessionName);
   const hasGraphWorkflow =
     session?.graphWorkflowExecution != null ||
-    (session?.graphWorkflowExecutionHistory.length ?? 0) > 0;
+    (historyQuery.data?.length ?? 0) > 0;
 
   const { isMobile, mobilePanel, setMobilePanel, autoSwitchPanel } =
     useWorkflowMobilePanel<ExecutionMobilePanel>("graph");

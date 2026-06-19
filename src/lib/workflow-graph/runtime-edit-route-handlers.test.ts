@@ -34,7 +34,6 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     targetBranch: "main",
     parentSessionName: null,
     graphWorkflowExecution: null,
-    graphWorkflowExecutionHistory: [],
     referenceDocuments: [],
     ...overrides,
   };

@@ -93,7 +93,6 @@ function stateWith(convOverrides: Record<string, unknown> = {}): ManagerState {
             targetBranch: "main",
             parentSessionName: null,
             graphWorkflowExecution: null,
-            graphWorkflowExecutionHistory: [],
             referenceDocuments: [],
           },
         },

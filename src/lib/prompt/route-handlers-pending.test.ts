@@ -63,7 +63,6 @@ function makeSession(conversations: ConversationState[]): SessionState {
     targetBranch: "main",
     parentSessionName: null,
     graphWorkflowExecution: null,
-    graphWorkflowExecutionHistory: [],
     referenceDocuments: [],
   };
 }

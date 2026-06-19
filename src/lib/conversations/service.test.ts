@@ -176,7 +176,6 @@ function makeSessionWith(
     targetBranch: "main",
     parentSessionName: null,
     graphWorkflowExecution: null,
-    graphWorkflowExecutionHistory: [],
     referenceDocuments: [],
     ...overrides,
   };
@@ -207,7 +206,6 @@ async function seedSession(
             targetBranch: "main",
             parentSessionName: null,
             graphWorkflowExecution: null,
-            graphWorkflowExecutionHistory: [],
             referenceDocuments: [],
             ...sessionOverrides,
           },

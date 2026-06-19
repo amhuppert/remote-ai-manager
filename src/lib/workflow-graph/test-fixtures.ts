@@ -296,7 +296,6 @@ export function createWorkflowExecution(
     joins: {},
     lanePlan: { continuationMap: {}, longestDownstreamPath: {} },
     machineSnapshot: null,
-    history: [],
     startedAt: timestamp,
     completedAt: null,
     haltReason: null,

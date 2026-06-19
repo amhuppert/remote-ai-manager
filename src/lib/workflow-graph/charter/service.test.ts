@@ -6,7 +6,10 @@ import {
   renderCharterMarkdown,
 } from "@/lib/workflow-graph/charter/render";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowExecutionEvent,
+} from "@/lib/workflows/schemas";
 import { createWorkflowCharterService } from "./service";
 
 interface CapturedWrite {
@@ -29,7 +32,26 @@ function setup(
     });
 
   const publishCharterRegistered = vi.fn(
-    (input: { execution: GraphWorkflowExecution }) => input.execution,
+    (input: {
+      execution: GraphWorkflowExecution;
+      definitionId: string;
+      definitionRevision: number;
+      charterHash: string;
+    }): GraphWorkflowExecutionEvent[] => [
+      {
+        occurredAt: "2026-04-01T00:00:00.000Z",
+        preReset: false,
+        event: {
+          type: "graph-workflow-charter-registered",
+          projectName: "p",
+          sessionName: "s",
+          executionId: input.execution.id,
+          definitionId: input.definitionId,
+          definitionRevision: input.definitionRevision,
+          charterHash: input.charterHash,
+        },
+      },
+    ],
   );
 
   const service = createWorkflowCharterService({
@@ -159,12 +181,23 @@ describe("createWorkflowCharterService.seedCharter", () => {
     );
   });
 
-  it("returns the execution produced by publishCharterRegistered (history appended)", async () => {
+  it("returns the charter-registered events produced by publishCharterRegistered", async () => {
     const writes: CapturedWrite[] = [];
-    const taggedExecution = {
-      ...createWorkflowExecution(),
-      id: "tagged-by-publisher",
-    };
+    const taggedEvents: GraphWorkflowExecutionEvent[] = [
+      {
+        occurredAt: "2026-04-01T00:00:00.000Z",
+        preReset: false,
+        event: {
+          type: "graph-workflow-charter-registered",
+          projectName: "p",
+          sessionName: "s",
+          executionId: "exec-tagged",
+          definitionId: "wf",
+          definitionRevision: 1,
+          charterHash: "sha256:tagged",
+        },
+      },
+    ];
     const service = createWorkflowCharterService({
       writeFile: async (
         absolutePath: string,
@@ -173,10 +206,10 @@ describe("createWorkflowCharterService.seedCharter", () => {
         writes.push({ absolutePath, contents: String(contents) });
       },
       ensureDir: async () => {},
-      publishCharterRegistered: () => taggedExecution,
+      publishCharterRegistered: () => taggedEvents,
     });
 
-    const { nextExecution } = await service.seedCharter({
+    const { events } = await service.seedCharter({
       charter: makeTestCharter(),
       worktreePath: "/repo/wt",
       execution: createWorkflowExecution(),
@@ -184,7 +217,7 @@ describe("createWorkflowCharterService.seedCharter", () => {
       sessionName: "session-1",
     });
 
-    expect(nextExecution.id).toBe("tagged-by-publisher");
+    expect(events).toEqual(taggedEvents);
   });
 
   it("never writes any path other than charter.md, even for an external-readonly source", async () => {

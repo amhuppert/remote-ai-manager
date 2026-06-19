@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { createWorkflowExecution } from "@/lib/workflow-graph/test-fixtures";
 import type {
   GraphWorkflowExecution,
-  GraphWorkflowExecutionEvent,
   GraphWorkflowAgentSessionState,
 } from "@/lib/workflows/schemas";
 import { resetExecutionContext } from "./reset-context";
@@ -27,65 +26,6 @@ function makeLaneState(
     rotateBeforeNextTurn: false,
     limitEvaluation: "disabled",
     lastUsedAt: now,
-  };
-}
-
-function makeHistoryEvent(
-  type:
-    | "graph-workflow-status"
-    | "graph-workflow-context-status"
-    | "graph-workflow-task-status",
-  contextId: string | null,
-): GraphWorkflowExecutionEvent {
-  if (type === "graph-workflow-status") {
-    return {
-      occurredAt: now,
-      preReset: false,
-      event: {
-        type,
-        projectName: "p",
-        sessionName: "s",
-        executionId: "execution-1",
-        workflowStatus: "running",
-        activeContextIds: contextId ? [contextId] : [],
-        activeBatchIds: [],
-        activeJoinIds: [],
-        haltReason: null,
-        pendingHaltReason: null,
-        secondaryHaltReasons: [],
-      },
-    };
-  }
-  if (type === "graph-workflow-context-status") {
-    return {
-      occurredAt: now,
-      preReset: false,
-      event: {
-        type,
-        projectName: "p",
-        sessionName: "s",
-        executionId: "execution-1",
-        contextId: contextId ?? "",
-        status: "running",
-        remainingTaskCount: 0,
-        iterationCount: 1,
-      },
-    };
-  }
-  return {
-    occurredAt: now,
-    preReset: false,
-    event: {
-      type,
-      projectName: "p",
-      sessionName: "s",
-      executionId: "execution-1",
-      taskId: `task-${contextId}-1`,
-      contextId: contextId ?? "",
-      status: "running",
-      source: "user",
-      order: 1,
-    },
   };
 }
 
@@ -201,13 +141,6 @@ function buildExecution(
     haltReason: null,
     completedAt: null,
     machineSnapshot: { state: "paused" },
-    history: [
-      makeHistoryEvent("graph-workflow-status", "context-implement"),
-      makeHistoryEvent("graph-workflow-context-status", "context-implement"),
-      makeHistoryEvent("graph-workflow-task-status", "context-implement"),
-      makeHistoryEvent("graph-workflow-context-status", "context-plan"),
-      makeHistoryEvent("graph-workflow-task-status", "context-plan"),
-    ],
     ...overrides,
   });
 }
@@ -287,38 +220,6 @@ describe("resetExecutionContext", () => {
     expect(next.laneStates["context-plan"]?.["context_validator"]).toEqual(
       execution.laneStates["context-plan"]?.["context_validator"],
     );
-  });
-
-  it("marks matching history rows as preReset and leaves others unchanged", () => {
-    const execution = buildExecution();
-
-    const next = resetExecutionContext(execution, "context-implement");
-
-    const matchingRows = next.history.filter((row) => {
-      const event = row.event;
-      return "contextId" in event && event.contextId === "context-implement";
-    });
-    expect(matchingRows.length).toBeGreaterThan(0);
-    for (const row of matchingRows) {
-      expect(row.preReset).toBe(true);
-    }
-
-    const unrelated = next.history.filter((row) => {
-      const event = row.event;
-      return "contextId" in event && event.contextId === "context-plan";
-    });
-    expect(unrelated.length).toBeGreaterThan(0);
-    for (const row of unrelated) {
-      expect(row.preReset).toBe(false);
-    }
-  });
-
-  it("does not delete historical events for the target context", () => {
-    const execution = buildExecution();
-
-    const next = resetExecutionContext(execution, "context-implement");
-
-    expect(next.history).toHaveLength(execution.history.length);
   });
 
   it("leaves workflow status paused, clears haltReason, completedAt, and machineSnapshot", () => {
@@ -461,73 +362,5 @@ describe("resetExecutionContext", () => {
       "context-implement",
     );
     expect(next.lanePlan.longestDownstreamPath["context-plan"]).toBe(1);
-  });
-
-  it("marks graph-workflow-status history rows tied to the target context via activeContextIds or haltReason", () => {
-    const execution = buildExecution({
-      history: [
-        {
-          occurredAt: now,
-          preReset: false,
-          event: {
-            type: "graph-workflow-status",
-            projectName: "p",
-            sessionName: "s",
-            executionId: "execution-1",
-            workflowStatus: "running",
-            activeContextIds: ["context-implement"],
-            activeBatchIds: [],
-            activeJoinIds: [],
-            haltReason: null,
-            pendingHaltReason: null,
-            secondaryHaltReasons: [],
-          },
-        },
-        {
-          occurredAt: now,
-          preReset: false,
-          event: {
-            type: "graph-workflow-status",
-            projectName: "p",
-            sessionName: "s",
-            executionId: "execution-1",
-            workflowStatus: "halted",
-            activeContextIds: [],
-            activeBatchIds: [],
-            activeJoinIds: [],
-            haltReason: {
-              type: "max_iterations",
-              contextId: "context-implement",
-              iterationCount: 3,
-            },
-            pendingHaltReason: null,
-            secondaryHaltReasons: [],
-          },
-        },
-        {
-          occurredAt: now,
-          preReset: false,
-          event: {
-            type: "graph-workflow-status",
-            projectName: "p",
-            sessionName: "s",
-            executionId: "execution-1",
-            workflowStatus: "running",
-            activeContextIds: ["context-plan"],
-            activeBatchIds: [],
-            activeJoinIds: [],
-            haltReason: null,
-            pendingHaltReason: null,
-            secondaryHaltReasons: [],
-          },
-        },
-      ],
-    });
-
-    const next = resetExecutionContext(execution, "context-implement");
-
-    expect(next.history[0]?.preReset).toBe(true);
-    expect(next.history[1]?.preReset).toBe(true);
-    expect(next.history[2]?.preReset).toBe(false);
   });
 });

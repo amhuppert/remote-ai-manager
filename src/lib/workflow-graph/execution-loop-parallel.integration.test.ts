@@ -54,8 +54,20 @@ interface InMemoryExecutionRepository {
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+    ) =>
+      | GraphWorkflowExecution
+      | { execution: GraphWorkflowExecution; events: unknown[] }
+      | Promise<
+          | GraphWorkflowExecution
+          | { execution: GraphWorkflowExecution; events: unknown[] }
+        >,
   ): Promise<GraphWorkflowExecution>;
+  markContextEventsPreReset(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+    contextId: string,
+  ): Promise<number>;
 }
 
 function createRepository(
@@ -83,12 +95,18 @@ function createRepository(
         if (!active) {
           throw new Error("No active execution");
         }
-        const updated = await fn(structuredClone(active));
-        active = updated;
-        return updated;
+        const result = await fn(structuredClone(active));
+        active =
+          "execution" in result && "events" in result
+            ? result.execution
+            : result;
+        return active;
       } finally {
         release();
       }
+    },
+    async markContextEventsPreReset() {
+      return 0;
     },
     read() {
       return active;
@@ -113,7 +131,6 @@ function createSession(overrides: Partial<SessionState> = {}): SessionState {
     targetBranch: "main",
     parentSessionName: null,
     graphWorkflowExecution: null,
-    graphWorkflowExecutionHistory: [],
     referenceDocuments: [],
     ...overrides,
   } as unknown as SessionState;
@@ -303,7 +320,6 @@ function createInitialExecution(
     joins: {},
     lanePlan: { continuationMap: {}, longestDownstreamPath: {} },
     machineSnapshot: null,
-    history: [],
     startedAt: "2026-03-27T12:00:00.000Z",
     completedAt: null,
     haltReason: null,
@@ -2017,8 +2033,8 @@ describe("execution loop — parallel integration", () => {
     expect(mergeAt).toBeGreaterThan(lockAcquiredAt);
     expect(lockReleasedAt).toBeGreaterThan(mergeAt);
 
-    const resolvedEvents = result.history
-      .map((entry) => entry.event)
+    const resolvedEvents = broadcast.mock.calls
+      .map(([event]) => event)
       .filter((event) => event.type === "graph-workflow-approval-resolved");
     expect(resolvedEvents).toHaveLength(1);
     expect(resolvedEvents[0]).toMatchObject({
@@ -2189,8 +2205,8 @@ describe("execution loop — parallel integration", () => {
     expect(mergeAt).toBeGreaterThan(lockAcquiredAt);
     expect(lockReleasedAt).toBeGreaterThan(mergeAt);
 
-    const resolvedEvents = result.history
-      .map((entry) => entry.event)
+    const resolvedEvents = broadcast.mock.calls
+      .map(([event]) => event)
       .filter((event) => event.type === "graph-workflow-approval-resolved");
     expect(resolvedEvents).toHaveLength(1);
     expect(resolvedEvents[0]).toMatchObject({

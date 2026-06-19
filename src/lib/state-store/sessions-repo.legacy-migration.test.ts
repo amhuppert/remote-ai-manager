@@ -110,7 +110,6 @@ function buildCleanExecutionJson(): string {
     joins: {},
     lanePlan: { continuationMap: {}, longestDownstreamPath: {} },
     machineSnapshot: null,
-    history: [],
     startedAt: "2026-04-04T00:00:00.000Z",
     completedAt: null,
     haltReason: null,

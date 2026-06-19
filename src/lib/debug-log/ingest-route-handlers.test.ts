@@ -65,7 +65,6 @@ const BASE_SESSION: SessionState = {
   targetBranch: "main",
   parentSessionName: null,
   graphWorkflowExecution: null,
-  graphWorkflowExecutionHistory: [],
   referenceDocuments: [],
 };
 

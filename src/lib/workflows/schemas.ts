@@ -404,7 +404,7 @@ export type GraphWorkflowSharedDocumentEntry = z.infer<
   typeof graphWorkflowSharedDocumentEntrySchema
 >;
 
-const graphWorkflowStatusSchema = z.enum([
+export const graphWorkflowStatusSchema = z.enum([
   "pending",
   "running",
   "paused",
@@ -1133,6 +1133,13 @@ export type GraphWorkflowExecutionEvent = z.infer<
   typeof graphWorkflowExecutionEventSchema
 >;
 
+export const graphWorkflowExecutionEventsResponseSchema = z.object({
+  events: z.array(graphWorkflowExecutionEventSchema),
+});
+export type GraphWorkflowExecutionEventsResponse = z.infer<
+  typeof graphWorkflowExecutionEventsResponseSchema
+>;
+
 export const resetExecutionContextRequestSchema = z.object({
   executionId: z.string().trim().min(1),
   contextId: z.string().trim().min(1),
@@ -1226,7 +1233,6 @@ export const graphWorkflowExecutionSchema = z.object({
     longestDownstreamPath: {},
   }),
   machineSnapshot: z.unknown().nullable().default(null),
-  history: z.array(graphWorkflowExecutionEventSchema).default([]),
   startedAt: z.string(),
   completedAt: z.string().nullable().default(null),
   haltReason: graphWorkflowHaltReasonSchema.nullable().default(null),

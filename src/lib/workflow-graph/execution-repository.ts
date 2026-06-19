@@ -22,6 +22,7 @@ import type { GlobalConfig } from "@/lib/config/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type {
   GraphWorkflowExecution,
+  GraphWorkflowExecutionEvent,
   WorkflowSemanticDefinition,
 } from "@/lib/workflows/schemas";
 export { GraphWorkflowValidationError } from "./validation";
@@ -36,17 +37,65 @@ export interface GraphWorkflowExecutionSeed {
   startedAt: string;
 }
 
+/**
+ * A `mutateActive` callback may return the next execution alone (its
+ * append-only events are derived from the prev→next diff) or pair it with
+ * `events` it published directly (e.g. a validation-result or approval event,
+ * which no state diff can reconstruct). Both the diff events and these extra
+ * events are appended to `graph_workflow_events` in the same write.
+ */
+export interface MutateActiveResult {
+  execution: GraphWorkflowExecution;
+  events: GraphWorkflowExecutionEvent[];
+}
+
+function isMutateActiveResult(
+  value: MutateActiveResult | GraphWorkflowExecution,
+): value is MutateActiveResult {
+  return (
+    "events" in value &&
+    "execution" in value &&
+    Array.isArray((value as MutateActiveResult).events)
+  );
+}
+
 export interface GraphWorkflowExecutionRepositoryDeps {
   getSession(
     projectPath: string,
     sessionName: string,
   ): Promise<SessionState | null>;
-  mutateSession<T = void>(
+  /**
+   * Atomically persist the history-free execution blob and append the
+   * publisher-computed events to `graph_workflow_events` inside one write-queue
+   * critical section. The mutator receives the currently-persisted execution.
+   */
+  mutateActiveGraphWorkflowExecution(
     projectPath: string,
     sessionName: string,
     label: string,
-    mutate: (session: SessionState) => T | Promise<T>,
-  ): Promise<T>;
+    mutate: (current: GraphWorkflowExecution | null) => Promise<{
+      execution: GraphWorkflowExecution;
+      events: GraphWorkflowExecutionEvent[];
+    }>,
+  ): Promise<GraphWorkflowExecution>;
+  /**
+   * Move the active execution to the archived-executions table and null the
+   * active blob (its events stay in `graph_workflow_events`).
+   */
+  archiveActiveGraphWorkflowExecution(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<void>;
+  /**
+   * Mark every persisted event for a context up to the current boundary as
+   * pre-reset, replacing the old in-memory `history.map` reset marking.
+   */
+  markGraphWorkflowContextEventsPreReset(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+    contextId: string,
+  ): Promise<number>;
   eventPublisher?: ReturnType<
     typeof createGraphWorkflowExecutionEventPublisher
   >;
@@ -90,7 +139,6 @@ async function createExecutionFromSeed(
     taskStates,
     sharedDocuments: [],
     machineSnapshot: null,
-    history: [],
     startedAt: seed.startedAt,
     completedAt: null,
     haltReason: null,
@@ -155,38 +203,37 @@ export function createGraphWorkflowExecutionRepository(
 
     // Seed the charter before the first iteration: write charter.md inside the
     // worktree, register the kind:"charter" shared-document entry, snapshot the
-    // charter onto the execution, and append the charter-registered event. A
+    // charter onto the execution, and compute the charter-registered event. A
     // render/write/register failure throws here, halting the seed with no
     // partial charter state.
-    const { nextExecution: seededExecution } = await charterService.seedCharter(
-      {
-        charter: baseExecution.charter,
-        worktreePath: session.worktreePath,
-        execution: baseExecution,
-        projectPath,
-        sessionName,
-      },
-    );
+    const {
+      nextExecution: seededExecution,
+      events: charterEvents,
+    } = await charterService.seedCharter({
+      charter: baseExecution.charter,
+      worktreePath: session.worktreePath,
+      execution: baseExecution,
+      projectPath,
+      sessionName,
+    });
 
-    let storedExecution = seededExecution;
-
-    await deps.mutateSession(
+    return deps.mutateActiveGraphWorkflowExecution(
       projectPath,
       sessionName,
       "graphWorkflowExecution.create",
-      (session) => {
-        storedExecution = eventPublisher.publishExecutionUpdate({
+      async () => {
+        const updateEvents = eventPublisher.publishExecutionUpdate({
           projectPath,
           sessionName,
           previousExecution: null,
           nextExecution: seededExecution,
         });
-        session.graphWorkflowExecution = storedExecution;
-        session.lastActivityAt = seed.startedAt;
+        return {
+          execution: seededExecution,
+          events: [...charterEvents, ...updateEvents],
+        };
       },
     );
-
-    return storedExecution;
   }
 
   async function update(
@@ -196,22 +243,21 @@ export function createGraphWorkflowExecutionRepository(
   ): Promise<void> {
     const parsed = graphWorkflowExecutionSchema.parse(execution);
 
-    await deps.mutateSession(
+    await deps.mutateActiveGraphWorkflowExecution(
       projectPath,
       sessionName,
       "graphWorkflowExecution.update",
-      (session) => {
-        if (!session.graphWorkflowExecution) {
+      async (current) => {
+        if (!current) {
           throw new Error("No active graph workflow execution");
         }
-
-        session.graphWorkflowExecution = eventPublisher.publishExecutionUpdate({
+        const events = eventPublisher.publishExecutionUpdate({
           projectPath,
           sessionName,
-          previousExecution: session.graphWorkflowExecution,
+          previousExecution: current,
           nextExecution: parsed,
         });
-        session.lastActivityAt = new Date().toISOString();
+        return { execution: parsed, events };
       },
     );
   }
@@ -221,31 +267,33 @@ export function createGraphWorkflowExecutionRepository(
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+    ) =>
+      | MutateActiveResult
+      | GraphWorkflowExecution
+      | Promise<MutateActiveResult | GraphWorkflowExecution>,
   ): Promise<GraphWorkflowExecution> {
-    return deps.mutateSession(
+    return deps.mutateActiveGraphWorkflowExecution(
       projectPath,
       sessionName,
       "graphWorkflowExecution.mutateActive",
-      async (session) => {
-        if (!session.graphWorkflowExecution) {
+      async (current) => {
+        if (!current) {
           throw new Error(
             "Session does not have an active graph workflow execution",
           );
         }
 
-        const previous = session.graphWorkflowExecution;
-        const next = await fn(structuredClone(previous));
+        const result = await fn(structuredClone(current));
+        const next = isMutateActiveResult(result) ? result.execution : result;
+        const extraEvents = isMutateActiveResult(result) ? result.events : [];
         const parsed = graphWorkflowExecutionSchema.parse(next);
-        const published = eventPublisher.publishExecutionUpdate({
+        const diffEvents = eventPublisher.publishExecutionUpdate({
           projectPath,
           sessionName,
-          previousExecution: previous,
+          previousExecution: current,
           nextExecution: parsed,
         });
-        session.graphWorkflowExecution = published;
-        session.lastActivityAt = new Date().toISOString();
-        return published;
+        return { execution: parsed, events: [...diffEvents, ...extraEvents] };
       },
     );
   }
@@ -254,21 +302,20 @@ export function createGraphWorkflowExecutionRepository(
     projectPath: string,
     sessionName: string,
   ): Promise<void> {
-    await deps.mutateSession(
+    await deps.archiveActiveGraphWorkflowExecution(projectPath, sessionName);
+  }
+
+  async function markContextEventsPreReset(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+    contextId: string,
+  ): Promise<number> {
+    return deps.markGraphWorkflowContextEventsPreReset(
       projectPath,
       sessionName,
-      "graphWorkflowExecution.archive",
-      (session) => {
-        if (!session.graphWorkflowExecution) {
-          return;
-        }
-
-        session.graphWorkflowExecutionHistory.push(
-          session.graphWorkflowExecution,
-        );
-        session.graphWorkflowExecution = null;
-        session.lastActivityAt = new Date().toISOString();
-      },
+      executionId,
+      contextId,
     );
   }
 
@@ -278,5 +325,6 @@ export function createGraphWorkflowExecutionRepository(
     update,
     mutateActive,
     archiveActive,
+    markContextEventsPreReset,
   };
 }

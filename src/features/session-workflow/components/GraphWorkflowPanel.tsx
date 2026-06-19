@@ -7,6 +7,7 @@ import "@/components/workflow-graph/workflow-graph.css";
 import { generateWorkflowLayout } from "@/lib/workflow-graph/layout";
 import type {
   GraphWorkflowExecution,
+  GraphWorkflowExecutionEvent,
   GraphWorkflowVisualLayout,
 } from "@/lib/workflows/schemas";
 import type { ExecutionMobilePanel } from "../SessionWorkflowPage";
@@ -20,6 +21,7 @@ interface GraphWorkflowPanelProps {
   projectName: string;
   sessionName: string;
   execution: GraphWorkflowExecution | null;
+  events: GraphWorkflowExecutionEvent[];
   archivedExecutions: GraphWorkflowExecution[];
   layout: GraphWorkflowVisualLayout | null;
   onPause(): void;
@@ -49,6 +51,7 @@ export default function GraphWorkflowPanel({
   projectName,
   sessionName,
   execution,
+  events,
   layout,
   onPause,
   onResume,
@@ -164,6 +167,7 @@ export default function GraphWorkflowPanel({
               />
               <ExecutionInspectorPanel
                 execution={execution}
+                events={events}
                 selectedContextId={selectedContextId}
                 onSelectContext={(id) => handleSelectContext(id)}
                 onDeselectContext={() => handleSelectContext(null)}
@@ -238,6 +242,7 @@ export default function GraphWorkflowPanel({
               )}
               <ExecutionInspectorPanel
                 execution={execution}
+                events={events}
                 selectedContextId={selectedContextId}
                 onSelectContext={(id) => handleSelectContext(id)}
                 onDeselectContext={() => handleSelectContext(null)}

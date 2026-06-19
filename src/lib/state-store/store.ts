@@ -12,6 +12,8 @@ import {
   canonicalConversationRow,
   createConversationsRepo,
 } from "./conversations-repo";
+import { createGraphWorkflowArchivedExecutionsRepo } from "./graph-workflow-archived-executions-repo";
+import { createGraphWorkflowEventsRepo } from "./graph-workflow-events-repo";
 import { createProjectConversationsRepo } from "./project-conversations-repo";
 import { createProjectsRepo } from "./projects-repo";
 import {
@@ -77,6 +79,11 @@ export function createStateStore(deps: StateStoreDeps = {}) {
       deps.repos?.projectConversations ?? createProjectConversationsRepo(db),
     referenceDocuments:
       deps.repos?.referenceDocuments ?? createReferenceDocumentsRepo(db),
+    graphWorkflowEvents:
+      deps.repos?.graphWorkflowEvents ?? createGraphWorkflowEventsRepo(db),
+    graphWorkflowArchivedExecutions:
+      deps.repos?.graphWorkflowArchivedExecutions ??
+      createGraphWorkflowArchivedExecutionsRepo(db),
   };
 
   const aggregate: StateAggregate =
@@ -352,6 +359,11 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     getProjectMcpOverrides: accessors.getProjectMcpOverrides,
     getArchivedProjects: accessors.getArchivedProjects,
     getPinnedProjects: accessors.getPinnedProjects,
+    getGraphWorkflowEventsTail: accessors.getGraphWorkflowEventsTail,
+    findLatestGraphWorkflowContextEvent:
+      accessors.findLatestGraphWorkflowContextEvent,
+    listArchivedGraphWorkflowExecutions:
+      accessors.listArchivedGraphWorkflowExecutions,
     getOrCreateProject,
     updateSession,
     removeSession,
@@ -368,6 +380,12 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     setProjectPinned: setters.setProjectPinned,
     setSessionSpawnedFrom: setters.setSessionSpawnedFrom,
     addPlcSpawnedSessionIds: setters.addPlcSpawnedSessionIds,
+    mutateActiveGraphWorkflowExecution:
+      setters.mutateActiveGraphWorkflowExecution,
+    archiveActiveGraphWorkflowExecution:
+      setters.archiveActiveGraphWorkflowExecution,
+    markGraphWorkflowContextEventsPreReset:
+      setters.markGraphWorkflowContextEventsPreReset,
     createReferenceDocument: setters.createReferenceDocument,
     deleteReferenceDocument: setters.deleteReferenceDocument,
   };

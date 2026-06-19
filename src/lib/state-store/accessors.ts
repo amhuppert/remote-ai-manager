@@ -16,6 +16,10 @@ import type { McpOverrides } from "@/lib/mcp/schemas";
 import type { ManagerState } from "@/lib/projects/schemas";
 import type { ReferenceDocument } from "@/lib/reference-documents/schemas";
 import type { SessionListItem, SessionState } from "@/lib/sessions/schemas";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowExecutionEvent,
+} from "@/lib/workflows/schemas";
 import type { StateStoreCore } from "./schemas";
 
 const logger = createLogger("state-store");
@@ -419,6 +423,57 @@ export function createAccessors(core: StateStoreCore) {
     }
   }
 
+  /**
+   * Tail of the persisted append-only event log for a graph-workflow execution,
+   * in chronological order (oldest first). Replaces reading
+   * `execution.history`. Caller passes a limit so the full log is never loaded
+   * into memory.
+   */
+  async function getGraphWorkflowEventsTail(
+    executionId: string,
+    limit: number,
+  ): Promise<GraphWorkflowExecutionEvent[]> {
+    return repos.graphWorkflowEvents.findTail(executionId, limit);
+  }
+
+  /**
+   * Latest persisted event of `eventType` filed under `contextId` for an
+   * execution, or null. Backs the iteration orchestrator's latest-validation
+   * lookup. Returns the single most recent row via the context index.
+   */
+  async function findLatestGraphWorkflowContextEvent(
+    executionId: string,
+    contextId: string,
+    eventType: string,
+  ): Promise<GraphWorkflowExecutionEvent | null> {
+    return repos.graphWorkflowEvents.findLatestForContext(
+      executionId,
+      contextId,
+      eventType,
+    );
+  }
+
+  async function listArchivedGraphWorkflowExecutions(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<GraphWorkflowExecution[]> {
+    const summaries =
+      repos.graphWorkflowArchivedExecutions.listSummariesBySession(
+        projectPath,
+        sessionName,
+      );
+    const out: GraphWorkflowExecution[] = [];
+    for (const summary of summaries) {
+      const execution = repos.graphWorkflowArchivedExecutions.findByExecution(
+        projectPath,
+        sessionName,
+        summary.executionId,
+      );
+      if (execution) out.push(execution);
+    }
+    return out;
+  }
+
   return {
     readState,
     getSession,
@@ -435,5 +490,8 @@ export function createAccessors(core: StateStoreCore) {
     getProjectMcpOverrides,
     getArchivedProjects,
     getPinnedProjects,
+    getGraphWorkflowEventsTail,
+    findLatestGraphWorkflowContextEvent,
+    listArchivedGraphWorkflowExecutions,
   };
 }

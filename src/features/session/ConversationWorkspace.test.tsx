@@ -460,7 +460,6 @@ const baseSession: SessionState = {
   creationMode: "fast" as const,
   tddEnabled: true,
   graphWorkflowExecution: null,
-  graphWorkflowExecutionHistory: [],
   referenceDocuments: [],
 };
 

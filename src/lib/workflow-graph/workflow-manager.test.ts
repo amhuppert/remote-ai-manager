@@ -54,15 +54,31 @@ interface InMemoryExecutionRepository {
     sessionName: string,
     fn: (
       execution: GraphWorkflowExecution,
-    ) => GraphWorkflowExecution | Promise<GraphWorkflowExecution>,
+    ) =>
+      | GraphWorkflowExecution
+      | { execution: GraphWorkflowExecution; events: unknown[] }
+      | Promise<
+          | GraphWorkflowExecution
+          | { execution: GraphWorkflowExecution; events: unknown[] }
+        >,
   ): Promise<GraphWorkflowExecution>;
+  markContextEventsPreReset(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+    contextId: string,
+  ): Promise<number>;
 }
 
 function createRepository(
   initialExecution: GraphWorkflowExecution | null = null,
-): InMemoryExecutionRepository & { read(): GraphWorkflowExecution | null } {
+): InMemoryExecutionRepository & {
+  read(): GraphWorkflowExecution | null;
+  preResetCalls: Array<{ executionId: string; contextId: string }>;
+} {
   let activeExecution = initialExecution;
   let lock: Promise<void> = Promise.resolve();
+  const preResetCalls: Array<{ executionId: string; contextId: string }> = [];
 
   return {
     async getActive() {
@@ -95,16 +111,29 @@ function createRepository(
             "Session does not have an active graph workflow execution",
           );
         }
-        const next = await fn(structuredClone(activeExecution));
-        activeExecution = next;
-        return next;
+        const result = await fn(structuredClone(activeExecution));
+        activeExecution =
+          "execution" in result && "events" in result
+            ? result.execution
+            : (result as GraphWorkflowExecution);
+        return activeExecution;
       } finally {
         release();
       }
     },
+    async markContextEventsPreReset(
+      _projectPath,
+      _sessionName,
+      executionId,
+      contextId,
+    ) {
+      preResetCalls.push({ executionId, contextId });
+      return 0;
+    },
     read() {
       return activeExecution;
     },
+    preResetCalls,
   };
 }
 
@@ -2572,7 +2601,6 @@ describe("graph workflow manager", () => {
         targetBranch: "main",
         parentSessionName: null,
         graphWorkflowExecution: null,
-        graphWorkflowExecutionHistory: [],
         referenceDocuments: [],
         ...overrides,
       };

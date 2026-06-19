@@ -45,7 +45,6 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     targetBranch: "main",
     parentSessionName: null,
     graphWorkflowExecution: null,
-    graphWorkflowExecutionHistory: [],
     referenceDocuments: [],
     ...overrides,
   };
@@ -73,6 +72,13 @@ describe("graph workflow execution route handlers", () => {
   const drainAndHalt = vi.fn();
   const recordApprovalDecision = vi.fn();
   const readSessionWorktreeDirtyPaths = vi.fn();
+  const listArchivedExecutions =
+    vi.fn<
+      (
+        _projectPath: string,
+        _sessionName: string,
+      ) => Promise<GraphWorkflowExecution[]>
+    >();
 
   const handlers = createGraphWorkflowExecutionRouteHandlers({
     resolveProjectPath,
@@ -90,10 +96,12 @@ describe("graph workflow execution route handlers", () => {
     drainAndHalt,
     recordApprovalDecision,
     readSessionWorktreeDirtyPaths,
+    listArchivedExecutions,
   });
 
   beforeEach(() => {
     vi.resetAllMocks();
+    listArchivedExecutions.mockResolvedValue([]);
   });
 
   it("starts an execution and archives a previous terminal run first", async () => {
@@ -280,16 +288,16 @@ describe("graph workflow execution route handlers", () => {
             },
           },
         }),
-        graphWorkflowExecutionHistory: [
-          createWorkflowExecution({
-            id: "execution-history-1",
-            status: "aborted",
-            completedAt: "2026-03-27T11:00:00.000Z",
-            haltReason: { type: "aborted" },
-          }),
-        ],
       }),
     );
+    listArchivedExecutions.mockResolvedValue([
+      createWorkflowExecution({
+        id: "execution-history-1",
+        status: "aborted",
+        completedAt: "2026-03-27T11:00:00.000Z",
+        haltReason: { type: "aborted" },
+      }),
+    ]);
 
     const response = await handlers.STATUS(
       makeRequest(
@@ -1141,7 +1149,12 @@ describe("graph workflow resolve-approval route handler", () => {
   function buildHandlers() {
     const repository = createGraphWorkflowExecutionRepository({
       getSession: fixture.store.getSession,
-      mutateSession: fixture.store.mutateSession,
+      mutateActiveGraphWorkflowExecution:
+        fixture.store.mutateActiveGraphWorkflowExecution,
+      archiveActiveGraphWorkflowExecution:
+        fixture.store.archiveActiveGraphWorkflowExecution,
+      markGraphWorkflowContextEventsPreReset:
+        fixture.store.markGraphWorkflowContextEventsPreReset,
       eventPublisher: createGraphWorkflowExecutionEventPublisher({
         broadcast: () => {},
         dispatchPush: () => {},
@@ -1615,11 +1628,15 @@ describe("implementer runner wiring (unified executePromptStream path)", () => {
           return activeExecution;
         },
         async mutateActive(_p, _s, fn) {
-          const next = await fn(structuredClone(activeExecution));
-          activeExecution = next;
-          return next;
+          const result = await fn(structuredClone(activeExecution));
+          activeExecution =
+            "execution" in result && "events" in result
+              ? result.execution
+              : result;
+          return activeExecution;
         },
       },
+      findLatestContextValidationEvent: async () => null,
       createConversation: vi.fn(async () => ({ id: "conv-codex-1" })),
       createToolServer: vi.fn(() => ({ server: { servers: [] } })),
       // Wire runAgentIteration the same way execution-route-handlers.ts does
@@ -1688,11 +1705,15 @@ describe("implementer runner wiring (unified executePromptStream path)", () => {
           return activeExecution;
         },
         async mutateActive(_p, _s, fn) {
-          const next = await fn(structuredClone(activeExecution));
-          activeExecution = next;
-          return next;
+          const result = await fn(structuredClone(activeExecution));
+          activeExecution =
+            "execution" in result && "events" in result
+              ? result.execution
+              : result;
+          return activeExecution;
         },
       },
+      findLatestContextValidationEvent: async () => null,
       createConversation: vi.fn(async () => ({ id: "conv-codex-1" })),
       createToolServer: vi.fn(() => ({ server: { servers: [] } })),
       async runAgentIteration(input: GraphWorkflowRunAgentIterationInput) {

@@ -13,7 +13,6 @@ const SESSION = "demo-session";
 const EXEC = "exec-1";
 
 function makeExecution(
-  history: GraphWorkflowExecutionEvent[],
   overrides: Partial<GraphWorkflowExecution> = {},
 ): GraphWorkflowExecution {
   return {
@@ -110,7 +109,6 @@ function makeExecution(
     joins: {},
     lanePlan: { continuationMap: {}, longestDownstreamPath: {} },
     machineSnapshot: null,
-    history,
     startedAt: "2026-03-30T09:00:00Z",
     completedAt: null,
     haltReason: null,
@@ -488,13 +486,14 @@ type Story = StoryObj<typeof meta>;
 
 export const RichTimeline: Story = {
   args: {
-    execution: makeExecution(richHistory),
+    execution: makeExecution(),
+    events: richHistory,
   },
 };
 
 export const FailureAndHalt: Story = {
   args: {
-    execution: makeExecution(failureHistory, {
+    execution: makeExecution({
       status: "halted",
       activeContextIds: [],
       haltReason: {
@@ -505,31 +504,36 @@ export const FailureAndHalt: Story = {
         summary: "Validator rejected the implementation three times in a row.",
       },
     }),
+    events: failureHistory,
   },
 };
 
 export const MergeConflict: Story = {
   args: {
-    execution: makeExecution(mergeFailureHistory),
+    execution: makeExecution(),
+    events: mergeFailureHistory,
   },
 };
 
 export const FilteredByContext: Story = {
   args: {
-    execution: makeExecution(richHistory),
+    execution: makeExecution(),
+    events: richHistory,
     contextId: "ctx-implement",
   },
 };
 
 export const LimitedToFive: Story = {
   args: {
-    execution: makeExecution(richHistory),
+    execution: makeExecution(),
+    events: richHistory,
     limit: 5,
   },
 };
 
 export const Empty: Story = {
   args: {
-    execution: makeExecution([]),
+    execution: makeExecution(),
+    events: [],
   },
 };

@@ -74,17 +74,6 @@ function makeFullSession(overrides: Partial<SessionState> = {}): SessionState {
       status: "pending",
       startedAt: "2026-01-01T00:00:00Z",
     },
-    graphWorkflowExecutionHistory: [
-      {
-        id: "wf-h-1",
-        seedDefinitionId: "seed-h",
-        seedDefinitionRevision: 1,
-        workingDefinition: {},
-        charter: makeTestCharter(),
-        status: "completed",
-        startedAt: "2025-12-01T00:00:00Z",
-      },
-    ],
     workflowEnvelopes: { env1: { kind: "primitive", payload: 42 } },
     workflowLanes: { lane1: { engine: "noop" } },
     mcpOverrides: {
@@ -552,16 +541,6 @@ describe("rowToDomain quarantine: forward-incompatible workflow columns degrade 
     expect(bad?.session.graphWorkflowExecution).toBeNull();
   });
 
-  it("degrades an unparseable graph_workflow_execution_history to an empty array", () => {
-    insertRaw("bad-history", "graph_workflow_execution_history", "?", [
-      `[${execWithUnknownHaltReason}]`,
-    ]);
-
-    const out = repo.findByKey(PROJECT_PATH, "bad-history");
-    expect(out).not.toBeNull();
-    expect(out?.graphWorkflowExecutionHistory).toEqual([]);
-  });
-
   it("still throws (fail-loud) when a core scalar column is unparseable", () => {
     insertRaw("bad-source", "source", "?", ["not-a-valid-source"]);
 
@@ -846,25 +825,6 @@ function buildMaximalGraphWorkflowExecution(): unknown {
       longestDownstreamPath: { "ctx-1": 3 },
     },
     machineSnapshot: { value: "running", context: { step: 2 } },
-    history: [
-      {
-        occurredAt: "2026-01-02T06:00:00Z",
-        event: {
-          type: "graph-workflow-status",
-          projectName: "p1",
-          sessionName: "full-durable",
-          executionId: "wf-maximal",
-          workflowStatus: "running",
-          activeContextIds: ["ctx-1"],
-          activeBatchIds: ["batch-1"],
-          activeJoinIds: ["join-1"],
-          haltReason: { type: "aborted" },
-          pendingHaltReason: { type: "aborted" },
-          secondaryHaltReasons: [{ type: "aborted" }],
-        },
-        preReset: true,
-      },
-    ],
     startedAt: "2026-01-01T00:00:00Z",
     completedAt: "2026-01-02T07:00:00Z",
     haltReason: {
@@ -951,7 +911,6 @@ function buildMaximalSession(): SessionState {
       conversationId: "conv-1",
     },
     graphWorkflowExecution: execution,
-    graphWorkflowExecutionHistory: [execution],
     workflowEnvelopes: {
       env1: { kind: "primitive", payload: 42, status: "running" },
     },

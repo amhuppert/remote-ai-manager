@@ -171,7 +171,7 @@ describe("graph workflow execution event publisher", () => {
       "graph-workflow-circuit-breaker",
       "graph-workflow-shared-documents-updated",
     ]);
-    expect(publishedExecution.history.map((entry) => entry.event.type)).toEqual(
+    expect(publishedExecution.map((entry) => entry.event.type)).toEqual(
       [
         "graph-workflow-status",
         "graph-workflow-context-status",
@@ -180,7 +180,7 @@ describe("graph workflow execution event publisher", () => {
         "graph-workflow-shared-documents-updated",
       ],
     );
-    expect(publishedExecution.history[0]?.occurredAt).toBe(
+    expect(publishedExecution[0]?.occurredAt).toBe(
       "2026-03-28T10:00:00.000Z",
     );
   });
@@ -227,8 +227,8 @@ describe("graph workflow execution event publisher", () => {
         reopenTaskIds: ["task-plan-1"],
       }),
     );
-    expect(updatedExecution.history).toHaveLength(1);
-    expect(updatedExecution.history[0]?.event).toEqual(
+    expect(updatedExecution).toHaveLength(1);
+    expect(updatedExecution[0]?.event).toEqual(
       expect.objectContaining({
         type: "graph-workflow-validation-result",
         validatorType: "context",
@@ -780,7 +780,7 @@ describe("graph workflow execution event publisher", () => {
       lastCommittingContextId: null,
     });
     expect(
-      published.history.some(
+      published.some(
         (h) => h.event.type === "graph-workflow-lane-status",
       ),
     ).toBe(true);
@@ -941,7 +941,7 @@ describe("graph workflow execution event publisher", () => {
       conflicts: null,
     });
     expect(
-      published.history.some(
+      published.some(
         (h) => h.event.type === "graph-workflow-join-status",
       ),
     ).toBe(true);
@@ -1137,11 +1137,11 @@ describe("graph workflow execution event publisher", () => {
       conversationId: "conversation-9",
       requestedAt: "2026-06-10T08:59:00.000Z",
     });
-    expect(updatedExecution.history).toHaveLength(1);
-    expect(updatedExecution.history[0]?.occurredAt).toBe(
+    expect(updatedExecution).toHaveLength(1);
+    expect(updatedExecution[0]?.occurredAt).toBe(
       "2026-06-10T09:00:00.000Z",
     );
-    expect(updatedExecution.history[0]?.event).toMatchObject({
+    expect(updatedExecution[0]?.event).toMatchObject({
       type: "graph-workflow-approval-pending",
       contextId: "context-plan",
       conversationId: "conversation-9",
@@ -1190,11 +1190,11 @@ describe("graph workflow execution event publisher", () => {
       message: null,
       decidedAt: "2026-06-10T09:29:00.000Z",
     });
-    expect(updatedExecution.history).toHaveLength(1);
-    expect(updatedExecution.history[0]?.occurredAt).toBe(
+    expect(updatedExecution).toHaveLength(1);
+    expect(updatedExecution[0]?.occurredAt).toBe(
       "2026-06-10T09:30:00.000Z",
     );
-    expect(updatedExecution.history[0]?.event).toMatchObject({
+    expect(updatedExecution[0]?.event).toMatchObject({
       type: "graph-workflow-approval-resolved",
       decision: "approved",
     });
@@ -1233,7 +1233,7 @@ describe("graph workflow execution event publisher", () => {
         message: "The plan misses the migration step.",
       }),
     );
-    expect(updatedExecution.history[0]?.event).toMatchObject({
+    expect(updatedExecution[0]?.event).toMatchObject({
       type: "graph-workflow-approval-resolved",
       decision: "rejected",
       message: "The plan misses the migration step.",
@@ -1359,11 +1359,11 @@ describe("graph workflow execution event publisher", () => {
       charterHash: "sha256:abc123",
     });
 
-    expect(updatedExecution.history).toHaveLength(1);
-    expect(updatedExecution.history[0]?.occurredAt).toBe(
+    expect(updatedExecution).toHaveLength(1);
+    expect(updatedExecution[0]?.occurredAt).toBe(
       "2026-06-14T10:00:00.000Z",
     );
-    expect(updatedExecution.history[0]?.event).toMatchObject({
+    expect(updatedExecution[0]?.event).toMatchObject({
       type: "graph-workflow-charter-registered",
       executionId: execution.id,
       definitionId: "workflow-1",
@@ -1384,7 +1384,7 @@ describe("graph workflow execution event publisher", () => {
       activeContextIds: ["context-plan"],
     });
 
-    const updatedExecution = publisher.publishCharterUpdated({
+    const updatedEvents = publisher.publishCharterUpdated({
       projectPath: "/projects/repo",
       sessionName: "session-1",
       execution,
@@ -1402,9 +1402,8 @@ describe("graph workflow execution event publisher", () => {
       definitionRevision: 4,
       charterHash: "sha256:def456",
     });
-    expect(updatedExecution).not.toBeNull();
-    expect(updatedExecution?.history).toHaveLength(1);
-    expect(updatedExecution?.history[0]?.event).toMatchObject({
+    expect(updatedEvents).toHaveLength(1);
+    expect(updatedEvents[0]?.event).toMatchObject({
       type: "graph-workflow-charter-updated",
       executionId: execution.id,
     });
@@ -1417,7 +1416,7 @@ describe("graph workflow execution event publisher", () => {
       now: () => "2026-06-14T12:00:00.000Z",
     });
 
-    const updatedExecution = publisher.publishCharterUpdated({
+    const updatedEvents = publisher.publishCharterUpdated({
       projectPath: "/projects/repo",
       sessionName: "session-1",
       definitionId: "workflow-1",
@@ -1434,6 +1433,10 @@ describe("graph workflow execution event publisher", () => {
       definitionRevision: 5,
       charterHash: "sha256:ghi789",
     });
-    expect(updatedExecution).toBeNull();
+    // With no active execution there is no execution_id to key events under, so
+    // the returned charter-updated event carries a null executionId (the caller
+    // does not persist it).
+    expect(updatedEvents).toHaveLength(1);
+    expect(updatedEvents[0]?.event.type).toBe("graph-workflow-charter-updated");
   });
 });

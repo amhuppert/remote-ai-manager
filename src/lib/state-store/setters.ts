@@ -6,6 +6,11 @@ import type { ConversationState } from "@/lib/conversations/schemas";
 import type { ProjectState } from "@/lib/projects/schemas";
 import type { ReferenceDocument } from "@/lib/reference-documents/schemas";
 import type { SessionState, SpawnedFrom } from "@/lib/sessions/schemas";
+import type {
+  GraphWorkflowExecution,
+  GraphWorkflowExecutionEvent,
+} from "@/lib/workflows/schemas";
+import type { GraphWorkflowArchivedExecutionRow } from "./graph-workflow-archived-executions-repo";
 import type { StateStoreCore } from "./schemas";
 
 const logger = createLogger("state-store");
@@ -353,6 +358,153 @@ export function createSetters(core: StateStoreCore, mutations: MutationFns) {
     );
   }
 
+  /**
+   * Atomically write the active graph-workflow execution blob (history-free)
+   * and append its computed append-only events to `graph_workflow_events`,
+   * inside a single write-queue critical section. The mutator receives the
+   * currently-persisted execution and returns the next execution plus the
+   * events to append (typically the events the publisher computed while
+   * broadcasting). Returns the written execution.
+   */
+  async function mutateActiveGraphWorkflowExecution(
+    projectPath: string,
+    sessionName: string,
+    label: string,
+    mutate: (current: GraphWorkflowExecution | null) => Promise<{
+      execution: GraphWorkflowExecution;
+      events: GraphWorkflowExecutionEvent[];
+    }>,
+  ): Promise<GraphWorkflowExecution> {
+    return writeQueue.withWriteQueue(`${label}[${sessionName}]`, async () =>
+      timed(
+        logger,
+        "state.mutate",
+        { label, projectPath, sessionName },
+        async () => {
+          const session = repos.sessions.findByKey(projectPath, sessionName);
+          if (!session) {
+            throw new Error(
+              `Session "${sessionName}" not found in project "${projectPath}" during ${label}`,
+            );
+          }
+          const { execution, events } = await mutate(
+            session.graphWorkflowExecution,
+          );
+          const now = new Date().toISOString();
+          const txn = db.transaction(() => {
+            repos.sessions.setActiveGraphWorkflowExecution(
+              projectPath,
+              sessionName,
+              execution,
+              now,
+            );
+            repos.graphWorkflowEvents.appendMany(
+              projectPath,
+              sessionName,
+              execution.id,
+              now,
+              events,
+            );
+          });
+          txn.immediate();
+          return execution;
+        },
+      ),
+    );
+  }
+
+  /**
+   * Move the active graph-workflow execution into the archived-executions table
+   * (control-state only; its events stay in `graph_workflow_events` keyed by the
+   * same execution id) and null the active blob, inside one write-queue section.
+   */
+  async function archiveActiveGraphWorkflowExecution(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<void> {
+    return writeQueue.withWriteQueue(
+      `archiveGraphWorkflowExecution[${sessionName}]`,
+      async () =>
+        timed(
+          logger,
+          "state.mutate",
+          {
+            label: "archiveGraphWorkflowExecution",
+            projectPath,
+            sessionName,
+          },
+          async () => {
+            const session = repos.sessions.findByKey(projectPath, sessionName);
+            const execution = session?.graphWorkflowExecution ?? null;
+            if (!execution) return;
+            const now = new Date().toISOString();
+            const row: GraphWorkflowArchivedExecutionRow = {
+              projectPath,
+              sessionName,
+              executionId: execution.id,
+              archivedAt: now,
+              status: execution.status,
+              startedAt: execution.startedAt,
+              completedAt: execution.completedAt,
+              execution,
+            };
+            const txn = db.transaction(() => {
+              repos.graphWorkflowArchivedExecutions.insert(row);
+              repos.sessions.setActiveGraphWorkflowExecution(
+                projectPath,
+                sessionName,
+                null,
+                now,
+              );
+            });
+            txn.immediate();
+          },
+        ),
+    );
+  }
+
+  /**
+   * Mark every persisted event for a context up to the current insertion
+   * boundary as pre-reset, replacing the old in-memory `history.map` reset
+   * marking. Returns the number of rows newly marked.
+   */
+  async function markGraphWorkflowContextEventsPreReset(
+    projectPath: string,
+    sessionName: string,
+    executionId: string,
+    contextId: string,
+  ): Promise<number> {
+    return writeQueue.withWriteQueue(
+      `markGraphWorkflowContextEventsPreReset[${sessionName}]`,
+      async () =>
+        timed(
+          logger,
+          "state.mutate",
+          {
+            label: "markGraphWorkflowContextEventsPreReset",
+            projectPath,
+            sessionName,
+            conversationId: undefined,
+          },
+          async () => {
+            const boundaryRow = db
+              .prepare(
+                `SELECT MAX(id) AS maxId FROM graph_workflow_events
+                  WHERE execution_id = ?`,
+              )
+              .get(executionId) as { maxId: number | null };
+            const boundaryId = boundaryRow.maxId;
+            if (boundaryId === null) return 0;
+            return repos.graphWorkflowEvents.markPreReset(
+              executionId,
+              contextId,
+              boundaryId,
+            );
+          },
+        ),
+    );
+  }
+
   async function createReferenceDocument(
     projectPath: string,
     sessionName: string,
@@ -416,6 +568,9 @@ export function createSetters(core: StateStoreCore, mutations: MutationFns) {
     setProjectPinned,
     setSessionSpawnedFrom,
     addPlcSpawnedSessionIds,
+    mutateActiveGraphWorkflowExecution,
+    archiveActiveGraphWorkflowExecution,
+    markGraphWorkflowContextEventsPreReset,
     createReferenceDocument,
     deleteReferenceDocument,
   };

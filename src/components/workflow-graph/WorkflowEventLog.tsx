@@ -50,6 +50,7 @@ export interface NormalizedEvent {
 
 interface WorkflowEventLogProps {
   execution: GraphWorkflowExecution;
+  events: GraphWorkflowExecutionEvent[];
   contextId?: string | null;
   limit?: number;
   onSelectContext?: (contextId: string) => void;
@@ -490,6 +491,7 @@ function EventRow({
 
 export default function WorkflowEventLog({
   execution,
+  events,
   contextId,
   limit,
   onSelectContext,
@@ -500,10 +502,10 @@ export default function WorkflowEventLog({
   );
   const taskLookup = useMemo(() => buildTaskLookup(execution), [execution]);
 
-  const events = useMemo(() => {
+  const normalizedEvents = useMemo(() => {
     const normalized: NormalizedEvent[] = [];
-    for (let i = execution.history.length - 1; i >= 0; i--) {
-      const entry = execution.history[i];
+    for (let i = events.length - 1; i >= 0; i--) {
+      const entry = events[i];
       if (!entry || entry.preReset) continue;
       const normalizedEvent = normalizeEvent(
         entry,
@@ -517,9 +519,9 @@ export default function WorkflowEventLog({
       if (limit && normalized.length >= limit) break;
     }
     return normalized;
-  }, [execution.history, contextLookup, taskLookup, contextId, limit]);
+  }, [events, contextLookup, taskLookup, contextId, limit]);
 
-  if (events.length === 0) {
+  if (normalizedEvents.length === 0) {
     return (
       <div className="wb-exec-event-empty">
         <span className="wb-exec-event-text">No events yet</span>
@@ -529,7 +531,7 @@ export default function WorkflowEventLog({
 
   return (
     <div className="wb-exec-event-log">
-      {events.map((event) => (
+      {normalizedEvents.map((event) => (
         <EventRow
           key={event.key}
           event={event}
