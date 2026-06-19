@@ -10,12 +10,148 @@ import type {
 } from "@/lib/workflows/schemas";
 function executionWithHistory(
   history: Array<Omit<GraphWorkflowExecutionEvent, "preReset">>,
-): { execution: GraphWorkflowExecution; events: GraphWorkflowExecutionEvent[] } {
+): {
+  execution: GraphWorkflowExecution;
+  events: GraphWorkflowExecutionEvent[];
+} {
   return {
     execution: createWorkflowExecution(),
     events: history.map((entry) => ({ ...entry, preReset: false })),
   };
 }
+
+const EVENT_BASE = {
+  projectName: "repo",
+  sessionName: "session-1",
+  executionId: "exec-1",
+} as const;
+
+function statusEntry(
+  occurredAt: string,
+  workflowStatus: "pending" | "running" | "paused" | "halted",
+  activeContextIds: string[],
+): Omit<GraphWorkflowExecutionEvent, "preReset"> {
+  return {
+    occurredAt,
+    event: {
+      type: "graph-workflow-status",
+      ...EVENT_BASE,
+      workflowStatus,
+      activeContextIds,
+      activeBatchIds: [],
+      activeJoinIds: [],
+      haltReason: null,
+      pendingHaltReason: null,
+      secondaryHaltReasons: [],
+    },
+  };
+}
+
+function contextStatusEntry(
+  occurredAt: string,
+  contextId: string,
+  status: "running" | "halted" | "completed" | "pending",
+  iterationCount: number,
+): Omit<GraphWorkflowExecutionEvent, "preReset"> {
+  return {
+    occurredAt,
+    event: {
+      type: "graph-workflow-context-status",
+      ...EVENT_BASE,
+      contextId,
+      status,
+      remainingTaskCount: 1,
+      iterationCount,
+    },
+  };
+}
+
+function laneEntry(
+  occurredAt: string,
+  laneId: string,
+  status: "active" | "merged" | "halted",
+): Omit<GraphWorkflowExecutionEvent, "preReset"> {
+  return {
+    occurredAt,
+    event: {
+      type: "graph-workflow-lane-status",
+      ...EVENT_BASE,
+      laneId,
+      kind: "worktree",
+      status,
+      branchName: "csm/feature-lane-plan",
+      worktreePath: null,
+      includedContextIds: [],
+      lastCommittingContextId: null,
+    },
+  };
+}
+
+describe("WorkflowEventLog collapsing of redundant same-status events", () => {
+  it("renders a single 'Workflow running' row when consecutive status events re-affirm running with only active-set changes", () => {
+    const { execution, events } = executionWithHistory([
+      statusEntry("2026-04-02T08:00:00.000Z", "pending", []),
+      statusEntry("2026-04-02T08:00:01.000Z", "running", []),
+      statusEntry("2026-04-02T08:00:02.000Z", "running", ["context-plan"]),
+    ]);
+
+    render(<WorkflowEventLog execution={execution} events={events} />);
+
+    expect(screen.getAllByText("Workflow running")).toHaveLength(1);
+    expect(screen.getByText("Workflow pending")).toBeInTheDocument();
+  });
+
+  it("collapses two context 'started' rows that re-fire across an interleaved lane event into one", () => {
+    const { execution, events } = executionWithHistory([
+      contextStatusEntry(
+        "2026-04-02T08:00:00.000Z",
+        "context-plan",
+        "running",
+        0,
+      ),
+      laneEntry("2026-04-02T08:00:01.000Z", "lane-plan", "active"),
+      contextStatusEntry(
+        "2026-04-02T08:00:02.000Z",
+        "context-plan",
+        "running",
+        1,
+      ),
+    ]);
+
+    render(<WorkflowEventLog execution={execution} events={events} />);
+
+    expect(screen.getAllByText("Plan · started")).toHaveLength(1);
+    expect(screen.getByText(/Lane active · lane-plan/)).toBeInTheDocument();
+  });
+
+  it("keeps both 'started' rows when a context restarts after a halt, since the halt is a real intervening transition", () => {
+    const { execution, events } = executionWithHistory([
+      contextStatusEntry(
+        "2026-04-02T08:00:00.000Z",
+        "context-plan",
+        "running",
+        0,
+      ),
+      contextStatusEntry(
+        "2026-04-02T08:00:01.000Z",
+        "context-plan",
+        "halted",
+        0,
+      ),
+      contextStatusEntry(
+        "2026-04-02T08:00:02.000Z",
+        "context-plan",
+        "running",
+        1,
+      ),
+    ]);
+
+    render(<WorkflowEventLog execution={execution} events={events} />);
+
+    expect(screen.getAllByText("Plan · started")).toHaveLength(2);
+    expect(screen.getByText("Plan · halted")).toBeInTheDocument();
+  });
+});
 
 describe("WorkflowEventLog rendering of lane/join events", () => {
   it("renders a graph-workflow-lane-status event title with lane identity so operators can read lane progress in the activity log", () => {

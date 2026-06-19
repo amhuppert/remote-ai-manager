@@ -15,6 +15,7 @@ import type {
   GraphWorkflowLaneKind,
   GraphWorkflowMergeStatusValue,
   GraphWorkflowContextStatus,
+  GraphWorkflowSSEEvent,
 } from "@/lib/workflows/schemas";
 type EventDotKind =
   | "pass"
@@ -422,6 +423,31 @@ function dotClassName(dot: EventDotKind): string {
   return `wb-exec-event-dot wb-exec-event-dot--${dot}`;
 }
 
+// Identifies the entity whose status a given event reports, so consecutive
+// re-affirmations of the same rendered status for that entity can be collapsed.
+// Status-bearing events (workflow/context/task/merge/lane/join) re-fire whenever
+// an ancillary field changes (e.g. activeContextIds, iterationCount) even though
+// the human-readable row is identical; one-shot events (validation, circuit
+// breaker, batch scheduled) return null and are never collapsed.
+function eventStreamKey(event: GraphWorkflowSSEEvent): string | null {
+  switch (event.type) {
+    case "graph-workflow-status":
+      return "workflow-status";
+    case "graph-workflow-context-status":
+      return `context-status:${event.contextId}`;
+    case "graph-workflow-task-status":
+      return `task-status:${event.taskId}`;
+    case "graph-workflow-merge-status":
+      return `merge-status:${event.contextId}`;
+    case "graph-workflow-lane-status":
+      return `lane-status:${event.laneId}`;
+    case "graph-workflow-join-status":
+      return `join-status:${event.joinId}`;
+    default:
+      return null;
+  }
+}
+
 function EventRow({
   event,
   onSelectContext,
@@ -503,8 +529,15 @@ export default function WorkflowEventLog({
   const taskLookup = useMemo(() => buildTaskLookup(execution), [execution]);
 
   const normalizedEvents = useMemo(() => {
+    // Walk oldest→newest, keeping the first event of each run of identical
+    // rendered rows per entity. A status-bearing event re-fires whenever an
+    // ancillary field changes (active-set, iteration count) while the rendered
+    // status is unchanged; those re-fires would otherwise show as duplicate
+    // rows. A genuine status transition (e.g. running→halted→running) breaks the
+    // run because its rendered row differs, so it is preserved.
     const normalized: NormalizedEvent[] = [];
-    for (let i = events.length - 1; i >= 0; i--) {
+    const lastRowByStream = new Map<string, string>();
+    for (let i = 0; i < events.length; i++) {
       const entry = events[i];
       if (!entry || entry.preReset) continue;
       const normalizedEvent = normalizeEvent(
@@ -515,10 +548,16 @@ export default function WorkflowEventLog({
       );
       if (!normalizedEvent) continue;
       if (contextId && normalizedEvent.contextId !== contextId) continue;
+      const streamKey = eventStreamKey(entry.event);
+      if (streamKey) {
+        const row = `${normalizedEvent.dot} ${normalizedEvent.title}`;
+        if (lastRowByStream.get(streamKey) === row) continue;
+        lastRowByStream.set(streamKey, row);
+      }
       normalized.push(normalizedEvent);
-      if (limit && normalized.length >= limit) break;
     }
-    return normalized;
+    normalized.reverse();
+    return limit ? normalized.slice(0, limit) : normalized;
   }, [events, contextLookup, taskLookup, contextId, limit]);
 
   if (normalizedEvents.length === 0) {
