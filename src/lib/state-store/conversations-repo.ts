@@ -32,6 +32,7 @@ export interface ConversationsRepo {
     conversationId: string,
   ): ConversationState | null;
   findBySession(projectPath: string, sessionName: string): ConversationState[];
+  countBySession(projectPath: string, sessionName: string): number;
   findListItemsForProject(projectPath: string): Array<{
     id: string;
     sessionName: string;
@@ -321,6 +322,10 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
      WHERE project_path = ? AND session_name = ?
      ORDER BY created_at ASC, id ASC`,
   );
+  const countBySessionStmt = db.prepare(
+    `SELECT COUNT(*) AS n FROM conversations
+     WHERE project_path = ? AND session_name = ?`,
+  );
   const findListItemsForProjectStmt = db.prepare(
     `SELECT id, session_name, status, prompt_count, last_activity_at
      FROM conversations
@@ -493,6 +498,14 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
         lastFindAllVersion = cacheVersion;
         lastFindAllResult = out;
         return out;
+      });
+    },
+    countBySession(projectPath, sessionName) {
+      return timed("countBySession", { projectPath, sessionName }, () => {
+        const row = countBySessionStmt.get(projectPath, sessionName) as {
+          n: number;
+        };
+        return row.n;
       });
     },
     upsert(projectPath, sessionName, conversation) {

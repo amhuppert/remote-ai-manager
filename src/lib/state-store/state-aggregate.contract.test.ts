@@ -269,6 +269,7 @@ describe("state-aggregate.readAll", () => {
         findByIdWithKey: () => null,
         findByKey: () => null,
         findBySession: () => [],
+        countBySession: () => 0,
         findListItemsForProject: () => [],
         findAll: () => [],
         upsert: () => {},

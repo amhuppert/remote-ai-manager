@@ -289,6 +289,49 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     );
   }
 
+  /**
+   * Focused conversation creation. Inserts one new conversation row via the
+   * conversations repo, bypassing the aggregate's read-everything-validate-diff
+   * cycle. The `build` factory receives the next sequence number (existing
+   * conversation count + 1) computed inside the write-queue critical section, so
+   * concurrent creates cannot collide on a name, and returns the fully-formed
+   * conversation. Persists via `upsertWithSessionTouch`, so the new row and its
+   * session's `lastActivityAt` move together.
+   */
+  async function createSessionConversation(
+    projectPath: string,
+    sessionName: string,
+    build: (sequenceNumber: number) => ConversationState,
+  ): Promise<ConversationState> {
+    return writeQueue.withWriteQueue(
+      `createConversation[${sessionName}]`,
+      async () =>
+        timed(
+          logger,
+          "state.mutate",
+          { label: "createConversation", projectPath, sessionName },
+          async () => {
+            const session = repos.sessions.findByKey(projectPath, sessionName);
+            if (!session) {
+              throw new Error(
+                `Session "${sessionName}" not found in project "${projectPath}" during createConversation`,
+              );
+            }
+            const sequenceNumber =
+              repos.conversations.countBySession(projectPath, sessionName) + 1;
+            const conversation = build(sequenceNumber);
+            repos.conversations.upsertWithSessionTouch(
+              projectPath,
+              sessionName,
+              conversation,
+              conversation.lastActivityAt,
+            );
+            return conversation;
+          },
+        ),
+    );
+  }
+
   async function getOrCreateProject(
     projectPath: string,
   ): Promise<ProjectState> {
@@ -345,6 +388,7 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     mutateSession,
     mutateConversation,
     mutateProjectConversation,
+    createSessionConversation,
     getProjectSessions: accessors.getProjectSessions,
     getProjectSessionListItems: accessors.getProjectSessionListItems,
     getSession: accessors.getSession,

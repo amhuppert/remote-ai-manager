@@ -19,6 +19,8 @@ export const readState = defaultStore.readState;
 export const mutateState = defaultStore.mutateState;
 export const mutateSession = defaultStore.mutateSession;
 export const mutateConversation = defaultStore.mutateConversation;
+export const createSessionConversation =
+  defaultStore.createSessionConversation;
 export const mutateProjectConversation = defaultStore.mutateProjectConversation;
 export const getProjectSessionListItems =
   defaultStore.getProjectSessionListItems;

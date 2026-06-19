@@ -10,6 +10,7 @@ import type {
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import {
   mutateSession as defaultMutateSession,
+  createSessionConversation as defaultCreateSessionConversation,
   getSession as defaultGetSession,
   getConversation as defaultGetConversation,
   getSessionConversations as defaultGetSessionConversations,
@@ -84,6 +85,7 @@ const logger = createLogger("conversations");
 
 export interface ConversationsDeps {
   mutateSession: typeof defaultMutateSession;
+  createSessionConversation: typeof defaultCreateSessionConversation;
   getSession: typeof defaultGetSession;
   getConversation: typeof defaultGetConversation;
   getSessionConversations: typeof defaultGetSessionConversations;
@@ -100,6 +102,7 @@ export interface ConversationsDeps {
 
 const defaultConversationsDeps: ConversationsDeps = {
   mutateSession: defaultMutateSession,
+  createSessionConversation: defaultCreateSessionConversation,
   getSession: defaultGetSession,
   getConversation: defaultGetConversation,
   getSessionConversations: defaultGetSessionConversations,
@@ -116,6 +119,7 @@ export function createConversationService(
 ) {
   const {
     mutateSession,
+    createSessionConversation,
     getSession,
     getConversation,
     getSessionConversations,
@@ -134,13 +138,11 @@ export function createConversationService(
     sessionName: string,
     opts?: { role?: ConversationRole; agentBackend?: AgentBackendId },
   ): Promise<ConversationState> {
-    const conversation = await mutateSession(
+    const conversation = await createSessionConversation(
       projectPath,
       sessionName,
-      "createConversation",
-      (session) => {
+      (sequenceNumber) => {
         const now = new Date().toISOString();
-        const sequenceNumber = session.conversations.length + 1;
         const conv: ConversationState = {
           id: crypto.randomUUID(),
           scope: "session",
@@ -172,7 +174,6 @@ export function createConversationService(
           pendingQueue: [],
         };
 
-        session.conversations.push(conv);
         return conv;
       },
     );

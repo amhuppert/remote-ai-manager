@@ -134,6 +134,112 @@ describe("createStateStore — focused read DI guard", () => {
     expect(spyAggregate.diffAndCommit).not.toHaveBeenCalled();
   });
 
+  it("createSessionConversation inserts via the conversations repo without invoking aggregate.readAll/diffAndCommit, numbers by existing count, and touches the session", async () => {
+    const projects = createProjectsRepo(db);
+    const sessions = createSessionsRepo(db);
+    const conversations = createConversationsRepo(db);
+
+    projects.upsert({ rootPath: "/proj-a" });
+    sessions.upsert(
+      "/proj-a",
+      sessionStateSchema.parse({
+        sessionName: "alpha",
+        worktreePath: "/wt/alpha",
+        branchName: "csm/alpha",
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+    // One pre-existing conversation so the next sequence number is 2.
+    conversations.upsert(
+      "/proj-a",
+      "alpha",
+      conversationStateSchema.parse({
+        id: "conv-1",
+        transcriptPath: null,
+        status: "idle",
+        promptCount: 0,
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+
+    const spyAggregate: StateAggregate = {
+      readAll: vi.fn(() => {
+        throw new Error(
+          "readAll must NOT be called from createSessionConversation",
+        );
+      }),
+      diffAndCommit: vi.fn(() => {
+        throw new Error(
+          "diffAndCommit must NOT be called from createSessionConversation",
+        );
+      }),
+    };
+
+    const store = createStateStore({ db, aggregate: spyAggregate });
+
+    const created = await store.createSessionConversation(
+      "/proj-a",
+      "alpha",
+      (sequenceNumber) =>
+        conversationStateSchema.parse({
+          id: "conv-2",
+          name: `alpha ${sequenceNumber}`,
+          transcriptPath: null,
+          status: "new",
+          promptCount: 0,
+          createdAt: "2026-02-02T00:00:00Z",
+          lastActivityAt: "2026-02-02T00:00:00Z",
+        }),
+    );
+
+    // Numbered by existing count (1) + 1, never touching the aggregate.
+    expect(created.name).toBe("alpha 2");
+    expect(spyAggregate.readAll).not.toHaveBeenCalled();
+    expect(spyAggregate.diffAndCommit).not.toHaveBeenCalled();
+
+    // Persisted through the real repo and visible on reload.
+    const reloaded = createConversationsRepo(db).findByKey(
+      "/proj-a",
+      "alpha",
+      "conv-2",
+    );
+    expect(reloaded?.name).toBe("alpha 2");
+
+    // upsertWithSessionTouch moved the session's lastActivityAt to the new conv's.
+    const session = createSessionsRepo(db).findByKey("/proj-a", "alpha");
+    expect(session?.lastActivityAt).toBe("2026-02-02T00:00:00Z");
+  });
+
+  it("createSessionConversation throws when the session does not exist", async () => {
+    createProjectsRepo(db).upsert({ rootPath: "/proj-a" });
+
+    const spyAggregate: StateAggregate = {
+      readAll: vi.fn(() => {
+        throw new Error("readAll must not be called");
+      }),
+      diffAndCommit: vi.fn(() => {
+        throw new Error("diffAndCommit must not be called");
+      }),
+    };
+    const store = createStateStore({ db, aggregate: spyAggregate });
+
+    await expect(
+      store.createSessionConversation("/proj-a", "missing", (n) =>
+        conversationStateSchema.parse({
+          id: "conv-x",
+          name: `missing ${n}`,
+          transcriptPath: null,
+          status: "new",
+          promptCount: 0,
+          createdAt: "2026-02-02T00:00:00Z",
+          lastActivityAt: "2026-02-02T00:00:00Z",
+        }),
+      ),
+    ).rejects.toThrow(/Session "missing" not found/);
+  });
+
   it("conversations.ts getConversation routes through focused accessor — never invokes aggregate.readAll/diffAndCommit", async () => {
     const projects = createProjectsRepo(db);
     const sessions = createSessionsRepo(db);
@@ -177,6 +283,7 @@ describe("createStateStore — focused read DI guard", () => {
 
     const conversationService = createConversationService({
       mutateSession: store.mutateSession,
+      createSessionConversation: store.createSessionConversation,
       getSession: store.getSession,
       getConversation: store.getConversation,
       getSessionConversations: store.getSessionConversations,

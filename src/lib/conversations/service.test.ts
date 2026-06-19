@@ -66,6 +66,7 @@ function createTestServices(
   const fakeFork = overrides.forkSession ?? makeFakeForkSession().fn;
   const conversations = createConversationService({
     mutateSession: state.mutateSession,
+    createSessionConversation: state.createSessionConversation,
     getSession: state.getSession,
     getConversation: state.getConversation,
     getSessionConversations: state.getSessionConversations,
