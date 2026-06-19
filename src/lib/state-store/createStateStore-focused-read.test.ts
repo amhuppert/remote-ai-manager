@@ -19,11 +19,43 @@ import { createWriteQueue } from "./write-queue";
 import type { StateAggregate } from "./state-aggregate";
 import { createConversationService } from "../conversations/service";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
+import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 
 type Db = InstanceType<typeof Database>;
 
 let db: Db;
+
+interface RunRecord {
+  sql: string;
+}
+
+/**
+ * Wrap the db's `prepare` so every `run()` records its SQL. MUST be installed
+ * before the repos prepare their statements (including the focused per-column
+ * UPDATE statements, which are prepared lazily on first use) so those
+ * statements get the wrapped `run`.
+ */
+function patchPrepareToTrack(database: Db, runs: RunRecord[]): void {
+  const origPrepare = database.prepare.bind(database) as (
+    sql: string,
+  ) => ReturnType<typeof database.prepare>;
+  (database as unknown as { prepare: (sql: string) => unknown }).prepare = (
+    sql: string,
+  ) => {
+    const stmt = origPrepare(sql);
+    const origRun = stmt.run.bind(stmt) as (
+      ...args: unknown[]
+    ) => ReturnType<typeof stmt.run>;
+    (stmt as unknown as { run: (...args: unknown[]) => unknown }).run = (
+      ...args: unknown[]
+    ) => {
+      runs.push({ sql });
+      return origRun(...args);
+    };
+    return stmt;
+  };
+}
 
 beforeEach(() => {
   db = _createTestDb({ inMemory: true });
@@ -647,5 +679,176 @@ describe("createStateStore — focused read DI guard", () => {
     expect(found?.summary).toBe("after");
     expect(spyAggregate.readAll).not.toHaveBeenCalled();
     expect(spyAggregate.diffAndCommit).not.toHaveBeenCalled();
+  });
+
+  it("mutateConversation writes only the changed column and never re-serializes co-located blobs", async () => {
+    const runRecords: RunRecord[] = [];
+    patchPrepareToTrack(db, runRecords);
+
+    const projects = createProjectsRepo(db);
+    const sessions = createSessionsRepo(db);
+    const conversations = createConversationsRepo(db);
+
+    projects.upsert({ rootPath: "/proj-a" });
+    sessions.upsert(
+      "/proj-a",
+      sessionStateSchema.parse({
+        sessionName: "alpha",
+        worktreePath: "/wt/alpha",
+        branchName: "csm/alpha",
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+
+    // A large machine_snapshot whose persisted bytes must survive a scalar
+    // mutate untouched (and never be re-serialized into the UPDATE).
+    const bigSnapshot = {
+      state: "running",
+      context: {
+        history: Array.from({ length: 500 }, (_, i) => ({
+          index: i,
+          note: `event-${i}-`.repeat(8),
+        })),
+      },
+    };
+    conversations.upsert(
+      "/proj-a",
+      "alpha",
+      conversationStateSchema.parse({
+        id: "conv-1",
+        transcriptPath: null,
+        status: "idle",
+        promptCount: 0,
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+        machineSnapshot: bigSnapshot,
+      }),
+    );
+
+    const beforeBytes = (
+      db
+        .prepare("SELECT machine_snapshot FROM conversations WHERE id = ?")
+        .get("conv-1") as { machine_snapshot: string }
+    ).machine_snapshot;
+    expect(beforeBytes.length).toBeGreaterThan(1000);
+
+    const store = createStateStore({
+      db,
+      aggregate: {
+        readAll: vi.fn(() => {
+          throw new Error("readAll must not be called");
+        }),
+        diffAndCommit: vi.fn(() => {
+          throw new Error("diffAndCommit must not be called");
+        }),
+      },
+      writeQueue: createWriteQueue(),
+    });
+
+    runRecords.length = 0;
+    await store.mutateConversation(
+      "/proj-a",
+      "alpha",
+      "conv-1",
+      "focused.status",
+      (c) => {
+        c.status = "running";
+      },
+    );
+
+    const updateRecord = runRecords.find((r) =>
+      /UPDATE conversations SET/.test(r.sql),
+    );
+    expect(updateRecord, "a focused UPDATE must have run").toBeDefined();
+    const updateSql = updateRecord!.sql;
+    expect(updateSql).toMatch(/\bstatus\b/);
+    expect(updateSql).toMatch(/\blast_activity_at\b/);
+    expect(updateSql).not.toMatch(/machine_snapshot/);
+    expect(updateSql).not.toMatch(/pending_queue/);
+    expect(updateSql).not.toMatch(/mcp_runtime/);
+    expect(updateSql).not.toMatch(/agent_capabilities_runtime/);
+
+    const afterBytes = (
+      db
+        .prepare("SELECT machine_snapshot FROM conversations WHERE id = ?")
+        .get("conv-1") as { machine_snapshot: string }
+    ).machine_snapshot;
+    expect(afterBytes).toBe(beforeBytes);
+
+    const reloaded = await store.getConversation("/proj-a", "alpha", "conv-1");
+    expect(reloaded?.status).toBe("running");
+    expect(reloaded?.machineSnapshot).toEqual(bigSnapshot);
+  });
+
+  it("mutateConversation returns a non-frozen value the caller can mutate", async () => {
+    const projects = createProjectsRepo(db);
+    const sessions = createSessionsRepo(db);
+    const conversations = createConversationsRepo(db);
+
+    projects.upsert({ rootPath: "/proj-a" });
+    sessions.upsert(
+      "/proj-a",
+      sessionStateSchema.parse({
+        sessionName: "alpha",
+        worktreePath: "/wt/alpha",
+        branchName: "csm/alpha",
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+    conversations.upsert(
+      "/proj-a",
+      "alpha",
+      conversationStateSchema.parse({
+        id: "conv-1",
+        transcriptPath: null,
+        status: "idle",
+        promptCount: 0,
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+        pendingQueue: [
+          {
+            id: "m1",
+            content: [{ type: "text", text: "hi" }],
+            status: "pending",
+            enqueuedAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            deliveryStartedAt: null,
+            deliveredAt: null,
+            cancelledAt: null,
+            failedAt: null,
+            deliveryAttemptId: null,
+            attemptCount: 0,
+            error: null,
+          },
+        ],
+      }),
+    );
+
+    const store = createStateStore({ db, writeQueue: createWriteQueue() });
+
+    // Mirror the message-queue family: the mutator builds a new entry, assigns
+    // it into the draft's pendingQueue, and returns that same entry reference.
+    // The returned value must be mutable by the caller (not Immer-frozen).
+    const claimed = await store.mutateConversation(
+      "/proj-a",
+      "alpha",
+      "conv-1",
+      "focused.claim",
+      (c) => {
+        const entry: PendingQueuedMessage = {
+          ...c.pendingQueue[0]!,
+          status: "delivering",
+        };
+        c.pendingQueue = [entry];
+        return entry;
+      },
+    );
+
+    expect(() => {
+      claimed.status = "delivered";
+    }).not.toThrow();
+    expect(claimed.status).toBe("delivered");
   });
 });

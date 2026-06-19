@@ -387,3 +387,87 @@ export function encodeSharedConversationColumns(
     unread: conversation.unread ? 1 : 0,
   };
 }
+
+/**
+ * Every persisted, mutable conversation column and the single domain field it
+ * derives from, paired with the serializer that turns that field into its
+ * SQLite-primitive bind value. This is the per-column write authority: it
+ * deliberately omits the identity columns (`id`/`project_path`/`session_name`,
+ * never updated) and `last_activity_at` (the store/repo restamp it on every
+ * mutate, so the repo writes it explicitly rather than diffing it).
+ *
+ * Strictly 1:1 — no column derives from more than one domain field, and no
+ * domain field maps to more than one column — so a per-top-level-field
+ * reference diff maps cleanly to columns. The four non-column top-level fields
+ * (`scope`, `open`, `spawnedSessionIds`, `activeTurnSource`) are intentionally
+ * absent: they have no column on the `conversations` table, so a mutate
+ * touching only them yields zero changed columns here.
+ */
+const CONVERSATION_COLUMN_MAP = [
+  ["name", "name", (c: ConversationState) => c.name],
+  ["transcriptPath", "transcript_path", (c: ConversationState) => c.transcriptPath],
+  ["status", "status", (c: ConversationState) => c.status],
+  ["promptCount", "prompt_count", (c: ConversationState) => c.promptCount],
+  ["createdAt", "created_at", (c: ConversationState) => c.createdAt],
+  ["source", "source", (c: ConversationState) => c.source],
+  ["summary", "summary", (c: ConversationState) => c.summary],
+  ["archived", "archived", (c: ConversationState) => (c.archived ? 1 : 0)],
+  ["totalCostUsd", "total_cost_usd", (c: ConversationState) => c.totalCostUsd],
+  ["totalDurationMs", "total_duration_ms", (c: ConversationState) => c.totalDurationMs],
+  ["totalTurns", "total_turns", (c: ConversationState) => c.totalTurns],
+  ["pendingQuestionId", "pending_question_id", (c: ConversationState) => c.pendingQuestionId],
+  ["pendingQuestions", "pending_questions", (c: ConversationState) => jsonOrNull(c.pendingQuestions)],
+  ["pendingPromptText", "pending_prompt_text", (c: ConversationState) => c.pendingPromptText],
+  ["forkedFrom", "forked_from", (c: ConversationState) => jsonOrNull(c.forkedFrom)],
+  ["role", "role", (c: ConversationState) => c.role],
+  ["contextTokens", "context_tokens", (c: ConversationState) => c.contextTokens],
+  ["contextWindowMax", "context_window_max", (c: ConversationState) => c.contextWindowMax],
+  ["debugMode", "debug_mode", (c: ConversationState) => jsonOrNull(c.debugMode)],
+  ["machineSnapshot", "machine_snapshot", (c: ConversationState) => jsonOrNull(c.machineSnapshot)],
+  ["agentBackend", "agent_backend", (c: ConversationState) => c.agentBackend],
+  ["backendRef", "backend_ref", (c: ConversationState) => jsonOrNull(c.backendRef)],
+  ["mcpOverrides", "mcp_overrides", (c: ConversationState) => jsonOrNull(c.mcpOverrides)],
+  ["mcpRuntime", "mcp_runtime", (c: ConversationState) => jsonOrNull(c.mcpRuntime)],
+  [
+    "agentCapabilityOverrides",
+    "agent_capability_overrides",
+    (c: ConversationState) => jsonOrNull(c.agentCapabilityOverrides),
+  ],
+  [
+    "agentCapabilitiesRuntime",
+    "agent_capabilities_runtime",
+    (c: ConversationState) => jsonOrNull(c.agentCapabilitiesRuntime),
+  ],
+  ["unread", "unread", (c: ConversationState) => (c.unread ? 1 : 0)],
+  ["pendingQueue", "pending_queue", (c: ConversationState) => jsonOrNull(c.pendingQueue)],
+] as const satisfies ReadonlyArray<
+  readonly [keyof ConversationState, string, (c: ConversationState) => string | number | null]
+>;
+
+export type ChangedConversationColumns = Record<string, string | number | null>;
+
+/**
+ * Compare `base` against `next` field-by-field (top-level reference equality)
+ * and return only the columns whose source field changed, already serialized
+ * to their SQLite-primitive bind values via the same serializers the full-row
+ * encoder uses (zero column drift). Excludes `last_activity_at` and the
+ * identity columns — the repo restamps `last_activity_at` itself.
+ *
+ * `base` and `next` must be distinct objects (e.g. the row loaded before the
+ * mutator and the value Immer's `produce` returns), so structural sharing makes
+ * `next[field] !== base[field]` exactly "this field's persisted bytes may have
+ * changed". Serialization happens lazily, only for changed fields, so an
+ * untouched `machine_snapshot`/`pending_queue` is never re-stringified.
+ */
+export function diffChangedConversationColumns(
+  base: ConversationState,
+  next: ConversationState,
+): ChangedConversationColumns {
+  const changed: ChangedConversationColumns = {};
+  for (const [field, column, encode] of CONVERSATION_COLUMN_MAP) {
+    if (next[field] !== base[field]) {
+      changed[column] = encode(next);
+    }
+  }
+  return changed;
+}

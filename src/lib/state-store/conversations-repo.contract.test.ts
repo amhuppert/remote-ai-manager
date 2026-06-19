@@ -16,6 +16,7 @@ import {
   createConversationsRepo,
   type ConversationsRepo,
 } from "./conversations-repo";
+import { diffChangedConversationColumns } from "./conversation-row-codec";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
@@ -399,6 +400,339 @@ describe("conversations-repo upsertWithSessionTouch atomicity", () => {
       expect(afterSession.last_activity_at).toBe(beforeLastActivity);
     } finally {
       db.exec("DROP TRIGGER abort_session_update");
+    }
+  });
+});
+
+describe("conversations-repo updateChangedColumnsWithSessionTouch", () => {
+  const ALL_COLUMNS = [
+    "name",
+    "transcript_path",
+    "status",
+    "prompt_count",
+    "created_at",
+    "last_activity_at",
+    "source",
+    "summary",
+    "archived",
+    "total_cost_usd",
+    "total_duration_ms",
+    "total_turns",
+    "pending_question_id",
+    "pending_questions",
+    "pending_prompt_text",
+    "forked_from",
+    "role",
+    "context_tokens",
+    "context_window_max",
+    "debug_mode",
+    "machine_snapshot",
+    "agent_backend",
+    "backend_ref",
+    "mcp_overrides",
+    "mcp_runtime",
+    "agent_capability_overrides",
+    "agent_capabilities_runtime",
+    "unread",
+    "pending_queue",
+  ] as const;
+
+  function readRow(id: string): Record<string, unknown> {
+    return db
+      .prepare(`SELECT * FROM conversations WHERE id = ?`)
+      .get(id) as Record<string, unknown>;
+  }
+
+  it("commits the changed columns and parent session.last_activity_at in one transaction (success)", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeFullConversation({ id: "c-full", summary: "v1" }),
+    );
+
+    const base = repo.findById("c-full")!;
+    const next = { ...base, summary: "v2" };
+    const changed = diffChangedConversationColumns(base, next);
+    expect(Object.keys(changed)).toEqual(["summary"]);
+
+    const newLastActivity = "2026-04-04T04:04:04Z";
+    repo.updateChangedColumnsWithSessionTouch(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "c-full",
+      changed,
+      newLastActivity,
+    );
+
+    expect(repo.findById("c-full")?.summary).toBe("v2");
+    expect(repo.findById("c-full")?.lastActivityAt).toBe(newLastActivity);
+    const session = db
+      .prepare(
+        "SELECT last_activity_at FROM sessions WHERE project_path = ? AND session_name = ?",
+      )
+      .get(PROJECT_PATH, SESSION_NAME) as { last_activity_at: string };
+    expect(session.last_activity_at).toBe(newLastActivity);
+  });
+
+  it("leaves every non-changed column byte-identical to the full-upsert baseline across a sequence of single-column writes", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeFullConversation({ id: "c-full" }),
+    );
+    const baseline = readRow("c-full");
+
+    // A sequence of scalar/JSON single-field mutations, each applied via the
+    // focused per-column path. After each, only the targeted column (plus
+    // last_activity_at) may differ from the prior row state.
+    const steps: Array<{
+      apply: (c: ConversationState) => ConversationState;
+      column: string;
+    }> = [
+      { apply: (c) => ({ ...c, status: "awaiting" }), column: "status" },
+      { apply: (c) => ({ ...c, unread: true }), column: "unread" },
+      { apply: (c) => ({ ...c, summary: "changed" }), column: "summary" },
+      {
+        apply: (c) => ({ ...c, pendingQueue: [] }),
+        column: "pending_queue",
+      },
+    ];
+
+    let prevRow = baseline;
+    let activity = 0;
+    for (const step of steps) {
+      const before = repo.findById("c-full")!;
+      const after = step.apply(before);
+      const changed = diffChangedConversationColumns(before, after);
+      expect(Object.keys(changed)).toEqual([step.column]);
+
+      activity += 1;
+      const lastActivityAt = `2026-05-0${activity}T00:00:00Z`;
+      repo.updateChangedColumnsWithSessionTouch(
+        PROJECT_PATH,
+        SESSION_NAME,
+        "c-full",
+        changed,
+        lastActivityAt,
+      );
+
+      const newRow = readRow("c-full");
+      for (const col of ALL_COLUMNS) {
+        if (col === step.column || col === "last_activity_at") continue;
+        expect(newRow[col], `column ${col} must be unchanged`).toBe(
+          prevRow[col],
+        );
+      }
+      expect(newRow.last_activity_at).toBe(lastActivityAt);
+      prevRow = newRow;
+    }
+
+    // The big blob columns the focused path must never have re-written stay
+    // byte-identical to the very first full-upsert baseline.
+    for (const blob of [
+      "machine_snapshot",
+      "mcp_overrides",
+      "mcp_runtime",
+      "debug_mode",
+      "forked_from",
+      "backend_ref",
+    ]) {
+      expect(readRow("c-full")[blob]).toBe(baseline[blob]);
+    }
+  });
+
+  it("writes only the named JSON column and never re-serializes co-located blobs", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeFullConversation({ id: "c-full" }),
+    );
+    const baselineMachine = readRow("c-full").machine_snapshot;
+
+    const before = repo.findById("c-full")!;
+    const after = {
+      ...before,
+      pendingQuestions: [
+        {
+          id: "q-new",
+          question: "Proceed?",
+          context: "ctx",
+          options: [{ label: "ok", recommended: true }],
+          multiSelect: false,
+          required: false,
+          allowNote: false,
+        },
+      ],
+    };
+    const changed = diffChangedConversationColumns(before, after);
+    expect(Object.keys(changed)).toEqual(["pending_questions"]);
+
+    repo.updateChangedColumnsWithSessionTouch(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "c-full",
+      changed,
+      "2026-06-01T00:00:00Z",
+    );
+
+    expect(readRow("c-full").machine_snapshot).toBe(baselineMachine);
+    expect(repo.findById("c-full")?.pendingQuestions?.[0]?.id).toBe("q-new");
+  });
+
+  it("writes both columns when two fields change", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeFullConversation({ id: "c-full", summary: "v1", promptCount: 1 }),
+    );
+    const before = repo.findById("c-full")!;
+    const after = { ...before, summary: "v2", promptCount: 2 };
+    const changed = diffChangedConversationColumns(before, after);
+    expect(Object.keys(changed).sort()).toEqual(["prompt_count", "summary"]);
+
+    repo.updateChangedColumnsWithSessionTouch(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "c-full",
+      changed,
+      "2026-06-02T00:00:00Z",
+    );
+
+    const reloaded = repo.findById("c-full")!;
+    expect(reloaded.summary).toBe("v2");
+    expect(reloaded.promptCount).toBe(2);
+  });
+
+  it("with no changed columns still updates last_activity_at on both row and session", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeFullConversation({ id: "c-full" }),
+    );
+    const before = repo.findById("c-full")!;
+    // Reference-identical mutation: nothing changed.
+    const changed = diffChangedConversationColumns(before, { ...before });
+    expect(Object.keys(changed)).toEqual([]);
+
+    const newLastActivity = "2026-06-03T00:00:00Z";
+    repo.updateChangedColumnsWithSessionTouch(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "c-full",
+      changed,
+      newLastActivity,
+    );
+
+    expect(repo.findById("c-full")?.lastActivityAt).toBe(newLastActivity);
+    const session = db
+      .prepare(
+        "SELECT last_activity_at FROM sessions WHERE project_path = ? AND session_name = ?",
+      )
+      .get(PROJECT_PATH, SESSION_NAME) as { last_activity_at: string };
+    expect(session.last_activity_at).toBe(newLastActivity);
+  });
+
+  it("bumps the findAll cache version so a stale parsed row is not served", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeFullConversation({ id: "c-full", summary: "v1" }),
+    );
+    expect(repo.findAll().find((r) => r.conversation.id === "c-full")
+      ?.conversation.summary).toBe("v1");
+
+    const before = repo.findById("c-full")!;
+    const changed = diffChangedConversationColumns(before, {
+      ...before,
+      summary: "v2",
+    });
+    repo.updateChangedColumnsWithSessionTouch(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "c-full",
+      changed,
+      "2026-06-04T00:00:00Z",
+    );
+
+    expect(repo.findAll().find((r) => r.conversation.id === "c-full")
+      ?.conversation.summary).toBe("v2");
+  });
+
+  it("round-trips a full fixture's durability after a focused per-column write", () => {
+    const fixture = makeFullConversation({ id: "c-full" });
+    repo.upsert(PROJECT_PATH, SESSION_NAME, fixture);
+
+    const before = repo.findById("c-full")!;
+    const changed = diffChangedConversationColumns(before, {
+      ...before,
+      status: "awaiting",
+    });
+    repo.updateChangedColumnsWithSessionTouch(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "c-full",
+      changed,
+      "2026-06-05T00:00:00Z",
+    );
+
+    const reloaded = repo.findById("c-full")!;
+    // Every other persisted field of the maximal fixture survived the focused
+    // write untouched.
+    expect(reloaded).toEqual({
+      ...fixture,
+      status: "awaiting",
+      lastActivityAt: "2026-06-05T00:00:00Z",
+    });
+  });
+
+  it("rolls back BOTH the column update and the session UPDATE if the transaction aborts", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeFullConversation({ id: "c-full", summary: "original" }),
+    );
+    const beforeSession = db
+      .prepare(
+        "SELECT last_activity_at FROM sessions WHERE project_path = ? AND session_name = ?",
+      )
+      .get(PROJECT_PATH, SESSION_NAME) as { last_activity_at: string };
+
+    db.exec(`
+      CREATE TRIGGER abort_session_update_cols
+      BEFORE UPDATE ON sessions
+      WHEN NEW.last_activity_at = '__rollback_marker__'
+      BEGIN
+        SELECT RAISE(ABORT, 'simulated failure');
+      END
+    `);
+
+    try {
+      const before = repo.findById("c-full")!;
+      const changed = diffChangedConversationColumns(before, {
+        ...before,
+        summary: "should_not_persist",
+      });
+      expect(() =>
+        repo.updateChangedColumnsWithSessionTouch(
+          PROJECT_PATH,
+          SESSION_NAME,
+          "c-full",
+          changed,
+          "__rollback_marker__",
+        ),
+      ).toThrow();
+
+      expect(repo.findById("c-full")?.summary).toBe("original");
+      const afterSession = db
+        .prepare(
+          "SELECT last_activity_at FROM sessions WHERE project_path = ? AND session_name = ?",
+        )
+        .get(PROJECT_PATH, SESSION_NAME) as { last_activity_at: string };
+      expect(afterSession.last_activity_at).toBe(
+        beforeSession.last_activity_at,
+      );
+    } finally {
+      db.exec("DROP TRIGGER abort_session_update_cols");
     }
   });
 });

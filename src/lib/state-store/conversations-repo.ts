@@ -9,6 +9,7 @@ import {
   parseJsonColumn,
   stableStringify,
   throwConversationValidationError,
+  type ChangedConversationColumns,
 } from "./conversation-row-codec";
 import { pendingQueuedMessageSchema } from "@/lib/conversations/message-queue-schemas";
 import type {
@@ -55,6 +56,22 @@ export interface ConversationsRepo {
     projectPath: string,
     sessionName: string,
     conversation: ConversationState,
+    lastActivityAt: string,
+  ): void;
+  /**
+   * Per-column update of one existing conversation row plus the session
+   * `last_activity_at` touch, in one transaction. Writes only the columns in
+   * `changedColumns` (column-name → already-serialized bind value) and always
+   * sets the row's `last_activity_at`, so co-located large columns
+   * (`machine_snapshot`, `pending_queue`, runtime blobs) are neither
+   * re-serialized nor re-written when their source field did not change. The
+   * row must already exist; a missing row writes nothing.
+   */
+  updateChangedColumnsWithSessionTouch(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    changedColumns: ChangedConversationColumns,
     lastActivityAt: string,
   ): void;
   setPendingPromptText(
@@ -412,6 +429,48 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
     },
   );
 
+  // Per-column-set prepared statements for the focused update path, keyed by the
+  // sorted, comma-joined changed-column list so repeated mutation shapes (status
+  // toggles, unread flips, pending_queue claims, machine_snapshot saves) reuse
+  // one prepared statement. Bounded by the small number of distinct shapes seen
+  // in practice. Each statement always sets `last_activity_at` in addition to
+  // the changed columns. Bind params are named: the changed-column values plus
+  // `@last_activity_at`, `@project_path`, `@session_name`, `@id`.
+  const updateColumnsStmtCache = new Map<
+    string,
+    ReturnType<typeof db.prepare>
+  >();
+  function getUpdateColumnsStmt(
+    sortedColumns: readonly string[],
+  ): ReturnType<typeof db.prepare> {
+    const cacheKey = sortedColumns.join(",");
+    const cached = updateColumnsStmtCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+    const assignments = [
+      ...sortedColumns.map((col) => `${col} = @${col}`),
+      `last_activity_at = @last_activity_at`,
+    ].join(", ");
+    const stmt = db.prepare(
+      `UPDATE conversations SET ${assignments}
+       WHERE project_path = @project_path AND session_name = @session_name AND id = @id`,
+    );
+    updateColumnsStmtCache.set(cacheKey, stmt);
+    return stmt;
+  }
+
+  const updateChangedColumnsWithSessionTouchTxn = db.transaction(
+    (
+      stmt: ReturnType<typeof db.prepare>,
+      bind: Record<string, string | number | null>,
+      projectPath: string,
+      sessionName: string,
+      lastActivityAt: string,
+    ) => {
+      stmt.run(bind);
+      sessionTouchStmt.run(lastActivityAt, projectPath, sessionName);
+    },
+  );
+
   return {
     findById(id) {
       return timed("findById", { id }, () => {
@@ -542,6 +601,39 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
             conversation,
           );
           upsertWithSessionTouchTxn.immediate(bind, lastActivityAt);
+          cacheVersion += 1;
+        },
+      );
+    },
+    updateChangedColumnsWithSessionTouch(
+      projectPath,
+      sessionName,
+      conversationId,
+      changedColumns,
+      lastActivityAt,
+    ) {
+      timed(
+        "updateChangedColumnsWithSessionTouch",
+        { id: conversationId, projectPath, sessionName },
+        () => {
+          const sortedColumns = Object.keys(changedColumns).sort();
+          const stmt = getUpdateColumnsStmt(sortedColumns);
+          const bind: Record<string, string | number | null> = {
+            project_path: projectPath,
+            session_name: sessionName,
+            id: conversationId,
+            last_activity_at: lastActivityAt,
+          };
+          for (const col of sortedColumns) {
+            bind[col] = changedColumns[col]!;
+          }
+          updateChangedColumnsWithSessionTouchTxn.immediate(
+            stmt,
+            bind,
+            projectPath,
+            sessionName,
+            lastActivityAt,
+          );
           cacheVersion += 1;
         },
       );

@@ -275,6 +275,7 @@ describe("state-aggregate.readAll", () => {
         upsert: () => {},
         delete: () => {},
         upsertWithSessionTouch: () => {},
+        updateChangedColumnsWithSessionTouch: () => {},
         setPendingPromptText: () => false,
       },
       referenceDocuments: {

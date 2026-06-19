@@ -1,3 +1,4 @@
+import { Immer } from "immer";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { ManagerState, ProjectState } from "@/lib/projects/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
@@ -8,6 +9,7 @@ import { timed } from "@/lib/logging/timed";
 
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import { createAccessors } from "./accessors";
+import { diffChangedConversationColumns } from "./conversation-row-codec";
 import {
   canonicalConversationRow,
   createConversationsRepo,
@@ -42,6 +44,19 @@ const logger = createLogger("state-store");
 export function getStateDb(): Db {
   return getDb();
 }
+
+/**
+ * Immer instance with auto-freeze disabled, scoped to the conversation-mutate
+ * path. Drafting the loaded row gives `mutateConversation` a `next` whose
+ * touched top-level fields are fresh references (cheap per-column reference
+ * diff via structural sharing) while leaving the mutator's return value
+ * mutable: callers in the message-queue family build queued-message rows,
+ * assign them into the draft, and return those same references onward into
+ * broadcast/view code — auto-freeze would turn those into read-only objects
+ * that silently no-op on a later in-place edit. Isolated from the global Immer
+ * (the rest of the app keeps default freezing via `produce`).
+ */
+const conversationMutateImmer = new Immer({ autoFreeze: false });
 
 function canonicalSessionWithChildren(
   projectPath: string,
@@ -226,23 +241,32 @@ export function createStateStore(deps: StateStoreDeps = {}) {
         "state.mutate",
         { label, projectPath, sessionName, conversationId },
         async () => {
-          const conversation = repos.conversations.findByKey(
+          const base = repos.conversations.findByKey(
             projectPath,
             sessionName,
             conversationId,
           );
-          if (!conversation) {
+          if (!base) {
             throw new Error(
               `Conversation "${conversationId}" not found in session "${sessionName}" during ${label}`,
             );
           }
-          const result = await mutate(conversation);
+          // Run the mutator against an Immer draft so structural sharing makes
+          // each touched top-level field a fresh reference on `next`, then diff
+          // `base` vs `next` by reference to find exactly which columns changed.
+          // `createDraft`/`finishDraft` (not `produce`) because mutators may be
+          // async — Immer finalizes `produce` synchronously and would revoke the
+          // proxy before an async recipe's first `await` resumes.
+          const draft = conversationMutateImmer.createDraft(base);
+          const result = await mutate(draft);
+          const next = conversationMutateImmer.finishDraft(draft);
           const now = new Date().toISOString();
-          conversation.lastActivityAt = now;
-          repos.conversations.upsertWithSessionTouch(
+          const changedColumns = diffChangedConversationColumns(base, next);
+          repos.conversations.updateChangedColumnsWithSessionTouch(
             projectPath,
             sessionName,
-            conversation,
+            conversationId,
+            changedColumns,
             now,
           );
           return result;
