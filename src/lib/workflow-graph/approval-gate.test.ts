@@ -395,6 +395,8 @@ describe("createApprovalGateService.recordDecision", () => {
   function buildService() {
     const repo = createGraphWorkflowExecutionRepository({
       getSession: fixture.store.getSession,
+      getActiveGraphWorkflowExecution:
+        fixture.store.getActiveGraphWorkflowExecution,
       mutateActiveGraphWorkflowExecution:
         fixture.store.mutateActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
@@ -414,20 +416,23 @@ describe("createApprovalGateService.recordDecision", () => {
   }
 
   async function seedExecution(execution: GraphWorkflowExecution | null) {
-    await fixture.store.mutateSession(
+    // The fixture session starts with no active execution; "seeding null" means
+    // leaving it that way (the executions table has no row for the session).
+    if (execution === null) return;
+    await fixture.store.mutateActiveGraphWorkflowExecution(
       PROJECT_PATH,
       SESSION_NAME,
       "test.seedExecution",
-      (session) => {
-        session.graphWorkflowExecution = execution;
-      },
+      async () => ({ execution, events: [] }),
     );
   }
 
   async function reloadGatedContext() {
-    const session = await fixture.store.getSession(PROJECT_PATH, SESSION_NAME);
-    const contextState =
-      session?.graphWorkflowExecution?.contextStates[GATED_CONTEXT_ID];
+    const execution = await fixture.store.getActiveGraphWorkflowExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    const contextState = execution?.contextStates[GATED_CONTEXT_ID];
     if (!contextState) throw new Error("gated context missing after reload");
     return contextState;
   }

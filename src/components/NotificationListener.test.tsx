@@ -7,7 +7,11 @@ import NotificationListener from "./NotificationListener";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { mcpConfigKeys, mcpToolsKeys } from "@/lib/mcp/query-keys";
 import { agentCapabilityKeys } from "@/lib/agent-capabilities/query-keys";
-import { collaborationKeys } from "@/lib/workflows/query-keys";
+import {
+  collaborationKeys,
+  graphWorkflowEventsKeys,
+  graphWorkflowExecutionKeys,
+} from "@/lib/workflows/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
@@ -1291,6 +1295,67 @@ describe("NotificationListener", () => {
     });
     const cached = client.getQueryData<Array<{ seq: number }>>(messagesKey);
     expect(cached?.length).toBe(1);
+  });
+
+  it("invalidates the execution detail and event log (not session detail) on graph-workflow-status", async () => {
+    const client = makeClient();
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("graph-workflow-status", {
+      type: "graph-workflow-status",
+      projectName: "proj",
+      sessionName: "sess",
+      executionId: "exec-1",
+      workflowStatus: "running",
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: graphWorkflowExecutionKeys.detail("proj", "sess"),
+      }),
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: graphWorkflowEventsKeys.list("proj", "sess", "exec-1"),
+    });
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: sessionKeys.detail("proj", "sess"),
+    });
+  });
+
+  it("invalidates the execution detail and event log on graph-workflow-task-status", async () => {
+    const client = makeClient();
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+
+    renderWithClient(client);
+
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+
+    es.emit("graph-workflow-task-status", {
+      type: "graph-workflow-task-status",
+      projectName: "proj",
+      sessionName: "sess",
+      executionId: "exec-7",
+      taskId: "task-1",
+      contextId: "ctx-1",
+      status: "completed",
+      source: "agent",
+      order: 1,
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: graphWorkflowEventsKeys.list("proj", "sess", "exec-7"),
+      }),
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: graphWorkflowExecutionKeys.detail("proj", "sess"),
+    });
   });
 
   it("enqueues an input toast and invalidates active + session detail on graph-workflow-approval-pending", async () => {

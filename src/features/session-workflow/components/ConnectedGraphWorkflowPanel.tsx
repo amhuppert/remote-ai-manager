@@ -3,9 +3,9 @@
 import { useCallback } from "react";
 import {
   useGraphWorkflowEventsQuery,
+  useGraphWorkflowExecutionQuery,
   useWorkflowDefinitionQuery,
 } from "@/lib/workflows/queries";
-import { useSessionQuery } from "@/lib/sessions/queries";
 import {
   useAbortGraphWorkflowMutation,
   useClearGraphWorkflowMutation,
@@ -32,10 +32,12 @@ export default function ConnectedGraphWorkflowPanel({
   mobilePanel,
   autoSwitchPanel,
 }: ConnectedGraphWorkflowPanelProps) {
-  const sessionQuery = useSessionQuery(projectName, sessionName);
-  const session = sessionQuery.data ?? null;
-  const seedDefinitionId =
-    session?.graphWorkflowExecution?.seedDefinitionId ?? null;
+  const executionQuery = useGraphWorkflowExecutionQuery(
+    projectName,
+    sessionName,
+  );
+  const execution = executionQuery.data ?? null;
+  const seedDefinitionId = execution?.seedDefinitionId ?? null;
   const seedDefinitionQuery = useWorkflowDefinitionQuery(
     projectName,
     seedDefinitionId,
@@ -130,7 +132,7 @@ export default function ConnectedGraphWorkflowPanel({
     [runtimeEditMutation],
   );
 
-  const executionId = session?.graphWorkflowExecution?.id ?? null;
+  const executionId = execution?.id ?? null;
   const eventsQuery = useGraphWorkflowEventsQuery(
     projectName,
     sessionName,
@@ -148,7 +150,7 @@ export default function ConnectedGraphWorkflowPanel({
     <GraphWorkflowPanel
       projectName={projectName}
       sessionName={sessionName}
-      execution={session?.graphWorkflowExecution ?? null}
+      execution={execution}
       events={eventsQuery.data ?? []}
       archivedExecutions={[]}
       layout={seedDefinitionQuery.data?.item.layout ?? null}

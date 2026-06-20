@@ -23,13 +23,16 @@ vi.mock("@/lib/logging", () => ({
 
 import type Database from "better-sqlite3";
 import { _createTestDb } from "./state-db";
-import { createSessionsRepo, type SessionsRepo } from "./sessions-repo";
+import {
+  createGraphWorkflowExecutionsRepo,
+  type GraphWorkflowExecutionsRepo,
+} from "./graph-workflow-executions-repo";
 import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 type Db = InstanceType<typeof Database>;
 
 let db: Db;
-let repo: SessionsRepo;
+let repo: GraphWorkflowExecutionsRepo;
 
 const PROJECT_PATH = "/p1";
 const SESSION_NAME = "s1";
@@ -38,10 +41,26 @@ function insertProject(): void {
   db.prepare("INSERT INTO projects (root_path) VALUES (?)").run(PROJECT_PATH);
 }
 
-function buildLegacyExecutionJson(
+function insertSession(): void {
+  db.prepare(
+    `INSERT INTO sessions (
+       project_path, session_name, worktree_path, branch_name,
+       created_at, last_activity_at
+     ) VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    PROJECT_PATH,
+    SESSION_NAME,
+    `/wt/${SESSION_NAME}`,
+    `csm/${SESSION_NAME}`,
+    "2026-01-01T00:00:00Z",
+    "2026-01-01T00:00:00Z",
+  );
+}
+
+function buildLegacyExecution(
   overrides: Record<string, unknown> = {},
-): string {
-  const exec = {
+): Record<string, unknown> {
+  return {
     id: "exec-legacy-1",
     seedDefinitionId: "seed-1",
     seedDefinitionRevision: 1,
@@ -85,11 +104,10 @@ function buildLegacyExecutionJson(
     collaborationContinuations: {},
     ...overrides,
   };
-  return JSON.stringify(exec);
 }
 
-function buildCleanExecutionJson(): string {
-  const exec: GraphWorkflowExecution = {
+function buildCleanExecution(): GraphWorkflowExecution {
+  return {
     id: "exec-clean-1",
     seedDefinitionId: "seed-1",
     seedDefinitionRevision: 1,
@@ -119,83 +137,87 @@ function buildCleanExecutionJson(): string {
     collaborationContinuations: {},
     pendingMergeRetry: [],
   };
-  return JSON.stringify(exec);
 }
 
-function rawInsertSession(graphWorkflowExecutionJson: string | null): void {
+/**
+ * Raw-insert one active execution row with the whole (possibly legacy-shaped)
+ * record in `runtime_json` and an empty `definition_json`. The repo's read-time
+ * merge is `{...definition_json, ...runtime_json}`, so the whole record is
+ * reconstructed and the on-read legacy-upgrade path runs against it — exactly
+ * what a freshly backfilled-then-stale row looks like before the first rewrite.
+ */
+function rawInsertExecution(execution: Record<string, unknown>): void {
+  const status =
+    typeof execution.status === "string" ? execution.status : "running";
   db.prepare(
-    `INSERT INTO sessions (
-       project_path, session_name, worktree_path, branch_name,
-       created_at, last_activity_at, archived, finished, source,
-       objective, creation_mode, tdd_enabled, target_branch,
-       parent_session_name, graph_workflow_execution,
-       graph_workflow_execution_history, workflow_envelopes,
-       workflow_lanes, mcp_overrides
-     ) VALUES (
-       @project_path, @session_name, @worktree_path, @branch_name,
-       @created_at, @last_activity_at, @archived, @finished, @source,
-       @objective, @creation_mode, @tdd_enabled, @target_branch,
-       @parent_session_name, @graph_workflow_execution,
-       @graph_workflow_execution_history, @workflow_envelopes,
-       @workflow_lanes, @mcp_overrides
-     )`,
-  ).run({
-    project_path: PROJECT_PATH,
-    session_name: SESSION_NAME,
-    worktree_path: `/wt/${SESSION_NAME}`,
-    branch_name: `csm/${SESSION_NAME}`,
-    created_at: "2026-01-01T00:00:00Z",
-    last_activity_at: "2026-01-01T00:00:00Z",
-    archived: 0,
-    finished: 0,
-    source: "cc",
-    objective: null,
-    creation_mode: "fast",
-    tdd_enabled: 1,
-    target_branch: "main",
-    parent_session_name: null,
-    graph_workflow_execution: graphWorkflowExecutionJson,
-    graph_workflow_execution_history: "[]",
-    workflow_envelopes: null,
-    workflow_lanes: null,
-    mcp_overrides: null,
-  });
+    `INSERT INTO graph_workflow_executions (
+       project_path, session_name, execution_id, seed_definition_id,
+       seed_definition_revision, started_at, status, completed_at,
+       definition_json, runtime_json, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    PROJECT_PATH,
+    SESSION_NAME,
+    typeof execution.id === "string" ? execution.id : "exec-unknown",
+    "seed-1",
+    1,
+    "2026-04-04T00:00:00.000Z",
+    status,
+    null,
+    "{}",
+    JSON.stringify(execution),
+    "2026-01-01T00:00:00Z",
+  );
 }
 
-function readGraphWorkflowExecutionColumn(): string | null {
+/** The merged stored record (definition_json ⊕ runtime_json) as raw JSON. */
+function readStoredExecution(): Record<string, unknown> | null {
   const row = db
     .prepare(
-      "SELECT graph_workflow_execution FROM sessions WHERE project_path = ? AND session_name = ?",
+      `SELECT definition_json, runtime_json FROM graph_workflow_executions
+        WHERE project_path = ? AND session_name = ?`,
     )
-    .get(PROJECT_PATH, SESSION_NAME) as {
-    graph_workflow_execution: string | null;
+    .get(PROJECT_PATH, SESSION_NAME) as
+    | { definition_json: string; runtime_json: string }
+    | undefined;
+  if (!row) return null;
+  return {
+    ...(JSON.parse(row.definition_json) as Record<string, unknown>),
+    ...(JSON.parse(row.runtime_json) as Record<string, unknown>),
   };
-  return row.graph_workflow_execution;
 }
 
 beforeEach(() => {
   capturedLogs.length = 0;
   db = _createTestDb({ inMemory: true });
   insertProject();
-  repo = createSessionsRepo(db);
+  insertSession();
+  repo = createGraphWorkflowExecutionsRepo(db);
 });
 
 afterEach(() => {
   db.close();
 });
 
-describe("sessions-repo graph-workflow legacy migration on load", () => {
+describe("graph-workflow-executions-repo legacy migration on read", () => {
   it("(a) clean record passes through untouched without re-persisting or emitting migration event", () => {
-    const cleanJson = buildCleanExecutionJson();
-    rawInsertSession(cleanJson);
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      buildCleanExecution(),
+      "2026-01-01T00:00:00Z",
+    );
+    const before = readStoredExecution();
+    capturedLogs.length = 0;
 
-    const before = readGraphWorkflowExecutionColumn();
-    const session = repo.findByKey(PROJECT_PATH, SESSION_NAME);
-    const after = readGraphWorkflowExecutionColumn();
+    // A fresh repo instance bypasses the parsed-row cache so the read re-merges.
+    const fresh = createGraphWorkflowExecutionsRepo(db);
+    const execution = fresh.getActive(PROJECT_PATH, SESSION_NAME);
+    const after = readStoredExecution();
 
-    expect(session?.graphWorkflowExecution?.id).toBe("exec-clean-1");
-    expect(session?.graphWorkflowExecution?.status).toBe("paused");
-    expect(before).toBe(after);
+    expect(execution?.id).toBe("exec-clean-1");
+    expect(execution?.status).toBe("paused");
+    expect(after).toEqual(before);
 
     const migrationEvents = capturedLogs.filter(
       (e) => e.message === "graph-workflow.parallel.legacy_migrated",
@@ -204,30 +226,28 @@ describe("sessions-repo graph-workflow legacy migration on load", () => {
   });
 
   it("(b) legacy record is migrated, re-persisted to disk, and structured event is emitted", () => {
-    rawInsertSession(buildLegacyExecutionJson());
+    rawInsertExecution(buildLegacyExecution());
 
-    const session = repo.findByKey(PROJECT_PATH, SESSION_NAME);
-    const exec = session?.graphWorkflowExecution;
-    expect(exec).not.toBeNull();
-    if (!exec) return;
+    const execution = repo.getActive(PROJECT_PATH, SESSION_NAME);
+    expect(execution).not.toBeNull();
+    if (!execution) return;
 
-    expect(exec.id).toBe("exec-legacy-1");
-    expect(exec.status).toBe("paused");
-    expect(exec.activeContextIds).toEqual([]);
-    const ctxA = exec.contextStates["ctx-a"];
+    expect(execution.id).toBe("exec-legacy-1");
+    expect(execution.status).toBe("paused");
+    expect(execution.activeContextIds).toEqual([]);
+    const ctxA = execution.contextStates["ctx-a"];
     expect(ctxA?.status).toBe("ready");
     expect(ctxA?.worktreePath).toBe("/wt/sub");
     expect(ctxA?.branchName).toBe("csm/feature");
-    expect(exec.contextStates["ctx-b"]?.status).toBe("completed");
+    expect(execution.contextStates["ctx-b"]?.status).toBe("completed");
 
-    const onDisk = readGraphWorkflowExecutionColumn();
+    const onDisk = readStoredExecution();
     expect(onDisk).not.toBeNull();
     if (!onDisk) return;
-    const onDiskParsed = JSON.parse(onDisk) as Record<string, unknown>;
-    expect("activeContextId" in onDiskParsed).toBe(false);
-    expect(onDiskParsed.status).toBe("paused");
-    expect(onDiskParsed.activeContextIds).toEqual([]);
-    const onDiskCtxA = (onDiskParsed.contextStates as Record<string, unknown>)[
+    expect("activeContextId" in onDisk).toBe(false);
+    expect(onDisk.status).toBe("paused");
+    expect(onDisk.activeContextIds).toEqual([]);
+    const onDiskCtxA = (onDisk.contextStates as Record<string, unknown>)[
       "ctx-a"
     ] as Record<string, unknown>;
     expect(onDiskCtxA.status).toBe("ready");
@@ -252,8 +272,8 @@ describe("sessions-repo graph-workflow legacy migration on load", () => {
     );
   });
 
-  it("(c) malformed record (post-migration parse fails) degrades the column to null in memory, loud-logs, and preserves the original on disk", () => {
-    const malformed = JSON.stringify({
+  it("(c) malformed record (post-migration parse fails) throws (fail-loud) and preserves the original on disk", () => {
+    const malformed = {
       id: "exec-bad-1",
       seedDefinitionId: "seed-1",
       seedDefinitionRevision: 1,
@@ -263,29 +283,27 @@ describe("sessions-repo graph-workflow legacy migration on load", () => {
       contextStates: {},
       taskStates: {},
       startedAt: "2026-04-04T00:00:00.000Z",
-    });
-    rawInsertSession(malformed);
+    };
+    rawInsertExecution(malformed);
+    const before = readStoredExecution();
 
-    const out = repo.findByKey(PROJECT_PATH, SESSION_NAME);
-    expect(out).not.toBeNull();
-    expect(out?.graphWorkflowExecution).toBeNull();
+    expect(() => repo.getActive(PROJECT_PATH, SESSION_NAME)).toThrow();
 
-    const quarantineLogs = capturedLogs.filter(
+    const validationLogs = capturedLogs.filter(
       (e) =>
         e.level === "error" &&
-        e.message === "state-store.sessions.column_quarantined",
+        e.message ===
+          "state-store.graph-workflow-executions.schema_validation_failure",
     );
-    expect(quarantineLogs).toHaveLength(1);
-    expect(quarantineLogs[0]?.data).toMatchObject({
-      column: "graphWorkflowExecution",
-    });
+    expect(validationLogs).toHaveLength(1);
 
-    const onDisk = readGraphWorkflowExecutionColumn();
-    expect(onDisk).toBe(malformed);
+    // The corrupt blob is left intact on disk (a schema that understands it can
+    // still parse it on a later read).
+    expect(readStoredExecution()).toEqual(before);
   });
 
   it("(d) new-schema record with a legitimately running context passes through untouched (no migration on every read mid-execution)", () => {
-    const runningJson = JSON.stringify({
+    const running = {
       id: "exec-running-1",
       seedDefinitionId: "seed-1",
       seedDefinitionRevision: 1,
@@ -319,22 +337,18 @@ describe("sessions-repo graph-workflow legacy migration on load", () => {
       completedAt: null,
       haltReason: null,
       pendingHaltReason: null,
-    });
-    rawInsertSession(runningJson);
+    };
+    rawInsertExecution(running);
+    const before = readStoredExecution();
 
-    const before = readGraphWorkflowExecutionColumn();
-    const session = repo.findByKey(PROJECT_PATH, SESSION_NAME);
-    const after = readGraphWorkflowExecutionColumn();
+    const execution = repo.getActive(PROJECT_PATH, SESSION_NAME);
+    const after = readStoredExecution();
 
-    expect(session?.graphWorkflowExecution?.id).toBe("exec-running-1");
-    expect(session?.graphWorkflowExecution?.status).toBe("running");
-    expect(session?.graphWorkflowExecution?.activeContextIds).toEqual([
-      "ctx-a",
-    ]);
-    expect(
-      session?.graphWorkflowExecution?.contextStates["ctx-a"]?.status,
-    ).toBe("running");
-    expect(before).toBe(after);
+    expect(execution?.id).toBe("exec-running-1");
+    expect(execution?.status).toBe("running");
+    expect(execution?.activeContextIds).toEqual(["ctx-a"]);
+    expect(execution?.contextStates["ctx-a"]?.status).toBe("running");
+    expect(after).toEqual(before);
 
     const migrationEvents = capturedLogs.filter(
       (e) => e.message === "graph-workflow.parallel.legacy_migrated",
@@ -343,10 +357,10 @@ describe("sessions-repo graph-workflow legacy migration on load", () => {
   });
 
   it("legacy detection happens on the raw object (legacy field present) before zod-strip would silently drop it", () => {
-    rawInsertSession(buildLegacyExecutionJson());
+    rawInsertExecution(buildLegacyExecution());
 
-    const session = repo.findByKey(PROJECT_PATH, SESSION_NAME);
-    expect(session?.graphWorkflowExecution?.activeContextIds).toEqual([]);
+    const execution = repo.getActive(PROJECT_PATH, SESSION_NAME);
+    expect(execution?.activeContextIds).toEqual([]);
 
     const migrationEvents = capturedLogs.filter(
       (e) => e.message === "graph-workflow.parallel.legacy_migrated",
@@ -359,7 +373,7 @@ describe("sessions-repo graph-workflow legacy migration on load", () => {
   });
 
   it("flat laneStates record (pre-promotion shape) is reshaped to nested keying and re-persisted", () => {
-    const flatLanesJson = JSON.stringify({
+    const flatLanes = {
       id: "exec-flat-lanes-1",
       seedDefinitionId: "seed-1",
       seedDefinitionRevision: 1,
@@ -413,15 +427,14 @@ describe("sessions-repo graph-workflow legacy migration on load", () => {
       completedAt: null,
       haltReason: null,
       pendingHaltReason: null,
-    });
-    rawInsertSession(flatLanesJson);
+    };
+    rawInsertExecution(flatLanes);
 
-    const session = repo.findByKey(PROJECT_PATH, SESSION_NAME);
-    const exec = session?.graphWorkflowExecution;
-    expect(exec).not.toBeNull();
-    if (!exec) return;
+    const execution = repo.getActive(PROJECT_PATH, SESSION_NAME);
+    expect(execution).not.toBeNull();
+    if (!execution) return;
 
-    expect(exec.laneStates).toEqual({
+    expect(execution.laneStates).toEqual({
       "execution-loop-fan-out-fan-in": {
         context_validator: expect.objectContaining({
           engine: "codex",
@@ -434,11 +447,10 @@ describe("sessions-repo graph-workflow legacy migration on load", () => {
       },
     });
 
-    const onDisk = readGraphWorkflowExecutionColumn();
+    const onDisk = readStoredExecution();
     expect(onDisk).not.toBeNull();
     if (!onDisk) return;
-    const onDiskParsed = JSON.parse(onDisk) as Record<string, unknown>;
-    const onDiskLanes = onDiskParsed.laneStates as Record<string, unknown>;
+    const onDiskLanes = onDisk.laneStates as Record<string, unknown>;
     expect(Object.keys(onDiskLanes)).toEqual(["execution-loop-fan-out-fan-in"]);
 
     const migrationEvents = capturedLogs.filter(

@@ -18,10 +18,18 @@ import type { CollaborationManager } from "@/lib/workflows/collaboration/manager
 // ---------------------------------------------------------------------------
 
 function createTestDeps(): PromptRouteDeps {
+  const getSession = vi.fn().mockResolvedValue(testSession);
   return {
     resolveProjectPath: vi.fn().mockResolvedValue("/projects/my-project"),
-    getSession: vi.fn().mockResolvedValue(testSession),
+    getSession,
     getConversation: vi.fn().mockResolvedValue(testConversation),
+    // The active execution no longer rides the session row; the approval-gate
+    // check reads it via this accessor. Fixtures still seed it on the session
+    // mock, so surface whatever the current getSession mock returns.
+    getActiveGraphWorkflowExecution: vi.fn(async () => {
+      const session = await getSession();
+      return session?.graphWorkflowExecution ?? null;
+    }),
     isConversationBusy: vi.fn().mockReturnValue(false),
     executePromptStream: vi.fn().mockResolvedValue(undefined),
     getCollaborationManager: vi.fn().mockReturnValue(makeMockManager()),

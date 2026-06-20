@@ -122,6 +122,24 @@ function makeState(
   });
 }
 
+/**
+ * Build the active-executions map the handlers read, keyed by the NUL-separated
+ * `${projectPath} ${sessionName}` the production accessor emits. The fixture
+ * state's single session is `/repo/project` :: `session-a`.
+ */
+function activeExecutionsMap(
+  graphWorkflowExecution: GraphWorkflowExecution | null,
+): Map<string, GraphWorkflowExecution> {
+  const map = new Map<string, GraphWorkflowExecution>();
+  if (graphWorkflowExecution) {
+    map.set(
+      `/repo/project${String.fromCharCode(0)}session-a`,
+      graphWorkflowExecution,
+    );
+  }
+  return map;
+}
+
 async function listRows(
   conversations: ConversationState[],
   graphWorkflowExecution: GraphWorkflowExecution | null = null,
@@ -133,6 +151,9 @@ async function listRows(
     getProjectDisplayName: vi.fn().mockReturnValue("project"),
     readLastAssistantContent: vi.fn().mockResolvedValue(null),
     listProjectConversations: vi.fn().mockResolvedValue([]),
+    listActiveGraphWorkflowExecutions: vi
+      .fn()
+      .mockResolvedValue(activeExecutionsMap(graphWorkflowExecution)),
   };
   const handlers = createActiveConversationsRouteHandlers(deps);
   const response = await handlers.GET();
@@ -495,6 +516,9 @@ describe("GET /api/conversations/active pending approval standing", () => {
           conversation: makeConversation({ id: "proj-conv", status: "new" }),
         },
       ]),
+      listActiveGraphWorkflowExecutions: vi
+        .fn()
+        .mockResolvedValue(activeExecutionsMap(null)),
     };
     const handlers = createActiveConversationsRouteHandlers(deps);
     const response = await handlers.GET();

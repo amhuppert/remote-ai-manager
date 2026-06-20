@@ -453,6 +453,46 @@ export function createAccessors(core: StateStoreCore) {
     );
   }
 
+  /**
+   * The merged active graph-workflow execution for one session, or null.
+   * Reads the dedicated `graph_workflow_executions` table (definition ⊕ runtime
+   * tiers) — never the vestigial `sessions.graph_workflow_execution` column.
+   */
+  async function getActiveGraphWorkflowExecution(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<GraphWorkflowExecution | null> {
+    const start = performance.now();
+    try {
+      return repos.graphWorkflowExecutions.getActive(projectPath, sessionName);
+    } finally {
+      emitReadTiming(start, {
+        accessor: "getActiveGraphWorkflowExecution",
+        projectPath,
+        sessionName,
+      });
+    }
+  }
+
+  /**
+   * Every active graph-workflow execution across all sessions, keyed by
+   * `${projectPath} ${sessionName}` (NUL-separated). Backs the
+   * active-conversations feed, which needs the executions of many sessions in a
+   * single read instead of N per-session point lookups.
+   */
+  async function listActiveGraphWorkflowExecutions(): Promise<
+    Map<string, GraphWorkflowExecution>
+  > {
+    const start = performance.now();
+    try {
+      return repos.graphWorkflowExecutions.listActive();
+    } finally {
+      emitReadTiming(start, {
+        accessor: "listActiveGraphWorkflowExecutions",
+      });
+    }
+  }
+
   async function listArchivedGraphWorkflowExecutions(
     projectPath: string,
     sessionName: string,
@@ -492,6 +532,8 @@ export function createAccessors(core: StateStoreCore) {
     getPinnedProjects,
     getGraphWorkflowEventsTail,
     findLatestGraphWorkflowContextEvent,
+    getActiveGraphWorkflowExecution,
+    listActiveGraphWorkflowExecutions,
     listArchivedGraphWorkflowExecutions,
   };
 }

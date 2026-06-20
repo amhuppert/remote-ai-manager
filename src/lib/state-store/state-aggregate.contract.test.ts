@@ -261,7 +261,6 @@ describe("state-aggregate.readAll", () => {
         delete: () => {},
         updateChangedColumns: () => false,
         setSpawnedFrom: () => false,
-        setActiveGraphWorkflowExecution: () => false,
         setSessionWorkflowLanes: () => false,
         setSessionWorkflowEnvelopes: () => false,
       },

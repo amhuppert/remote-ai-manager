@@ -65,6 +65,15 @@ export interface GraphWorkflowExecutionRepositoryDeps {
     sessionName: string,
   ): Promise<SessionState | null>;
   /**
+   * Read the merged active graph-workflow execution for a session from the
+   * dedicated `graph_workflow_executions` table (definition ⊕ runtime tiers),
+   * or null. The execution no longer rides the session row.
+   */
+  getActiveGraphWorkflowExecution(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<GraphWorkflowExecution | null>;
+  /**
    * Atomically persist the history-free execution blob and append the
    * publisher-computed events to `graph_workflow_events` inside one write-queue
    * critical section. The mutator receives the currently-persisted execution.
@@ -162,8 +171,7 @@ export function createGraphWorkflowExecutionRepository(
     projectPath: string,
     sessionName: string,
   ): Promise<GraphWorkflowExecution | null> {
-    const session = await deps.getSession(projectPath, sessionName);
-    return session?.graphWorkflowExecution ?? null;
+    return deps.getActiveGraphWorkflowExecution(projectPath, sessionName);
   }
 
   async function create(

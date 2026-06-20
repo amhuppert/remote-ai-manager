@@ -10,6 +10,7 @@ import { createLogger } from "@/lib/logging";
 import {
   readState as defaultReadState,
   listAllProjectConversations as defaultListAllProjectConversations,
+  listActiveGraphWorkflowExecutions as defaultListActiveGraphWorkflowExecutions,
 } from "@/lib/state-store";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
 import { readLastAssistantContent as defaultReadLastAssistantContent } from "@/lib/prompt/transcript";
@@ -51,6 +52,14 @@ export interface ActiveConversationsRouteDeps {
   listProjectConversations(): Promise<
     { projectPath: string; conversation: ConversationState }[]
   >;
+  /**
+   * Every active graph-workflow execution across all sessions, keyed by
+   * `${projectPath}\u0000${sessionName}`. Read once up front so the
+   * per-session loop never point-looks-up the (now decoupled) execution.
+   */
+  listActiveGraphWorkflowExecutions(): Promise<
+    Map<string, GraphWorkflowExecution>
+  >;
 }
 
 const defaultDeps: ActiveConversationsRouteDeps = {
@@ -58,7 +67,13 @@ const defaultDeps: ActiveConversationsRouteDeps = {
   getProjectDisplayName: defaultGetProjectDisplayName,
   readLastAssistantContent: defaultReadLastAssistantContent,
   listProjectConversations: defaultListAllProjectConversations,
+  listActiveGraphWorkflowExecutions: defaultListActiveGraphWorkflowExecutions,
 };
+
+/** Map key for {@link ActiveConversationsRouteDeps.listActiveGraphWorkflowExecutions}. */
+function executionKey(projectPath: string, sessionName: string): string {
+  return `${projectPath}\u0000${sessionName}`;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -429,6 +444,7 @@ export function createActiveConversationsRouteHandlers(
     try {
       const state = await deps.readState();
       const projectConversations = await deps.listProjectConversations();
+      const activeExecutions = await deps.listActiveGraphWorkflowExecutions();
       const conversations: ActiveConversation[] = [];
       const graphWorkflowExecutions: ActiveGraphWorkflowExecution[] = [];
       const activeCollaborationExecutions: ActiveCollaborationExecution[] = [];
@@ -502,9 +518,13 @@ export function createActiveConversationsRouteHandlers(
             });
           }
 
-          const pendingApprovalStandings = buildPendingApprovalStandings(
-            session.graphWorkflowExecution,
-          );
+          const activeExecution =
+            activeExecutions.get(
+              executionKey(projectPath, session.sessionName),
+            ) ?? null;
+
+          const pendingApprovalStandings =
+            buildPendingApprovalStandings(activeExecution);
 
           for (const convo of session.conversations) {
             if (convo.archived) continue;
@@ -571,7 +591,7 @@ export function createActiveConversationsRouteHandlers(
           }
 
           // Collect active graph workflow executions
-          const exec = session.graphWorkflowExecution;
+          const exec = activeExecution;
           if (exec && ACTIVE_GW_STATUSES.has(exec.status)) {
             const index = createExecutionIndex(exec.workingDefinition, exec);
             const activeContextIds = [...exec.activeContextIds];

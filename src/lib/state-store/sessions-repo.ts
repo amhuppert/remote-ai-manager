@@ -3,7 +3,6 @@ import { z } from "zod";
 import { createLogger } from "@/lib/logging";
 import { mcpOverridesSchema } from "@/lib/mcp/schemas";
 import { agentCapabilityOverridesSchema } from "@/lib/agent-capabilities/schemas";
-import { graphWorkflowExecutionSchema } from "@/lib/workflows/schemas";
 import {
   sessionCreationModeSchema,
   sessionSourceSchema,
@@ -11,16 +10,11 @@ import {
   spawnedFromSchema,
 } from "@/lib/sessions/schemas";
 import { PersistenceError, getErrorMessage } from "../shared/errors";
-import {
-  migrateLegacyExecution,
-  needsLegacyMigration,
-} from "@/lib/workflow-graph/migrate-legacy-execution";
+import { jsonOrNull, stableStringify } from "./serialization";
 import type { SessionState, SpawnedFrom } from "@/lib/sessions/schemas";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 type Db = InstanceType<typeof Database>;
 
 const logger = createLogger("state-store.sessions");
-const parallelLogger = createLogger("graph-workflow-parallel");
 
 interface SessionListItemRow {
   session_name: string;
@@ -74,19 +68,6 @@ export interface SessionsRepo {
     projectPath: string,
     sessionName: string,
     spawnedFrom: SpawnedFrom | null,
-  ): boolean;
-  /**
-   * Focused write of the active graph-workflow execution blob (history-free)
-   * plus `last_activity_at` (Pattern 2: no whole-state read). Used by the
-   * execution repository's focused write path, which appends the computed
-   * append-only events to `graph_workflow_events` separately. Bumps the
-   * findAll cache version. Returns whether a row was updated.
-   */
-  setActiveGraphWorkflowExecution(
-    projectPath: string,
-    sessionName: string,
-    execution: GraphWorkflowExecution | null,
-    lastActivityAt: string,
   ): boolean;
   /**
    * Focused write of the `workflow_lanes` column plus `last_activity_at`
@@ -162,35 +143,11 @@ interface SqlBindRow {
   tdd_enabled: number;
   target_branch: string;
   parent_session_name: string | null;
-  graph_workflow_execution: string | null;
   workflow_envelopes: string | null;
   workflow_lanes: string | null;
   mcp_overrides: string | null;
   agent_capability_overrides: string | null;
   spawned_from: string | null;
-}
-
-function stableStringify(value: unknown): string {
-  if (value === null || value === undefined) return "null";
-  if (typeof value === "string") return JSON.stringify(value);
-  if (typeof value === "number" || typeof value === "boolean") {
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) {
-    return "[" + value.map(stableStringify).join(",") + "]";
-  }
-  const obj = value as Record<string, unknown>;
-  const keys = Object.keys(obj).sort();
-  const parts: string[] = [];
-  for (const k of keys) {
-    parts.push(JSON.stringify(k) + ":" + stableStringify(obj[k]));
-  }
-  return "{" + parts.join(",") + "}";
-}
-
-function jsonOrNull(value: unknown): string | null {
-  if (value === undefined || value === null) return null;
-  return stableStringify(value);
 }
 
 /**
@@ -218,7 +175,6 @@ function sessionToSqlBind(
     tdd_enabled: session.tddEnabled ? 1 : 0,
     target_branch: session.targetBranch,
     parent_session_name: session.parentSessionName,
-    graph_workflow_execution: jsonOrNull(session.graphWorkflowExecution),
     workflow_envelopes: jsonOrNull(session.workflowEnvelopes),
     workflow_lanes: jsonOrNull(session.workflowLanes),
     mcp_overrides: jsonOrNull(session.mcpOverrides),
@@ -269,11 +225,6 @@ const SESSION_COLUMN_MAP = [
     "parentSessionName",
     "parent_session_name",
     (s: SessionState) => s.parentSessionName,
-  ],
-  [
-    "graphWorkflowExecution",
-    "graph_workflow_execution",
-    (s: SessionState) => jsonOrNull(s.graphWorkflowExecution),
   ],
   [
     "workflowEnvelopes",
@@ -427,95 +378,9 @@ function logColumnQuarantine(
 
 const opaqueRecordSchema = z.record(z.string(), z.unknown());
 
-interface GraphWorkflowExecutionMigration {
-  upgradedJson: string;
-  executionId: string | null;
-  repairedFields: string[];
-}
-
-interface GraphWorkflowExecutionLoadSuccess {
-  ok: true;
-  value: GraphWorkflowExecution | null;
-  migration: GraphWorkflowExecutionMigration | null;
-}
-
-function loadGraphWorkflowExecutionColumn(
-  rawJson: string | null,
-): GraphWorkflowExecutionLoadSuccess | JsonParseFailure {
-  if (rawJson === null) return { ok: true, value: null, migration: null };
-
-  let parsedJson: unknown;
-  try {
-    parsedJson = JSON.parse(rawJson);
-  } catch (err) {
-    return {
-      ok: false,
-      issues: [
-        {
-          code: "invalid_json",
-          path: ["graphWorkflowExecution"],
-          message: getErrorMessage(err),
-        },
-      ],
-    };
-  }
-
-  if (parsedJson === null) return { ok: true, value: null, migration: null };
-
-  let candidate: unknown = parsedJson;
-  let migrationMeta: {
-    executionId: string | null;
-    repairedFields: string[];
-  } | null = null;
-  if (needsLegacyMigration(parsedJson)) {
-    try {
-      const result = migrateLegacyExecution(parsedJson);
-      candidate = result.upgradedRecord;
-      migrationMeta = {
-        executionId: result.executionId,
-        repairedFields: result.repairedFields,
-      };
-    } catch (err) {
-      return {
-        ok: false,
-        issues: [
-          {
-            code: "legacy_migration_failed",
-            path: ["graphWorkflowExecution"],
-            message: getErrorMessage(err),
-          },
-        ],
-      };
-    }
-  }
-
-  const parseResult = graphWorkflowExecutionSchema
-    .nullable()
-    .safeParse(candidate);
-  if (!parseResult.success) {
-    return { ok: false, issues: parseResult.error.issues };
-  }
-  if (parseResult.data === null) {
-    return { ok: true, value: null, migration: null };
-  }
-  if (migrationMeta === null) {
-    return { ok: true, value: parseResult.data, migration: null };
-  }
-  return {
-    ok: true,
-    value: parseResult.data,
-    migration: {
-      upgradedJson: stableStringify(parseResult.data),
-      executionId: migrationMeta.executionId,
-      repairedFields: migrationMeta.repairedFields,
-    },
-  };
-}
-
 function rowToDomain(rawRow: unknown): {
   projectPath: string;
   session: SessionState;
-  graphWorkflowExecutionMigration: GraphWorkflowExecutionMigration | null;
 } {
   const fallbackProjectPath =
     typeof rawRow === "object" &&
@@ -557,22 +422,6 @@ function rowToDomain(rawRow: unknown): {
       row.project_path,
       row.session_name,
       creationModeResult.error.issues,
-    );
-  }
-
-  let graphWorkflowExecution: GraphWorkflowExecution | null = null;
-  let graphWorkflowExecutionMigration: GraphWorkflowExecutionMigration | null =
-    null;
-  const gwExec = loadGraphWorkflowExecutionColumn(row.graph_workflow_execution);
-  if (gwExec.ok) {
-    graphWorkflowExecution = gwExec.value;
-    graphWorkflowExecutionMigration = gwExec.migration;
-  } else {
-    logColumnQuarantine(
-      row.project_path,
-      row.session_name,
-      "graphWorkflowExecution",
-      gwExec.issues,
     );
   }
 
@@ -683,7 +532,7 @@ function rowToDomain(rawRow: unknown): {
     tddEnabled: row.tdd_enabled === 1,
     targetBranch: row.target_branch,
     parentSessionName: row.parent_session_name,
-    graphWorkflowExecution,
+    graphWorkflowExecution: null,
     conversations: [],
     referenceDocuments: [],
     spawnedFrom,
@@ -707,7 +556,6 @@ function rowToDomain(rawRow: unknown): {
   return {
     projectPath: row.project_path,
     session: result.data,
-    graphWorkflowExecutionMigration,
   };
 }
 
@@ -767,10 +615,14 @@ export function createSessionsRepo(db: Db): SessionsRepo {
        session_name, worktree_path, branch_name, target_branch,
        parent_session_name, created_at, last_activity_at,
        archived, finished, source, creation_mode, tdd_enabled, objective,
-       CASE WHEN graph_workflow_execution IS NOT NULL
-         AND json_extract(graph_workflow_execution, '$.status')
-           NOT IN ('completed', 'failed', 'cancelled')
-         THEN 1 ELSE 0 END AS has_active_graph_workflow,
+       COALESCE((
+         SELECT CASE WHEN e.status
+                  NOT IN ('completed', 'failed', 'cancelled')
+                THEN 1 ELSE 0 END
+           FROM graph_workflow_executions e
+          WHERE e.project_path = sessions.project_path
+            AND e.session_name = sessions.session_name
+       ), 0) AS has_active_graph_workflow,
        workflow_envelopes, spawned_from
      FROM sessions
      WHERE project_path = ?
@@ -785,7 +637,7 @@ export function createSessionsRepo(db: Db): SessionsRepo {
        project_path, session_name, worktree_path, branch_name,
        created_at, last_activity_at, archived, finished, source,
        objective, creation_mode, tdd_enabled, target_branch,
-       parent_session_name, graph_workflow_execution,
+       parent_session_name,
        workflow_envelopes,
        workflow_lanes, mcp_overrides, agent_capability_overrides,
        spawned_from
@@ -793,7 +645,7 @@ export function createSessionsRepo(db: Db): SessionsRepo {
        @project_path, @session_name, @worktree_path, @branch_name,
        @created_at, @last_activity_at, @archived, @finished, @source,
        @objective, @creation_mode, @tdd_enabled, @target_branch,
-       @parent_session_name, @graph_workflow_execution,
+       @parent_session_name,
        @workflow_envelopes,
        @workflow_lanes, @mcp_overrides, @agent_capability_overrides,
        @spawned_from
@@ -811,7 +663,6 @@ export function createSessionsRepo(db: Db): SessionsRepo {
        tdd_enabled                      = excluded.tdd_enabled,
        target_branch                    = excluded.target_branch,
        parent_session_name              = excluded.parent_session_name,
-       graph_workflow_execution         = excluded.graph_workflow_execution,
        workflow_envelopes               = excluded.workflow_envelopes,
        workflow_lanes                   = excluded.workflow_lanes,
        mcp_overrides                    = excluded.mcp_overrides,
@@ -824,15 +675,6 @@ export function createSessionsRepo(db: Db): SessionsRepo {
   const setSpawnedFromStmt = db.prepare(
     `UPDATE sessions SET spawned_from = ?
      WHERE project_path = ? AND session_name = ?`,
-  );
-  const updateGraphWorkflowExecutionStmt = db.prepare(
-    `UPDATE sessions SET graph_workflow_execution = ?
-     WHERE project_path = ? AND session_name = ?`,
-  );
-  const setActiveGraphWorkflowExecutionStmt = db.prepare(
-    `UPDATE sessions
-        SET graph_workflow_execution = ?, last_activity_at = ?
-      WHERE project_path = ? AND session_name = ?`,
   );
   const setSessionWorkflowLanesStmt = db.prepare(
     `UPDATE sessions
@@ -874,54 +716,18 @@ export function createSessionsRepo(db: Db): SessionsRepo {
     return stmt;
   }
 
-  function applyGraphWorkflowExecutionMigration(
-    projectPath: string,
-    sessionName: string,
-    migration: GraphWorkflowExecutionMigration,
-  ): void {
-    updateGraphWorkflowExecutionStmt.run(
-      migration.upgradedJson,
-      projectPath,
-      sessionName,
-    );
-    parallelLogger.info("graph-workflow.parallel.legacy_migrated", {
-      projectPath,
-      sessionName,
-      executionId: migration.executionId,
-      repairedFields: migration.repairedFields,
-    });
-  }
-
   return {
     findByKey(projectPath, sessionName) {
       return timed("findByKey", projectPath, sessionName, () => {
         const row: unknown = findByKeyStmt.get(projectPath, sessionName);
         if (row === undefined) return null;
-        const result = rowToDomain(row);
-        if (result.graphWorkflowExecutionMigration !== null) {
-          applyGraphWorkflowExecutionMigration(
-            result.projectPath,
-            result.session.sessionName,
-            result.graphWorkflowExecutionMigration,
-          );
-        }
-        return result.session;
+        return rowToDomain(row).session;
       });
     },
     findByProject(projectPath) {
       return timed("findByProject", projectPath, undefined, () => {
         const rows = findByProjectStmt.all(projectPath) as unknown[];
-        return rows.map((row) => {
-          const result = rowToDomain(row);
-          if (result.graphWorkflowExecutionMigration !== null) {
-            applyGraphWorkflowExecutionMigration(
-              result.projectPath,
-              result.session.sessionName,
-              result.graphWorkflowExecutionMigration,
-            );
-          }
-          return result.session;
-        });
+        return rows.map((row) => rowToDomain(row).session);
       });
     },
     findListItemsByProject(projectPath) {
@@ -949,13 +755,6 @@ export function createSessionsRepo(db: Db): SessionsRepo {
             continue;
           }
           const result = rowToDomain(row);
-          if (result.graphWorkflowExecutionMigration !== null) {
-            applyGraphWorkflowExecutionMigration(
-              result.projectPath,
-              result.session.sessionName,
-              result.graphWorkflowExecutionMigration,
-            );
-          }
           const parsed: ParsedSessionRow = {
             projectPath: result.projectPath,
             session: result.session,
@@ -1012,32 +811,6 @@ export function createSessionsRepo(db: Db): SessionsRepo {
         );
         return info.changes > 0;
       });
-    },
-    setActiveGraphWorkflowExecution(
-      projectPath,
-      sessionName,
-      execution,
-      lastActivityAt,
-    ) {
-      return timed(
-        "setActiveGraphWorkflowExecution",
-        projectPath,
-        sessionName,
-        () => {
-          const validated =
-            execution === null
-              ? null
-              : graphWorkflowExecutionSchema.parse(execution);
-          const info = setActiveGraphWorkflowExecutionStmt.run(
-            jsonOrNull(validated),
-            lastActivityAt,
-            projectPath,
-            sessionName,
-          );
-          cacheVersion += 1;
-          return info.changes > 0;
-        },
-      );
     },
     setSessionWorkflowLanes(projectPath, sessionName, lanes, lastActivityAt) {
       return timed("setSessionWorkflowLanes", projectPath, sessionName, () => {

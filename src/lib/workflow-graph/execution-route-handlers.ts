@@ -12,6 +12,7 @@ import { createLogger, withTracing } from "@/lib/logging";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import {
   getSession as defaultGetSession,
+  getActiveGraphWorkflowExecution,
   mutateActiveGraphWorkflowExecution,
   archiveActiveGraphWorkflowExecution,
   markGraphWorkflowContextEventsPreReset,
@@ -114,6 +115,7 @@ const eventPublisher = createGraphWorkflowExecutionEventPublisher({
 
 const executionRepository = createGraphWorkflowExecutionRepository({
   getSession: defaultGetSession,
+  getActiveGraphWorkflowExecution,
   mutateActiveGraphWorkflowExecution,
   archiveActiveGraphWorkflowExecution,
   markGraphWorkflowContextEventsPreReset,
@@ -596,18 +598,15 @@ async function summarizeHistory(
   deps: GraphWorkflowExecutionRouteDeps,
   projectPath: string,
   sessionName: string,
-  session: SessionState,
 ): Promise<GraphWorkflowExecutionSummary[]> {
   const listArchived =
     deps.listArchivedExecutions ?? listArchivedGraphWorkflowExecutions;
   const archived = await listArchived(projectPath, sessionName);
   const items = archived.map((execution) => summarizeExecution(execution, true));
 
-  if (
-    session.graphWorkflowExecution &&
-    isTerminalStatus(session.graphWorkflowExecution.status)
-  ) {
-    items.push(summarizeExecution(session.graphWorkflowExecution, false));
+  const active = await deps.getActiveExecution(projectPath, sessionName);
+  if (active && isTerminalStatus(active.status)) {
+    items.push(summarizeExecution(active, false));
   }
 
   return items;
@@ -815,8 +814,12 @@ export function createGraphWorkflowExecutionRouteHandlers(
       );
     }
 
-    if (session.graphWorkflowExecution) {
-      if (isTerminalStatus(session.graphWorkflowExecution.status)) {
+    const existingExecution = await deps.getActiveExecution(
+      projectPath,
+      sessionName,
+    );
+    if (existingExecution) {
+      if (isTerminalStatus(existingExecution.status)) {
         await deps.archiveExecution(projectPath, sessionName);
       } else {
         return NextResponse.json(
@@ -923,7 +926,11 @@ export function createGraphWorkflowExecutionRouteHandlers(
       resolved.sessionName,
     );
     const execution =
-      normalizedExecution ?? resolved.session.graphWorkflowExecution;
+      normalizedExecution ??
+      (await deps.getActiveExecution(
+        resolved.projectPath,
+        resolved.sessionName,
+      ));
 
     const listArchived =
       deps.listArchivedExecutions ?? listArchivedGraphWorkflowExecutions;
@@ -940,6 +947,29 @@ export function createGraphWorkflowExecutionRouteHandlers(
     });
   }
 
+  async function EXECUTION(
+    _request: Request,
+    context: RouteContext,
+  ): Promise<Response> {
+    const resolved = await resolveSession(context, deps);
+    if ("error" in resolved) {
+      return resolved.error;
+    }
+
+    const normalizedExecution = await deps.normalizeExecutionAfterRestart(
+      resolved.projectPath,
+      resolved.sessionName,
+    );
+    const execution =
+      normalizedExecution ??
+      (await deps.getActiveExecution(
+        resolved.projectPath,
+        resolved.sessionName,
+      ));
+
+    return NextResponse.json({ execution: execution ?? null });
+  }
+
   async function HISTORY(
     _request: Request,
     context: RouteContext,
@@ -954,7 +984,6 @@ export function createGraphWorkflowExecutionRouteHandlers(
         deps,
         resolved.projectPath,
         resolved.sessionName,
-        resolved.session,
       ),
     });
   }
@@ -969,10 +998,12 @@ export function createGraphWorkflowExecutionRouteHandlers(
     }
 
     const url = new URL(request.url);
+    const activeExecution = await deps.getActiveExecution(
+      resolved.projectPath,
+      resolved.sessionName,
+    );
     const executionId =
-      url.searchParams.get("executionId") ??
-      resolved.session.graphWorkflowExecution?.id ??
-      null;
+      url.searchParams.get("executionId") ?? activeExecution?.id ?? null;
     if (!executionId) {
       return NextResponse.json({ events: [] });
     }
@@ -1106,7 +1137,10 @@ export function createGraphWorkflowExecutionRouteHandlers(
       );
     }
 
-    const activeExecution = resolved.session.graphWorkflowExecution;
+    const activeExecution = await deps.getActiveExecution(
+      resolved.projectPath,
+      resolved.sessionName,
+    );
     if (!activeExecution) {
       return NextResponse.json(
         {
@@ -1211,11 +1245,11 @@ export function createGraphWorkflowExecutionRouteHandlers(
       return resolved.error;
     }
 
-    const { session } = resolved;
-    if (
-      !session.graphWorkflowExecution ||
-      !isTerminalStatus(session.graphWorkflowExecution.status)
-    ) {
+    const activeExecution = await deps.getActiveExecution(
+      resolved.projectPath,
+      resolved.sessionName,
+    );
+    if (!activeExecution || !isTerminalStatus(activeExecution.status)) {
       return NextResponse.json(
         {
           error:
@@ -1232,6 +1266,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
   return {
     START,
     STATUS,
+    EXECUTION,
     HISTORY,
     EVENTS,
     PAUSE,
@@ -1251,6 +1286,9 @@ export const startGraphWorkflowExecution = withTracing(
 );
 export const getGraphWorkflowExecutionStatus = withTracing(
   defaultGraphWorkflowExecutionHandlers.STATUS,
+);
+export const getGraphWorkflowExecutionFull = withTracing(
+  defaultGraphWorkflowExecutionHandlers.EXECUTION,
 );
 export const getGraphWorkflowExecutionHistory = withTracing(
   defaultGraphWorkflowExecutionHandlers.HISTORY,

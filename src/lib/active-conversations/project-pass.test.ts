@@ -67,6 +67,7 @@ function makeDeps(
     getProjectDisplayName: () => "demo",
     readLastAssistantContent: async () => null,
     listProjectConversations: async () => projectConvs,
+    listActiveGraphWorkflowExecutions: async () => new Map(),
   };
 }
 

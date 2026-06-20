@@ -5,6 +5,7 @@ import {
 } from "./route-handlers";
 import type { ConversationStatus } from "@/lib/conversations/schemas";
 import type { ManagerState } from "@/lib/projects/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -107,11 +108,31 @@ function makeState(
 // ---------------------------------------------------------------------------
 
 function createTestDeps(): ActiveConversationsRouteDeps {
+  const readState = vi.fn().mockResolvedValue(makeState());
   return {
-    readState: vi.fn().mockResolvedValue(makeState()),
+    readState,
     getProjectDisplayName: vi.fn().mockReturnValue("my-project"),
     readLastAssistantContent: vi.fn().mockResolvedValue(null),
     listProjectConversations: vi.fn().mockResolvedValue([]),
+    // The execution no longer rides the session row; the production accessor
+    // reads the dedicated table. The fixtures still seed executions on the
+    // session, so derive the keyed map from the same readState() fixture.
+    listActiveGraphWorkflowExecutions: vi.fn(async () => {
+      const state: ManagerState = await readState();
+      const map = new Map<string, GraphWorkflowExecution>();
+      for (const [projectPath, project] of Object.entries(state.projects)) {
+        for (const session of Object.values(project.sessions)) {
+          const exec = session.graphWorkflowExecution;
+          if (exec) {
+            map.set(
+              `${projectPath}${String.fromCharCode(0)}${session.sessionName}`,
+              exec,
+            );
+          }
+        }
+      }
+      return map;
+    }),
   };
 }
 

@@ -13,6 +13,7 @@ import { buildSessionContext } from "@/lib/conversations/copy-context";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import { useConversationsQuery } from "@/lib/conversations/queries";
 import { useSessionQuery } from "@/lib/sessions/queries";
+import { useGraphWorkflowExecutionQuery } from "@/lib/workflows/queries";
 import { useSessionDiffQuery, useCommitsQuery } from "@/lib/git/queries";
 import {
   useCreateConversationMutation,
@@ -75,6 +76,10 @@ export default function ConversationList({
   // --- TanStack Query ---
   const sessionQuery = useSessionQuery(projectName, sessionName);
   const conversationsQuery = useConversationsQuery(projectName, sessionName);
+  const graphWorkflowExecutionQuery = useGraphWorkflowExecutionQuery(
+    projectName,
+    sessionName,
+  );
   const diffQuery = useSessionDiffQuery(projectName, sessionName);
   const commitsQuery = useCommitsQuery(projectName, sessionName);
 
@@ -142,13 +147,18 @@ export default function ConversationList({
     (e: React.MouseEvent) => {
       e.stopPropagation();
       if (!session) return;
-      const text = buildSessionContext({ projectName, sessionName, session });
+      const text = buildSessionContext({
+        projectName,
+        sessionName,
+        session,
+        graphWorkflowExecution: graphWorkflowExecutionQuery.data ?? null,
+      });
       void navigator.clipboard.writeText(text).then(() => {
         setContextCopied(true);
         setTimeout(() => setContextCopied(false), 1500);
       });
     },
-    [session, projectName, sessionName],
+    [session, projectName, sessionName, graphWorkflowExecutionQuery.data],
   );
 
   const handleNewConversation = useCallback(() => {
@@ -348,7 +358,7 @@ export default function ConversationList({
               <GraphWorkflowCard
                 projectName={projectName}
                 sessionName={sessionName}
-                execution={session.graphWorkflowExecution ?? null}
+                execution={graphWorkflowExecutionQuery.data ?? null}
                 isFinished={isFinished}
               />
             )}

@@ -30,6 +30,7 @@ import { useResolveApprovalMutation } from "@/lib/workflows/mutations";
 import { useGenericArchiveSessionMutation } from "@/lib/sessions/mutations";
 import { apiFetch } from "@/lib/api/fetcher";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
+import { graphWorkflowExecutionFullResponseSchema } from "@/lib/workflows/schemas";
 import { buildConversationContext } from "@/lib/conversations/copy-context";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import ConfirmDialog from "@/components/ConfirmDialog";
@@ -435,15 +436,24 @@ function ConversationSidebar({
 
   const handleCopyContext = useCallback(
     async (row: SessionActiveConversation): Promise<void> => {
-      const session = await apiFetch(
-        `/api/projects/${encodeURIComponent(row.projectName)}/sessions/${encodeURIComponent(row.sessionName)}`,
-        sessionStateSchema,
-      );
+      const [session, executionResponse] = await Promise.all([
+        apiFetch(
+          `/api/projects/${encodeURIComponent(row.projectName)}/sessions/${encodeURIComponent(row.sessionName)}`,
+          sessionStateSchema,
+        ),
+        // The execution no longer rides the session payload (decoupled table),
+        // so fetch it separately to keep the workflow block in the copy.
+        apiFetch(
+          `/api/projects/${encodeURIComponent(row.projectName)}/sessions/${encodeURIComponent(row.sessionName)}/graph-workflow/execution`,
+          graphWorkflowExecutionFullResponseSchema,
+        ),
+      ]);
       const text = buildConversationContext({
         projectName: row.projectName,
         sessionName: row.sessionName,
         session,
         conversationId: row.id,
+        graphWorkflowExecution: executionResponse.execution,
       });
       await navigator.clipboard.writeText(text);
     },

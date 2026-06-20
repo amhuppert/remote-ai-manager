@@ -295,13 +295,40 @@ describe("buildSessionContext", () => {
     expect(result).not.toContain("<graph-workflow>");
   });
 
+  it("sources the workflow block from the execution param, not session.graphWorkflowExecution", () => {
+    // The executions table is decoupled from the sessions row, so
+    // session.graphWorkflowExecution is always null in production. The block
+    // must appear only when the execution is threaded in explicitly.
+    const execution = makeGraphWorkflowExecution();
+    const sessionCarryingField = makeSession({
+      graphWorkflowExecution: execution,
+    });
+
+    const withoutParam = buildSessionContext({
+      projectName: "p",
+      sessionName: "s",
+      session: sessionCarryingField,
+    });
+    expect(withoutParam).not.toContain("<graph-workflow>");
+
+    const withParam = buildSessionContext({
+      projectName: "p",
+      sessionName: "s",
+      session: makeSession(),
+      graphWorkflowExecution: execution,
+    });
+    expect(withParam).toContain("<graph-workflow>");
+    expect(withParam).toContain("<execution-id>exec-1</execution-id>");
+  });
+
   it("includes graph workflow execution info when active", () => {
     const execution = makeGraphWorkflowExecution();
-    const session = makeSession({ graphWorkflowExecution: execution });
+    const session = makeSession();
     const result = buildSessionContext({
       projectName: "p",
       sessionName: "s",
       session,
+      graphWorkflowExecution: execution,
     });
 
     expect(result).toContain("<graph-workflow>");
@@ -338,11 +365,12 @@ describe("buildSessionContext", () => {
         failureCount: 3,
       },
     });
-    const session = makeSession({ graphWorkflowExecution: execution });
+    const session = makeSession();
     const result = buildSessionContext({
       projectName: "p",
       sessionName: "s",
       session,
+      graphWorkflowExecution: execution,
     });
 
     expect(result).toContain("<halt-reason>circuit_breaker</halt-reason>");
@@ -447,7 +475,6 @@ describe("buildConversationContext", () => {
   it("includes graph workflow info with task linkage for iteration conversation", () => {
     const execution = makeGraphWorkflowExecution();
     const session = makeSession({
-      graphWorkflowExecution: execution,
       conversations: [
         makeConversation({ id: "conv-iter-2", role: "iteration" }),
       ],
@@ -457,6 +484,7 @@ describe("buildConversationContext", () => {
       sessionName: "s",
       session,
       conversationId: "conv-iter-2",
+      graphWorkflowExecution: execution,
     });
 
     expect(result).toContain("<graph-workflow>");

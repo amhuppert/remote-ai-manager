@@ -4,6 +4,7 @@ import { workflowRuntimeEditRequestSchema } from "@/lib/workflows/schemas";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import {
   getSession as defaultGetSession,
+  getActiveGraphWorkflowExecution,
   mutateActiveGraphWorkflowExecution,
   archiveActiveGraphWorkflowExecution,
   markGraphWorkflowContextEventsPreReset,
@@ -29,6 +30,7 @@ type RouteContext = {
 
 const executionRepository = createGraphWorkflowExecutionRepository({
   getSession: defaultGetSession,
+  getActiveGraphWorkflowExecution,
   mutateActiveGraphWorkflowExecution,
   archiveActiveGraphWorkflowExecution,
   markGraphWorkflowContextEventsPreReset,

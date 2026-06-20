@@ -5,6 +5,7 @@ import { createLogger } from "@/lib/logging";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import {
   getSession,
+  getActiveGraphWorkflowExecution,
   mutateActiveGraphWorkflowExecution,
   archiveActiveGraphWorkflowExecution,
   markGraphWorkflowContextEventsPreReset,
@@ -99,6 +100,7 @@ const eventPublisher = createGraphWorkflowExecutionEventPublisher({
 
 const executionRepository = createGraphWorkflowExecutionRepository({
   getSession,
+  getActiveGraphWorkflowExecution,
   mutateActiveGraphWorkflowExecution,
   archiveActiveGraphWorkflowExecution,
   markGraphWorkflowContextEventsPreReset,
@@ -141,7 +143,10 @@ const defaultWorkflowExecutionMcpServerDeps: WorkflowExecutionMcpServerDeps = {
       throw new McpRouteError(404, "Session not found");
     }
 
-    const execution = session.graphWorkflowExecution;
+    const execution = await getActiveGraphWorkflowExecution(
+      projectPath,
+      sessionName,
+    );
     if (!execution || execution.id !== executionId) {
       return null;
     }
@@ -320,15 +325,19 @@ const defaultWorkflowExecutionMcpServerDeps: WorkflowExecutionMcpServerDeps = {
     return {
       ...baseContext,
       getPendingHaltReason: async () => {
-        const freshSession = await getSession(projectPath, sessionName);
-        return freshSession?.graphWorkflowExecution?.pendingHaltReason ?? null;
+        const freshExecution = await getActiveGraphWorkflowExecution(
+          projectPath,
+          sessionName,
+        );
+        return freshExecution?.pendingHaltReason ?? null;
       },
       getPendingToolBlock: async () => {
-        const freshSession = await getSession(projectPath, sessionName);
+        const freshExecution = await getActiveGraphWorkflowExecution(
+          projectPath,
+          sessionName,
+        );
         const pending =
-          freshSession?.graphWorkflowExecution?.pendingCollaborations[
-            contextId
-          ] ?? null;
+          freshExecution?.pendingCollaborations[contextId] ?? null;
         if (!pending) {
           return null;
         }

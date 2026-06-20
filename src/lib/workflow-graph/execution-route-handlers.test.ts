@@ -102,6 +102,16 @@ describe("graph workflow execution route handlers", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     listArchivedExecutions.mockResolvedValue([]);
+    // The active execution no longer rides the session row; route handlers read
+    // it via getActiveExecution. The fixtures still seed it on the session, so
+    // by default surface whatever the current getSession mock returns. Tests
+    // that need a distinct active execution override getActiveExecution.
+    getActiveExecution.mockImplementation(
+      async (projectPath: string, sessionName: string) => {
+        const session = await getSession(projectPath, sessionName);
+        return session?.graphWorkflowExecution ?? null;
+      },
+    );
   });
 
   it("starts an execution and archives a previous terminal run first", async () => {
@@ -197,6 +207,10 @@ describe("graph workflow execution route handlers", () => {
     getSession.mockResolvedValue(makeSession());
     startExecution.mockResolvedValue(startedExecution);
     kickOffExecutionLoop.mockRejectedValue(new Error("loop boom"));
+    // The pre-start guard sees no active execution; the post-crash halt path
+    // then reads the just-started execution.
+    getActiveExecution.mockReset();
+    getActiveExecution.mockResolvedValueOnce(null);
     getActiveExecution.mockResolvedValue(startedExecution);
     recordPendingHaltReason.mockResolvedValue({
       execution: startedExecution,
@@ -709,6 +723,66 @@ describe("graph workflow execution route handlers", () => {
     });
   });
 
+  it("EXECUTION returns the raw active execution sourced via getActiveExecution", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+    const active = createWorkflowExecution({
+      id: "execution-1",
+      status: "running",
+    });
+    getActiveExecution.mockReset();
+    getActiveExecution.mockResolvedValue(active);
+
+    const response = await handlers.EXECUTION(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/execution",
+        "GET",
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(getActiveExecution).toHaveBeenCalledWith("/repo", "session-1");
+    await expect(response.json()).resolves.toEqual({ execution: active });
+  });
+
+  it("EXECUTION prefers the restart-normalized execution and returns null when absent", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+    const normalized = createWorkflowExecution({
+      id: "execution-normalized",
+      status: "paused",
+    });
+    normalizeExecutionAfterRestart.mockResolvedValue(normalized);
+    getActiveExecution.mockReset();
+    getActiveExecution.mockResolvedValue(null);
+
+    const present = await handlers.EXECUTION(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/execution",
+        "GET",
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+    expect(normalizeExecutionAfterRestart).toHaveBeenCalledWith(
+      "/repo",
+      "session-1",
+    );
+    await expect(present.json()).resolves.toMatchObject({
+      execution: { id: "execution-normalized" },
+    });
+
+    normalizeExecutionAfterRestart.mockResolvedValue(null);
+    const absent = await handlers.EXECUTION(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/execution",
+        "GET",
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+    await expect(absent.json()).resolves.toEqual({ execution: null });
+  });
+
   it("returns history items that include the current terminal execution for review", async () => {
     resolveProjectPath.mockResolvedValue("/repo");
     getSession.mockResolvedValue(
@@ -1149,6 +1223,8 @@ describe("graph workflow resolve-approval route handler", () => {
   function buildHandlers() {
     const repository = createGraphWorkflowExecutionRepository({
       getSession: fixture.store.getSession,
+      getActiveGraphWorkflowExecution:
+        fixture.store.getActiveGraphWorkflowExecution,
       mutateActiveGraphWorkflowExecution:
         fixture.store.mutateActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
@@ -1206,20 +1282,21 @@ describe("graph workflow resolve-approval route handler", () => {
   }
 
   async function seedExecution(execution: GraphWorkflowExecution | null) {
-    await fixture.store.mutateSession(
+    if (execution === null) return;
+    await fixture.store.mutateActiveGraphWorkflowExecution(
       PROJECT_PATH,
       SESSION_NAME,
       "test.seedExecution",
-      (session) => {
-        session.graphWorkflowExecution = execution;
-      },
+      async () => ({ execution, events: [] }),
     );
   }
 
   async function reloadGatedContext() {
-    const session = await fixture.store.getSession(PROJECT_PATH, SESSION_NAME);
-    const contextState =
-      session?.graphWorkflowExecution?.contextStates[GATED_CONTEXT_ID];
+    const execution = await fixture.store.getActiveGraphWorkflowExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    const contextState = execution?.contextStates[GATED_CONTEXT_ID];
     if (!contextState) throw new Error("gated context missing after reload");
     return contextState;
   }

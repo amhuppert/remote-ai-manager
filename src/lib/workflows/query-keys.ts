@@ -19,6 +19,12 @@ export const graphWorkflowEventsKeys = {
     ] as const,
 };
 
+export const graphWorkflowExecutionKeys = {
+  all: ["graph-workflow-execution"] as const,
+  detail: (projectName: string, sessionName: string) =>
+    [...graphWorkflowExecutionKeys.all, projectName, sessionName] as const,
+};
+
 export const graphWorkflowHistoryKeys = {
   all: ["graph-workflow-history"] as const,
   list: (projectName: string, sessionName: string) =>

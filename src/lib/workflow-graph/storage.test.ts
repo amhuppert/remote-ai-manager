@@ -42,6 +42,8 @@ function createServices() {
     }),
     repository: createGraphWorkflowExecutionRepository({
       getSession: stateManager.getSession,
+      getActiveGraphWorkflowExecution:
+        stateManager.getActiveGraphWorkflowExecution,
       mutateActiveGraphWorkflowExecution:
         stateManager.mutateActiveGraphWorkflowExecution,
       archiveActiveGraphWorkflowExecution:
@@ -168,6 +170,10 @@ describe("graph workflow execution repository", () => {
 
     await repository.archiveActive("/repo", "session-1");
 
+    // The active execution is cleared from the dedicated table on archive...
+    const afterArchive = await repository.getActive("/repo", "session-1");
+    expect(afterArchive).toBeNull();
+    // ...and never lived on the session row in the first place.
     const session = await stateManager.getSession("/repo", "session-1");
     expect(session?.graphWorkflowExecution).toBeNull();
 

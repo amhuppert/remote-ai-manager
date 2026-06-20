@@ -21,6 +21,7 @@ import { sessionStateSchema } from "@/lib/sessions/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
+import { buildMaximalGraphWorkflowExecution } from "@/lib/shared/testing/graph-workflow-execution-fixture";
 type Db = InstanceType<typeof Database>;
 
 let db: Db;
@@ -120,8 +121,15 @@ describe("sessions-repo round-trip contract", () => {
     expect(out).not.toBeNull();
     if (!out) return;
 
-    // The repo materializes `spawnedFrom: null` for the (non-spawned) fixture.
-    const expected = { ...fixture, spawnedFrom: null };
+    // The repo materializes `spawnedFrom: null` for the (non-spawned) fixture
+    // and no longer persists `graphWorkflowExecution` on the sessions row (it
+    // lives in the dedicated graph_workflow_executions table), so it nulls on
+    // reload regardless of the fixture value.
+    const expected = {
+      ...fixture,
+      spawnedFrom: null,
+      graphWorkflowExecution: null,
+    };
     expect(out).toEqual(expected);
     expect(sessionStateSchema.parse(out)).toEqual(expected);
   });
@@ -336,29 +344,12 @@ describe("sessions-repo findListItemsByProject projection", () => {
       state: "running",
       context: { largeBlob: "x".repeat(50_000) },
     });
-    const runningExecution = JSON.stringify({
-      id: "wf-running",
-      seedDefinitionId: "seed",
-      seedDefinitionRevision: 1,
-      workingDefinition: {},
-      status: "running",
-      startedAt: "2026-01-01T00:00:00Z",
-    });
-    const completedExecution = JSON.stringify({
-      id: "wf-done",
-      seedDefinitionId: "seed",
-      seedDefinitionRevision: 1,
-      workingDefinition: {},
-      status: "completed",
-      startedAt: "2026-01-01T00:00:00Z",
-    });
 
     db.prepare(
       `INSERT INTO sessions
          (project_path, session_name, worktree_path, branch_name,
-          created_at, last_activity_at, graph_workflow_execution,
-          graph_workflow_execution_history, workflow_envelopes, workflow_lanes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          created_at, last_activity_at, workflow_envelopes, workflow_lanes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       PROJECT_PATH,
       "running-wf",
@@ -366,8 +357,6 @@ describe("sessions-repo findListItemsByProject projection", () => {
       "csm/running-wf",
       "2026-01-01T00:00:00Z",
       "2026-02-01T00:00:00Z",
-      runningExecution,
-      "[]",
       JSON.stringify({
         env1: { workflowType: "collaboration", status: "running" },
       }),
@@ -376,9 +365,8 @@ describe("sessions-repo findListItemsByProject projection", () => {
     db.prepare(
       `INSERT INTO sessions
          (project_path, session_name, worktree_path, branch_name,
-          created_at, last_activity_at, graph_workflow_execution,
-          graph_workflow_execution_history)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          created_at, last_activity_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
     ).run(
       PROJECT_PATH,
       "done-wf",
@@ -386,8 +374,43 @@ describe("sessions-repo findListItemsByProject projection", () => {
       "csm/done-wf",
       "2026-01-01T00:00:00Z",
       "2026-01-15T00:00:00Z",
-      completedExecution,
-      "[]",
+    );
+
+    // The has_active_graph_workflow flag is derived by a correlated subquery
+    // against graph_workflow_executions, not the (now vestigial) sessions
+    // column. Seed one active and one terminal execution in the new table.
+    const insertExecution = db.prepare(
+      `INSERT INTO graph_workflow_executions
+         (project_path, session_name, execution_id, seed_definition_id,
+          seed_definition_revision, started_at, status, completed_at,
+          definition_json, runtime_json, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    insertExecution.run(
+      PROJECT_PATH,
+      "running-wf",
+      "wf-running",
+      "seed",
+      1,
+      "2026-01-01T00:00:00Z",
+      "running",
+      null,
+      "{}",
+      "{}",
+      "2026-02-01T00:00:00Z",
+    );
+    insertExecution.run(
+      PROJECT_PATH,
+      "done-wf",
+      "wf-done",
+      "seed",
+      1,
+      "2026-01-01T00:00:00Z",
+      "completed",
+      "2026-01-15T00:00:00Z",
+      "{}",
+      "{}",
+      "2026-01-15T00:00:00Z",
     );
 
     db.prepare(
@@ -477,26 +500,10 @@ describe("canonicalSessionRow", () => {
   });
 });
 
-describe("rowToDomain quarantine: forward-incompatible workflow columns degrade in-memory", () => {
+describe("rowToDomain quarantine: forward-incompatible scalar columns fail loud", () => {
   const REQUIRED_COLUMNS =
     `(project_path, session_name, worktree_path, branch_name,
       created_at, last_activity_at` as const;
-
-  /**
-   * A graph_workflow_execution payload that is structurally a valid execution
-   * but carries a halt reason whose discriminator the current schema does not
-   * recognise — the exact shape a feature branch writes when it extends the
-   * halt-reason union and persists into the shared database.
-   */
-  const execWithUnknownHaltReason = JSON.stringify({
-    id: "wf-bad",
-    seedDefinitionId: "seed",
-    seedDefinitionRevision: 1,
-    workingDefinition: {},
-    status: "halted",
-    startedAt: "2026-01-01T00:00:00Z",
-    haltReason: { type: "collaboration_failure", contextId: "ctx-1" },
-  });
 
   function insertRaw(
     sessionName: string,
@@ -518,28 +525,26 @@ describe("rowToDomain quarantine: forward-incompatible workflow columns degrade 
     );
   }
 
-  it("findByKey returns the session with graphWorkflowExecution nulled instead of throwing", () => {
-    insertRaw("bad-exec", "graph_workflow_execution", "?", [
-      execWithUnknownHaltReason,
+  it("never reads the vestigial graph_workflow_execution column into the domain", () => {
+    // A structurally-valid-but-forward-incompatible blob left on the (now
+    // vestigial) sessions column must NOT surface on the domain object: the
+    // execution lives in graph_workflow_executions and the column is ignored.
+    insertRaw("legacy-blob", "graph_workflow_execution", "?", [
+      JSON.stringify({
+        id: "wf-ignored",
+        seedDefinitionId: "seed",
+        seedDefinitionRevision: 1,
+        workingDefinition: {},
+        status: "halted",
+        startedAt: "2026-01-01T00:00:00Z",
+        haltReason: { type: "collaboration_failure", contextId: "ctx-1" },
+      }),
     ]);
 
-    const out = repo.findByKey(PROJECT_PATH, "bad-exec");
+    const out = repo.findByKey(PROJECT_PATH, "legacy-blob");
     expect(out).not.toBeNull();
-    expect(out?.sessionName).toBe("bad-exec");
+    expect(out?.sessionName).toBe("legacy-blob");
     expect(out?.graphWorkflowExecution).toBeNull();
-  });
-
-  it("findAll does not throw and includes the degraded session alongside healthy ones", () => {
-    insertRaw("bad-exec", "graph_workflow_execution", "?", [
-      execWithUnknownHaltReason,
-    ]);
-    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "healthy" }));
-
-    const all = repo.findAll();
-    const names = all.map((r) => r.session.sessionName).sort();
-    expect(names).toEqual(["bad-exec", "healthy"]);
-    const bad = all.find((r) => r.session.sessionName === "bad-exec");
-    expect(bad?.session.graphWorkflowExecution).toBeNull();
   });
 
   it("still throws (fail-loud) when a core scalar column is unparseable", () => {
@@ -631,255 +636,6 @@ describe("sessions-repo findAll caching", () => {
 });
 
 /**
- * A fully-populated graph workflow execution: every introspectable persisted
- * key path of `graphWorkflowExecutionSchema` carries a distinctive non-default
- * value, every array/record has at least one fully-populated representative
- * element so the durability harness descends into nested fields, and
- * `machineSnapshot` (a `z.unknown().nullable().default(null)` leaf) is non-null.
- *
- * The harness descends into the FIRST element of each array and the FIRST entry
- * of each record, so each such container needs only one representative whose own
- * nested optional fields are all populated.
- */
-function buildMaximalGraphWorkflowExecution(): unknown {
-  return {
-    id: "wf-maximal",
-    seedDefinitionId: "seed-maximal",
-    seedDefinitionRevision: 3,
-    workingDefinition: {
-      schemaVersion: 2,
-      executionContexts: [
-        {
-          id: "ctx-1",
-          title: "Implement the thing",
-          description: "Detailed description of the context",
-          acceptanceCriteria: "All tests pass and the build is green",
-          implementer: {
-            backend: "claude",
-            model: "opus",
-            reasoningEffort: "high",
-          },
-          contextValidator: {
-            type: "claude",
-            enabled: true,
-            continuity: { enabled: false, contextLimitTokens: 120_000 },
-            agent: {
-              backend: "claude",
-              model: "sonnet",
-              reasoningEffort: "medium",
-            },
-          },
-          scriptValidator: { enabled: true },
-          humanApprovalGate: { enabled: true },
-          mutability: { allowAgentTaskAdd: true },
-          circuitBreaker: { consecutiveFailureThreshold: 5 },
-          iterationPolicy: {
-            maxIterations: 7,
-            continuity: { enabled: false, contextLimitTokens: 90_000 },
-          },
-          charter: makeTestCharter(),
-        },
-      ],
-      tasks: [
-        {
-          id: "task-1",
-          contextId: "ctx-1",
-          order: 1,
-          title: "First task",
-          instructions: "Do the first thing carefully",
-          metadata: { area: "backend" },
-          source: "agent",
-        },
-      ],
-      edges: [
-        {
-          id: "edge-1",
-          sourceContextId: "ctx-1",
-          targetContextId: "ctx-2",
-        },
-      ],
-    },
-    charter: makeTestCharter(),
-    status: "running",
-    activeContextIds: ["ctx-1"],
-    contextStates: {
-      "ctx-1": {
-        contextId: "ctx-1",
-        // Parked at the human-review gate with a recorded-but-unapplied
-        // rejected decision (valid mid-flight state: decisions recorded while
-        // paused/halted persist until the loop applies them). Upholds the
-        // invariant: pendingApproval !== null ⇔ status === "awaiting_approval".
-        status: "awaiting_approval",
-        totalTaskCount: 4,
-        completedTaskCount: 2,
-        iterationCount: 3,
-        consecutiveFailureCount: 1,
-        worktreePath: "/wt/ctx-1",
-        branchName: "csm/ctx-1",
-        isolation: "worktree",
-        batchId: "batch-1",
-        laneId: "lane-1",
-        joinId: "join-1",
-        mergeStatus: "in-progress",
-        cleanupStatus: "pending",
-        lastMergeError: "merge conflict in foo.ts",
-        pendingApproval: {
-          conversationId: "conv-approval-1",
-          requestedAt: "2026-01-01T00:00:30.000Z",
-          decision: {
-            type: "rejected",
-            message: "needs more tests before merge",
-            decidedAt: "2026-01-01T00:00:45.000Z",
-          },
-        },
-      },
-    },
-    taskStates: {
-      "task-1": {
-        taskId: "task-1",
-        contextId: "ctx-1",
-        order: 1,
-        status: "running",
-        summary: "implemented the first slice",
-        startedAt: "2026-01-02T00:00:00Z",
-        completedAt: "2026-01-02T01:00:00Z",
-        lastConversationId: "conv-task-1",
-        failureMessage: "transient flake on first attempt",
-        failureHistory: [
-          {
-            message: "assertion failed in unit test",
-            timestamp: "2026-01-02T00:30:00Z",
-          },
-        ],
-      },
-    },
-    sharedDocuments: [
-      {
-        id: "doc-1",
-        relativePath: "docs/plan.md",
-        description: "the shared plan",
-        readWhen: "before implementing",
-        kind: "charter",
-        createdAt: "2026-01-01T00:00:00Z",
-        updatedAt: "2026-01-02T00:00:00Z",
-        lastUpdatedByConversationId: "conv-doc-1",
-      },
-    ],
-    laneStates: {
-      "ctx-1": {
-        "lane-key-1": {
-          lane: "implementer",
-          contextId: "ctx-1",
-          engine: "claude",
-          workflowConversationId: "wf-conv-1",
-          sessionRef: {
-            engine: "claude",
-            lane: "implementer",
-            conversationId: "conv-lane-1",
-          },
-          lastContextTokens: 12_000,
-          lastContextWindowMax: 200_000,
-          rotateBeforeNextTurn: true,
-          limitEvaluation: "supported",
-          lastUsedAt: "2026-01-02T02:00:00Z",
-        },
-      },
-    },
-    executionLanes: {
-      "lane-1": {
-        laneId: "lane-1",
-        kind: "worktree",
-        status: "active",
-        worktreePath: "/wt/lane-1",
-        branchName: "csm/lane-1",
-        includedContextIds: ["ctx-1"],
-        lastCommittingContextId: "ctx-1",
-        commitSnapshots: [
-          {
-            contextId: "ctx-1",
-            sha: "abc123def456",
-            committedAt: "2026-01-02T03:00:00Z",
-          },
-        ],
-        createdAt: "2026-01-01T00:00:00Z",
-        updatedAt: "2026-01-02T03:00:00Z",
-      },
-    },
-    joins: {
-      "join-1": {
-        joinId: "join-1",
-        kind: "context_merge",
-        contextId: "ctx-1",
-        targetLaneId: "lane-1",
-        sourceLaneIds: ["lane-2"],
-        mergedSourceLaneIds: ["lane-2"],
-        status: "running",
-        errorMessage: "retrying merge",
-        conflicts: { files: ["foo.ts"], message: "conflict in foo.ts" },
-        createdAt: "2026-01-01T00:00:00Z",
-        updatedAt: "2026-01-02T04:00:00Z",
-        completedAt: "2026-01-02T05:00:00Z",
-      },
-    },
-    lanePlan: {
-      continuationMap: { "ctx-1": "ctx-2" },
-      longestDownstreamPath: { "ctx-1": 3 },
-    },
-    machineSnapshot: { value: "running", context: { step: 2 } },
-    startedAt: "2026-01-01T00:00:00Z",
-    completedAt: "2026-01-02T07:00:00Z",
-    haltReason: {
-      type: "max_iterations",
-      contextId: "ctx-1",
-      iterationCount: 7,
-    },
-    pendingHaltReason: {
-      type: "recovery_error",
-      message: "could not recover lane state",
-    },
-    secondaryHaltReasons: [{ type: "aborted" }],
-    pendingCollaborations: {
-      "collab-1": {
-        workflowId: "wf-maximal",
-        contextId: "ctx-1",
-        conversationId: "conv-collab-1",
-        parentImplementerTurnId: "turn-1",
-        brief: "resolve the design disagreement",
-        startedAt: "2026-01-02T08:00:00Z",
-      },
-    },
-    collaborationContinuations: {
-      "ctx-1": [
-        {
-          workflowId: "wf-maximal",
-          brief: "resolve the design disagreement",
-          result: {
-            // Non-converged so the schema's superRefine demands a populated
-            // openConflicts; a non-null finalAnswer is still permitted, which
-            // the durability guard requires (a nullable field left null reads
-            // as "missing"). Both branches stay non-default.
-            status: "rounds_exhausted",
-            finalAnswer: "leaning toward the queue-based approach",
-            openConflicts: [
-              {
-                rejectingAgent: "agent_two",
-                disputedPoint: "queue vs. polling for the merge step",
-                severity: "major",
-                category: "implementation",
-              },
-            ],
-          },
-          roundsConsumed: 2,
-          completedAt: "2026-01-02T09:00:00Z",
-          deliveredAt: "2026-01-02T09:05:00Z",
-        },
-      ],
-    },
-    pendingMergeRetry: ["ctx-1"],
-  };
-}
-
-/**
  * Build a session with EVERY introspectable persisted key path populated to a
  * distinctive non-default value, so the schema-driven durability harness can
  * prove no field is dropped on write or reset to its default on read.
@@ -952,7 +708,6 @@ describe("sessions-repo updateChangedColumns", () => {
     "tdd_enabled",
     "target_branch",
     "parent_session_name",
-    "graph_workflow_execution",
     "workflow_envelopes",
     "workflow_lanes",
     "mcp_overrides",
@@ -1054,12 +809,7 @@ describe("sessions-repo updateChangedColumns", () => {
 
     // The big blob columns the focused path must never have re-written stay
     // byte-identical to the very first full-upsert baseline.
-    for (const blob of [
-      "graph_workflow_execution",
-      "workflow_lanes",
-      "workflow_envelopes",
-      "mcp_overrides",
-    ]) {
+    for (const blob of ["workflow_lanes", "workflow_envelopes", "mcp_overrides"]) {
       expect(readRow("full")[blob]).toBe(baseline[blob]);
     }
   });
@@ -1117,6 +867,13 @@ describe("sessions-repo durability contract", () => {
         // are joined in by higher layers; rowToDomain sets
         // `referenceDocuments: []`. Not a serialization gap.
         referenceDocuments: "not-persisted",
+        // `graphWorkflowExecution` no longer round-trips on the sessions row.
+        // The active execution lives in the dedicated graph_workflow_executions
+        // table (see graph-workflow-executions-repo) and is merged back into the
+        // in-memory SessionState by higher layers, not by sessions-repo;
+        // rowToDomain deliberately sets `graphWorkflowExecution: null`. Its own
+        // durability backstop is graph-workflow-executions-repo.contract.test.
+        graphWorkflowExecution: "not-persisted",
       },
     });
   });

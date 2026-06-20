@@ -6,9 +6,10 @@
  *
  * Each test runs against `createPersistenceFixture()` — real repos over a fresh
  * `:memory:` DB — so the assertions exercise a genuine repository ↔ SQLite
- * round-trip. The session is seeded with a non-trivial `graphWorkflowExecution`
- * so we can prove that a focused lane/envelope write leaves the large execution
- * blob byte-identical (i.e. it was never rewritten by the focused path).
+ * round-trip. The session also has a non-trivial active graph-workflow execution
+ * (in the dedicated graph_workflow_executions table) so we can prove that a
+ * focused lane/envelope write leaves the execution untouched (i.e. it was never
+ * rewritten by the focused path).
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -45,19 +46,27 @@ afterEach(() => {
   fixture.close();
 });
 
-function seedSessionWithExecution(overrides: Partial<SessionState> = {}): void {
-  fixture.seedSession(PROJECT_PATH, SESSION_NAME, {
-    graphWorkflowExecution: makeExecution(),
-    ...overrides,
-  });
+async function seedSessionWithExecution(
+  overrides: Partial<SessionState> = {},
+): Promise<void> {
+  fixture.seedSession(PROJECT_PATH, SESSION_NAME, overrides);
+  // The active execution lives in the dedicated graph_workflow_executions table
+  // (no longer on the session row), seeded via the real setter.
+  await fixture.store.mutateActiveGraphWorkflowExecution(
+    PROJECT_PATH,
+    SESSION_NAME,
+    "test.seed-active-execution",
+    async () => ({ execution: makeExecution(), events: [] }),
+  );
 }
 
 describe("mutateSessionWorkflowLanes — focused durable write", () => {
   it("persists a lane write across a reload and leaves graphWorkflowExecution byte-identical", async () => {
-    seedSessionWithExecution();
-    const executionBefore = (
-      await fixture.store.getSession(PROJECT_PATH, SESSION_NAME)
-    )?.graphWorkflowExecution;
+    await seedSessionWithExecution();
+    const executionBefore = await fixture.store.getActiveGraphWorkflowExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
     expect(executionBefore).not.toBeNull();
 
     await fixture.store.mutateSessionWorkflowLanes(
@@ -73,13 +82,17 @@ describe("mutateSessionWorkflowLanes — focused durable write", () => {
     expect(reloaded?.workflowLanes).toEqual({
       "wf-A::primary": { engine: "noop", seq: 7 },
     });
-    // The large execution blob must survive untouched — the focused write must
-    // not have re-serialized the whole row.
-    expect(reloaded?.graphWorkflowExecution).toEqual(executionBefore);
+    // The active execution must survive untouched — the focused lane write must
+    // not have disturbed the dedicated executions table.
+    const executionAfter = await fixture.store.getActiveGraphWorkflowExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    expect(executionAfter).toEqual(executionBefore);
   });
 
   it("returns the mutator's value and stamps lastActivityAt", async () => {
-    seedSessionWithExecution();
+    await seedSessionWithExecution();
     const result = await fixture.store.mutateSessionWorkflowLanes(
       PROJECT_PATH,
       SESSION_NAME,
@@ -96,7 +109,7 @@ describe("mutateSessionWorkflowLanes — focused durable write", () => {
   });
 
   it("serializes concurrent same-session lane writes (neither is lost)", async () => {
-    seedSessionWithExecution();
+    await seedSessionWithExecution();
     await Promise.all([
       fixture.store.mutateSessionWorkflowLanes(
         PROJECT_PATH,
@@ -139,10 +152,11 @@ describe("mutateSessionWorkflowLanes — focused durable write", () => {
 
 describe("mutateSessionWorkflowEnvelopes — focused durable write", () => {
   it("persists an envelope write across a reload and leaves graphWorkflowExecution byte-identical", async () => {
-    seedSessionWithExecution();
-    const executionBefore = (
-      await fixture.store.getSession(PROJECT_PATH, SESSION_NAME)
-    )?.graphWorkflowExecution;
+    await seedSessionWithExecution();
+    const executionBefore = await fixture.store.getActiveGraphWorkflowExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
     expect(executionBefore).not.toBeNull();
 
     await fixture.store.mutateSessionWorkflowEnvelopes(
@@ -166,11 +180,15 @@ describe("mutateSessionWorkflowEnvelopes — focused durable write", () => {
         status: "running",
       },
     });
-    expect(reloaded?.graphWorkflowExecution).toEqual(executionBefore);
+    const executionAfter = await fixture.store.getActiveGraphWorkflowExecution(
+      PROJECT_PATH,
+      SESSION_NAME,
+    );
+    expect(executionAfter).toEqual(executionBefore);
   });
 
   it("returns the mutator's value and stamps lastActivityAt", async () => {
-    seedSessionWithExecution();
+    await seedSessionWithExecution();
     const result = await fixture.store.mutateSessionWorkflowEnvelopes(
       PROJECT_PATH,
       SESSION_NAME,
@@ -187,7 +205,7 @@ describe("mutateSessionWorkflowEnvelopes — focused durable write", () => {
   });
 
   it("serializes concurrent same-session envelope writes (neither is lost)", async () => {
-    seedSessionWithExecution();
+    await seedSessionWithExecution();
     await Promise.all([
       fixture.store.mutateSessionWorkflowEnvelopes(
         PROJECT_PATH,

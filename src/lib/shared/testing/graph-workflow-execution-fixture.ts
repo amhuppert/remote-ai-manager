@@ -1,0 +1,250 @@
+import { makeTestCharter } from "./charter-fixture";
+
+/**
+ * A maximal {@link GraphWorkflowExecution}-shaped value with EVERY introspectable
+ * persisted key path populated to a distinctive non-default value, so the
+ * schema-driven durability harness can prove no field is dropped on write or
+ * reset to its default on read. Returned as `unknown` (not parsed) so callers
+ * choose whether to feed it through the schema; the durability harness parses
+ * via its `schema` parameter.
+ *
+ * MUST NOT be imported by production code; it lives under
+ * `src/lib/shared/testing/`.
+ */
+export function buildMaximalGraphWorkflowExecution(): unknown {
+  return {
+    id: "wf-maximal",
+    seedDefinitionId: "seed-maximal",
+    seedDefinitionRevision: 3,
+    workingDefinition: {
+      schemaVersion: 2,
+      executionContexts: [
+        {
+          id: "ctx-1",
+          title: "Implement the thing",
+          description: "Detailed description of the context",
+          acceptanceCriteria: "All tests pass and the build is green",
+          implementer: {
+            backend: "claude",
+            model: "opus",
+            reasoningEffort: "high",
+          },
+          contextValidator: {
+            type: "claude",
+            enabled: true,
+            continuity: { enabled: false, contextLimitTokens: 120_000 },
+            agent: {
+              backend: "claude",
+              model: "sonnet",
+              reasoningEffort: "medium",
+            },
+          },
+          scriptValidator: { enabled: true },
+          humanApprovalGate: { enabled: true },
+          mutability: { allowAgentTaskAdd: true },
+          circuitBreaker: { consecutiveFailureThreshold: 5 },
+          iterationPolicy: {
+            maxIterations: 7,
+            continuity: { enabled: false, contextLimitTokens: 90_000 },
+          },
+          charter: makeTestCharter(),
+        },
+      ],
+      tasks: [
+        {
+          id: "task-1",
+          contextId: "ctx-1",
+          order: 1,
+          title: "First task",
+          instructions: "Do the first thing carefully",
+          metadata: { area: "backend" },
+          source: "agent",
+        },
+      ],
+      edges: [
+        {
+          id: "edge-1",
+          sourceContextId: "ctx-1",
+          targetContextId: "ctx-2",
+        },
+      ],
+    },
+    charter: makeTestCharter(),
+    status: "running",
+    activeContextIds: ["ctx-1"],
+    contextStates: {
+      "ctx-1": {
+        contextId: "ctx-1",
+        // Parked at the human-review gate with a recorded-but-unapplied
+        // rejected decision (valid mid-flight state: decisions recorded while
+        // paused/halted persist until the loop applies them). Upholds the
+        // invariant: pendingApproval !== null ⇔ status === "awaiting_approval".
+        status: "awaiting_approval",
+        totalTaskCount: 4,
+        completedTaskCount: 2,
+        iterationCount: 3,
+        consecutiveFailureCount: 1,
+        worktreePath: "/wt/ctx-1",
+        branchName: "csm/ctx-1",
+        isolation: "worktree",
+        batchId: "batch-1",
+        laneId: "lane-1",
+        joinId: "join-1",
+        mergeStatus: "in-progress",
+        cleanupStatus: "pending",
+        lastMergeError: "merge conflict in foo.ts",
+        pendingApproval: {
+          conversationId: "conv-approval-1",
+          requestedAt: "2026-01-01T00:00:30.000Z",
+          decision: {
+            type: "rejected",
+            message: "needs more tests before merge",
+            decidedAt: "2026-01-01T00:00:45.000Z",
+          },
+        },
+      },
+    },
+    taskStates: {
+      "task-1": {
+        taskId: "task-1",
+        contextId: "ctx-1",
+        order: 1,
+        status: "running",
+        summary: "implemented the first slice",
+        startedAt: "2026-01-02T00:00:00Z",
+        completedAt: "2026-01-02T01:00:00Z",
+        lastConversationId: "conv-task-1",
+        failureMessage: "transient flake on first attempt",
+        failureHistory: [
+          {
+            message: "assertion failed in unit test",
+            timestamp: "2026-01-02T00:30:00Z",
+          },
+        ],
+      },
+    },
+    sharedDocuments: [
+      {
+        id: "doc-1",
+        relativePath: "docs/plan.md",
+        description: "the shared plan",
+        readWhen: "before implementing",
+        kind: "charter",
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-02T00:00:00Z",
+        lastUpdatedByConversationId: "conv-doc-1",
+      },
+    ],
+    laneStates: {
+      "ctx-1": {
+        "lane-key-1": {
+          lane: "implementer",
+          contextId: "ctx-1",
+          engine: "claude",
+          workflowConversationId: "wf-conv-1",
+          sessionRef: {
+            engine: "claude",
+            lane: "implementer",
+            conversationId: "conv-lane-1",
+          },
+          lastContextTokens: 12_000,
+          lastContextWindowMax: 200_000,
+          rotateBeforeNextTurn: true,
+          limitEvaluation: "supported",
+          lastUsedAt: "2026-01-02T02:00:00Z",
+        },
+      },
+    },
+    executionLanes: {
+      "lane-1": {
+        laneId: "lane-1",
+        kind: "worktree",
+        status: "active",
+        worktreePath: "/wt/lane-1",
+        branchName: "csm/lane-1",
+        includedContextIds: ["ctx-1"],
+        lastCommittingContextId: "ctx-1",
+        commitSnapshots: [
+          {
+            contextId: "ctx-1",
+            sha: "abc123def456",
+            committedAt: "2026-01-02T03:00:00Z",
+          },
+        ],
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-02T03:00:00Z",
+      },
+    },
+    joins: {
+      "join-1": {
+        joinId: "join-1",
+        kind: "context_merge",
+        contextId: "ctx-1",
+        targetLaneId: "lane-1",
+        sourceLaneIds: ["lane-2"],
+        mergedSourceLaneIds: ["lane-2"],
+        status: "running",
+        errorMessage: "retrying merge",
+        conflicts: { files: ["foo.ts"], message: "conflict in foo.ts" },
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-02T04:00:00Z",
+        completedAt: "2026-01-02T05:00:00Z",
+      },
+    },
+    lanePlan: {
+      continuationMap: { "ctx-1": "ctx-2" },
+      longestDownstreamPath: { "ctx-1": 3 },
+    },
+    machineSnapshot: { value: "running", context: { step: 2 } },
+    startedAt: "2026-01-01T00:00:00Z",
+    completedAt: "2026-01-02T07:00:00Z",
+    haltReason: {
+      type: "max_iterations",
+      contextId: "ctx-1",
+      iterationCount: 7,
+    },
+    pendingHaltReason: {
+      type: "recovery_error",
+      message: "could not recover lane state",
+    },
+    secondaryHaltReasons: [{ type: "aborted" }],
+    pendingCollaborations: {
+      "collab-1": {
+        workflowId: "wf-maximal",
+        contextId: "ctx-1",
+        conversationId: "conv-collab-1",
+        parentImplementerTurnId: "turn-1",
+        brief: "resolve the design disagreement",
+        startedAt: "2026-01-02T08:00:00Z",
+      },
+    },
+    collaborationContinuations: {
+      "ctx-1": [
+        {
+          workflowId: "wf-maximal",
+          brief: "resolve the design disagreement",
+          result: {
+            // Non-converged so the schema's superRefine demands a populated
+            // openConflicts; a non-null finalAnswer is still permitted, which
+            // the durability guard requires (a nullable field left null reads
+            // as "missing"). Both branches stay non-default.
+            status: "rounds_exhausted",
+            finalAnswer: "leaning toward the queue-based approach",
+            openConflicts: [
+              {
+                rejectingAgent: "agent_two",
+                disputedPoint: "queue vs. polling for the merge step",
+                severity: "major",
+                category: "implementation",
+              },
+            ],
+          },
+          roundsConsumed: 2,
+          completedAt: "2026-01-02T09:00:00Z",
+          deliveredAt: "2026-01-02T09:05:00Z",
+        },
+      ],
+    },
+    pendingMergeRetry: ["ctx-1"],
+  };
+}

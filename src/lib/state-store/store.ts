@@ -13,6 +13,7 @@ import { diffChangedConversationColumns } from "./conversation-row-codec";
 import { createConversationsRepo } from "./conversations-repo";
 import { createGraphWorkflowArchivedExecutionsRepo } from "./graph-workflow-archived-executions-repo";
 import { createGraphWorkflowEventsRepo } from "./graph-workflow-events-repo";
+import { createGraphWorkflowExecutionsRepo } from "./graph-workflow-executions-repo";
 import { createProjectConversationsRepo } from "./project-conversations-repo";
 import { createProjectsRepo } from "./projects-repo";
 import { createReferenceDocumentsRepo } from "./reference-documents-repo";
@@ -139,6 +140,9 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     graphWorkflowArchivedExecutions:
       deps.repos?.graphWorkflowArchivedExecutions ??
       createGraphWorkflowArchivedExecutionsRepo(db),
+    graphWorkflowExecutions:
+      deps.repos?.graphWorkflowExecutions ??
+      createGraphWorkflowExecutionsRepo(db),
   };
 
   const aggregate: StateAggregate =
@@ -528,6 +532,9 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     getGraphWorkflowEventsTail: accessors.getGraphWorkflowEventsTail,
     findLatestGraphWorkflowContextEvent:
       accessors.findLatestGraphWorkflowContextEvent,
+    getActiveGraphWorkflowExecution: accessors.getActiveGraphWorkflowExecution,
+    listActiveGraphWorkflowExecutions:
+      accessors.listActiveGraphWorkflowExecutions,
     listArchivedGraphWorkflowExecutions:
       accessors.listArchivedGraphWorkflowExecutions,
     getOrCreateProject,

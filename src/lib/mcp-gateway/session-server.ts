@@ -2,7 +2,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { readConfig } from "@/lib/config/loader";
 import { sendAgentNotification } from "@/lib/notifications/push";
 import { resolveProjectPath } from "@/lib/projects/resolver";
-import { getSession, mutateConversation } from "@/lib/state-store";
+import {
+  getSession,
+  getActiveGraphWorkflowExecution,
+  mutateConversation,
+} from "@/lib/state-store";
 import { registerNotificationTool } from "@/lib/notifications/agent-notification-tool";
 import { registerAskUserQuestionTool } from "@/lib/conversations/ask-user-question-tool";
 import {
@@ -97,8 +101,7 @@ const defaultSessionMcpServerDeps: SessionMcpServerDeps = {
       updateWorkflow: storage.update,
       deleteWorkflow: storage.delete,
       async getActiveExecution(projectPath, sessionName) {
-        const session = await getSession(projectPath, sessionName);
-        return session?.graphWorkflowExecution ?? null;
+        return getActiveGraphWorkflowExecution(projectPath, sessionName);
       },
       publishCharterUpdated: eventPublisher.publishCharterUpdated,
     });

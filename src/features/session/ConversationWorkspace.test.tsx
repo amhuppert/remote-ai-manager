@@ -263,6 +263,7 @@ vi.mock("@/lib/workflows/queries", () => ({
     isPending: false,
   }),
   useWorkflowDefinitionQuery: () => ({ data: undefined }),
+  useGraphWorkflowExecutionQuery: () => ({ data: null, isPending: false }),
 }));
 
 vi.mock("@/lib/conversations/queries", () => ({

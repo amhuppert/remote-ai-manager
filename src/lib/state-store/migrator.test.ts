@@ -208,6 +208,31 @@ function readActiveBlob(db: Db): Record<string, unknown> | null {
   return row.blob === null ? null : (JSON.parse(row.blob) as Record<string, unknown>);
 }
 
+function readActiveExecutionRow(
+  db: Db,
+): { status: string; definition_json: string; runtime_json: string } | null {
+  const row = db
+    .prepare(
+      `SELECT status, definition_json, runtime_json
+         FROM graph_workflow_executions
+        WHERE project_path = ? AND session_name = ?`,
+    )
+    .get(PROJECT_PATH, SESSION_NAME) as
+    | { status: string; definition_json: string; runtime_json: string }
+    | undefined;
+  return row ?? null;
+}
+
+function mergeActiveExecutionRow(
+  row: { definition_json: string; runtime_json: string } | null,
+): Record<string, unknown> {
+  if (row === null) throw new Error("no active execution row");
+  return {
+    ...(JSON.parse(row.definition_json) as Record<string, unknown>),
+    ...(JSON.parse(row.runtime_json) as Record<string, unknown>),
+  };
+}
+
 function readArchivedBlob(
   db: Db,
   executionId: string,
@@ -262,10 +287,16 @@ describe("0002-split-graph-workflow-history (production registry)", () => {
     );
     expect(ctxScoped?.event.type).toBe("graph-workflow-context-status");
 
-    const blob = readActiveBlob(db);
-    expect(blob).not.toBeNull();
-    expect(blob).toMatchObject({ id: "exec-active", status: "running" });
-    expect(blob && "history" in blob).toBe(false);
+    // 0002 strips `history` from the active blob; 0003 (next in the registry)
+    // then moves that history-free blob out of the session column into the
+    // dedicated executions table and NULLs the source column.
+    expect(readActiveBlob(db)).toBeNull();
+    const split = readActiveExecutionRow(db);
+    expect(split).not.toBeNull();
+    expect(split?.status).toBe("running");
+    const merged = mergeActiveExecutionRow(split);
+    expect(merged).toMatchObject({ id: "exec-active", status: "running" });
+    expect("history" in merged).toBe(false);
   });
 
   it("archives past executions and splits their history by execution id", async () => {
@@ -367,8 +398,11 @@ describe("0002-split-graph-workflow-history (production registry)", () => {
       ),
     ).toHaveLength(1);
 
-    const blob = readActiveBlob(db);
-    expect(blob && "history" in blob).toBe(false);
+    // After the full registry the active execution lives in the executions
+    // table (history-free) and the session column is NULL.
+    expect(readActiveBlob(db)).toBeNull();
+    const merged = mergeActiveExecutionRow(readActiveExecutionRow(db));
+    expect("history" in merged).toBe(false);
   });
 
   it("re-runs the up step (manual replay) without duplicating rows", async () => {

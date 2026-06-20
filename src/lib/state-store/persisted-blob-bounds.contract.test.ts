@@ -67,7 +67,7 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
       referenceDocuments:
         "normalized: reference_documents table; joined in-memory, never stored on the sessions row.",
       "graphWorkflowExecution.**":
-        "delegated: bounds enforced by the graph_workflow_execution document entry.",
+        "not-persisted: never stored on the sessions row (set to null by rowToDomain); the active execution lives in graph_workflow_executions.definition_json / runtime_json, registered below.",
       workflowEnvelopes:
         "bounded: keyed by active workflow envelope id; heavy per-turn artifact stream externalized to collab-artifacts sidecar files.",
       workflowLanes:
@@ -79,43 +79,58 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
     },
   },
   {
-    label: "graph_workflow_execution document",
+    // The active execution is split across two TEXT columns of the
+    // graph_workflow_executions table: the definition tier
+    // (graph_workflow_executions.definition_json) and the runtime tier
+    // (graph_workflow_executions.runtime_json). Both columns are still single
+    // serialized blobs, so every collection inside them is gated here.
+    label: "graph_workflow_executions definition_json + runtime_json",
     schema: graphWorkflowExecutionSchema,
     discharges: {
+      // --- definition_json tier (near-static, written only when its hash changes) ---
       "workingDefinition.**":
-        "bounded: immutable resolved workflow definition (contexts, tasks, edges, per-context charters) fixed at resolve time, never mutated at runtime.",
-      "charter.**": "bounded: author-fixed workflow charter.",
+        "bounded: immutable resolved workflow definition (contexts, tasks, edges, per-context charters) fixed at resolve time, never mutated at runtime. In graph_workflow_executions.definition_json.",
+      "charter.**":
+        "bounded: author-fixed workflow charter. In graph_workflow_executions.definition_json.",
+      // --- runtime_json tier (hot, rewritten every tick) ---
       activeContextIds:
-        "bounded: subset of the author-fixed execution contexts.",
-      contextStates: "bounded: keyed by the author-fixed execution contexts.",
-      taskStates: "bounded: keyed by the author-fixed task graph.",
+        "bounded: subset of the author-fixed execution contexts. In graph_workflow_executions.runtime_json.",
+      contextStates:
+        "bounded: keyed by the author-fixed execution contexts. In graph_workflow_executions.runtime_json.",
+      taskStates:
+        "bounded: keyed by the author-fixed task graph. In graph_workflow_executions.runtime_json.",
       "taskStates.*.failureHistory":
-        "pruned: capped to the last 10 entries via appendFailureHistory in iteration-orchestrator.",
-      collaborationContinuations: "bounded: keyed by execution context.",
+        "pruned: capped to the last 10 entries via appendFailureHistory in iteration-orchestrator. In graph_workflow_executions.runtime_json.",
+      collaborationContinuations:
+        "bounded: keyed by execution context. In graph_workflow_executions.runtime_json.",
       "collaborationContinuations.*":
-        "pruned: consumed continuations removed on delivery in iteration-orchestrator (emptied context keys deleted).",
+        "pruned: consumed continuations removed on delivery in iteration-orchestrator (emptied context keys deleted). In graph_workflow_executions.runtime_json.",
       "collaborationContinuations.*[].result.openConflicts":
-        "bounded: conflicting files from one merge attempt.",
-      executionLanes: "bounded: keyed by the author-fixed execution lanes.",
+        "bounded: conflicting files from one merge attempt. In graph_workflow_executions.runtime_json.",
+      executionLanes:
+        "bounded: keyed by the author-fixed execution lanes. In graph_workflow_executions.runtime_json.",
       "executionLanes.*.includedContextIds":
-        "bounded: subset of the author-fixed execution contexts.",
+        "bounded: subset of the author-fixed execution contexts. In graph_workflow_executions.runtime_json.",
       "executionLanes.*.commitSnapshots":
-        "tracked: grows one entry per lane commit with no eviction — graph_workflow_execution normalization (structural change #4).",
-      "laneStates.**": "bounded: keyed by the execution lanes.",
+        "tracked: grows one entry per lane commit with no eviction — graph_workflow_execution normalization (structural change #4). In graph_workflow_executions.runtime_json.",
+      "laneStates.**":
+        "bounded: keyed by the execution lanes. In graph_workflow_executions.runtime_json.",
       "joins.**":
-        "bounded: per-join merge state keyed by author-fixed joins; lane-id and conflict-file lists sized by the merge.",
+        "bounded: per-join merge state keyed by author-fixed joins; lane-id and conflict-file lists sized by the merge. In graph_workflow_executions.runtime_json.",
       "lanePlan.**":
-        "bounded: continuation / longest-path maps derived from the author-fixed graph.",
+        "bounded: continuation / longest-path maps derived from the author-fixed graph. In graph_workflow_executions.definition_json.",
       "haltReason.**":
-        "bounded: single halt descriptor (conflict files / source lanes from one halt).",
-      "pendingHaltReason.**": "bounded: single pending halt descriptor.",
+        "bounded: single halt descriptor (conflict files / source lanes from one halt). In graph_workflow_executions.runtime_json.",
+      "pendingHaltReason.**":
+        "bounded: single pending halt descriptor. In graph_workflow_executions.runtime_json.",
       "secondaryHaltReasons.**":
-        "bounded: one entry per halted secondary lane (at most the execution-lane count).",
+        "bounded: one entry per halted secondary lane (at most the execution-lane count). In graph_workflow_executions.runtime_json.",
       pendingCollaborations:
-        "bounded: in-flight collaboration requests for the current batch, drained as delivered.",
-      pendingMergeRetry: "bounded: single pending merge-retry descriptor.",
+        "bounded: in-flight collaboration requests for the current batch, drained as delivered. In graph_workflow_executions.runtime_json.",
+      pendingMergeRetry:
+        "bounded: single pending merge-retry descriptor. In graph_workflow_executions.runtime_json.",
       sharedDocuments:
-        "tracked: one entry per workflow-produced shared document with no eviction — graph_workflow_execution normalization (structural change #4).",
+        "tracked: one entry per workflow-produced shared document with no eviction — graph_workflow_execution normalization (structural change #4). In graph_workflow_executions.runtime_json.",
     },
   },
 ];

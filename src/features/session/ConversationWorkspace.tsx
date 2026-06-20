@@ -83,6 +83,7 @@ export default function ConversationWorkspace({
     sessionQuery,
     conversationsQuery,
     collaborationListQuery,
+    graphWorkflowExecutionQuery,
     messagesQuery,
     rawMessages,
     diff,
@@ -159,7 +160,7 @@ export default function ConversationWorkspace({
     projectName,
     sessionName,
     conversationId,
-    execution: session?.graphWorkflowExecution ?? null,
+    execution: graphWorkflowExecutionQuery.data ?? null,
     conversationBusy: activeConversation?.status === "running",
   });
   const isReadOnly =

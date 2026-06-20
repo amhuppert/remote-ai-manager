@@ -438,6 +438,15 @@ function setupObservability() {
       }
       return session;
     },
+    async getActiveGraphWorkflowExecution(projectPath, sessionName) {
+      const key = `${projectPath}:${sessionName}`;
+      let session = sessions.get(key);
+      if (!session) {
+        session = makeSession();
+        sessions.set(key, session);
+      }
+      return session.graphWorkflowExecution;
+    },
     async mutateActiveGraphWorkflowExecution(
       projectPath,
       sessionName,

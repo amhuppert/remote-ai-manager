@@ -1,0 +1,280 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/lib/logging", () => ({
+  createLogger: () => ({
+    info: vi.fn(),
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  }),
+}));
+
+import type Database from "better-sqlite3";
+import { _createTestDb } from "./state-db";
+import {
+  createGraphWorkflowExecutionsRepo,
+  splitExecution,
+  DEFINITION_TIER_KEYS,
+  RUNTIME_TIER_KEYS,
+  type GraphWorkflowExecutionsRepo,
+} from "./graph-workflow-executions-repo";
+import { graphWorkflowExecutionSchema } from "@/lib/workflows/schemas";
+import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import { assertRoundTripDurability } from "@/lib/shared/testing/round-trip-durability";
+import { buildMaximalGraphWorkflowExecution } from "@/lib/shared/testing/graph-workflow-execution-fixture";
+
+type Db = InstanceType<typeof Database>;
+
+const PROJECT_PATH = "/p1";
+const SESSION_NAME = "s1";
+
+let db: Db;
+let repo: GraphWorkflowExecutionsRepo;
+
+function seedSession(): void {
+  db.prepare("INSERT INTO projects (root_path) VALUES (?)").run(PROJECT_PATH);
+  db.prepare(
+    `INSERT INTO sessions (
+       project_path, session_name, worktree_path, branch_name,
+       created_at, last_activity_at
+     ) VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    PROJECT_PATH,
+    SESSION_NAME,
+    `${PROJECT_PATH}/.worktrees/${SESSION_NAME}`,
+    `csm/${SESSION_NAME}`,
+    "2026-01-01T00:00:00Z",
+    "2026-01-01T00:00:00Z",
+  );
+}
+
+function maximalExecution(): GraphWorkflowExecution {
+  return graphWorkflowExecutionSchema.parse(buildMaximalGraphWorkflowExecution());
+}
+
+beforeEach(() => {
+  db = _createTestDb({ inMemory: true });
+  seedSession();
+  repo = createGraphWorkflowExecutionsRepo(db);
+});
+
+afterEach(() => {
+  db.close();
+});
+
+describe("graph-workflow-executions split symmetry", () => {
+  it("assigns every top-level execution key to exactly one tier", () => {
+    const allKeys = Object.keys(graphWorkflowExecutionSchema.shape).sort();
+    const definitionKeys: string[] = [...DEFINITION_TIER_KEYS];
+    const runtimeKeys: string[] = [...RUNTIME_TIER_KEYS];
+
+    const overlap = definitionKeys.filter((k) => runtimeKeys.includes(k));
+    expect(overlap, "a key must not appear in both tiers").toEqual([]);
+
+    const union = [...definitionKeys, ...runtimeKeys].sort();
+    expect(
+      union,
+      "union of definition+runtime tier keys must exactly equal the schema keys (no field unassigned, none duplicated)",
+    ).toEqual(allKeys);
+  });
+
+  it("round-trips a maximal execution through splitExecution + JSON merge losslessly", () => {
+    const execution = maximalExecution();
+    const split = splitExecution(execution);
+    const merged = {
+      ...(JSON.parse(split.definitionJson) as Record<string, unknown>),
+      ...(JSON.parse(split.runtimeJson) as Record<string, unknown>),
+    };
+    expect(graphWorkflowExecutionSchema.parse(merged)).toEqual(execution);
+  });
+});
+
+describe("graph-workflow-executions-repo durability contract", () => {
+  it("round-trips every persisted execution key path through setActive -> getActive", async () => {
+    await assertRoundTripDurability({
+      label: "graph-workflow-executions",
+      schema: graphWorkflowExecutionSchema,
+      buildMaximalFixture: maximalExecution,
+      persist: (fixture) => {
+        repo.setActive(PROJECT_PATH, SESSION_NAME, fixture, "2026-03-01T00:00:00Z");
+        return fixture;
+      },
+      reload: () => repo.getActive(PROJECT_PATH, SESSION_NAME),
+    });
+  });
+});
+
+describe("graph-workflow-executions-repo behavior", () => {
+  it("returns null when no active execution exists", () => {
+    expect(repo.getActive(PROJECT_PATH, SESSION_NAME)).toBeNull();
+  });
+
+  it("deletes the active row on setActive(null)", () => {
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      maximalExecution(),
+      "2026-03-01T00:00:00Z",
+    );
+    expect(repo.getActive(PROJECT_PATH, SESSION_NAME)).not.toBeNull();
+
+    const removed = repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      null,
+      "2026-03-02T00:00:00Z",
+    );
+    expect(removed).toBe(true);
+    expect(repo.getActive(PROJECT_PATH, SESSION_NAME)).toBeNull();
+  });
+
+  it("rewrites runtime-only when the definition tier is unchanged but the runtime changes", () => {
+    const execution = maximalExecution();
+    repo.setActive(PROJECT_PATH, SESSION_NAME, execution, "2026-03-01T00:00:00Z");
+
+    const definitionBefore = db
+      .prepare(
+        `SELECT definition_json, runtime_json FROM graph_workflow_executions
+          WHERE project_path = ? AND session_name = ?`,
+      )
+      .get(PROJECT_PATH, SESSION_NAME) as {
+      definition_json: string;
+      runtime_json: string;
+    };
+
+    // Mutate only a runtime-tier field; the definition tier is byte-identical.
+    const next = graphWorkflowExecutionSchema.parse({
+      ...execution,
+      status: "completed",
+      completedAt: "2026-03-05T00:00:00Z",
+    });
+    repo.setActive(PROJECT_PATH, SESSION_NAME, next, "2026-03-02T00:00:00Z");
+
+    const after = db
+      .prepare(
+        `SELECT definition_json, runtime_json, status, completed_at
+           FROM graph_workflow_executions
+          WHERE project_path = ? AND session_name = ?`,
+      )
+      .get(PROJECT_PATH, SESSION_NAME) as {
+      definition_json: string;
+      runtime_json: string;
+      status: string;
+      completed_at: string | null;
+    };
+
+    expect(after.definition_json).toBe(definitionBefore.definition_json);
+    expect(after.runtime_json).not.toBe(definitionBefore.runtime_json);
+    expect(after.status).toBe("completed");
+    expect(after.completed_at).toBe("2026-03-05T00:00:00Z");
+
+    const reloaded = repo.getActive(PROJECT_PATH, SESSION_NAME);
+    expect(reloaded?.status).toBe("completed");
+    expect(reloaded?.completedAt).toBe("2026-03-05T00:00:00Z");
+  });
+
+  it("recreates the row via a full upsert when the runtime-only UPDATE matches zero rows", () => {
+    const execution = maximalExecution();
+    // First write warms the per-instance definition-hash cache.
+    repo.setActive(PROJECT_PATH, SESSION_NAME, execution, "2026-03-01T00:00:00Z");
+
+    // Delete the row out-of-band WITHOUT going through setActive(null), so the
+    // hash cache still believes the (unchanged) definition is already on disk.
+    db.prepare(
+      `DELETE FROM graph_workflow_executions
+        WHERE project_path = ? AND session_name = ?`,
+    ).run(PROJECT_PATH, SESSION_NAME);
+
+    // A re-write with the SAME definition tier takes the runtime-only UPDATE
+    // path (hash matches). Without the defensive fallback the UPDATE would
+    // match 0 rows and the execution would be lost while events accumulate.
+    repo.setActive(PROJECT_PATH, SESSION_NAME, execution, "2026-03-02T00:00:00Z");
+
+    const row = db
+      .prepare(
+        `SELECT execution_id, definition_json, runtime_json
+           FROM graph_workflow_executions
+          WHERE project_path = ? AND session_name = ?`,
+      )
+      .get(PROJECT_PATH, SESSION_NAME) as
+      | { execution_id: string; definition_json: string; runtime_json: string }
+      | undefined;
+    expect(row, "row must be recreated, not silently dropped").toBeDefined();
+    expect(row?.execution_id).toBe(execution.id);
+
+    // The merged read reconstructs the full execution from the recreated row.
+    const freshRepo = createGraphWorkflowExecutionsRepo(db);
+    expect(freshRepo.getActive(PROJECT_PATH, SESSION_NAME)?.id).toBe(
+      execution.id,
+    );
+  });
+
+  it("bumps cacheVersion on every write", () => {
+    const v0 = repo.cacheVersion;
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      maximalExecution(),
+      "2026-03-01T00:00:00Z",
+    );
+    const v1 = repo.cacheVersion;
+    expect(v1).toBeGreaterThan(v0);
+    repo.setActive(PROJECT_PATH, SESSION_NAME, null, "2026-03-02T00:00:00Z");
+    expect(repo.cacheVersion).toBeGreaterThan(v1);
+  });
+
+  it("lists active executions across sessions keyed by project+session", () => {
+    db.prepare(
+      `INSERT INTO sessions (
+         project_path, session_name, worktree_path, branch_name,
+         created_at, last_activity_at
+       ) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      PROJECT_PATH,
+      "s2",
+      `${PROJECT_PATH}/.worktrees/s2`,
+      "csm/s2",
+      "2026-01-01T00:00:00Z",
+      "2026-01-01T00:00:00Z",
+    );
+
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      maximalExecution(),
+      "2026-03-01T00:00:00Z",
+    );
+    repo.setActive(
+      PROJECT_PATH,
+      "s2",
+      maximalExecution(),
+      "2026-03-01T00:00:00Z",
+    );
+
+    const all = repo.listActive();
+    expect(all.size).toBe(2);
+    const SEP = String.fromCharCode(0);
+    expect(all.get(`${PROJECT_PATH}${SEP}${SESSION_NAME}`)?.id).toBe(
+      "wf-maximal",
+    );
+    expect(all.get(`${PROJECT_PATH}${SEP}s2`)?.id).toBe("wf-maximal");
+  });
+
+  it("quarantines a corrupt runtime_json blob on read", () => {
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      maximalExecution(),
+      "2026-03-01T00:00:00Z",
+    );
+    db.prepare(
+      `UPDATE graph_workflow_executions SET runtime_json = ?
+        WHERE project_path = ? AND session_name = ?`,
+    ).run("{not valid json", PROJECT_PATH, SESSION_NAME);
+
+    // A fresh repo instance bypasses the in-memory parsed-row cache so the read
+    // actually hits the corrupt blob.
+    const freshRepo = createGraphWorkflowExecutionsRepo(db);
+    expect(() => freshRepo.getActive(PROJECT_PATH, SESSION_NAME)).toThrow();
+  });
+});

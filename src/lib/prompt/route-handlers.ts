@@ -7,7 +7,10 @@
 
 import { NextResponse } from "next/server";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
-import { getSession as defaultGetSession } from "@/lib/state-store";
+import {
+  getSession as defaultGetSession,
+  getActiveGraphWorkflowExecution as defaultGetActiveGraphWorkflowExecution,
+} from "@/lib/state-store";
 import {
   getConversation as defaultGetConversation,
   setConversationPendingPromptText as defaultSetConversationPendingPromptText,
@@ -93,6 +96,10 @@ export interface PromptRouteDeps {
     sessionName: string,
     conversationId: string,
   ) => Promise<ConversationState | null>;
+  getActiveGraphWorkflowExecution: (
+    projectPath: string,
+    sessionName: string,
+  ) => Promise<GraphWorkflowExecution | null>;
   isConversationBusy: (
     projectPath: string,
     sessionName: string,
@@ -112,6 +119,7 @@ const defaultDeps: PromptRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,
   getSession: defaultGetSession,
   getConversation: defaultGetConversation,
+  getActiveGraphWorkflowExecution: defaultGetActiveGraphWorkflowExecution,
   isConversationBusy: defaultIsConversationBusy,
   executePromptStream: defaultExecutePromptStream,
   getCollaborationManager: getDefaultCollaborationManager,
@@ -323,8 +331,12 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
     }
 
     if (conversation.role === "iteration") {
+      const activeExecution = await deps.getActiveGraphWorkflowExecution(
+        projectPath,
+        sessionName,
+      );
       const gateOpen = hasUndecidedApprovalGate(
-        session.graphWorkflowExecution,
+        activeExecution,
         conversationId,
       );
       if (!gateOpen) {

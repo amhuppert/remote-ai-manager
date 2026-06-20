@@ -5,7 +5,11 @@ import { useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { debugLogKeys } from "@/lib/debug-log/query-keys";
 import { mcpConfigKeys, mcpToolsKeys } from "@/lib/mcp/query-keys";
-import { collaborationKeys } from "@/lib/workflows/query-keys";
+import {
+  collaborationKeys,
+  graphWorkflowEventsKeys,
+  graphWorkflowExecutionKeys,
+} from "@/lib/workflows/query-keys";
 import { devServerKeys } from "@/lib/dev-server/query-keys";
 import { notificationKeys } from "@/lib/notifications/query-keys";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
@@ -665,7 +669,21 @@ export default function NotificationListener(): null {
       sessionName: string,
     ) => {
       void queryClient.invalidateQueries({
-        queryKey: sessionKeys.detail(projectName, sessionName),
+        queryKey: graphWorkflowExecutionKeys.detail(projectName, sessionName),
+      });
+    };
+
+    const invalidateGraphWorkflowEvents = (
+      projectName: string,
+      sessionName: string,
+      executionId: string,
+    ) => {
+      void queryClient.invalidateQueries({
+        queryKey: graphWorkflowEventsKeys.list(
+          projectName,
+          sessionName,
+          executionId,
+        ),
       });
     };
 
@@ -678,6 +696,11 @@ export default function NotificationListener(): null {
         invalidateGraphWorkflow(
           parsed.data.projectName,
           parsed.data.sessionName,
+        );
+        invalidateGraphWorkflowEvents(
+          parsed.data.projectName,
+          parsed.data.sessionName,
+          parsed.data.executionId,
         );
       } catch {
         // best-effort
@@ -694,6 +717,11 @@ export default function NotificationListener(): null {
           parsed.data.projectName,
           parsed.data.sessionName,
         );
+        invalidateGraphWorkflowEvents(
+          parsed.data.projectName,
+          parsed.data.sessionName,
+          parsed.data.executionId,
+        );
       } catch {
         // best-effort
       }
@@ -708,6 +736,11 @@ export default function NotificationListener(): null {
         invalidateGraphWorkflow(
           parsed.data.projectName,
           parsed.data.sessionName,
+        );
+        invalidateGraphWorkflowEvents(
+          parsed.data.projectName,
+          parsed.data.sessionName,
+          parsed.data.executionId,
         );
       } catch {
         // best-effort

@@ -1,6 +1,7 @@
 import type { StateMigration } from "./types";
 import { dropLegacyRoadmapItems } from "./0001-drop-legacy-roadmap-items";
 import { splitGraphWorkflowHistory } from "./0002-split-graph-workflow-history";
+import { splitGraphWorkflowExecution } from "./0003-split-graph-workflow-execution";
 
 /**
  * Ordered registry of state-store migrations. Append new migrations here in
@@ -11,6 +12,7 @@ import { splitGraphWorkflowHistory } from "./0002-split-graph-workflow-history";
 export const migrations: readonly StateMigration[] = [
   dropLegacyRoadmapItems,
   splitGraphWorkflowHistory,
+  splitGraphWorkflowExecution,
 ];
 
 export type { MigrationContext, StateMigration } from "./types";

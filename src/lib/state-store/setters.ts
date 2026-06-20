@@ -387,11 +387,11 @@ export function createSetters(core: StateStoreCore, mutations: MutationFns) {
             );
           }
           const { execution, events } = await mutate(
-            session.graphWorkflowExecution,
+            repos.graphWorkflowExecutions.getActive(projectPath, sessionName),
           );
           const now = new Date().toISOString();
           const txn = db.transaction(() => {
-            repos.sessions.setActiveGraphWorkflowExecution(
+            repos.graphWorkflowExecutions.setActive(
               projectPath,
               sessionName,
               execution,
@@ -433,8 +433,10 @@ export function createSetters(core: StateStoreCore, mutations: MutationFns) {
             sessionName,
           },
           async () => {
-            const session = repos.sessions.findByKey(projectPath, sessionName);
-            const execution = session?.graphWorkflowExecution ?? null;
+            const execution = repos.graphWorkflowExecutions.getActive(
+              projectPath,
+              sessionName,
+            );
             if (!execution) return;
             const now = new Date().toISOString();
             const row: GraphWorkflowArchivedExecutionRow = {
@@ -449,7 +451,7 @@ export function createSetters(core: StateStoreCore, mutations: MutationFns) {
             };
             const txn = db.transaction(() => {
               repos.graphWorkflowArchivedExecutions.insert(row);
-              repos.sessions.setActiveGraphWorkflowExecution(
+              repos.graphWorkflowExecutions.setActive(
                 projectPath,
                 sessionName,
                 null,

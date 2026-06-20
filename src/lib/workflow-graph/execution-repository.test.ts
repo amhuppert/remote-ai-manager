@@ -69,6 +69,9 @@ function createInMemoryRepo(config: GlobalConfig = {} as GlobalConfig) {
     async getSession(projectPath, sessionName) {
       return getOrCreateSession(projectPath, sessionName);
     },
+    async getActiveGraphWorkflowExecution(projectPath, sessionName) {
+      return getOrCreateSession(projectPath, sessionName).graphWorkflowExecution;
+    },
     async mutateActiveGraphWorkflowExecution(
       projectPath,
       sessionName,

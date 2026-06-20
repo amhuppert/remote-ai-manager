@@ -17,8 +17,16 @@ export function buildSessionContext(params: {
   projectName: string;
   sessionName: string;
   session: SessionState;
+  /**
+   * Active graph-workflow execution, sourced from
+   * `useGraphWorkflowExecutionQuery`. It no longer rides `session` (the
+   * executions table is decoupled from the sessions row), so callers must
+   * thread it in explicitly for the workflow block to appear in the copy.
+   */
+  graphWorkflowExecution?: GraphWorkflowExecution | null;
 }): string {
   const { projectName, sessionName, session } = params;
+  const execution = params.graphWorkflowExecution ?? null;
   const lines: string[] = [
     "```xml",
     "<session-context>",
@@ -35,8 +43,8 @@ export function buildSessionContext(params: {
     `  <finished>${session.finished}</finished>`,
   ];
 
-  if (session.graphWorkflowExecution) {
-    appendGraphWorkflowLines(lines, session.graphWorkflowExecution, "  ");
+  if (execution) {
+    appendGraphWorkflowLines(lines, execution, "  ");
   }
 
   lines.push("</session-context>", "```");
@@ -48,8 +56,16 @@ export function buildConversationContext(params: {
   sessionName: string;
   session: SessionState;
   conversationId: string;
+  /**
+   * Active graph-workflow execution, sourced from
+   * `useGraphWorkflowExecutionQuery`. It no longer rides `session` (the
+   * executions table is decoupled from the sessions row), so callers must
+   * thread it in explicitly for the workflow block to appear in the copy.
+   */
+  graphWorkflowExecution?: GraphWorkflowExecution | null;
 }): string {
   const { projectName, sessionName, session, conversationId } = params;
+  const execution = params.graphWorkflowExecution ?? null;
   const conv = session.conversations.find((c) => c.id === conversationId);
 
   const lines: string[] = [
@@ -88,13 +104,8 @@ export function buildConversationContext(params: {
     );
   }
 
-  if (session.graphWorkflowExecution) {
-    appendGraphWorkflowLines(
-      lines,
-      session.graphWorkflowExecution,
-      "  ",
-      conversationId,
-    );
+  if (execution) {
+    appendGraphWorkflowLines(lines, execution, "  ", conversationId);
   }
 
   lines.push("</conversation-context>", "```");

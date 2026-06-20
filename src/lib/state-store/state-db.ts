@@ -309,6 +309,26 @@ const SCHEMA_DDL = `
 
   CREATE INDEX IF NOT EXISTS idx_graph_workflow_archived_executions_session
     ON graph_workflow_archived_executions(project_path, session_name, archived_at);
+
+  CREATE TABLE IF NOT EXISTS graph_workflow_executions (
+    project_path              TEXT NOT NULL,
+    session_name              TEXT NOT NULL,
+    execution_id              TEXT NOT NULL,
+    seed_definition_id        TEXT NOT NULL,
+    seed_definition_revision  INTEGER NOT NULL,
+    started_at                TEXT NOT NULL,
+    status                    TEXT NOT NULL,
+    completed_at              TEXT,
+    definition_json           TEXT NOT NULL,
+    runtime_json              TEXT NOT NULL,
+    updated_at                TEXT NOT NULL,
+    PRIMARY KEY (project_path, session_name),
+    FOREIGN KEY (project_path, session_name)
+      REFERENCES sessions(project_path, session_name) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_graph_workflow_executions_status
+    ON graph_workflow_executions(project_path, session_name, status);
 `;
 
 class SchemaVersionConflictError extends Error {

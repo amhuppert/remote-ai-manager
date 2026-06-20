@@ -1253,6 +1253,14 @@ export type GraphWorkflowExecution = z.infer<
   typeof graphWorkflowExecutionSchema
 >;
 
+export const graphWorkflowExecutionFullResponseSchema = z.object({
+  execution: graphWorkflowExecutionSchema.nullable(),
+});
+
+export type GraphWorkflowExecutionFullResponse = z.infer<
+  typeof graphWorkflowExecutionFullResponseSchema
+>;
+
 // ============================================================
 // Workflow Runtime Edits
 // ============================================================

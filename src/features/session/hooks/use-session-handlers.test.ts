@@ -1,8 +1,23 @@
 // @vitest-environment jsdom
 import { renderHook, act } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
+import { createElement, type ReactNode } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useSessionHandlers } from "./use-session-handlers";
 import type { SessionState } from "@/lib/sessions/schemas";
+
+/**
+ * `useSessionHandlers` calls `useGraphWorkflowExecutionQuery` (to source the
+ * active execution for the Copy Context payload), so the hook must render under
+ * a QueryClientProvider. The query never resolves in these tests — buildContext
+ * tolerates an undefined execution.
+ */
+function wrapper({ children }: { children: ReactNode }) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return createElement(QueryClientProvider, { client }, children);
+}
 
 const fakeSession: SessionState = {
   sessionName: "s",
@@ -50,6 +65,7 @@ describe("useSessionHandlers", () => {
         clearQuestions,
         failPrompt,
       }),
+      { wrapper },
     );
 
     expect(typeof result.current.handleAnswerSubmit).toBe("function");
@@ -94,6 +110,7 @@ describe("useSessionHandlers", () => {
         failPrompt: () => {},
         onOpenConversation,
       }),
+      { wrapper },
     );
 
     await act(async () => {
@@ -127,6 +144,7 @@ describe("useSessionHandlers", () => {
         clearQuestions: () => {},
         failPrompt: () => {},
       }),
+      { wrapper },
     );
 
     await act(async () => {
@@ -154,6 +172,7 @@ describe("useSessionHandlers", () => {
         clearQuestions: () => {},
         failPrompt: () => {},
       }),
+      { wrapper },
     );
     expect(result.current.buildContext()).toBeNull();
   });

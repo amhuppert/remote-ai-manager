@@ -4,6 +4,7 @@ import { apiFetch } from "@/lib/api/fetcher";
 import {
   workflowDefinitionKeys,
   graphWorkflowEventsKeys,
+  graphWorkflowExecutionKeys,
   graphWorkflowHistoryKeys,
   collaborationKeys,
 } from "@/lib/workflows/query-keys";
@@ -11,7 +12,10 @@ import {
   workflowDefinitionsResponseSchema,
   workflowDefinitionGetResponseSchema,
 } from "@/lib/workflow-definitions/schemas";
-import { graphWorkflowExecutionEventsResponseSchema } from "@/lib/workflows/schemas";
+import {
+  graphWorkflowExecutionEventsResponseSchema,
+  graphWorkflowExecutionFullResponseSchema,
+} from "@/lib/workflows/schemas";
 import { collaborationListResponseSchema } from "@/lib/collaboration/schemas";
 
 export function useWorkflowDefinitionsQuery(projectName: string) {
@@ -65,6 +69,26 @@ export function useGraphWorkflowEventsQuery(
         graphWorkflowExecutionEventsResponseSchema,
       ).then((r) => r.events),
     enabled: executionId != null,
+  });
+}
+
+/**
+ * The active graph-workflow execution for a session, sourced from the
+ * dedicated `graph_workflow_executions` table rather than the session payload.
+ * Invalidation-driven (no `refetchInterval`): SSE handlers invalidate
+ * `graphWorkflowExecutionKeys.detail` when the execution changes.
+ */
+export function useGraphWorkflowExecutionQuery(
+  projectName: string,
+  sessionName: string,
+) {
+  return useQuery({
+    queryKey: graphWorkflowExecutionKeys.detail(projectName, sessionName),
+    queryFn: () =>
+      apiFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/execution`,
+        graphWorkflowExecutionFullResponseSchema,
+      ).then((r) => r.execution),
   });
 }
 

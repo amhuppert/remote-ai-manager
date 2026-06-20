@@ -69,6 +69,10 @@ export const getGraphWorkflowEventsTail =
   defaultStore.getGraphWorkflowEventsTail;
 export const findLatestGraphWorkflowContextEvent =
   defaultStore.findLatestGraphWorkflowContextEvent;
+export const getActiveGraphWorkflowExecution =
+  defaultStore.getActiveGraphWorkflowExecution;
+export const listActiveGraphWorkflowExecutions =
+  defaultStore.listActiveGraphWorkflowExecutions;
 export const listArchivedGraphWorkflowExecutions =
   defaultStore.listArchivedGraphWorkflowExecutions;
 export const createReferenceDocument = defaultStore.createReferenceDocument;
