@@ -1,8 +1,7 @@
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { cache } from "react";
 import { rawGlobalConfigSchema } from "./schemas";
 import { intersectKeys, mergeConfigWithDefaults } from "./cascade";
 import type { GlobalConfig } from "@/lib/config/schemas";
@@ -42,7 +41,6 @@ export function resolveConfigDir(): string {
 }
 
 const CONFIG_DIR = resolveConfigDir();
-const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
 
 /** Default global config values */
 function defaultConfig(): GlobalConfig {
@@ -206,20 +204,56 @@ export function createConfigReader(configDir: string): ConfigReader {
     }
   }
 
+  // Parsed-config cache invalidated by the file's (mtime, size) token, mirroring
+  // the diff and transcript caches. The merged config is re-read only when the
+  // file changes on disk; every write through this reader nulls the cache so a
+  // same-size rewrite within one mtime tick can't serve a stale parse.
+  let configCache: {
+    mtimeMs: number;
+    size: number;
+    config: GlobalConfig;
+  } | null = null;
+
   return {
     async readConfig(): Promise<GlobalConfig> {
-      await ensureDir();
+      let fileStat: Awaited<ReturnType<typeof stat>> | null = null;
+      try {
+        fileStat = await stat(configFile);
+      } catch {
+        fileStat = null;
+      }
 
-      if (!existsSync(configFile)) {
+      if (fileStat === null) {
+        await ensureDir();
         const config = defaultConfig();
         await this.writeConfig(config);
+        const written = await stat(configFile);
+        configCache = {
+          mtimeMs: written.mtimeMs,
+          size: written.size,
+          config,
+        };
         return config;
+      }
+
+      const cached = configCache;
+      if (
+        cached !== null &&
+        cached.mtimeMs === fileStat.mtimeMs &&
+        cached.size === fileStat.size
+      ) {
+        return cached.config;
       }
 
       const raw = await readFile(configFile, "utf-8");
       const parsed = rawGlobalConfigSchema.parse(JSON.parse(raw));
-
-      return mergeConfigWithDefaults(defaultConfig(), parsed);
+      const config = mergeConfigWithDefaults(defaultConfig(), parsed);
+      configCache = {
+        mtimeMs: fileStat.mtimeMs,
+        size: fileStat.size,
+        config,
+      };
+      return config;
     },
 
     async readRawConfig(): Promise<Partial<GlobalConfig>> {
@@ -270,12 +304,14 @@ export function createConfigReader(configDir: string): ConfigReader {
       await ensureDir();
       const json = JSON.stringify(config, null, 2);
       await writeFile(configFile, json, "utf-8");
+      configCache = null;
     },
 
     async writeRawConfig(config: Partial<GlobalConfig>): Promise<void> {
       await ensureDir();
       const json = JSON.stringify(config, null, 2);
       await writeFile(configFile, json, "utf-8");
+      configCache = null;
       log.info("config.raw_write", {
         fieldCount: Object.keys(config).length,
         configDir,
@@ -292,50 +328,36 @@ export function createConfigReader(configDir: string): ConfigReader {
 /*  Default singleton (backward-compatible module-level exports)      */
 /* ------------------------------------------------------------------ */
 
-/** Ensure the config directory exists */
-async function ensureConfigDir(): Promise<void> {
-  if (!existsSync(CONFIG_DIR)) {
-    await mkdir(CONFIG_DIR, { recursive: true });
+// Lazily constructed so module-load never calls `createLogger` (the factory does)
+// before `@/lib/logging` has finished initializing — loader and logging form an
+// import cycle, so an eager top-level reader would read `createLogger` as
+// undefined. First actual config access happens well after the graph is loaded.
+let defaultReader: ConfigReader | null = null;
+function getDefaultReader(): ConfigReader {
+  if (defaultReader === null) {
+    defaultReader = createConfigReader(CONFIG_DIR);
   }
+  return defaultReader;
 }
 
 /** Read the global config, creating a default one if it doesn't exist */
-async function readConfigUncached(): Promise<GlobalConfig> {
-  await ensureConfigDir();
-
-  if (!existsSync(CONFIG_FILE)) {
-    const config = defaultConfig();
-    await writeConfig(config);
-    return config;
-  }
-
-  const raw = await readFile(CONFIG_FILE, "utf-8");
-  const parsed = rawGlobalConfigSchema.parse(JSON.parse(raw));
-
-  return mergeConfigWithDefaults(defaultConfig(), parsed);
+export function readConfig(): Promise<GlobalConfig> {
+  return getDefaultReader().readConfig();
 }
 
-export const readConfig = cache(readConfigUncached);
-
 /** Read the raw config from disk without merging defaults. Returns {} if file doesn't exist. */
-export async function readRawConfig(): Promise<Partial<GlobalConfig>> {
-  const reader = createConfigReader(CONFIG_DIR);
-  return reader.readRawConfig();
+export function readRawConfig(): Promise<Partial<GlobalConfig>> {
+  return getDefaultReader().readRawConfig();
 }
 
 /** Write raw (explicit-only) config to disk, replacing the entire file. */
-export async function writeRawConfig(
-  config: Partial<GlobalConfig>,
-): Promise<void> {
-  const reader = createConfigReader(CONFIG_DIR);
-  return reader.writeRawConfig(config);
+export function writeRawConfig(config: Partial<GlobalConfig>): Promise<void> {
+  return getDefaultReader().writeRawConfig(config);
 }
 
 /** Write the global config to disk */
-export async function writeConfig(config: GlobalConfig): Promise<void> {
-  await ensureConfigDir();
-  const json = JSON.stringify(config, null, 2);
-  await writeFile(CONFIG_FILE, json, "utf-8");
+export function writeConfig(config: GlobalConfig): Promise<void> {
+  return getDefaultReader().writeConfig(config);
 }
 
 /** Get the config directory path (for testing/diagnostics) */

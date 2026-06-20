@@ -62,6 +62,72 @@ describe("createConfigReader", () => {
   });
 });
 
+describe("createConfigReader readConfig caching", () => {
+  it("serves the same parsed config by reference when the file is unchanged (cache hit)", async () => {
+    const configDir = await createTempConfigDir();
+    await writeFile(
+      path.join(configDir, "config.json"),
+      JSON.stringify({ baseDir: "/x" }),
+      "utf-8",
+    );
+    const reader = createConfigReader(configDir);
+
+    const first = await reader.readConfig();
+    const second = await reader.readConfig();
+
+    // Reference equality proves the parse was reused, not re-run.
+    expect(second).toBe(first);
+    expect(second.baseDir).toBe("/x");
+  });
+
+  it("reflects a change to the file on disk (mtime/size invalidation)", async () => {
+    const configDir = await createTempConfigDir();
+    const file = path.join(configDir, "config.json");
+    await writeFile(file, JSON.stringify({ baseDir: "/first" }), "utf-8");
+    const reader = createConfigReader(configDir);
+
+    const first = await reader.readConfig();
+    expect(first.baseDir).toBe("/first");
+
+    // Different-length content so the (mtime, size) token changes regardless of
+    // filesystem mtime resolution.
+    await writeFile(file, JSON.stringify({ baseDir: "/second-longer-path" }), "utf-8");
+
+    const second = await reader.readConfig();
+    expect(second.baseDir).toBe("/second-longer-path");
+    expect(second).not.toBe(first);
+  });
+
+  it("reflects a writeConfig made through the same reader (own-write invalidation)", async () => {
+    const configDir = await createTempConfigDir();
+    await writeFile(
+      path.join(configDir, "config.json"),
+      JSON.stringify({ baseDir: "/orig" }),
+      "utf-8",
+    );
+    const reader = createConfigReader(configDir);
+
+    const first = await reader.readConfig();
+    expect(first.baseDir).toBe("/orig");
+
+    await reader.writeConfig({ ...first, baseDir: "/updated" });
+
+    const after = await reader.readConfig();
+    expect(after.baseDir).toBe("/updated");
+  });
+
+  it("creates and returns the default config when no file exists, then caches it", async () => {
+    const configDir = await createTempConfigDir();
+    const reader = createConfigReader(configDir);
+
+    const first = await reader.readConfig();
+    expect(first.baseDir).toBeDefined();
+
+    const second = await reader.readConfig();
+    expect(second).toBe(first);
+  });
+});
+
 describe("resolveConfigDir", () => {
   const FAKE_HOME = "/home/fake";
 
