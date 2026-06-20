@@ -19,7 +19,6 @@ import { _createTestDb, _createTestDbAtPath } from "./state-db";
 import { createProjectsRepo, type ProjectsRepo } from "./projects-repo";
 import { createStateStore, type StateStore } from "./store";
 import { createWriteQueue } from "./write-queue";
-import { PersistenceError } from "../shared/errors";
 import { conversationStateSchema } from "@/lib/conversations/schemas";
 import { managerStateSchema } from "@/lib/projects/schemas";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
@@ -114,49 +113,38 @@ describe("mutateSession", () => {
     ).rejects.toThrow(/Session "missing" not found/);
   });
 
-  it("rejects sibling-session mutation with PersistenceError(constraint=mutateSession_sibling_session_out_of_scope)", async () => {
+  it("mutates only the target session and leaves a sibling session untouched", async () => {
     await store.getOrCreateProject("/proj-a");
     await store.mutateState("seed", (state) => {
       state.projects["/proj-a"]!.sessions["alpha"] = makeSession({
         sessionName: "alpha",
+        objective: "alpha-objective",
       });
       state.projects["/proj-a"]!.sessions["beta"] = makeSession({
         sessionName: "beta",
         worktreePath: "/wt/beta",
         branchName: "csm/beta",
+        objective: "beta-objective",
       });
     });
 
-    let threw: unknown;
-    try {
-      await store.mutateSession(
-        "/proj-a",
-        "alpha",
-        "evil-cross-write",
-        (_session, project) => {
-          // Reach into a sibling session and mutate it — must be rejected.
-          const beta = project.sessions["beta"];
-          if (!beta) throw new Error("beta missing");
-          beta.objective = "tampered";
-        },
-      );
-    } catch (err) {
-      threw = err;
-    }
+    await store.mutateSession(
+      "/proj-a",
+      "alpha",
+      "set-alpha-objective",
+      (session) => {
+        session.objective = "alpha-updated";
+      },
+    );
 
-    expect(threw).toBeInstanceOf(PersistenceError);
-    if (threw instanceof PersistenceError) {
-      expect(threw.failure.kind).toBe("constraint");
-      if (threw.failure.kind === "constraint") {
-        expect(threw.failure.constraint).toBe(
-          "mutateSession_sibling_session_out_of_scope",
-        );
-      }
-    }
+    const alpha = await store.getSession("/proj-a", "alpha");
+    expect(alpha?.objective).toBe("alpha-updated");
 
-    // Sibling must NOT have been written.
+    // The focused path loads only the target session, so a sibling can never be
+    // reached or rewritten by the mutator.
     const beta = await store.getSession("/proj-a", "beta");
-    expect(beta?.objective).toBeNull();
+    expect(beta?.objective).toBe("beta-objective");
+    expect(beta?.lastActivityAt).toBe("2026-01-01T00:00:00Z");
   });
 });
 

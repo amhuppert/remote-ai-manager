@@ -49,6 +49,23 @@ export interface SessionsRepo {
   upsert(projectPath: string, session: SessionState): void;
   delete(projectPath: string, sessionName: string): void;
   /**
+   * Per-column update of one existing session row in one statement. Writes only
+   * the columns in `changedColumns` (column-name → already-serialized bind
+   * value), so co-located large columns (`graph_workflow_execution`,
+   * `workflow_lanes`, `workflow_envelopes`) are neither re-serialized nor
+   * re-written when their source field did not change. Does NOT auto-restamp
+   * `last_activity_at` — that column is mutator-owned on the session-mutate path
+   * (config toggles like archive/tdd must not bump session activity); the caller
+   * includes it in `changedColumns` only when the mutator changed it. The row
+   * must already exist; a missing row or an empty change set writes nothing.
+   * Bumps the findAll cache version. Returns whether a row was updated.
+   */
+  updateChangedColumns(
+    projectPath: string,
+    sessionName: string,
+    changedColumns: ChangedSessionColumns,
+  ): boolean;
+  /**
    * Focused single-column write of the `from chat` origin tag (Pattern 2: no
    * whole-state read). Called once at chat-spawn creation. Returns whether a
    * row was updated.
@@ -216,6 +233,105 @@ function domainToSessionRow(
 ): SqlBindRow {
   const validated = sessionStateSchema.parse(session);
   return sessionToSqlBind(projectPath, validated);
+}
+
+/**
+ * Every persisted, mutable session column and the single domain field it
+ * derives from, paired with the serializer that turns that field into its
+ * SQLite-primitive bind value — the per-column write authority for the focused
+ * `mutateSession` path. Each serializer is byte-identical to the one
+ * `sessionToSqlBind` uses for the same column, so a per-column UPDATE and a
+ * full-row upsert produce identical bytes (zero column drift).
+ *
+ * Deliberately omits the identity columns (`project_path`/`session_name`, never
+ * updated through this path) and `last_activity_at` (excluded from the diff;
+ * `mutateSession` adds it to `changedColumns` only when the mutator changed
+ * `session.lastActivityAt` — config toggles like archive/tdd must not bump
+ * session ordering). Strictly 1:1 — no column derives from more than one field.
+ * The two non-column
+ * top-level fields (`conversations`, `referenceDocuments`) are intentionally
+ * absent: they have no column on the `sessions` table (they live in child
+ * tables), so a mutate touching only them yields zero changed session columns
+ * here and is persisted via the child repos instead.
+ */
+const SESSION_COLUMN_MAP = [
+  ["worktreePath", "worktree_path", (s: SessionState) => s.worktreePath],
+  ["branchName", "branch_name", (s: SessionState) => s.branchName],
+  ["createdAt", "created_at", (s: SessionState) => s.createdAt],
+  ["archived", "archived", (s: SessionState) => (s.archived ? 1 : 0)],
+  ["finished", "finished", (s: SessionState) => (s.finished ? 1 : 0)],
+  ["source", "source", (s: SessionState) => s.source],
+  ["objective", "objective", (s: SessionState) => s.objective],
+  ["creationMode", "creation_mode", (s: SessionState) => s.creationMode],
+  ["tddEnabled", "tdd_enabled", (s: SessionState) => (s.tddEnabled ? 1 : 0)],
+  ["targetBranch", "target_branch", (s: SessionState) => s.targetBranch],
+  [
+    "parentSessionName",
+    "parent_session_name",
+    (s: SessionState) => s.parentSessionName,
+  ],
+  [
+    "graphWorkflowExecution",
+    "graph_workflow_execution",
+    (s: SessionState) => jsonOrNull(s.graphWorkflowExecution),
+  ],
+  [
+    "workflowEnvelopes",
+    "workflow_envelopes",
+    (s: SessionState) => jsonOrNull(s.workflowEnvelopes),
+  ],
+  [
+    "workflowLanes",
+    "workflow_lanes",
+    (s: SessionState) => jsonOrNull(s.workflowLanes),
+  ],
+  [
+    "mcpOverrides",
+    "mcp_overrides",
+    (s: SessionState) => jsonOrNull(s.mcpOverrides),
+  ],
+  [
+    "agentCapabilityOverrides",
+    "agent_capability_overrides",
+    (s: SessionState) => jsonOrNull(s.agentCapabilityOverrides),
+  ],
+  [
+    "spawnedFrom",
+    "spawned_from",
+    (s: SessionState) => jsonOrNull(s.spawnedFrom ?? null),
+  ],
+] as const satisfies ReadonlyArray<
+  readonly [keyof SessionState, string, (s: SessionState) => string | number | null]
+>;
+
+export type ChangedSessionColumns = Record<string, string | number | null>;
+
+/**
+ * Compare `base` against `next` field-by-field (top-level reference equality)
+ * and return only the columns whose source field changed, already serialized to
+ * their SQLite-primitive bind values via the same serializers the full-row
+ * encoder uses (zero column drift). Excludes `last_activity_at` and the identity
+ * columns — `mutateSession` adds `last_activity_at` to `changedColumns` only
+ * when the mutator changed `session.lastActivityAt`, so it is never
+ * auto-restamped on this path.
+ *
+ * `base` and `next` must be distinct objects (the row loaded before the mutator
+ * and the value Immer's `finishDraft` returns) so structural sharing makes
+ * `next[field] !== base[field]` exactly "this field's persisted bytes may have
+ * changed". Serialization happens lazily, only for changed fields, so an
+ * untouched `graph_workflow_execution` blob is never re-stringified.
+ */
+export function diffChangedSessionColumns(
+  base: SessionState,
+  next: SessionState,
+): ChangedSessionColumns {
+  const changed: ChangedSessionColumns = {};
+  for (const [field, column, encode] of SESSION_COLUMN_MAP) {
+    if (next[field] !== base[field]) {
+      changed[column] = encode(next);
+    }
+  }
+  return changed;
 }
 
 export function canonicalSessionRow(
@@ -729,6 +845,35 @@ export function createSessionsRepo(db: Db): SessionsRepo {
       WHERE project_path = ? AND session_name = ?`,
   );
 
+  // Per-column-set prepared statements for the focused update path, keyed by the
+  // sorted, comma-joined changed-column list so repeated mutation shapes (flag
+  // toggles, objective edits, override patches) reuse one prepared statement.
+  // Bounded by the small number of distinct shapes seen in practice. Writes only
+  // the changed columns; `last_activity_at`, when changed, is one of those
+  // columns (the caller decides — it is mutator-owned, never auto-restamped on
+  // this path). Bind params are named: the changed-column values plus
+  // `@project_path`, `@session_name`.
+  const updateColumnsStmtCache = new Map<
+    string,
+    ReturnType<typeof db.prepare>
+  >();
+  function getUpdateColumnsStmt(
+    sortedColumns: readonly string[],
+  ): ReturnType<typeof db.prepare> {
+    const cacheKey = sortedColumns.join(",");
+    const cached = updateColumnsStmtCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+    const assignments = sortedColumns
+      .map((col) => `${col} = @${col}`)
+      .join(", ");
+    const stmt = db.prepare(
+      `UPDATE sessions SET ${assignments}
+       WHERE project_path = @project_path AND session_name = @session_name`,
+    );
+    updateColumnsStmtCache.set(cacheKey, stmt);
+    return stmt;
+  }
+
   function applyGraphWorkflowExecutionMigration(
     projectPath: string,
     sessionName: string,
@@ -839,6 +984,23 @@ export function createSessionsRepo(db: Db): SessionsRepo {
       timed("delete", projectPath, sessionName, () => {
         deleteStmt.run(projectPath, sessionName);
         cacheVersion += 1;
+      });
+    },
+    updateChangedColumns(projectPath, sessionName, changedColumns) {
+      return timed("updateChangedColumns", projectPath, sessionName, () => {
+        const sortedColumns = Object.keys(changedColumns).sort();
+        if (sortedColumns.length === 0) return false;
+        const stmt = getUpdateColumnsStmt(sortedColumns);
+        const bind: Record<string, string | number | null> = {
+          project_path: projectPath,
+          session_name: sessionName,
+        };
+        for (const col of sortedColumns) {
+          bind[col] = changedColumns[col]!;
+        }
+        const info = stmt.run(bind);
+        if (info.changes > 0) cacheVersion += 1;
+        return info.changes > 0;
       });
     },
     setSpawnedFrom(projectPath, sessionName, spawnedFrom) {

@@ -1,29 +1,26 @@
 import { Immer } from "immer";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { ManagerState, ProjectState } from "@/lib/projects/schemas";
+import type { ReferenceDocument } from "@/lib/reference-documents/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import { managerStateSchema } from "@/lib/projects/schemas";
-import { PersistenceError } from "../shared/errors";
 import { createLogger } from "@/lib/logging";
 import { timed } from "@/lib/logging/timed";
 
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import { createAccessors } from "./accessors";
 import { diffChangedConversationColumns } from "./conversation-row-codec";
-import {
-  canonicalConversationRow,
-  createConversationsRepo,
-} from "./conversations-repo";
+import { createConversationsRepo } from "./conversations-repo";
 import { createGraphWorkflowArchivedExecutionsRepo } from "./graph-workflow-archived-executions-repo";
 import { createGraphWorkflowEventsRepo } from "./graph-workflow-events-repo";
 import { createProjectConversationsRepo } from "./project-conversations-repo";
 import { createProjectsRepo } from "./projects-repo";
-import {
-  canonicalReferenceDocumentRow,
-  createReferenceDocumentsRepo,
-} from "./reference-documents-repo";
+import { createReferenceDocumentsRepo } from "./reference-documents-repo";
 import { createSetters } from "./setters";
-import { canonicalSessionRow, createSessionsRepo } from "./sessions-repo";
+import {
+  createSessionsRepo,
+  diffChangedSessionColumns,
+} from "./sessions-repo";
 import { getDb } from "./state-db";
 import { createStateAggregate, type StateAggregate } from "./state-aggregate";
 import type { AllRepos, Db, StateStoreCore, StateStoreDeps } from "./schemas";
@@ -46,35 +43,78 @@ export function getStateDb(): Db {
 }
 
 /**
- * Immer instance with auto-freeze disabled, scoped to the conversation-mutate
- * path. Drafting the loaded row gives `mutateConversation` a `next` whose
- * touched top-level fields are fresh references (cheap per-column reference
- * diff via structural sharing) while leaving the mutator's return value
- * mutable: callers in the message-queue family build queued-message rows,
- * assign them into the draft, and return those same references onward into
- * broadcast/view code — auto-freeze would turn those into read-only objects
- * that silently no-op on a later in-place edit. Isolated from the global Immer
- * (the rest of the app keeps default freezing via `produce`).
+ * Immer instance with auto-freeze disabled, scoped to the focused row-mutate
+ * paths (`mutateConversation` / `mutateSession`). Drafting the loaded row gives
+ * the mutator a `next` whose touched top-level fields are fresh references
+ * (cheap per-column reference diff via structural sharing) while leaving the
+ * mutator's return value mutable: callers in the message-queue family build
+ * queued-message rows, assign them into the draft, and return those same
+ * references onward into broadcast/view code — auto-freeze would turn those
+ * into read-only objects that silently no-op on a later in-place edit. Session
+ * mutators that add/remove a child (`forkConversation` pushes a conversation,
+ * `deleteReferenceDocument` splices a doc) likewise return the touched row.
+ * Isolated from the global Immer (the rest of the app keeps default freezing
+ * via `produce`).
  */
-const conversationMutateImmer = new Immer({ autoFreeze: false });
+const rowMutateImmer = new Immer({ autoFreeze: false });
 
-function canonicalSessionWithChildren(
-  projectPath: string,
-  session: SessionState,
-): string {
-  const conversations = [...session.conversations]
-    .map((c) => canonicalConversationRow(projectPath, session.sessionName, c))
-    .sort();
-  const referenceDocuments = [...session.referenceDocuments]
-    .map((d) =>
-      canonicalReferenceDocumentRow(projectPath, session.sessionName, d),
-    )
-    .sort();
-  return JSON.stringify({
-    session: canonicalSessionRow(projectPath, session),
-    conversations,
-    referenceDocuments,
-  });
+/**
+ * Diff a session's child conversation array (`base` loaded before the mutator,
+ * `next` produced after) by `id`: an id only in `next` is an insert, an id only
+ * in `base` is a removal, and a shared id whose top-level reference changed is
+ * an in-place edit. Identity is the conversation `id`; reference equality on the
+ * shared id is "this conversation may have changed" (Immer structural sharing
+ * gives an untouched conversation the same reference on `next`).
+ */
+function diffChildConversations(
+  base: readonly ConversationState[],
+  next: readonly ConversationState[],
+): {
+  added: ConversationState[];
+  edited: ConversationState[];
+  removedIds: string[];
+} {
+  const baseById = new Map(base.map((c) => [c.id, c]));
+  const nextIds = new Set(next.map((c) => c.id));
+  const added: ConversationState[] = [];
+  const edited: ConversationState[] = [];
+  for (const conversation of next) {
+    const before = baseById.get(conversation.id);
+    if (before === undefined) {
+      added.push(conversation);
+      continue;
+    }
+    if (before !== conversation) edited.push(conversation);
+  }
+  const removedIds: string[] = [];
+  for (const conversation of base) {
+    if (!nextIds.has(conversation.id)) removedIds.push(conversation.id);
+  }
+  return { added, edited, removedIds };
+}
+
+/**
+ * Diff a session's child reference-document array by `id`. Reference documents
+ * have only two mutable columns, so a changed doc is re-`upsert`ed whole rather
+ * than per-column diffed (cheap). Returns the docs to upsert (added or changed)
+ * and the ids to delete.
+ */
+function diffChildReferenceDocuments(
+  base: readonly ReferenceDocument[],
+  next: readonly ReferenceDocument[],
+): { upserts: ReferenceDocument[]; removedIds: string[] } {
+  const baseById = new Map(base.map((d) => [d.id, d]));
+  const nextIds = new Set(next.map((d) => d.id));
+  const upserts: ReferenceDocument[] = [];
+  for (const doc of next) {
+    const before = baseById.get(doc.id);
+    if (before === undefined || before !== doc) upserts.push(doc);
+  }
+  const removedIds: string[] = [];
+  for (const doc of base) {
+    if (!nextIds.has(doc.id)) removedIds.push(doc.id);
+  }
+  return { upserts, removedIds };
 }
 
 export function createStateStore(deps: StateStoreDeps = {}) {
@@ -154,60 +194,118 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     );
   }
 
+  /**
+   * Focused single-session mutation. Loads only the target session and its two
+   * child collections (conversations, reference documents), runs the mutator
+   * against an Immer draft, then writes — in one transaction — only the session
+   * columns whose source field changed plus the added/edited/removed child rows.
+   * Bypasses the aggregate's read-everything-clone-validate-diff cycle and the
+   * full-row re-serialization of every session column (notably the large
+   * `graph_workflow_execution` blob). The mutator only ever sees the target
+   * session, so cross-session writes are structurally impossible and no
+   * sibling-canonicalization guard is needed. Does NOT auto-restamp
+   * `lastActivityAt` — the session timestamp is unchanged unless the mutator
+   * sets `session.lastActivityAt` explicitly (config toggles like
+   * archive/tdd/objective must not bump session ordering).
+   */
   async function mutateSession<T = void>(
     projectPath: string,
     sessionName: string,
     label: string,
-    mutate: (session: SessionState, project: ProjectState) => T | Promise<T>,
+    mutate: (session: SessionState) => T | Promise<T>,
   ): Promise<T> {
     return writeQueue.withWriteQueue(`${label}[${sessionName}]`, async () =>
       timed(logger, "state.mutate", { label, sessionName }, async () => {
-        const snapshot = aggregate.readAll();
-        const snapProject = snapshot.projects[projectPath];
-        if (!snapProject || !snapProject.sessions[sessionName]) {
+        const baseSession = repos.sessions.findByKey(projectPath, sessionName);
+        if (!baseSession) {
           throw new Error(
             `Session "${sessionName}" not found in project "${projectPath}" during ${label}`,
           );
         }
+        const base: SessionState = {
+          ...baseSession,
+          conversations: repos.conversations.findBySession(
+            projectPath,
+            sessionName,
+          ),
+          referenceDocuments: repos.referenceDocuments.findBySession(
+            projectPath,
+            sessionName,
+          ),
+        };
 
-        const siblingCanonicalsBefore = new Map<string, string>();
-        for (const [name, sess] of Object.entries(snapProject.sessions)) {
-          if (name === sessionName) continue;
-          siblingCanonicalsBefore.set(
-            name,
-            canonicalSessionWithChildren(projectPath, sess),
+        // Run the mutator against an Immer draft so structural sharing makes
+        // each touched top-level field (and each touched child) a fresh
+        // reference on `next`, then diff `base` vs `next` by reference to find
+        // exactly which columns and child rows changed. `createDraft`/
+        // `finishDraft` (not `produce`) because mutators may be async — Immer
+        // finalizes `produce` synchronously and would revoke the proxy before
+        // an async recipe's first `await` resumes.
+        const draft = rowMutateImmer.createDraft(base);
+        const result = await mutate(draft);
+        const next = rowMutateImmer.finishDraft(draft);
+
+        const changedColumns = diffChangedSessionColumns(base, next);
+        const convDiff = diffChildConversations(
+          base.conversations,
+          next.conversations,
+        );
+        const refDocDiff = diffChildReferenceDocuments(
+          base.referenceDocuments,
+          next.referenceDocuments,
+        );
+
+        // `last_activity_at` is excluded from SESSION_COLUMN_MAP: the session-
+        // mutate path does not auto-restamp it, so a config toggle like
+        // archive/tdd must not bump session activity. Carry an explicit
+        // mutator-set `session.lastActivityAt` through.
+        if (next.lastActivityAt !== base.lastActivityAt) {
+          changedColumns.last_activity_at = next.lastActivityAt;
+        }
+
+        const txn = db.transaction(() => {
+          repos.sessions.updateChangedColumns(
+            projectPath,
+            sessionName,
+            changedColumns,
           );
-        }
-
-        const mutated = cloneAndValidate(snapshot);
-        const mutProject = mutated.projects[projectPath]!;
-        const mutSession = mutProject.sessions[sessionName]!;
-
-        const result = await mutate(mutSession, mutProject);
-
-        for (const [name, sess] of Object.entries(mutProject.sessions)) {
-          if (name === sessionName) continue;
-          const before = siblingCanonicalsBefore.get(name);
-          if (
-            before === undefined ||
-            canonicalSessionWithChildren(projectPath, sess) !== before
-          ) {
-            throw new PersistenceError({
-              kind: "constraint",
-              constraint: "mutateSession_sibling_session_out_of_scope",
-            });
+          for (const conversation of convDiff.added) {
+            repos.conversations.upsert(projectPath, sessionName, conversation);
           }
-        }
-        for (const name of siblingCanonicalsBefore.keys()) {
-          if (!(name in mutProject.sessions)) {
-            throw new PersistenceError({
-              kind: "constraint",
-              constraint: "mutateSession_sibling_session_out_of_scope",
-            });
+          for (const conversation of convDiff.edited) {
+            const baseConv = base.conversations.find(
+              (c) => c.id === conversation.id,
+            )!;
+            const changedConvColumns = diffChangedConversationColumns(
+              baseConv,
+              conversation,
+            );
+            // `last_activity_at` is excluded from the conversation column map
+            // (the focused conversation path restamps it). The session-mutate
+            // path does not auto-restamp child conversation activity, so carry
+            // an explicit mutator-set `lastActivityAt` through.
+            if (conversation.lastActivityAt !== baseConv.lastActivityAt) {
+              changedConvColumns.last_activity_at = conversation.lastActivityAt;
+            }
+            repos.conversations.updateChangedColumns(
+              projectPath,
+              sessionName,
+              conversation.id,
+              changedConvColumns,
+            );
           }
-        }
+          for (const id of convDiff.removedIds) {
+            repos.conversations.delete(id);
+          }
+          for (const doc of refDocDiff.upserts) {
+            repos.referenceDocuments.upsert(projectPath, sessionName, doc);
+          }
+          for (const id of refDocDiff.removedIds) {
+            repos.referenceDocuments.delete(id);
+          }
+        });
+        txn.immediate();
 
-        aggregate.diffAndCommit(snapshot, mutated);
         return result;
       }),
     );
@@ -257,9 +355,9 @@ export function createStateStore(deps: StateStoreDeps = {}) {
           // `createDraft`/`finishDraft` (not `produce`) because mutators may be
           // async — Immer finalizes `produce` synchronously and would revoke the
           // proxy before an async recipe's first `await` resumes.
-          const draft = conversationMutateImmer.createDraft(base);
+          const draft = rowMutateImmer.createDraft(base);
           const result = await mutate(draft);
-          const next = conversationMutateImmer.finishDraft(draft);
+          const next = rowMutateImmer.finishDraft(draft);
           const now = new Date().toISOString();
           const changedColumns = diffChangedConversationColumns(base, next);
           repos.conversations.updateChangedColumnsWithSessionTouch(

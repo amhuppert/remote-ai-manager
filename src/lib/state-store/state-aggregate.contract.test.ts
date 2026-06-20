@@ -259,6 +259,7 @@ describe("state-aggregate.readAll", () => {
         ],
         upsert: () => {},
         delete: () => {},
+        updateChangedColumns: () => false,
         setSpawnedFrom: () => false,
         setActiveGraphWorkflowExecution: () => false,
         setSessionWorkflowLanes: () => false,
@@ -276,6 +277,7 @@ describe("state-aggregate.readAll", () => {
         delete: () => {},
         upsertWithSessionTouch: () => {},
         updateChangedColumnsWithSessionTouch: () => {},
+        updateChangedColumns: () => {},
         setPendingPromptText: () => false,
       },
       referenceDocuments: {

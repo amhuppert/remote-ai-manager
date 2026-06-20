@@ -14,6 +14,7 @@ import { _createTestDb } from "./state-db";
 import {
   canonicalSessionRow,
   createSessionsRepo,
+  diffChangedSessionColumns,
   type SessionsRepo,
 } from "./sessions-repo";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
@@ -936,6 +937,161 @@ function buildMaximalSession(): SessionState {
     },
   });
 }
+
+describe("sessions-repo updateChangedColumns", () => {
+  const ALL_COLUMNS = [
+    "worktree_path",
+    "branch_name",
+    "created_at",
+    "last_activity_at",
+    "archived",
+    "finished",
+    "source",
+    "objective",
+    "creation_mode",
+    "tdd_enabled",
+    "target_branch",
+    "parent_session_name",
+    "graph_workflow_execution",
+    "workflow_envelopes",
+    "workflow_lanes",
+    "mcp_overrides",
+    "agent_capability_overrides",
+    "spawned_from",
+  ] as const;
+
+  function readRow(sessionName: string): Record<string, unknown> {
+    return db
+      .prepare(
+        `SELECT * FROM sessions WHERE project_path = ? AND session_name = ?`,
+      )
+      .get(PROJECT_PATH, sessionName) as Record<string, unknown>;
+  }
+
+  it("writes only the changed column and does NOT auto-restamp last_activity_at", () => {
+    repo.upsert(PROJECT_PATH, makeFullSession({ objective: "v1" }));
+    const baselineActivity = readRow("full").last_activity_at;
+
+    const base = repo.findByKey(PROJECT_PATH, "full")!;
+    const next = { ...base, objective: "v2" };
+    const changed = diffChangedSessionColumns(base, next);
+    expect(Object.keys(changed)).toEqual(["objective"]);
+
+    const updated = repo.updateChangedColumns(PROJECT_PATH, "full", changed);
+    expect(updated).toBe(true);
+
+    const reloaded = repo.findByKey(PROJECT_PATH, "full")!;
+    expect(reloaded.objective).toBe("v2");
+    // The config-toggle path must not bump session activity.
+    expect(readRow("full").last_activity_at).toBe(baselineActivity);
+  });
+
+  it("writes last_activity_at when the caller includes it as a changed column", () => {
+    repo.upsert(PROJECT_PATH, makeFullSession());
+    const newActivity = "2026-04-04T04:04:04Z";
+
+    repo.updateChangedColumns(PROJECT_PATH, "full", {
+      objective: "moved",
+      last_activity_at: newActivity,
+    });
+
+    const reloaded = repo.findByKey(PROJECT_PATH, "full")!;
+    expect(reloaded.objective).toBe("moved");
+    expect(reloaded.lastActivityAt).toBe(newActivity);
+  });
+
+  it("returns false when the session row does not exist", () => {
+    const updated = repo.updateChangedColumns(PROJECT_PATH, "missing", {
+      objective: "x",
+    });
+    expect(updated).toBe(false);
+  });
+
+  it("is a no-op when no columns changed", () => {
+    repo.upsert(PROJECT_PATH, makeFullSession());
+    const baseline = readRow("full");
+
+    const updated = repo.updateChangedColumns(PROJECT_PATH, "full", {});
+    expect(updated).toBe(false);
+    expect(readRow("full")).toEqual(baseline);
+  });
+
+  it("leaves every non-changed column byte-identical to the full-upsert baseline across a sequence of single-column writes", () => {
+    repo.upsert(PROJECT_PATH, makeFullSession());
+    const baseline = readRow("full");
+
+    const steps: Array<{
+      apply: (s: SessionState) => SessionState;
+      column: string;
+    }> = [
+      { apply: (s) => ({ ...s, archived: false }), column: "archived" },
+      { apply: (s) => ({ ...s, objective: "changed" }), column: "objective" },
+      { apply: (s) => ({ ...s, tddEnabled: true }), column: "tdd_enabled" },
+      {
+        apply: (s) => ({ ...s, targetBranch: "release" }),
+        column: "target_branch",
+      },
+    ];
+
+    let prevRow = baseline;
+    for (const step of steps) {
+      const before = repo.findByKey(PROJECT_PATH, "full")!;
+      const after = step.apply(before);
+      const changed = diffChangedSessionColumns(before, after);
+      expect(Object.keys(changed)).toEqual([step.column]);
+
+      repo.updateChangedColumns(PROJECT_PATH, "full", changed);
+
+      const newRow = readRow("full");
+      for (const col of ALL_COLUMNS) {
+        if (col === step.column) continue;
+        expect(newRow[col], `column ${col} must be unchanged`).toBe(
+          prevRow[col],
+        );
+      }
+      prevRow = newRow;
+    }
+
+    // The big blob columns the focused path must never have re-written stay
+    // byte-identical to the very first full-upsert baseline.
+    for (const blob of [
+      "graph_workflow_execution",
+      "workflow_lanes",
+      "workflow_envelopes",
+      "mcp_overrides",
+    ]) {
+      expect(readRow("full")[blob]).toBe(baseline[blob]);
+    }
+  });
+
+  it("a per-column update of every mutable column matches the full-upsert bytes (no column drift)", () => {
+    // Seed a minimal row, then drive every column to its makeFullSession value
+    // via the focused per-column path. The result must be byte-identical to a
+    // direct full upsert of makeFullSession — proving SESSION_COLUMN_MAP's
+    // serializers do not drift from sessionToSqlBind.
+    repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "full" }));
+    const minimal = repo.findByKey(PROJECT_PATH, "full")!;
+    const full = makeFullSession();
+    const changed = diffChangedSessionColumns(minimal, full);
+    // `last_activity_at` is excluded from the column map; carry it explicitly so
+    // the byte comparison against the full upsert holds.
+    changed.last_activity_at = full.lastActivityAt;
+    repo.updateChangedColumns(PROJECT_PATH, "full", changed);
+    const viaColumns = readRow("full");
+
+    db.prepare(
+      `DELETE FROM sessions WHERE project_path = ? AND session_name = ?`,
+    ).run(PROJECT_PATH, "full");
+    repo.upsert(PROJECT_PATH, makeFullSession());
+    const viaUpsert = readRow("full");
+
+    for (const col of ALL_COLUMNS) {
+      expect(viaColumns[col], `column ${col} must match full-upsert bytes`).toBe(
+        viaUpsert[col],
+      );
+    }
+  });
+});
 
 describe("sessions-repo durability contract", () => {
   it("round-trips every persisted session key path through the real repo", async () => {

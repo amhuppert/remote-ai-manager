@@ -3,7 +3,6 @@ import { createLogger } from "@/lib/logging";
 import { timed } from "@/lib/logging/timed";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import type { ConversationState } from "@/lib/conversations/schemas";
-import type { ProjectState } from "@/lib/projects/schemas";
 import type { ReferenceDocument } from "@/lib/reference-documents/schemas";
 import type { SessionState, SpawnedFrom } from "@/lib/sessions/schemas";
 import type {
@@ -20,7 +19,7 @@ export interface MutationFns {
     projectPath: string,
     sessionName: string,
     label: string,
-    mutate: (session: SessionState, project: ProjectState) => T | Promise<T>,
+    mutate: (session: SessionState) => T | Promise<T>,
   ): Promise<T>;
 }
 
@@ -598,7 +597,16 @@ export function createSetters(core: StateStoreCore, mutations: MutationFns) {
         );
         if (existing) {
           existing.description = description;
-          return existing;
+          // Return a plain snapshot, not the draft element: the focused mutate
+          // path finalizes the draft after the mutator returns, revoking every
+          // draft proxy — including this one — so returning it directly would
+          // throw on first access by the caller.
+          return {
+            id: existing.id,
+            filePath: existing.filePath,
+            description: existing.description,
+            createdAt: existing.createdAt,
+          };
         }
         const doc: ReferenceDocument = {
           id: randomUUID(),
@@ -626,8 +634,19 @@ export function createSetters(core: StateStoreCore, mutations: MutationFns) {
           (d) => d.id === documentId,
         );
         if (index === -1) return null;
-        const [removed] = session.referenceDocuments.splice(index, 1);
-        return removed!;
+        const removed = session.referenceDocuments[index]!;
+        // Snapshot into a plain object before splicing: the focused mutate path
+        // runs the mutator against an Immer draft, and a spliced-off element is
+        // not part of the finalized `next`, so its proxy is revoked when the
+        // draft finishes — returning it directly would throw on first access.
+        const snapshot: ReferenceDocument = {
+          id: removed.id,
+          filePath: removed.filePath,
+          description: removed.description,
+          createdAt: removed.createdAt,
+        };
+        session.referenceDocuments.splice(index, 1);
+        return snapshot;
       },
     );
   }

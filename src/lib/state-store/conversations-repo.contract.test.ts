@@ -737,6 +737,86 @@ describe("conversations-repo updateChangedColumnsWithSessionTouch", () => {
   });
 });
 
+describe("conversations-repo updateChangedColumns (no session/activity touch)", () => {
+  function readRow(id: string): Record<string, unknown> {
+    return db
+      .prepare(`SELECT * FROM conversations WHERE id = ?`)
+      .get(id) as Record<string, unknown>;
+  }
+
+  it("writes only the changed column WITHOUT touching last_activity_at or the session", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeFullConversation({ id: "c-full", summary: "v1" }),
+    );
+    const baselineConvActivity = readRow("c-full").last_activity_at;
+    const baselineSessionActivity = (
+      db
+        .prepare(
+          "SELECT last_activity_at FROM sessions WHERE project_path = ? AND session_name = ?",
+        )
+        .get(PROJECT_PATH, SESSION_NAME) as { last_activity_at: string }
+    ).last_activity_at;
+
+    const before = repo.findById("c-full")!;
+    const changed = diffChangedConversationColumns(before, {
+      ...before,
+      summary: "v2",
+    });
+    expect(Object.keys(changed)).toEqual(["summary"]);
+
+    repo.updateChangedColumns(PROJECT_PATH, SESSION_NAME, "c-full", changed);
+
+    expect(repo.findById("c-full")?.summary).toBe("v2");
+    // Neither the conversation's own activity nor the session's was restamped.
+    expect(readRow("c-full").last_activity_at).toBe(baselineConvActivity);
+    const sessionAfter = db
+      .prepare(
+        "SELECT last_activity_at FROM sessions WHERE project_path = ? AND session_name = ?",
+      )
+      .get(PROJECT_PATH, SESSION_NAME) as { last_activity_at: string };
+    expect(sessionAfter.last_activity_at).toBe(baselineSessionActivity);
+  });
+
+  it("is a no-op when no columns changed", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeFullConversation({ id: "c-full", summary: "v1" }),
+    );
+    const baseline = readRow("c-full");
+
+    repo.updateChangedColumns(PROJECT_PATH, SESSION_NAME, "c-full", {});
+
+    expect(readRow("c-full")).toEqual(baseline);
+  });
+
+  it("bumps the findAll cache version so a stale parsed row is not served", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeFullConversation({ id: "c-full", summary: "v1" }),
+    );
+    expect(
+      repo.findAll().find((r) => r.conversation.id === "c-full")?.conversation
+        .summary,
+    ).toBe("v1");
+
+    const before = repo.findById("c-full")!;
+    const changed = diffChangedConversationColumns(before, {
+      ...before,
+      summary: "v2",
+    });
+    repo.updateChangedColumns(PROJECT_PATH, SESSION_NAME, "c-full", changed);
+
+    expect(
+      repo.findAll().find((r) => r.conversation.id === "c-full")?.conversation
+        .summary,
+    ).toBe("v2");
+  });
+});
+
 describe("canonicalConversationRow", () => {
   it("returns the same string for two ConversationState values that are deep-equal post-Zod-parse", () => {
     const a = makeFullConversation();

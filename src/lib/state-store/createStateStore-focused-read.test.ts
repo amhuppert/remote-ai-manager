@@ -14,6 +14,7 @@ import { _createTestDb } from "./state-db";
 import { createProjectsRepo } from "./projects-repo";
 import { createSessionsRepo } from "./sessions-repo";
 import { createConversationsRepo } from "./conversations-repo";
+import { createReferenceDocumentsRepo } from "./reference-documents-repo";
 import { createStateStore } from "./store";
 import { createWriteQueue } from "./write-queue";
 import type { StateAggregate } from "./state-aggregate";
@@ -851,4 +852,414 @@ describe("createStateStore — focused read DI guard", () => {
     }).not.toThrow();
     expect(claimed.status).toBe("delivered");
   });
+
+  it("mutateSession writes only the changed session column (no auto-restamp), never re-serializing the workflow_lanes blob, and never touches the aggregate", async () => {
+    const runRecords: RunRecord[] = [];
+    patchPrepareToTrack(db, runRecords);
+
+    const projects = createProjectsRepo(db);
+    const sessions = createSessionsRepo(db);
+    createConversationsRepo(db);
+
+    projects.upsert({ rootPath: "/proj-a" });
+
+    // A large workflow_lanes blob whose persisted bytes must survive a scalar
+    // session mutate untouched (and never be re-serialized into the UPDATE).
+    const bigLanes = buildBigLanes();
+    sessions.upsert(
+      "/proj-a",
+      sessionStateSchema.parse({
+        sessionName: "alpha",
+        worktreePath: "/wt/alpha",
+        branchName: "csm/alpha",
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+        objective: "before",
+        workflowLanes: bigLanes,
+      }),
+    );
+
+    const beforeBytes = (
+      db
+        .prepare(
+          "SELECT workflow_lanes FROM sessions WHERE project_path = ? AND session_name = ?",
+        )
+        .get("/proj-a", "alpha") as { workflow_lanes: string }
+    ).workflow_lanes;
+    expect(beforeBytes.length).toBeGreaterThan(1000);
+
+    const spyAggregate: StateAggregate = {
+      readAll: vi.fn(() => {
+        throw new Error("readAll must not be called");
+      }),
+      diffAndCommit: vi.fn(() => {
+        throw new Error("diffAndCommit must not be called");
+      }),
+    };
+
+    const store = createStateStore({
+      db,
+      aggregate: spyAggregate,
+      writeQueue: createWriteQueue(),
+    });
+
+    runRecords.length = 0;
+    await store.mutateSession("/proj-a", "alpha", "set-objective", (session) => {
+      session.objective = "after";
+    });
+
+    const updateRecord = runRecords.find((r) =>
+      /UPDATE sessions SET/.test(r.sql),
+    );
+    expect(updateRecord, "a focused UPDATE must have run").toBeDefined();
+    const updateSql = updateRecord!.sql;
+    expect(updateSql).toMatch(/\bobjective\b/);
+    // The mutator only changed `objective`; a config toggle must not bump
+    // session activity, so last_activity_at is absent from the UPDATE.
+    expect(updateSql).not.toMatch(/last_activity_at/);
+    expect(updateSql).not.toMatch(/graph_workflow_execution/);
+    expect(updateSql).not.toMatch(/workflow_lanes/);
+    expect(updateSql).not.toMatch(/workflow_envelopes/);
+    expect(updateSql).not.toMatch(/mcp_overrides/);
+
+    const afterBytes = (
+      db
+        .prepare(
+          "SELECT workflow_lanes FROM sessions WHERE project_path = ? AND session_name = ?",
+        )
+        .get("/proj-a", "alpha") as { workflow_lanes: string }
+    ).workflow_lanes;
+    expect(afterBytes).toBe(beforeBytes);
+
+    const reloaded = await store.getSession("/proj-a", "alpha");
+    expect(reloaded?.objective).toBe("after");
+    expect(reloaded?.workflowLanes).toEqual(bigLanes);
+    expect(spyAggregate.readAll).not.toHaveBeenCalled();
+    expect(spyAggregate.diffAndCommit).not.toHaveBeenCalled();
+  });
+
+  it("mutateSession edits a child conversation through the mutator and persists it without rewriting the session blob columns", async () => {
+    const runRecords: RunRecord[] = [];
+    patchPrepareToTrack(db, runRecords);
+
+    const projects = createProjectsRepo(db);
+    const sessions = createSessionsRepo(db);
+    const conversations = createConversationsRepo(db);
+
+    projects.upsert({ rootPath: "/proj-a" });
+    const bigLanes = buildBigLanes();
+    sessions.upsert(
+      "/proj-a",
+      sessionStateSchema.parse({
+        sessionName: "alpha",
+        worktreePath: "/wt/alpha",
+        branchName: "csm/alpha",
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+        workflowLanes: bigLanes,
+      }),
+    );
+    conversations.upsert(
+      "/proj-a",
+      "alpha",
+      conversationStateSchema.parse({
+        id: "conv-1",
+        name: "old name",
+        transcriptPath: null,
+        status: "idle",
+        promptCount: 0,
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+
+    const store = createStateStore({ db, writeQueue: createWriteQueue() });
+
+    runRecords.length = 0;
+    await store.mutateSession("/proj-a", "alpha", "rename-child", (session) => {
+      const conv = session.conversations.find((c) => c.id === "conv-1")!;
+      conv.name = "new name";
+    });
+
+    const convUpdate = runRecords.find((r) =>
+      /UPDATE conversations SET/.test(r.sql),
+    );
+    expect(convUpdate, "child conversation UPDATE must have run").toBeDefined();
+    expect(convUpdate!.sql).toMatch(/\bname\b/);
+
+    // No session-column UPDATE (only the child changed) → no blob rewrite and no
+    // session last_activity_at restamp (matching the prior whole-tree diff).
+    const sessionUpdate = runRecords.find((r) =>
+      /UPDATE sessions SET/.test(r.sql),
+    );
+    expect(sessionUpdate).toBeUndefined();
+
+    const reloaded = await store.getSession("/proj-a", "alpha");
+    expect(reloaded?.conversations.find((c) => c.id === "conv-1")?.name).toBe(
+      "new name",
+    );
+    expect(reloaded?.workflowLanes).toEqual(bigLanes);
+    expect(reloaded?.lastActivityAt).toBe("2026-01-01T00:00:00Z");
+  });
+
+  it("mutateSession adds a child conversation pushed by the mutator", async () => {
+    const projects = createProjectsRepo(db);
+    const sessions = createSessionsRepo(db);
+    createConversationsRepo(db);
+
+    projects.upsert({ rootPath: "/proj-a" });
+    sessions.upsert(
+      "/proj-a",
+      sessionStateSchema.parse({
+        sessionName: "alpha",
+        worktreePath: "/wt/alpha",
+        branchName: "csm/alpha",
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+
+    const store = createStateStore({ db, writeQueue: createWriteQueue() });
+
+    await store.mutateSession("/proj-a", "alpha", "add-child", (session) => {
+      session.conversations.push(
+        conversationStateSchema.parse({
+          id: "conv-new",
+          name: "forked",
+          transcriptPath: null,
+          status: "new",
+          promptCount: 0,
+          createdAt: "2026-02-02T00:00:00Z",
+          lastActivityAt: "2026-02-02T00:00:00Z",
+        }),
+      );
+    });
+
+    const reloaded = await store.getSession("/proj-a", "alpha");
+    expect(reloaded?.conversations.map((c) => c.id)).toEqual(["conv-new"]);
+    expect(
+      createConversationsRepo(db).findByKey("/proj-a", "alpha", "conv-new")
+        ?.name,
+    ).toBe("forked");
+  });
+
+  it("mutateSession edits one child conversation and adds another in the same mutate (finalizeInitialization shape)", async () => {
+    const projects = createProjectsRepo(db);
+    const sessions = createSessionsRepo(db);
+    const conversations = createConversationsRepo(db);
+
+    projects.upsert({ rootPath: "/proj-a" });
+    sessions.upsert(
+      "/proj-a",
+      sessionStateSchema.parse({
+        sessionName: "alpha",
+        worktreePath: "/wt/alpha",
+        branchName: "csm/alpha",
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+    conversations.upsert(
+      "/proj-a",
+      "alpha",
+      conversationStateSchema.parse({
+        id: "init",
+        role: "initialization",
+        transcriptPath: null,
+        status: "idle",
+        promptCount: 1,
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+        archived: false,
+      }),
+    );
+
+    const store = createStateStore({ db, writeQueue: createWriteQueue() });
+
+    await store.mutateSession("/proj-a", "alpha", "finalize", (session) => {
+      const init = session.conversations.find((c) => c.role === "initialization")!;
+      init.archived = true;
+      session.conversations.push(
+        conversationStateSchema.parse({
+          id: "fresh",
+          name: "alpha 2",
+          transcriptPath: null,
+          status: "new",
+          promptCount: 0,
+          createdAt: "2026-02-02T00:00:00Z",
+          lastActivityAt: "2026-02-02T00:00:00Z",
+        }),
+      );
+    });
+
+    const reloadedConvs = createConversationsRepo(db).findBySession(
+      "/proj-a",
+      "alpha",
+    );
+    expect(reloadedConvs.find((c) => c.id === "init")?.archived).toBe(true);
+    expect(reloadedConvs.find((c) => c.id === "fresh")?.name).toBe("alpha 2");
+  });
+
+  it("mutateSession removes a child reference document spliced by the mutator", async () => {
+    const runRecords: RunRecord[] = [];
+    patchPrepareToTrack(db, runRecords);
+
+    const projects = createProjectsRepo(db);
+    const sessions = createSessionsRepo(db);
+    const referenceDocuments = createReferenceDocumentsRepo(db);
+
+    projects.upsert({ rootPath: "/proj-a" });
+    sessions.upsert(
+      "/proj-a",
+      sessionStateSchema.parse({
+        sessionName: "alpha",
+        worktreePath: "/wt/alpha",
+        branchName: "csm/alpha",
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+    referenceDocuments.upsert("/proj-a", "alpha", {
+      id: "doc-1",
+      filePath: "/docs/a.md",
+      description: "doc a",
+      createdAt: "2026-01-01T00:00:00Z",
+    });
+
+    const store = createStateStore({ db, writeQueue: createWriteQueue() });
+
+    runRecords.length = 0;
+    const removed = await store.mutateSession(
+      "/proj-a",
+      "alpha",
+      "remove-doc",
+      (session) => {
+        const index = session.referenceDocuments.findIndex(
+          (d) => d.id === "doc-1",
+        );
+        const target = session.referenceDocuments[index]!;
+        const snapshot = { ...target };
+        session.referenceDocuments.splice(index, 1);
+        return snapshot;
+      },
+    );
+
+    expect(removed?.id).toBe("doc-1");
+    const deleteRecord = runRecords.find((r) =>
+      /DELETE FROM reference_documents/.test(r.sql),
+    );
+    expect(deleteRecord, "a reference-document DELETE must have run").toBeDefined();
+
+    expect(createReferenceDocumentsRepo(db).findById("doc-1")).toBeNull();
+    const reloaded = await store.getSession("/proj-a", "alpha");
+    expect(reloaded?.referenceDocuments).toEqual([]);
+  });
+
+  it("mutateSession supports an async mutator (agent-capabilities patchSession shape)", async () => {
+    const projects = createProjectsRepo(db);
+    const sessions = createSessionsRepo(db);
+    createConversationsRepo(db);
+
+    projects.upsert({ rootPath: "/proj-a" });
+    sessions.upsert(
+      "/proj-a",
+      sessionStateSchema.parse({
+        sessionName: "alpha",
+        worktreePath: "/wt/alpha",
+        branchName: "csm/alpha",
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+
+    const store = createStateStore({ db, writeQueue: createWriteQueue() });
+
+    const result = await store.mutateSession(
+      "/proj-a",
+      "alpha",
+      "async-patch",
+      async (session) => {
+        // Suspend across an await to prove the Immer draft survives (createDraft/
+        // finishDraft, not produce, which would revoke the proxy mid-await).
+        await Promise.resolve();
+        session.objective = "async-set";
+        return "ok" as const;
+      },
+    );
+
+    expect(result).toBe("ok");
+    const reloaded = await store.getSession("/proj-a", "alpha");
+    expect(reloaded?.objective).toBe("async-set");
+  });
+
+  it("mutateSession rolls back every write when the mutator throws mid-way", async () => {
+    const projects = createProjectsRepo(db);
+    const sessions = createSessionsRepo(db);
+    const conversations = createConversationsRepo(db);
+
+    projects.upsert({ rootPath: "/proj-a" });
+    sessions.upsert(
+      "/proj-a",
+      sessionStateSchema.parse({
+        sessionName: "alpha",
+        worktreePath: "/wt/alpha",
+        branchName: "csm/alpha",
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+        objective: "original",
+      }),
+    );
+    conversations.upsert(
+      "/proj-a",
+      "alpha",
+      conversationStateSchema.parse({
+        id: "conv-1",
+        name: "original-name",
+        transcriptPath: null,
+        status: "idle",
+        promptCount: 0,
+        createdAt: "2026-01-01T00:00:00Z",
+        lastActivityAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+
+    const store = createStateStore({ db, writeQueue: createWriteQueue() });
+
+    await expect(
+      store.mutateSession("/proj-a", "alpha", "throwing", (session) => {
+        session.objective = "should-not-persist";
+        const conv = session.conversations.find((c) => c.id === "conv-1")!;
+        conv.name = "should-not-persist";
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+
+    const reloaded = await store.getSession("/proj-a", "alpha");
+    expect(reloaded?.objective).toBe("original");
+    expect(reloaded?.conversations.find((c) => c.id === "conv-1")?.name).toBe(
+      "original-name",
+    );
+  });
 });
+
+/**
+ * Build a large, opaque workflow_lanes map whose serialized bytes exceed 1KB,
+ * so a scalar session mutate can prove that co-located blob column is neither
+ * re-serialized into the focused UPDATE nor altered on disk. `workflowLanes` is
+ * an opaque `z.record(z.string(), z.unknown())` on the session schema, so an
+ * arbitrarily-shaped record round-trips without a primitive-layer parse.
+ */
+function buildBigLanes(): Record<string, unknown> {
+  const lanes: Record<string, unknown> = {};
+  for (let i = 0; i < 40; i += 1) {
+    lanes[`lane-${i}`] = {
+      engine: "noop",
+      note: `lane ${i} ${"detail-".repeat(8)}`,
+      steps: Array.from({ length: 4 }, (_, j) => ({
+        index: j,
+        label: `step-${j}-`.repeat(4),
+      })),
+    };
+  }
+  return lanes;
+}

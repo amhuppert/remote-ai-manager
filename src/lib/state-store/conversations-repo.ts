@@ -74,6 +74,20 @@ export interface ConversationsRepo {
     changedColumns: ChangedConversationColumns,
     lastActivityAt: string,
   ): void;
+  /**
+   * Per-column update of one existing conversation row WITHOUT touching the
+   * conversation's own `last_activity_at` or the session row. Writes only the
+   * columns in `changedColumns`. Used when an edit to a child conversation flows
+   * through a session-level mutate: a config change on the session must not
+   * silently restamp child-conversation activity, so the caller owns the
+   * timestamp. The row must already exist; a missing row writes nothing.
+   */
+  updateChangedColumns(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    changedColumns: ChangedConversationColumns,
+  ): void;
   setPendingPromptText(
     projectPath: string,
     sessionName: string,
@@ -471,6 +485,29 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
     },
   );
 
+  // No-touch sibling of `getUpdateColumnsStmt`: updates only the changed columns
+  // and never sets `last_activity_at`. Keyed by the same sorted-column cache key.
+  const updateColumnsNoTouchStmtCache = new Map<
+    string,
+    ReturnType<typeof db.prepare>
+  >();
+  function getUpdateColumnsNoTouchStmt(
+    sortedColumns: readonly string[],
+  ): ReturnType<typeof db.prepare> {
+    const cacheKey = sortedColumns.join(",");
+    const cached = updateColumnsNoTouchStmtCache.get(cacheKey);
+    if (cached !== undefined) return cached;
+    const assignments = sortedColumns
+      .map((col) => `${col} = @${col}`)
+      .join(", ");
+    const stmt = db.prepare(
+      `UPDATE conversations SET ${assignments}
+       WHERE project_path = @project_path AND session_name = @session_name AND id = @id`,
+    );
+    updateColumnsNoTouchStmtCache.set(cacheKey, stmt);
+    return stmt;
+  }
+
   return {
     findById(id) {
       return timed("findById", { id }, () => {
@@ -634,6 +671,32 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
             sessionName,
             lastActivityAt,
           );
+          cacheVersion += 1;
+        },
+      );
+    },
+    updateChangedColumns(
+      projectPath,
+      sessionName,
+      conversationId,
+      changedColumns,
+    ) {
+      timed(
+        "updateChangedColumns",
+        { id: conversationId, projectPath, sessionName },
+        () => {
+          const sortedColumns = Object.keys(changedColumns).sort();
+          if (sortedColumns.length === 0) return;
+          const stmt = getUpdateColumnsNoTouchStmt(sortedColumns);
+          const bind: Record<string, string | number | null> = {
+            project_path: projectPath,
+            session_name: sessionName,
+            id: conversationId,
+          };
+          for (const col of sortedColumns) {
+            bind[col] = changedColumns[col]!;
+          }
+          stmt.run(bind);
           cacheVersion += 1;
         },
       );
