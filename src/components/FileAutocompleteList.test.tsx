@@ -37,7 +37,7 @@ describe("FileAutocompleteList", () => {
     expect(screen.getByText("2 of 50")).toBeInTheDocument();
   });
 
-  it("highlights the selected item", () => {
+  it("marks the selected item active via data-active", () => {
     const { container } = render(
       <FileAutocompleteList
         items={items}
@@ -46,9 +46,9 @@ describe("FileAutocompleteList", () => {
         onSelect={() => {}}
       />,
     );
-    const itemEls = container.querySelectorAll(".file-item");
-    expect(itemEls[0]?.className).not.toContain("active");
-    expect(itemEls[1]?.className).toContain("active");
+    const itemEls = container.querySelectorAll("[data-active]");
+    expect(itemEls[0]?.getAttribute("data-active")).toBe("false");
+    expect(itemEls[1]?.getAttribute("data-active")).toBe("true");
   });
 
   it("calls onSelect with the item when clicked", () => {
@@ -61,7 +61,7 @@ describe("FileAutocompleteList", () => {
         onSelect={onSelect}
       />,
     );
-    const itemEls = container.querySelectorAll(".file-item");
+    const itemEls = container.querySelectorAll("[data-active]");
     fireEvent.click(itemEls[1]!);
     expect(onSelect).toHaveBeenCalledWith(items[1]);
   });
@@ -101,7 +101,7 @@ describe("FileAutocompleteList", () => {
         onSelect={() => {}}
       />,
     );
-    const itemEls = container.querySelectorAll(".file-item");
+    const itemEls = container.querySelectorAll("[data-active]");
     fireEvent.mouseEnter(itemEls[1]!);
     expect(onHover).toHaveBeenCalledWith(1);
   });

@@ -24,7 +24,9 @@ describe("ModelSelector", () => {
     const trigger = screen.getByTitle(/model/i);
     fireEvent.click(trigger);
     // The dropdown div should get the "open" class
-    const dropdown = document.querySelector(".model-selector-dropdown.open");
+    const dropdown = document.querySelector(
+      '[data-testid="model-selector-dropdown"][data-open="true"]',
+    );
     expect(dropdown).toBeTruthy();
   });
 
@@ -33,8 +35,10 @@ describe("ModelSelector", () => {
     const trigger = screen.getByTitle(/model/i);
     fireEvent.click(trigger);
 
-    const container = document.querySelector(".model-selector");
-    const dropdown = document.querySelector(".model-selector-dropdown.open");
+    const container = document.querySelector('[data-testid="model-selector"]');
+    const dropdown = document.querySelector(
+      '[data-testid="model-selector-dropdown"][data-open="true"]',
+    );
     expect(dropdown).toBeTruthy();
     // The dropdown must NOT be a child of .model-selector (rendered via portal)
     expect(container!.contains(dropdown)).toBe(false);
@@ -46,7 +50,7 @@ describe("ModelSelector", () => {
     fireEvent.click(trigger);
 
     const dropdown = document.querySelector(
-      ".model-selector-dropdown.open",
+      '[data-testid="model-selector-dropdown"][data-open="true"]',
     ) as HTMLElement;
     expect(dropdown).toBeTruthy();
     // Portal dropdown should have inline position styles
@@ -58,11 +62,17 @@ describe("ModelSelector", () => {
     const trigger = screen.getByTitle(/model/i);
     fireEvent.click(trigger);
     expect(
-      document.querySelector(".model-selector-dropdown.open"),
+      document.querySelector(
+        '[data-testid="model-selector-dropdown"][data-open="true"]',
+      ),
     ).toBeTruthy();
 
     // Click outside
     fireEvent.mouseDown(document.body);
-    expect(document.querySelector(".model-selector-dropdown.open")).toBeFalsy();
+    expect(
+      document.querySelector(
+        '[data-testid="model-selector-dropdown"][data-open="true"]',
+      ),
+    ).toBeFalsy();
   });
 });

@@ -64,6 +64,8 @@ const LAYOUT_ALLOWED = [
   "basis",
   "grow",
   "shrink",
+  "flex",
+  "overflow",
 ];
 
 /** Strip leading (bracket-free) variant prefixes and a negative sign → base token core. */
@@ -77,6 +79,24 @@ function stripVariants(token) {
 function isLayoutUtility(token) {
   if (!token) return true; // empty segment
   const core = stripVariants(token);
+  // Area-based grid placement (`[grid-area:…]`/`[grid-column:…]`/`[grid-row:…]`)
+  // is placement, exactly like the line-based `col-*`/`row-*` already allowed —
+  // it is how a parent drops a child into its `grid-template-areas`. The arbitrary
+  // form starts with `[` so the prefix list cannot match it.
+  if (core.startsWith("[grid-")) return true;
+  // Responsive display toggling (`hidden` to drop a child from the parent's
+  // responsive grid/flow at a breakpoint) is a layout-flow concern, not appearance
+  // (the §2 appearance list is color/bg/border/radius/shadow/opacity/padding).
+  if (core === "hidden") return true;
+  // Overflow-clipping text truncation (`truncate` = overflow-hidden + ellipsis +
+  // nowrap; or the `text-ellipsis`/`text-clip` overflow modes) is how a parent
+  // constrains a flex/grid child's content to its allotted box — a flow/clipping
+  // concern paired with the already-allowed `overflow`/`min-w`/`flex`, not a §2
+  // appearance utility. `text` is NOT a LAYOUT_ALLOWED prefix (it would admit
+  // text color/size), so these three content-overflow keywords are matched exactly.
+  if (core === "truncate" || core === "text-ellipsis" || core === "text-clip") {
+    return true;
+  }
   return LAYOUT_ALLOWED.some((p) => {
     if (core === p) return true;
     return core.startsWith(p + "-") || core.startsWith(p + "[");
@@ -318,7 +338,7 @@ const noAppearanceInLayoutClassName = {
     },
     messages: {
       appearance:
-        "layoutClassName accepts external-geometry utilities only (margin, grid/flex placement, order, self-align, width/basis). '{{cls}}' is not on the layout allowlist — the primitive owns appearance (docs/tailwind-conventions.md §2).",
+        "layoutClassName accepts external-geometry utilities only (margin, grid/flex placement incl. [grid-area:…], order, self-align, width/basis/flex sizing, overflow clipping + text truncation, responsive display `hidden`). '{{cls}}' is not on the layout allowlist — the primitive owns appearance (docs/tailwind-conventions.md §2).",
     },
     schema: [],
   },

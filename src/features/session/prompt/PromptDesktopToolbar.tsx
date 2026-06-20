@@ -10,6 +10,15 @@ import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 
+/**
+ * The send/queue button recipe (legacy `.send-btn` + `.send-btn.busy`). Shared
+ * by the desktop toolbar and the mobile toolbar's send slot so the two render
+ * the identical button. Busy state (`sending` with no live conversation) is a
+ * `data-busy` attribute, not a runtime class.
+ */
+export const SEND_BUTTON_CLASS =
+  "send-btn flex items-center justify-center w-[36px] h-[36px] rounded-md border-0 bg-cyan text-text-inverse text-[0.9rem] transition-all duration-150 shrink-0 cursor-pointer hover:bg-cyan-dim hover:shadow-[0_0_24px_var(--cyan-glow-strong)] disabled:opacity-40 disabled:cursor-not-allowed data-[busy=true]:bg-bg-raised data-[busy=true]:text-cyan data-[busy=true]:border data-[busy=true]:border-solid data-[busy=true]:border-cyan-dim data-[busy=true]:animate-[pulse-border_1.5s_ease-in-out_infinite]";
+
 export interface PromptDesktopToolbarProps {
   projectName: string;
   sessionName: string;
@@ -33,7 +42,7 @@ export interface PromptDesktopToolbarProps {
   voiceAvailable: boolean;
   elapsedTime: number;
   toggleRecording: () => void;
-  sendBtnClass: string;
+  sendBusy: boolean;
   sendDisabled: boolean;
   sendTitle: string;
   sendButtonInner: React.ReactNode;
@@ -66,7 +75,7 @@ export default function PromptDesktopToolbar({
   voiceAvailable,
   elapsedTime,
   toggleRecording,
-  sendBtnClass,
+  sendBusy,
   sendDisabled,
   sendTitle,
   sendButtonInner,
@@ -76,12 +85,12 @@ export default function PromptDesktopToolbar({
   onCapabilitiesOpenChange,
 }: PromptDesktopToolbarProps): React.JSX.Element {
   return (
-    <div className="prompt-toolbar">
+    <div className="prompt-toolbar flex items-center justify-between max-768:hidden">
       {/* Clicking an in-flow control keeps the literal editor focused (focus
           continuity for typing) via the established onMouseDown→preventDefault
           idiom; the control still fires its own onClick. */}
       <div
-        className="prompt-toolbar-start"
+        className="flex items-center gap-sm"
         onMouseDown={(e) => {
           if (e.target instanceof HTMLElement && e.target.closest("button")) {
             e.preventDefault();
@@ -89,7 +98,7 @@ export default function PromptDesktopToolbar({
         }}
       >
         <button
-          className="attachment-btn"
+          className="flex h-[36px] w-[36px] cursor-pointer items-center justify-center rounded-sm border border-solid border-border-subtle bg-transparent p-0 text-text-secondary transition-[border-color,color] duration-150 ease-[ease] hover:border-cyan-dim hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
           onClick={onAttachClick}
           disabled={attachDisabled}
           title="Attach image"
@@ -148,7 +157,7 @@ export default function PromptDesktopToolbar({
           onOpenChange={onCapabilitiesOpenChange}
         />
       </div>
-      <div className="prompt-toolbar-end">
+      <div className="flex items-center gap-sm">
         <VoiceRecordButton
           isRecording={isRecording}
           isProcessing={isProcessing}
@@ -158,7 +167,8 @@ export default function PromptDesktopToolbar({
           disabled={sending}
         />
         <button
-          className={sendBtnClass}
+          className={SEND_BUTTON_CLASS}
+          data-busy={sendBusy}
           disabled={sendDisabled}
           onClick={onSendPrompt}
           title={sendTitle}

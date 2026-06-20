@@ -1,6 +1,10 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { cn } from "@/lib/ui/cn";
+import { Button } from "@/components/ui/Button";
+import { IconButton } from "@/components/ui/IconButton";
+import { EmptyState, EmptyStateTitle } from "@/components/ui/EmptyState";
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -105,6 +109,25 @@ function ArrowLeftIcon({ size = 14 }: { size?: number }) {
   );
 }
 
+// ── Static appearance recipes ──────────────────────────────────
+
+// The summary-stat chip (`.cr-stat`); each tone appends its colour.
+const STAT_BASE =
+  "font-mono text-[0.7rem] font-semibold uppercase tracking-[0.04em] px-[8px] py-[2px] rounded-[100px]";
+
+// Approve/reject action button (`.cr-action-btn`). Resting/hover/active
+// appearance is gated by `data-active` (active beats hover via mutually
+// exclusive `data-[active=…]` selectors, not source order). The active border
+// colours (green/red at 0.4 alpha) have no solid-colour token, so they are
+// derived from the base `--green`/`--red` tokens via `color-mix` (token-backed,
+// no raw literal — passes `no-hardcoded-color`; `--green`/`--red` are opaque so
+// the mix with `transparent` reproduces the legacy 0.4-alpha rgba exactly).
+const ACTION_BTN_BASE =
+  "w-[28px] h-[28px] flex items-center justify-center border border-solid rounded-sm cursor-pointer transition-all duration-150 ease-[ease] " +
+  "max-768:w-[44px] max-768:h-[44px] " +
+  "data-[active=false]:bg-transparent data-[active=false]:text-text-tertiary data-[active=false]:border-border-default " +
+  "data-[active=false]:hover:bg-bg-hover data-[active=false]:hover:text-text-primary data-[active=false]:hover:border-border-strong";
+
 // ── Conflict card with approve/reject ──────────────────────────
 
 function ConflictReviewCard({
@@ -140,29 +163,59 @@ function ConflictReviewCard({
 
   return (
     <div
-      className={`cr-card ${state.decision !== "pending" ? `cr-card-${state.decision}` : ""}`}
+      data-decision={state.decision}
+      className={cn(
+        "group overflow-hidden rounded-md border border-solid bg-bg-surface transition-[border-color] duration-150 ease-[ease]",
+        "data-[decision=pending]:border-border-subtle",
+        "data-[decision=approved]:border-[var(--cc-green-border)]",
+        "data-[decision=rejected]:border-[var(--cc-red-border)]",
+      )}
     >
-      <div className="cr-card-header">
+      <div className="flex items-center px-md py-sm">
         <button
-          className="cr-card-toggle"
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-sm border-0 bg-transparent px-0 py-xs font-mono text-[0.78rem] text-text-primary max-768:text-[0.72rem]"
           onClick={() => setExpanded(!expanded)}
         >
-          <span className={`cr-card-chevron ${expanded ? "expanded" : ""}`}>
+          <span
+            className={cn(
+              "shrink-0 text-[0.72rem] text-text-tertiary transition-transform duration-150 ease-[ease]",
+              expanded && "rotate-90",
+            )}
+          >
             ▸
           </span>
-          <span className="cr-card-number">{index + 1}</span>
-          <span className="cr-card-file">{conflict.file}</span>
+          <span
+            className={cn(
+              "flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-[0.7rem] font-semibold",
+              "group-data-[decision=pending]:bg-amber-glow group-data-[decision=pending]:text-amber",
+              "group-data-[decision=approved]:bg-green-glow group-data-[decision=approved]:text-green",
+              "group-data-[decision=rejected]:bg-red-glow group-data-[decision=rejected]:text-red",
+            )}
+          >
+            {index + 1}
+          </span>
+          <span className="flex-1 overflow-hidden text-left text-ellipsis whitespace-nowrap">
+            {conflict.file}
+          </span>
         </button>
-        <div className="cr-card-actions">
+        <div className="ml-sm flex shrink-0 gap-[4px]">
           <button
-            className={`cr-action-btn cr-approve ${state.decision === "approved" ? "active" : ""}`}
+            data-active={state.decision === "approved"}
+            className={cn(
+              ACTION_BTN_BASE,
+              "data-[active=true]:border-[color:color-mix(in_srgb,var(--green)_40%,transparent)] data-[active=true]:bg-green-glow data-[active=true]:text-green",
+            )}
             onClick={handleApprove}
             title="Approve this resolution"
           >
             <CheckIcon size={11} />
           </button>
           <button
-            className={`cr-action-btn cr-reject ${state.decision === "rejected" ? "active" : ""}`}
+            data-active={state.decision === "rejected"}
+            className={cn(
+              ACTION_BTN_BASE,
+              "data-[active=true]:border-[color:color-mix(in_srgb,var(--red)_40%,transparent)] data-[active=true]:bg-red-glow data-[active=true]:text-red",
+            )}
             onClick={handleReject}
             title="Reject this resolution"
           >
@@ -172,25 +225,43 @@ function ConflictReviewCard({
       </div>
 
       {expanded && (
-        <div className="cr-card-body">
-          <div className="cr-section">
-            <span className="cr-section-label">Conflict</span>
-            <p className="cr-section-text">{conflict.description}</p>
+        <div className="flex flex-col gap-md border-x-0 border-t border-b-0 border-solid border-border-subtle px-lg py-md max-768:px-md max-768:py-sm">
+          <div className="flex flex-col gap-[4px]">
+            <span className="font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-cyan-dim uppercase">
+              Conflict
+            </span>
+            <p className="font-mono text-[0.75rem] leading-[1.6] text-text-secondary">
+              {conflict.description}
+            </p>
           </div>
-          <div className="cr-section">
-            <span className="cr-section-label">Proposed Resolution</span>
-            <p className="cr-section-text">{conflict.resolution}</p>
+          <div className="flex flex-col gap-[4px]">
+            <span className="font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-cyan-dim uppercase">
+              Proposed Resolution
+            </span>
+            <p className="font-mono text-[0.75rem] leading-[1.6] text-text-secondary">
+              {conflict.resolution}
+            </p>
           </div>
-          <div className="cr-section">
-            <span className="cr-section-label">Rationale</span>
-            <p className="cr-section-text">{conflict.rationale}</p>
+          <div className="flex flex-col gap-[4px]">
+            <span className="font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-cyan-dim uppercase">
+              Rationale
+            </span>
+            <p className="font-mono text-[0.75rem] leading-[1.6] text-text-secondary">
+              {conflict.rationale}
+            </p>
           </div>
 
           {state.decision === "rejected" && (
-            <div className="cr-feedback">
-              <label className="cr-feedback-label">Guidance for Claude</label>
+            <div className="border-x-0 border-t border-b-0 border-solid border-border-subtle pt-sm">
+              <label className="mb-xs block font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-red uppercase">
+                Guidance for Claude
+              </label>
               <textarea
-                className="form-input cr-feedback-input"
+                // `.form-input` (globals.css:7991) loads after dialogs.css's
+                // `@import`, so at equal specificity its `font-size:0.82rem`
+                // overrides `.cr-feedback-input{font-size:0.75rem}` — the
+                // override was dead. 0.82rem is the effective recipe.
+                className="w-full rounded-md border border-solid border-border-default bg-bg-base px-[12px] py-[9px] font-mono text-[0.82rem] text-text-primary outline-0 transition-[border-color,box-shadow] duration-150 ease-[ease] placeholder:text-text-tertiary hover:border-border-strong focus:border-cyan focus:shadow-[0_0_0_3px_var(--cyan-glow)]"
                 rows={2}
                 placeholder="Explain how this conflict should be resolved instead..."
                 value={state.feedback}
@@ -290,70 +361,78 @@ export default function MergeConflictsPage({
 
   if (error) {
     return (
-      <div className="app">
-        <main className="main">
-          <div className="empty-state">
-            <div className="empty-state-title">{error}</div>
-            <button className="btn btn-sm" onClick={onBack}>
+      <div className="flex h-dvh flex-col overflow-clip">
+        <main className="min-h-0 w-full flex-1 overflow-x-hidden overflow-y-auto p-lg">
+          <EmptyState>
+            <EmptyStateTitle>{error}</EmptyStateTitle>
+            <Button size="sm" touch onClick={onBack}>
               Back to session
-            </button>
-          </div>
+            </Button>
+          </EmptyState>
         </main>
       </div>
     );
   }
 
   return (
-    <div className="cr-page">
+    <div className="mx-auto flex min-h-[calc(100dvh-var(--topbar-height))] max-w-[800px] flex-col gap-md px-lg pt-lg pb-[80px] max-768:px-md max-768:pt-md">
       {/* ── Page header ── */}
-      <div className="cr-page-header">
-        <div className="cr-page-header-left">
-          <button
-            className="btn-icon-only cr-back-btn"
-            onClick={onBack}
-            data-tooltip="Back"
-          >
+      <div className="flex items-center justify-between gap-md max-768:flex-col max-768:items-start">
+        <div className="flex items-center gap-md">
+          <IconButton variant="square" onClick={onBack} data-tooltip="Back">
             <ArrowLeftIcon size={14} />
-          </button>
-          <div className="cr-page-header-text">
-            <h1 className="cr-page-title">Merge Conflicts</h1>
-            <span className="cr-page-subtitle">
+          </IconButton>
+          <div className="flex flex-col gap-[2px]">
+            <h1 className="font-display text-[1.2rem] leading-[1.2] font-bold text-text-primary max-768:text-[1rem]">
+              Merge Conflicts
+            </h1>
+            <span className="font-mono text-[0.7rem] text-text-tertiary">
               {projectName} / {sessionName}
             </span>
           </div>
         </div>
-        <div className="cr-page-header-right">
-          <span className="cr-branch-chip">{branchName}</span>
+        <div className="shrink-0">
+          <span className="inline-block rounded-[100px] border border-solid border-border-subtle bg-bg-raised px-[10px] py-[3px] font-mono text-[0.72rem] text-text-secondary">
+            {branchName}
+          </span>
         </div>
       </div>
 
       {/* ── Conflict summary banner ── */}
-      <div className="cr-summary-banner">
+      <div className="flex items-start gap-md rounded-md border border-solid border-[color:color-mix(in_srgb,var(--amber)_20%,transparent)] bg-amber-glow px-lg py-md text-amber max-768:flex-col max-768:gap-sm max-768:px-md">
         <WarningIcon size={16} />
-        <div className="cr-summary-text">
-          <span className="cr-summary-title">
+        <div className="flex flex-1 flex-col gap-[4px]">
+          <span className="font-mono text-[0.78rem] font-semibold">
             {conflicts.length} merge conflict
             {conflicts.length !== 1 ? "s" : ""} found
           </span>
-          <span className="cr-summary-desc">
-            {targetBranch} has diverged from <code>{branchName}</code>. Review
-            each conflict below, then approve or reject the proposed
+          <span className="font-mono text-[0.72rem] leading-[1.5] text-text-secondary">
+            {targetBranch} has diverged from{" "}
+            <code className="rounded-[3px] bg-bg-raised px-[5px] py-[1px] text-[0.7rem] text-cyan">
+              {branchName}
+            </code>
+            . Review each conflict below, then approve or reject the proposed
             resolutions.
           </span>
         </div>
-        <div className="cr-summary-stats">
+        <div className="flex shrink-0 gap-sm self-center max-768:self-start">
           {approvedCount > 0 && (
-            <span className="cr-stat cr-stat-approved">
+            <span className={cn(STAT_BASE, "bg-green-glow text-green")}>
               {approvedCount} approved
             </span>
           )}
           {rejectedCount > 0 && (
-            <span className="cr-stat cr-stat-rejected">
+            <span className={cn(STAT_BASE, "bg-red-glow text-red")}>
               {rejectedCount} rejected
             </span>
           )}
           {pendingCount > 0 && (
-            <span className="cr-stat cr-stat-pending">
+            <span
+              className={cn(
+                STAT_BASE,
+                "border border-solid border-border-default bg-bg-hover text-text-secondary",
+              )}
+            >
               {pendingCount} pending
             </span>
           )}
@@ -361,7 +440,7 @@ export default function MergeConflictsPage({
       </div>
 
       {/* ── Conflict list ── */}
-      <div className="cr-conflicts-list">
+      <div className="flex flex-col gap-sm">
         {conflicts.map((conflict, i) => (
           <ConflictReviewCard
             key={conflict.file}
@@ -375,23 +454,23 @@ export default function MergeConflictsPage({
         ))}
       </div>
 
-      {/* ── Sticky action bar ── */}
+      {/* ── Sticky action bar (preserved overlay residual: fixed positioning
+          + backdrop-filter; `.cr-*` per docs/reports/css-inventory.md) ── */}
       <div className="cr-action-bar">
         <div className="cr-action-bar-inner">
-          <button
-            className="btn btn-sm cr-accept-all-btn"
-            onClick={handleAcceptAll}
-          >
+          <Button size="sm" touch onClick={handleAcceptAll}>
             <CheckIcon size={11} /> Accept All and Fix
-          </button>
-          <div className="cr-action-bar-sep" />
-          <button
-            className="btn btn-primary btn-sm"
+          </Button>
+          <div className="h-[20px] w-px bg-border-subtle" />
+          <Button
+            variant="primary"
+            size="sm"
+            touch
             disabled={!hasAnyDecision}
             onClick={handleFixApproved}
           >
             Fix with Claude
-          </button>
+          </Button>
         </div>
       </div>
     </div>

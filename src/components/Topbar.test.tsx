@@ -166,15 +166,14 @@ describe("Topbar", () => {
   });
 
   it("does not render global status on detail page", () => {
-    const { container } = render(
+    render(
       <Topbar
         breadcrumbs={[]}
         page="detail"
         globalStatus={<span>3 active</span>}
       />,
     );
-    const statusDefault = container.querySelector(".topbar-status-default");
-    expect(statusDefault).toBeNull();
+    expect(screen.queryByText("3 active")).toBeNull();
   });
 
   it("renders unified panel toggle button", () => {

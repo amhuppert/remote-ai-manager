@@ -12,6 +12,10 @@
  * dropped, re-aliased to a weaker value, or the underlying legacy value is
  * weakened below threshold. This is NOT a CSS-structure assertion — it never
  * checks a selector or a className.
+ *
+ * The text-contrast guarantee is OPACITY-AWARE (see `fadedContrast`): a faded
+ * element whose effective (opacity-multiplied) text color drops below the WCAG
+ * threshold fails, where a token-pair-only check would wrongly pass it.
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -89,12 +93,37 @@ function relativeLuminance([r, g, b]: [number, number, number]): number {
   return 0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b);
 }
 
-/** WCAG contrast ratio between two `@theme` color tokens. */
-function contrast(colorName: string, bgName: string): number {
-  const l1 = relativeLuminance(hexToRgb(themeColor(colorName)));
-  const l2 = relativeLuminance(hexToRgb(themeColor(bgName)));
+/**
+ * Effective WCAG contrast of a text token rendered at CSS `opacity` over a solid
+ * background token. CSS opacity flattens the text toward whatever sits behind it;
+ * browsers (and axe-core) composite in sRGB space:
+ *   shown = opacity·fg + (1 − opacity)·bg
+ * `opacity === 1` is the un-faded case. Accounting for the multiplier is what
+ * makes this guarantee OPACITY-AWARE: a faded element whose effective text color
+ * drops below the WCAG threshold fails here, where a token-pair-only check — one
+ * that ignores opacity — would wrongly pass it.
+ */
+function fadedContrast(
+  colorName: string,
+  bgName: string,
+  opacity: number,
+): number {
+  const fg = hexToRgb(themeColor(colorName));
+  const bg = hexToRgb(themeColor(bgName));
+  const shown: [number, number, number] = [
+    opacity * fg[0] + (1 - opacity) * bg[0],
+    opacity * fg[1] + (1 - opacity) * bg[1],
+    opacity * fg[2] + (1 - opacity) * bg[2],
+  ];
+  const l1 = relativeLuminance(shown);
+  const l2 = relativeLuminance(bg);
   const [lighter, darker] = l1 > l2 ? [l1, l2] : [l2, l1];
   return (lighter + 0.05) / (darker + 0.05);
+}
+
+/** WCAG contrast ratio between two `@theme` color tokens (un-faded). */
+function contrast(colorName: string, bgName: string): number {
+  return fadedContrast(colorName, bgName, 1);
 }
 
 /** Resolve a `--cc-size-floor-*` token to a numeric value in its unit. */
@@ -127,6 +156,41 @@ describe("WCAG text-contrast guarantees (re-homed to the @theme surface)", () =>
 
   test("red-text ≥ 4.5:1 against bg-surface", () => {
     expect(contrast("red-text", "bg-surface")).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
+describe("WCAG opacity-aware text-contrast guarantee", () => {
+  // The design system's two centralized faded-text locations — the Badge
+  // `subtle` variant (neutral muted: text-secondary on bg-raised) and the Tabs
+  // inactive count (text-secondary inherited over bg-surface) — render their
+  // text at full strength, not behind an opacity fade. At full opacity their
+  // effective contrast meets AA.
+  test("Badge subtle (text-secondary on bg-raised) meets AA at full opacity", () => {
+    expect(
+      fadedContrast("text-secondary", "bg-raised", 1),
+    ).toBeGreaterThanOrEqual(4.5);
+  });
+
+  test("Tabs inactive count (text-secondary on bg-surface) meets AA at full opacity", () => {
+    expect(
+      fadedContrast("text-secondary", "bg-surface", 1),
+    ).toBeGreaterThanOrEqual(4.5);
+  });
+
+  // The guarantee has teeth: re-introducing an opacity fade on either location
+  // drops the effective text color below AA, so this guarantee FAILS for it. A
+  // token-pair contrast check ignores the opacity multiplier and would wrongly
+  // pass these — these assertions pin that the multiplier is accounted for, so a
+  // faded element below threshold cannot slip through. (Never weaken the 4.5
+  // threshold to admit a fade; the point is that a fade fails.)
+  test("a 0.5 opacity fade on the subtle badge is BELOW AA (guarantee must reject it)", () => {
+    expect(fadedContrast("text-secondary", "bg-raised", 0.5)).toBeLessThan(4.5);
+  });
+
+  test("a 0.85 opacity fade on the inactive count is BELOW AA (guarantee must reject it)", () => {
+    expect(fadedContrast("text-secondary", "bg-surface", 0.85)).toBeLessThan(
+      4.5,
+    );
   });
 });
 

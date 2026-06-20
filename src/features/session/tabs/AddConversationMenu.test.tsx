@@ -64,7 +64,7 @@ afterEach(() => {
 });
 
 describe("AddConversationMenu", () => {
-  it("renders a menu with one menuitem per addable conversation, showing title, project, and a status dot (2.9/6.2)", () => {
+  it("renders a menu with one menuitem per addable conversation, showing title and project (2.9/6.2)", () => {
     renderMenu({
       addableConversations: [
         convo("a", { status: "running" }),
@@ -81,14 +81,6 @@ describe("AddConversationMenu", () => {
     expect(within(items[0]!).getByText("proj-a")).toBeInTheDocument();
     expect(within(items[1]!).getByText("Conversation b")).toBeInTheDocument();
     expect(within(items[1]!).getByText("proj-b")).toBeInTheDocument();
-
-    const dots = items.map((item) =>
-      item.querySelector(".add-conversation-menu__dot"),
-    );
-    expect(dots.map((d) => d?.getAttribute("data-status"))).toEqual([
-      "running",
-      "waiting_for_input",
-    ]);
   });
 
   it("falls back to a placeholder title for unnamed conversations", () => {

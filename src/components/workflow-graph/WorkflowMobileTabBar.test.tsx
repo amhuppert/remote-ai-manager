@@ -24,7 +24,7 @@ describe("WorkflowMobileTabBar", () => {
     expect(screen.getByText("Inspector")).toBeInTheDocument();
   });
 
-  it("applies active class to the selected tab only", () => {
+  it("marks the selected tab active only", () => {
     render(
       <WorkflowMobileTabBar
         tabs={tabs}
@@ -35,8 +35,8 @@ describe("WorkflowMobileTabBar", () => {
     const defsBtn = screen.getByText("Defs").closest("button");
     const graphBtn = screen.getByText("Graph").closest("button");
 
-    expect(defsBtn?.classList.contains("active")).toBe(true);
-    expect(graphBtn?.classList.contains("active")).toBe(false);
+    expect(defsBtn?.getAttribute("data-active")).toBe("true");
+    expect(graphBtn?.getAttribute("data-active")).toBe("false");
   });
 
   it("calls onChange with the clicked tab value", async () => {

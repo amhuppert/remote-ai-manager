@@ -8,6 +8,7 @@ const MarkdownContent = dynamic(() => import("@/components/MarkdownContent"), {
   ssr: false,
 });
 import CollapsibleText from "@/components/CollapsibleText";
+import { cn } from "@/lib/ui/cn";
 import { formatGraphWorkflowHaltReason } from "./ContextHaltCard";
 import type {
   GraphWorkflowExecution,
@@ -201,7 +202,7 @@ function normalizeEvent(
           dot: "task-failed",
           title: `Task failed · ${taskLookup.get(event.taskId) ?? event.taskId}`,
           detail: event.failureMessage ? (
-            <pre className="wb-exec-event-pre">{event.failureMessage}</pre>
+            <pre className={eventPreClass}>{event.failureMessage}</pre>
           ) : null,
           expandable: null,
         };
@@ -245,7 +246,7 @@ function normalizeEvent(
         dot: formatted.dot,
         title: `${formatted.verb} · ${title}${branchSuffix}`,
         detail: event.lastMergeError ? (
-          <pre className="wb-exec-event-pre">{event.lastMergeError}</pre>
+          <pre className={eventPreClass}>{event.lastMergeError}</pre>
         ) : null,
         expandable: null,
       };
@@ -266,7 +267,7 @@ function normalizeEvent(
         ) : null,
         expandable:
           event.issues.length > 0 ? (
-            <ul className="wb-exec-event-issues">
+            <ul className={eventIssuesClass}>
               {event.issues.map((issue, idx) => (
                 <li key={idx}>
                   <strong>{issue.title}</strong>
@@ -401,7 +402,7 @@ function normalizeEvent(
         dot,
         title: `Join ${event.status} · ${event.joinId}`,
         detail: errorSummary ? (
-          <pre className="wb-exec-event-pre">{errorSummary}</pre>
+          <pre className={eventPreClass}>{errorSummary}</pre>
         ) : detailText ? (
           <span>{detailText}</span>
         ) : null,
@@ -419,8 +420,41 @@ function normalizeEvent(
   }
 }
 
+const eventPreClass =
+  "font-mono text-[0.7rem] bg-[var(--cc-graph-ink-a40)] border border-border-dim rounded-sm py-[6px] px-[8px] m-0 whitespace-pre-wrap break-words text-text-secondary max-h-[160px] overflow-auto";
+
+const eventIssuesClass =
+  "list-none p-0 m-0 flex flex-col gap-[8px] [&_li]:py-[6px] [&_li]:px-[8px] [&_li]:bg-[var(--cc-graph-ink-a40)] [&_li]:border [&_li]:border-border-dim [&_li]:rounded-sm [&_strong]:block [&_strong]:text-text-primary [&_strong]:text-[0.72rem] [&_strong]:font-semibold [&_strong]:mb-[2px]";
+
+const dotBaseClass = "w-[6px] h-[6px] rounded-full shrink-0";
+
+const dotStatusClass: Record<EventDotKind, string> = {
+  pass: "bg-green shadow-[0_0_6px_var(--green-glow)]",
+  fail: "bg-red",
+  retry: "bg-amber shadow-[0_0_6px_var(--amber-glow)]",
+  breaker:
+    "bg-red shadow-[0_0_0_1px_var(--cc-red-a40),0_0_6px_var(--cc-red-a50)]",
+  "merge-start":
+    "bg-green shadow-[0_0_6px_var(--green-glow)] animate-[pulse-dot_1.2s_ease-in-out_infinite]",
+  "merge-success": "bg-green shadow-[0_0_6px_var(--green-glow)]",
+  "merge-fail": "bg-red",
+  "task-completed": "bg-green",
+  "task-running": "bg-cyan shadow-[0_0_6px_var(--cyan-glow)]",
+  "task-failed": "bg-red",
+  "context-running": "bg-cyan shadow-[0_0_6px_var(--cyan-glow)]",
+  "context-completed": "bg-green shadow-[0_0_6px_var(--green-glow)]",
+  "context-halted": "bg-red",
+  "context-ready": "bg-text-tertiary",
+  "workflow-paused": "bg-amber",
+  "workflow-resumed": "bg-cyan shadow-[0_0_6px_var(--cyan-glow)]",
+  "workflow-aborted": "bg-text-tertiary",
+  "workflow-halted": "bg-red",
+  "workflow-completed": "bg-green shadow-[0_0_6px_var(--green-glow)]",
+  neutral: "bg-text-tertiary",
+};
+
 function dotClassName(dot: EventDotKind): string {
-  return `wb-exec-event-dot wb-exec-event-dot--${dot}`;
+  return cn(dotBaseClass, dotStatusClass[dot]);
 }
 
 // Identifies the entity whose status a given event reports, so consecutive
@@ -461,9 +495,12 @@ function EventRow({
   const isClickable = hasExpandable || hasDetail;
 
   return (
-    <div className={`wb-exec-event ${expanded ? "expanded" : ""}`.trim()}>
+    <div
+      data-expanded={expanded}
+      className="border-b border-border-dim py-[8px] [contain-intrinsic-size:auto_32px] [content-visibility:auto] last:border-b-0 data-[expanded=true]:bg-[var(--cc-white-a015)]"
+    >
       <div
-        className="wb-exec-event-header"
+        className="flex items-center gap-[8px] text-[0.72rem]"
         role={isClickable ? "button" : undefined}
         tabIndex={isClickable ? 0 : -1}
         onClick={() => {
@@ -478,11 +515,13 @@ function EventRow({
         style={isClickable ? { cursor: "pointer" } : undefined}
       >
         <span className={dotClassName(event.dot)} aria-hidden="true" />
-        <span className="wb-exec-event-text">{event.title}</span>
+        <span className="min-w-0 flex-1 text-text-secondary">
+          {event.title}
+        </span>
         {event.contextId && onSelectContext && (
           <button
             type="button"
-            className="wb-exec-event-jump"
+            className="cursor-pointer rounded-[3px] border border-border-subtle bg-transparent px-[6px] py-0 font-[inherit] text-[0.7rem] leading-[1.4] text-text-tertiary hover:border-cyan-dim hover:bg-[var(--cc-cyan-a05)] hover:text-cyan"
             onClick={(e) => {
               e.stopPropagation();
               if (event.contextId) onSelectContext(event.contextId);
@@ -492,24 +531,29 @@ function EventRow({
             ↗
           </button>
         )}
-        <span className="wb-exec-event-timestamp">
+        <span className="ml-auto shrink-0 text-[0.7rem] whitespace-nowrap text-text-tertiary">
           {formatTimestamp(event.occurredAt)}
         </span>
         {isClickable && (
-          <span className="wb-exec-event-caret" aria-hidden="true">
+          <span
+            className="ml-[4px] shrink-0 text-[0.65rem] text-text-tertiary"
+            aria-hidden="true"
+          >
             {expanded ? "▾" : "▸"}
           </span>
         )}
       </div>
       {expanded && hasDetail && (
-        <div className="wb-exec-event-detail">
+        <div className="mt-[4px] pl-[14px] text-[0.7rem] leading-[1.4] text-text-tertiary">
           <CollapsibleText maxCollapsedHeight={140}>
             {event.detail}
           </CollapsibleText>
         </div>
       )}
       {expanded && hasExpandable && (
-        <div className="wb-exec-event-detail">{event.expandable}</div>
+        <div className="mt-[4px] pl-[14px] text-[0.7rem] leading-[1.4] text-text-tertiary">
+          {event.expandable}
+        </div>
       )}
     </div>
   );
@@ -550,7 +594,7 @@ export default function WorkflowEventLog({
       if (contextId && normalizedEvent.contextId !== contextId) continue;
       const streamKey = eventStreamKey(entry.event);
       if (streamKey) {
-        const row = `${normalizedEvent.dot} ${normalizedEvent.title}`;
+        const row = `${normalizedEvent.dot} ${normalizedEvent.title}`;
         if (lastRowByStream.get(streamKey) === row) continue;
         lastRowByStream.set(streamKey, row);
       }
@@ -562,14 +606,16 @@ export default function WorkflowEventLog({
 
   if (normalizedEvents.length === 0) {
     return (
-      <div className="wb-exec-event-empty">
-        <span className="wb-exec-event-text">No events yet</span>
+      <div className="py-[8px] text-[0.72rem] text-text-tertiary italic">
+        <span className="min-w-0 flex-1 text-text-secondary">
+          No events yet
+        </span>
       </div>
     );
   }
 
   return (
-    <div className="wb-exec-event-log">
+    <div className="flex flex-col">
       {normalizedEvents.map((event) => (
         <EventRow
           key={event.key}

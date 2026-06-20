@@ -11,6 +11,8 @@ import type {
   AgentCapabilityViewRow,
 } from "@/lib/agent-capabilities/schemas";
 import type { AgentCapabilityScope } from "@/hooks/use-agent-capabilities";
+import { Button } from "@/components/ui/Button";
+import { cn } from "@/lib/ui/cn";
 
 export interface AgentCapabilityLayerOption {
   label: string;
@@ -64,6 +66,35 @@ const CASCADE_TITLES: Record<AgentCapabilityCascadeKind, string> = {
   "codex-plugins": "Codex Plugins",
 };
 
+// Visually-hidden text exposed to screen readers only.
+const SR_ONLY =
+  "absolute h-px w-px overflow-hidden whitespace-nowrap [clip:rect(0_0_0_0)]";
+
+// Shared by every detail span (including the chips) so long content wraps inside the row.
+const DETAILS_SPAN = "min-w-0 [overflow-wrap:anywhere]";
+
+// Toggle switch shared by the row controls; size and knob are set per use.
+const SWITCH_BASE =
+  "relative flex-none cursor-pointer rounded-full border border-solid transition-all duration-150";
+const SWITCH_ON = "border-cyan bg-cyan shadow-[0_0_12px_var(--cyan-glow)]";
+const SWITCH_OFF = "border-border-default bg-bg-base";
+const SWITCH_KNOB =
+  "absolute left-px top-px rounded-full transition-[transform,background] duration-150";
+
+// Base styling shared by the inheritance, status, and plugin chips.
+const CHIP_BASE =
+  "inline-flex items-center gap-[4px] whitespace-nowrap rounded-full border border-solid border-border-subtle px-[7px] py-[2px] font-mono text-[0.7rem] font-medium text-text-tertiary";
+const CHIP_CYAN = "border-[var(--cc-cyan-a25)] bg-cyan-glow text-cyan";
+const CHIP_AMBER = "border-[var(--cc-amber-a25)] bg-amber-glow text-amber";
+
+const PLUGIN_CHIP = cn(
+  CHIP_BASE,
+  "cursor-pointer bg-transparent transition-[border-color,background,color] duration-150",
+  "hover:border-blue-dim hover:bg-blue-glow hover:text-blue",
+  "focus-visible:border-blue-dim focus-visible:bg-blue-glow focus-visible:text-blue",
+);
+const PLUGIN_CHIP_SUPPRESSED = "border-blue-dim bg-blue-glow text-blue";
+
 export function AgentCapabilityPanel({
   title,
   view,
@@ -106,31 +137,27 @@ export function AgentCapabilityPanel({
   const overrideCount = view
     ? view.items.filter((row) => row.currentLayerValue !== undefined).length
     : 0;
-  const panelClass = [
-    "agent-capability-panel",
-    view?.backend === "codex" ? "agent-capability-panel--codex" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-  const rowsClass = [
-    "agent-capability-panel__rows",
-    "agent-capability-panel__rows--capabilities",
-  ]
-    .filter(Boolean)
-    .join(" ");
 
   return (
-    <section className={panelClass} data-cascade-kind={view?.cascadeKind}>
+    <section
+      className={cn(
+        "flex min-h-0 min-w-0 flex-auto flex-col bg-bg-base",
+        view?.backend === "codex" && "shadow-[0_0_0_1px_var(--violet-glow)]",
+      )}
+      data-cascade-kind={view?.cascadeKind}
+    >
       {!hideHeader ? (
-        <div className="agent-capability-panel__header">
+        <div className="flex min-w-0 items-start justify-between gap-md max-768:flex-col">
           <div>
-            <h2 className="agent-capability-panel__title">{title}</h2>
-            <p className="agent-capability-panel__subtitle">
+            <h2 className="font-display text-[1.25rem] leading-[1.2] font-extrabold text-text-primary">
+              {title}
+            </h2>
+            <p className="mt-xs font-mono text-[0.74rem] text-text-secondary">
               Toggle this capability set at any available scope. More specific
               layers inherit until they store an override.
             </p>
             {view ? (
-              <div className="agent-capability-panel__summary">
+              <div className="mt-[4px] flex flex-wrap gap-xs font-mono text-[0.7rem] text-text-tertiary">
                 <span>{view.items.length} items</span>
                 <span>{view.backend}</span>
                 <span>{metadataLabel(view)}</span>
@@ -138,15 +165,17 @@ export function AgentCapabilityPanel({
               </div>
             ) : null}
           </div>
-          <div className="agent-capability-panel__actions">
+          <div className="flex-none">
             {onRefresh ? (
-              <button
+              <Button
                 type="button"
-                className="btn btn-ghost btn-sm"
+                variant="ghost"
+                size="sm"
+                touch
                 onClick={onRefresh}
               >
                 Refresh
-              </button>
+              </Button>
             ) : null}
           </div>
         </div>
@@ -160,22 +189,28 @@ export function AgentCapabilityPanel({
         />
       ) : null}
 
-      <div className="agent-capability-panel__toolbar">
-        <label className="agent-capability-panel__field">
-          <span>Search</span>
+      <div className="flex min-w-0 flex-none flex-wrap items-center gap-sm rounded-md border border-solid border-border-dim border-b-border-subtle bg-bg-void px-xl py-md max-900:flex-col max-900:items-stretch [[data-cap-drawer]_&]:px-lg [[data-cap-drawer]_&]:py-sm">
+        <label className="flex max-w-[360px] min-w-[180px] flex-1 flex-col items-center gap-[7px] rounded-md border border-solid border-border-subtle bg-bg-base px-[10px] py-[6px] font-mono text-[0.7rem] font-semibold tracking-[0.06em] text-text-secondary uppercase transition-all duration-150 focus-within:border-cyan focus-within:shadow-[0_0_0_3px_var(--cyan-glow)] max-900:max-w-none">
+          <span className={SR_ONLY}>Search</span>
           <input
             aria-label={`Search ${title}`}
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Filter items"
+            className="min-h-[34px] w-full rounded-md border-0 bg-transparent px-[8px] py-[6px] font-mono text-[0.76rem] tracking-normal text-text-primary normal-case outline-0 placeholder:text-text-tertiary"
           />
         </label>
-        <div className="agent-capability-panel__filters">
+        <div className="flex flex-wrap items-center gap-[2px] rounded-md border border-solid border-border-subtle bg-bg-base p-[2px]">
           {FILTERS.map((filter) => (
             <button
               key={filter.key}
               type="button"
-              className={`agent-capability-filter${activeFilter === filter.key ? " agent-capability-filter--active" : ""}`}
+              className={cn(
+                "inline-flex min-h-[24px] cursor-pointer items-center gap-[6px] rounded-sm border-0 bg-transparent px-[9px] py-[4px] font-mono text-[0.7rem] font-medium transition-all duration-150 hover:text-text-primary",
+                activeFilter === filter.key
+                  ? "bg-bg-raised text-cyan"
+                  : "text-text-secondary",
+              )}
               aria-label={filter.ariaLabel}
               aria-pressed={activeFilter === filter.key}
               onClick={() => setActiveFilter(filter.key)}
@@ -184,18 +219,21 @@ export function AgentCapabilityPanel({
             </button>
           ))}
         </div>
-        <div className="agent-capability-panel__scope-note">
+        <div className="ml-auto font-mono text-[0.7rem] whitespace-nowrap text-text-tertiary">
           {selectedOption?.label ?? levelLabel(selectedScope.level)}
         </div>
       </div>
 
       {loading ? (
-        <div className="agent-capability-panel__notice">
+        <div className="rounded-sm bg-bg-base p-sm font-mono text-[0.78rem] text-text-secondary">
           Loading capabilities
         </div>
       ) : null}
       {errorMessage ? (
-        <div className="agent-capability-panel__error" role="alert">
+        <div
+          className="rounded-sm border border-solid border-red-dim bg-red-glow p-sm font-mono text-[0.78rem] text-red"
+          role="alert"
+        >
           {errorMessage}
         </div>
       ) : null}
@@ -203,7 +241,7 @@ export function AgentCapabilityPanel({
         <DiagnosticList diagnostics={view.diagnostics} />
       ) : null}
 
-      <div className={rowsClass}>
+      <div className="grid min-h-0 flex-auto [grid-auto-rows:calc(var(--space-3xl)+var(--space-2xl)+var(--space-md))] content-start gap-xs overflow-y-auto px-xl pt-md pb-xl [[data-cap-drawer]_&]:px-lg [[data-cap-drawer]_&]:pt-sm [[data-cap-drawer]_&]:pb-lg">
         {view
           ? visibleRows.map((row) => (
               <CapabilityRow
@@ -218,7 +256,7 @@ export function AgentCapabilityPanel({
             ))
           : null}
         {view && visibleRows.length === 0 ? (
-          <div className="agent-capability-panel__empty">
+          <div className="rounded-sm border border-dashed border-border-default p-sm font-mono text-[0.78rem] text-text-tertiary">
             No capabilities match
           </div>
         ) : null}
@@ -244,29 +282,42 @@ export function AgentCapabilityLevelSwitcher({
   );
 
   return (
-    <div className="agent-capability-levels">
-      <span className="agent-capability-levels__label">Editing at</span>
-      <div className="agent-capability-levels__stones">
-        {layerOptions.map((option) => {
+    <div className="mt-lg flex min-w-0 items-stretch pb-lg max-900:flex-col max-900:gap-sm">
+      <span className="flex flex-none items-center pr-md font-mono text-[0.7rem] font-semibold tracking-[0.08em] whitespace-nowrap text-text-tertiary uppercase max-900:pr-0">
+        Editing at
+      </span>
+      <div className="flex min-w-0 flex-1 items-stretch overflow-hidden max-900:flex-col max-900:gap-xs">
+        {layerOptions.map((option, index) => {
           const value = layerOptionValue(option);
           const active = option.scope
             ? scopeValue(option.scope) === selectedValue
             : false;
+          const isFirst = index === 0;
+          const isLast = index === layerOptions.length - 1;
           return (
             <button
               key={value}
               type="button"
-              className={`agent-capability-level${active ? " agent-capability-level--active" : ""}`}
+              className={cn(
+                "flex min-w-0 flex-1 cursor-pointer flex-col justify-center gap-[2px] border border-r-0 border-solid border-border-subtle bg-bg-base py-[9px] pr-[12px] pl-[11px] text-left text-text-secondary transition-all duration-150",
+                "enabled:hover:border-border-default enabled:hover:bg-bg-surface enabled:hover:text-text-primary",
+                "disabled:cursor-not-allowed disabled:opacity-[0.35]",
+                "max-900:rounded-md max-900:border max-900:border-border-subtle",
+                isFirst && "rounded-l-md",
+                isLast && "rounded-r-md border-r border-r-border-subtle",
+                active &&
+                  "z-[2] border-cyan bg-bg-raised text-cyan shadow-[inset_0_0_0_1px_var(--cyan),0_0_14px_var(--cyan-glow)]",
+              )}
               disabled={option.disabled || !option.scope}
               aria-pressed={active}
               onClick={() => {
                 if (option.scope) onScopeChange(option.scope);
               }}
             >
-              <span className="agent-capability-level__name">
+              <span className="flex items-center gap-[6px] overflow-hidden font-mono text-[0.7rem] font-semibold tracking-[0.06em] whitespace-nowrap uppercase">
                 {option.label}
               </span>
-              <span className="agent-capability-level__detail">
+              <span className="mt-[2px] min-w-0 overflow-hidden font-mono text-[0.7rem] text-ellipsis whitespace-nowrap text-text-tertiary">
                 {option.detail ??
                   (option.scope ? scopeDetail(option.scope) : "")}
               </span>
@@ -274,7 +325,7 @@ export function AgentCapabilityLevelSwitcher({
           );
         })}
       </div>
-      <label className="agent-capability-panel__scope-select">
+      <label className={SR_ONLY}>
         <span>Edited layer</span>
         <select
           aria-label="Edited layer"
@@ -337,35 +388,52 @@ function CapabilityRow({
   const controlsDisabled = pending || unavailableReason !== undefined;
   const explicitHere = row.currentLayerValue !== undefined;
   const switchEnabled = row.ownEffectiveState.enabled;
-  const className = [
-    "agent-capability-row",
-    row.effectiveState.enabled ? "agent-capability-row--enabled" : "",
-    row.stale ? "agent-capability-row--stale" : "",
-    row.inheritedDisableReason ? "agent-capability-row--parent-disabled" : "",
-    row.inheritedDisableReason ? "agent-capability-row--plugin-disabled" : "",
-    row.applyStatus !== "none" ? "agent-capability-row--pending" : "",
-    explicitHere ? "agent-capability-row--explicit" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const effectiveOn = row.effectiveState.enabled;
+  const pluginDisabled = row.inheritedDisableReason !== undefined;
+  const applyPending = row.applyStatus !== "none";
+
+  const borderLeft = pluginDisabled
+    ? "border-l-2 border-l-blue"
+    : explicitHere
+      ? effectiveOn
+        ? "border-l-2 border-l-cyan"
+        : "border-l-2 border-l-amber"
+      : undefined;
+  const pendingRing =
+    applyPending && !(pluginDisabled || (explicitHere && !effectiveOn))
+      ? "shadow-[inset_2px_0_0_var(--cyan)]"
+      : undefined;
 
   return (
     <article
-      className={className}
+      className={cn(
+        "mb-sm grid h-full min-h-0 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-md overflow-hidden rounded-md border border-solid border-border-subtle bg-bg-surface px-[14px] py-[11px] transition-[border-color,background] duration-150 hover:border-border-default max-900:grid-cols-[1fr]",
+        borderLeft,
+        pendingRing,
+      )}
       data-testid={`capability-row-${row.itemId}`}
       data-item-id={row.itemId}
-      data-effective={row.effectiveState.enabled ? "on" : "off"}
+      data-effective={effectiveOn ? "on" : "off"}
     >
-      <div className="agent-capability-row__body">
-        <div className="agent-capability-row__main">
-          <div className="agent-capability-row__identity">
-            <span className="agent-capability-row__name">
+      <div className="grid min-w-0 gap-xs">
+        <div className="grid min-w-0 items-start justify-stretch gap-xs">
+          <div className="grid min-w-0 gap-[3px]">
+            <span
+              className={cn(
+                "min-w-0 overflow-hidden font-mono text-[0.86rem] font-medium [overflow-wrap:anywhere] text-ellipsis whitespace-nowrap",
+                effectiveOn
+                  ? "text-text-primary"
+                  : "text-text-secondary line-through decoration-text-tertiary decoration-1",
+              )}
+            >
               {row.displayName}
             </span>
-            <span className="agent-capability-row__id">{row.itemId}</span>
+            <span className="min-w-0 overflow-hidden font-mono text-[0.7rem] [overflow-wrap:anywhere] text-ellipsis whitespace-nowrap text-text-tertiary">
+              {row.itemId}
+            </span>
           </div>
         </div>
-        <div className="agent-capability-row__details">
+        <div className="mt-[5px] flex min-w-0 flex-wrap items-center gap-sm font-mono text-[0.7rem] text-text-tertiary">
           <InheritanceChip row={row} />
           {row.owningPluginId ? (
             <PluginChip
@@ -383,10 +451,12 @@ function CapabilityRow({
             />
           ) : null}
           {pending ? (
-            <span className="agent-capability-row__control-note">Pending</span>
+            <span className={cn(DETAILS_SPAN, "font-mono text-[0.7rem]")}>
+              Pending
+            </span>
           ) : null}
           {unavailableReason ? (
-            <span className="agent-capability-row__control-note">
+            <span className={cn(DETAILS_SPAN, "font-mono text-[0.7rem]")}>
               {unavailableReason}
             </span>
           ) : null}
@@ -397,21 +467,39 @@ function CapabilityRow({
       </div>
 
       {onToggleItem || onResetItem ? (
-        <div className="agent-capability-row__controls">
+        <div className="flex flex-wrap items-center justify-end gap-sm">
           <button
             type="button"
-            className={`agent-capability-row__switch${switchEnabled ? " agent-capability-row__switch--on" : ""}`}
+            className={cn(
+              SWITCH_BASE,
+              "h-[18px] w-[34px] disabled:cursor-not-allowed disabled:opacity-45",
+              switchEnabled ? SWITCH_ON : SWITCH_OFF,
+            )}
             aria-pressed={switchEnabled}
             aria-label={`${switchEnabled ? "Disable" : "Enable"} ${row.displayName}`}
             disabled={controlsDisabled || !onToggleItem}
             onClick={() => onToggleItem?.(row.itemId, !switchEnabled)}
           >
-            <span />
+            <span
+              className={cn(
+                SWITCH_KNOB,
+                "h-[14px] w-[14px]",
+                switchEnabled
+                  ? "translate-x-[16px] bg-text-inverse"
+                  : "bg-text-tertiary",
+              )}
+            />
           </button>
           {explicitHere ? (
+            // Retained on the `.btn` leaf recipe: this control needs a
+            // disabled-state fade (`disabled:opacity-45`), which the Button
+            // primitive cannot carry (it accepts no appearance className, and
+            // the fade is keyed on the button's own :disabled state, not the
+            // layout allowlist). Integration tracks this as a remediation
+            // consumer; see ApprovalGatePanel's local recipe for the precedent.
             <button
               type="button"
-              className="btn btn-ghost btn-sm agent-capability-row__reset"
+              className="btn btn-ghost btn-sm disabled:cursor-not-allowed disabled:opacity-45 max-768:min-h-[var(--touch-target-min)]"
               aria-label={`Reset ${row.displayName}`}
               disabled={controlsDisabled || !onResetItem}
               onClick={() => onResetItem?.(row.itemId)}
@@ -434,7 +522,11 @@ function StatusChip({
 }): React.JSX.Element {
   return (
     <span
-      className={`agent-capability-status-chip${tone ? ` agent-capability-status-chip--${tone}` : ""}`}
+      className={cn(
+        CHIP_BASE,
+        DETAILS_SPAN,
+        tone === "warning" ? CHIP_AMBER : tone === "pending" ? CHIP_CYAN : "",
+      )}
     >
       {label}
     </span>
@@ -456,22 +548,17 @@ function PluginChip({
   ) => void;
 }): React.JSX.Element {
   const label = pluginDisplayName(pluginId);
-  const className = [
-    "agent-capability-plugin-chip",
-    disabledByPlugin ? "agent-capability-plugin-chip--suppressed" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const chipClass = cn(PLUGIN_CHIP, disabledByPlugin && PLUGIN_CHIP_SUPPRESSED);
   const text = disabledByPlugin ? `Off via plugin · ${label}` : `via ${label}`;
 
   if (!onOpenPlugin) {
-    return <span className={className}>{text}</span>;
+    return <span className={cn(chipClass, DETAILS_SPAN)}>{text}</span>;
   }
 
   return (
     <button
       type="button"
-      className={className}
+      className={chipClass}
       aria-label={`Open ${label} plugin configuration`}
       onClick={() => onOpenPlugin(pluginId, backend)}
     >
@@ -488,7 +575,11 @@ function InheritanceChip({
   if (row.currentLayerValue) {
     return (
       <span
-        className={`agent-capability-inheritance agent-capability-inheritance--explicit${row.currentLayerValue.enabled ? "" : "-off"}`}
+        className={cn(
+          CHIP_BASE,
+          DETAILS_SPAN,
+          row.currentLayerValue.enabled ? CHIP_CYAN : CHIP_AMBER,
+        )}
       >
         Set {enabledStateLabel(row.currentLayerValue.enabled)} at{" "}
         {originLabel(row.currentLayerValue.originLayer)}
@@ -497,7 +588,7 @@ function InheritanceChip({
   }
 
   return (
-    <span className="agent-capability-inheritance">
+    <span className={cn(CHIP_BASE, DETAILS_SPAN)}>
       Inherits {enabledStateLabel(row.ownEffectiveState.enabled)} from{" "}
       {originLabel(row.ownEffectiveState.originLayer)}
     </span>
@@ -512,23 +603,28 @@ function DiagnosticList({
   compact?: boolean;
 }): React.JSX.Element {
   return (
-    <div
-      className={
-        compact
-          ? "agent-capability-diagnostics agent-capability-diagnostics--compact"
-          : "agent-capability-diagnostics"
-      }
-    >
+    <div className={cn("grid gap-[4px]", compact && "mt-[2px]")}>
       {diagnostics.map((diagnostic) => (
         <div
           key={`${diagnostic.code}:${diagnostic.itemId ?? ""}:${diagnostic.message}`}
-          className={`agent-capability-diagnostic agent-capability-diagnostic--${diagnostic.severity}`}
+          className={cn(
+            "rounded-sm px-[8px] py-[6px] font-mono text-[0.72rem] [overflow-wrap:anywhere]",
+            diagnosticToneClass(diagnostic.severity),
+          )}
         >
           <span>{diagnostic.message}</span>
         </div>
       ))}
     </div>
   );
+}
+
+function diagnosticToneClass(
+  severity: AgentCapabilityDiagnostic["severity"],
+): string {
+  if (severity === "warning") return "bg-amber-glow text-amber";
+  if (severity === "error") return "bg-red-glow text-red";
+  return "bg-bg-raised text-text-secondary";
 }
 
 function rowMatchesSearch(row: AgentCapabilityViewRow, term: string): boolean {

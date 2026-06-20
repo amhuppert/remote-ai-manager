@@ -8,6 +8,23 @@ import {
   useImperativeHandle,
   forwardRef,
 } from "react";
+import { cn } from "@/lib/ui/cn";
+import {
+  autocompleteEmptyClass,
+  autocompleteErrorClass,
+  autocompleteFooterClass,
+  autocompleteFooterKbdClass,
+  autocompleteHeaderClass,
+  autocompleteHeaderCountClass,
+  autocompleteItemClass,
+  autocompleteListClass,
+  autocompletePopupClass,
+} from "./CommandAutocompleteList";
+import {
+  fileCharClass,
+  fileExtBadgeClass,
+  filePathClass,
+} from "./FileAutocompleteList";
 
 /** A file item from the project file index */
 interface FileItem {
@@ -133,22 +150,24 @@ export const FileAutocomplete = forwardRef<
     : `${displayCount} ${displayCount === 1 ? "file" : "files"}`;
 
   return (
-    <div className="file-autocomplete">
-      <div className="file-header">
+    <div className={cn(autocompletePopupClass, "max-h-[340px]")}>
+      <div className={autocompleteHeaderClass}>
         <span>{sourceLabel ? `Files — ${sourceLabel}` : "Files"}</span>
-        <span className="file-header-count">
+        <span className={autocompleteHeaderCountClass}>
           {countLabel}
           {truncated ? " (truncated)" : ""}
         </span>
       </div>
 
-      <div className="file-list" ref={listRef}>
-        {loading && <div className="file-loading">Scanning files...</div>}
+      <div className={autocompleteListClass} ref={listRef}>
+        {loading && (
+          <div className={autocompleteEmptyClass}>Scanning files...</div>
+        )}
 
-        {error && <div className="file-error">{error}</div>}
+        {error && <div className={autocompleteErrorClass}>{error}</div>}
 
         {!loading && !error && items.length === 0 && (
-          <div className="file-empty">No matching files</div>
+          <div className={autocompleteEmptyClass}>No matching files</div>
         )}
 
         {!loading &&
@@ -156,7 +175,8 @@ export const FileAutocomplete = forwardRef<
           items.map((scored, i) => (
             <div
               key={scored.item.path}
-              className={`file-item${i === activeIndex ? " active" : ""}`}
+              data-active={i === activeIndex}
+              className={autocompleteItemClass}
               onMouseEnter={() => setActiveIndex(i)}
               onClick={() => onSelect(scored.item.path)}
             >
@@ -166,15 +186,16 @@ export const FileAutocomplete = forwardRef<
           ))}
       </div>
 
-      <div className="file-footer">
+      <div className={autocompleteFooterClass}>
         <span>
-          <kbd>↑</kbd> <kbd>↓</kbd> navigate
+          <kbd className={autocompleteFooterKbdClass}>↑</kbd>{" "}
+          <kbd className={autocompleteFooterKbdClass}>↓</kbd> navigate
         </span>
         <span>
-          <kbd>Enter</kbd> select
+          <kbd className={autocompleteFooterKbdClass}>Enter</kbd> select
         </span>
         <span>
-          <kbd>Esc</kbd> close
+          <kbd className={autocompleteFooterKbdClass}>Esc</kbd> close
         </span>
       </div>
     </div>
@@ -194,17 +215,14 @@ function FilePath({ path, indices }: { path: string; indices: number[] }) {
     const isDir = i <= lastSlash;
     const isMatch = indexSet.has(i);
 
-    let className = isDir ? "file-dir-char" : "file-name-char";
-    if (isMatch) className += " file-match";
-
     chars.push(
-      <span key={i} className={className}>
+      <span key={i} className={fileCharClass(isDir, isMatch)}>
         {path[i]}
       </span>,
     );
   }
 
-  return <span className="file-path">{chars}</span>;
+  return <span className={filePathClass}>{chars}</span>;
 }
 
 /** Renders a small extension badge (e.g., .tsx, .css) */
@@ -214,5 +232,5 @@ function FileExtBadge({ path }: { path: string }) {
   if (lastDot <= lastSlash) return null;
 
   const ext = path.slice(lastDot);
-  return <span className="file-ext">{ext}</span>;
+  return <span className={fileExtBadgeClass}>{ext}</span>;
 }

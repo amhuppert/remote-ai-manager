@@ -42,6 +42,15 @@ const backendAppearance: Record<BadgeBackend, string> = {
   codex: "bg-violet-glow text-violet",
 };
 
+// `subtle` de-emphasizes a badge in repetitive contexts. It renders the neutral
+// muted palette (text-secondary on bg-raised, 4.59:1) rather than fading the
+// variant with opacity — an opacity fade multiplies the text toward its
+// background and drops it below the WCAG AA contrast threshold. Where the accent
+// variant's identity matters (backend), the badge text + aria-label still carry
+// it. Resolved as a single appearance (not an appended override) because the
+// primitive's `cn` does not tailwind-merge conflicting utilities.
+const subtleAppearance = "bg-bg-raised text-text-secondary";
+
 type BadgeCommon = Omit<
   HTMLAttributes<HTMLSpanElement>,
   "className" | "style"
@@ -87,7 +96,9 @@ export function Badge(props: BadgeProps) {
     active,
     ...domProps
   } = props as BadgeAllProps;
-  const appearance = resolveAppearance(props as BadgeAllProps);
+  const appearance = subtle
+    ? subtleAppearance
+    : resolveAppearance(props as BadgeAllProps);
   const resolvedTier: BadgeTier = tier ?? "status";
 
   return (
@@ -99,7 +110,7 @@ export function Badge(props: BadgeProps) {
         resolvedTier === "count" ? String(active ?? false) : undefined
       }
       data-backend={backend}
-      className={cn(base, appearance, subtle && "opacity-50", layoutClassName)}
+      className={cn(base, appearance, layoutClassName)}
     />
   );
 }

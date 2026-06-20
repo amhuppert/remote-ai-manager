@@ -51,7 +51,7 @@ describe("CollabOpenConflictsCard (awaiting mode)", () => {
     expect(screen.getByText(/v1 vs v2 contract/)).toBeInTheDocument();
     expect(screen.getByText(/cache TTL strategy/)).toBeInTheDocument();
 
-    const chips = document.querySelectorAll(".collab-sev-cat-chip");
+    const chips = document.querySelectorAll("[data-severity]");
     expect(chips).toHaveLength(2);
   });
 

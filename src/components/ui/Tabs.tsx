@@ -59,8 +59,13 @@ export function Tab({
   );
 }
 
+// The active/inactive distinction is carried by the parent tab's color, which
+// the count inherits (inactive: text-secondary on bg-surface; active:
+// text-inverse on cyan; hover: text-primary) — every state meets WCAG AA. It is
+// NOT faded with opacity: an opacity fade multiplies the inactive count toward
+// its background and drops it below the AA text-contrast threshold.
 const tabCountBase =
-  "font-mono text-[0.7rem] font-medium px-[4px] rounded-full opacity-[0.85] data-[active=true]:opacity-100";
+  "font-mono text-[0.7rem] font-medium px-[4px] rounded-full";
 
 export type TabCountProps = Omit<
   HTMLAttributes<HTMLSpanElement>,

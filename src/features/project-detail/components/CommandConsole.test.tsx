@@ -33,15 +33,12 @@ describe("CommandConsole", () => {
       { cat: "status", key: "is", value: "running" },
       { cat: "target", key: "target", value: "main" },
     ];
-    const { container } = render(
-      <CommandConsole {...defaults()} tokens={tokens} />,
-    );
-    const chips = container.querySelectorAll(".console-token");
-    expect(chips).toHaveLength(2);
-    expect(chips[0]?.textContent).toContain("is:");
-    expect(chips[0]?.textContent).toContain("running");
-    expect(chips[1]?.textContent).toContain("target:");
-    expect(chips[1]?.textContent).toContain("main");
+    render(<CommandConsole {...defaults()} tokens={tokens} />);
+    expect(screen.getByText("is:")).toBeInTheDocument();
+    expect(screen.getByText("running")).toBeInTheDocument();
+    expect(screen.getByText("target:")).toBeInTheDocument();
+    expect(screen.getByText("main")).toBeInTheDocument();
+    expect(screen.getAllByLabelText(/Remove filter/)).toHaveLength(2);
   });
 
   it("calls onRemoveToken when chip × button is clicked", () => {
@@ -82,14 +79,14 @@ describe("CommandConsole", () => {
       },
     ];
 
-    const { rerender, container } = render(
+    const { rerender } = render(
       <CommandConsole
         {...defaults()}
         suggestions={suggestions}
         focused={false}
       />,
     );
-    expect(container.querySelector(".console-suggest")).toBeNull();
+    expect(screen.queryByText("is:running · 2")).toBeNull();
 
     rerender(
       <CommandConsole
@@ -98,7 +95,6 @@ describe("CommandConsole", () => {
         focused={true}
       />,
     );
-    expect(container.querySelector(".console-suggest")).not.toBeNull();
     expect(screen.getByText("is:running · 2")).toBeInTheDocument();
   });
 
@@ -119,17 +115,15 @@ describe("CommandConsole", () => {
         grp: "Filter",
       },
     ];
-    const { container } = render(
+    render(
       <CommandConsole
         {...defaults()}
         suggestions={suggestions}
         focused={true}
       />,
     );
-    const labels = Array.from(container.querySelectorAll(".grp-label")).map(
-      (el) => el.textContent,
-    );
-    expect(labels).toEqual(["Actions", "Filter"]);
+    expect(screen.getByText("Actions")).toBeInTheDocument();
+    expect(screen.getByText("Filter")).toBeInTheDocument();
   });
 
   it("applies the active suggestion on Enter", () => {
@@ -216,10 +210,8 @@ describe("CommandConsole", () => {
 
   it("does NOT call onBlur on mousedown inside the console", () => {
     const props = defaults();
-    const { container } = render(<CommandConsole {...props} focused={true} />);
-    const bar = container.querySelector(".console-bar");
-    expect(bar).not.toBeNull();
-    if (bar) fireEvent.mouseDown(bar);
+    render(<CommandConsole {...props} focused={true} />);
+    fireEvent.mouseDown(screen.getByRole("combobox"));
     expect(props.onBlur).not.toHaveBeenCalled();
   });
 

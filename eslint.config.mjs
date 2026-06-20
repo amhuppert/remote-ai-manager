@@ -17,6 +17,129 @@ import tailwindGuardrails from "./eslint-rules/tailwind-guardrails.mjs";
 const MIGRATED_UTILITY_FIRST = [
   "src/components/ui/**/*.{ts,tsx}",
   "src/features/projects-index/components/ProjectCard.tsx",
+  "src/features/projects-index/ProjectsIndexPage.tsx",
+  // Stage B-1 migrated feature surfaces.
+  "src/features/config/**/*.{ts,tsx}",
+  "src/features/_root/spawn-card/**/*.{ts,tsx}",
+  "src/features/workflows-catalog/**/*.{ts,tsx}",
+  "src/features/project-detail/composer/**/*.{ts,tsx}",
+  "src/features/project-detail/cockpit/**/*.{ts,tsx}",
+  // Stage B-2 migrated feature surfaces + shared components.
+  "src/features/session/tabs/**/*.{ts,tsx}",
+  "src/features/session/dialogs/**/*.{ts,tsx}",
+  "src/components/mcp/**/*.{ts,tsx}",
+  "src/components/HotkeyHelpModal.tsx",
+  "src/components/GlobalHotkeyHelp.tsx",
+  "src/components/BranchSelector.tsx",
+  "src/components/ContextFillIndicator.tsx",
+  "src/components/TddToggle.tsx",
+  "src/components/CardContextMenu.tsx",
+  "src/components/Topbar.tsx",
+  "src/components/NotificationsPanel.tsx",
+  "src/components/ApprovalGatePanel.tsx",
+  "src/components/ConfirmDialog.tsx",
+  "src/components/ModelSelector.tsx",
+  "src/components/ReasoningLevelSelector.tsx",
+  "src/features/session-diff/components/SessionDiffViewer.tsx",
+  // Stage B-3 migrated confined feature surfaces (AddConversationMenu is already
+  // covered by the session/tabs/** glob above).
+  "src/features/project-detail/components/**/*.{ts,tsx}",
+  "src/features/project-detail/ProjectDetailView.tsx",
+  "src/features/session/sidebar/**/*.{ts,tsx}",
+  "src/features/session/debug/**/*.{ts,tsx}",
+  "src/features/session/git/**/*.{ts,tsx}",
+  "src/features/session/conversation/SessionActionsMenu.tsx",
+  "src/features/session/conversation/InfoDetailsPopover.tsx",
+  // Stage B-4 conversation/prompt/panes cluster (mirrors the utility-collisions
+  // allowlist + the css ratchet; conversation.css/prompt.css/conversation-panes.css
+  // dropped to their preserved residuals). src/components + session/conversation
+  // entries are file-scoped so still-legacy siblings stay guarded; collab/, prompt/,
+  // panes/ migrated wholesale (dir-scoped).
+  "src/components/AgentPill.tsx",
+  "src/components/AskQuestionPanel.tsx",
+  "src/components/BackendToggle.tsx",
+  "src/components/ConversationNav.tsx",
+  "src/components/CopyMessageButton.tsx",
+  "src/components/FocusConfirmationBar.tsx",
+  "src/components/ImageAttachmentPreview.tsx",
+  "src/components/MessageActions.tsx",
+  "src/components/VoiceRecordButton.tsx",
+  "src/components/conversation/ConversationPanel.tsx",
+  "src/components/conversation/MessageRow.tsx",
+  "src/components/conversation/TypingIndicator.tsx",
+  "src/features/session/conversation/collab/**/*.{ts,tsx}",
+  "src/features/session/conversation/ConversationList.tsx",
+  "src/features/session/conversation/ConversationMentionChip.tsx",
+  "src/features/session/conversation/ConversationMentionChip.stories.tsx",
+  "src/features/session/conversation/DocsPanel.tsx",
+  "src/features/session/conversation/FileMentionChip.tsx",
+  "src/features/session/conversation/GraphWorkflowCard.tsx",
+  "src/features/session/conversation/RightPane.tsx",
+  "src/features/session/conversation/SpecBrowser.tsx",
+  "src/features/session/conversation/SyntheticForkBadge.tsx",
+  "src/features/session/prompt/**/*.{ts,tsx}",
+  "src/features/session/mobile/MobilePromptToolbar.tsx",
+  "src/features/session/mobile/MobilePromptToolbar.stories.tsx",
+  "src/features/session/panes/**/*.{ts,tsx}",
+  // Stage B-5a globals.css chrome slices. BulkConfirmModal is already covered by
+  // the project-detail/components/** glob; the prompt-editor mention popups by
+  // session/prompt/**. CreateSessionModal/MobileActionMenu are intentionally
+  // omitted (still part-legacy / deferred Family B). The dev-server inline-rgba
+  // gaps + the toast/autocomplete gaps are tokenized in tokens.css.
+  "src/features/session/conversation/ConversationLinkChip.tsx",
+  "src/components/CollapsibleText.tsx",
+  "src/components/MergeToast.tsx",
+  "src/components/InputNeededToast.tsx",
+  "src/components/PromptErrorToast.tsx",
+  "src/components/NotificationsPanelContainer.tsx",
+  "src/components/GlobalActivePanelHotkey.tsx",
+  "src/components/CommandAutocompleteList.tsx",
+  "src/components/FileAutocomplete.tsx",
+  "src/components/FileAutocompleteList.tsx",
+  "src/components/ConversationAutocompleteList.tsx",
+  "src/components/DevServerDrawer.tsx",
+  "src/features/session/conversation/DevServersButton.tsx",
+  // Stage B-5b agent-capability globals.css chrome slices (drawer shell, MCP panel,
+  // capability-panel core). The whole directory is utility-first; this dir entry
+  // supersedes the two B-2 stranded-file entries (Conversation/Scoped configs).
+  "src/components/agent-capabilities/**/*.{ts,tsx}",
+  // Stage B-6 final waves (graph/builder last) + the globals/session/conversation
+  // chrome they migrated wholesale. Mirrors the prettier class-sort overrides and
+  // the tailwind-utility-collisions allowlist (which the foundation pre-registered).
+  // session/debug,git,dialogs,panes,tabs,prompt/sidebar + ConversationPanel/
+  // ConversationNav/TddToggle are already covered by earlier-stage globs above.
+  // session/mobile/ is MIXED: MobileInfoPanel migrated to utilities (file-scoped
+  // below, alongside the B-4 MobilePromptToolbar entry), but MobileBottomBar and
+  // MobileSessionView.stories still consume the legacy .cc-tab/.mobile-bottom-bar
+  // recipes (deferred graph-context) — they stay guarded, so NO dir glob here.
+  "src/features/workflows-builder/**/*.{ts,tsx}",
+  "src/features/session-workflow/**/*.{ts,tsx}",
+  "src/components/workflow-graph/**/*.{ts,tsx}",
+  "src/features/session/mobile/MobileInfoPanel.tsx",
+  "src/components/ToolUseGroup.tsx",
+  "src/components/CommandIndicator.tsx",
+  "src/components/MessageContent.tsx",
+  "src/components/MobileActionMenu.tsx",
+  "src/components/DebugStructuredCard.tsx",
+  "src/components/CopyableId.tsx",
+  "src/features/session/conversation/SessionInfoStrip.tsx",
+  "src/features/session/conversation/SessionContent.tsx",
+  "src/features/session/conversation/LayoutSwitcher.tsx",
+  "src/features/session/conversation/InfoStrip.stories.tsx",
+  // Primitive-swap remediation wave (integration sync of the foundation's
+  // UTILITY_FIRST_PATHS pre-registration). The swap slices re-homed the shared
+  // leaf recipes (.btn*/.cc-tab*/.empty-state*/.status-dot/.form-*/.cc-section-*/
+  // .cc-primary/.cc-ibtn/.btn-toggle/.cc-checkbox/.cc-toast) onto ui/ primitives or
+  // inline utilities. session/conversation/ is now utility-first wholesale (this dir
+  // glob supersedes the file-scoped entries above). Toast.tsx is intentionally
+  // omitted: its bg-[rgba(20,25,35,0.96)] surface has no design token yet, so
+  // no-hardcoded-color would trip — minting the token + swapping the literal is a
+  // tokens.css/Toast.tsx edit outside this integration's ownership; tracked as a
+  // remediation task (mint token, swap literal, then add Toast.tsx here + .prettierrc).
+  "src/features/session/conversation/**/*.{ts,tsx}",
+  "src/components/LandPreparedMergeButton.tsx",
+  "src/features/session/ConversationWorkspace.tsx",
+  "src/app/projects/[name]/[session]/conflicts/page.tsx",
 ];
 
 // Foundation/vendor areas where authored global CSS is allowed. Feature `styles/`
@@ -131,11 +254,7 @@ const eslintConfig = defineConfig([
   // do not import whole-state anyway).
   {
     files: ["src/**/*.{ts,tsx}"],
-    ignores: [
-      ...WHOLE_STATE_ALLOWED,
-      "**/*.test.{ts,tsx}",
-      "**/*.stories.tsx",
-    ],
+    ignores: [...WHOLE_STATE_ALLOWED, "**/*.test.{ts,tsx}", "**/*.stories.tsx"],
     rules: {
       "no-restricted-imports": [
         "error",

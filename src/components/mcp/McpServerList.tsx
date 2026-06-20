@@ -57,7 +57,7 @@ export default function McpServerList({
 
   if (servers.length === 0) {
     return (
-      <div className="mcp-list-empty">
+      <div className="rounded-[4px] border border-dashed border-border-subtle bg-bg-surface p-lg text-center font-mono text-[0.75rem] text-[var(--text-muted)]">
         {emptyMessage ?? "No MCP servers discovered for this level."}
       </div>
     );
@@ -67,7 +67,7 @@ export default function McpServerList({
 
   if (hideScopeGroups) {
     return (
-      <div className="mcp-server-list">
+      <div className="flex flex-col gap-sm">
         {servers.map((server) => (
           <McpServerCard
             key={`${server.scope}:${server.id}`}
@@ -82,19 +82,21 @@ export default function McpServerList({
   }
 
   return (
-    <div className="mcp-server-list">
+    <div className="flex flex-col gap-sm">
       {grouped.map(({ scope, servers: scopeServers }) => (
-        <section key={scope} className="mcp-scope-group">
-          <header className="mcp-scope-group__head">
-            <span className="mcp-scope-group__label">
+        <section key={scope} className="[&:not(:first-child)]:mt-md">
+          <header className="mb-sm flex items-baseline gap-sm border-x-0 border-t-0 border-b border-solid border-border-subtle px-xs pb-xs">
+            <span className="font-mono text-[0.7rem] font-bold tracking-[0.08em] text-text-secondary">
               {SCOPE_LABEL[scope].toUpperCase()}
             </span>
-            <span className="mcp-scope-group__hint">{SCOPE_HINT[scope]}</span>
-            <span className="mcp-scope-group__count">
+            <span className="min-w-0 flex-1 truncate font-mono text-[0.7rem] text-[var(--text-muted)]">
+              {SCOPE_HINT[scope]}
+            </span>
+            <span className="rounded-[2px] bg-bg-surface px-xs font-mono text-[0.7rem] text-[var(--text-muted)]">
               {scopeServers.length}
             </span>
           </header>
-          <div className="mcp-scope-group__body">
+          <div className="flex flex-col gap-xs">
             {scopeServers.map((server) => (
               <McpServerCard
                 key={`${scope}:${server.id}`}

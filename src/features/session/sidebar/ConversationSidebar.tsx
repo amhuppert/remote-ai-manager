@@ -9,6 +9,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { cn } from "@/lib/ui/cn";
 import type {
   ActiveConversation,
   SessionActiveConversation,
@@ -77,6 +78,26 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
+// Status dot color for graph-workflow / collaboration items (legacy
+// `.sidebar-dot.<status>`).
+const SIDEBAR_DOT: Record<string, string> = {
+  running: "bg-cyan shadow-[0_0_4px_var(--color-cyan)]",
+  awaiting: "bg-green",
+  new: "bg-blue shadow-[0_0_4px_var(--color-blue)]",
+  waiting_for_input: "bg-amber shadow-[0_0_4px_var(--color-amber)]",
+};
+
+function sidebarDotClass(status: string): string {
+  return cn(
+    "mt-[5px] size-[6px] shrink-0 rounded-full bg-text-tertiary",
+    SIDEBAR_DOT[status],
+  );
+}
+
+// Active conversations list item (graph-workflow / collaboration link).
+const SIDEBAR_ITEM_CLASS =
+  "flex items-start gap-xs px-[12px] py-[10px] no-underline text-inherit border-y-0 border-r-0 border-l-2 border-solid border-transparent transition-[background-color,border-color] duration-100 ease-[ease] hover:bg-bg-elevated";
+
 function formatRelativeTime(isoDate: string): string {
   const diff = Date.now() - new Date(isoDate).getTime();
   const minutes = Math.floor(diff / 60_000);
@@ -100,7 +121,6 @@ interface SidebarRowItemProps {
   href: string;
   isActive: boolean;
   activeConversationId: string;
-  archived: boolean;
   closed: boolean;
   onOpenMenu: (point: { x: number; y: number }) => void;
   onNavigate: () => void;
@@ -114,7 +134,6 @@ function SidebarRowItem({
   href,
   isActive,
   activeConversationId,
-  archived,
   closed,
   onOpenMenu,
   onNavigate,
@@ -126,17 +145,7 @@ function SidebarRowItem({
   });
 
   return (
-    <div
-      className={[
-        "conversation-sidebar-row-wrapper",
-        archived ? "is-archived" : null,
-        closed ? "is-closed" : null,
-      ]
-        .filter(Boolean)
-        .join(" ")}
-      style={{ position: "relative" }}
-      {...handlers}
-    >
+    <div className="relative mx-[8px] my-[1px]" {...handlers}>
       <ConversationSidebarRow
         href={href}
         conversation={conversation}
@@ -592,28 +601,16 @@ function ConversationSidebar({
     ) => {
       const isEditing = editingId === row.id;
       const isActive = row.id === activeConversationId;
-      const archived = row.archived === true;
       const closed = isClosedProjectConversation(row);
       const descriptor = describeActiveRow(row);
       const href = descriptor.href;
 
       if (isEditing) {
         return (
-          <div
-            key={row.id}
-            className={[
-              "conversation-sidebar-row-wrapper",
-              archived ? "is-archived" : null,
-              closed ? "is-closed" : null,
-            ]
-              .filter(Boolean)
-              .join(" ")}
-            style={{ position: "relative" }}
-          >
+          <div key={row.id} className="relative mx-[8px] my-[1px]">
             <div
-              className="conversation-sidebar-row"
+              className="relative flex w-full flex-col items-start gap-[5px] overflow-hidden rounded-md border border-solid border-border-dim bg-transparent px-md py-sm"
               data-status={row.status}
-              style={{ padding: "var(--space-sm) var(--space-md)" }}
             >
               <input
                 ref={editInputRef}
@@ -646,7 +643,6 @@ function ConversationSidebar({
           href={href}
           isActive={isActive}
           activeConversationId={activeConversationId}
-          archived={archived}
           closed={closed}
           onNavigate={() => {
             if (row.scope === "session") {
@@ -711,51 +707,62 @@ function ConversationSidebar({
     ) => {
       return sections.map((section) => {
         if (section.items.length === 0) return null;
-        const headerClasses = ["convo-sidebar-section-header"];
-        if (section.kind === "needs") {
-          headerClasses.push("convo-sidebar-section-header--needs");
-          if (section.tone === "finished") {
-            headerClasses.push("convo-sidebar-section-header--finished");
-          }
-        } else if (section.kind === "closed") {
-          headerClasses.push("convo-sidebar-section-header--closed");
-        }
+        const isNeeds = section.kind === "needs";
+        const isFinished = isNeeds && section.tone === "finished";
+        const isClosedSection = section.kind === "closed";
+        const headerClass = cn(
+          "flex min-w-0 items-center gap-sm px-[12px] pb-[4px] font-mono text-[0.7rem] leading-[1.2] font-semibold tracking-[0.12em] uppercase",
+          isNeeds ? "pt-[10px]" : "pt-[12px]",
+          isFinished
+            ? "text-green"
+            : isNeeds
+              ? "text-amber"
+              : isClosedSection
+                ? "text-text-tertiary"
+                : "text-text-primary",
+          !isNeeds &&
+            "after:order-2 after:h-[1px] after:min-w-[16px] after:flex-1 after:[background-image:linear-gradient(to_right,var(--border-default),transparent)] after:content-['']",
+        );
+        const countClass = cn(
+          "order-1 font-medium",
+          isFinished
+            ? "text-green-dim"
+            : isNeeds
+              ? "text-amber-dim"
+              : "text-text-tertiary",
+        );
         return (
           <section
             key={section.groupKey}
-            className="convo-sidebar-section"
+            className="flex flex-col"
             data-section-kind={section.kind}
             data-section-tone={section.tone ?? undefined}
           >
-            <div className={headerClasses.join(" ")}>
+            <div className={headerClass}>
               {section.kind === "session" &&
               section.projectLabel !== undefined &&
               section.sessionLabel !== undefined ? (
-                <span className="convo-sidebar-section-label convo-sidebar-section-label--session">
-                  <span className="convo-sidebar-section-label-project">
+                <span className="inline-flex min-w-0 items-baseline gap-[5px] overflow-hidden text-ellipsis whitespace-nowrap">
+                  <span className="min-w-0 overflow-hidden text-ellipsis text-text-tertiary">
                     {section.projectLabel}
                   </span>
-                  <span className="convo-sidebar-section-label-separator">
-                    /
-                  </span>
-                  <span className="convo-sidebar-section-label-session">
+                  <span className="shrink-0 text-text-tertiary">/</span>
+                  <span className="min-w-0 overflow-hidden text-ellipsis text-text-primary">
                     {section.sessionLabel}
                   </span>
                 </span>
               ) : (
-                <span className="convo-sidebar-section-label">
+                <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
                   {section.label}
                 </span>
               )}
-              <span className="convo-sidebar-section-count">
+              <span className={countClass}>
                 {section.kind === "needs"
                   ? `(${section.items.length})`
                   : section.items.length}
               </span>
             </div>
-            <div className="convo-sidebar-section-rows">
-              {section.items.map((row) => renderRow(row))}
-            </div>
+            <div>{section.items.map((row) => renderRow(row))}</div>
           </section>
         );
       });
@@ -943,23 +950,41 @@ function ConversationSidebar({
     <>
       {/* Backdrop for mobile drawer */}
       <div
-        className={`convo-sidebar-backdrop${mobileOpen ? " visible" : ""}`}
+        className={cn(
+          "hidden max-768:fixed max-768:inset-0 max-768:z-[89] max-768:bg-[var(--cc-bg-void-a60)] max-768:backdrop-blur-[4px]",
+          mobileOpen && "max-768:block",
+        )}
         onClick={onMobileClose}
       />
       <div
-        className={`convo-sidebar${effectiveCollapsed ? " collapsed" : ""}${mobileOpen ? " mobile-open" : ""}`}
+        className={cn(
+          // `convo-sidebar` is kept as a structural hook: out-of-scope
+          // conversation.css (`.convo-sidebar .convo-rename-input`, Stage B-4)
+          // and the already-migrated ProjectCockpit (`[&_.convo-sidebar]`
+          // overrides) both select it. The panel's own appearance is
+          // utility-owned here.
+          "convo-sidebar flex flex-col overflow-hidden rounded-none border-y-0 border-r border-l-0 border-solid bg-bg-base transition-[width,min-width,border-right-color] duration-200 ease-[ease]",
+          effectiveCollapsed
+            ? "w-0 min-w-0 border-r-transparent"
+            : "w-[616px] min-w-[616px] border-border-default",
+          "max-768:fixed max-768:top-[var(--topbar-height)] max-768:bottom-[56px] max-768:left-0 max-768:z-[90] max-768:rounded-none max-768:border-border-default max-768:bg-bg-surface max-768:transition-transform max-768:duration-[250ms] max-768:ease-[ease]",
+          effectiveCollapsed
+            ? "max-768:w-[280px] max-768:min-w-[280px]"
+            : "max-768:w-[308px] max-768:min-w-[308px]",
+          mobileOpen ? "max-768:translate-x-0" : "max-768:-translate-x-full",
+        )}
       >
-        <div className="cc-section-header convo-sidebar-header">
-          <span className="convo-sidebar-title">
+        <div className="mb-header-content flex min-h-[28px] items-center justify-between gap-xs border-x-0 border-t-0 border-b border-solid border-border-subtle px-[10px] pt-[10px] pb-[8px]">
+          <span className="inline-flex min-w-0 items-baseline gap-[5px] overflow-hidden font-mono text-[0.72rem] leading-[1.2] font-semibold tracking-[0.1em] whitespace-nowrap text-text-secondary uppercase">
             Active Conversations{" "}
-            <span className="convo-sidebar-title-count">
+            <span className="font-medium text-text-tertiary">
               ({filterCounts.all})
             </span>
           </span>
-          <div className="cc-section-actions">
+          <div className="ml-auto flex items-center gap-xs">
             {showNewConversationButton && (
               <button
-                className="btn-icon-only convo-sidebar-header-new"
+                className="relative flex size-[28px] shrink-0 cursor-pointer items-center justify-center rounded-sm border border-solid border-transparent bg-transparent p-0 text-[1rem] font-medium text-cyan transition-[color,background-color,border-color] duration-150 ease-[ease] hover:border-cyan-dim hover:bg-[var(--cc-cyan-a10)] hover:text-text-primary disabled:cursor-not-allowed disabled:text-text-tertiary disabled:opacity-50 max-768:size-[44px] [&>svg]:size-[18px]"
                 onClick={handleNewConversation}
                 disabled={createConvoMutation.isPending}
                 data-tooltip="New conversation"
@@ -970,7 +995,12 @@ function ConversationSidebar({
             )}
             {showCollapseControl && (
               <button
-                className="btn-icon-only convo-sidebar-toggle"
+                // Legacy parity: `.convo-sidebar-toggle{display:none}` at
+                // max-768 was overridden by the later-sourced unlayered
+                // `.btn-icon-only{display:flex}`, so the collapse toggle in fact
+                // stayed visible on mobile and inherited the `.btn-icon-only`
+                // 44px/1rem touch enlargement.
+                className="relative flex size-[30px] shrink-0 cursor-pointer items-center justify-center rounded-sm border border-solid border-border-default bg-transparent p-0 text-[0.7rem] text-text-tertiary transition-all duration-150 ease-[ease] hover:border-border-strong hover:bg-bg-hover hover:text-text-primary max-768:size-[44px] max-768:text-[1rem]"
                 onClick={toggleCollapsed}
                 data-tooltip="Collapse sidebar"
               >
@@ -978,7 +1008,10 @@ function ConversationSidebar({
               </button>
             )}
             <button
-              className="convo-sidebar-close"
+              // `data-sidebar-close` is the hook ProjectCockpit uses to hide
+              // this drawer-close button in its embedded mobile rail pane.
+              data-sidebar-close=""
+              className="hidden size-[30px] shrink-0 cursor-pointer items-center justify-center rounded-sm border border-solid border-border-default bg-transparent p-0 text-[0.85rem] text-text-secondary max-768:flex max-768:size-[44px]"
               onClick={onMobileClose}
               data-tooltip="Close"
             >
@@ -988,7 +1021,7 @@ function ConversationSidebar({
         </div>
         {(!effectiveCollapsed || mobileOpen) && (
           <>
-            <div className="convo-sidebar-controls-wrapper">
+            <div className="flex flex-col gap-sm border-x-0 border-t-0 border-b border-solid border-border-subtle px-[12px] py-[8px]">
               <ConversationSidebarHeader
                 counts={filterCounts}
                 activeFilter={activeListFilter}
@@ -1001,14 +1034,14 @@ function ConversationSidebar({
               <ConversationSidebarFilters />
             </div>
 
-            <div className="convo-sidebar-list">
+            <div className="flex flex-1 flex-col gap-0 overflow-y-auto bg-bg-base pt-[8px] pb-[16px]">
               {activeGraphWorkflows.length > 0 && (
-                <div className="convo-sidebar-section">
-                  <div className="convo-sidebar-section-header">
-                    <span className="convo-sidebar-section-label">
+                <div className="flex flex-col">
+                  <div className="flex min-w-0 items-center gap-sm px-[12px] pt-[12px] pb-[4px] font-mono text-[0.7rem] leading-[1.2] font-semibold tracking-[0.12em] text-text-primary uppercase after:order-2 after:h-[1px] after:min-w-[16px] after:flex-1 after:[background-image:linear-gradient(to_right,var(--border-default),transparent)] after:content-['']">
+                    <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
                       Graph Workflows
                     </span>
-                    <span className="convo-sidebar-section-count">
+                    <span className="order-1 font-medium text-text-tertiary">
                       {activeGraphWorkflows.length}
                     </span>
                   </div>
@@ -1016,21 +1049,21 @@ function ConversationSidebar({
                     <Link
                       key={gw.executionId}
                       href={`/projects/${encodeURIComponent(gw.projectName)}/${encodeURIComponent(gw.sessionName)}/workflow`}
-                      className="convo-sidebar-item"
+                      className={SIDEBAR_ITEM_CLASS}
                     >
-                      <span className={`sidebar-dot ${gw.status}`} />
-                      <div className="convo-sidebar-item-body">
-                        <div className="convo-sidebar-item-name-row">
-                          <div className="convo-sidebar-item-summary">
+                      <span className={sidebarDotClass(gw.status)} />
+                      <div className="flex min-w-0 flex-1 flex-col gap-xs">
+                        <div className="flex min-w-0 items-baseline gap-xs">
+                          <div className="flex min-w-0 flex-1 items-center gap-[4px] overflow-hidden text-[0.78rem] font-medium text-ellipsis whitespace-nowrap text-text-primary">
                             {gw.activeContextTitles.length > 0
                               ? gw.activeContextTitles.join(" + ")
                               : "Graph Workflow"}
                           </div>
-                          <span className="convo-sidebar-active-time">
+                          <span className="shrink-0 font-mono text-[0.7rem] whitespace-nowrap text-text-tertiary">
                             {gw.completedContexts}/{gw.totalContexts}
                           </span>
                         </div>
-                        <span className="convo-sidebar-session-label">
+                        <span className="overflow-hidden font-mono text-[0.7rem] text-ellipsis whitespace-nowrap text-text-tertiary">
                           {gw.projectName} / {gw.sessionName}
                         </span>
                       </div>
@@ -1039,12 +1072,12 @@ function ConversationSidebar({
                 </div>
               )}
               {activeCollaborations.length > 0 && (
-                <div className="convo-sidebar-section">
-                  <div className="convo-sidebar-section-header">
-                    <span className="convo-sidebar-section-label">
+                <div className="flex flex-col">
+                  <div className="flex min-w-0 items-center gap-sm px-[12px] pt-[12px] pb-[4px] font-mono text-[0.7rem] leading-[1.2] font-semibold tracking-[0.12em] text-text-primary uppercase after:order-2 after:h-[1px] after:min-w-[16px] after:flex-1 after:[background-image:linear-gradient(to_right,var(--border-default),transparent)] after:content-['']">
+                    <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
                       Collaborations
                     </span>
-                    <span className="convo-sidebar-section-count">
+                    <span className="order-1 font-medium text-text-tertiary">
                       {activeCollaborations.length}
                     </span>
                   </div>
@@ -1058,19 +1091,19 @@ function ConversationSidebar({
                       <Link
                         key={collab.workflowId}
                         href={href}
-                        className="convo-sidebar-item"
+                        className={SIDEBAR_ITEM_CLASS}
                       >
-                        <span className={`sidebar-dot ${collab.status}`} />
-                        <div className="convo-sidebar-item-body">
-                          <div className="convo-sidebar-item-name-row">
-                            <div className="convo-sidebar-item-summary">
+                        <span className={sidebarDotClass(collab.status)} />
+                        <div className="flex min-w-0 flex-1 flex-col gap-xs">
+                          <div className="flex min-w-0 items-baseline gap-xs">
+                            <div className="flex min-w-0 flex-1 items-center gap-[4px] overflow-hidden text-[0.78rem] font-medium text-ellipsis whitespace-nowrap text-text-primary">
                               Collaboration ({collab.status})
                             </div>
-                            <span className="convo-sidebar-active-time">
+                            <span className="shrink-0 font-mono text-[0.7rem] whitespace-nowrap text-text-tertiary">
                               {formatRelativeTime(collab.updatedAt)}
                             </span>
                           </div>
-                          <span className="convo-sidebar-session-label">
+                          <span className="overflow-hidden font-mono text-[0.7rem] text-ellipsis whitespace-nowrap text-text-tertiary">
                             {collab.projectName} / {collab.sessionName}
                           </span>
                         </div>
@@ -1083,11 +1116,11 @@ function ConversationSidebar({
                 ? renderSections(sidebarSections)
                 : activeGraphWorkflows.length === 0 &&
                   activeCollaborations.length === 0 && (
-                    <div className="convo-sidebar-empty">
+                    <div className="px-md py-lg text-center font-mono text-[0.72rem] leading-[1.6] text-text-tertiary">
                       {sidebarFilter
                         ? "No matches."
                         : "No active conversations."}
-                      <span className="convo-sidebar-empty-hint">
+                      <span className="mt-xs block text-[0.7rem] opacity-[0.7]">
                         {sidebarFilter
                           ? "Try clearing the search."
                           : "New, running, or awaiting conversations will appear here."}

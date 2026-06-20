@@ -177,9 +177,9 @@ describe("PromptInputSlot", () => {
     );
 
     const panel = screen.getByTestId("approval-gate-panel");
-    const question = screen.getByText("Pick a flavor", {
-      selector: ".ask-question-card-q",
-    });
+    // The rendered question text is a behavioral landmark — no assertion on the
+    // migrated panel's internal DOM structure.
+    const [question] = screen.getAllByText("Pick a flavor");
     expect(panel).toBeInTheDocument();
     expect(question).toBeInTheDocument();
     expect(
@@ -187,7 +187,7 @@ describe("PromptInputSlot", () => {
     ).toBeNull();
     // Gate panel renders above the question panel.
     expect(
-      panel.compareDocumentPosition(question) &
+      panel.compareDocumentPosition(question!) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
   });

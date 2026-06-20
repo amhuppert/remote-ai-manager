@@ -442,7 +442,7 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
     );
 
     return (
-      <div className="prompt-editor" title={title}>
+      <div className="relative" title={title}>
         {slashState && projectName && sessionName ? (
           <PromptEditorSlashCommandPopup
             ref={slashPopupRef}
@@ -477,7 +477,10 @@ export const PromptEditor = forwardRef<PromptEditorHandle, PromptEditorProps>(
             onClose={() => setConversationState(null)}
           />
         ) : null}
-        <EditorContent editor={editor} className="prompt-editor__content" />
+        <EditorContent
+          editor={editor}
+          className="prompt-editor__content max-h-[50vh] min-h-[80px] overflow-y-auto rounded-md border border-border-default bg-bg-surface px-[14px] py-[12px] font-mono text-[0.85rem] leading-[1.5] text-text-primary transition-[border-color,box-shadow] duration-150 focus-within:border-cyan-dim focus-within:shadow-[0_0_0_3px_var(--cyan-glow)]"
+        />
       </div>
     );
   },

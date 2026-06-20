@@ -183,7 +183,7 @@ function WorkflowBuilderEditorInner({
   );
 
   return (
-    <div className="wb-editor">
+    <div className="flex min-h-0 flex-1 flex-col">
       <WorkflowToolbar
         workflowName={workflowName}
         revision={revision}
@@ -199,8 +199,12 @@ function WorkflowBuilderEditorInner({
         hasValidationErrors={validationErrors.length > 0}
         isMobile={isMobile}
       />
-      {saveError && <div className="wb-save-error-banner">{saveError}</div>}
-      <div className="wb-editor-body">
+      {saveError && (
+        <div className="border-b border-solid border-b-[var(--cc-red-a15)] bg-[var(--cc-red-a06)] px-md py-sm font-mono text-[0.72rem] leading-[1.4] text-red">
+          {saveError}
+        </div>
+      )}
+      <div className="flex min-h-0 flex-1 max-768:flex-col">
         <WorkflowBuilderCanvas
           onSelectContext={handleSelectContext}
           globalDefaults={globalDefaults}

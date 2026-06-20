@@ -10,6 +10,26 @@ import type {
 import CollabClaimsList from "@/features/session/conversation/collab/CollabClaimsList";
 import CollabCollapsibleCard from "@/features/session/conversation/collab/CollabCollapsibleCard";
 import CollabMarkdownText from "@/features/session/conversation/collab/CollabMarkdownText";
+import {
+  cardAgent,
+  cardEyebrow,
+  cardList,
+  cardNarrative,
+  cardRound,
+  cardSection,
+  cardSectionTitle,
+  cardSummary,
+  changeList,
+  changeListAddresses,
+  changeListAddressesId,
+  changeListAddressesLabel,
+  changeListChange,
+  changeListId,
+  changeListItem,
+  changeListRationale,
+  idList,
+  idListItem,
+} from "@/features/session/conversation/collab/card-chrome";
 
 export interface CollabCounterProposalCardProps {
   fromAgent: CollaborationAgent;
@@ -39,13 +59,13 @@ function IdList({
 }): React.JSX.Element | null {
   if (ids.length === 0) return null;
   return (
-    <section className="collab-artifact-card-section">
-      <h4 className="collab-artifact-card-section-title">
+    <section className={cardSection}>
+      <h4 className={cardSectionTitle}>
         {label} ({ids.length})
       </h4>
-      <ul className="collab-id-list">
+      <ul className={idList}>
         {ids.map((id) => (
-          <li key={id} className="collab-id-list-item">
+          <li key={id} className={idListItem}>
             {id}
           </li>
         ))}
@@ -89,53 +109,40 @@ export default function CollabCounterProposalCard({
       defaultOpen={defaultOpen}
       header={
         <>
-          <span className="collab-artifact-card-agent" data-agent={fromAgent}>
+          <span className={cardAgent} data-agent={fromAgent}>
             {AGENT_LABEL[fromAgent]}
           </span>
-          <span className="collab-artifact-card-eyebrow">Counter-proposal</span>
-          <span
-            className="collab-artifact-card-round"
-            aria-label={`Round ${round}`}
-          >
+          <span className={cardEyebrow}>Counter-proposal</span>
+          <span className={cardRound} aria-label={`Round ${round}`}>
             R{round}
           </span>
-          <span className="collab-artifact-card-summary">{summary}</span>
+          <span className={cardSummary}>{summary}</span>
         </>
       }
     >
-      <CollabMarkdownText
-        content={narrative}
-        className="collab-artifact-card-narrative"
-      />
+      <CollabMarkdownText content={narrative} className={cardNarrative} />
 
       <IdList ids={acceptedProposedChangeIds} label="Accepted" />
       <IdList ids={rejectedProposedChangeIds} label="Rejected" />
 
       {alternativeChanges.length > 0 ? (
-        <section className="collab-artifact-card-section">
-          <h4 className="collab-artifact-card-section-title">
+        <section className={cardSection}>
+          <h4 className={cardSectionTitle}>
             Alternative changes ({alternativeChanges.length})
           </h4>
-          <ul className="collab-change-list">
+          <ul className={changeList}>
             {alternativeChanges.map((change) => (
-              <li className="collab-change-list-item" key={change.id}>
-                <span className="collab-change-list-id">{change.id}</span>
-                <span className="collab-change-list-change">
-                  {change.change}
-                </span>
-                <span className="collab-change-list-rationale">
+              <li className={changeListItem} key={change.id}>
+                <span className={changeListId}>{change.id}</span>
+                <span className={changeListChange}>{change.change}</span>
+                <span className={changeListRationale}>
                   rationale: {change.rationale}
                 </span>
                 {change.addressesDisagreementIds.length > 0 ? (
-                  <span className="collab-change-list-addresses">
-                    <span className="collab-change-list-addresses-label">
-                      addresses:
-                    </span>
+                  <span className={changeListAddresses}>
+                    <span className={changeListAddressesLabel}>addresses:</span>
                     {change.addressesDisagreementIds.map((id) => (
-                      <span
-                        key={id}
-                        className="collab-change-list-addresses-id"
-                      >
+                      <span key={id} className={changeListAddressesId}>
                         {id}
                       </span>
                     ))}
@@ -154,11 +161,9 @@ export default function CollabCounterProposalCard({
       />
 
       {supporting.length > 0 ? (
-        <section className="collab-artifact-card-section">
-          <h4 className="collab-artifact-card-section-title">
-            Evidence ({supporting.length})
-          </h4>
-          <ul className="collab-artifact-card-list">
+        <section className={cardSection}>
+          <h4 className={cardSectionTitle}>Evidence ({supporting.length})</h4>
+          <ul className={cardList}>
             {supporting.map((item, idx) => (
               <li key={`supporting-${idx}`}>{item}</li>
             ))}

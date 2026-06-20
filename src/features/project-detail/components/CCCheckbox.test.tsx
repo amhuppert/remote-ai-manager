@@ -14,14 +14,14 @@ describe("CCCheckbox", () => {
     render(<CCCheckbox checked={true} onChange={() => {}} />);
     const cb = screen.getByRole("checkbox");
     expect(cb).toHaveAttribute("aria-checked", "true");
-    expect(cb.className).toContain("checked");
+    expect(cb).toHaveAttribute("data-checked", "true");
   });
 
   it('renders aria-checked="mixed" when indeterminate and not checked', () => {
     render(<CCCheckbox checked={false} indeterminate onChange={() => {}} />);
     const cb = screen.getByRole("checkbox");
     expect(cb).toHaveAttribute("aria-checked", "mixed");
-    expect(cb.className).toContain("indeterminate");
+    expect(cb).toHaveAttribute("data-indeterminate", "true");
   });
 
   it("calls onChange(!checked) on click and stops propagation", () => {

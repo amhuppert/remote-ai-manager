@@ -9,7 +9,7 @@ import "./styles/cockpit.css";
 
 function FakeTranscript() {
   return (
-    <div className="flex-1 min-h-0 flex flex-col p-lg">
+    <div className="flex min-h-0 flex-1 flex-col p-lg">
       <div className="message user">
         <div className="message-role">You</div>
         <div className="message-content">Refactor the auth module.</div>

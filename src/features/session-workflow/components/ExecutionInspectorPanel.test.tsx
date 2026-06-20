@@ -1013,7 +1013,6 @@ describe("ExecutionInspectorPanel — awaiting-approval status badge", () => {
 
     const badge = screen.getByText("Awaiting Approval");
     expect(badge).toBeInTheDocument();
-    expect(badge.classList.contains("awaiting-approval")).toBe(true);
   });
 });
 

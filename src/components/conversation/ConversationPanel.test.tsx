@@ -90,10 +90,8 @@ describe("ConversationPanel", () => {
   });
 
   it("does not render the prompt-error banner when promptError is null", () => {
-    const { container } = render(
-      <ConversationPanel {...makeProps({ promptError: null })} />,
-    );
-    expect(container.querySelector(".prompt-error")).toBeNull();
+    render(<ConversationPanel {...makeProps({ promptError: null })} />);
+    expect(screen.queryByText("×")).toBeNull();
   });
 
   it("renders 'Prompt cancelled' and invokes dismissCancelled on dismiss click", () => {
@@ -113,10 +111,8 @@ describe("ConversationPanel", () => {
   });
 
   it("does not render the prompt-cancelled banner when promptCancelled=false", () => {
-    const { container } = render(
-      <ConversationPanel {...makeProps({ promptCancelled: false })} />,
-    );
-    expect(container.querySelector(".prompt-cancelled")).toBeNull();
+    render(<ConversationPanel {...makeProps({ promptCancelled: false })} />);
+    expect(screen.queryByText("Prompt cancelled")).toBeNull();
   });
 
   it("renders the promptInputSlot in the panel", () => {

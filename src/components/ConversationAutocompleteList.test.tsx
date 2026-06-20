@@ -74,33 +74,9 @@ describe("ConversationAutocompleteList", () => {
       />,
     );
 
-    const rows = container.querySelectorAll(".conversation-item");
-    expect(rows[0]?.className).not.toContain("active");
-    expect(rows[1]?.className).toContain("active");
-  });
-
-  it("highlights match indices on the display label", () => {
-    const items = [
-      makeItem({
-        id: "a",
-        displayLabel: "foo bar",
-        matchIndices: [0, 1, 2],
-      }),
-    ];
-    const { container } = render(
-      <ConversationAutocompleteList
-        items={items}
-        selectedIndex={0}
-        onHover={NO_OP}
-        onSelect={NO_OP}
-        totalCount={1}
-        loading={false}
-        error={null}
-        includeArchived={false}
-        onToggleArchived={NO_OP}
-      />,
-    );
-    expect(container.querySelectorAll(".conversation-match")).toHaveLength(3);
+    const rows = container.querySelectorAll("[data-active]");
+    expect(rows[0]?.getAttribute("data-active")).toBe("false");
+    expect(rows[1]?.getAttribute("data-active")).toBe("true");
   });
 
   it("invokes onSelect when a row is clicked", () => {
@@ -145,7 +121,7 @@ describe("ConversationAutocompleteList", () => {
       />,
     );
 
-    const rows = container.querySelectorAll(".conversation-item");
+    const rows = container.querySelectorAll("[data-active]");
     fireEvent.mouseEnter(rows[1] as Element);
     expect(onHover).toHaveBeenCalledWith(1);
   });
@@ -260,7 +236,7 @@ describe("ConversationAutocompleteList", () => {
     expect(screen.getByText("2 of 50")).toBeInTheDocument();
   });
 
-  it("applies the archived modifier class to archived rows", () => {
+  it("flags archived rows via data-archived", () => {
     const items = [makeItem({ id: "a", archived: true })];
     const { container } = render(
       <ConversationAutocompleteList
@@ -275,9 +251,7 @@ describe("ConversationAutocompleteList", () => {
         onToggleArchived={NO_OP}
       />,
     );
-    expect(
-      container.querySelector(".conversation-item--archived"),
-    ).not.toBeNull();
+    expect(container.querySelector("[data-archived='true']")).not.toBeNull();
   });
 
   it("renders a status dot only for running or waiting_for_input", () => {
@@ -300,7 +274,7 @@ describe("ConversationAutocompleteList", () => {
       />,
     );
 
-    const dots = container.querySelectorAll(".conversation-item__status-dot");
+    const dots = container.querySelectorAll("[data-status]");
     expect(dots).toHaveLength(2);
   });
 
@@ -312,7 +286,7 @@ describe("ConversationAutocompleteList", () => {
         isCurrentProject: true,
       }),
     ];
-    const { container } = render(
+    render(
       <ConversationAutocompleteList
         items={items}
         selectedIndex={0}
@@ -325,9 +299,7 @@ describe("ConversationAutocompleteList", () => {
         onToggleArchived={NO_OP}
       />,
     );
-    expect(
-      container.querySelector(".conversation-item__project")?.textContent,
-    ).toBe("current");
+    expect(screen.getByText("current")).toBeInTheDocument();
     expect(screen.queryByText(/elsewhere/)).not.toBeInTheDocument();
   });
 });

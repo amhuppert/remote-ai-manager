@@ -1,5 +1,6 @@
 "use client";
 
+import { cn } from "@/lib/ui/cn";
 import {
   useSidebarSessionFilter,
   useSetSidebarSessionFilter,
@@ -25,43 +26,50 @@ export default function ConversationSidebarFilters({
   const setSessionFilter = useSetSidebarSessionFilter();
 
   return (
-    <div className="convo-sidebar-group-controls">
-      <div className="convo-sidebar-group-row">
-        <span className="convo-sidebar-group-label">{label}</span>
+    <div className="flex flex-col gap-xs">
+      <div className="flex min-w-0 items-center gap-sm">
+        <span className="shrink-0 font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+          {label}
+        </span>
         <div
-          className="convo-sidebar-group-switch"
+          className="flex min-w-0 flex-1 items-center gap-[2px] rounded-sm border border-solid border-border-default bg-bg-surface p-[2px]"
           role="radiogroup"
           aria-label={label}
         >
-          {GROUP_BY_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              role="radio"
-              className={`convo-sidebar-group-option${groupBy === opt.value ? " active" : ""}`}
-              onClick={() => setGroupBy(opt.value)}
-              aria-checked={groupBy === opt.value}
-            >
-              {opt.value === "project" ? <FolderIcon /> : <SessionIcon />}
-              {opt.label}
-            </button>
-          ))}
+          {GROUP_BY_OPTIONS.map((opt) => {
+            const active = groupBy === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                role="radio"
+                className={cn(
+                  "inline-flex h-[22px] min-w-0 flex-1 cursor-pointer items-center justify-center gap-[5px] rounded-[3px] border-0 px-[6px] font-mono text-[0.7rem] font-semibold tracking-[0.06em] uppercase max-768:min-h-[var(--touch-target-min)]",
+                  active
+                    ? "bg-bg-elevated text-text-primary [&_svg]:text-cyan"
+                    : "bg-transparent text-text-secondary hover:bg-bg-hover hover:text-text-primary",
+                )}
+                onClick={() => setGroupBy(opt.value)}
+                aria-checked={active}
+              >
+                {opt.value === "project" ? <FolderIcon /> : <SessionIcon />}
+                {opt.label}
+              </button>
+            );
+          })}
         </div>
       </div>
       {sessionFilter !== null && (
         <button
           type="button"
-          className="convo-sidebar-session-filter-chip"
+          className="inline-flex max-w-full cursor-pointer items-center gap-xs self-start rounded-full border border-solid border-border-subtle bg-bg-elevated px-sm py-[2px] font-mono text-[11px] text-text-secondary hover:border-cyan-dim hover:text-text-primary focus-visible:border-cyan-dim focus-visible:text-text-primary focus-visible:outline-none"
           onClick={() => setSessionFilter(null)}
           aria-label={`Clear session filter (${sessionFilter.sessionName})`}
         >
-          <span className="convo-sidebar-session-filter-chip__label">
+          <span className="overflow-hidden text-ellipsis whitespace-nowrap">
             Session: {sessionFilter.sessionName}
           </span>
-          <span
-            className="convo-sidebar-session-filter-chip__close"
-            aria-hidden="true"
-          >
+          <span className="text-[10px] opacity-[0.7]" aria-hidden="true">
             &#10005;
           </span>
         </button>

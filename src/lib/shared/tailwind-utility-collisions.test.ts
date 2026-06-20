@@ -52,6 +52,157 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}features${path.sep}workflows-catalog${path.sep}`,
   `${path.sep}features${path.sep}project-detail${path.sep}composer${path.sep}`,
   `${path.sep}features${path.sep}project-detail${path.sep}cockpit${path.sep}`,
+  // Stage B-2 migrated feature surfaces + shared components. The src/components
+  // entries are file-scoped (their still-legacy siblings stay under the guard).
+  `${path.sep}features${path.sep}session${path.sep}tabs${path.sep}`,
+  `${path.sep}features${path.sep}session${path.sep}dialogs${path.sep}`,
+  `${path.sep}components${path.sep}mcp${path.sep}`,
+  `${path.sep}components${path.sep}HotkeyHelpModal.tsx`,
+  `${path.sep}components${path.sep}GlobalHotkeyHelp.tsx`,
+  `${path.sep}components${path.sep}BranchSelector.tsx`,
+  `${path.sep}components${path.sep}ContextFillIndicator.tsx`,
+  `${path.sep}components${path.sep}TddToggle.tsx`,
+  `${path.sep}components${path.sep}CardContextMenu.tsx`,
+  `${path.sep}components${path.sep}Topbar.tsx`,
+  `${path.sep}components${path.sep}NotificationsPanel.tsx`,
+  `${path.sep}components${path.sep}ApprovalGatePanel.tsx`,
+  // Stage B-5b agent-capability drawer-shell slice: the whole directory goes
+  // utility-first as the cap-*/tabs/configurator/drawer/trigger families are
+  // migrated out of globals.css. Dir-scoped (covers the still-in-flight panel
+  // slices too — their not-yet-migrated classes stay rule-backed in globals.css,
+  // so no bare-token collision exists for the heuristic to catch).
+  `${path.sep}components${path.sep}agent-capabilities${path.sep}`,
+  `${path.sep}features${path.sep}projects-index${path.sep}ProjectsIndexPage.tsx`,
+  `${path.sep}components${path.sep}ConfirmDialog.tsx`,
+  `${path.sep}components${path.sep}ModelSelector.tsx`,
+  `${path.sep}components${path.sep}ReasoningLevelSelector.tsx`,
+  // SessionDiffViewer reproduces the session.css/conversation.css diff/commit
+  // rules as utilities in its own .tsx (those dense files stay for the sidebar
+  // until B-3); fully utility-first.
+  `${path.sep}features${path.sep}session-diff${path.sep}components${path.sep}SessionDiffViewer.tsx`,
+  // Stage B-3 confined feature surfaces (AddConversationMenu is covered by the
+  // session/tabs/ entry above). project-detail/components + ProjectDetailView are
+  // file/dir-scoped so the still-legacy project-detail shell stays under the guard.
+  `${path.sep}features${path.sep}project-detail${path.sep}components${path.sep}`,
+  `${path.sep}features${path.sep}project-detail${path.sep}ProjectDetailView.tsx`,
+  `${path.sep}features${path.sep}session${path.sep}sidebar${path.sep}`,
+  `${path.sep}features${path.sep}session${path.sep}debug${path.sep}`,
+  `${path.sep}features${path.sep}session${path.sep}git${path.sep}`,
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}SessionActionsMenu.tsx`,
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}InfoDetailsPopover.tsx`,
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}ConversationLinkChip.tsx`,
+  `${path.sep}components${path.sep}CollapsibleText.tsx`,
+  // ConversationsPage is NOT utility-first; the sidebar wave migrated only its
+  // sidebar-expand-float button to utilities (the `.convo-sidebar-expand-float`
+  // rule was deleted from sidebar.css). File-scoped so the page's still-legacy
+  // remainder stays under the guard.
+  `${path.sep}features${path.sep}session${path.sep}ConversationsPage.tsx`,
+  // Stage B-4 conversation/prompt/panes cluster: conversation.css dropped to its
+  // preserved floor as these surfaces went utility-first (cn()/static maps). The
+  // src/components entries are file-scoped so still-legacy siblings stay guarded;
+  // collab/ and session/prompt/ migrated wholesale (dir-scoped).
+  `${path.sep}components${path.sep}AgentPill.tsx`,
+  `${path.sep}components${path.sep}AskQuestionPanel.tsx`,
+  `${path.sep}components${path.sep}BackendToggle.tsx`,
+  `${path.sep}components${path.sep}ConversationNav.tsx`,
+  `${path.sep}components${path.sep}CopyMessageButton.tsx`,
+  `${path.sep}components${path.sep}FocusConfirmationBar.tsx`,
+  `${path.sep}components${path.sep}ImageAttachmentPreview.tsx`,
+  `${path.sep}components${path.sep}MessageActions.tsx`,
+  `${path.sep}components${path.sep}VoiceRecordButton.tsx`,
+  `${path.sep}components${path.sep}conversation${path.sep}ConversationPanel.tsx`,
+  `${path.sep}components${path.sep}conversation${path.sep}MessageRow.tsx`,
+  `${path.sep}components${path.sep}conversation${path.sep}TypingIndicator.tsx`,
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}collab${path.sep}`,
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}ConversationList.tsx`,
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}ConversationMentionChip.tsx`,
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}ConversationMentionChip.stories.tsx`,
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}DocsPanel.tsx`,
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}FileMentionChip.tsx`,
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}GraphWorkflowCard.tsx`,
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}RightPane.tsx`,
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}SpecBrowser.tsx`,
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}SyntheticForkBadge.tsx`,
+  `${path.sep}features${path.sep}session${path.sep}prompt${path.sep}`,
+  `${path.sep}features${path.sep}session${path.sep}mobile${path.sep}MobilePromptToolbar.tsx`,
+  `${path.sep}features${path.sep}session${path.sep}mobile${path.sep}MobilePromptToolbar.stories.tsx`,
+  // Stage B-4 conversation-panes wave: the split-screen panes frame is fully
+  // utility-first (conversation-panes.css dropped to its 3-selector residual).
+  `${path.sep}features${path.sep}session${path.sep}panes${path.sep}`,
+  // Stage B-5a merge-toast slice: the global toast layer is fully utility-first
+  // (the .merge-toast* region was deleted from globals.css; only its keyframes
+  // remain as preserved-CSS).
+  `${path.sep}components${path.sep}MergeToast.tsx`,
+  `${path.sep}components${path.sep}InputNeededToast.tsx`,
+  `${path.sep}components${path.sep}PromptErrorToast.tsx`,
+  // Stage B-5a unified-panel + modal-feature-bits slice. The dead .unified-panel*
+  // region was deleted from globals.css (its consumer is the already-migrated
+  // .np-* NotificationsPanel); these two carry no legacy classes. The migrated
+  // modals BulkConfirmModal/CreateSessionModal already fall under the
+  // features/project-detail/components/ dir entry above.
+  `${path.sep}components${path.sep}NotificationsPanelContainer.tsx`,
+  `${path.sep}components${path.sep}GlobalActivePanelHotkey.tsx`,
+  // Stage B-5a autocomplete slice: the .cmd-*/.file-*/.conversation-* autocomplete
+  // regions were deleted from globals.css (only the shared cmdReveal keyframe
+  // remains as preserved-CSS). The popup consumers fall under the
+  // features/session/prompt/ dir entry above.
+  `${path.sep}components${path.sep}CommandAutocompleteList.tsx`,
+  `${path.sep}components${path.sep}FileAutocomplete.tsx`,
+  `${path.sep}components${path.sep}FileAutocompleteList.tsx`,
+  `${path.sep}components${path.sep}ConversationAutocompleteList.tsx`,
+  // DevServerDrawer + DevServersButton are utility-first; their only CSS is the
+  // ds-panel-in/ds-sheet-in entry keyframes in globals.css (preserved-CSS).
+  `${path.sep}components${path.sep}DevServerDrawer.tsx`,
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}DevServersButton.tsx`,
+  // Stage B-6 pre-registration (foundation context): all surfaces the parallel
+  // B-6 migration waves convert wholesale to utilities are exempted here in one
+  // edit so those waves need no further allowlist changes. SAFE: not-yet-migrated
+  // files still use rule-backed legacy classes (no bare-token utility collision),
+  // so exempting them early is a no-op for the heuristic. Whole folders that
+  // migrate wholesale are dir-scoped; the globals-chrome / shared components that
+  // migrate file-by-file are file-scoped. (The .collaboration-status-card rule in
+  // globals.css is dead — its old consumer was deleted — so it needs no entry.)
+  `${path.sep}features${path.sep}workflows-builder${path.sep}`,
+  `${path.sep}features${path.sep}session-workflow${path.sep}`,
+  `${path.sep}components${path.sep}workflow-graph${path.sep}`,
+  // session/mobile/ is now utility-first WHOLESALE. The B-4/B-6 waves migrated
+  // MobileInfoPanel/MobilePromptToolbar/MobileSessionView.stories; the primitive-swap
+  // remediation wave migrates the last leaf-recipe holdout (MobileBottomBar.tsx's
+  // .cc-tabs/.cc-tab recipes → the Tabs primitive), so the whole dir is dir-scoped
+  // here (superseding the earlier file-scoping that kept MobileBottomBar guarded).
+  `${path.sep}features${path.sep}session${path.sep}mobile${path.sep}`,
+  `${path.sep}components${path.sep}ToolUseGroup.tsx`,
+  `${path.sep}components${path.sep}CommandIndicator.tsx`,
+  // MessageContent.tsx hosts the ToolUseIndicator (the .tool-use-* chrome this
+  // B-6 message wave migrated to utilities). The foundation pre-registration
+  // omitted it; added here (UTILITY_FIRST_PATHS only — eslint/prettier allowlist
+  // sync deferred to integration) so the collision guardrail stays green.
+  `${path.sep}components${path.sep}MessageContent.tsx`,
+  `${path.sep}components${path.sep}MobileActionMenu.tsx`,
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}SessionInfoStrip.tsx`,
+  `${path.sep}components${path.sep}CopyableId.tsx`,
+  // Session-chrome slice entries the foundation pre-registration omitted (the
+  // SessionInfoStrip host components migrated to utilities). DebugStructuredCard
+  // has no bare-token collision so needs no entry here (see b6-session-chrome
+  // foundation-gap doc); it is still registered in eslint/prettier for class-sort.
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}SessionContent.tsx`,
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}LayoutSwitcher.tsx`,
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}InfoStrip.stories.tsx`,
+  // Primitive-swap remediation wave pre-registration (UTILITY_FIRST_PATHS only;
+  // eslint.config.mjs + .prettierrc sync deferred to the integration context). The
+  // parallel swap slices re-home each shared leaf recipe (.btn*/.cc-tab*/.empty-state*/
+  // .status-dot/.form-*/.cc-section-*/.cc-primary/.cc-ibtn/.btn-toggle/.cc-checkbox/
+  // .cc-toast) onto the matching ui/ primitive or inline utilities. SAFE pre-swap:
+  // every file below still uses rule-backed legacy classes today (no bare-token
+  // collision), so exempting it now is a no-op for the heuristic; the entry takes
+  // effect once a slice adds layout utilities. Owned subdirs that go utility-first
+  // wholesale are dir-scoped (their existing file-scoped entries above stay valid,
+  // just now redundant); the shared globals-chrome consumers are file-scoped.
+  `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}`,
+  `${path.sep}components${path.sep}LandPreparedMergeButton.tsx`,
+  `${path.sep}components${path.sep}Toast.tsx`,
+  `${path.sep}features${path.sep}session${path.sep}ConversationWorkspace.tsx`,
+  `${path.sep}app${path.sep}projects${path.sep}[name]${path.sep}[session]${path.sep}conflicts${path.sep}page.tsx`,
 ];
 
 function srcFiles(ext: string): string[] {

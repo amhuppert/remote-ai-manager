@@ -64,17 +64,20 @@ const meta = {
     (Story) => (
       <div
         style={{
-          position: "relative",
-          padding: "var(--space-lg)",
-          maxWidth: 520,
+          minHeight: 700,
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "flex-end",
         }}
       >
-        <Story />
+        <div style={{ position: "relative", maxWidth: 520 }}>
+          <Story />
+        </div>
       </div>
     ),
   ],
   parameters: {
-    layout: "padded",
+    layout: "fullscreen",
   },
 } satisfies Meta<typeof ConversationAutocompleteList>;
 

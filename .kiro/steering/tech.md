@@ -8,6 +8,7 @@ Server-rendered Next.js + API routes as backend. **Persistence**: a single SQLit
 
 - **TypeScript** — `strict`, `noUncheckedIndexedAccess`, `noUnusedLocals`, `noUnusedParameters`, `allowJs: false`
 - **Next.js 16** (App Router) + **React 19** + **Node.js**
+- **Tailwind CSS v4** (`@tailwindcss/postcss`, CSS-first `@theme`) — the styling system: utility-first classNames + React primitives in `src/components/ui/` + the `cn()` helper (`src/lib/ui/cn.ts`). Custom tokens are defined in `src/features/_root/styles/theme.css` (`@theme`) — the single source of truth for which utilities exist. Which built-ins may/may not be used: `docs/tailwind-conventions.md`. Preflight is intentionally OFF (`reset.css` is the canonical base reset).
 - **Zod v4** — schema-first; types derived via `z.infer`; `safeParse` external/untrusted, `parse` internal/trusted
 - **Zustand + Immer** — client state (`src/stores/`)
 - **@tanstack/react-query** — server state; per-domain factories in `src/lib/<domain>/{queries,mutations,query-keys}.ts`
@@ -54,8 +55,8 @@ bun run lint         # eslint
 
 ## Code style
 
-- ESLint via `eslint-config-next`
-- CSS: kebab-case BEM-style (`project-card-header`)
+- ESLint via `eslint-config-next` + Tailwind guardrail rules (`no-hardcoded-color`, `no-dynamic-class`, `no-appearance-in-layout-classname`, `no-unapproved-global-css`) on migrated utility-first files
+- Styling: **Tailwind v4** utility-first (+ `ui/` primitives + `cn()`); tokens in `src/features/_root/styles/theme.css`; new global CSS is rejected by the `no-unapproved-global-css` guardrail. Allowed vs forbidden built-in utilities: `docs/tailwind-conventions.md`. Legacy/preserved stylesheets use kebab-case BEM (`project-card-header`)
 - Vitest tests colocated next to source
 
 ## Key Decisions

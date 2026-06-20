@@ -12,12 +12,11 @@ export interface SessionsFilterPopoverProps {
 }
 
 // The popover menu shadow uses the design-system popovers/menus black drop
-// shadow (rgba(0,0,0,0.35)); there is no solid-color token for it, so the
-// established black-drop-shadow exception is referenced inline for exact parity.
+// shadow, exposed as the `shadow-menu` token utility (theme.css → --shadow-menu).
 const MENU_CLASS =
   "absolute right-0 top-[calc(100%+var(--space-xs))] z-sticky min-w-[220px] p-sm " +
   "bg-bg-elevated border border-solid border-border-default rounded-md " +
-  "shadow-[0_12px_32px_rgba(0,0,0,0.35)] flex flex-col gap-sm";
+  "shadow-menu flex flex-col gap-sm";
 
 const GROUP_LABEL_CLASS =
   "font-mono text-[0.66rem] font-semibold tracking-[0.08em] uppercase text-text-tertiary";

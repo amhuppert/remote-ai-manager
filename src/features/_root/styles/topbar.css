@@ -1,5 +1,24 @@
 /* ============================================================
-   Topbar
+   Topbar — residual after Tailwind migration
+   ============================================================
+
+   src/components/Topbar.tsx is migrated to Tailwind utilities. The rules below
+   are RESIDUAL and intentionally retained (Topbar is not their sole consumer):
+
+   - .topbar / .topbar-brand / .topbar-logo / .topbar-divider /
+     .topbar-breadcrumb (+ a:hover, .bc-session): still consumed by the
+     hand-rolled topbar markup in
+     src/features/session/mobile/MobileSessionView.stories.tsx — a deferred
+     Stage B-3 surface outside this wave's write set.
+   - .topbar-status-default / .topbar-status-session: descendant-selector
+     anchors for externally-injected globalStatus / sessionControls content
+     (status indicators, buttons, layout switcher) that Topbar does not author;
+     also targeted by migrated controls via the [.topbar-status-session_&]
+     arbitrary variant.
+   - .topbar-sep: also consumed by session controls injected into the topbar
+     (SessionInfoStrip, ConversationList).
+
+   References the shared `pulse-dot` keyframe (preserved in globals.css).
    ============================================================ */
 
 .topbar {
@@ -47,10 +66,6 @@
   color: var(--text-secondary);
 }
 
-.topbar-breadcrumb .bc-sep {
-  color: var(--text-tertiary);
-}
-
 .topbar-breadcrumb a:hover {
   color: var(--text-primary);
 }
@@ -58,16 +73,6 @@
 .topbar-breadcrumb .bc-session {
   color: var(--text-primary);
   font-weight: 600;
-}
-
-.topbar-mobile-back {
-  display: none;
-}
-
-.topbar-status {
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
 }
 
 .topbar-status-default,
@@ -82,102 +87,4 @@
   height: 24px;
   background: var(--border-default);
   flex-shrink: 0;
-}
-
-.topbar-nav-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  text-decoration: none;
-  transition: all 0.15s ease;
-}
-
-.topbar-nav-link:hover {
-  color: var(--text-primary);
-  border-color: var(--cyan);
-  background: var(--bg-hover);
-}
-
-.topbar-nav-link.active {
-  color: var(--text-primary);
-  border-color: var(--cyan);
-}
-
-.topbar-nav-link-label {
-  line-height: 1;
-}
-
-.topbar-needs {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: 28px;
-  padding: 0 11px 0 9px;
-  border-radius: 999px;
-  background: var(--amber-glow);
-  border: 1px solid var(--amber-dim);
-  color: var(--amber);
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  text-decoration: none;
-  cursor: pointer;
-  transition:
-    background 0.14s ease,
-    border-color 0.14s ease;
-}
-
-.topbar-needs:hover {
-  background: rgba(255, 179, 0, 0.2);
-  border-color: var(--amber);
-}
-
-.topbar-needs__dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--amber);
-  box-shadow: 0 0 7px var(--amber);
-  animation: pulse-dot 1.6s ease-in-out infinite;
-}
-
-.topbar-needs__count {
-  font-variant-numeric: tabular-nums;
-}
-
-.topbar-needs__label {
-  color: var(--amber-dim);
-  font-weight: 600;
-}
-
-.topbar-needs__approvals {
-  color: var(--amber);
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-@media (max-width: 768px) {
-  .topbar-nav-link {
-    height: 44px;
-    padding: 0 var(--space-sm);
-  }
-  .topbar-nav-link-label {
-    display: none;
-  }
-  .topbar-needs__label {
-    display: none;
-  }
 }

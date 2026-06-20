@@ -27,7 +27,7 @@ export function ConfigSubsection({
       )}
       data-subsection={id}
     >
-      <div className="flex items-center gap-[7px] px-md py-[10px] border-x-0 border-t-0 border-b border-solid border-border-subtle bg-bg-base text-text-secondary font-mono text-[0.72rem] font-semibold tracking-[0.08em] uppercase text-left cursor-default select-text">
+      <div className="flex cursor-default items-center gap-[7px] border-x-0 border-t-0 border-b border-solid border-border-subtle bg-bg-base px-md py-[10px] text-left font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-secondary uppercase select-text">
         <span>{title}</span>
         <span
           className={cn(

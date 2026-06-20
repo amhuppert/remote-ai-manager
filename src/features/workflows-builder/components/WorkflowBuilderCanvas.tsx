@@ -39,6 +39,9 @@ const nodeTypes = {
 } as unknown as NodeTypes;
 const edgeTypes = { contextEdge: ContextEdge } as unknown as EdgeTypes;
 
+const CANVAS_WRAPPER_CLASS =
+  "relative flex min-w-0 flex-1 flex-col max-768:[.app[data-page=workflow-builder][data-mobile-panel=inspector]_&]:hidden";
+
 interface WorkflowBuilderCanvasProps {
   onSelectContext?: (contextId: string | null) => void;
   globalDefaults?: WorkflowDefaults;
@@ -187,11 +190,16 @@ export default function WorkflowBuilderCanvas({
     [draftDefinition, updateDefinition],
   );
 
+  // Faithful transcription of the legacy `.wb-empty-state`/`-text` recipe
+  // (full-height, gap-md, 0.82rem/500). This is NOT the `EmptyState` primitive
+  // recipe (`.empty-state*`: padded, text-center, bold 1.1rem display title) —
+  // swapping to it would change appearance, so parity keeps this builder-local
+  // form. Only SessionWorkflowPage, which used the real `.empty-state*`, uses it.
   if (!draftDefinition || !draftLayout) {
     return (
-      <div className="wb-canvas-wrapper">
-        <div className="wb-empty-state">
-          <span className="wb-empty-state-text">Loading...</span>
+      <div className={CANVAS_WRAPPER_CLASS}>
+        <div className="flex h-full flex-col items-center justify-center gap-md text-text-tertiary">
+          <span className="text-[0.82rem] font-medium">Loading...</span>
         </div>
       </div>
     );
@@ -199,9 +207,9 @@ export default function WorkflowBuilderCanvas({
 
   if (draftDefinition.executionContexts.length === 0) {
     return (
-      <div className="wb-canvas-wrapper">
-        <div className="wb-empty-state">
-          <span className="wb-empty-state-text">
+      <div className={CANVAS_WRAPPER_CLASS}>
+        <div className="flex h-full flex-col items-center justify-center gap-md text-text-tertiary">
+          <span className="text-[0.82rem] font-medium">
             Add your first execution context
           </span>
         </div>
@@ -210,7 +218,7 @@ export default function WorkflowBuilderCanvas({
   }
 
   return (
-    <div className="wb-canvas-wrapper">
+    <div className={CANVAS_WRAPPER_CLASS}>
       <ReactFlow
         nodes={nodes}
         edges={edges}

@@ -1,6 +1,27 @@
 "use client";
 
 import { useState } from "react";
+import { cn } from "@/lib/ui/cn";
+
+// Local button recipe: the legacy `.btn.btn-sm.<variant>` plus the panel-only
+// `.approval-gate-actions .btn` rules (whitespace + the 0.45-opacity disabled
+// fade). The shared Button primitive cannot carry that disabled fade (it omits
+// className and the fade is keyed on the button's own :disabled state, not the
+// layout allowlist), so the recipe is authored here for parity.
+const ACTION_BTN_BASE =
+  "inline-flex items-center gap-sm rounded-md border border-solid px-[12px] py-[6px] " +
+  "font-mono text-[0.72rem] whitespace-nowrap transition-all duration-150 ease-[ease] " +
+  "disabled:cursor-not-allowed disabled:opacity-[0.45] disabled:pointer-events-none";
+const ACTION_BTN_VARIANT = {
+  primary:
+    "bg-cyan border-cyan font-semibold text-text-inverse hover:bg-cyan-dim hover:border-cyan-dim hover:shadow-[0_0_20px_var(--color-cyan-glow)]",
+  danger:
+    "bg-transparent border-[var(--cc-red-border)] font-medium text-red hover:bg-red-glow hover:border-red-dim",
+  ghost:
+    "bg-transparent border-transparent font-medium text-text-secondary hover:bg-bg-hover hover:border-border-default hover:text-cyan",
+} as const;
+
+const HINT_BASE = "font-mono text-[0.7rem]";
 
 interface ApprovalGatePanelProps {
   contextTitle: string | null;
@@ -70,39 +91,53 @@ export default function ApprovalGatePanel({
   };
 
   return (
-    <div className="approval-gate-panel" data-testid="approval-gate-panel">
-      <div className="approval-gate-row">
-        <span className="approval-gate-dot" aria-hidden="true" />
-        <div className="approval-gate-badge">Approval required</div>
+    <div
+      className="relative flex shrink-0 flex-col gap-sm border-x-0 border-t border-b-0 border-solid border-t-border-subtle bg-bg-base px-lg py-md before:absolute before:inset-x-0 before:-top-px before:h-[2px] before:opacity-80 before:content-[''] before:[background:linear-gradient(90deg,var(--amber),transparent_65%)]"
+      data-testid="approval-gate-panel"
+    >
+      <div className="flex items-center gap-md">
+        <span
+          className="size-[7px] shrink-0 animate-pulse-dot rounded-full bg-amber shadow-[0_0_8px_var(--amber)]"
+          aria-hidden="true"
+        />
+        <div className="font-mono text-[0.7rem] font-semibold tracking-[0.06em] whitespace-nowrap text-amber uppercase">
+          Approval required
+        </div>
         {(contextTitle || workflowName) && (
-          <div className="approval-gate-meta">
+          <div className="flex min-w-0 flex-1 items-baseline gap-sm overflow-hidden font-mono text-[0.7rem] whitespace-nowrap">
             {contextTitle && (
-              <span className="approval-gate-context">{contextTitle}</span>
+              <span className="overflow-hidden text-ellipsis text-text-secondary">
+                {contextTitle}
+              </span>
             )}
             {contextTitle && workflowName && (
-              <span className="approval-gate-sep" aria-hidden="true">
+              <span className="text-text-tertiary" aria-hidden="true">
                 /
               </span>
             )}
             {workflowName && (
-              <span className="approval-gate-workflow">{workflowName}</span>
+              <span className="whitespace-nowrap text-text-tertiary">
+                {workflowName}
+              </span>
             )}
           </div>
         )}
         {waitLabel !== null && (
-          <span className="approval-gate-wait">{waitLabel}</span>
+          <span className="ml-auto font-mono text-[0.66rem] whitespace-nowrap text-text-tertiary">
+            {waitLabel}
+          </span>
         )}
         {!rejecting && (
-          <div className="approval-gate-actions">
+          <div className="flex shrink-0 items-center gap-sm">
             <button
-              className="btn btn-sm btn-primary"
+              className={cn(ACTION_BTN_BASE, ACTION_BTN_VARIANT.primary)}
               disabled={actionsDisabled}
               onClick={onApprove}
             >
               Approve
             </button>
             <button
-              className="btn btn-sm btn-danger"
+              className={cn(ACTION_BTN_BASE, ACTION_BTN_VARIANT.danger)}
               disabled={actionsDisabled}
               onClick={() => setRejecting(true)}
             >
@@ -112,17 +147,19 @@ export default function ApprovalGatePanel({
         )}
       </div>
 
-      {busyHint && <div className="approval-gate-hint">{busyHint}</div>}
+      {busyHint && (
+        <div className={cn(HINT_BASE, "text-text-tertiary")}>{busyHint}</div>
+      )}
       {executionSuspended && (
-        <div className="approval-gate-hint approval-gate-hint--suspended">
+        <div className={cn(HINT_BASE, "text-amber-dim")}>
           Execution suspended — the decision applies when the workflow resumes.
         </div>
       )}
 
       {rejecting && (
-        <div className="approval-gate-reject">
+        <div className="flex flex-col gap-sm">
           <textarea
-            className="approval-gate-reject-input"
+            className="w-full resize-y rounded-md border border-solid border-border-default bg-bg-surface px-md py-sm font-mono text-[0.78rem] leading-[1.5] text-text-primary transition-[border-color,box-shadow] duration-150 ease-[ease] placeholder:text-text-tertiary focus:border-red-dim focus:shadow-[0_0_0_2px_var(--red-glow)] focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
             aria-label="Rejection feedback"
             placeholder="Explain what needs to change..."
             value={message}
@@ -132,22 +169,24 @@ export default function ApprovalGatePanel({
             autoFocus
             rows={3}
           />
-          <div className="approval-gate-actions">
+          <div className="flex shrink-0 items-center gap-sm">
             <button
-              className="btn btn-sm btn-danger"
+              className={cn(ACTION_BTN_BASE, ACTION_BTN_VARIANT.danger)}
               disabled={actionsDisabled || trimmedMessage === ""}
               onClick={() => onReject(trimmedMessage)}
             >
               Submit rejection
             </button>
             <button
-              className="btn btn-sm btn-ghost"
+              className={cn(ACTION_BTN_BASE, ACTION_BTN_VARIANT.ghost)}
               disabled={isSubmitting}
               onClick={cancelReject}
             >
               Cancel
             </button>
-            <span className="approval-gate-kbd">⌘↵ submit · esc cancel</span>
+            <span className="ml-auto font-mono text-[0.64rem] text-text-tertiary">
+              ⌘↵ submit · esc cancel
+            </span>
           </div>
         </div>
       )}

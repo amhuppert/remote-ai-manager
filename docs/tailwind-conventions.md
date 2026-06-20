@@ -9,6 +9,28 @@ Source of truth for the architecture is `.kiro/specs/tailwind-design-system-migr
 for the visual language, `.claude/skills/cc-design-system/SKILL.md`. The toolchain
 wiring is recorded in `.cc/graph-workflow-docs/toolchain-integration-notes.md`.
 
+> **End-state status (post-migration).** Stages A–B are complete: every migratable
+> surface that a B-6 slice owned is utility-first, the primitives ship in
+> `src/components/ui/`, and the `css:progress` ratchet is green (no owner above its
+> committed baseline). The migration is **ratchet-complete, not literal
+> "preserved-only"** — the CSS that remains is three buckets: the preserved catalog
+> (§5), the retained canonical recipes (§5.1), and the cross-owned / shell /
+> descendant-anchor residual that is blocked on surfaces deferred out of B-6 (§5.2).
+> Reaching a literal preserved-only floor needs the follow-up work recorded in §5.2
+> and `.cc/graph-workflow-docs/b-final-final-verification.md`; it is **not** done in
+> this stage. Two facts changed at B-final and are reflected throughout this
+> doc:
+> - **The `@theme` alias bridge is collapsed.** `theme.css` now carries the
+>   **literal** value for every token directly (no `var(--legacy)` indirection).
+>   The legacy `var(--…)` **names** are deliberately **retained** in `tokens.css`
+>   because preserved CSS still reads them; both hold byte-identical values.
+> - **Preflight is not imported (ratified).** CC's curated `reset.css` is the
+>   **canonical base reset** (Option A — ratified by Alex). Its consequences (e.g.
+>   single-side borders, §1.5) are standing rules, not temporary debt. Background:
+>   `.cc/graph-workflow-docs/b-final-preflight-decision.md`.
+> The per-slice protocol (§4) and rules (§1–§3, §7–§8) remain the standing contract
+> for any new or future UI.
+
 ## The model in one paragraph
 
 CC styles itself with a CSS-custom-property token system. Tailwind v4 is the
@@ -18,9 +40,11 @@ primitives** (`Button`, `Badge`, `StatusDot`, `Tabs`, `SectionHeader`,
 `ModalShell`, `IconButton`, `EmptyState`, `FormField` — `src/components/ui/`)
 that own canonical recipes. State is
 expressed with `data-*` attributes mapped to **static class maps**. Tokens are
-exposed through `@theme` in `src/features/_root/styles/theme.css`; legacy
-`var(--…)` names keep resolving during the migration. Preflight is OFF — CC's
-`reset.css` is the base reset.
+exposed through `@theme` in `src/features/_root/styles/theme.css`, which carries
+the literal value for each token directly (the alias bridge is collapsed); the
+legacy `var(--…)` names are retained in `tokens.css` and keep resolving for
+preserved CSS. Preflight is **not imported** — CC's curated `reset.css` is the
+reconciled canonical base reset.
 
 > **Token utility names in this doc (`bg-cc-*`, `text-cc-text-*`, `gap-cc-*`,
 > `rounded-cc-*`, `max-md`, …) are ILLUSTRATIVE of the pattern.** The authoritative
@@ -46,7 +70,22 @@ Three tiers, lowest to highest precedence:
 Only `reset.css` is layered; do **not** move feature CSS into a layer (that would
 break tier 3). Backstops: `src/lib/shared/tailwind-reset-cascade.test.ts` (reset
 sits in `base`, below utilities) and `tailwind-cascade-order.test.ts` (unlayered
-legacy beats utilities). Preflight stays OFF until Stage B.
+legacy beats utilities).
+
+**Preflight is not imported** (it never was). The migration evaluated layering
+Tailwind's Preflight below `reset.css` and found it is **not inert** — it strips
+markdown list markers (CC sets `list-style` nowhere) and reflows inline icons/
+media (`img,svg,…{display:block}`), which would break R6 preserved output and
+zero-visual-change parity. The ratified end-state (Option A) is that
+**CC's `reset.css` IS the canonical base reset**; its universal
+`*{box-sizing:border-box;margin:0;padding:0}` in `@layer base` already supplies
+the one base behavior Tailwind utilities depend on. Consequences that follow from
+not loading Preflight are standing rules, not temporary debt — see §1.5
+(single-side borders). Decision package + the foreclosure analysis (why a
+zero-drift Preflight adoption cannot pass the `css:progress` ratchet within the
+B-final ownership) live in `.cc/graph-workflow-docs/b-final-preflight-decision.md`.
+Option A is **ratified** — `reset.css` is permanently CC's base reset; Preflight is
+not adopted.
 
 ---
 
@@ -135,9 +174,10 @@ legacy rule owns it; rename such a className to a non-utility BEM name.
 `src/lib/shared/tailwind-utility-collisions.test.ts` asserts zero such collisions
 and fails CI if a new one appears.
 
-### 1.5 Single-side borders need the other sides zeroed (Preflight is OFF)
+### 1.5 Single-side borders need the other sides zeroed (no global border reset)
 
-Preflight's `*{border-width:0;border-style:solid}` reset is **not** loaded, so an
+CC's `reset.css` does **not** zero borders globally (and Preflight — whose
+`*{border-width:0;border-style:solid}` reset would — is not imported), so an
 element's unset border sides keep the CSS initial `border-width: medium` (~3px).
 Applying `border-solid` (which sets the style on **all four** sides) together with
 only a single-side width utility (`border-t`/`border-b`/…) makes the other three
@@ -154,7 +194,9 @@ explicitly**:
 ```
 
 A full-box border (`border` = all four sides 1px) is unaffected. This is verified
-visually per slice; there is no global border reset until Preflight lands in Stage B.
+visually per slice. Because CC's reset is the reconciled base reset (no global
+border reset, Preflight not imported), this is a **standing rule**, not migration
+debt that a later Preflight step removes.
 
 ---
 
@@ -169,11 +211,11 @@ classes and never overriding its appearance.
 | `layoutClassName` MAY contain (external geometry) | It MUST NOT contain (appearance — the primitive owns these) |
 |---|---|
 | margin: `m-*`, `mt-*`, `mx-*`, … | color / text: `text-*`, `font-*` |
-| grid/flex placement: `col-*`, `row-*`, `justify-self-*`, `self-*`, `place-self-*` | background: `bg-*` |
+| grid/flex placement: `col-*`, `row-*`, `justify-self-*`, `self-*`, `place-self-*`, area-based `[grid-area:*]`/`[grid-column:*]`/`[grid-row:*]` | background: `bg-*` |
 | order: `order-*` | border: `border-*`, `ring-*` |
 | alignment of self: `self-*`, `justify-self-*` | radius: `rounded-*` |
 | width / basis: `w-*`, `min-w-*`, `max-w-*`, `basis-*`, `grow`, `shrink` | shadow / effects: `shadow-*`, `opacity-*` |
-| | padding (`p-*`) — it shapes the primitive's own box |
+| responsive display toggle: `hidden` (drop a child from the parent's responsive grid/flow at a breakpoint) | padding (`p-*`) — it shapes the primitive's own box |
 
 Why it exists: CC positions controls **from their container** today
 (`.cc-page-actions .cc-ibtn`, `.approval-gate-actions .btn`, mobile touch-enlarge
@@ -210,7 +252,7 @@ transcribe each existing rule 1:1.
 ```
 ```tsx
 /* migrated — same threshold, desktop-first, no logic change */
-<div className="flex flex-row max-md:flex-col" />
+<div className="flex flex-row max-768:flex-col" />
 ```
 
 The canonical breakpoint tokens and `max-*` variant set are **frozen in
@@ -220,11 +262,11 @@ and the CSS inventory):
 
 | Threshold | Meaning | Variant (frozen in theme.css) |
 |---|---|---|
-| ≤768px | mobile single-panel mode | `max-md` (the dominant spine) |
-| ≤960px | sidebar shrinks to 280px | `max-lg` |
-| ≤1080px | topbar crumbs shrink | `max-xl` |
-| ≤1180px | right pane hides; single column | `max-2xl` |
-| 769px `min-width` | the few genuinely mobile-first rules | `min-md` companion |
+| ≤768px | mobile single-panel mode | `max-768` (the dominant spine) |
+| ≤960px | sidebar shrinks to 280px | `max-960` |
+| ≤1080px | topbar crumbs shrink | `max-1080` |
+| ≤1180px | right pane hides; single column | `max-1180` |
+| 769px `min-width` | the few genuinely mobile-first rules | `min-769` companion |
 
 One-off thresholds (`640/800/900/1100/…`) are tokenized as named
 `--breakpoint-*` if recurring, or kept component-local if genuinely single-use.
@@ -317,12 +359,85 @@ Never convert these to utilities. The authoritative, regenerable list is
 | **`@keyframes`** (graph/atmospheric/vendor; shared ones tokenized to `--animate-*` by the token bridge) | `globals.css`, `workflow-graph.css`, `conversation.css`, `session.css`, `cockpit.css`, `project-detail.css`, `PeekPopover.css` |
 | **Portal / overlay positioning** | tooltip/modal/toast (`globals.css`), AskQuestion overlay (`conversation.css`), `.cr-*` dialog (`dialogs.css`), diff slide-over (`cockpit.css`), peek backdrop (`PeekPopover.css`) |
 | **`prefers-reduced-motion` blocks** | `conversation.css`, `cockpit.css` |
-| **Base reset** (`*`, `html`, `body`) | `reset.css` — preserved until Preflight is reconciled in Stage B |
+| **Base reset** (`*`, `html`, `body`) | `reset.css` — CC's **canonical base reset** (Preflight not imported; Option A ratified). Stays in `@layer base`. |
 
 When a slice's component sits next to preserved CSS (e.g. a conversation message
 rendering markdown), migrate the **authored chrome** and leave the
 generated-content selectors untouched. "Completion" is **Tailwind-backed tokens +
 route/component migration**, not zero CSS files.
+
+### 5.1 Retained canonical recipes (the five families still above floor)
+
+> **Status: Option A executed.** The primitive-swap remediation wave swapped the
+> leaf-recipe consumers onto the `ui/` primitives (or inline utilities) and
+> **deleted** the now-dead recipes: `.empty-state*`, `.cc-section-*`, `.form-*`,
+> `.cc-primary`, `.cc-ibtn`, `.cc-checkbox`, `.cc-toast`, `.btn-toggle` (and earlier
+> `.cc-badge*` + the `.cc-*` typography helpers). **Five** families remain — each
+> because ≥1 consumer needs a primitive feature that does not exist yet — plus the
+> load-bearing `.text-*` helpers. They are parked, not permanent. The authoritative
+> backlog (file:line) is `docs/reports/leaf-recipe-swap-residual-report.md`.
+
+These families stay only until the **primitive-extension remediation wave** extends
+the matching primitive and swaps the last consumers. New UI MUST use the primitive,
+never these recipes.
+
+| Retained family | Owner file | Matching primitive | Why it can't be swapped yet (the missing feature) |
+|---|---|---|---|
+| `.btn*` (`-primary/-danger/-success/-ghost/-sm` + mobile) | `globals.css` | `ui/Button` | SessionGitPanel View-Diff is a `<Link>` (Button renders `<button>`); AgentCapabilityPanel Reset needs a disabled-fade variant; MobileInfoPanel. → `Button` `as`/anchor + disabled variant. |
+| `.btn-icon-only*` | `globals.css` | `ui/IconButton` | ConversationPanel copy-markdown uses a cross-owned 28px rule; `IconButton` is 30px (+2px). → 28px size. |
+| `.cc-tab*` (`cc-tabs`, `cc-tab`, `cc-tab-count`) | `globals.css` | `ui/Tabs` | MobileBottomBar `.mobile-bottom-bar .cc-tab` descendant overrides not re-homable in-slice. |
+| `.status-dot*` (`.warning/.amber/.cyan`) | `globals.css` | `ui/StatusDot` | mobile topbar enlarges the dot to 8px; `StatusDot` is fixed 7px. → 8px size + re-home the topbar-owned rules. |
+| `.modal*` (`-overlay`/`.modal`/`-title`/`-actions`) | `globals.css` | `ui/ModalShell` | CreateSessionModal mobile bottom-sheet; `ModalShell` is desktop-only. → mobile-sheet variant. |
+| `.text-*` color helpers | `typography.css` | Tailwind `text-<color>` utilities | **Load-bearing** — they back the `text-*` tokens so those aren't flagged as bare-token collisions. Retire during R9 with `TypographyHelpers.stories.tsx`. |
+
+**Two consequences for end-state cleanup:**
+
+- These families are tracked **above** each owner's preserved floor (globals.css
+  floor stays **66**; project-detail/typography stay **0**). The `css:progress`
+  baseline ratchet records them as the current high-water mark, so they cannot
+  silently regrow but the primitive-extension remediation wave can still reduce
+  them. Do **not** raise the floor to encode these as "preserved forever" — that
+  would forbid the swap.
+- They stay **unlayered** in their owner file (where they currently win over
+  utilities). Several consumers stack Tailwind utilities directly on a recipe
+  element (e.g. `cc-tab flex … px-md py-sm hover:bg-bg-hover`), authored under that
+  cascade. Moving the recipes into `@layer components` would flip precedence and
+  risk visual drift; since Preflight is not adopted (Option A ratified) there is no
+  cascade-reconciliation pass — the primitive-extension wave re-checks parity per
+  consumer as it swaps, never a blind sweep.
+
+The per-family prod-consumer lists and the Option-A-vs-B disposition are recorded
+in `.cc/graph-workflow-docs/b-final-leaf-recipe-disposition.md`.
+
+### 5.2 Cross-owned / shell / descendant-anchor residual (above floor, blocked on deferred surfaces)
+
+A **third** class of CSS remains above some owners' floors that is neither §5
+preserved-DOM nor a §5.1 retained recipe. It is migratable in principle, but a B-6
+slice could not finish it without crossing into a surface that was **deferred out of
+B-6's scope** (or out of any single slice's ownership). It is honest to call these
+out explicitly: the migration is **ratchet-complete, not literal preserved-only**,
+and this is the residual that a literal preserved-only floor would still have to
+clear. None of it is loose ends inside a migrated component — each item is blocked on
+a specific, named follow-up.
+
+| Owner (count) | Residual | Why it can't reach floor in B-6 | Unblocks when |
+|---|---|---|---|
+| `shell.css` (8, floor 0) | `.app` / `.main` shell-layout grid + `data-page`/`data-with-sidebar`/`data-sidebar-collapsed` column templates + mobile drawer override | Unlayered `.main` **beats** `@layer utilities`; the shell element is shared by every page (and by `workflows-catalog.css .workflow-detail-main` on the same `<main>`). A utility form lands in `@layer utilities` and loses → cascade-blocked. | The shell shell-layout migrates as its own foundation slice (re-home into the layered base or restructure the `.main` cascade) — out of B-6. |
+| `topbar.css` (10, floor 10 = at floor) | `.topbar*` brand/divider/breadcrumb/`-status-*`/`-sep` | `Topbar.tsx` is migrated; these survive as descendant-anchors for **externally-injected** `globalStatus`/`sessionControls` content + a deferred-legacy consumer (`MobileSessionView.stories.tsx`). At floor, but not preserved-catalog. | The deferred `MobileSessionView` mobile-topbar surface migrates; injected-content anchors move onto their injectors. |
+| `session.css` (23, floor 0) | `.sidebar-diff-panel` / `.prompt-panel` data-layout + mobile-panel visibility toggles, bare structural hooks (`.session-content-area`, `.conversation-docked-stage`, `.debug-*`), `.finished-banner`/`.iteration-readonly-banner`, 3 preserved keyframes | The toggles style elements **owned by the conversation / right-pane context** (DiffPanel, ConversationPanel) from the session content area's state — they move when that context migrates those elements, not before. Keyframes are §5 preserved. | The conversation/right-pane DiffPanel + ConversationPanel chrome migrates (deferred past B-6); keyframes stay (preserved). |
+| `conversation-panes.css` (2, floor 0) | `.pane__body > .conversation` gap + `> *+*` margin override | Overrides the **unlayered** shared `.conversation` (owned by `conversation.css`); a `@layer utilities` form loses the cascade → the density override would be defeated. | The shared `.conversation` base migrates (or the panes override is re-homed unlayered) — out of B-6. |
+| `workflows-catalog.css` (3, floor 0) | `.workflow-detail-main` (+ detail grid) | Lives on the **same `<main>`** as the legacy shell `.main`; migrating creates mixed ownership with the unlayered shell class. | Blocked on the same `shell.css` migration above. |
+| `keyboard-shortcuts-modal.css` (3, floor 2) · `cockpit.css` (8, floor 6) · `PeekPopover.css` (8, floor 6) · `dialogs.css` (3→2) | Floors that **undercount** true preserved residual (scroll container + mobile bottom-sheet selectors; comma-list `prefers-reduced-motion` + mobile width; `.peek-backdrop` + ProseMirror + peek keyframes) | The floor is a conservative bound; reaching "exactly floor" would delete **preserved** CSS (barred by R6). | B-final **9.2 floor-tightening** raises these floors to the proven residual (see `b6-small-residuals-disposition.md`). |
+
+`project-detail.css` (23, floor 0) and `typography.css` (13, floor 0) above-floor
+residual is the §5.1 retained recipes (`.cc-primary`/`.cc-ibtn`/`.cc-checkbox`;
+`.text-*` helpers), not this bucket.
+
+The disposition of each item is recorded in
+`.cc/graph-workflow-docs/b6-small-residuals-disposition.md`,
+`b6-conversation-prompt-panel-residual-disposition.md`, and the B-final
+final-verification record. These are surfaced for Alex at the human-approval gate as
+**explicit remediation**, not silently absorbed into "preserved."
 
 ---
 
@@ -356,7 +471,7 @@ runs on migrated paths (`entryPoint: src/app/globals.css`).
 |---|---|---|
 | `tailwind-guardrails/no-dynamic-class` | template-literal (interpolation **glued** into a token, e.g. `bg-${x}-500`) or non-static `+`-concat class strings in `className`/`layoutClassName`/`cn()`, **including indirectly** via a variable resolved to such an init. Space-separated composition of complete strings (`` `${A} ${B}` ``) is allowed | migrated paths |
 | `tailwind-guardrails/no-hardcoded-color` | **any raw color literal** — hex (`#abc…`) **and** `rgb()`/`rgba()`/`hsl()` — in a class string. Custom-alpha glows/shadow colors/translucent borders with no solid-color token are extracted to a `--cc-*` token in `tokens.css` and referenced via `var(--…)` inside the composite utility (`shadow-[…var(--…)…]`); `var()`/gradient/keyword values carry no literal and pass | migrated paths |
-| `tailwind-guardrails/no-appearance-in-layout-classname` | any non-layout utility in `layoutClassName` (allowlist: margin, grid/flex placement, order, self-align, width/basis) | migrated paths |
+| `tailwind-guardrails/no-appearance-in-layout-classname` | any non-layout utility in `layoutClassName` (allowlist: margin, grid/flex placement incl. `[grid-area:*]`, order, self-align, width/basis, responsive display `hidden`) | migrated paths |
 | `tailwind-guardrails/no-unapproved-global-css` | new CSS rules in a stylesheet outside the approved **foundation/vendor** areas (`_root/styles/`, `workflow-graph`). Feature `styles/` dirs are migration **debt**: the existing files are grandfathered, but a NEW stylesheet there fails | all `*.css` |
 
 **Extending per wave — keep these FOUR allowlists in sync** (each gates a different
@@ -461,13 +576,39 @@ filters, reference an **existing** token/var inside an arbitrary utility:
   is a signal to escalate to the token bridge — **not** to inline a literal or add
   a feature-wave token.
 
-### 8.4 Single-side borders (reminder — Preflight is OFF)
+#### The token-backed-arbitrary-utility parity pattern (when a parity color has no token)
 
-Preflight's border reset is still not loaded, so `border-solid` + a single-side
-width utility renders a ~3px box on the other three sides. **Zero them
-explicitly** (`border-x-0 border-b-0 border-t …`); a full-box `border` is
-unaffected. Full detail and example in **§1.5** — re-read it before authoring any
-single-side border in a wave.
+Zero-visual-change parity sometimes needs a color that has **no** Tailwind scale
+entry and **no** existing token — e.g. the `.conv-stop-btn` soft-red
+`rgb(248,113,113)`, which is distinct from `--red` (`#ff3d5a`). The standing
+resolution (proven in the B-6 foundation context) keeps `no-hardcoded-color`
+satisfied without any wave editing the token files:
+
+1. A **single designated token-owner context** (the foundation/token-bridge
+   context for a wave group) mints the parity-only token in `tokens.css` **up
+   front** — e.g. `--cc-red-soft-a45`, `--cc-amber-a08`, `--cc-bg-void-a70`.
+2. Migration slices then reproduce the exact color via a **token-backed arbitrary
+   utility** — `bg-[var(--cc-red-soft-a45)]`, `border-t-[var(--cc-amber-a08)]`,
+   `text-[var(--cc-red-check-fail)]`. A `var(--…)` inside an arbitrary utility
+   carries no literal, so it **passes `no-hardcoded-color`**.
+3. Slices **never** edit `tokens.css`/`theme.css` themselves — only the token-owner
+   context does. This makes the "forbid token edits in a wave" rule (above)
+   satisfiable instead of a deadlock: the color exists as a token before the slice
+   that needs it runs.
+
+For a value derivable from an existing token, prefer `color-mix(in srgb, var(--…)
+N%, transparent)` inside the arbitrary utility (also literal-free, also exact) over
+minting a near-duplicate token; reserve minting for genuinely new parity colors.
+The minted parity tokens join the `@theme` surface for the R9 dedup pass (e.g.
+normalizing `--cc-amber-a08` into the amber scale).
+
+### 8.4 Single-side borders (reminder — no global border reset)
+
+CC's reset does not zero borders globally and Preflight is not imported, so
+`border-solid` + a single-side width utility renders a ~3px box on the other three
+sides. **Zero them explicitly** (`border-x-0 border-b-0 border-t …`); a full-box
+`border` is unaffected. Full detail and example in **§1.5** — re-read it before
+authoring any single-side border.
 
 ## Pointers
 

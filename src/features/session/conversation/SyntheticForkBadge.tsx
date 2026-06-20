@@ -6,7 +6,7 @@ const TOOLTIP_TEXT =
 export default function SyntheticForkBadge(): React.JSX.Element {
   return (
     <span
-      className="cc-badge cc-badge--subtle synthetic-fork-badge"
+      className="inline-flex cursor-help items-center justify-center gap-[4px] rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] leading-[1.3] font-semibold whitespace-nowrap lowercase opacity-50"
       data-tooltip={TOOLTIP_TEXT}
       aria-label="synthesized fork"
     >

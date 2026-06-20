@@ -47,26 +47,33 @@ export default function CollabConnector({
   const path = buildPath(from, to);
   return (
     <div
-      className="collab-connector"
+      className="relative block h-[96px] min-w-0"
       data-from={from}
       data-to={to}
       aria-hidden={label ? undefined : true}
       role={label ? "presentation" : undefined}
     >
       <svg
-        className="collab-connector-svg"
+        className="block h-full w-full overflow-visible"
         viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
         preserveAspectRatio="none"
         focusable="false"
       >
-        <path className="collab-connector-path" d={path} />
+        <path
+          className="fill-none stroke-text-secondary [stroke-width:2.5] [stroke-linecap:round] [vector-effect:non-scaling-stroke]"
+          d={path}
+        />
       </svg>
       <span
-        className="collab-connector-arrow-tip"
+        className="absolute bottom-0 h-0 w-0 -translate-x-1/2 [border-left:7px_solid_transparent] [border-right:7px_solid_transparent] [border-top:9px_solid_var(--text-secondary)]"
         aria-hidden="true"
         style={{ left: ANCHOR_PERCENT[to] }}
       />
-      {label ? <span className="collab-connector-label">{label}</span> : null}
+      {label ? (
+        <span className="pointer-events-none absolute inset-0 flex items-center justify-center font-mono text-[11px]">
+          {label}
+        </span>
+      ) : null}
     </div>
   );
 }

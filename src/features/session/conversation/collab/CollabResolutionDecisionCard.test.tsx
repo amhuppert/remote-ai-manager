@@ -25,11 +25,9 @@ describe("CollabResolutionDecisionCard", () => {
     );
 
     expect(
-      container.querySelector(".collab-resolution-decision-card-trajectory"),
+      container.querySelector('[aria-label^="Disagreement trajectory"]'),
     ).toBeNull();
-    expect(
-      container.querySelector(".collab-resolution-decision-card-sparkline"),
-    ).toBeNull();
+    expect(container.querySelector('svg[role="img"]')).toBeNull();
   });
 
   it("renders the trajectory sparkline once at least two data points exist (R2+)", () => {
@@ -42,9 +40,7 @@ describe("CollabResolutionDecisionCard", () => {
       />,
     );
 
-    const sparkline = container.querySelector(
-      ".collab-resolution-decision-card-sparkline",
-    );
+    const sparkline = container.querySelector('svg[role="img"]');
     expect(sparkline).not.toBeNull();
     expect(sparkline?.querySelector("path")).not.toBeNull();
     expect(sparkline?.querySelector("circle")).not.toBeNull();
@@ -60,7 +56,7 @@ describe("CollabResolutionDecisionCard", () => {
       />,
     );
 
-    const verdict = container.querySelector(".collab-artifact-card-verdict");
+    const verdict = container.querySelector("[data-next-action]");
     expect(verdict?.getAttribute("data-next-action")).toBe("final");
     expect(verdict?.textContent ?? "").toContain("Converged");
 
@@ -73,7 +69,7 @@ describe("CollabResolutionDecisionCard", () => {
       />,
     );
 
-    const failed = container.querySelector(".collab-artifact-card-verdict");
+    const failed = container.querySelector("[data-next-action]");
     expect(failed?.getAttribute("data-next-action")).toBe("fail");
     expect(failed?.textContent ?? "").toContain("Failed");
   });

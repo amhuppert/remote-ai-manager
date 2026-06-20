@@ -7,6 +7,20 @@ import type {
 } from "@/lib/workflows/collaboration/types";
 import CollabCollapsibleCard from "@/features/session/conversation/collab/CollabCollapsibleCard";
 import CollabMarkdownText from "@/features/session/conversation/collab/CollabMarkdownText";
+import {
+  claimsRefButtonClass,
+  claimsRefSpanClass,
+} from "@/features/session/conversation/collab/CollabClaimsList";
+import {
+  cardAgent,
+  cardEyebrow,
+  cardList,
+  cardNarrative,
+  cardPrimaryFlag,
+  cardSection,
+  cardSectionTitle,
+  cardSummary,
+} from "@/features/session/conversation/collab/card-chrome";
 
 export interface CollabInitialDraftCardProps {
   agent: CollaborationAgent;
@@ -51,28 +65,21 @@ export default function CollabInitialDraftCard({
       defaultOpen={defaultOpen}
       header={
         <>
-          <span className="collab-artifact-card-agent" data-agent={agent}>
+          <span className={cardAgent} data-agent={agent}>
             {AGENT_LABEL[agent]}
           </span>
-          <span className="collab-artifact-card-eyebrow">Initial Draft</span>
-          {isPrimary ? (
-            <span className="collab-artifact-card-primary-flag">Primary</span>
-          ) : null}
-          <span className="collab-artifact-card-summary">{summary}</span>
+          <span className={cardEyebrow}>Initial Draft</span>
+          {isPrimary ? <span className={cardPrimaryFlag}>Primary</span> : null}
+          <span className={cardSummary}>{summary}</span>
         </>
       }
     >
-      <CollabMarkdownText
-        content={narrative}
-        className="collab-artifact-card-narrative"
-      />
+      <CollabMarkdownText content={narrative} className={cardNarrative} />
 
       {keyClaims.length > 0 ? (
-        <section className="collab-artifact-card-section">
-          <h4 className="collab-artifact-card-section-title">
-            Key claims ({keyClaims.length})
-          </h4>
-          <ul className="collab-artifact-card-list">
+        <section className={cardSection}>
+          <h4 className={cardSectionTitle}>Key claims ({keyClaims.length})</h4>
+          <ul className={cardList}>
             {keyClaims.map((claim) => (
               <li key={claim.id}>
                 {claim.claim}
@@ -82,14 +89,14 @@ export default function CollabInitialDraftCard({
                       {" "}
                       <button
                         type="button"
-                        className="collab-claims-list-ref collab-claims-list-ref--button"
+                        className={claimsRefButtonClass}
                         onClick={() => onRefClick(claim.ref!)}
                       >
                         → {refLabel(claim.ref)}
                       </button>
                     </>
                   ) : (
-                    <span className="collab-claims-list-ref">
+                    <span className={claimsRefSpanClass}>
                       {" "}
                       → {refLabel(claim.ref)}
                     </span>
@@ -102,11 +109,11 @@ export default function CollabInitialDraftCard({
       ) : null}
 
       {assumptions.length > 0 ? (
-        <section className="collab-artifact-card-section">
-          <h4 className="collab-artifact-card-section-title">
+        <section className={cardSection}>
+          <h4 className={cardSectionTitle}>
             Assumptions ({assumptions.length})
           </h4>
-          <ul className="collab-artifact-card-list">
+          <ul className={cardList}>
             {assumptions.map((assumption, idx) => (
               <li key={`assumption-${idx}`}>{assumption}</li>
             ))}
@@ -115,11 +122,9 @@ export default function CollabInitialDraftCard({
       ) : null}
 
       {supporting.length > 0 ? (
-        <section className="collab-artifact-card-section">
-          <h4 className="collab-artifact-card-section-title">
-            Evidence ({supporting.length})
-          </h4>
-          <ul className="collab-artifact-card-list">
+        <section className={cardSection}>
+          <h4 className={cardSectionTitle}>Evidence ({supporting.length})</h4>
+          <ul className={cardList}>
             {supporting.map((item, idx) => (
               <li key={`supporting-${idx}`}>{item}</li>
             ))}

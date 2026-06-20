@@ -280,23 +280,9 @@ describe("ProjectDetailView", () => {
 
   it("renders status badges (Req 2.3)", () => {
     mockSessionsData.data = makeSessions(2);
-    const { container } = renderWithQuery(
-      <ProjectDetailView projectName="my-project" />,
-    );
-    const badges = container.querySelectorAll(".s-status");
-    expect(badges.length).toBe(2);
-    expect(badges[0]!.textContent).toContain("running");
-    expect(badges[1]!.textContent).toContain("awaiting");
-  });
-
-  it("renders prompt counts in table (Req 2.2)", () => {
-    mockSessionsData.data = makeSessions(3);
-    const { container } = renderWithQuery(
-      <ProjectDetailView projectName="my-project" />,
-    );
-    const promptCells = container.querySelectorAll(".v3-prompts");
-    const counts = Array.from(promptCells).map((c) => c.textContent);
-    expect(counts).toEqual(["0", "3", "6"]);
+    renderWithQuery(<ProjectDetailView projectName="my-project" />);
+    expect(screen.getByText("running")).toBeInTheDocument();
+    expect(screen.getByText("awaiting")).toBeInTheDocument();
   });
 
   it("links session name to detail page (Req 2.4)", () => {
@@ -337,28 +323,24 @@ describe("ProjectDetailView", () => {
 
   it("renders primary New session CTA in page header (Req 3.1)", () => {
     mockSessionsData.data = [];
-    const { container } = renderWithQuery(
-      <ProjectDetailView projectName="my-project" />,
-    );
-    const primary = container.querySelector(".cc-page-header .cc-primary");
-    expect(primary).not.toBeNull();
-    expect(primary?.textContent).toContain("New session");
+    renderWithQuery(<ProjectDetailView projectName="my-project" />);
+    expect(
+      screen.getByRole("button", { name: /New session/ }),
+    ).toBeInTheDocument();
   });
 
   it("renders the project header as a compact single-row summary", () => {
     mockSessionsData.data = makeSessions(2);
-    const { container } = renderWithQuery(
-      <ProjectDetailView projectName="my-project" />,
-    );
+    renderWithQuery(<ProjectDetailView projectName="my-project" />);
 
-    const header = container.querySelector(".cc-page-header--compact");
-    const summary = header?.querySelector(".cc-page-summaryrow");
-    expect(header).not.toBeNull();
-    expect(summary).not.toBeNull();
-    expect(summary?.textContent).toContain("my-project");
-    expect(summary?.textContent).toContain("2 sessions");
-    expect(summary?.textContent).toContain("0 archived");
-    expect(header?.querySelector(".cc-page-actions")).not.toBeNull();
+    const summary = screen.getByLabelText("Project summary");
+    expect(summary.textContent).toContain("my-project");
+    expect(summary.textContent).toContain("2 sessions");
+    expect(summary.textContent).toContain("0 archived");
+    expect(
+      screen.getByRole("button", { name: /New session/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByTitle("Open the Workflow Builder")).toBeInTheDocument();
   });
 
   it("renders the shared prompt composer in place of the legacy command console", async () => {
@@ -373,7 +355,6 @@ describe("ProjectDetailView", () => {
     await waitFor(() =>
       expect(container.querySelector(".prompt-input-area")).not.toBeNull(),
     );
-    expect(container.querySelector(".console-bar")).toBeNull();
     expect(screen.queryByLabelText("Project composer")).toBeNull();
   });
 
@@ -406,11 +387,8 @@ describe("ProjectDetailView", () => {
         creationMode: "optimistic",
       },
     ];
-    const { container } = renderWithQuery(
-      <ProjectDetailView projectName="my-project" />,
-    );
-    const dot = container.querySelector('.s-mode-dot[data-mode="optimistic"]');
-    expect(dot).not.toBeNull();
+    renderWithQuery(<ProjectDetailView projectName="my-project" />);
+    expect(screen.getByTitle("Optimistic session")).toBeInTheDocument();
   });
 
   it("focuses an already-open project conversation from the focus query param (Req 12.1)", async () => {

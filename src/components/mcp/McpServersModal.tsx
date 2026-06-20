@@ -64,28 +64,41 @@ export default function McpServersModal({
 
   const overlay = (
     <div
-      className="modal-overlay"
+      className="fixed inset-0 z-dropdown flex animate-[fadeIn_0.15s_ease] items-center justify-center bg-[var(--cc-overlay-scrim)] backdrop-blur-[8px] max-768:items-end"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="modal mcp-servers-modal" role="dialog" aria-label={title}>
-        <header className="mcp-servers-modal__head">
-          <div className="mcp-servers-modal__headings">
-            <span className="mcp-servers-modal__eyebrow">
+      {/* Self-contained modal card: reproduces the shared `.modal` desktop
+          appearance plus this modal's 720px / padding-0 / flex-column box model
+          and the ≤768px bottom-sheet / ≤640px full-screen behaviour as
+          utilities, so it carries no legacy class. ModalShell is not used: it
+          reproduces only the desktop `.modal` recipe and not the mobile sheet. */}
+      <div
+        className="flex max-h-[min(800px,calc(100vh-4rem))] w-[min(720px,calc(100vw-2rem))] max-w-[480px] animate-[slideUp_0.2s_ease] flex-col overflow-hidden rounded-[var(--radius-lg)] border border-solid border-border-default bg-bg-surface max-640:h-screen max-640:max-h-screen max-640:w-screen max-640:rounded-none max-768:max-w-full max-768:animate-[slideUpSheet_0.25s_ease] max-768:rounded-b-none"
+        role="dialog"
+        aria-label={title}
+      >
+        <header className="flex items-start gap-md border-x-0 border-t-0 border-b border-solid border-border-subtle bg-bg-surface px-lg py-md">
+          <div className="flex min-w-0 flex-1 flex-col gap-[0.15rem]">
+            <span className="font-mono text-[0.7rem] font-bold tracking-[0.12em] text-[var(--accent-cyan)]">
               {viewLevel.toUpperCase()}
             </span>
-            <h2 className="mcp-servers-modal__title">{title}</h2>
+            <h2 className="m-0 font-mono text-[1rem] font-semibold text-text-primary">
+              {title}
+            </h2>
             {subtitle ? (
-              <span className="mcp-servers-modal__subtitle">{subtitle}</span>
+              <span className="font-mono text-[0.72rem] text-[var(--text-muted)]">
+                {subtitle}
+              </span>
             ) : null}
           </div>
-          <div className="mcp-servers-modal__meta">
-            <span className="mcp-servers-modal__stat">
+          <div className="flex items-center gap-sm">
+            <span className="font-mono text-[0.72rem] text-text-secondary">
               <strong>{on}</strong>/{total} enabled
             </span>
             {overrides > 0 ? (
-              <span className="mcp-servers-modal__stat mcp-servers-modal__stat--overrides">
+              <span className="font-mono text-[0.72rem] text-[var(--accent-cyan)]">
                 <strong>{overrides}</strong> override
                 {overrides === 1 ? "" : "s"}
               </span>
@@ -93,7 +106,7 @@ export default function McpServersModal({
           </div>
           <button
             type="button"
-            className="mcp-servers-modal__close"
+            className="cursor-pointer appearance-none rounded-[3px] border-0 bg-transparent px-[0.5rem] py-[0.2rem] text-[1.4rem] leading-none text-text-secondary hover:bg-bg-hover hover:text-text-primary"
             onClick={onClose}
             aria-label="Close"
           >
@@ -102,10 +115,12 @@ export default function McpServersModal({
         </header>
 
         {banner ? (
-          <div className="mcp-servers-modal__banner">{banner}</div>
+          <div className="border-x-0 border-t-0 border-b border-solid border-border-subtle bg-bg-surface px-lg py-xs font-mono text-[0.72rem] text-[var(--text-muted)]">
+            {banner}
+          </div>
         ) : null}
 
-        <div className="mcp-servers-modal__body">
+        <div className="flex-1 overflow-y-auto px-lg pt-md pb-lg">
           <McpServerList
             viewLevel={viewLevel}
             servers={servers}

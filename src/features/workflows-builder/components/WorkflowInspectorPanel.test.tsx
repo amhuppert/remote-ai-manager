@@ -46,7 +46,7 @@ function setupStore(options?: {
 
 function getTabs(container: HTMLElement): HTMLButtonElement[] {
   return Array.from(
-    container.querySelectorAll(".cc-tab"),
+    container.querySelectorAll('[role="tab"]'),
   ) as HTMLButtonElement[];
 }
 
@@ -54,17 +54,19 @@ function findBlockByLabel(
   container: HTMLElement,
   label: string,
 ): HTMLElement | null {
-  const blocks = container.querySelectorAll(".wb-inspector-block");
+  const blocks = container.querySelectorAll("[data-source]");
   for (const block of Array.from(blocks)) {
-    const labelEl = block.querySelector(".cc-section-label");
+    const labelEl = block.querySelector("[data-section-label]");
     if (labelEl?.textContent === label) return block as HTMLElement;
   }
   return null;
 }
 
+// The block's foot holds the action Buttons; the only other <button> in a block
+// is the collapse header (carries aria-expanded). Exclude it.
 function footButtons(block: HTMLElement): HTMLButtonElement[] {
-  return Array.from(
-    block.querySelectorAll(".wb-inspector-block__foot button"),
+  return Array.from(block.querySelectorAll("button")).filter(
+    (b) => !b.hasAttribute("aria-expanded"),
   ) as HTMLButtonElement[];
 }
 
@@ -82,7 +84,7 @@ describe("WorkflowInspectorPanel — persistent tab strip", () => {
       HTMLButtonElement,
     ];
     expect(workflowTab.textContent).toBe("Workflow");
-    expect(workflowTab.className).toContain("active");
+    expect(workflowTab.getAttribute("data-active")).toBe("true");
     expect(contextTab.textContent).toBe("Context");
     expect(contextTab.disabled).toBe(true);
     expect(contextTab.getAttribute("title")).toBe(
@@ -107,7 +109,7 @@ describe("WorkflowInspectorPanel — persistent tab strip", () => {
     const { container, rerender } = render(
       <WorkflowInspectorPanel {...defaultProps} />,
     );
-    expect(getTabs(container)[0]!.className).toContain("active");
+    expect(getTabs(container)[0]!.getAttribute("data-active")).toBe("true");
 
     act(() => {
       _useGraphWorkflowBuilderStore.setState({
@@ -117,8 +119,8 @@ describe("WorkflowInspectorPanel — persistent tab strip", () => {
     rerender(<WorkflowInspectorPanel {...defaultProps} />);
 
     const [workflowTab, contextTab] = getTabs(container);
-    expect(contextTab!.className).toContain("active");
-    expect(workflowTab!.className).not.toContain("active");
+    expect(contextTab!.getAttribute("data-active")).toBe("true");
+    expect(workflowTab!.getAttribute("data-active")).toBe("false");
   });
 
   it("clicking Workflow tab does not clear selection", () => {
@@ -128,7 +130,7 @@ describe("WorkflowInspectorPanel — persistent tab strip", () => {
 
     const workflowTab = getTabs(container)[0]!;
     fireEvent.click(workflowTab);
-    expect(workflowTab.className).toContain("active");
+    expect(workflowTab.getAttribute("data-active")).toBe("true");
     expect(_useGraphWorkflowBuilderStore.getState().selectedContextId).toBe(
       "context-plan",
     );
@@ -141,10 +143,10 @@ describe("WorkflowInspectorPanel — workflow tab body", () => {
     setupStore({ selectedContextId: null });
     const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
 
-    const blocks = container.querySelectorAll(".wb-inspector-block");
+    const blocks = container.querySelectorAll("[data-source]");
     expect(blocks).toHaveLength(8);
     const labels = Array.from(
-      container.querySelectorAll(".cc-section-label"),
+      container.querySelectorAll("[data-section-label]"),
     ).map((el) => el.textContent);
     expect(labels).toEqual([
       "Implementer",
@@ -158,7 +160,7 @@ describe("WorkflowInspectorPanel — workflow tab body", () => {
     ]);
 
     expect(container.querySelector("#context-acceptance-criteria")).toBeNull();
-    expect(container.querySelector(".wb-task-list")).toBeNull();
+    expect(container.querySelector('[data-section="tasks"]')).toBeNull();
     expect(
       container.querySelector('[data-section="delete-context"]'),
     ).toBeNull();
@@ -292,10 +294,10 @@ describe("WorkflowInspectorPanel — context tab body", () => {
     expect(
       container.querySelector("#context-acceptance-criteria"),
     ).not.toBeNull();
-    const blocks = container.querySelectorAll(".wb-inspector-block");
+    const blocks = container.querySelectorAll("[data-source]");
     expect(blocks).toHaveLength(8);
 
-    expect(container.querySelector(".wb-task-list")).not.toBeNull();
+    expect(container.querySelector('[data-section="tasks"]')).not.toBeNull();
     expect(
       container.querySelector('[data-section="delete-context"]'),
     ).not.toBeNull();
@@ -334,9 +336,10 @@ describe("WorkflowInspectorPanel — context tab body", () => {
       });
     });
 
-    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
-    const error = container.querySelector(".wb-field-error");
-    expect(error?.textContent).toBe("Acceptance criteria is required");
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+    expect(
+      screen.getByText("Acceptance criteria is required"),
+    ).toBeInTheDocument();
   });
 
   it("override/reset on context iteration policy uses setContextBlockOverride/clearContextBlockOverride", () => {

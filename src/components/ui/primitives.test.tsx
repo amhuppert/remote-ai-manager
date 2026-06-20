@@ -247,13 +247,17 @@ describe("Badge", () => {
     expectAll(codex, ["bg-violet-glow", "text-violet"]);
   });
 
-  it("subtle adds opacity-50 and layoutClassName is appended last", () => {
+  it("subtle renders the neutral muted palette (no opacity fade) and layoutClassName is appended last", () => {
     const el = root(
       <Badge status="running" subtle layoutClassName="ml-1">
         x
       </Badge>,
     );
-    expectAll(el, ["opacity-50"]);
+    expectAll(el, ["bg-bg-raised", "text-text-secondary"]);
+    expect(el.className).not.toContain("opacity-50");
+    // subtle replaces the variant appearance, it does not layer over it.
+    expect(el.className).not.toContain("bg-cyan-glow");
+    expect(el.className).not.toContain("text-cyan");
     expect(el.className.trim().endsWith("ml-1")).toBe(true);
   });
 
@@ -353,14 +357,18 @@ describe("Tabs / Tab / TabCount", () => {
     expectAll(filled, ["max-768:justify-center", "max-768:min-h-[36px]"]);
   });
 
-  it("TabCount opacity steps with active", () => {
+  it("TabCount inherits the tab colour (no opacity fade); data-active reflects state", () => {
     const off = root(<TabCount>3</TabCount>);
     expect(off.getAttribute("data-active")).toBe("false");
     expectAll(off, [
-      "opacity-[0.85]",
-      "data-[active=true]:opacity-100",
+      "font-mono",
+      "text-[0.7rem]",
+      "font-medium",
+      "px-[4px]",
       "rounded-full",
     ]);
+    expect(off.className).not.toContain("opacity-[0.85]");
+    expect(off.className).not.toContain("opacity-100");
 
     const on = root(<TabCount active>3</TabCount>);
     expect(on.getAttribute("data-active")).toBe("true");

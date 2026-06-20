@@ -11,7 +11,93 @@ Command Center is "air traffic control for Claude Code." The UI must feel like a
 
 The system is **monochrome-dark with semantic accents** (cyan = active, amber = awaiting, green = success, red = destructive, violet = Codex agent identity). Surfaces step through six elevation levels; hover always moves up one level, never skipping. Typography is mono-by-default; body prose font is reserved for conversation messages only.
 
-When a new screen or component is needed, reach for existing tokens and `.cc-*` canonical patterns first. New tokens or one-off styles are smells — almost always there's already a recipe.
+When a new screen or component is needed, reach for the **`@theme` tokens, Tailwind utilities, and the `src/components/ui/` primitives** first. New tokens or one-off styles are smells — almost always there's already a token, a utility, or a primitive recipe.
+
+---
+
+## Authoring model: Tailwind utility-first
+
+CC is migrated to **Tailwind v4 as the authoring mechanism over its existing token
+system** — same visual language, different mechanics. The full operational contract
+is `docs/tailwind-conventions.md`; the essentials:
+
+- **Utilities, not new CSS.** New and migrated UI is written as Tailwind utility
+  classes (layout + appearance) backed by the CC tokens. Do **not** add feature
+  CSS files; the `no-unapproved-global-css` guardrail rejects new stylesheets
+  outside the foundation/vendor areas. The migration is **ratchet-complete, not
+  literal "preserved-only"**: the CSS that remains is the preserved catalog (below),
+  the retained canonical recipes (below), and a third bucket of cross-owned / shell /
+  descendant-anchor residual blocked on surfaces deferred out of B-6
+  (`docs/tailwind-conventions.md §5.2`).
+- **Tokens are `@theme`.** Every CC token is exposed in
+  `src/features/_root/styles/theme.css` under a Tailwind namespace, so a utility
+  generates for it: colors under `--color-*` → `bg-*`/`text-*`/`border-*`
+  (text colors are `--color-text-*`, e.g. `text-text-primary`); spacing
+  `--spacing-*` → `p-*`/`m-*`/`gap-*`; radii `--radius-*` → `rounded-*`; fonts
+  `--font-*` → `font-display/body/mono`; plus `--z-index-*`, `--breakpoint-*`
+  (desktop-first `max-*` variants), `--animate-*`. The alias bridge is collapsed —
+  `theme.css` holds literal values; the legacy `var(--…)` names stay in `tokens.css`
+  for preserved CSS. See `references/tokens.md`.
+- **React primitives own canonical recipes.** `Button`, `Badge`, `StatusDot`,
+  `Tabs`, `SectionHeader`, `ModalShell`, `IconButton`, `EmptyState`, `FormField`
+  (`src/components/ui/`) emit pure utilities and **omit `className`/`style`** so a
+  call site cannot inject appearance. Layout-only geometry goes through their
+  `layoutClassName` escape hatch. See `references/components.md`.
+- **`cn()` composes; state is `data-*`.** Compose conditional classes with
+  `cn()` (`src/lib/ui/cn.ts`, a `clsx` wrapper) — every argument is a complete
+  static string. Encode appearance variants as **static class maps** keyed by a
+  union; encode component **state** as `data-*` attributes selected by `data-*`
+  variants. Never build a class name by interpolation (`bg-${x}` is rejected by
+  the guardrails and may not even be generated).
+- **Token-backed arbitrary utilities for parity colors.** When zero-visual-change
+  parity needs a color with no token (e.g. a custom-alpha glow), the value lives
+  as a `--cc-*` token in `tokens.css` and is referenced via
+  `bg-[var(--cc-…)]` / `shadow-[…var(--cc-…)…]` — a `var()` inside an arbitrary
+  utility carries no literal, so it passes `no-hardcoded-color`. Never inline a raw
+  `#hex`/`rgb()`/`rgba()` in a class string.
+- **Preflight is not imported.** CC's `reset.css` is the reconciled canonical base
+  reset. One standing consequence: a single-side border needs the other sides
+  zeroed explicitly (`border-x-0 border-b-0 border-t …`) because no global border
+  reset is loaded.
+
+### Preserved CSS — the do-not-convert catalog
+
+Some DOM is not authored in CC's JSX, so its CSS stays scoped **forever** (never
+converted to utilities). "Migration complete" means Tailwind-backed tokens +
+component migration, **not** zero CSS files. The authoritative, regenerable list is
+`docs/reports/css-inventory.md` (`bun run css:inventory`):
+
+| Preserved category | Owner(s) |
+|---|---|
+| **React Flow vendor DOM** (`.react-flow*`/`.xyflow*`) + the graph `@keyframes` + the `.wb-markdown*` rendered-markdown selectors | `src/components/workflow-graph/workflow-graph.css` (floor ~58) |
+| **Tiptap `.ProseMirror` editor DOM** | `conversation.css`, `PeekPopover.css` |
+| **Markdown / syntax-highlighter / Mermaid render output** | `globals.css` (`.markdown-*`), `conversation.css` (`.mermaid*`) |
+| **Body atmospherics** (`body::before` noise, `body::after` scan lines) | `reset.css` |
+| **Scrollbars** (`::-webkit-scrollbar*`) | `globals.css`, `conversation.css`, `workflow-graph.css` |
+| **`@keyframes`** (graph/atmospheric/vendor; shared ones tokenized to `--animate-*`) | `globals.css`, `workflow-graph.css`, `conversation.css`, others |
+| **Portal / overlay positioning** (tooltip/modal/toast, AskQuestion scrim, dialog, diff slide-over, peek backdrop) | `globals.css`, `conversation.css`, `dialogs.css`, `cockpit.css`, `PeekPopover.css` |
+| **Base reset** (`*`, `html`, `body`) | `reset.css` (the reconciled base reset) |
+
+A second class of CSS is **deliberately retained**: the utility-shaped `.text-*`
+color helpers (load-bearing for the collision guard — they back the `text-*` tokens),
+plus **five** canonical recipe families that still have a consumer whose primitive
+lacks a needed feature — `.btn*` (Button needs an anchor/`as` + disabled variant),
+`.btn-icon-only*` (28px IconButton size), `.cc-tab*` (MobileBottomBar descendant
+overrides), `.status-dot*` (8px mobile dot), `.modal*` (ModalShell mobile
+bottom-sheet). New UI MUST use the primitive, never these recipes — extend the
+primitive to retire the last consumers (backlog in
+`docs/reports/leaf-recipe-swap-residual-report.md`). Every other recipe
+(`.empty-state*`, `.cc-section-*`, `.form-*`, `.cc-primary`, `.cc-ibtn`,
+`.cc-checkbox`, `.cc-toast`, `.btn-toggle`, `.cc-badge*`) has been **deleted**.
+
+A **third** class remains above floor: cross-owned / shell / descendant-anchor
+residual (the shell `.app`/`.main` grid, topbar injected-content anchors, the session
+content-area data-layout toggles owned by the conversation/right-pane context, the
+panes cascade-loss override, and floor-undercount cases). It is migratable in
+principle but blocked on surfaces deferred out of B-6, so the migration is
+**ratchet-complete, not literal preserved-only**. It is recorded as explicit
+remediation in `docs/tailwind-conventions.md §5.2` and
+`.cc/graph-workflow-docs/b-final-final-verification.md`.
 
 ---
 
@@ -38,10 +124,10 @@ These are non-negotiable. Breaking any of them creates regressions.
 
 ### Do
 
-- **Use `[data-*]` attributes for layout/state, not classes.** `data-layout`, `data-agent`, `data-status`, `data-composer-focused`. Classes are for appearance only.
-- **Use the `.cc-*` typography helper layer** (`.cc-page-title`, `.cc-section-label`, `.cc-meta-label`, `.cc-prose`, etc.) for new screens. Per-selector inlining is acceptable for existing surfaces.
-- **Use `var(--space-*)` always** — never literal pixel values in margin/padding.
-- **Use BEM modifiers on `.cc-badge`** — `.cc-badge--status`, `.cc-badge--type`, `.cc-badge--count`, `.cc-badge--subtle`.
+- **Use `[data-*]` attributes for state.** `data-layout`, `data-agent`, `data-status`, `data-composer-focused`. Select them with Tailwind `data-*` variants (`data-[status=running]:…`) mapped through static class maps. Appearance is utilities; never compute a class string at runtime.
+- **Use Tailwind text utilities + primitives for new screens** — `font-display/body/mono`, the `text-text-*` colors, and the size tiers (`references/tokens.md`). The old `.cc-*` typography helpers (`.cc-page-title`, `.cc-prose`, …) were deleted in the migration; only `.cc-section-label`/`.cc-section-*` survive as part of the retained `SectionHeader` recipe.
+- **Use spacing utilities** (`p-*`/`m-*`/`gap-*`, backed by `--spacing-*`) in migrated/new UI; `var(--space-*)` remains only inside preserved CSS. Never literal pixel values for margin/padding.
+- **Use the `Badge` primitive** (`ui/Badge.tsx`) for badges — it emits the utilities for the tier (status/type/count/subtle) + value. The legacy `.cc-badge*` recipe was deleted.
 - **Make icon-only buttons accessible** — `aria-label` + `data-tooltip` on every one.
 - **Make actions imperative; state declarative.** Buttons say `Merge`, `Archive`. Status says `Running`, `Awaiting input`.
 
@@ -106,8 +192,9 @@ Load the relevant reference file when working on a specific surface. Don't load 
 
 | File | Load when |
 |---|---|
-| [`references/tokens.md`](references/tokens.md) | You need exact hex values, full color tables, complete size tiers, all spacing aliases, or the rainbow gradient stops. Also: token naming conventions for new additions. |
-| [`references/components.md`](references/components.md) | You're building or modifying a component. Covers foundation classes (`.btn`, `.status-dot`, `.prompt-input`, `.modal-*`), canonical `.cc-*` patterns (`.cc-tabs`, `.cc-section-header`, `.cc-badge--*`), composite components (`.project-card`, `.sessions-table`, `.session-info-strip`, etc.), the card recipe, hover/press states, and the Codex agent variant. |
+| [`docs/tailwind-conventions.md`](../../../docs/tailwind-conventions.md) | You're **authoring or migrating UI** — the operational contract for utilities, primitives, `cn()`, `data-*` state, `layoutClassName`, `max-*` breakpoints, the token-backed-arbitrary-utility parity pattern, the guardrails, and the preserved-CSS catalog. Read this before writing any new component. |
+| [`references/tokens.md`](references/tokens.md) | You need exact hex values, full color tables, complete size tiers, all spacing aliases, the rainbow gradient stops, or the **legacy-token → `@theme` namespace → utility** mapping. Also: token naming conventions for new additions. |
+| [`references/components.md`](references/components.md) | You're building or modifying a component. Covers the `ui/` primitives (Button/IconButton/Badge/Tabs/StatusDot/EmptyState/FormField/SectionHeader/ModalShell) and the visual contract (colors/states) they reproduce, composite surfaces (`.project-card`, `.sessions-table`, `.session-info-strip`, etc.), the card recipe, hover/press states, and the Codex agent variant. |
 | [`references/iconography.md`](references/iconography.md) | You're adding, replacing, or selecting an icon. Covers the canonical icon set, SVG conventions (1.5 stroke, currentcolor), sizing inside buttons, unicode-glyph rules, and the substitution policy (hand-drawn → Lucide → unicode). |
 | [`references/motion-and-atmospherics.md`](references/motion-and-atmospherics.md) | You're touching animation, hover effects, atmospheric overlays (noise/scan lines), frosted glass, shadows, glows, or the rainbow gradient surfaces. |
 | [`references/content-and-voice.md`](references/content-and-voice.md) | You're writing UI copy — button labels, empty states, dialog titles, confirmations, microcopy. Covers voice, casing rules (sentence case / UPPERCASE MONO / lowercase mono), person & address, microcopy patterns (IDs, counts, null values, time format). |

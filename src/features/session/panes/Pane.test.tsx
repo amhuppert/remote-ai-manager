@@ -95,10 +95,9 @@ function renderPane(
 }
 
 describe("Pane", () => {
-  it("renders the head: status dot, title, open-full and close controls (4.1)", () => {
+  it("renders the head: title, open-full and close controls (4.1)", () => {
     renderPane();
 
-    expect(document.querySelector('[data-status="running"]')).not.toBeNull();
     expect(screen.getByText("Fix the bug")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Open full" }),
@@ -126,83 +125,71 @@ describe("Pane", () => {
     expect(onActivate).not.toHaveBeenCalled();
   });
 
-  it("clicking the pane body activates when not active (5.2)", () => {
+  it("clicking the pane activates when not active (5.2)", () => {
     const { onActivate, container } = renderPane({ active: false });
 
-    fireEvent.click(container.querySelector(".pane") as HTMLElement);
+    fireEvent.click(container.querySelector("section") as HTMLElement);
 
     expect(onActivate).toHaveBeenCalledWith(CONV_ID);
   });
 
-  it("clicking the pane body does not re-activate when already active (5.2)", () => {
+  it("clicking the pane does not re-activate when already active (5.2)", () => {
     const { onActivate, container } = renderPane({ active: true });
 
-    fireEvent.click(container.querySelector(".pane") as HTMLElement);
+    fireEvent.click(container.querySelector("section") as HTMLElement);
 
     expect(onActivate).not.toHaveBeenCalled();
   });
 
-  it("marks the active pane via data-active (5.1)", () => {
-    const { container } = renderPane({ active: true });
-
-    expect(container.querySelector('.pane[data-active="true"]')).not.toBeNull();
-  });
-
   it("renders the meta line: status label, project/session, relative time (4.2)", () => {
     const { container } = renderPane();
-    const meta = container.querySelector(".pane__meta") as HTMLElement;
+    const section = container.querySelector("section") as HTMLElement;
 
-    expect(meta.textContent).toContain("running");
-    expect(meta.textContent).toContain(PROJECT);
-    expect(meta.textContent).toContain(SESSION);
-    expect(meta.textContent).toContain("ago");
+    expect(section.textContent).toContain("running");
+    expect(section.textContent).toContain(PROJECT);
+    expect(section.textContent).toContain(SESSION);
+    expect(section.textContent).toContain("ago");
   });
 
-  it("renders the pending-question banner when waiting for input (4.3)", () => {
-    const { container } = renderPane({
+  it("shows the pending-question banner instead of the status line when waiting for input (4.3)", () => {
+    renderPane({
       conversation: baseConversation({
         status: "waiting_for_input",
         pendingQuestion: "Should I delete the file?",
       }),
     });
 
-    const banner = container.querySelector(".pane__banner");
-    expect(banner).not.toBeNull();
-    expect(banner?.textContent).toContain("Should I delete the file?");
-    expect(container.querySelector(".pane__status-line")).toBeNull();
+    expect(screen.getByText("Should I delete the file?")).toBeInTheDocument();
+    // The status line (lastActivitySummary) is suppressed while the banner shows.
+    expect(screen.queryByText("Edited three files")).toBeNull();
   });
 
-  it("renders the status line when not waiting for input (4.4)", () => {
-    const { container } = renderPane({
+  it("shows the status line when not waiting for input (4.4)", () => {
+    renderPane({
       conversation: baseConversation({ status: "running" }),
     });
 
-    const statusLine = container.querySelector(".pane__status-line");
-    expect(statusLine).not.toBeNull();
-    expect(statusLine?.textContent).toContain("Edited three files");
-    expect(container.querySelector(".pane__banner")).toBeNull();
+    expect(screen.getByText("Edited three files")).toBeInTheDocument();
   });
 
   it("renders the empty state when the conversation has no messages", () => {
-    const { container } = renderPane({}, []);
+    renderPane({}, []);
 
     expect(screen.getByText("No messages yet")).toBeInTheDocument();
-    expect(container.querySelector(".pane__body")).toBeNull();
   });
 
-  it("renders the full transcript body when messages are present (2/3)", () => {
+  it("renders the full transcript body, not the empty state, when messages are present (2/3)", () => {
     const { container } = renderPane({}, [
       textMessage(1, "first"),
       textMessage(2, "second"),
       textMessage(3, "third"),
     ]);
 
-    // The real message-rendering section mounts; the empty/compact-tail
-    // placeholders are gone (panes show the whole transcript, not a slice).
-    expect(container.querySelector(".pane__body")).not.toBeNull();
+    // The real message-rendering section mounts (the `.conversation` thread,
+    // marked by data-backend), so the empty-state placeholder is gone. The rows
+    // themselves are virtualized and render nothing under jsdom.
     expect(screen.queryByText("No messages yet")).toBeNull();
-    expect(container.querySelector(".pane-message")).toBeNull();
-    expect(container.querySelector(".pane__tail")).toBeNull();
+    expect(container.querySelector("[data-backend]")).not.toBeNull();
   });
 
   it("does not render a composer inside the pane (4.9)", () => {
@@ -235,10 +222,11 @@ describe("Pane", () => {
       inactive.unmount();
 
       // The active pane (the composer's target) merges the optimistic row, so
-      // it shows the transcript body, not the empty state.
+      // it shows the transcript body (marked by data-backend), not the empty
+      // state.
       const active = renderPane({ active: true }, []);
       expect(screen.queryByText("No messages yet")).toBeNull();
-      expect(active.container.querySelector(".pane__body")).not.toBeNull();
+      expect(active.container.querySelector("[data-backend]")).not.toBeNull();
     });
   });
 });

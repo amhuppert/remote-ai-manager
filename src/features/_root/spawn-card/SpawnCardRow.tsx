@@ -25,9 +25,9 @@ export default function SpawnCardRow({
 }): React.JSX.Element {
   const agentBadgeBackend = proposed.agent === "codex" ? "codex" : "claude";
   return (
-    <div className="flex items-center gap-md px-md py-sm bg-bg-base border border-solid border-border-dim rounded-md">
+    <div className="flex items-center gap-md rounded-md border border-solid border-border-dim bg-bg-base px-md py-sm">
       <span className="font-medium text-text-primary">{proposed.name}</span>
-      <span className="inline-flex items-center gap-xs text-text-secondary text-[0.75rem]">
+      <span className="inline-flex items-center gap-xs text-[0.75rem] text-text-secondary">
         <span>{proposed.branch}</span>
         <span className="text-text-tertiary" aria-hidden>
           →

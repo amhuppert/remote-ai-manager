@@ -6,8 +6,8 @@ const meta = {
   component: CopyableId,
   decorators: [
     (Story) => (
-      <div className="session-info-strip" style={{ padding: 12 }}>
-        <div className="si-details" style={{ display: "flex" }}>
+      <div style={{ padding: 12 }}>
+        <div style={{ display: "flex" }}>
           <Story />
         </div>
       </div>

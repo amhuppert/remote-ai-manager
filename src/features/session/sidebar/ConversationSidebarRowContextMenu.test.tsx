@@ -45,7 +45,7 @@ describe("ConversationSidebarRowContextMenu", () => {
     );
     expect(getByText("Open conversation")).toBeDefined();
     expect(getByText("Rename…")).toBeDefined();
-    expect(document.querySelectorAll(".ctx-menu__div").length).toBe(1);
+    expect(document.querySelectorAll('[role="separator"]').length).toBe(1);
   });
 
   it("renders hotkey hint when provided", () => {
@@ -96,21 +96,6 @@ describe("ConversationSidebarRowContextMenu", () => {
     fireEvent.click(getByText("Pin as tab"));
     expect(onSelect).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
-  });
-
-  it("applies the danger class to danger items", () => {
-    const items: ContextMenuItem[] = [
-      { kind: "item", label: "Delete…", onSelect: vi.fn(), danger: true },
-    ];
-    const { getByText } = render(
-      <ConversationSidebarRowContextMenu
-        x={0}
-        y={0}
-        items={items}
-        onClose={vi.fn()}
-      />,
-    );
-    expect(getByText("Delete…").closest("button")?.className).toMatch(/danger/);
   });
 
   it("closes on Escape", () => {

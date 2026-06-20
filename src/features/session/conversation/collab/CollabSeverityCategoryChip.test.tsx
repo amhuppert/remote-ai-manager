@@ -9,7 +9,7 @@ describe("CollabSeverityCategoryChip", () => {
       <CollabSeverityCategoryChip severity="blocking" category="objective" />,
     );
 
-    const chip = container.querySelector(".collab-sev-cat-chip");
+    const chip = container.querySelector("[data-severity]");
     expect(chip).not.toBeNull();
     expect(chip?.getAttribute("data-severity")).toBe("blocking");
     expect(chip?.getAttribute("data-category")).toBe("objective");
@@ -21,7 +21,7 @@ describe("CollabSeverityCategoryChip", () => {
     const { container } = render(
       <CollabSeverityCategoryChip severity="minor" category="implementation" />,
     );
-    const chip = container.querySelector(".collab-sev-cat-chip");
+    const chip = container.querySelector("[data-severity]");
     expect(chip?.textContent ?? "").toContain("IMPL");
     expect(chip?.textContent ?? "").toContain("MINOR");
   });
@@ -30,7 +30,7 @@ describe("CollabSeverityCategoryChip", () => {
     const { container } = render(
       <CollabSeverityCategoryChip severity="major" category="implementation" />,
     );
-    const chip = container.querySelector(".collab-sev-cat-chip");
+    const chip = container.querySelector("[data-severity]");
     const label = chip?.getAttribute("aria-label") ?? "";
     expect(label).toContain("IMPL");
     expect(label).toContain("MAJOR");

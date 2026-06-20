@@ -14,6 +14,7 @@ import { computeContextFillPercent } from "@/lib/conversations/context-fill";
 import { useSendPrompt } from "@/hooks/use-send-prompt";
 import { useAbortPrompt } from "@/hooks/use-abort-prompt";
 import ConversationWorkspaceView from "@/features/session/ConversationWorkspaceView";
+import { EmptyState, EmptyStateTitle } from "@/components/ui/EmptyState";
 import { type EffortLevel } from "@/lib/agent-backends/schemas";
 import { useBackendModelEffort } from "@/features/session/hooks/use-backend-model-effort";
 import { useImageIndexCountQuery } from "@/hooks/use-image-index-count";
@@ -61,9 +62,9 @@ function hasCollabPrefix(text: string): boolean {
 
 function WorkspaceFallback({ title }: { title: string }): React.JSX.Element {
   return (
-    <div className="empty-state">
-      <div className="empty-state-title">{title}</div>
-    </div>
+    <EmptyState>
+      <EmptyStateTitle>{title}</EmptyStateTitle>
+    </EmptyState>
   );
 }
 

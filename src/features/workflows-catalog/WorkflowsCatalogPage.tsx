@@ -16,7 +16,7 @@ export default function WorkflowsCatalogPage(): React.JSX.Element {
       />
       <main className="main">
         <div className="stagger-in mb-2xl max-768:mb-lg">
-          <h1 className="mb-sm font-display text-[2.4rem] font-extrabold leading-[1.1] tracking-[-0.03em] text-text-primary max-768:text-[1.6rem]">
+          <h1 className="mb-sm font-display text-[2.4rem] leading-[1.1] font-extrabold tracking-[-0.03em] text-text-primary max-768:text-[1.6rem]">
             Workflow{" "}
             <span className="text-cyan [text-shadow:0_0_30px_var(--cyan-glow-text)]">
               Atlas

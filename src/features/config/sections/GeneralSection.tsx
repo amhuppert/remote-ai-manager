@@ -60,11 +60,11 @@ export function GeneralSection({
           readOnly
           hint="Directories and globs excluded from worktree operations and indexing."
         >
-          <div className="flex flex-wrap gap-[6px] min-h-[44px] px-[10px] py-[8px] rounded-md border border-solid border-border-default bg-bg-base">
+          <div className="flex min-h-[44px] flex-wrap gap-[6px] rounded-md border border-solid border-border-default bg-bg-base px-[10px] py-[8px]">
             {formState.ignorePatterns.map((pattern) => (
               <span
                 key={pattern}
-                className="inline-flex items-center px-[9px] py-[3px] rounded-sm border border-solid border-border-subtle bg-bg-raised text-text-primary font-mono text-[0.74rem]"
+                className="inline-flex items-center rounded-sm border border-solid border-border-subtle bg-bg-raised px-[9px] py-[3px] font-mono text-[0.74rem] text-text-primary"
               >
                 {pattern}
               </span>

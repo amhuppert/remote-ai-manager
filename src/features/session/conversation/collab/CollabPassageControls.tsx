@@ -1,5 +1,8 @@
 "use client";
 
+const btnClass =
+  "inline-flex min-h-[30px] cursor-pointer appearance-none items-center justify-center rounded-[4px] border border-solid border-border-subtle bg-[var(--cc-white-a02)] px-md py-xs font-mono text-[11px] tracking-[0.04em] text-text-secondary [transition:border-color_120ms_ease,color_120ms_ease,background_120ms_ease] enabled:hover:border-cyan enabled:hover:bg-[var(--cc-cyan-a06)] enabled:hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40 max-768:min-h-[44px] max-768:min-w-[44px]";
+
 export interface CollabPassageControlsProps {
   total: number;
   currentIndex: number;
@@ -22,14 +25,14 @@ export default function CollabPassageControls({
   const canNext = currentIndex < total - 1;
   return (
     <div
-      className="collab-passage-controls"
+      className="mr-xs inline-flex flex-wrap items-center gap-md"
       role="group"
       aria-label="Collaboration navigation"
     >
-      <div className="collab-passage-controls-cluster" data-cluster="collapse">
+      <div className="inline-flex items-center gap-xs" data-cluster="collapse">
         <button
           type="button"
-          className="collab-passage-controls-btn"
+          className={btnClass}
           onClick={onCollapseAll}
           aria-label="Collapse all cards"
         >
@@ -37,17 +40,17 @@ export default function CollabPassageControls({
         </button>
         <button
           type="button"
-          className="collab-passage-controls-btn"
+          className={btnClass}
           onClick={onExpandAll}
           aria-label="Expand all cards"
         >
           Expand all
         </button>
       </div>
-      <div className="collab-passage-controls-cluster" data-cluster="nav">
+      <div className="inline-flex items-center gap-xs" data-cluster="nav">
         <button
           type="button"
-          className="collab-passage-controls-btn"
+          className={btnClass}
           onClick={onPrev}
           disabled={!canPrev}
           aria-label="Previous card"
@@ -55,14 +58,14 @@ export default function CollabPassageControls({
           ‹ Prev
         </button>
         <span
-          className="collab-passage-controls-counter"
+          className="min-w-[36px] px-xs text-center font-mono text-[11px] text-text-secondary"
           aria-label={`Card ${currentIndex + 1} of ${total}`}
         >
           {currentIndex + 1}/{total}
         </span>
         <button
           type="button"
-          className="collab-passage-controls-btn"
+          className={btnClass}
           onClick={onNext}
           disabled={!canNext}
           aria-label="Next card"

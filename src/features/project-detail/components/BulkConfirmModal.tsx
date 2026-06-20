@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
+import { Button } from "@/components/ui/Button";
 import { useOverlayScope } from "@/hooks/useOverlayScope";
 
 export type BulkConfirmKind = "archive" | "unarchive" | "delete";
@@ -55,13 +56,6 @@ export default function BulkConfirmModal({
   onConfirm,
   onClose,
 }: BulkConfirmModalProps): React.JSX.Element | null {
-  const confirmButtonRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    confirmButtonRef.current?.focus();
-  }, [open]);
-
   useEffect(() => {
     if (!open) return;
     const handleKeyDown = (e: KeyboardEvent): void => {
@@ -80,22 +74,37 @@ export default function BulkConfirmModal({
   const copy = buildCopy(kind, count);
 
   return (
-    <div className="modal-overlay" data-testid="bulk-confirm-overlay">
-      <div className="modal confirm-modal">
-        <h2 className="modal-title">{copy.title}</h2>
-        <p className="confirm-message">{copy.body}</p>
-        <div className="modal-actions">
-          <button className="btn btn-sm" onClick={onClose} disabled={isPending}>
+    <div
+      className="fixed inset-0 z-dropdown flex animate-[fadeIn_0.15s_ease] items-center justify-center bg-[var(--cc-overlay-scrim)] backdrop-blur-[8px] max-768:items-end"
+      data-testid="bulk-confirm-overlay"
+    >
+      <div className="w-full max-w-[400px] animate-[slideUp_0.2s_ease] rounded-lg border border-solid border-border-default bg-bg-surface p-xl max-768:max-w-full max-768:animate-[slideUpSheet_0.25s_ease] max-768:rounded-b-none max-768:px-md max-768:py-lg max-768:pb-[calc(var(--space-lg)+env(safe-area-inset-bottom,0))]">
+        <h2 className="mb-lg font-display text-[1.2rem] font-bold">
+          {copy.title}
+        </h2>
+        <p className="mb-lg font-mono text-[0.82rem] leading-[1.55] text-text-secondary">
+          {copy.body}
+        </p>
+        <div className="flex justify-end gap-sm">
+          <Button
+            variant="default"
+            size="sm"
+            touch
+            onClick={onClose}
+            disabled={isPending}
+          >
             Cancel
-          </button>
-          <button
-            ref={confirmButtonRef}
-            className={`btn btn-sm ${copy.danger ? "btn-danger" : "btn-primary"}`}
+          </Button>
+          <Button
+            autoFocus
+            variant={copy.danger ? "danger" : "primary"}
+            size="sm"
+            touch
             onClick={onConfirm}
             disabled={isPending}
           >
             {copy.primary}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

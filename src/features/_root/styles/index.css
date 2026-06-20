@@ -4,8 +4,8 @@
    Tailwind spacing utility (padding, margin, gap) on EVERY element, making
    utility-authored spacing dead on arrival. In @layer base it loses to the
    layered utilities (so `p-xl` resolves to 24px), while unlayered feature CSS
-   still beats both — preserving the no-mixed-ownership backstop. Preflight stays
-   OFF; reset remains CC's base reset until Stage B reconciliation.
+   still beats both — preserving the no-mixed-ownership backstop. Preflight is
+   intentionally NOT imported; reset.css is CC's canonical base reset.
    See src/lib/shared/tailwind-reset-cascade.test.ts and docs/tailwind-conventions.md. */
 @import "./reset.css" layer(base);
 @import "./typography.css";

@@ -4,8 +4,10 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
 import { useState } from "react";
 import MobilePromptToolbar, {
+  MOBILE_PROMPT_ROW_CLASS,
   type MobilePromptToolbarProps,
 } from "@/features/session/mobile/MobilePromptToolbar";
+import { SEND_BUTTON_CLASS } from "@/features/session/prompt/PromptDesktopToolbar";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import {
   clampEffortToModel,
@@ -72,8 +74,11 @@ function McpRowStub({
       ? "No servers configured"
       : `${enabled} of ${total} enabled${hasOverrides ? " · overrides set" : ""}`;
   return (
-    <button type="button" className="mobile-prompt-row" onClick={fn()}>
-      <span className="mobile-prompt-row__icon" aria-hidden>
+    <button type="button" className={MOBILE_PROMPT_ROW_CLASS} onClick={fn()}>
+      <span
+        className="flex h-[28px] w-[28px] shrink-0 items-center justify-center font-mono text-[0.85rem] text-text-secondary"
+        aria-hidden
+      >
         <svg viewBox="0 0 16 16" width="16" height="16">
           <path
             fill="currentColor"
@@ -81,15 +86,15 @@ function McpRowStub({
           />
         </svg>
       </span>
-      <span className="mobile-prompt-row__content">
-        <span className="mobile-prompt-row__label">MCP servers</span>
-        <span className="mobile-prompt-row__meta">{meta}</span>
+      <span className="flex min-w-0 flex-1 flex-col gap-2xs">
+        <span className="font-medium text-text-primary">MCP servers</span>
+        <span className="text-[0.7rem] text-text-tertiary">{meta}</span>
       </span>
-      <span className="mobile-prompt-row__trailing">
+      <span className="flex shrink-0 items-center gap-xs">
         {total > 0 && (
-          <span className="mobile-prompt-badge">{`${enabled}/${total}`}</span>
+          <span className="inline-flex items-center rounded-sm bg-bg-raised px-sm py-2xs font-mono text-[0.7rem] font-medium text-text-secondary">{`${enabled}/${total}`}</span>
         )}
-        <span className="mobile-prompt-row__chevron" aria-hidden>
+        <span className="shrink-0 text-[1rem] text-text-tertiary" aria-hidden>
           {"\u203A"}
         </span>
       </span>
@@ -189,7 +194,8 @@ function DemoToolbar({
     sendButton: (
       <button
         type="button"
-        className={`send-btn${sending ? " busy" : ""}`}
+        className={SEND_BUTTON_CLASS}
+        data-busy={sending}
         disabled={(!text.trim() && !sending) || isReadOnly || isRecording}
         title={
           isReadOnly
@@ -217,8 +223,8 @@ function DemoToolbar({
   };
 
   return (
-    <div className="prompt-input-area">
-      <div className="prompt-input-wrapper">
+    <div className="shrink-0 border-x-0 border-t border-b-0 border-solid border-border-subtle bg-bg-base px-lg py-md max-768:border-border-default max-768:bg-[var(--cc-bg-base-a60)] max-768:px-sm max-768:py-xs">
+      <div className="relative flex flex-col gap-sm">
         <textarea
           className="prompt-textarea"
           placeholder={

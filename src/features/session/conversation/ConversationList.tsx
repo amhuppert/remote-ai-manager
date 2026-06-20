@@ -3,6 +3,14 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { cn } from "@/lib/ui/cn";
+import { Button } from "@/components/ui/Button";
+import { IconButton } from "@/components/ui/IconButton";
+import {
+  EmptyState,
+  EmptyStateTitle,
+  EmptyStateDesc,
+} from "@/components/ui/EmptyState";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import { CloseIcon } from "@/components/icons";
 import {
@@ -58,10 +66,45 @@ function formatDate(iso: string): string {
   });
 }
 
+// Status-dot recipe. Reproduces the merged `.session-status` cascade (session.css
+// base + conversation.css overrides, the latter winning on conflicts) so this
+// usage no longer depends on the `.session-status` rule. That rule survives only
+// as the now-consumerless conversation.css copy, awaiting deletion by the
+// conversation/right-pane context.
+const STATUS_DOT: Record<string, string> = {
+  running:
+    "bg-cyan shadow-[0_0_6px_var(--cyan)] animate-[pulse-dot_1.5s_ease-in-out_infinite]",
+  idle: "bg-text-tertiary",
+  new: "bg-blue shadow-[0_0_6px_var(--blue)]",
+  ready: "bg-green shadow-[0_0_6px_var(--green)]",
+  awaiting: "bg-green shadow-[0_0_6px_var(--green)]",
+  waiting_for_input:
+    "bg-amber shadow-[0_0_6px_var(--amber)] animate-[pulse-dot_1.5s_ease-in-out_infinite]",
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  running: "text-cyan",
+  idle: "text-text-tertiary",
+  new: "text-blue",
+  ready: "text-green",
+  awaiting: "text-green",
+  waiting_for_input: "text-amber",
+};
+
 function ConversationStatusDot({ status }: { status: string }) {
   return (
-    <span className={`session-status ${status}`}>
-      <span className="dot" />
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center gap-[6px] font-mono text-[0.72rem] leading-none font-medium tracking-[0.05em] uppercase",
+        STATUS_LABEL[status] ?? "text-text-secondary",
+      )}
+    >
+      <span
+        className={cn(
+          "h-[6px] w-[6px] shrink-0 rounded-full",
+          STATUS_DOT[status] ?? "bg-text-tertiary",
+        )}
+      />
       {status}
     </span>
   );
@@ -253,62 +296,72 @@ export default function ConversationList({
               {displayStatus}
             </div>
             <div className="topbar-sep" />
-            <button
-              className="btn-icon-only danger"
+            <IconButton
+              variant="square"
+              tone="danger"
+              layoutClassName="max-768:hidden"
               data-tooltip="Delete session"
               aria-label="Delete session"
               onClick={() => setShowDeleteConfirm(true)}
             >
               <CloseIcon />
-            </button>
+            </IconButton>
           </>
         }
       />
 
       <main className="main">
         {isLoading ? (
-          <div className="empty-state">
-            <div className="empty-state-title">Loading conversations...</div>
-          </div>
+          <EmptyState>
+            <EmptyStateTitle>Loading conversations...</EmptyStateTitle>
+          </EmptyState>
         ) : (
-          <div className="convo-list-layout stagger-in">
+          <div className="stagger-in mx-auto flex w-full max-w-[960px] flex-col gap-md p-lg">
             {/* Session info strip */}
             {session && (
-              <div className="convo-list-header">
-                <div className="convo-list-meta">
+              <div className="flex flex-wrap items-center justify-between gap-md">
+                <div className="convo-list-meta flex flex-wrap items-center gap-sm">
                   <CopyableId
                     label="Branch"
                     value={session.branchName}
                     truncateAt={999}
                   />
-                  <div className="si-sep" />
+                  <div className="inline-block h-[12px] w-px shrink-0 bg-border-subtle" />
                   <CopyableId
                     label="Worktree"
                     value={session.worktreePath}
                     truncateAt={999}
                   />
-                  <div className="si-sep" />
-                  <div className="si-item">
-                    <span className="si-label">Created</span>
-                    <span className="si-val">
+                  <div className="inline-block h-[12px] w-px shrink-0 bg-border-subtle" />
+                  <div className="flex items-center gap-[4px] text-[0.72rem]">
+                    <span className="font-mono text-[0.7rem] tracking-[0.04em] text-text-tertiary uppercase">
+                      Created
+                    </span>
+                    <span className="font-mono text-text-primary">
                       {formatDate(session.createdAt)}
                     </span>
                   </div>
-                  <div className="si-sep" />
-                  <div className="si-item">
-                    <span className="si-label">Conversations</span>
-                    <span className="si-val">{activeCount}</span>
+                  <div className="inline-block h-[12px] w-px shrink-0 bg-border-subtle" />
+                  <div className="flex items-center gap-[4px] text-[0.72rem]">
+                    <span className="font-mono text-[0.7rem] tracking-[0.04em] text-text-tertiary uppercase">
+                      Conversations
+                    </span>
+                    <span className="font-mono text-text-primary">
+                      {activeCount}
+                    </span>
                   </div>
-                  <div className="si-sep" />
-                  <div className="si-item">
-                    <span className="si-label">Total Prompts</span>
-                    <span className="si-val">
+                  <div className="inline-block h-[12px] w-px shrink-0 bg-border-subtle" />
+                  <div className="flex items-center gap-[4px] text-[0.72rem]">
+                    <span className="font-mono text-[0.7rem] tracking-[0.04em] text-text-tertiary uppercase">
+                      Total Prompts
+                    </span>
+                    <span className="font-mono text-text-primary">
                       {deriveSessionPromptCount(session)}
                     </span>
                   </div>
-                  <div className="si-sep" />
+                  <div className="inline-block h-[12px] w-px shrink-0 bg-border-subtle" />
                   <button
-                    className="si-copy-context-btn"
+                    className="relative cursor-pointer rounded-sm border border-solid border-border-subtle bg-transparent px-[6px] py-px font-mono text-[0.7rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase transition-colors duration-150 hover:border-border-default hover:text-text-secondary"
                     onClick={handleCopyContext}
                     data-tooltip={
                       contextCopied ? "Copied ✓" : "Copy context to clipboard"
@@ -316,12 +369,12 @@ export default function ConversationList({
                   >
                     {contextCopied ? "\u2713" : "\u2398"} Context
                   </button>
-                  <div className="si-sep" />
+                  <div className="inline-block h-[12px] w-px shrink-0 bg-border-subtle" />
                   <ScopedAgentCapabilitiesConfig
                     level="session"
                     projectName={projectName}
                     sessionName={sessionName}
-                    className="si-copy-context-btn cap-trigger"
+                    className="cap-trigger relative cursor-pointer rounded-sm border border-solid border-border-subtle bg-transparent px-[6px] py-px font-mono text-[0.7rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase transition-colors duration-150 hover:border-border-default hover:text-text-secondary"
                   />
                 </div>
                 <div
@@ -333,23 +386,30 @@ export default function ConversationList({
                 >
                   {archivedCount > 0 && (
                     <button
-                      className={`btn btn-sm btn-toggle${showArchived ? " active" : ""}`}
+                      data-active={showArchived}
                       onClick={toggleArchived}
                       type="button"
+                      className={cn(
+                        "inline-flex items-center gap-sm rounded-md border border-solid px-[12px] py-[6px] font-mono text-[0.72rem] font-medium transition-all duration-150 ease-[ease] max-768:min-h-[44px] max-768:px-[16px]",
+                        "data-[active=false]:border-border-default data-[active=false]:bg-transparent data-[active=false]:text-text-secondary data-[active=false]:hover:border-border-strong data-[active=false]:hover:bg-bg-hover data-[active=false]:hover:text-text-primary",
+                        "data-[active=true]:border-cyan-glow-strong data-[active=true]:bg-cyan-glow data-[active=true]:text-cyan data-[active=true]:hover:bg-cyan-glow-strong",
+                      )}
                     >
                       Archived ({archivedCount})
                     </button>
                   )}
-                  <button
-                    className="btn btn-primary btn-sm"
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    touch
                     onClick={handleNewConversation}
                     disabled={createConvoMutation.isPending || isFinished}
                   >
-                    <span className="btn-icon">+</span>
+                    <span className="text-[1em]">+</span>
                     {createConvoMutation.isPending
                       ? "Creating..."
                       : "New Conversation"}
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}
@@ -386,29 +446,33 @@ export default function ConversationList({
 
             {/* Conversation cards */}
             {filteredConversations.length > 0 ? (
-              <div className="convo-card-grid">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-md">
                 {filteredConversations.map((convo) => (
                   <Link
                     key={convo.id}
                     href={conversationsPageHref({ conversationId: convo.id })}
-                    className={`convo-card${convo.id === mostRecentId ? " most-recent" : ""}${convo.archived ? " archived" : ""}`}
+                    data-recent={convo.id === mostRecentId}
+                    data-archived={convo.archived}
+                    className="flex flex-col gap-sm rounded-md border border-solid border-border-subtle bg-bg-surface p-md text-inherit no-underline [contain-intrinsic-size:0_96px] [content-visibility:auto] [transition:border-color_0.15s_ease,background_0.15s_ease] hover:bg-bg-elevated data-[archived=true]:border-dashed data-[archived=true]:opacity-55 data-[archived=true]:hover:opacity-75 data-[recent=false]:hover:border-border-strong data-[recent=true]:border-[var(--cc-cyan-a35)] data-[archived=true]:data-[recent=true]:border-border-subtle"
                   >
-                    <div className="convo-card-header">
+                    <div className="flex items-center gap-xs">
                       <ConversationStatusDot status={convo.status} />
                       {convo.archived && (
-                        <span className="convo-badge archived-badge">
+                        <span className="rounded-sm border border-dashed border-border-default bg-[color-mix(in_srgb,var(--text-secondary)_10%,transparent)] px-[6px] py-[1px] font-mono text-[0.7rem] tracking-[0.04em] text-text-tertiary uppercase">
                           archived
                         </span>
                       )}
                       {convo.source === "imported" && (
-                        <span className="convo-badge imported">imported</span>
+                        <span className="rounded-sm bg-[var(--cc-cyan-a10)] px-[6px] py-[1px] font-mono text-[0.7rem] tracking-[0.04em] text-cyan uppercase">
+                          imported
+                        </span>
                       )}
                     </div>
-                    <div className="convo-card-body">
+                    <div className="flex-1">
                       {editingId === convo.id ? (
                         <input
                           ref={editInputRef}
-                          className="convo-rename-input"
+                          className="w-full rounded-[4px] border-0 bg-transparent px-[6px] py-[2px] [font-family:inherit] text-[0.78rem] leading-[1.5] text-text-primary outline-none"
                           value={editValue}
                           onChange={(e) => setEditValue(e.target.value)}
                           onKeyDown={(e) => {
@@ -428,21 +492,21 @@ export default function ConversationList({
                           maxLength={200}
                         />
                       ) : (
-                        <div className="convo-card-summary">
+                        <div className="line-clamp-3 text-[0.78rem] leading-[1.5] text-text-secondary">
                           {convo.name ?? convo.summary ?? "New conversation"}
                         </div>
                       )}
                     </div>
-                    <div className="convo-card-footer">
-                      <span className="convo-card-meta">
+                    <div className="flex items-center justify-between border-x-0 border-t border-b-0 border-solid border-border-subtle pt-xs">
+                      <span className="font-mono text-[0.72rem] text-text-tertiary">
                         {convo.promptCount} prompt
                         {convo.promptCount !== 1 ? "s" : ""}
                       </span>
-                      <span className="convo-card-meta">
+                      <span className="font-mono text-[0.72rem] text-text-tertiary">
                         {formatRelativeTime(convo.lastActivityAt)}
                       </span>
                       <span
-                        className="convo-card-meta convo-card-id"
+                        className="font-mono text-[0.72rem] text-text-tertiary opacity-70 hover:cursor-pointer hover:text-cyan hover:opacity-100"
                         title={convo.id}
                         onClick={(e) => {
                           e.preventDefault();
@@ -452,8 +516,9 @@ export default function ConversationList({
                       >
                         {convo.id.slice(0, 8)}
                       </span>
-                      <button
-                        className="btn-icon-only convo-card-archive-btn"
+                      <IconButton
+                        variant="square"
+                        layoutClassName="ml-auto"
                         data-tooltip="Rename"
                         onClick={(e) => {
                           e.preventDefault();
@@ -462,9 +527,10 @@ export default function ConversationList({
                         }}
                       >
                         &#9998;
-                      </button>
-                      <button
-                        className="btn-icon-only convo-card-archive-btn"
+                      </IconButton>
+                      <IconButton
+                        variant="square"
+                        layoutClassName="ml-auto"
                         data-tooltip={convo.archived ? "Unarchive" : "Archive"}
                         onClick={(e) => {
                           e.preventDefault();
@@ -473,18 +539,18 @@ export default function ConversationList({
                         }}
                       >
                         {convo.archived ? "\u21A9" : "\u2913"}
-                      </button>
+                      </IconButton>
                     </div>
                   </Link>
                 ))}
               </div>
             ) : (
-              <div className="empty-state">
-                <div className="empty-state-title">No conversations yet</div>
-                <div className="empty-state-desc">
+              <EmptyState>
+                <EmptyStateTitle>No conversations yet</EmptyStateTitle>
+                <EmptyStateDesc>
                   Create a new conversation to start working with Claude.
-                </div>
-              </div>
+                </EmptyStateDesc>
+              </EmptyState>
             )}
           </div>
         )}

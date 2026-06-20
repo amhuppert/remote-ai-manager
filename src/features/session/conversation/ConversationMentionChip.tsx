@@ -96,17 +96,17 @@ export default function ConversationMentionChip(
   return (
     <NodeViewWrapper
       as="span"
-      className="conversation-mention-chip"
+      className="inline-flex items-center gap-xs rounded-md border border-solid border-border-default bg-bg-raised py-[2px] pr-[4px] pl-[6px] align-baseline font-mono text-[0.78rem] leading-none [transition:border-color_0.15s_ease,box-shadow_0.15s_ease] data-[backend=codex]:border-violet-dim data-[selected=true]:shadow-[0_0_0_2px_var(--cyan-glow)] data-[backend=claude]:data-[selected=true]:border-cyan-dim max-768:min-h-[28px] max-768:py-[4px] max-768:pr-[6px] max-768:pl-[8px]"
       data-selected={selected ? "true" : "false"}
       data-backend={attrs.backend}
       contentEditable={false}
       title={tooltip}
     >
-      <span className="conversation-mention-chip__hash">#</span>
-      <span className="conversation-mention-chip__name">{label}</span>
+      <span className="font-semibold text-cyan">#</span>
+      <span className="text-text-primary">{label}</span>
       <button
         type="button"
-        className="conversation-mention-chip__remove"
+        className="h-[16px] w-[16px] cursor-pointer rounded-[3px] border-0 bg-transparent p-0 text-[12px] leading-none text-text-tertiary hover:bg-red-glow hover:text-red-text max-768:min-h-[24px] max-768:min-w-[24px]"
         onClick={handleRemove}
         onMouseDown={(e) => e.preventDefault()}
         aria-label={`Remove #${removeAriaTarget}`}

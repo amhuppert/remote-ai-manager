@@ -2,6 +2,20 @@
 
 import { useState, useEffect, useCallback } from "react";
 
+import { cn } from "@/lib/ui/cn";
+
+import {
+  mergeToastBaseClass,
+  mergeToastShadowClass,
+  mergeToastExitClass,
+  toastIconClass,
+  toastContentClass,
+  toastTitleClass,
+  toastDetailClass,
+  toastActionClass,
+  toastCloseClass,
+} from "./MergeToast";
+
 interface InputNeededToastProps {
   sessionName?: string;
   contextLabel?: string;
@@ -77,34 +91,46 @@ export default function InputNeededToast({
 
   const detailContext = contextLabel ?? sessionName ?? "";
   const isApproval = variant === "approval";
-  const toneClass = isApproval
-    ? "merge-toast-approval"
-    : "merge-toast-conflicts";
   const detail = `${projectName} / ${detailContext}`;
 
   return (
     <div
-      className={`merge-toast ${toneClass}${exiting ? " merge-toast-exit" : ""}`}
+      className={cn(
+        mergeToastBaseClass,
+        isApproval
+          ? "border-[var(--cc-amber-a45)] shadow-[0_8px_32px_var(--cc-shadow-soft),0_0_18px_var(--amber-glow)]"
+          : cn("border-[var(--cc-amber-a30)]", mergeToastShadowClass),
+        exiting && mergeToastExitClass,
+      )}
     >
-      <div className="merge-toast-icon">
+      <div
+        className={cn(
+          toastIconClass,
+          "text-amber",
+          isApproval && "self-center",
+        )}
+      >
         {isApproval ? (
-          <span className="merge-toast-gate-dot" aria-hidden="true" />
+          <span
+            className="block size-[7px] animate-pulse-dot rounded-full bg-amber shadow-[0_0_7px_var(--amber)]"
+            aria-hidden="true"
+          />
         ) : (
           <InputIcon />
         )}
       </div>
-      <div className="merge-toast-content">
-        <span className="merge-toast-title">{title ?? "Needs input"}</span>
-        <span className="merge-toast-detail">
+      <div className={toastContentClass}>
+        <span className={toastTitleClass}>{title ?? "Needs input"}</span>
+        <span className={toastDetailClass}>
           {contextTitle !== undefined ? `${contextTitle} · ${detail}` : detail}
         </span>
       </div>
       {onAction && (
-        <button className="merge-toast-action" onClick={onAction}>
+        <button className={toastActionClass} onClick={onAction}>
           {isApproval ? "Review" : "View"}
         </button>
       )}
-      <button className="merge-toast-close" onClick={handleDismiss}>
+      <button className={toastCloseClass} onClick={handleDismiss}>
         <CloseIcon />
       </button>
     </div>

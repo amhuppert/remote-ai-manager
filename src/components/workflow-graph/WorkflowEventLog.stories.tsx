@@ -468,7 +468,7 @@ const meta = {
           width: 560,
           padding: 16,
           background: "var(--bg-void)",
-          color: "var(--text-strong)",
+          color: "var(--text-primary)",
         }}
       >
         <Story />

@@ -27,6 +27,8 @@ export interface PaneConversationBodyProps {
 
 const noop = (): void => {};
 
+const bodyStatusClass = "text-text-tertiary font-mono text-[0.7rem]";
+
 /**
  * The full, scrollable transcript for one pane — the same message-rendering
  * section as the primary conversation panel (`MessageRow` inside the shared
@@ -59,17 +61,21 @@ export default function PaneConversationBody({
   const virtuosoRef = useRef<VirtuosoHandle>(null);
 
   if (isLoading) {
-    return <div className="pane__body-status">Loading…</div>;
+    return <div className={bodyStatusClass}>Loading…</div>;
   }
   if (isError) {
-    return <div className="pane__body-status">Could not load messages</div>;
+    return <div className={bodyStatusClass}>Could not load messages</div>;
   }
   if (rows.length === 0) {
-    return <div className="pane__body-status">No messages yet</div>;
+    return <div className={bodyStatusClass}>No messages yet</div>;
   }
 
   return (
-    <div className="pane__body">
+    // `pane__body` is kept as a rule-less anchor: conversation-panes.css applies
+    // a pane-context density override to the not-yet-migrated shared
+    // `.conversation` thread via `.pane__body > .conversation`. The body's own
+    // box is utility-owned.
+    <div className="pane__body flex min-h-0 flex-1 cursor-auto flex-col overflow-hidden">
       <div className="conversation" data-backend={selectedBackend}>
         <ConversationVirtuosoList
           rows={rows}

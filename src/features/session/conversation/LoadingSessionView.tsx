@@ -1,6 +1,7 @@
 "use client";
 
 import Topbar from "@/components/Topbar";
+import { EmptyState, EmptyStateTitle } from "@/components/ui/EmptyState";
 
 export interface LoadingSessionViewProps {
   projectName: string;
@@ -34,9 +35,9 @@ export default function LoadingSessionView({
         ]}
       />
       <main className="main">
-        <div className="empty-state">
-          <div className="empty-state-title">{title}</div>
-        </div>
+        <EmptyState>
+          <EmptyStateTitle>{title}</EmptyStateTitle>
+        </EmptyState>
       </main>
     </div>
   );

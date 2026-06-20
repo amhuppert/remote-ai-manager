@@ -43,7 +43,6 @@ describe("ExecutionStatusBar awaiting-approval chip", () => {
 
     const chip = screen.getByText("1 awaiting approval");
     expect(chip).toBeInTheDocument();
-    expect(chip.classList.contains("awaiting-approval")).toBe(true);
   });
 
   it("counts multiple parked contexts in the chip", () => {

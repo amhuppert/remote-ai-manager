@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useEffect, useCallback } from "react";
+import { cn } from "@/lib/ui/cn";
 
 interface CollapsibleTextProps {
   maxCollapsedHeight?: number;
@@ -35,17 +36,21 @@ export default function CollapsibleText({
   const needsCollapse = isOverflowing && !isExpanded;
 
   return (
-    <div className="collapsible-text">
+    <div className="relative">
       <div
         ref={contentRef}
-        className={`collapsible-text-content${needsCollapse ? " collapsed" : ""}`}
+        className={cn(
+          "overflow-hidden transition-[max-height] duration-200 ease-[ease]",
+          needsCollapse &&
+            "[mask-image:linear-gradient(to_bottom,black_60%,transparent_100%)] [-webkit-mask-image:linear-gradient(to_bottom,black_60%,transparent_100%)]",
+        )}
         style={needsCollapse ? { maxHeight: maxCollapsedHeight } : undefined}
       >
         {children}
       </div>
       {isOverflowing && (
         <button
-          className="collapsible-text-toggle"
+          className="mt-xs block cursor-pointer border-none bg-transparent p-0 font-mono text-[0.7rem] font-medium text-cyan-dim transition-colors duration-150 ease-[ease] hover:text-cyan"
           onClick={() => setIsExpanded((prev) => !prev)}
           type="button"
         >

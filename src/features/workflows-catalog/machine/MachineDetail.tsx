@@ -113,7 +113,7 @@ export default function MachineDetail({
         ]}
       />
       <div
-        className="hidden gap-[2px] rounded-md border border-solid border-border-default bg-bg-surface p-[3px] max-1100:mx-lg max-1100:mt-sm max-1100:flex max-1100:self-center max-768:mx-md max-768:self-stretch"
+        className="hidden gap-[2px] rounded-md border border-solid border-border-default bg-bg-surface p-[3px] max-768:mx-md max-768:self-stretch max-1100:mx-lg max-1100:mt-sm max-1100:flex max-1100:self-center"
         role="tablist"
         aria-label="Workflow view"
       >
@@ -182,7 +182,7 @@ function PanelTab({
       aria-selected={active}
       data-active={active}
       onClick={onClick}
-      className="flex min-h-[28px] cursor-pointer items-center gap-[4px] whitespace-nowrap rounded-sm border-0 bg-transparent px-[10px] py-[5px] font-mono text-[0.72rem] font-medium uppercase tracking-[0.05em] text-text-secondary transition-all duration-150 ease-[ease] data-[active=true]:bg-cyan data-[active=true]:text-text-inverse data-[active=false]:hover:bg-bg-hover data-[active=false]:hover:text-text-primary max-1100:min-w-[90px] max-1100:justify-center max-768:min-h-[44px] max-768:grow max-768:text-[0.78rem]"
+      className="flex min-h-[28px] cursor-pointer items-center gap-[4px] rounded-sm border-0 bg-transparent px-[10px] py-[5px] font-mono text-[0.72rem] font-medium tracking-[0.05em] whitespace-nowrap text-text-secondary uppercase transition-all duration-150 ease-[ease] data-[active=false]:hover:bg-bg-hover data-[active=false]:hover:text-text-primary data-[active=true]:bg-cyan data-[active=true]:text-text-inverse max-768:min-h-[44px] max-768:grow max-768:text-[0.78rem] max-1100:min-w-[90px] max-1100:justify-center"
     >
       {children}
     </button>

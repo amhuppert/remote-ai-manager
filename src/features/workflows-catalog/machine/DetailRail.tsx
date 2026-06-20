@@ -57,7 +57,7 @@ function MachinePane({ spec }: { spec: MachineSpec }): React.JSX.Element {
   return (
     <>
       <div className="flex flex-col gap-sm">
-        <div className="font-mono text-[0.7rem] uppercase tracking-[0.08em] text-text-tertiary">
+        <div className="font-mono text-[0.7rem] tracking-[0.08em] text-text-tertiary uppercase">
           About this workflow
         </div>
         <p className="text-[0.9rem] leading-[1.55] text-text-secondary">
@@ -69,10 +69,10 @@ function MachinePane({ spec }: { spec: MachineSpec }): React.JSX.Element {
           </span>
         </div>
         <div className="flex flex-col gap-[2px] font-mono text-[0.7rem]">
-          <span className="uppercase tracking-[0.08em] text-text-tertiary">
+          <span className="tracking-[0.08em] text-text-tertiary uppercase">
             source
           </span>
-          <code className="break-all rounded-sm bg-bg-base px-[8px] py-[4px] text-cyan-dim">
+          <code className="rounded-sm bg-bg-base px-[8px] py-[4px] break-all text-cyan-dim">
             {spec.filePath}
           </code>
         </div>
@@ -123,7 +123,7 @@ function MachinePane({ spec }: { spec: MachineSpec }): React.JSX.Element {
         </RailListSection>
       )}
 
-      <div className="border-x-0 border-b-0 border-t border-solid border-border-subtle pt-md text-[0.8rem] italic text-text-tertiary">
+      <div className="border-x-0 border-t border-b-0 border-solid border-border-subtle pt-md text-[0.8rem] text-text-tertiary italic">
         Click any state in the diagram to inspect it.
       </div>
     </>
@@ -147,7 +147,7 @@ function SelectedStatePane({
         ← Back to overview
       </button>
       <div className="flex flex-col gap-sm">
-        <div className="font-mono text-[0.7rem] uppercase tracking-[0.08em] text-text-tertiary">
+        <div className="font-mono text-[0.7rem] tracking-[0.08em] text-text-tertiary uppercase">
           {state.kind} state
         </div>
         <h2 className="font-display text-[1.5rem] tracking-[-0.01em] text-text-primary">
@@ -233,8 +233,8 @@ function RailListSection({
 }): React.JSX.Element {
   return (
     <div className="flex flex-col gap-sm">
-      <div className="flex items-baseline justify-between border-x-0 border-b-0 border-t border-solid border-border-subtle pt-md">
-        <h3 className="font-mono text-[0.85rem] uppercase tracking-[0.08em] text-text-primary">
+      <div className="flex items-baseline justify-between border-x-0 border-t border-b-0 border-solid border-border-subtle pt-md">
+        <h3 className="font-mono text-[0.85rem] tracking-[0.08em] text-text-primary uppercase">
           {title}
         </h3>
         {hint && (

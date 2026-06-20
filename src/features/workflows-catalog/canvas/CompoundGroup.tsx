@@ -73,14 +73,14 @@ export default function CompoundGroup({
       >
         <button
           type="button"
-          className="pointer-events-auto absolute left-[16px] top-[-12px] inline-flex cursor-pointer items-center gap-[8px] rounded-sm border border-solid border-border-default bg-bg-base px-[10px] py-[2px] font-mono text-[0.7rem] uppercase tracking-[0.08em] text-text-secondary transition-all duration-150 ease-[ease] enabled:hover:border-border-strong enabled:hover:bg-bg-raised enabled:hover:text-text-primary disabled:cursor-default"
+          className="pointer-events-auto absolute top-[-12px] left-[16px] inline-flex cursor-pointer items-center gap-[8px] rounded-sm border border-solid border-border-default bg-bg-base px-[10px] py-[2px] font-mono text-[0.7rem] tracking-[0.08em] text-text-secondary uppercase transition-all duration-150 ease-[ease] enabled:hover:border-border-strong enabled:hover:bg-bg-raised enabled:hover:text-text-primary disabled:cursor-default"
           onClick={() => stateId && onClickHeader?.(stateId)}
           disabled={!stateId || !onClickHeader}
           tabIndex={stateId ? 0 : -1}
         >
           <span className="text-text-primary">{label}</span>
           {hint && (
-            <span className="normal-case tracking-[0.02em] text-text-tertiary">
+            <span className="tracking-[0.02em] text-text-tertiary normal-case">
               {hint}
             </span>
           )}

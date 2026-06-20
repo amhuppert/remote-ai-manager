@@ -5,12 +5,11 @@ const meta = {
   title: "UI/Badge",
   component: Badge,
   parameters: {
-    // `subtle` is opacity-0.5 by design (legacy `.cc-badge--subtle`, for content
-    // redundant with context), which axe flags for faded contrast. That opacity
-    // is frozen design-token parity, so a11y stays advisory here ("todo", the
-    // project default) rather than failing the Storybook test project on legacy
-    // debt. The non-subtle variants are contrast-clean.
-    a11y: { test: "todo" },
+    // Every variant — including `subtle`, which renders the neutral muted palette
+    // (text-secondary on bg-raised) rather than an opacity fade — meets WCAG AA
+    // text contrast, so a11y is enforced ("error" fails the Storybook test
+    // project on any violation).
+    a11y: { test: "error" },
     layout: "centered",
   },
 } satisfies Meta<typeof Badge>;

@@ -9,9 +9,21 @@ import type {
   CollaborationResolvedDisagreement,
   CollaborationUserQuestion,
 } from "@/lib/workflows/collaboration/types";
+import { cn } from "@/lib/ui/cn";
 import CollabClaimsList from "@/features/session/conversation/collab/CollabClaimsList";
 import CollabCollapsibleCard from "@/features/session/conversation/collab/CollabCollapsibleCard";
 import CollabMarkdownText from "@/features/session/conversation/collab/CollabMarkdownText";
+import {
+  cardAgent,
+  cardEyebrow,
+  cardNarrative,
+  cardRound,
+  cardSection,
+  cardSectionTitle,
+  cardSummary,
+  cardVerdict,
+  cardVerdictColor,
+} from "@/features/session/conversation/collab/card-chrome";
 
 export interface CollabResolutionDecisionCardProps {
   agent: CollaborationAgent;
@@ -85,20 +97,22 @@ function TrajectorySparkline({
   const path = pointsToPath(points);
   return (
     <div
-      className="collab-resolution-decision-card-trajectory"
+      className="flex items-center gap-sm font-mono text-[0.7rem] text-text-tertiary"
       aria-label={`Disagreement trajectory: ${trajectory.join(", ")}`}
     >
       <span>trajectory</span>
       <svg
-        className="collab-resolution-decision-card-sparkline"
+        className="block h-[24px] w-auto"
         viewBox={`0 0 ${SPARKLINE_WIDTH} ${SPARKLINE_HEIGHT}`}
         width={SPARKLINE_WIDTH}
         height={SPARKLINE_HEIGHT}
         role="img"
         aria-hidden="true"
       >
-        <path d={path} />
-        {last ? <circle cx={last.x} cy={last.y} r={2} /> : null}
+        <path className="fill-none stroke-cyan [stroke-width:1.5]" d={path} />
+        {last ? (
+          <circle className="fill-cyan" cx={last.x} cy={last.y} r={2} />
+        ) : null}
       </svg>
       <span>
         {trajectory[0]} → {trajectory[trajectory.length - 1]}
@@ -131,23 +145,20 @@ export default function CollabResolutionDecisionCard({
       defaultOpen={defaultOpen}
       header={
         <>
-          <span className="collab-artifact-card-agent" data-agent={agent}>
+          <span className={cardAgent} data-agent={agent}>
             {AGENT_LABEL[agent]}
           </span>
-          <span className="collab-artifact-card-eyebrow">Resolution</span>
-          <span
-            className="collab-artifact-card-round"
-            aria-label={`Round ${round}`}
-          >
+          <span className={cardEyebrow}>Resolution</span>
+          <span className={cardRound} aria-label={`Round ${round}`}>
             R{round}
           </span>
           <span
-            className="collab-artifact-card-verdict"
+            className={cn(cardVerdict, cardVerdictColor[nextAction])}
             data-next-action={nextAction}
           >
             {verdictLabel}
           </span>
-          <span className="collab-artifact-card-summary">
+          <span className={cardSummary}>
             {acceptedPoints.length} accepted · {resolvedDisagreements.length}{" "}
             resolved · {remainingDisagreements.length} remaining
             {userQuestions.length > 0
@@ -162,41 +173,42 @@ export default function CollabResolutionDecisionCard({
     >
       <TrajectorySparkline trajectory={trajectory} />
 
-      <CollabMarkdownText
-        content={rationale}
-        className="collab-artifact-card-narrative"
-      />
+      <CollabMarkdownText content={rationale} className={cardNarrative} />
 
       {resolvedDisagreements.length > 0 ? (
-        <section className="collab-artifact-card-section">
-          <h4 className="collab-artifact-card-section-title">
+        <section className={cardSection}>
+          <h4 className={cardSectionTitle}>
             Resolved disagreements ({resolvedDisagreements.length})
           </h4>
           <ul
-            className="collab-resolution-decision-card-resolved"
+            className="m-0 flex list-none flex-col gap-[6px] p-0"
             aria-label="Resolved disagreements"
           >
             {resolvedDisagreements.map((item) => (
               <li
-                className="collab-resolution-decision-card-resolved-item"
+                className="flex flex-col gap-[2px] border-0 border-l-2 border-solid border-l-green-dim pl-sm text-[0.82rem] text-text-primary"
                 key={item.disagreementId}
               >
-                <div className="collab-resolution-decision-card-resolved-resolution">
-                  <span className="collab-resolution-decision-card-resolved-id">
+                <div className="flex flex-wrap items-baseline gap-x-[4px] gap-y-0">
+                  <span className="shrink-0 font-mono font-semibold text-text-secondary">
                     {item.disagreementId} →
                   </span>{" "}
                   <CollabMarkdownText
                     content={item.resolution}
-                    className="collab-resolution-decision-card-resolved-text"
+                    className="min-w-0 flex-auto"
                   />
                 </div>
-                <div className="collab-resolution-decision-card-resolved-meta">
-                  <span className="collab-resolution-decision-card-resolved-meta-prefix">
+                {/* `collab-resolution-decision-card-resolved-meta` is kept ONLY
+                    as a generated-content scope: it has no own-element rule left
+                    in conversation.css, just the preserved descendant rule that
+                    sizes inline code inside this rationale's markdown. */}
+                <div className="collab-resolution-decision-card-resolved-meta flex flex-wrap items-baseline gap-x-[4px] gap-y-0 font-mono text-[0.7rem] text-text-secondary">
+                  <span className="shrink-0">
                     {item.resolvedAutonomously ? "auto" : "manual"} ·
                   </span>{" "}
                   <CollabMarkdownText
                     content={item.rationale}
-                    className="collab-resolution-decision-card-resolved-rationale"
+                    className="min-w-0 flex-auto font-mono text-[0.7rem] text-text-secondary"
                   />
                 </div>
               </li>

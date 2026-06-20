@@ -1,6 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { Button } from "@/components/ui/Button";
+import { SectionChevron, SectionLabel } from "@/components/ui/SectionHeader";
+import { cn } from "@/lib/ui/cn";
 
 export type InspectorConfigBlockSource =
   | "global"
@@ -27,6 +30,20 @@ const BADGE_TEXT: Record<InspectorConfigBlockSource, string> = {
   disabled: "DISABLED",
 };
 
+const BORDER_LEFT_CLASS: Record<InspectorConfigBlockSource, string> = {
+  global: "border-l-border-subtle",
+  workflow: "border-l-border-default",
+  "context-override": "border-l-cyan",
+  disabled: "border-l-red-dim",
+};
+
+const BADGE_COLOR_CLASS: Record<InspectorConfigBlockSource, string> = {
+  global: "text-text-tertiary bg-transparent",
+  workflow: "text-text-tertiary bg-transparent",
+  "context-override": "text-cyan bg-cyan-glow",
+  disabled: "text-red-text bg-red-glow",
+};
+
 function isInherited(source: InspectorConfigBlockSource): boolean {
   return source === "global" || source === "workflow";
 }
@@ -51,91 +68,85 @@ export default function InspectorConfigBlock({
 
   return (
     <div
-      className={`wb-inspector-block wb-inspector-block--source-${source}`}
+      className={cn(
+        "mb-sm rounded-md border border-l-2 border-solid border-border-subtle bg-bg-surface p-0",
+        BORDER_LEFT_CLASS[source],
+      )}
       data-source={source}
     >
       <button
         type="button"
-        className="wb-inspector-block__head"
+        className="flex w-full cursor-pointer appearance-none items-center gap-sm border-0 bg-transparent px-md py-sm text-left text-text-secondary select-none hover:text-text-primary focus-visible:[outline:2px_solid_var(--cyan)] focus-visible:[outline-offset:-2px]"
         aria-expanded={open}
         aria-controls={bodyId}
         onClick={() => setOpen((prev) => !prev)}
       >
-        <span
-          className={`cc-section-chevron${open ? "" : " collapsed"}`}
-          aria-hidden="true"
-        >
+        <SectionChevron collapsed={!open} aria-hidden="true">
           ▾
+        </SectionChevron>
+        <SectionLabel data-section-label>{label}</SectionLabel>
+        <span
+          className={cn(
+            "min-w-0 flex-1 overflow-hidden font-mono text-[0.72rem] font-normal text-ellipsis whitespace-nowrap text-text-primary",
+            source === "disabled" && "text-text-tertiary line-through",
+          )}
+        >
+          {summary}
         </span>
-        <span className="cc-section-label">{label}</span>
-        <span className="wb-inspector-block__summary">{summary}</span>
-        <span className="wb-inspector-block__badge">{BADGE_TEXT[source]}</span>
+        <span
+          className={cn(
+            "flex-shrink-0 rounded-full px-[8px] py-[2px] font-mono text-[0.7rem] font-semibold tracking-[0.06em] whitespace-nowrap uppercase",
+            BADGE_COLOR_CLASS[source],
+          )}
+        >
+          {BADGE_TEXT[source]}
+        </span>
       </button>
 
-      <div id={bodyId} className="wb-inspector-block__body" hidden={!open}>
+      <div
+        id={bodyId}
+        className="rounded-b-[calc(var(--radius-md)-1px)] border-t border-solid border-border-subtle bg-bg-base p-md"
+        hidden={!open}
+      >
         <div
-          className={`wb-inspector-block__controls${editable ? "" : " wb-inspector-block__controls--readonly"}`}
+          className={cn("block", !editable && "pointer-events-none opacity-65")}
           aria-disabled={editable ? undefined : true}
         >
           {children}
         </div>
 
-        <div className="wb-inspector-block__foot">
+        <div className="mt-md flex justify-end gap-sm">
           {isInherited(source) && onOverride ? (
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={onOverride}
-            >
+            <Button variant="ghost" size="sm" touch onClick={onOverride}>
               Override
-            </button>
+            </Button>
           ) : null}
           {isInherited(source) && onToggleDisabled ? (
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={onToggleDisabled}
-            >
+            <Button variant="ghost" size="sm" touch onClick={onToggleDisabled}>
               Disable for this context
-            </button>
+            </Button>
           ) : null}
 
           {source === "context-override" && onReset ? (
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={onReset}
-            >
+            <Button variant="ghost" size="sm" touch onClick={onReset}>
               Reset to inherit
-            </button>
+            </Button>
           ) : null}
           {source === "context-override" && onToggleDisabled ? (
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={onToggleDisabled}
-            >
+            <Button variant="ghost" size="sm" touch onClick={onToggleDisabled}>
               Disable for this context
-            </button>
+            </Button>
           ) : null}
 
           {source === "disabled" && onToggleDisabled ? (
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={onToggleDisabled}
-            >
+            <Button variant="ghost" size="sm" touch onClick={onToggleDisabled}>
               Re-enable (inherit)
-            </button>
+            </Button>
           ) : null}
           {source === "disabled" && onOverride ? (
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={onOverride}
-            >
+            <Button variant="ghost" size="sm" touch onClick={onOverride}>
               Override with custom validator
-            </button>
+            </Button>
           ) : null}
         </div>
       </div>

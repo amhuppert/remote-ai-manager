@@ -79,7 +79,7 @@ const OWNERS: readonly OwnerSpec[] = [
       "one-off",
     ],
     residual:
-      "PRESERVED: scrollbar styling (`::-webkit-scrollbar*`); tooltip/modal/toast/notification-panel portal positioning (`.tooltip-portal`, `.modal-overlay`, `.np-backdrop`); rendered-markdown output (`.markdown-content`/`.markdown-viewer`/`.markdown-fallback`); the global `@keyframes` library (21 keyframes). Also hosts 32 canonical `.cc-*` recipe rules + a large appended utility/component block that migrate to React primitives — globals.css shrinks across waves (Stage B).",
+      "PRESERVED: scrollbar styling (`::-webkit-scrollbar*`); tooltip/modal/toast/notification-panel portal positioning (`.tooltip-portal`, `.modal-overlay`, `.np-backdrop`); rendered-markdown output (`.markdown-content`/`.markdown-viewer`/`.markdown-fallback`); the global `@keyframes` library. The leaf-recipe swap wave deleted every consumer-free canonical recipe (`.btn-icon`, `.btn-toggle*`, `.empty-state*`, `.cc-section-*`, `.form-*`, `.cc-toast`); the recipes still present (`.btn*`, `.btn-icon-only*`, `.cc-tabs`/`.cc-tab*`, `.status-dot*`, `.modal*`) each retain ≥1 escape-hatched prod consumer and are tracked above the preserved floor for a follow-up remediation wave (see `.cc/graph-workflow-docs/integration-retained-recipes.md`).",
   },
   {
     path: "src/features/_root/styles/index.css",
@@ -99,14 +99,14 @@ const OWNERS: readonly OwnerSpec[] = [
     taxonomy: "foundation",
     alsoContains: [],
     residual:
-      "PRESERVED: body atmospherics — `body::before` (noise-texture overlay) + `body::after` (scanline overlay) stay scoped forever (decision 4 / R6.2). The base reset (`*`, `html`, `body`) is preserved until Preflight is reconciled in Stage B (R9.3).",
+      "PRESERVED: body atmospherics — `body::before` (noise-texture overlay) + `body::after` (scanline overlay) stay scoped forever (decision 4 / R6.2). The base reset (`*`, `html`, `body`) is the reconciled canonical base reset — Preflight is not imported (recommended Option A, pending ratification at the B-final human gate; R9.3). Stays in `@layer base`.",
   },
   {
     path: "src/features/_root/styles/typography.css",
     taxonomy: "foundation",
     alsoContains: ["canonical-primitive"],
     residual:
-      "Base element typography preserved until reconciled with Preflight (Stage B). Hosts 11 canonical `.cc-*` text-utility rules that migrate to primitives/utilities.",
+      "Base element typography preserved as part of the reconciled base reset (Preflight not imported). The dead `.cc-*` typography helpers were deleted; the surviving rules are the utility-shaped `.text-*` color helpers (retire in the R9 token/alias-collapse pass) plus `.cc-diff`.",
   },
   {
     path: "src/features/_root/styles/theme.css",
@@ -176,9 +176,9 @@ const OWNERS: readonly OwnerSpec[] = [
   {
     path: "src/features/project-detail/styles/project-detail.css",
     taxonomy: "feature-layout",
-    alsoContains: ["canonical-primitive", "animation"],
+    alsoContains: ["animation"],
     residual:
-      "None hard-preserved. Hosts 46 canonical `.cc-*` recipe rules (`.cc-primary`, `.cc-ibtn`, `.cc-checkbox`) that migrate to primitives, plus `bulk-float-in` / `kebab-in` keyframes. Container-positioned controls reattach via the same-slice parent rule.",
+      "None hard-preserved. The leaf-recipe swap wave deleted every `.cc-*` recipe (`.cc-primary*`, `.cc-ibtn*`, `.cc-checkbox*`, `.cc-toast`) — all were consumer-free after their ProjectDetailView/CCCheckbox consumers swapped to primitives/inline utilities. What remains: the page-level `.main` layout override (targets a shared shell class), the `.project-detail-shell` flex column, and the preserved `kebab-in` keyframe.",
   },
   {
     path: "src/features/_root/styles/conversation-tabs.css",
@@ -229,24 +229,11 @@ const OWNERS: readonly OwnerSpec[] = [
       "None preserved — fully migratable feature layout (`.spawn-card*`).",
   },
   {
-    path: "src/features/config/styles/config-editor.css",
-    taxonomy: "feature-layout",
-    alsoContains: [],
-    residual:
-      "None preserved (`.config-*`). Background-token/className brittle assertions deleted on migration (Stage B 7.4).",
-  },
-  {
     path: "src/features/projects-index/styles/projects-index.css",
     taxonomy: "feature-layout",
     alsoContains: [],
     residual:
       "None preserved (`.project-card*`). This is the Stage-A pilot surface (ProjectCard + a leaf control).",
-  },
-  {
-    path: "src/features/project-detail/composer/styles/composer.css",
-    taxonomy: "feature-layout",
-    alsoContains: [],
-    residual: "None preserved (`.plc-uc-*` unified composer).",
   },
   {
     path: "src/features/workflows-catalog/styles/workflows-catalog.css",
@@ -256,24 +243,10 @@ const OWNERS: readonly OwnerSpec[] = [
       "None preserved (`.workflow-*` catalog + `.mc-*` machine-canvas primitives).",
   },
   {
-    path: "src/features/workflows-builder/styles/workflows-builder.css",
-    taxonomy: "feature-layout",
-    alsoContains: [],
-    residual:
-      "None hard-preserved (`.wb-*`). InspectorConfigBlock / WorkflowDefinitionsSidebar className brittle assertions deleted on migration (Stage B 9.1).",
-  },
-  {
     path: "src/features/session-diff/styles/session-diff.css",
     taxonomy: "feature-layout",
     alsoContains: [],
     residual: "None preserved (`.session-diff-*` full-page diff).",
-  },
-  {
-    path: "src/features/session-workflow/styles/session-workflow.css",
-    taxonomy: "feature-layout",
-    alsoContains: [],
-    residual:
-      'None preserved (single `.app[data-page="workflow"] .main` layout rule).',
   },
   // ---- One-off ----
   {
@@ -452,8 +425,8 @@ function renderMarkdown(reports: OwnerReport[]): string {
   lines.push(
     "Each owner gets one **primary** taxonomy. `canonical-primitive`, " +
       "`generated-content`, and `animation` have **no dedicated file** in CC — " +
-      "the `.cc-*` recipes live appended in `globals.css` / `typography.css` / " +
-      "`project-detail.css`; markdown/Mermaid styling lives inside `globals.css` " +
+      "the `.cc-*` recipes live appended in `globals.css` / `typography.css`; " +
+      "markdown/Mermaid styling lives inside `globals.css` " +
       "/ `conversation.css`; keyframes are interleaved throughout. These are " +
       "surfaced as **also-contains** below and enumerated in the preserved-CSS " +
       "catalog.",

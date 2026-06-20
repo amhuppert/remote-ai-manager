@@ -115,11 +115,8 @@ describe("PromptEditorConversationMentionPopup", () => {
       />,
     );
 
-    const labels = Array.from(
-      container.querySelectorAll(".conversation-item__label"),
-    ).map((el) => el.textContent);
-    expect(labels).toContain("Refactor parser");
-    expect(labels).not.toContain("Login flow");
+    expect(container.textContent).toContain("Refactor parser");
+    expect(container.textContent).not.toContain("Login flow");
   });
 
   it("excludes the current conversation from results", () => {

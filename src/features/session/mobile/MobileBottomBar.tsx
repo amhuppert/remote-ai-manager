@@ -34,6 +34,13 @@ export default function MobileBottomBar({
   onDevServers,
 }: MobileBottomBarProps): React.JSX.Element {
   return (
+    // RETAINED HOOK (foundation-deferred): `.mobile-bottom-bar` and its
+    // descendant `.mobile-bottom-bar .cc-tabs` / `.cc-tab` overrides (globals.css)
+    // are owned by the globals/graph-context slice, not this one — this file is
+    // intentionally excluded from the eslint utility-first allowlist. Swapping
+    // `.cc-tabs`/`.cc-tab` to <Tabs>/<Tab> here would detach those descendant
+    // rules (selector no longer matches) and regress the mobile bar, so the leaf
+    // hooks stay until the bottom-bar is migrated as one unit.
     <div className="mobile-bottom-bar">
       <div className="cc-tabs">
         {TABS.map((tab) => (

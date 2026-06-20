@@ -1,6 +1,7 @@
 "use client";
 
 import { memo } from "react";
+import { cn } from "@/lib/ui/cn";
 import MessageContent from "@/components/MessageContent";
 import MessageActions from "@/components/MessageActions";
 import DebugActionCard from "@/features/session/debug/DebugActionCard";
@@ -9,6 +10,25 @@ import type {
   ConversationState,
   TranscriptMessage,
 } from "@/lib/conversations/schemas";
+
+// `message`, the role modifier, `message-content`, and `message-iteration-badge`
+// are retained as structural / generated-content / test hooks — external slices
+// and tooling still target them and they are NOT this slice's to migrate:
+//   - `.message-content` (base typography + the `.message.notice .message-content`
+//     override + `.message-content code/pre` + the globals.css rendered-markdown
+//     `.message-content p/ul/h*/a/table/…`) is the PRESERVED markdown/code
+//     container (R6), shared with the collab slice's CollabFinalAnswerMessage —
+//     kept as scoped CSS, so the content div carries only the bare class.
+//   - globals.css `.wb-transcript-body .message`.
+//   - session.css `[data-debug-mode] .message.assistant … .message-content`.
+//   - `.conversation-virtuoso-item .message` inter-row spacing (conversation.css,
+//     owned by the conversation-surfaces slice).
+//   - a session-workflow smoke test selecting `.message.user/.assistant
+//     .message-iteration-badge`.
+// The row's own chrome (role label, meta, iteration badge, notice frame) is
+// utilities.
+export const messageRoleClass =
+  "font-mono text-[0.7rem] font-bold uppercase tracking-[0.1em] mb-[6px]";
 
 export interface MessageRowProps {
   msg: TranscriptMessage;
@@ -44,8 +64,13 @@ const MessageRow = memo(function MessageRow({
 }: MessageRowProps): React.JSX.Element {
   if (msg.role === "notice") {
     return (
-      <div className="message notice" data-msg-index={messageIndex}>
-        <div className="message-role">System</div>
+      <div
+        className="message notice relative border-y-0 border-r-0 border-l-2 border-solid border-border-subtle pl-md"
+        data-msg-index={messageIndex}
+      >
+        <div className={cn(messageRoleClass, "text-[var(--text-muted)]")}>
+          System
+        </div>
         <div className="message-content">
           <MessageContent content={msg.content} worktreePath={worktreePath} />
         </div>
@@ -57,30 +82,49 @@ const MessageRow = memo(function MessageRow({
     msg.origin?.source === "workflow"
       ? msg.origin.workflow?.iterationIndex
       : undefined;
+  // Assistant role colour is ancestor-dependent, exactly as the legacy CSS:
+  // cyan by default, violet only when inside a `[data-backend=codex]` ancestor
+  // (`.conversation[data-backend=codex] .message.assistant .message-role`). It
+  // is NOT derived from `selectedBackend` — outside a conversation thread (e.g.
+  // the sidebar peek) the legacy label stayed cyan even for a Codex turn.
+  // Arbitrary `[var(--…)]` values (not `text-cyan`/`text-violet`) are required so
+  // both base and override live in `@layer utilities`: CC's typography.css ships
+  // UNLAYERED `.text-cyan`/`.text-violet` classes that would otherwise outrank
+  // (unlayered > layered) the codex override and pin the colour to cyan.
+  const roleColor = isUserMsg
+    ? "text-[var(--amber)]"
+    : "text-[var(--cyan)] [[data-backend=codex]_&]:text-[var(--violet)]";
   return (
-    <div className={`message ${msg.role}`} data-msg-index={messageIndex}>
-      <div className="message-role">
+    <div
+      className={cn("message", msg.role, "relative")}
+      data-msg-index={messageIndex}
+    >
+      <div className={cn(messageRoleClass, roleColor)}>
         {isUserMsg ? "You" : selectedBackend === "codex" ? "Codex" : "Claude"}
         {iterationIndex !== undefined && (
           <span
-            className="cc-badge cc-badge--count message-iteration-badge"
+            className="message-iteration-badge ml-sm inline-flex items-center justify-center rounded-full bg-bg-raised px-[8px] py-[2px] font-mono text-[0.7rem] leading-[1.3] font-medium tracking-[0.02em] whitespace-nowrap text-text-secondary normal-case"
             data-iteration={iterationIndex}
           >
             iter {iterationIndex}
           </span>
         )}
         {!isUserMsg && (msg.model || msg.effort) && (
-          <span className="message-meta">
-            <span className="message-meta-sep">&middot;</span>
+          <span className="inline text-[0.7rem] font-medium tracking-[0.02em] normal-case">
+            <span className="mx-[5px] text-text-tertiary">&middot;</span>
             {msg.model && (
-              <span className="message-meta-model">{msg.model}</span>
+              <span className="text-text-secondary">{msg.model}</span>
             )}
             {msg.model && msg.effort && (
-              <span className="message-meta-sep">&middot;</span>
+              <span className="mx-[5px] text-text-tertiary">&middot;</span>
             )}
             {msg.effort && (
               <span
-                className={`message-meta-effort${msg.effort === "max" || msg.effort === "xhigh" ? " cc-rainbow-text" : ""}`}
+                className={
+                  msg.effort === "max" || msg.effort === "xhigh"
+                    ? "cc-rainbow-text"
+                    : "text-text-secondary"
+                }
               >
                 {msg.effort}
               </span>

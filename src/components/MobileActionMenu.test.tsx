@@ -21,17 +21,19 @@ describe("MobileActionMenu", () => {
 
   it("closes the menu when close button is clicked", () => {
     const { container } = render(<MobileActionMenu {...baseProps} />);
-    // Open the menu
+    // Open: the sheet exposes its state via data-open, the backdrop via .visible.
     fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
+    expect(container.querySelector('[data-open="true"]')).not.toBeNull();
     expect(
-      container.querySelector(".mobile-action-sheet.visible"),
-    ).toBeInTheDocument();
+      container.querySelector(".mobile-action-backdrop.visible"),
+    ).not.toBeNull();
 
     // Close via button
     fireEvent.click(screen.getByRole("button", { name: "Close menu" }));
+    expect(container.querySelector('[data-open="true"]')).toBeNull();
     expect(
-      container.querySelector(".mobile-action-sheet.visible"),
-    ).not.toBeInTheDocument();
+      container.querySelector(".mobile-action-backdrop.visible"),
+    ).toBeNull();
   });
 
   it("does not render Commit or Merge actions", () => {

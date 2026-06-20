@@ -32,7 +32,7 @@ describe("ConversationTab", () => {
     expect(screen.getByText("⌘1")).toBeInTheDocument();
 
     const tab = screen.getByRole("tab");
-    const dot = tab.querySelector(".conversation-tab__dot");
+    const dot = tab.querySelector("[data-status]");
     expect(dot).not.toBeNull();
     expect(dot?.getAttribute("data-status")).toBe("running");
   });
@@ -56,7 +56,7 @@ describe("ConversationTab", () => {
 
     const tab = screen.getByRole("tab");
     expect(tab).toHaveAttribute("aria-selected", "false");
-    expect(tab).not.toHaveAttribute("data-active");
+    expect(tab).toHaveAttribute("data-active", "false");
   });
 
   it("activates on click", () => {

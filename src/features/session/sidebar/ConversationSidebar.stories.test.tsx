@@ -45,10 +45,9 @@ describe("ConversationSidebar stories", () => {
     const creativeProjectRow = screen.getByLabelText(
       "Summarize project outcome — awaiting",
     );
-    expect(
-      creativeProjectRow.querySelector(".conversation-sidebar-row__breadcrumb")
-        ?.textContent,
-    ).toContain("creative-ai/main");
+    expect(creativeProjectRow.textContent?.replace(/\s+/g, "")).toContain(
+      "creative-ai/main",
+    );
     expect(screen.queryByText("conversation-ui-overhaul")).toBeNull();
   });
 
@@ -135,16 +134,14 @@ describe("ConversationSidebar stories", () => {
   it("MixedStatuses preserves session row grouping and session-only context menu actions", async () => {
     await GroupBySession.run();
 
-    expect(
-      screen.getByText((_, node) =>
-        Boolean(
-          node?.classList.contains("convo-sidebar-section-label--session") &&
-          node.textContent
-            ?.replace(/\s+/g, "")
-            .includes("remote-ai-manager/conversation-ui-overhaul"),
-        ),
-      ),
-    ).toBeDefined();
+    const sessionSection = Array.from(
+      document.querySelectorAll('[data-section-kind="session"]'),
+    ).find((section) =>
+      section.firstElementChild?.textContent
+        ?.replace(/\s+/g, "")
+        .includes("remote-ai-manager/conversation-ui-overhaul"),
+    );
+    expect(sessionSection).toBeDefined();
 
     fireEvent.contextMenu(
       screen.getByLabelText("Implement sidebar pipeline — running"),

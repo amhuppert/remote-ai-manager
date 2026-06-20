@@ -6,11 +6,11 @@ const meta = {
   title: "UI/Tabs",
   component: Tabs,
   parameters: {
-    // The inactive count pill is opacity-0.85 by design (legacy `.cc-tab-count`),
-    // which axe flags for faded contrast. That opacity is frozen parity, so a11y
-    // stays advisory here ("todo", the project default) rather than failing the
-    // Storybook test project on legacy debt. Tab labels themselves are clean.
-    a11y: { test: "todo" },
+    // The inactive count inherits the tab's color (text-secondary on bg-surface)
+    // instead of fading via opacity, so it — and the labels — meet WCAG AA text
+    // contrast. a11y is enforced ("error" fails the Storybook test project on any
+    // violation).
+    a11y: { test: "error" },
     layout: "centered",
   },
 } satisfies Meta<typeof Tabs>;
@@ -24,7 +24,7 @@ const items = [
   { id: "archived", label: "Archived", count: 0 },
 ];
 
-/** Active vs inactive tabs, each with a count badge whose opacity steps up when active. */
+/** Active vs inactive tabs, each with a count badge that takes the tab's color when active. */
 export const Interactive: Story = {
   render: () => {
     const [active, setActive] = useState("active");

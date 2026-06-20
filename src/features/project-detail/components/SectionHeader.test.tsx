@@ -99,11 +99,11 @@ describe("SectionHeader (bulk-mode)", () => {
   }
 
   it("morphs to bulk-mode and shows the selection count chip", () => {
-    const { container } = renderBulk({ selectionSize: 4 });
+    renderBulk({ selectionSize: 4 });
     expect(
-      container.querySelector(".v3-section-header.bulk-mode"),
-    ).not.toBeNull();
-    expect(container.querySelector(".bulk-count .n")?.textContent).toBe("4");
+      screen.getByRole("region", { name: "Bulk actions" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("4")).toBeInTheDocument();
     expect(screen.getByText(/sessions selected/i)).toBeInTheDocument();
   });
 

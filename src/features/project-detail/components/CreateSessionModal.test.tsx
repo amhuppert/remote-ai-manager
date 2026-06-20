@@ -103,7 +103,8 @@ describe("CreateSessionModal", () => {
 
   it("returns null when open=false", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} open={false} />);
-    expect(screen.queryByTestId("modal-overlay")).toBeNull();
+    expect(screen.queryByText("New Session")).toBeNull();
+    expect(document.getElementById("modal-overlay")).toBeNull();
   });
 
   it("auto-focuses name input in fast mode", () => {
@@ -216,8 +217,9 @@ describe("CreateSessionModal", () => {
 
   it("does not call onClose when overlay background clicked", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
-    const overlay = screen.getByTestId("modal-overlay");
-    fireEvent.click(overlay);
+    const overlay = document.getElementById("modal-overlay");
+    expect(overlay).not.toBeNull();
+    fireEvent.click(overlay!);
     expect(defaultProps.onClose).not.toHaveBeenCalled();
   });
 

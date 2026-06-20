@@ -273,7 +273,9 @@ describe("ConfigPage — Workflow Defaults", () => {
     // Edit implementer.model from "opus" → "sonnet" via ModelSelector.
     // Options are rendered in portals attached to document.body; click every
     // "Sonnet" option so the implementer's ModelSelector onChange fires.
-    const sonnetOptions = document.querySelectorAll(".model-selector-option");
+    const sonnetOptions = document.querySelectorAll(
+      '[data-testid="model-selector-option"]',
+    );
     let clicked = 0;
     for (const btn of Array.from(sonnetOptions)) {
       if ((btn.textContent ?? "").startsWith("Sonnet")) {
@@ -294,28 +296,30 @@ describe("ConfigPage — Workflow Defaults", () => {
       '[data-subsection="implementer"]',
     ) as HTMLElement;
     const modelTrigger = implementer.querySelector(
-      ".model-selector-trigger",
+      '[data-testid="model-selector-trigger"]',
     ) as HTMLElement;
 
     fireEvent.click(modelTrigger);
     const haikuOption = Array.from(
       document.querySelectorAll(
-        ".model-selector-dropdown.open .model-selector-option",
+        '[data-testid="model-selector-dropdown"][data-open="true"] [data-testid="model-selector-option"]',
       ),
     ).find((button) => (button.textContent ?? "").startsWith("Haiku"));
     expect(haikuOption).toBeTruthy();
     fireEvent.click(haikuOption as HTMLElement);
 
     expect(
-      implementer.querySelector(".model-selector-label")?.textContent,
+      implementer.querySelector('[data-testid="model-selector-label"]')
+        ?.textContent,
     ).toBe("Haiku");
 
     const effortTrigger = implementer.querySelector(
-      ".effort-selector-trigger",
+      '[data-testid="effort-selector-trigger"]',
     ) as HTMLButtonElement;
     expect(effortTrigger).toBeDisabled();
     expect(
-      implementer.querySelector(".effort-selector-label")?.textContent,
+      implementer.querySelector('[data-testid="effort-selector-label"]')
+        ?.textContent,
     ).toBe("Unavailable");
   });
 
@@ -327,7 +331,9 @@ describe("ConfigPage — Workflow Defaults", () => {
       '[data-subsection="implementer"]',
     ) as HTMLElement;
 
-    const sonnetOptions = document.querySelectorAll(".model-selector-option");
+    const sonnetOptions = document.querySelectorAll(
+      '[data-testid="model-selector-option"]',
+    );
     for (const btn of Array.from(sonnetOptions)) {
       if ((btn.textContent ?? "").startsWith("Sonnet")) {
         fireEvent.click(btn);

@@ -4,6 +4,7 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { fn } from "storybook/test";
 import { useState } from "react";
 import ModelSelector from "@/components/ModelSelector";
+import { SEND_BUTTON_CLASS } from "@/features/session/prompt/PromptDesktopToolbar";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import ImageAttachmentPreview from "@/components/ImageAttachmentPreview";
 import type { ImageAttachment } from "@/hooks/use-image-attachments";
@@ -53,10 +54,10 @@ function PromptInputAreaDemo({
   const toggleRecording = fn();
 
   return (
-    <div className="prompt-input-area">
-      <div className="prompt-input-wrapper">
+    <div className="shrink-0 border-x-0 border-t border-b-0 border-solid border-border-subtle bg-bg-base px-lg py-md max-768:border-border-default max-768:bg-[var(--cc-bg-base-a60)] max-768:px-sm max-768:py-xs">
+      <div className="relative flex flex-col gap-sm">
         <textarea
-          className="prompt-textarea"
+          className="max-h-[50vh] min-h-[80px] resize-none overflow-y-auto rounded-md border border-solid border-border-default bg-bg-surface px-[14px] py-[12px] font-mono text-[0.85rem] leading-[1.5] text-text-primary transition-[border-color,box-shadow] duration-150 outline-none placeholder:text-text-tertiary focus:border-cyan-dim focus:shadow-[0_0_0_3px_var(--cyan-glow)] max-768:max-h-[120px] max-768:min-h-[44px]"
           placeholder={
             isFinished
               ? "Session is merged and read-only"
@@ -68,10 +69,10 @@ function PromptInputAreaDemo({
           disabled={isFinished}
         />
         <ImageAttachmentPreview images={images} onRemove={removeImage} />
-        <div className="prompt-toolbar">
-          <div className="prompt-toolbar-start">
+        <div className="flex items-center justify-between max-768:hidden">
+          <div className="flex items-center gap-sm">
             <button
-              className="attachment-btn"
+              className="flex h-[36px] w-[36px] cursor-pointer items-center justify-center rounded-sm border border-solid border-border-subtle bg-transparent p-0 text-text-secondary transition-[border-color,color] duration-150 ease-[ease] hover:border-cyan-dim hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
               title="Attach image"
               type="button"
               disabled={sending || isFinished}
@@ -95,7 +96,7 @@ function PromptInputAreaDemo({
               disabled={sending || isFinished}
             />
           </div>
-          <div className="prompt-toolbar-end">
+          <div className="flex items-center gap-sm">
             <VoiceRecordButton
               isRecording={isRecording}
               isProcessing={false}
@@ -105,7 +106,8 @@ function PromptInputAreaDemo({
               disabled={sending}
             />
             <button
-              className={`send-btn${sending ? " busy" : ""}`}
+              className={SEND_BUTTON_CLASS}
+              data-busy={sending}
               disabled={
                 (!text.trim() && images.length === 0) ||
                 sending ||

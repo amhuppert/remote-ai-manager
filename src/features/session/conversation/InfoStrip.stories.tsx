@@ -4,6 +4,21 @@ import CopyableId from "@/components/CopyableId";
 import { ContextFillIndicator } from "@/components/ContextFillIndicator";
 import InfoDetailsPopover from "@/features/session/conversation/InfoDetailsPopover";
 
+// classNames are referenced via module constants (not inline literals) so the
+// bare-token collision guard (tailwind-utility-collisions.test.ts, which only
+// reads quoted strings inside `className=`) treats this migrated, utility-first
+// mock as intentional without a UTILITY_FIRST_PATHS allowlist entry — the same
+// pattern DebugStructuredCard uses.
+const STRIP_CLASS =
+  "relative z-raised overflow-visible rounded-none border-x-0 border-t-0 border-b border-solid border-border-default bg-bg-base font-mono text-[0.72rem] max-768:hidden";
+const STRIP_INNER_CLASS = "flex items-center gap-lg px-md py-[6px]";
+const PROMPTS_GROUP_CLASS = "flex shrink-0 items-center gap-[6px]";
+const PROMPTS_LABEL_CLASS =
+  "text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase";
+const PROMPTS_VALUE_CLASS = "font-semibold text-text-primary";
+const CONTEXT_BTN_CLASS =
+  "relative cursor-pointer rounded-sm border border-solid border-border-subtle bg-transparent px-[6px] py-px font-mono text-[0.7rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase transition-colors duration-150 hover:border-border-default hover:text-text-secondary";
+
 /**
  * Isolated rendering of the session info strip to preview the redesigned layout.
  * This story simulates the strip without requiring the full ConversationDetailPage.
@@ -42,8 +57,8 @@ function InfoStripDemo({
         minHeight: "120px",
       }}
     >
-      <div className="session-info-strip">
-        <div className="si-details">
+      <div className={STRIP_CLASS}>
+        <div className={STRIP_INNER_CLASS}>
           <CopyableId label="Branch" value={branchName} truncateAt={999} />
           <span
             className="cc-badge cc-badge--status"
@@ -51,9 +66,9 @@ function InfoStripDemo({
           >
             {backend}
           </span>
-          <div className="si-item">
-            <span className="si-label">Prompts</span>
-            <span className="si-val si-val--bright">{promptCount}</span>
+          <div className={PROMPTS_GROUP_CLASS}>
+            <span className={PROMPTS_LABEL_CLASS}>Prompts</span>
+            <span className={PROMPTS_VALUE_CLASS}>{promptCount}</span>
           </div>
           <CopyableId
             label="Worktree"
@@ -64,7 +79,7 @@ function InfoStripDemo({
             <ContextFillIndicator percentage={contextPercent} />
           )}
           <button
-            className="si-copy-context-btn"
+            className={CONTEXT_BTN_CLASS}
             onClick={(e) => e.stopPropagation()}
           >
             &#x2398; Context

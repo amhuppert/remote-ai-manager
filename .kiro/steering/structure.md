@@ -43,7 +43,7 @@ No other code in `src/app/`. CSS imports in `globals.css` chain through `@/featu
 - Types/Interfaces: PascalCase.
 - Schemas: camelCase + `Schema` suffix (`sessionStateSchema`).
 - Tests: `.test.ts`/`.test.tsx` colocated with source.
-- CSS files: kebab-case BEM (`project-card-header`), one file per feature concern under `src/features/<feature>/styles/`.
+- Styling: Tailwind v4 utility-first classNames + the `ui/` primitives (`src/components/ui/`) + `cn()` — author new UI with utilities, not new stylesheets (the `no-unapproved-global-css` guardrail rejects new global CSS). Custom tokens live in `src/features/_root/styles/theme.css` (`@theme`, the single source of truth); author with the Tailwind utilities, not raw `var(--…)` names. Existing `src/features/<feature>/styles/*.css` are grandfathered legacy/preserved CSS (kebab-case BEM, e.g. `project-card-header`); foundation tokens + reset live in `src/features/_root/styles/`. See `docs/tailwind-conventions.md`.
 
 ## Imports
 

@@ -66,7 +66,7 @@ export default function SpawnCard(props: SpawnCardProps): React.JSX.Element {
         </header>
         <ul className={LIST_RESET}>
           {props.validation.issues.map((issue, i) => (
-            <li key={i} className="text-amber text-[0.75rem]">
+            <li key={i} className="text-[0.75rem] text-amber">
               {issue}
             </li>
           ))}
@@ -169,7 +169,7 @@ function ValidSpawnCard({
                       aria-hidden
                     />
                     <span className="text-text-primary">{c.name}</span>
-                    <span className="ml-auto text-text-tertiary uppercase tracking-[0.04em] text-[0.7rem]">
+                    <span className="ml-auto text-[0.7rem] tracking-[0.04em] text-text-tertiary uppercase">
                       {live ? live.derivedStatus : "created"}
                     </span>
                   </li>
@@ -194,7 +194,7 @@ function ValidSpawnCard({
       )}
 
       {card.isError && (
-        <div className="text-red text-[0.75rem]" role="alert">
+        <div className="text-[0.75rem] text-red" role="alert">
           Failed to create sessions. Try again.
         </div>
       )}

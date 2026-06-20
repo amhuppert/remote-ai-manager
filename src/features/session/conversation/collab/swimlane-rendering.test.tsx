@@ -47,9 +47,7 @@ describe("artifact card swimlane-ready rendering", () => {
       </div>,
     );
 
-    const cards = Array.from(
-      container.querySelectorAll(".collab-artifact-card"),
-    );
+    const cards = Array.from(container.querySelectorAll("[data-kind]"));
     expect(cards).toHaveLength(3);
     expect(cards.map((c) => c.getAttribute("data-agent"))).toEqual([
       "claude",
@@ -80,12 +78,12 @@ describe("artifact card swimlane-ready rendering", () => {
       />,
     );
 
-    const card = container.querySelector(".collab-artifact-card");
+    const card = container.querySelector("[data-kind]");
     expect(card).not.toBeNull();
     expect(card?.getAttribute("data-kind")).toBe("resolution_decision");
     expect(card?.getAttribute("data-agent")).toBe("claude");
 
-    const verdict = container.querySelector(".collab-artifact-card-verdict");
+    const verdict = container.querySelector("[data-next-action]");
     expect(verdict).not.toBeNull();
     expect(verdict?.getAttribute("data-next-action")).toBe("final");
   });

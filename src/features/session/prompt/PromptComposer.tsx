@@ -8,8 +8,12 @@ import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import { CloseIcon } from "@/components/icons";
 import DebugStatusStrip from "@/features/session/debug/DebugStatusStrip";
 import ImageAttachmentPreview from "@/components/ImageAttachmentPreview";
-import MobilePromptToolbar from "@/features/session/mobile/MobilePromptToolbar";
-import PromptDesktopToolbar from "@/features/session/prompt/PromptDesktopToolbar";
+import MobilePromptToolbar, {
+  MOBILE_PROMPT_ROW_CLASS,
+} from "@/features/session/mobile/MobilePromptToolbar";
+import PromptDesktopToolbar, {
+  SEND_BUTTON_CLASS,
+} from "@/features/session/prompt/PromptDesktopToolbar";
 import { useComposerFocus } from "@/features/session/prompt/use-composer-focus";
 import CollabConfigRow, {
   type CollabConfigRowConfig,
@@ -285,7 +289,7 @@ export default function PromptComposer({
       setQueueError,
     ],
   );
-  const sendBtnClass = `send-btn${sending && !conversationId ? " busy" : ""}`;
+  const sendBusy = sending && !conversationId;
   const sendButtonInner =
     sending && !conversationId ? (
       <div
@@ -303,12 +307,12 @@ export default function PromptComposer({
 
   return (
     <div
-      className="prompt-input-area"
+      className="prompt-input-area shrink-0 border-x-0 border-t border-b-0 border-solid border-border-subtle bg-bg-base px-lg py-md max-768:border-border-default max-768:bg-[var(--cc-bg-base-a60)] max-768:px-sm max-768:py-xs"
       ref={containerRef}
       onFocus={onFocus}
       onBlur={onBlur}
     >
-      <div className="prompt-input-wrapper">
+      <div className="relative flex flex-col gap-sm">
         {activeConversation && (
           <DebugStatusStrip
             projectName={projectName}
@@ -365,17 +369,20 @@ export default function PromptComposer({
         ) : null}
         {cancellableEntries.length > 0 ? (
           <div
-            className="queued-cancel-strip"
+            className="mb-sm flex flex-wrap gap-xs"
             aria-label="Pending queued messages"
           >
             {cancellableEntries.map((entry) => (
-              <div key={entry.id} className="queued-cancel-chip">
-                <span className="queued-cancel-chip__preview">
+              <div
+                key={entry.id}
+                className="inline-flex max-w-full items-center gap-xs rounded-full border border-border-subtle bg-bg-raised px-sm py-2xs font-mono text-[0.72rem] text-text-secondary"
+              >
+                <span className="max-w-[220px] overflow-hidden text-ellipsis whitespace-nowrap">
                   {entry.preview}
                 </span>
                 <button
                   type="button"
-                  className="queued-cancel-chip__remove"
+                  className="inline-flex cursor-pointer items-center justify-center border-0 bg-transparent p-0 text-text-tertiary transition-colors duration-150 hover:text-red"
                   aria-label="Cancel queued message"
                   data-tooltip="Cancel queued message"
                   onClick={() => void cancelQueued(entry.id)}
@@ -432,7 +439,7 @@ export default function PromptComposer({
           voiceAvailable={voiceAvailable}
           elapsedTime={elapsedTime}
           toggleRecording={toggleRecording}
-          sendBtnClass={sendBtnClass}
+          sendBusy={sendBusy}
           sendDisabled={sendDisabled}
           sendTitle={sendTitle}
           sendButtonInner={sendButtonInner}
@@ -466,7 +473,7 @@ export default function PromptComposer({
           onToggleDebug={onDebugToggle}
           debugDisabled={sending || debugTogglePending}
           mcpRow={
-            <div className="mobile-prompt-row mobile-prompt-row--mcp">
+            <div className={MOBILE_PROMPT_ROW_CLASS}>
               <ConversationAgentCapabilitiesConfig
                 projectName={projectName}
                 sessionName={sessionName}
@@ -493,7 +500,8 @@ export default function PromptComposer({
           }
           sendButton={
             <button
-              className={sendBtnClass}
+              className={SEND_BUTTON_CLASS}
+              data-busy={sendBusy}
               disabled={sendDisabled}
               onClick={onSendPrompt}
               title={sendTitle}

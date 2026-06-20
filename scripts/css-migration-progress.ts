@@ -99,8 +99,8 @@ export const OWNER_FLOORS: readonly OwnerFloor[] = [
   {
     path: "src/components/workflow-graph/workflow-graph.css",
     preserved: true,
-    floor: 33,
-    note: "React Flow vendor DOM + own scrollbars + 7 graph keyframes stay bespoke forever; only the JSX-authored chrome migrates (Stage B 9.1). Conservative machine-detectable vendor+keyframe lower bound.",
+    floor: 58,
+    note: "React Flow vendor DOM + own scrollbars + 7 graph keyframes + the `.wb-markdown-inline*` rendered-markdown output (preserved per R6) stay bespoke forever; the JSX-authored chrome was migrated to utilities (Stage B 9.1 / B-6 graph-builder). Floor is the actual post-migration preserved residual (58), corrected up from the earlier conservative 33 which omitted the ~25 `.wb-markdown-inline*` selectors.",
   },
   {
     path: "src/features/_root/styles/conversation.css",
@@ -177,9 +177,9 @@ export const OWNER_FLOORS: readonly OwnerFloor[] = [
   },
   {
     path: "src/features/_root/styles/topbar.css",
-    preserved: false,
-    floor: 0,
-    note: "`.topbar*` — fully migratable.",
+    preserved: true,
+    floor: 10,
+    note: "Shared topbar stylesheet. Desktop Topbar.tsx is utility-first; its `.topbar-status-default/session` wrappers are cross-component descendant ANCHORS for injected session controls (SessionInfoStrip/ConversationList/TddToggle target them via descendant selectors in globals.css/session.css). The `.topbar`/`.topbar-brand`/`.topbar-logo`/`.topbar-divider`/`.topbar-breadcrumb`(+a:hover/.bc-session)/`.topbar-sep` rules are consumed by the Stage-B3 MobileSessionView, which hand-rolls topbar markup with these exact classes (verified: MobileSessionView.stories.tsx; see stage-b2-topbar-followups.md). Not migratable until MobileSessionView migrates (B-3) — corrects the earlier 'fully migratable' note, which did not account for that consumer.",
   },
   {
     path: "src/features/_root/styles/sidebar.css",

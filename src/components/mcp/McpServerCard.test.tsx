@@ -47,7 +47,7 @@ describe("McpServerCard — tool toggles", () => {
       />,
     );
     const toolToggle = container.querySelector(
-      ".mcp-tool-row .mcp-tool-toggle",
+      'button[aria-label="Disable tool browser_click"]',
     ) as HTMLButtonElement;
     expect(toolToggle).toBeTruthy();
     expect(toolToggle.disabled).toBe(false);
@@ -75,7 +75,7 @@ describe("McpServerCard — tool toggles", () => {
       />,
     );
     const toolToggle = container.querySelector(
-      ".mcp-tool-row .mcp-tool-toggle",
+      'button[aria-label="Disable tool browser_click"]',
     ) as HTMLButtonElement;
     expect(toolToggle.disabled).toBe(true);
     fireEvent.click(toolToggle);

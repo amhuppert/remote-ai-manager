@@ -32,14 +32,14 @@ describe("CollabFinalAnswerMessage", () => {
     );
     expect(
       container
-        .querySelector(".collab-final-answer-message")
+        .querySelector('[data-kind="final_answer"]')
         ?.getAttribute("data-agent"),
     ).toBe("claude");
 
     rerender(<CollabFinalAnswerMessage agent="codex" answer="x" />);
     expect(
       container
-        .querySelector(".collab-final-answer-message")
+        .querySelector('[data-kind="final_answer"]')
         ?.getAttribute("data-agent"),
     ).toBe("codex");
   });

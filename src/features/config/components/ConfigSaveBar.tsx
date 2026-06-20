@@ -14,11 +14,11 @@ export function ConfigSaveBar({
 }): React.JSX.Element {
   const dirty = dirtyCount > 0;
   return (
-    <div className="flex items-center justify-end gap-md flex-none py-[12px] px-2xl border-x-0 border-b-0 border-t border-solid border-border-default bg-bg-void sticky bottom-0 z-sticky mt-xl rounded-md [backdrop-filter:blur(16px)_saturate(140%)] max-768:fixed max-768:bottom-0 max-768:left-0 max-768:right-0 max-768:p-md max-768:rounded-none">
-      <div className="flex items-center gap-[6px] mr-auto text-text-secondary font-mono text-[0.76rem] whitespace-nowrap">
+    <div className="sticky bottom-0 z-sticky mt-xl flex flex-none items-center justify-end gap-md rounded-md border-x-0 border-t border-b-0 border-solid border-border-default bg-bg-void px-2xl py-[12px] [backdrop-filter:blur(16px)_saturate(140%)] max-768:fixed max-768:right-0 max-768:bottom-0 max-768:left-0 max-768:rounded-none max-768:p-md">
+      <div className="mr-auto flex items-center gap-[6px] font-mono text-[0.76rem] whitespace-nowrap text-text-secondary">
         <span
           className={cn(
-            "w-[7px] h-[7px] rounded-full",
+            "h-[7px] w-[7px] rounded-full",
             dirty
               ? "bg-amber shadow-[0_0_8px_var(--amber-glow)]"
               : "bg-text-tertiary",
@@ -26,14 +26,14 @@ export function ConfigSaveBar({
         />
         {dirty ? (
           <>
-            <span className="text-amber font-semibold">{dirtyCount}</span>{" "}
+            <span className="font-semibold text-amber">{dirtyCount}</span>{" "}
             unsaved {dirtyCount === 1 ? "change" : "changes"}
           </>
         ) : (
           "All changes saved"
         )}
       </div>
-      <div className="flex gap-sm ml-auto">
+      <div className="ml-auto flex gap-sm">
         <Button
           variant="ghost"
           size="sm"

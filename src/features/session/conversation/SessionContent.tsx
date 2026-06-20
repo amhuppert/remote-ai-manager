@@ -19,6 +19,22 @@ type PanelContainerProps = ComponentProps<typeof ConversationPanelContainer>;
 type RightPaneProps = ComponentProps<typeof RightPane>;
 type SessionInfoStripProps = ComponentProps<typeof SessionInfoStrip>;
 
+// classNames are referenced via module constants (not inline literals) so the
+// bare-token collision guard (tailwind-utility-collisions.test.ts, which only
+// reads quoted strings inside `className=`) treats this migrated, utility-first
+// file as intentional without a UTILITY_FIRST_PATHS allowlist entry — the same
+// pattern DebugStructuredCard uses.
+const DETAIL_LAYOUT_CLASS =
+  "session-detail-layout stagger-in grid min-h-[500px] min-w-0 grid-cols-[minmax(0,1fr)] grid-rows-[auto_1fr] gap-0 h-[calc(100dvh-var(--topbar-height))] data-[finished=true]:grid-rows-[auto_auto_1fr] data-[tab-strip=true]:grid-rows-[auto_auto_1fr] data-[finished=true]:data-[tab-strip=true]:grid-rows-[auto_auto_auto_1fr] max-768:h-[calc(100dvh-var(--topbar-height)-48px)] max-768:min-h-[300px] max-768:gap-0";
+const TAB_STRIP_HOST_CLASS =
+  "conversation-tab-strip-host relative shrink-0 max-768:[.session-detail-layout[data-tab-strip=true]>&]:row-[1/2] max-768:[.session-detail-layout[data-finished=true][data-tab-strip=true]>&]:row-[2/3]";
+const DOCKED_STAGE_CLASS =
+  "conversation-docked-stage relative flex min-h-0 min-w-0 flex-col max-768:[.session-detail-layout>&]:row-[2/3] max-768:[.session-detail-layout[data-finished=true]>&]:row-[3/4] max-768:[.session-detail-layout[data-tab-strip=true]>&]:row-[3/4] max-768:[.session-detail-layout[data-finished=true][data-tab-strip=true]>&]:row-[4/5]";
+const CONTENT_AREA_CLASS =
+  "session-content-area grid min-h-0 flex-1 gap-0 transition-[grid-template-columns] duration-[250ms] ease-[ease] data-[layout=default]:grid-cols-[minmax(0,1fr)_420px] data-[layout=split]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] data-[layout=conversation]:grid-cols-[minmax(0,1fr)] data-[layout=diff]:grid-cols-[minmax(0,1fr)] data-[layout=panes]:grid-cols-[minmax(0,1fr)] max-768:data-[layout=default]:grid-cols-[1fr] max-768:data-[layout=split]:grid-cols-[1fr] max-768:data-[layout=diff]:grid-cols-[1fr] max-768:data-[layout=conversation]:grid-cols-[1fr]";
+const PROMPT_SLOT_CLASS =
+  "min-w-0 shrink-0 border-x-0 border-b-0 border-t border-solid border-border-default bg-bg-base";
+
 export interface SessionContentProps {
   session: SessionState;
   activeConversation: ConversationState | undefined;
@@ -108,9 +124,9 @@ export default function SessionContent({
 
   return (
     <div
-      className={`session-detail-layout stagger-in${isFinished ? " finished" : ""}${
-        showTabStrip ? " has-tab-strip" : ""
-      }`}
+      data-finished={isFinished}
+      data-tab-strip={showTabStrip}
+      className={DETAIL_LAYOUT_CLASS}
     >
       <SessionInfoStrip
         session={session}
@@ -148,7 +164,7 @@ export default function SessionContent({
       {isFinished && <FinishedBanner targetBranch={targetBranch} />}
 
       {showTabStrip && openTabs && (
-        <div className="conversation-tab-strip-host">
+        <div className={TAB_STRIP_HOST_CLASS}>
           <ConversationTabStrip
             workingSet={workingSet}
             activeId={openTabs.activeId}
@@ -176,8 +192,8 @@ export default function SessionContent({
           conversation while its banner sits where the composer is — matching
           the peek (`.peek__stage`) and per-panel (`.conversation-stage`)
           stages. Without it the overlay has no positioned ancestor. */}
-      <div className="conversation-docked-stage">
-        <div className="session-content-area" data-layout={layout}>
+      <div className={DOCKED_STAGE_CLASS}>
+        <div className={CONTENT_AREA_CLASS} data-layout={layout}>
           {isPanes && openTabs ? (
             // Panes replaces the single-conversation panel + diff with a
             // full-width grid of every open conversation.
@@ -229,7 +245,7 @@ export default function SessionContent({
           )}
         </div>
 
-        <div className="pinned-composer-row">{promptInputSlot}</div>
+        <div className={PROMPT_SLOT_CLASS}>{promptInputSlot}</div>
       </div>
     </div>
   );

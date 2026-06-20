@@ -3,6 +3,7 @@
 import { useState, useCallback, useMemo } from "react";
 import { useRouter, useParams } from "next/navigation";
 import MergeConflictsPage from "@/features/session/dialogs/MergeConflictsPage";
+import { EmptyState, EmptyStateTitle } from "@/components/ui/EmptyState";
 import { useResolveConflictsMutation } from "@/lib/git/mutations";
 import { useConflictsQuery } from "@/lib/git/queries";
 import { useSessionQuery } from "@/lib/sessions/queries";
@@ -92,9 +93,9 @@ export default function ConflictsPage() {
     return (
       <div className="app">
         <main className="main">
-          <div className="empty-state">
-            <div className="empty-state-title">Loading conflicts...</div>
-          </div>
+          <EmptyState>
+            <EmptyStateTitle>Loading conflicts...</EmptyStateTitle>
+          </EmptyState>
         </main>
       </div>
     );

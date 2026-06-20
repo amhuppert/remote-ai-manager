@@ -78,7 +78,6 @@ describe("ConversationAgentCapabilitiesConfig", () => {
     const drawer = screen.getByRole("dialog", {
       name: "Agent capabilities configuration",
     });
-    expect(drawer).toHaveClass("agent-capabilities-drawer");
     expect(
       screen.getByTestId("agent-capabilities-drawer-overlay"),
     ).toBeInTheDocument();

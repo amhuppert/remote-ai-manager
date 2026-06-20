@@ -77,7 +77,7 @@ export default function WorkflowExecutionCanvas({
   );
 
   return (
-    <div className="wb-canvas-wrapper">
+    <div className="relative flex min-w-0 flex-1 flex-col max-768:[.app[data-page=workflow][data-mobile-panel=inspector]_&]:hidden max-768:[.app[data-page=workflow][data-mobile-panel=log]_&]:hidden">
       <ReactFlow
         nodes={nodes}
         edges={edges}

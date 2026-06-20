@@ -174,22 +174,22 @@ function makeProps(overrides: Partial<Props> = {}): Props {
 }
 
 describe("SessionContent", () => {
-  it("adds the 'finished' modifier class on the root layout when isFinished=true", () => {
+  it("flags the finished state on the root layout when isFinished=true", () => {
     const { container } = renderWithQuery(
       <SessionContent {...makeProps({ isFinished: true })} />,
     );
     const layout = container.querySelector(".session-detail-layout");
     expect(layout).not.toBeNull();
-    expect(layout!.classList.contains("finished")).toBe(true);
+    expect(layout!.getAttribute("data-finished")).toBe("true");
   });
 
-  it("omits the 'finished' modifier class when isFinished=false", () => {
+  it("clears the finished state when isFinished=false", () => {
     const { container } = renderWithQuery(
       <SessionContent {...makeProps({ isFinished: false })} />,
     );
     const layout = container.querySelector(".session-detail-layout");
     expect(layout).not.toBeNull();
-    expect(layout!.classList.contains("finished")).toBe(false);
+    expect(layout!.getAttribute("data-finished")).toBe("false");
   });
 
   it("renders the detail layout as its root, without page chrome or the rail", () => {
@@ -198,7 +198,9 @@ describe("SessionContent", () => {
       container.firstElementChild?.classList.contains("session-detail-layout"),
     ).toBe(true);
     expect(container.querySelector("main.main")).toBeNull();
-    expect(container.querySelector(".convo-sidebar")).toBeNull();
+    expect(
+      container.querySelector('[data-tooltip="Collapse sidebar"]'),
+    ).toBeNull();
   });
 
   it("renders the prompt composer exactly once in a pinned row", () => {
@@ -212,7 +214,10 @@ describe("SessionContent", () => {
     expect(
       container.querySelectorAll('[data-testid="composer-slot"]').length,
     ).toBe(1);
-    expect(container.querySelector(".pinned-composer-row")).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="composer-slot"]')?.parentElement ??
+        null,
+    ).not.toBeNull();
   });
 
   it("pins the composer as a sibling of the content area, not inside it", () => {
@@ -224,7 +229,9 @@ describe("SessionContent", () => {
       />,
     );
     const contentArea = container.querySelector(".session-content-area");
-    const composerRow = container.querySelector(".pinned-composer-row");
+    const composerRow =
+      container.querySelector('[data-testid="composer-slot"]')?.parentElement ??
+      null;
     const slot = container.querySelector('[data-testid="composer-slot"]');
 
     expect(contentArea).not.toBeNull();
@@ -249,7 +256,9 @@ describe("SessionContent", () => {
     const layout = container.querySelector(".session-detail-layout");
     const stage = container.querySelector(".conversation-docked-stage");
     const contentArea = container.querySelector(".session-content-area");
-    const composerRow = container.querySelector(".pinned-composer-row");
+    const composerRow =
+      container.querySelector('[data-testid="composer-slot"]')?.parentElement ??
+      null;
 
     expect(stage).not.toBeNull();
     // The stage is a direct child of the layout and spans both the conversation
@@ -289,7 +298,9 @@ describe("SessionContent", () => {
         })}
       />,
     );
-    const composerRow = container.querySelector(".pinned-composer-row");
+    const composerRow =
+      container.querySelector('[data-testid="composer-slot"]')?.parentElement ??
+      null;
     const slot = composerRow?.querySelector('[data-testid="composer-slot"]');
     expect(slot).not.toBeNull();
     expect(slot!.tagName).toBe("BUTTON");
@@ -383,7 +394,9 @@ describe("SessionContent", () => {
           })}
         />,
       );
-      const composerRow = container.querySelector(".pinned-composer-row");
+      const composerRow =
+        container.querySelector('[data-testid="composer-slot"]')
+          ?.parentElement ?? null;
       expect(composerRow).not.toBeNull();
       expect(
         composerRow!.querySelector('[data-testid="composer-slot"]'),

@@ -15,17 +15,17 @@ export default memo(function ImageAttachmentPreview({
   if (images.length === 0) return null;
 
   return (
-    <div className="attachment-preview-strip">
+    <div className="flex flex-wrap items-center gap-sm py-xs">
       {images.map((img) => (
-        <div key={img.id} className="attachment-thumbnail">
+        <div key={img.id} className="group relative h-[48px] w-[48px] shrink-0">
           {/* eslint-disable-next-line @next/next/no-img-element -- blob URLs from client-side file selection */}
           <img
             src={img.previewUrl}
             alt={img.fileName}
-            className="attachment-thumbnail-img"
+            className="h-[48px] w-[48px] rounded-md border-2 border-solid border-border-default object-cover transition-[border-color] duration-150 ease-[ease] group-hover:border-border-strong"
           />
           <button
-            className="attachment-thumbnail-remove"
+            className="absolute top-[-4px] right-[-4px] flex h-[18px] w-[18px] cursor-pointer items-center justify-center rounded-full border border-solid border-border-subtle bg-bg-raised p-0 text-[12px] leading-none text-text-secondary hover:border-[var(--danger)] hover:bg-[var(--danger)] hover:text-text-primary"
             onClick={() => onRemove(img.id)}
             title="Remove image"
             type="button"

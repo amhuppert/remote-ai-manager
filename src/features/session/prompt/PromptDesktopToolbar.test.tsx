@@ -32,7 +32,7 @@ function makeProps(
     voiceAvailable: false,
     elapsedTime: 0,
     toggleRecording: vi.fn(),
-    sendBtnClass: "send-btn",
+    sendBusy: false,
     sendDisabled: false,
     sendTitle: "Send prompt",
     sendButtonInner: <span>Send</span>,
@@ -52,7 +52,7 @@ describe("PromptDesktopToolbar", () => {
       <PromptDesktopToolbar {...makeProps({ onAttachClick })} />,
     );
     const attach = container.querySelector(
-      ".attachment-btn",
+      '[title="Attach image"]',
     ) as HTMLButtonElement;
     expect(attach).not.toBeNull();
     fireEvent.click(attach);
@@ -67,7 +67,7 @@ describe("PromptDesktopToolbar", () => {
       />,
     );
     const attach = container.querySelector(
-      ".attachment-btn",
+      '[title="Attach image"]',
     ) as HTMLButtonElement;
     expect(attach.disabled).toBe(true);
     fireEvent.click(attach);
@@ -112,7 +112,7 @@ describe("PromptDesktopToolbar", () => {
       <PromptDesktopToolbar {...makeProps({ isReadOnly: true })} />,
     );
     const trigger = container.querySelector(
-      ".model-selector-trigger",
+      '[data-testid="model-selector-trigger"]',
     ) as HTMLButtonElement;
     expect(trigger).not.toBeNull();
     expect(trigger.disabled).toBe(true);

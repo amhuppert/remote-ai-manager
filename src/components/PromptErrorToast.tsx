@@ -2,6 +2,20 @@
 
 import { useState, useEffect, useCallback } from "react";
 
+import { cn } from "@/lib/ui/cn";
+
+import {
+  mergeToastBaseClass,
+  mergeToastShadowClass,
+  mergeToastExitClass,
+  toastIconClass,
+  toastContentClass,
+  toastTitleClass,
+  toastDetailClass,
+  toastActionClass,
+  toastCloseClass,
+} from "./MergeToast";
+
 interface PromptErrorToastProps {
   sessionName?: string;
   projectName?: string;
@@ -74,21 +88,26 @@ export default function PromptErrorToast({
 
   return (
     <div
-      className={`merge-toast merge-toast-error${exiting ? " merge-toast-exit" : ""}`}
+      className={cn(
+        mergeToastBaseClass,
+        mergeToastShadowClass,
+        "border-[var(--cc-red-border)]",
+        exiting && mergeToastExitClass,
+      )}
     >
-      <div className="merge-toast-icon">
+      <div className={cn(toastIconClass, "text-red")}>
         <ErrorIcon />
       </div>
-      <div className="merge-toast-content">
-        <span className="merge-toast-title">Prompt failed</span>
-        <span className="merge-toast-detail">{detail}</span>
+      <div className={toastContentClass}>
+        <span className={toastTitleClass}>Prompt failed</span>
+        <span className={toastDetailClass}>{detail}</span>
       </div>
       {onAction && (
-        <button className="merge-toast-action" onClick={onAction}>
+        <button className={toastActionClass} onClick={onAction}>
           View
         </button>
       )}
-      <button className="merge-toast-close" onClick={handleDismiss}>
+      <button className={toastCloseClass} onClick={handleDismiss}>
         <CloseIcon />
       </button>
     </div>

@@ -15,7 +15,7 @@ export function LimitsSection({
       accent="timeouts"
       sub="Bounds for runaway agents, idle sessions and pre-merge automation."
     >
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-md pt-md px-[14px] pb-[14px] rounded-lg border border-solid border-border-subtle bg-bg-surface max-768:grid-cols-[1fr]">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-md rounded-lg border border-solid border-border-subtle bg-bg-surface px-[14px] pt-md pb-[14px] max-768:grid-cols-[1fr]">
         <ConfigField
           label="Claude timeout"
           fieldPath="claudeTimeoutMs"

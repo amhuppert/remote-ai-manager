@@ -25,13 +25,16 @@ export default function ConversationLinkChip({
   return (
     <Link
       href={href}
-      className="conversation-link-chip"
+      className="inline-flex items-center gap-xs rounded-md border border-solid border-border-default bg-bg-raised px-[6px] py-[2px] align-baseline font-mono text-[0.78rem] leading-none text-inherit no-underline transition-[border-color,background,box-shadow] duration-150 ease-[ease] hover:border-border-strong hover:bg-bg-hover hover:shadow-[0_0_0_2px_var(--cyan-glow)] data-[backend=codex]:border-violet-dim"
       title={`${projectName} · ${sessionName}`}
       data-backend={backend}
     >
-      <span className="conversation-link-chip__hash">#</span>
-      <span className="conversation-link-chip__name">{displayLabel}</span>
-      <span className="conversation-link-chip__open" aria-hidden="true">
+      <span className="font-semibold text-cyan">#</span>
+      <span className="text-text-primary">{displayLabel}</span>
+      <span
+        className="inline-flex items-center text-text-tertiary"
+        aria-hidden="true"
+      >
         <svg
           width="12"
           height="12"

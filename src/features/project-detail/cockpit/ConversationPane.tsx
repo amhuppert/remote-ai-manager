@@ -131,8 +131,8 @@ export default function ConversationPane({
           </Badge>
         )}
       </header>
-      <div className="flex-1 min-h-0 flex flex-col">{transcript}</div>
-      <div className="shrink-0 px-md py-md max-768:py-sm border-x-0 border-b-0 border-t border-solid border-border-dim bg-bg-base">
+      <div className="flex min-h-0 flex-1 flex-col">{transcript}</div>
+      <div className="shrink-0 border-x-0 border-t border-b-0 border-solid border-border-dim bg-bg-base px-md py-md max-768:py-sm">
         {composer}
       </div>
       {hasDiff && (

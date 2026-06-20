@@ -150,7 +150,9 @@ describe("ConversationSidebar", () => {
 
   it("renders its own collapse toggle by default (session page)", () => {
     renderSidebarWithActiveData(activeConversations);
-    expect(document.querySelector(".convo-sidebar-toggle")).not.toBeNull();
+    expect(
+      document.querySelector('[data-tooltip="Collapse sidebar"]'),
+    ).not.toBeNull();
   });
 
   it("omits its own collapse toggle, and never self-collapses, when the host owns rail collapse (cockpit rail)", () => {
@@ -164,7 +166,9 @@ describe("ConversationSidebar", () => {
 
     // The redundant inner toggle is gone and the content stays visible — there
     // is no way to strand the panel because the host owns collapse.
-    expect(document.querySelector(".convo-sidebar-toggle")).toBeNull();
+    expect(
+      document.querySelector('[data-tooltip="Collapse sidebar"]'),
+    ).toBeNull();
     expect(screen.getByRole("tab", { name: /^All/ })).not.toBeNull();
   });
 

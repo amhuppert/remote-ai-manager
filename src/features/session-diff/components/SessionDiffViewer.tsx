@@ -10,6 +10,14 @@ import {
 } from "@/lib/git/queries";
 import { useSessionQuery } from "@/lib/sessions/queries";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
+import { cn } from "@/lib/ui/cn";
+import { Tabs, Tab, TabCount } from "@/components/ui/Tabs";
+import {
+  EmptyState,
+  EmptyStateTitle,
+  EmptyStateDesc,
+} from "@/components/ui/EmptyState";
+import { Button } from "@/components/ui/Button";
 import Topbar from "@/components/Topbar";
 
 type DiffTab = "uncommitted" | "commits";
@@ -19,16 +27,41 @@ interface Props {
   sessionName: string;
 }
 
-function formatRelativeTime(isoDate: string): string {
-  const diff = Date.now() - new Date(isoDate).getTime();
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
+/* ── Migrated utility recipes (value-identical to the legacy BEM rules in
+   session.css / conversation.css / session-diff.css; the rule bodies are left
+   in place for Stage B-3 cleanup). ── */
+
+const diffFileSection =
+  "border-b border-border-subtle min-w-fit last:border-b-0";
+
+const diffFileHeaderBase =
+  "sticky top-0 z-raised px-md py-sm bg-bg-raised border-b border-border-subtle font-semibold text-text-secondary text-[0.72rem] flex items-center gap-[6px] cursor-pointer select-none transition-[background] duration-100 ease-[ease] hover:bg-bg-hover max-768:px-sm max-768:py-xs max-768:text-[0.7rem]";
+
+const diffFileChevron =
+  "text-[0.7rem] transition-transform duration-150 ease-[ease] text-text-tertiary shrink-0 leading-none";
+
+const diffFileName =
+  "flex-1 whitespace-nowrap overflow-hidden text-ellipsis max-768:min-w-0";
+
+const diffFileStat = "text-[0.7rem] font-normal shrink-0";
+
+const diffFileLinesBase = "min-w-fit";
+
+const diffLineBase =
+  "px-md whitespace-pre border-l-[3px] border-l-transparent max-768:px-sm";
+
+const diffLineByType: Record<
+  "add" | "remove" | "context" | "hunk-header",
+  string
+> = {
+  add: "bg-[var(--cc-green-a06)] border-l-green text-green",
+  remove: "bg-[var(--cc-red-a06)] border-l-red text-red",
+  context: "text-text-tertiary",
+  "hunk-header": "text-cyan-dim bg-cyan-glow font-medium",
+};
+
+const diffContent =
+  "flex-1 overflow-auto p-0 font-mono text-[0.75rem] leading-[1.7]";
 
 /* ── Inline commit entry with lazy-loaded diff ── */
 
@@ -52,41 +85,77 @@ function CommitEntry({
   );
 
   return (
-    <div className="commit-entry">
+    <div
+      className={cn(
+        // base entry + bottom divider
+        "relative border-b border-border-subtle last:border-b-0",
+        // ::before — continuous timeline rail
+        "before:absolute before:top-0 before:bottom-0 before:left-[18px] before:z-base before:w-px before:bg-border-default before:content-['']",
+        "first:before:top-1/2 last:before:bottom-1/2",
+        // ::after — timeline node dot
+        "after:absolute after:top-1/2 after:left-[14px] after:z-raised after:h-[9px] after:w-[9px] after:-translate-y-1/2 after:rounded-full after:border-2 after:border-border-strong after:bg-bg-surface after:transition-[all] after:duration-200 after:ease-[ease] after:content-['']",
+        // :has(.commit-header.expanded) variants, driven by the isExpanded prop
+        isExpanded &&
+          "before:top-0 after:top-[20px] after:translate-y-0 after:border-cyan-dim after:bg-cyan-glow after:shadow-[0_0_6px_var(--cyan-glow-strong)] first:before:top-[20px]",
+      )}
+    >
       <div
-        className={`commit-header${isExpanded ? " expanded" : ""}`}
+        className={cn(
+          "group/hdr relative z-raised grid cursor-pointer grid-cols-[auto_1fr] grid-rows-[auto_auto] items-center gap-x-[8px] gap-y-[2px] pt-[10px] pr-md pb-[10px] pl-[32px] transition-[background] duration-150 ease-[ease] select-none hover:bg-bg-hover active:bg-[var(--cc-bg-hover-a80)]",
+          isExpanded && "border-b border-border-subtle bg-[var(--cc-cyan-a04)]",
+        )}
         onClick={onToggle}
       >
-        <span className="commit-hash">{commit.hash}</span>
-        <span className="commit-message">{commit.message}</span>
-        <span className="commit-meta">
-          <span className="commit-files">
+        <span
+          className={cn(
+            "col-start-1 row-start-1 w-fit rounded-[3px] border border-[var(--cc-cyan-a12)] bg-[var(--cc-cyan-a07)] px-[6px] py-px font-mono text-[0.7rem] font-semibold tracking-[0.03em] text-cyan-dim transition-[all] duration-200 ease-[ease]",
+            isExpanded
+              ? "border-cyan-glow-strong bg-cyan-glow text-cyan shadow-[0_0_8px_var(--cc-cyan-a10)]"
+              : "group-hover/hdr:border-[var(--cc-cyan-a25)] group-hover/hdr:bg-cyan-glow group-hover/hdr:text-cyan",
+          )}
+        >
+          {commit.hash}
+        </span>
+        <span className="col-start-2 row-start-1 overflow-hidden font-body text-[0.78rem] leading-[1.3] font-medium text-ellipsis whitespace-nowrap text-text-primary">
+          {commit.message}
+        </span>
+        <span className="col-[1/3] row-start-2 flex items-center gap-sm pt-px font-mono text-[0.7rem] text-text-tertiary">
+          <span className="flex items-center gap-[3px] after:ml-[4px] after:opacity-40 after:content-['\00b7']">
             {commit.filesChanged} file
             {commit.filesChanged !== 1 ? "s" : ""}
           </span>
-          <span className="commit-date">{formatRelativeTime(commit.date)}</span>
+          <span className="opacity-70">{formatRelativeTime(commit.date)}</span>
         </span>
       </div>
 
       {isExpanded && (
-        <div className="commit-diff-inline">
+        <div className="relative ml-[32px] border-l border-border-subtle bg-[var(--cc-bg-void-a30)] font-mono text-[0.75rem] leading-[1.7]">
           {diffQuery.isPending ? (
-            <div className="commit-diff-loading">Loading diff...</div>
+            <div className={commitDiffLoading}>Loading diff...</div>
           ) : diffQuery.data ? (
             diffQuery.data.files.map((file) => (
-              <div key={file.filePath} className="diff-file-section">
-                <div className="diff-file-header">
-                  <span className="diff-file-name">{file.filePath}</span>
-                  <span className="diff-file-stat">
-                    <span className="add-count">+{file.additions}</span>{" "}
-                    <span className="rm-count">-{file.deletions}</span>
+              <div
+                key={file.filePath}
+                className={cn(diffFileSection, "last:border-b-0")}
+              >
+                <div className={diffFileHeaderBase}>
+                  <span className={diffFileName}>{file.filePath}</span>
+                  <span className={diffFileStat}>
+                    <span className="text-green">+{file.additions}</span>{" "}
+                    <span className="text-red">-{file.deletions}</span>
                   </span>
                 </div>
-                <div className="diff-file-lines">
+                <div className={diffFileLinesBase}>
                   {file.hunks.map((hunk, hunkIdx) => (
                     <div key={hunkIdx}>
                       {hunk.lines.map((line, lineIdx) => (
-                        <div key={lineIdx} className={`diff-line ${line.type}`}>
+                        <div
+                          key={lineIdx}
+                          className={cn(
+                            diffLineBase,
+                            diffLineByType[line.type],
+                          )}
+                        >
                           {line.content}
                         </div>
                       ))}
@@ -96,12 +165,26 @@ function CommitEntry({
               </div>
             ))
           ) : (
-            <div className="commit-diff-loading">Failed to load diff.</div>
+            <div className={commitDiffLoading}>Failed to load diff.</div>
           )}
         </div>
       )}
     </div>
   );
+}
+
+const commitDiffLoading =
+  "px-md py-lg text-text-tertiary font-mono text-[0.72rem] flex items-center gap-sm before:content-[''] before:w-[16px] before:h-[16px] before:border-2 before:border-border-default before:border-t-cyan-dim before:rounded-full before:animate-[spin_0.7s_linear_infinite]";
+
+function formatRelativeTime(isoDate: string): string {
+  const diff = Date.now() - new Date(isoDate).getTime();
+  const minutes = Math.floor(diff / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
 }
 
 /* ── Uncommitted diff content with navigation ── */
@@ -218,10 +301,10 @@ function UncommittedDiff({
 
   return (
     <>
-      <div className="diff-toolbar">
-        <div className="diff-toolbar-group">
+      <div className="flex shrink-0 items-center gap-sm border-b border-border-subtle bg-bg-raised px-md py-sm max-768:flex-nowrap max-768:px-sm max-768:py-xs">
+        <div className={diffToolbarGroup}>
           <button
-            className="diff-nav-btn"
+            className={diffNavBtn}
             onClick={collapseAll}
             title="Collapse all files"
           >
@@ -231,6 +314,7 @@ function UncommittedDiff({
               stroke="currentColor"
               strokeWidth="1.5"
               strokeLinecap="round"
+              className={diffNavBtnSvg}
             >
               <rect x="2" y="3" width="10" height="2" rx="0.5" />
               <line x1="5" y1="8" x2="9" y2="8" />
@@ -238,7 +322,7 @@ function UncommittedDiff({
             </svg>
           </button>
           <button
-            className="diff-nav-btn"
+            className={diffNavBtn}
             onClick={expandAll}
             title="Expand all files"
           >
@@ -248,6 +332,7 @@ function UncommittedDiff({
               stroke="currentColor"
               strokeWidth="1.5"
               strokeLinecap="round"
+              className={diffNavBtnSvg}
             >
               <line x1="2" y1="3" x2="12" y2="3" />
               <line x1="4" y1="5.5" x2="10" y2="5.5" />
@@ -256,10 +341,10 @@ function UncommittedDiff({
             </svg>
           </button>
         </div>
-        <div className="diff-toolbar-sep" />
-        <div className="diff-toolbar-group">
+        <div className={diffToolbarSep} />
+        <div className={diffToolbarGroup}>
           <button
-            className="diff-nav-btn"
+            className={diffNavBtn}
             onClick={() => navigateFile(-1)}
             title="Previous file"
           >
@@ -270,13 +355,14 @@ function UncommittedDiff({
               strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
+              className={diffNavBtnSvg}
             >
               <polyline points="9,2 5,7 9,12" />
             </svg>
           </button>
-          <span className="diff-toolbar-label">Files</span>
+          <span className={diffToolbarLabel}>Files</span>
           <button
-            className="diff-nav-btn"
+            className={diffNavBtn}
             onClick={() => navigateFile(1)}
             title="Next file"
           >
@@ -287,15 +373,16 @@ function UncommittedDiff({
               strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
+              className={diffNavBtnSvg}
             >
               <polyline points="5,2 9,7 5,12" />
             </svg>
           </button>
         </div>
-        <div className="diff-toolbar-sep" />
-        <div className="diff-toolbar-group">
+        <div className={diffToolbarSep} />
+        <div className={diffToolbarGroup}>
           <button
-            className="diff-nav-btn"
+            className={diffNavBtn}
             onClick={() => navigateHunk(-1)}
             title="Previous change"
           >
@@ -306,13 +393,14 @@ function UncommittedDiff({
               strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
+              className={diffNavBtnSvg}
             >
               <polyline points="9,2 5,7 9,12" />
             </svg>
           </button>
-          <span className="diff-toolbar-label">Changes</span>
+          <span className={diffToolbarLabel}>Changes</span>
           <button
-            className="diff-nav-btn"
+            className={diffNavBtn}
             onClick={() => navigateHunk(1)}
             title="Next change"
           >
@@ -323,6 +411,7 @@ function UncommittedDiff({
               strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
+              className={diffNavBtnSvg}
             >
               <polyline points="5,2 9,7 5,12" />
             </svg>
@@ -330,36 +419,41 @@ function UncommittedDiff({
         </div>
       </div>
 
-      <div className="diff-content" ref={contentRef}>
+      <div className={diffContent} ref={contentRef}>
         {diff.files.length === 0 ? (
-          <div className="empty-state" style={{ padding: "var(--space-xl)" }}>
-            <div className="empty-state-title">No changes</div>
-            <div className="empty-state-desc">
+          <div className="flex flex-col items-center justify-center px-xl py-xl text-center">
+            <EmptyStateTitle>No changes</EmptyStateTitle>
+            <EmptyStateDesc>
               This session has no uncommitted changes.
-            </div>
+            </EmptyStateDesc>
           </div>
         ) : (
           diff.files.map((file, fileIdx) => {
             const isCollapsed = collapsedFiles.has(fileIdx);
             return (
-              <div key={file.filePath} className="diff-file-section">
+              <div key={file.filePath} className={diffFileSection}>
                 <div
                   ref={(el) => {
                     fileHeaderRefs.current[fileIdx] = el;
                   }}
-                  className={`diff-file-header${isCollapsed ? " collapsed" : ""}`}
+                  className={diffFileHeaderBase}
                   onClick={() => toggleFile(fileIdx)}
                 >
-                  <span className="diff-file-chevron">&#9662;</span>
-                  <span className="diff-file-name">{file.filePath}</span>
-                  <span className="diff-file-stat">
-                    <span className="add-count">+{file.additions}</span>{" "}
-                    <span className="rm-count">-{file.deletions}</span>
+                  <span
+                    className={cn(
+                      diffFileChevron,
+                      isCollapsed && "rotate-[-90deg]",
+                    )}
+                  >
+                    &#9662;
+                  </span>
+                  <span className={diffFileName}>{file.filePath}</span>
+                  <span className={diffFileStat}>
+                    <span className="text-green">+{file.additions}</span>{" "}
+                    <span className="text-red">-{file.deletions}</span>
                   </span>
                 </div>
-                <div
-                  className={`diff-file-lines${isCollapsed ? " collapsed" : ""}`}
-                >
+                <div className={cn(diffFileLinesBase, isCollapsed && "hidden")}>
                   {file.hunks.map((hunk, hunkIdx) => {
                     const currentHunkRefIdx = hunkRefIndex++;
                     return (
@@ -372,7 +466,10 @@ function UncommittedDiff({
                                 ref={(el) => {
                                   hunkRefs.current[currentHunkRefIdx] = el;
                                 }}
-                                className="diff-line hunk-header"
+                                className={cn(
+                                  diffLineBase,
+                                  diffLineByType["hunk-header"],
+                                )}
                               >
                                 {line.content}
                               </div>
@@ -381,7 +478,10 @@ function UncommittedDiff({
                           return (
                             <div
                               key={lineIdx}
-                              className={`diff-line ${line.type}`}
+                              className={cn(
+                                diffLineBase,
+                                diffLineByType[line.type],
+                              )}
                             >
                               {line.content}
                             </div>
@@ -399,6 +499,21 @@ function UncommittedDiff({
     </>
   );
 }
+
+const diffToolbarGroup =
+  "flex items-center gap-[3px] p-[2px] bg-[var(--cc-bg-base-a40)] rounded-sm";
+
+const diffToolbarSep =
+  "w-px h-[20px] bg-border-default shrink-0 mx-xs max-768:h-[16px]";
+
+const diffToolbarLabel =
+  "font-mono text-[0.7rem] font-semibold uppercase tracking-[0.06em] text-text-secondary mx-xs max-768:hidden";
+
+const diffNavBtn =
+  "flex items-center justify-center min-w-[28px] h-[28px] px-[6px] border border-border-default rounded-sm bg-transparent text-text-secondary font-mono text-[0.75rem] font-medium transition-[all] duration-150 ease-[ease] cursor-pointer hover:bg-bg-hover hover:text-text-primary hover:border-border-strong hover:shadow-[0_0_8px_var(--cyan-glow)] max-768:min-w-[36px] max-768:min-h-[36px] max-768:h-[36px] max-768:px-xs";
+
+const diffNavBtnSvg =
+  "w-[16px] h-[16px] shrink-0 max-768:w-[14px] max-768:h-[14px]";
 
 /* ── Main SessionDiffViewer page component ── */
 
@@ -454,9 +569,9 @@ export default function SessionDiffViewer({
           ]}
         />
         <main className="main">
-          <div className="empty-state">
-            <div className="empty-state-title">Loading diff...</div>
-          </div>
+          <EmptyState>
+            <EmptyStateTitle>Loading diff...</EmptyStateTitle>
+          </EmptyState>
         </main>
       </div>
     );
@@ -482,10 +597,12 @@ export default function SessionDiffViewer({
       />
 
       <main className="main">
-        <div className="session-diff-page stagger-in">
-          <div className="sidebar-diff-panel session-diff-fullpage">
-            <div className="panel-header">
-              <span className="panel-title">Diff vs {targetBranch}</span>
+        <div className="stagger-in mx-auto flex h-full min-h-0 w-full max-w-[1200px] flex-col p-lg max-768:p-sm">
+          <div className="flex max-h-[calc(100dvh-120px)] min-h-0 flex-1 flex-col overflow-clip rounded-none border-0 border-l border-border-default bg-bg-base max-768:max-h-[calc(100dvh-100px)] max-768:rounded-none max-768:border-r-0 max-768:border-l-0">
+            <div className="flex items-center gap-sm border-b border-border-subtle bg-transparent px-lg py-md max-768:flex-wrap max-768:gap-xs max-768:px-sm max-768:py-xs">
+              <span className="font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-secondary uppercase">
+                Diff vs {targetBranch}
+              </span>
               <span
                 style={{
                   fontFamily: "var(--font-mono)",
@@ -502,42 +619,47 @@ export default function SessionDiffViewer({
                 &middot; {diff.files.length} file
                 {diff.files.length !== 1 ? "s" : ""}
               </span>
-              <button
-                className="btn btn-sm btn-ghost"
+              <Button
+                variant="ghost"
+                size="sm"
+                layoutClassName="ml-auto"
                 onClick={handleRefresh}
                 disabled={isRefreshing}
                 aria-label="Refresh"
                 type="button"
-                style={{ marginLeft: "auto" }}
               >
                 {isRefreshing ? "Refreshing..." : "Refresh"}
-              </button>
+              </Button>
             </div>
 
             {/* Tab bar */}
-            <div className="diff-tab-bar">
-              <div className="cc-tabs">
-                <button
-                  className={`cc-tab${activeTab === "uncommitted" ? " active" : ""}`}
+            <div className="shrink-0 border-b border-border-subtle bg-[var(--cc-bg-surface-a30)] px-md py-sm">
+              <Tabs>
+                <Tab
+                  active={activeTab === "uncommitted"}
                   onClick={() => setActiveTab("uncommitted")}
                   type="button"
                 >
                   Uncommitted
                   {diff.files.length > 0 && (
-                    <span className="cc-tab-count">{diff.files.length}</span>
+                    <TabCount active={activeTab === "uncommitted"}>
+                      {diff.files.length}
+                    </TabCount>
                   )}
-                </button>
-                <button
-                  className={`cc-tab${activeTab === "commits" ? " active" : ""}`}
+                </Tab>
+                <Tab
+                  active={activeTab === "commits"}
                   onClick={() => setActiveTab("commits")}
                   type="button"
                 >
                   Commits
                   {commits.length > 0 && (
-                    <span className="cc-tab-count">{commits.length}</span>
+                    <TabCount active={activeTab === "commits"}>
+                      {commits.length}
+                    </TabCount>
                   )}
-                </button>
-              </div>
+                </Tab>
+              </Tabs>
             </div>
 
             {activeTab === "uncommitted" ? (
@@ -546,19 +668,16 @@ export default function SessionDiffViewer({
                 hotkeysEnabled={activeTab === "uncommitted"}
               />
             ) : (
-              <div className="diff-content">
+              <div className={diffContent}>
                 {commits.length === 0 ? (
-                  <div
-                    className="empty-state"
-                    style={{ padding: "var(--space-xl)" }}
-                  >
-                    <div className="empty-state-title">No commits</div>
-                    <div className="empty-state-desc">
+                  <div className="flex flex-col items-center justify-center px-xl py-xl text-center">
+                    <EmptyStateTitle>No commits</EmptyStateTitle>
+                    <EmptyStateDesc>
                       Commit changes to see them listed here.
-                    </div>
+                    </EmptyStateDesc>
                   </div>
                 ) : (
-                  <div className="commit-history">
+                  <div className="px-0 py-sm">
                     {commits.map((commit) => (
                       <CommitEntry
                         key={commit.fullHash}

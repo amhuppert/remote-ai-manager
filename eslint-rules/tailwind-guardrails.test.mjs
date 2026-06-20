@@ -179,6 +179,27 @@ describe("tailwind-guardrails", () => {
         {
           code: `const layout = "ml-auto"; const x = <Button layoutClassName={layout} />;`,
         },
+        // Area-based grid placement (drops a primitive into a parent's
+        // grid-template-areas) is placement, like the line-based col-*/row-*.
+        {
+          code: `const x = <ModeDot layoutClassName="max-768:[grid-area:mode] max-768:self-center" />;`,
+        },
+        // Responsive display toggle removes a child from the parent's responsive
+        // grid/flow at a breakpoint — layout flow, not appearance.
+        {
+          code: `const x = <StatusPill layoutClassName="max-768:hidden" />;`,
+        },
+        // Flex sizing + overflow clipping + content truncation: how a parent
+        // constrains a flex child to its box (parity reproduction of the legacy
+        // `.wb-inspector-header .cc-tabs/.cc-tab` descendant rules). Flow/clipping,
+        // not appearance.
+        {
+          code: `const x = <Tabs layoutClassName="flex-[1_1_auto] min-w-0 overflow-hidden" />;`,
+        },
+        {
+          code: `const x = <Tab layoutClassName="min-w-0 overflow-hidden text-ellipsis" />;`,
+        },
+        { code: `const x = <Tab layoutClassName="truncate" />;` },
       ],
       invalid: [
         {

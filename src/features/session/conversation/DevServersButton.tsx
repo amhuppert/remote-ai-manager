@@ -6,6 +6,26 @@ import {
   type UnmanagedConflictInfo,
 } from "@/components/DevServerDrawer";
 import type { DevServerRuntimeState } from "@/lib/dev-server/schemas";
+import { cn } from "@/lib/ui/cn";
+
+const TRIGGER_BASE =
+  "relative inline-flex items-center gap-[6px] h-[26px] px-[9px] " +
+  "border border-solid rounded-sm font-mono text-[0.68rem] font-semibold " +
+  "tracking-[0.04em] cursor-pointer transition-all duration-150 ease-[ease] " +
+  // Hover only applies in the default state (the active/open states keep their
+  // own border + text); bg is untouched on hover, so only border + text change.
+  "data-[state=default]:hover:border-cyan data-[state=default]:hover:text-text-primary";
+
+type TriggerState = "open" | "active" | "default";
+
+const TRIGGER_STATE: Record<TriggerState, string> = {
+  open: "border-cyan bg-bg-hover text-text-primary",
+  // The active state intentionally uses a softer green (--cc-devgreen-*),
+  // distinct from the --green token (#00e676).
+  active:
+    "text-green border-[var(--cc-devgreen-a50)] bg-[var(--cc-devgreen-a06)]",
+  default: "border-border-default bg-transparent text-text-secondary",
+};
 
 export interface DevServersButtonProps {
   open: boolean;
@@ -86,13 +106,7 @@ export default function DevServersButton({
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  const triggerClass = [
-    "dev-servers-trigger",
-    open && "open",
-    anyActive && "active",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const state: TriggerState = open ? "open" : anyActive ? "active" : "default";
 
   const title = anyActive
     ? `${running} of ${total} dev servers running`
@@ -101,20 +115,21 @@ export default function DevServersButton({
       : "Dev servers";
 
   return (
-    <div className="dev-servers">
+    <div className="relative">
       <button
         ref={triggerRef}
         type="button"
-        className={triggerClass}
+        data-state={state}
+        className={cn(TRIGGER_BASE, TRIGGER_STATE[state])}
         onClick={onToggle}
         title={title}
         aria-expanded={open}
         aria-label="Dev servers"
       >
         <DevServersIcon />
-        <span className="dev-servers-count">
+        <span className="tabular-nums">
           {running}
-          <span className="dev-servers-total">/{total}</span>
+          <span className="ml-[1px] text-text-tertiary">/{total}</span>
         </span>
       </button>
       <DevServerPanel

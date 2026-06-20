@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useRef } from "react";
+import { cn } from "@/lib/ui/cn";
 import type { ActiveConversation } from "@/lib/active-conversations/schemas";
 
 interface Props {
@@ -30,6 +31,22 @@ const ROLE_LABEL: Record<NonNullable<ActiveConversation["role"]>, string> = {
   validator: "validator",
   planner: "planner",
 };
+
+// Status dot color (legacy `.conversation-sidebar-row__dot[data-status]`). An
+// unread-finished or gated row recolors the dot amber, overriding status (the
+// legacy unread/gated rules are sourced after the status rules).
+const DOT_STATUS: Record<ActiveConversation["status"], string> = {
+  new: "bg-blue shadow-[0_0_6px_var(--color-blue-glow)]",
+  running: "bg-cyan shadow-[0_0_6px_var(--color-cyan-glow-strong)]",
+  waiting_for_input: "bg-amber shadow-[0_0_6px_var(--color-amber-glow)]",
+  awaiting: "bg-green shadow-[0_0_6px_var(--color-green-glow)]",
+};
+const DOT_AMBER = "bg-amber shadow-[0_0_6px_var(--color-amber)]";
+
+// Row badge recipe (legacy `.cc-badge` base merged with the row's
+// `.conversation-sidebar-row__badge` size override: 0.7rem / 1px 6px / gap 3px).
+const BADGE_BASE =
+  "inline-flex items-center justify-center gap-[3px] px-[6px] py-[1px] rounded-full font-mono text-[0.7rem] font-semibold leading-[1.2] whitespace-nowrap";
 
 function formatGateStatusLine(
   pendingApproval: NonNullable<ActiveConversation["pendingApproval"]>,
@@ -178,18 +195,44 @@ export default function ConversationSidebarRow({
   const showAck =
     isUnreadFinished && pendingApproval === null && onAcknowledge !== undefined;
 
-  const classNames = [
-    "conversation-sidebar-row",
-    isActive ? "is-active" : null,
-    isClosed ? "is-closed" : null,
-    isFirstInSession ? "is-first-in-session" : null,
-    isLastInSession ? "is-last-in-session" : null,
-    !isClosed && pendingQuestion !== null ? "has-pending-question" : null,
-    !isClosed && pendingApproval !== null ? "has-pending-approval" : null,
-    isUnreadFinished ? "is-unread" : null,
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const gated = !isClosed && pendingApproval !== null;
+  const hasOverlay =
+    (!isClosed && pendingQuestion !== null) || gated || isUnreadFinished;
+
+  const rowClassName = cn(
+    "relative flex w-full cursor-pointer flex-col items-start gap-[5px] overflow-hidden rounded-md border px-[12px] py-[8px] text-left text-inherit no-underline transition-[background-color,border-color] duration-[120ms] ease-[ease] hover:bg-bg-surface",
+    isClosed ? "border-dashed" : "border-solid",
+    isActive ? "bg-bg-surface" : "bg-transparent",
+    // Border color per side: active rows are border-strong, but a row that is
+    // first/last in its session keeps border-dim on that edge (legacy
+    // `.is-first/last-in-session` is sourced after `.is-active`).
+    isActive ? "border-x-border-strong" : "border-x-border-dim",
+    isActive && !isFirstInSession
+      ? "border-t-border-strong"
+      : "border-t-border-dim",
+    isActive && !isLastInSession
+      ? "border-b-border-strong"
+      : "border-b-border-dim",
+    isActive &&
+      "before:absolute before:top-[8px] before:bottom-[8px] before:left-[-1px] before:w-[2px] before:rounded-[1px] before:bg-cyan before:shadow-[0_0_6px_var(--color-cyan)] before:content-['']",
+    isClosed && "opacity-[0.72] hover:opacity-[0.92]",
+    isUnreadFinished &&
+      !isActive &&
+      "shadow-[inset_2px_0_0_var(--color-amber)]",
+    hasOverlay &&
+      "after:pointer-events-none after:absolute after:inset-0 after:rounded-[inherit] after:[background-image:linear-gradient(90deg,var(--amber-glow),transparent_60%)] after:opacity-[0.65] after:content-['']",
+  );
+
+  const activityColor = isClosed
+    ? "text-text-tertiary"
+    : status === "waiting_for_input"
+      ? "text-amber"
+      : gateStatusLine !== null
+        ? "text-amber"
+        : isUnreadFinished
+          ? "text-green-dim"
+          : "text-text-secondary";
+
   const isCurrentConversation =
     currentConversationId !== null &&
     currentConversationId !== undefined &&
@@ -248,28 +291,28 @@ export default function ConversationSidebarRow({
     <a
       ref={rowRef}
       href={href ?? "#"}
-      className={classNames}
+      className={rowClassName}
       data-status={status}
       onClick={handleClick}
       onContextMenu={handleContextMenu}
       aria-label={`${title} — ${isClosed ? "closed, click to reopen" : STATUS_LABEL[status]}`}
       aria-current={isActive ? "page" : undefined}
     >
-      <span className="conversation-sidebar-row__main">
-        <span className="conversation-sidebar-row__title-line">
+      <span className="relative z-[1] flex w-full min-w-0 flex-1 flex-col gap-[5px]">
+        <span className="relative z-[1] flex w-full min-w-0 items-center gap-[6px] pr-[28px]">
           <span
-            className="conversation-sidebar-row__dot"
-            data-status={status}
-            data-unread={isUnreadFinished ? "true" : undefined}
-            data-gated={
-              !isClosed && pendingApproval !== null ? "true" : undefined
-            }
+            className={cn(
+              "mt-0 size-[7px] shrink-0 rounded-full",
+              isUnreadFinished || gated ? DOT_AMBER : DOT_STATUS[status],
+            )}
             aria-hidden="true"
           />
-          <span className="conversation-sidebar-row__title">{title}</span>
+          <span className="min-w-0 flex-1 overflow-hidden font-mono text-[0.86rem] leading-[1.25] font-bold text-ellipsis whitespace-nowrap text-text-primary">
+            {title}
+          </span>
           {!isClosed && pendingApproval !== null && (
             <span
-              className="conversation-sidebar-row__gate-chip"
+              className="inline-flex h-[16px] shrink-0 items-center rounded-full border border-solid border-[var(--cc-amber-a35)] bg-amber-glow px-[6px] font-mono text-[0.58rem] font-semibold tracking-[0.06em] text-amber uppercase"
               aria-label="approval required"
             >
               approval
@@ -277,7 +320,7 @@ export default function ConversationSidebarRow({
           )}
           {isClosed && (
             <span
-              className="conversation-sidebar-row__reopen"
+              className="inline-flex shrink-0 items-center justify-center text-text-tertiary"
               data-tooltip="Click to reopen"
               aria-label="reopens when selected"
             >
@@ -286,13 +329,13 @@ export default function ConversationSidebarRow({
           )}
           {isUnreadFinished && (
             <span
-              className="conversation-sidebar-row__unread-dot"
+              className="ml-[2px] size-[6px] shrink-0 rounded-full bg-amber shadow-[0_0_6px_var(--color-amber)]"
               aria-label="unread"
             />
           )}
           {timeLabel !== "" && (
             <span
-              className="conversation-sidebar-row__time"
+              className="absolute top-[2px] right-0 min-w-[24px] shrink-0 text-right font-mono text-[0.7rem] leading-none text-text-tertiary"
               title={new Date(conversation.lastActivityAt).toLocaleString()}
             >
               {timeLabel}
@@ -300,20 +343,26 @@ export default function ConversationSidebarRow({
           )}
         </span>
 
-        <span className="conversation-sidebar-row__meta-line">
-          <span className="conversation-sidebar-row__badges">
+        <span className="relative z-[1] flex min-w-0 items-center gap-[6px]">
+          <span className="inline-flex shrink-0 items-center gap-xs">
             <span
-              className="cc-badge cc-badge--subtle conversation-sidebar-row__badge"
-              data-type={agentBackend}
-              data-backend={agentBackend}
+              className={cn(
+                BADGE_BASE,
+                "opacity-50",
+                agentBackend === "codex"
+                  ? "bg-violet-glow text-violet"
+                  : "bg-cyan-glow text-cyan",
+              )}
               aria-label={`agent: ${agentBackend}`}
             >
               {agentBackend}
             </span>
             {forkedFrom !== null && (
               <span
-                className="cc-badge cc-badge--subtle conversation-sidebar-row__badge"
-                data-type="fork"
+                className={cn(
+                  BADGE_BASE,
+                  "bg-bg-raised text-text-secondary opacity-50",
+                )}
                 data-tooltip={formatForkTooltip(forkedFrom)}
                 aria-label={`forked (${forkedFrom.mode})`}
               >
@@ -323,8 +372,10 @@ export default function ConversationSidebarRow({
             )}
             {debugActive && (
               <span
-                className="cc-badge conversation-sidebar-row__badge"
-                data-type="debug-active"
+                className={cn(
+                  BADGE_BASE,
+                  "bg-violet-glow text-violet shadow-[0_0_6px_var(--color-violet-glow)]",
+                )}
                 data-tooltip="Debug mode active"
                 aria-label="debug active"
               >
@@ -333,9 +384,10 @@ export default function ConversationSidebarRow({
             )}
             {role !== null && (
               <span
-                className="cc-badge conversation-sidebar-row__badge"
-                data-type="role"
-                data-role={role}
+                className={cn(
+                  BADGE_BASE,
+                  "bg-bg-raised tracking-[0.06em] text-text-secondary uppercase",
+                )}
                 aria-label={`role: ${role}`}
               >
                 {ROLE_LABEL[role]}
@@ -343,13 +395,15 @@ export default function ConversationSidebarRow({
             )}
           </span>
 
-          <span className="conversation-sidebar-row__breadcrumb">
+          <span className="flex min-w-0 flex-1 items-center gap-xs overflow-hidden font-mono text-[0.7rem] text-text-tertiary">
             {breadcrumbLabels.map((label, index) => (
               <span key={`${index}-${label}`}>
                 {index > 0 && (
-                  <span className="conversation-sidebar-row__crumb-sep">/</span>
+                  <span className="shrink-0 text-border-strong">/</span>
                 )}
-                <span className="conversation-sidebar-row__crumb">{label}</span>
+                <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                  {label}
+                </span>
               </span>
             ))}
           </span>
@@ -357,19 +411,21 @@ export default function ConversationSidebarRow({
 
         {showActivity && (
           <span
-            className="conversation-sidebar-row__activity"
-            data-tone={gateStatusLine !== null ? "approval" : undefined}
+            className={cn(
+              "relative z-[1] line-clamp-2 font-mono text-[0.72rem] leading-[1.35]",
+              activityColor,
+            )}
           >
             {statusPrefix !== null && (
               <span
-                className="conversation-sidebar-row__activity-prefix"
-                data-tone={
+                className={cn(
+                  "mr-[4px]",
                   statusPrefix === "Asks"
-                    ? "question"
+                    ? "text-amber"
                     : statusPrefix === "Done"
-                      ? "finished"
-                      : undefined
-                }
+                      ? "text-green"
+                      : "text-text-tertiary",
+                )}
               >
                 {statusPrefix} &rsaquo;
               </span>
@@ -379,10 +435,10 @@ export default function ConversationSidebarRow({
         )}
 
         {showAck && (
-          <span className="conversation-sidebar-row__ack">
+          <span className="relative z-[1] mt-[2px] flex justify-end">
             <button
               type="button"
-              className="conversation-sidebar-row__ack-btn"
+              className="inline-flex h-[22px] cursor-pointer items-center gap-[5px] rounded-sm border border-solid border-amber-dim bg-amber-glow py-0 pr-[9px] pl-[7px] font-mono text-[0.62rem] font-bold tracking-[0.08em] text-amber uppercase transition-[background-color,border-color,transform] duration-[140ms] ease-[ease] hover:border-amber hover:bg-[var(--cc-amber-a22)] active:translate-y-[1px]"
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();

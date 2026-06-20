@@ -130,8 +130,8 @@ export default function GraphWorkflowPanel({
 
   if (!execution) {
     return (
-      <div className="wb-empty-state">
-        <span className="wb-empty-state-text">
+      <div className="flex h-full flex-col items-center justify-center gap-md text-text-tertiary">
+        <span className="text-[0.82rem] font-medium">
           No graph workflow execution has started for this session.
         </span>
       </div>
@@ -140,15 +140,15 @@ export default function GraphWorkflowPanel({
 
   if (!mergedLayout) {
     return (
-      <div className="wb-empty-state">
-        <span className="wb-empty-state-text">Loading layout...</span>
+      <div className="flex h-full flex-col items-center justify-center gap-md text-text-tertiary">
+        <span className="text-[0.82rem] font-medium">Loading layout...</span>
       </div>
     );
   }
 
   return (
     <ReactFlowProvider>
-      <div className="wb-execution-viewer">
+      <div className="flex min-h-0 flex-1 flex-col">
         <ExecutionStatusBar
           execution={execution}
           onPause={onPause}
@@ -157,7 +157,7 @@ export default function GraphWorkflowPanel({
           onClear={onClear}
           isMutating={isMutating}
         />
-        <div className="wb-execution-body">
+        <div className="flex min-h-0 flex-1 max-768:flex-col">
           {isMobile ? (
             <>
               <WorkflowExecutionCanvas
@@ -182,7 +182,7 @@ export default function GraphWorkflowPanel({
                 onViewConversation={handleViewConversation}
               />
               {mobilePanel === "log" && (
-                <div className="wb-transcript-viewer">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg-void max-768:[.app[data-page=workflow][data-mobile-panel=graph]_&]:hidden max-768:[.app[data-page=workflow][data-mobile-panel=inspector]_&]:hidden">
                   {viewingTask ? (
                     <WorkflowConversationViewer
                       projectName={projectName}
@@ -204,7 +204,7 @@ export default function GraphWorkflowPanel({
                       onClose={handleCloseTranscript}
                     />
                   ) : (
-                    <div className="wb-mobile-log-empty">
+                    <div className="flex flex-1 flex-col items-center justify-center p-xl text-[0.82rem] text-text-tertiary">
                       Select a task in Inspector to open its log.
                     </div>
                   )}

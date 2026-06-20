@@ -117,12 +117,10 @@ describe("CollabPassage rendering", () => {
       />,
     );
     const drafts = document.querySelectorAll(
-      '.collab-artifact-card[data-kind="initial_draft"]',
+      'section[data-kind="initial_draft"]',
     );
     expect(drafts).toHaveLength(2);
-    expect(
-      document.querySelector(".collab-artifact-card-primary-flag"),
-    ).not.toBeNull();
+    expect(screen.getByText("Primary")).toBeInTheDocument();
   });
 
   it("renders the resolution decision card in its own full-width lane", () => {
@@ -139,17 +137,17 @@ describe("CollabPassage rendering", () => {
       />,
     );
     const decisionCard = document.querySelector(
-      '.collab-artifact-card[data-kind="resolution_decision"]',
+      'section[data-kind="resolution_decision"]',
     );
     expect(decisionCard).not.toBeNull();
-    const decisionHost = decisionCard!.closest(".collab-card-host");
+    const decisionHost = decisionCard!.closest("[data-card-id]");
     expect(decisionHost).not.toBeNull();
     expect(decisionHost?.getAttribute("data-lane")).toBe("full");
   });
 
   // Parallel beats (the two initial drafts) share a single
-  // `.collab-passage-row` so the two-column grid binds them into one row.
-  it("groups both initial drafts as siblings inside one .collab-passage-row", () => {
+  // `[data-row-kind="drafts"]` row so the two-column grid binds them into one row.
+  it("groups both initial drafts as siblings inside one drafts row", () => {
     render(
       <CollabPassage
         workflowId="wf-1"
@@ -162,12 +160,10 @@ describe("CollabPassage rendering", () => {
       '[data-section="initial_draft"]',
     );
     expect(draftSection).not.toBeNull();
-    const rows = draftSection!.querySelectorAll(
-      '.collab-passage-row[data-row-kind="drafts"]',
-    );
+    const rows = draftSection!.querySelectorAll('[data-row-kind="drafts"]');
     expect(rows).toHaveLength(1);
     const draftsInRow = rows[0]!.querySelectorAll(
-      '.collab-artifact-card[data-kind="initial_draft"]',
+      'section[data-kind="initial_draft"]',
     );
     expect(draftsInRow).toHaveLength(2);
   });
@@ -190,19 +186,19 @@ describe("CollabPassage rendering", () => {
     );
     expect(roundSection).not.toBeNull();
     const proposed = roundSection!.querySelector(
-      '.collab-artifact-card[data-kind="proposed_changes"]',
+      'section[data-kind="proposed_changes"]',
     );
     const counter = roundSection!.querySelector(
-      '.collab-artifact-card[data-kind="counter_proposal"]',
+      'section[data-kind="counter_proposal"]',
     );
     expect(proposed).not.toBeNull();
     expect(counter).not.toBeNull();
-    expect(
-      proposed!.closest(".collab-card-host")?.getAttribute("data-lane"),
-    ).toBe("left");
-    expect(
-      counter!.closest(".collab-card-host")?.getAttribute("data-lane"),
-    ).toBe("right");
+    expect(proposed!.closest("[data-card-id]")?.getAttribute("data-lane")).toBe(
+      "left",
+    );
+    expect(counter!.closest("[data-card-id]")?.getAttribute("data-lane")).toBe(
+      "right",
+    );
   });
 
   it("renders connectors between sequential cards", () => {
@@ -221,7 +217,7 @@ describe("CollabPassage rendering", () => {
         ]}
       />,
     );
-    const connectors = document.querySelectorAll(".collab-connector");
+    const connectors = document.querySelectorAll("[data-from]");
     expect(connectors.length).toBeGreaterThan(0);
   });
 
@@ -288,9 +284,7 @@ describe("CollabPassage rendering", () => {
         onRefClick={vi.fn()}
       />,
     );
-    expect(
-      document.querySelector(".collab-final-answer-message"),
-    ).not.toBeNull();
+    expect(document.querySelector('[data-kind="final_answer"]')).not.toBeNull();
   });
 
   it("renders an inline phase strip by default and hides it when hideInlinePhaseStrip is true", () => {
@@ -301,9 +295,13 @@ describe("CollabPassage rendering", () => {
       artifacts: [makeAgentOneInitialDraft()],
     };
     const { rerender } = render(<CollabPassage {...props} />);
-    expect(document.querySelector(".collab-phase-strip")).not.toBeNull();
+    expect(
+      document.querySelector('[aria-label="Collaboration phase progress"]'),
+    ).not.toBeNull();
     rerender(<CollabPassage {...props} hideInlinePhaseStrip />);
-    expect(document.querySelector(".collab-phase-strip")).toBeNull();
+    expect(
+      document.querySelector('[aria-label="Collaboration phase progress"]'),
+    ).toBeNull();
   });
 
   it("offers Stop whenever the run is non-terminal, including paused", () => {
@@ -366,7 +364,7 @@ describe("CollabPassage rendering", () => {
         ]}
       />,
     );
-    const hosts = document.querySelectorAll(".collab-card-host");
+    const hosts = document.querySelectorAll("[data-card-id]");
     expect(hosts).toHaveLength(8);
     const cardIds = Array.from(hosts).map((h) =>
       h.getAttribute("data-card-id"),
@@ -418,7 +416,7 @@ describe("CollabPassage rendering", () => {
       '[data-section="cross_review"]',
     );
     expect(crossReviewSection).not.toBeNull();
-    const connector = crossReviewSection!.querySelector(".collab-connector");
+    const connector = crossReviewSection!.querySelector("[data-from]");
     expect(connector).not.toBeNull();
     expect(connector?.getAttribute("data-from")).toBe("left");
     expect(connector?.getAttribute("data-to")).toBe("right");
@@ -433,7 +431,9 @@ describe("CollabPassage rendering", () => {
         artifacts={[makeAgentOneInitialDraft()]}
       />,
     );
-    const article = document.querySelector(".collab-passage");
+    const article = document.querySelector(
+      '[aria-label="Collaboration passage"]',
+    );
     expect(article?.getAttribute("data-status")).toBe("user-stopped");
     expect(article?.getAttribute("data-primary")).toBe("codex");
   });
@@ -448,7 +448,9 @@ describe("CollabPassage rendering", () => {
         errorSummary="agent_one initial_draft failed: Conversation not found"
       />,
     );
-    const banner = document.querySelector(".collab-passage-error-banner");
+    const banner = document.querySelector(
+      '[aria-label="Collaboration failure"]',
+    );
     expect(banner).not.toBeNull();
     expect(banner?.textContent).toContain("Conversation not found");
   });
@@ -462,7 +464,9 @@ describe("CollabPassage rendering", () => {
         artifacts={[makeAgentOneInitialDraft()]}
       />,
     );
-    expect(document.querySelector(".collab-passage-error-banner")).toBeNull();
+    expect(
+      document.querySelector('[aria-label="Collaboration failure"]'),
+    ).toBeNull();
   });
 
   it("does not render the failure banner for non-failed statuses even when errorSummary is provided", () => {
@@ -475,7 +479,9 @@ describe("CollabPassage rendering", () => {
         errorSummary="lingering message"
       />,
     );
-    expect(document.querySelector(".collab-passage-error-banner")).toBeNull();
+    expect(
+      document.querySelector('[aria-label="Collaboration failure"]'),
+    ).toBeNull();
   });
 
   it("clears any active phase pip when the passage has failed (no stalled spinner)", () => {
@@ -495,9 +501,7 @@ describe("CollabPassage rendering", () => {
         errorSummary="agent_one initial_draft failed"
       />,
     );
-    const activePips = document.querySelectorAll(
-      '.collab-phase-strip-pip[data-status="active"]',
-    );
+    const activePips = document.querySelectorAll('li[data-status="active"]');
     expect(activePips).toHaveLength(0);
   });
 });

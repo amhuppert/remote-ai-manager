@@ -26,6 +26,19 @@ import {
   useDebugPhaseMutation,
 } from "@/lib/debug-log/mutations";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import { Button } from "@/components/ui/Button";
+
+// `debug-action-card` survives as a bare structural hook (no own CSS rule): the
+// merge variant below + DebugStructuredCard's last-child rule reference it from
+// the surrounding message DOM. When a structured card is this card's immediate
+// last-child predecessor inside the assistant message, the two visually fuse
+// (drop the top margin/border/radius) — legacy session.css adjacency.
+const CARD_CLASS =
+  "mt-md rounded-sm border border-l-[3px] border-solid border-[var(--cc-amber-a20)] border-l-amber bg-[var(--cc-amber-a04)] px-md py-sm " +
+  "[[data-debug-mode]_.message.assistant_.message-content:has(.debug-structured-card:last-child)+&]:mt-0 " +
+  "[[data-debug-mode]_.message.assistant_.message-content:has(.debug-structured-card:last-child)+&]:rounded-t-none " +
+  "[[data-debug-mode]_.message.assistant_.message-content:has(.debug-structured-card:last-child)+&]:border-t-0";
+
 interface DebugActionCardProps {
   projectName: string;
   sessionName: string;
@@ -150,51 +163,63 @@ function DebugActionCard({
   };
 
   return (
-    <div className="debug-action-card">
-      <div className="debug-action-card__actions">
-        <button
-          className="btn btn-sm btn-ghost"
+    <div className={`debug-action-card ${CARD_CLASS}`}>
+      <div className="flex items-center gap-sm">
+        {/* `btn-warning` has no CSS rule (Retry / Mark Fix Failed) — it has always
+            rendered as the default `.btn`, so it maps to variant="default". */}
+        <Button
+          variant="ghost"
+          size="sm"
+          touch
           onClick={handleExit}
           disabled={anyPending}
         >
           Exit Debug
-        </button>
-        <div className="debug-action-card__primary">
+        </Button>
+        <div className="ml-auto flex items-center gap-sm">
           {lastTurnFailed && (
-            <button
-              className="btn btn-sm btn-warning"
+            <Button
+              variant="default"
+              size="sm"
+              touch
               onClick={handleRetry}
               disabled={isBusy || anyPending}
             >
               Retry
-            </button>
+            </Button>
           )}
           {showMarkReproduced && (
-            <button
-              className="btn btn-sm btn-danger"
+            <Button
+              variant="danger"
+              size="sm"
+              touch
               onClick={() => void handleMarkReproduced()}
               disabled={isBusy || anyPending}
             >
               Mark Reproduced
-            </button>
+            </Button>
           )}
           {showMarkFixed && (
-            <button
-              className="btn btn-sm btn-success"
+            <Button
+              variant="success"
+              size="sm"
+              touch
               onClick={() => void handleMarkFix()}
               disabled={isBusy || anyPending}
             >
               Mark Fixed
-            </button>
+            </Button>
           )}
           {showMarkFixFailed && (
-            <button
-              className="btn btn-sm btn-warning"
+            <Button
+              variant="default"
+              size="sm"
+              touch
               onClick={() => void handleMarkFixFailed()}
               disabled={isBusy || anyPending}
             >
               Mark Fix Failed
-            </button>
+            </Button>
           )}
         </div>
       </div>

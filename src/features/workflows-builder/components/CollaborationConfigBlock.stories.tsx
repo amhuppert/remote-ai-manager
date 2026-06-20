@@ -2,7 +2,6 @@ import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { useState } from "react";
 import { fn } from "storybook/test";
 import "@/components/workflow-graph/workflow-graph.css";
-import "@/features/workflows-builder/styles/workflows-builder.css";
 import type { WorkflowCollaborationConfig } from "@/lib/workflows/schemas";
 import InspectorConfigBlock, {
   type InspectorConfigBlockSource,
@@ -43,7 +42,7 @@ function InspectorBlockHarness({
 
   return (
     <div style={{ width: 340, padding: 16, background: "var(--bg-surface)" }}>
-      <div className="wb-inspector-blocks" data-scope="workflow">
+      <div className="flex flex-col gap-sm" data-scope="workflow">
         <InspectorConfigBlock
           label="Collaboration"
           summary={summarize(value)}

@@ -128,7 +128,7 @@ const RAIL_CLASS =
   "max-768:group-data-[mobile-pane=rail]:[&_.convo-sidebar]:z-auto " +
   // The host-owned collapse toggle and the drawer close button are meaningless
   // when the rail is the only visible pane.
-  "max-768:group-data-[mobile-pane=rail]:[&_.convo-sidebar-close]:hidden";
+  "max-768:group-data-[mobile-pane=rail]:[&_[data-sidebar-close]]:hidden";
 
 const RAIL_TOGGLE_ROW_CLASS =
   "flex justify-end shrink-0 max-768:group-data-[mobile-pane=rail]:hidden";

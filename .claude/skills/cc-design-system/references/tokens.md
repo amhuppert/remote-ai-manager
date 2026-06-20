@@ -2,6 +2,32 @@
 
 Full reference for color, typography, spacing, radii, and layout constants. SKILL.md has the at-a-glance version; this is the authoritative table.
 
+The values below are the design source of truth. They are exposed to Tailwind through `@theme` in `src/features/_root/styles/theme.css` (which now carries the **literal** values directly — the alias bridge is collapsed), while the same values keep their legacy `var(--…)` names in `src/features/_root/styles/tokens.css` for the preserved CSS that still reads them.
+
+---
+
+## `@theme` namespaces → utilities
+
+When authoring UI, reach for the **utility** (not the raw `var(--…)`). Each token sits under a Tailwind namespace so a utility generates for it:
+
+| Token family (design name) | `@theme` namespace | Utilities generated | Notes |
+|---|---|---|---|
+| Backgrounds `--bg-*` | `--color-bg-*` | `bg-bg-void`, `bg-bg-surface`, … | |
+| Borders `--border-*` | `--color-border-*` | `border-border-subtle`, … | |
+| Accents `--cyan/amber/green/blue/red/violet` (+ `-dim/-glow/-glow-strong/-glow-text`) | `--color-*` | `bg-cyan`, `text-red`, `border-amber`, `ring-cyan-glow`, … | |
+| **Text colors** `--text-primary/secondary/tertiary/inverse` | `--color-text-*` | `text-text-primary`, `bg-text-inverse`, … | Under `--color-text-*`, **never** `--text-*` (Tailwind v4 reads `--text-*` as a font-size scale). |
+| Rainbow glows | `--color-rainbow-glow*` | `bg-rainbow-glow`, … | The rainbow **gradient** is `--background-image-rainbow` / `-rainbow-tint` → `bg-rainbow` / `bg-rainbow-tint`. |
+| Spacing `--space-*` (+ semantic `section/header-content/item`) | `--spacing-*` | `p-*`, `m-*`, `gap-*` (`p-md`, `gap-sm`, `px-xl`, …) | |
+| Radii `--radius-sm/md/lg` | `--radius-*` (`@theme inline`) | `rounded-sm/md/lg` | `inline` because the name collides with the legacy `--radius-*`. Pills stay `rounded-[9999px]`. |
+| Fonts `--font-display/body/mono` | `--font-*` (`@theme inline`) | `font-display`, `font-body`, `font-mono` | Resolve through the `next/font` `var(--font-anybody/manrope/geist-mono)` runtime refs. |
+| Sizing floors | `--cc-size-floor-{font,icon,icon-btn,touch}` | _(none — minimums, not a scale)_ | The legibility-floor guarantee asserts against these (`design-system-guarantees.test.ts`). |
+| z-index tiers | `--z-index-*` | `z-*` (`z-dropdown`, `z-tooltip`, …) | Ordered named bands; namespace is `--z-index-*` (generates `z-*`), not `--z-*`. |
+| Breakpoints | `--breakpoint-*` | desktop-first `max-*` variants | `max-640/768/800/900/960/1080/1100/1180` + `min-769` companion. Registered as inclusive `@media (max-width:…)`; **not** inverted to mobile-first. |
+| Shared animations | `--animate-{pulse-dot,fade-in,bulk-float-in}` | `animate-pulse-dot`, … | Only shared JSX-authored keyframes are tokenized; graph/atmospheric/vendor `@keyframes` stay bespoke in preserved CSS. |
+| Drop shadows | `--shadow-dropdown` / `--shadow-menu` | `shadow-dropdown` / `shadow-menu` | Canonical popover/menu black drop shadow. |
+
+For a parity color that has **no** token, mint a `--cc-*` token in `tokens.css` (token-owner context only) and reference it via a token-backed arbitrary utility — `bg-[var(--cc-…)]` — which passes the `no-hardcoded-color` guardrail. Never inline a raw color literal in a class string. See `docs/tailwind-conventions.md §8.3`.
+
 ---
 
 ## Color
@@ -114,29 +140,24 @@ Loaded via `next/font/google`.
 | 5 (prose) | `0.9rem` | Conversation message body text. |
 | Display | `1.0rem`+ | Page titles (Anybody 800 / 2.4rem), modal titles (Anybody 700 / 1.2rem). |
 
-### `.cc-*` typography helper classes
+### Typography for new screens — use utilities
 
-Reusable named recipes. Use these for new screens and prototypes.
+New and migrated UI sets type with **Tailwind utilities**: `font-display`/`font-body`/`font-mono` for the family, `text-text-*` for color, and the size tiers above. The old `.cc-*` typography helper recipes were **deleted in the migration** (they had no production consumers) — do **not** reach for them:
 
 ```
-.cc-page-title       — page-level heading
-.cc-page-subtitle    — secondary heading under page title
-.cc-logo             — CC wordmark
-.cc-modal-title      — modal heading
-.cc-empty-title      — empty-state heading
-.cc-section-label    — UPPERCASE MONO section label
-.cc-meta-label       — small metadata label
-.cc-button-text      — button text recipe
-.cc-prose            — conversation message body
-.cc-inline-code      — inline code spans
-.cc-code-block       — block code
-.cc-diff             — diff line text
+.cc-page-title  .cc-page-subtitle  .cc-logo  .cc-modal-title  .cc-empty-title
+.cc-meta-label  .cc-button-text    .cc-prose .cc-inline-code  .cc-code-block   — DELETED
 ```
+
+Two survive:
+- `.cc-section-label` (+ the rest of `.cc-section-*`) — kept as part of the retained `SectionHeader` recipe.
+- `.cc-diff` — kept (one production consumer).
 
 ### Utility classes
 
-- `.font-display`, `.font-body`, `.font-mono`
-- `.text-primary`, `.text-secondary`, `.text-tertiary`, `.text-cyan`, `.text-amber`, `.text-green`, `.text-red`, `.text-violet`
+- `font-display`, `font-body`, `font-mono` (Tailwind utilities from `--font-*`).
+- Text **color** is `text-text-primary/secondary/tertiary/inverse` and `text-cyan/amber/green/red/violet` (from `--color-*`).
+- The legacy `.text-primary/secondary/tertiary` and `.text-cyan/amber/…` **class recipes** in `typography.css` are utility-shaped names retained only until the R9 token/alias-collapse pass (they collide with the Tailwind color utilities; retiring them needs the showcase story + the utility-first allowlist updated together). Author new UI with the Tailwind `text-*` utilities, not these recipes.
 
 ---
 
@@ -214,9 +235,9 @@ No half-radius custom values.
 
 Before adding any new token:
 
-1. Check that no existing token already covers the use case.
-2. Check that the new token will be used in ≥3 places (otherwise inline the value).
+1. Check that no existing token already covers the use case (and that a `color-mix()` over an existing token won't do — see the parity-color note above).
+2. Check that the new token will be used in ≥3 places (otherwise inline the value, or for a one-off parity color reference it via `var(--cc-…)` in an arbitrary utility).
 3. Follow the existing naming pattern: `--<category>-<variant>` (e.g. `--cyan-glow-strong`, not `--strong-cyan-glow`).
-4. Add it to the appropriate section above and to production `src/app/globals.css`.
+4. Add the legacy `var(--…)` name to `src/features/_root/styles/tokens.css` **and** mirror its literal under the matching `@theme` namespace in `src/features/_root/styles/theme.css` (so a utility generates). Adding tokens is reserved to the foundation/token-owner context — feature waves consume tokens, they don't mint them.
 
-New `.cc-*` helper classes follow the same rule: ≥3 callers, or it stays inlined.
+`.cc-*` helper recipes are not the authoring path for new UI anymore — build with utilities or a `ui/` primitive. Touch the retained recipes only via their primitive.

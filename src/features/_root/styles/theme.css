@@ -2,123 +2,144 @@
    Tailwind @theme token surface (Tailwind migration — Stage A)
    ============================================================
 
-   The CC design-token surface, bridged onto Tailwind v4. Two lanes:
+   The CC design-token surface, bridged onto Tailwind v4. This `@theme` surface
+   is the single source of truth for the values the Tailwind utilities carry —
+   each token holds a literal value, resolved once from the legacy token it
+   mirrors. Two families of token:
 
-   - ALIAS lane — categories that already exist as `tokens.css` custom
-     properties (backgrounds, borders, accents, text colors, spacing, radii,
-     fonts). Aliased 1:1 under their Tailwind namespace; the legacy `var(--…)`
-     name stays authoritative (Stage B removes the aliases). Text colors go
-     under `--color-text-*`, NEVER `--text-*` (Tailwind v4 reads `--text-*` as a
-     font-size scale). Radii and font families use `@theme inline` because their
-     legacy names (`--radius-*`, `--font-*`) collide with the Tailwind namespace
-     — a non-inline alias would self-reference; inline emits no token and lets the
-     utility resolve straight to the legacy custom property.
+   - MIRROR family — values that also exist as `tokens.css` custom properties
+     (backgrounds, borders, accents, text colors, spacing, radii, fonts). The
+     `@theme` token carries the literal directly; the legacy `var(--…)` name in
+     tokens.css is retained (NOT removed) because preserved CSS still reads it,
+     and both hold the identical value. Text colors go under `--color-text-*`,
+     NEVER `--text-*` (Tailwind v4 reads `--text-*` as a font-size scale). Radii
+     and font families use `@theme inline` because their names (`--radius-*`,
+     `--font-*`) collide with the legacy tokens.css names of the same name —
+     `inline` emits no `@theme` variable, so the utilities carry the value
+     without double-defining the legacy custom property.
 
-   - EXTRACT lane — categories that do NOT exist as tokens today and live as
-     scattered literals: z-index tiers, breakpoints, and JSX-authored
-     animations. Centralized into new `@theme` tokens, preserving resolved
-     behavior. See the token namespace matrix in design.md and
+   - EXTRACT family — values that do NOT exist as tokens elsewhere and were
+     centralized here from scattered literals: z-index tiers, breakpoints, and
+     JSX-authored animations. See the token namespace matrix in design.md and
      docs/reports/theme-token-matrix.md.
 
-   Every legacy `var(--…)` reference keeps resolving identically — this file is
-   visually inert: it only makes utilities available, it does not restyle any
-   existing element.
+   This file is visually inert: every value is byte-identical to what the legacy
+   tokens resolved to, so it only makes utilities available — it does not restyle
+   any existing element.
    ============================================================ */
 
 @theme {
-  /* ===== Alias lane: colors (under the --color-* namespace) ===== */
+  /* ===== Mirror family: colors (under the --color-* namespace) ===== */
 
-  /* Backgrounds — 6 elevation levels (--bg-* → --color-bg-*) */
-  --color-bg-void: var(--bg-void);
-  --color-bg-base: var(--bg-base);
-  --color-bg-surface: var(--bg-surface);
-  --color-bg-raised: var(--bg-raised);
-  --color-bg-elevated: var(--bg-elevated);
-  --color-bg-hover: var(--bg-hover);
+  /* Backgrounds — 6 elevation levels (mirror of legacy --bg-*) */
+  --color-bg-void: #06090f;
+  --color-bg-base: #0b1019;
+  --color-bg-surface: #111825;
+  --color-bg-raised: #172033;
+  --color-bg-elevated: #1a2740;
+  --color-bg-hover: #1c2841;
 
-  /* Borders — 4 intensity levels (--border-* → --color-border-*) */
-  --color-border-dim: var(--border-dim);
-  --color-border-subtle: var(--border-subtle);
-  --color-border-default: var(--border-default);
-  --color-border-strong: var(--border-strong);
+  /* Borders — 4 intensity levels (mirror of legacy --border-*) */
+  --color-border-dim: #141d2e;
+  --color-border-subtle: #1a2338;
+  --color-border-default: #243048;
+  --color-border-strong: #2e3d5c;
 
   /* Accent: Electric Cyan */
-  --color-cyan: var(--cyan);
-  --color-cyan-dim: var(--cyan-dim);
-  --color-cyan-glow: var(--cyan-glow);
-  --color-cyan-glow-strong: var(--cyan-glow-strong);
-  --color-cyan-glow-text: var(--cyan-glow-text);
+  --color-cyan: #00e5ff;
+  --color-cyan-dim: #00b8cc;
+  --color-cyan-glow: rgba(0, 229, 255, 0.15);
+  --color-cyan-glow-strong: rgba(0, 229, 255, 0.3);
+  --color-cyan-glow-text: rgba(0, 229, 255, 0.6);
 
   /* Accent: Amber */
-  --color-amber: var(--amber);
-  --color-amber-dim: var(--amber-dim);
-  --color-amber-glow: var(--amber-glow);
+  --color-amber: #ffb300;
+  --color-amber-dim: #cc8f00;
+  --color-amber-glow: rgba(255, 179, 0, 0.15);
 
   /* Accent: Green */
-  --color-green: var(--green);
-  --color-green-dim: var(--green-dim);
-  --color-green-glow: var(--green-glow);
+  --color-green: #00e676;
+  --color-green-dim: #00b85c;
+  --color-green-glow: rgba(0, 230, 118, 0.15);
 
   /* Accent: Blue */
-  --color-blue: var(--blue);
-  --color-blue-dim: var(--blue-dim);
-  --color-blue-glow: var(--blue-glow);
+  --color-blue: #448aff;
+  --color-blue-dim: #2979ff;
+  --color-blue-glow: rgba(68, 138, 255, 0.15);
 
   /* Accent: Red */
-  --color-red: var(--red);
-  --color-red-dim: var(--red-dim);
-  --color-red-glow: var(--red-glow);
-  --color-red-text: var(--red-text);
+  --color-red: #ff3d5a;
+  --color-red-dim: #cc3148;
+  --color-red-glow: rgba(255, 61, 90, 0.12);
+  --color-red-text: #e8506c;
 
   /* Accent: Violet (Codex agent identity) */
-  --color-violet: var(--violet);
-  --color-violet-dim: var(--violet-dim);
-  --color-violet-glow: var(--violet-glow);
-  --color-violet-glow-strong: var(--violet-glow-strong);
+  --color-violet: #c77dff;
+  --color-violet-dim: #9d56d6;
+  --color-violet-glow: rgba(199, 125, 255, 0.15);
+  --color-violet-glow-strong: rgba(199, 125, 255, 0.3);
 
   /* Rainbow glows (rgba single colors). The rainbow GRADIENT tokens are bridged
      separately under the --background-image-* namespace below (a gradient is not
      a color, so it cannot live under --color-*). */
-  --color-rainbow-glow: var(--rainbow-glow);
-  --color-rainbow-glow-strong: var(--rainbow-glow-strong);
-  --color-rainbow-glow-blue: var(--rainbow-glow-blue);
+  --color-rainbow-glow: rgba(155, 89, 182, 0.15);
+  --color-rainbow-glow-strong: rgba(155, 89, 182, 0.25);
+  --color-rainbow-glow-blue: rgba(77, 150, 255, 0.08);
 
-  /* ===== Alias lane: background images (gradients) =====
+  /* ===== Mirror family: background images (gradients) =====
      The rainbow gradient tokens, under Tailwind's --background-image-* namespace
-     so `bg-rainbow` / `bg-rainbow-tint` utilities generate. Aliased 1:1 over the
-     legacy gradient vars, which keep resolving. */
-  --background-image-rainbow: var(--rainbow-gradient);
-  --background-image-rainbow-tint: var(--rainbow-tint);
+     so `bg-rainbow` / `bg-rainbow-tint` utilities generate. Byte-identical to the
+     legacy --rainbow-gradient / --rainbow-tint, which tokens.css retains. */
+  --background-image-rainbow: linear-gradient(
+    90deg,
+    #ff6b6b,
+    #ffa500,
+    #ffd93d,
+    #6bcb77,
+    #4d96ff,
+    #9b59b6,
+    #ff6b6b
+  );
+  --background-image-rainbow-tint: linear-gradient(
+    90deg,
+    rgba(255, 107, 107, 0.14),
+    rgba(255, 165, 0, 0.12),
+    rgba(255, 217, 61, 0.1),
+    rgba(107, 203, 119, 0.12),
+    rgba(77, 150, 255, 0.14),
+    rgba(155, 89, 182, 0.13),
+    rgba(255, 107, 107, 0.14)
+  );
 
   /* Text — 4 levels. Under --color-text-* so COLOR utilities (text-text-*)
      generate, NOT font-size utilities. */
-  --color-text-primary: var(--text-primary);
-  --color-text-secondary: var(--text-secondary);
-  --color-text-tertiary: var(--text-tertiary);
-  --color-text-inverse: var(--text-inverse);
+  --color-text-primary: #dce2f0;
+  --color-text-secondary: #7b899f;
+  --color-text-tertiary: #738699;
+  --color-text-inverse: #06090f;
 
-  /* ===== Alias lane: spacing (--space-* → --spacing-*) ===== */
-  --spacing-2xs: var(--space-2xs);
-  --spacing-xs: var(--space-xs);
-  --spacing-sm: var(--space-sm);
-  --spacing-md: var(--space-md);
-  --spacing-lg: var(--space-lg);
-  --spacing-xl: var(--space-xl);
-  --spacing-2xl: var(--space-2xl);
-  --spacing-3xl: var(--space-3xl);
-  /* Semantic spacing */
-  --spacing-section: var(--space-section);
-  --spacing-header-content: var(--space-header-content);
-  --spacing-item: var(--space-item);
+  /* ===== Mirror family: spacing (mirror of legacy --space-*) ===== */
+  --spacing-2xs: 2px;
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 12px;
+  --spacing-lg: 16px;
+  --spacing-xl: 24px;
+  --spacing-2xl: 32px;
+  --spacing-3xl: 48px;
+  /* Semantic spacing (--space-section/-header-content/-item resolve to xl/sm/xs) */
+  --spacing-section: 24px;
+  --spacing-header-content: 8px;
+  --spacing-item: 4px;
 
-  /* ===== Alias lane: sizing floors =====
+  /* ===== Mirror family: sizing floors =====
      A DELIBERATE namespace separate from the font-size scale (`--text-*`):
      these are MINIMUMS, not a type scale. They generate no utilities; the
      legibility-floor guarantee asserts against them (design-system-guarantees). */
-  --cc-size-floor-font: var(--font-size-floor);
-  --cc-size-floor-icon: var(--icon-size-min);
-  --cc-size-floor-icon-btn: var(--icon-btn-min);
-  --cc-size-floor-touch: var(--touch-target-min);
+  --cc-size-floor-font: 0.7rem;
+  --cc-size-floor-icon: 20px;
+  --cc-size-floor-icon-btn: 24px;
+  --cc-size-floor-touch: 44px;
 
   /* ===== Extract lane: z-index tiers =====
      An ORDERED named tier scale. Each tier maps to one of CC's actual distinct
@@ -184,21 +205,32 @@
   --animate-pulse-dot: pulse-dot 2.5s ease-in-out infinite;
   --animate-fade-in: fadeIn 0.3s ease;
   --animate-bulk-float-in: bulk-float-in 0.18s ease;
+
+  /* ===== Popover / menu drop shadows =====
+     The canonical design-system popover/menu black drop shadow, so the
+     `shadow-dropdown` / `shadow-menu` utilities generate on the composer
+     suggestions (dropdown) and sessions filter (menu) surfaces. Byte-identical
+     to the legacy --cc-shadow-dropdown / --cc-shadow-menu, which tokens.css
+     retains for the surfaces that still read them. */
+  --shadow-dropdown: 0 12px 32px rgba(0, 0, 0, 0.35);
+  --shadow-menu: 0 12px 32px rgba(0, 0, 0, 0.35);
 }
 
-/* ===== Alias lane: radii + font families (@theme inline) =====
-   The legacy names `--radius-*` and `--font-*` collide with the Tailwind
-   namespace, so a non-inline alias would self-reference. `inline` emits no
-   theme variable and inlines `var(--legacy)` into the utility, which resolves
-   to the (unlayered) legacy custom property — exact parity, no circular ref. */
+/* ===== Radii + font families (@theme inline) =====
+   The names `--radius-*` and `--font-*` collide with the legacy tokens.css
+   custom properties of the same name. `inline` emits NO `@theme` variable and
+   inlines the value straight into the utility, so the Tailwind utilities carry
+   these values without shadowing or double-defining the legacy `--radius-*` /
+   `--font-*` that preserved CSS still reads. The font stacks keep their
+   next/font `var(--font-*)` runtime references (injected at render). */
 @theme inline {
-  --radius-sm: var(--radius-sm);
-  --radius-md: var(--radius-md);
-  --radius-lg: var(--radius-lg);
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
 
-  --font-display: var(--font-display);
-  --font-body: var(--font-body);
-  --font-mono: var(--font-mono);
+  --font-display: var(--font-anybody), "Anybody", sans-serif;
+  --font-body: var(--font-manrope), "Manrope", sans-serif;
+  --font-mono: var(--font-geist-mono), "Geist Mono", monospace;
 }
 
 /* ===== Extract lane: desktop-first max-width custom variants =====

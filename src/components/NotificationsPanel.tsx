@@ -6,6 +6,8 @@ import { assertNever } from "@/lib/shared/assert-never";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import { getItemLabel } from "./notification-helpers";
 import { CloseIcon } from "@/components/icons";
+import { Badge } from "@/components/ui/Badge";
+import { cn } from "@/lib/ui/cn";
 import LandPreparedMergeButton from "./LandPreparedMergeButton";
 import type { BackgroundJob } from "@/lib/jobs/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -423,6 +425,45 @@ function getItemIcon(item: NotificationItem) {
   }
 }
 
+// ── Class recipes (migrated from the legacy .np-* rules) ───────
+
+const ITEM_BASE =
+  "group flex items-start gap-sm px-md py-sm no-underline text-text-primary " +
+  "border-y-0 border-r-0 border-l-2 border-solid border-l-transparent " +
+  "transition-[background,border-color] duration-100 ease-[ease] " +
+  "hover:bg-bg-elevated hover:border-l-border-default";
+// Accent-blue family lives in tokens.css (--cc-accent-blue and its alpha tints).
+const ITEM_UNREAD =
+  "bg-[var(--cc-accent-blue-bg-subtle)] border-l-[var(--cc-accent-blue)]";
+
+const ICON_BASE =
+  "flex items-center justify-center size-[24px] rounded-sm shrink-0 mt-[1px]";
+const ICON_CATEGORY: Record<string, string> = {
+  conversation: "text-cyan-dim bg-cyan-glow",
+  merge: "text-green-dim bg-green-glow",
+  commit: "text-amber-dim bg-amber-glow",
+  resolve: "text-text-secondary",
+};
+
+const STATUS_BASE =
+  "font-mono text-[0.7rem] font-semibold px-[6px] py-[1px] rounded-[8px] " +
+  "whitespace-nowrap uppercase tracking-[0.03em]";
+const STATUS_TONE: Record<string, string> = {
+  new: "text-blue bg-blue-glow",
+  running: "text-cyan bg-cyan-glow",
+  awaiting: "text-green bg-green-glow",
+  waiting_for_input: "text-amber bg-amber-glow",
+  success: "text-green bg-green-glow",
+  warning: "text-amber bg-amber-glow",
+  error: "text-red bg-red-glow",
+};
+
+const DISMISS_BTN =
+  "flex items-center justify-center bg-transparent border-0 cursor-pointer " +
+  "text-text-tertiary text-[0.7rem] px-[4px] py-[2px] rounded-sm ml-xs shrink-0 " +
+  "opacity-50 transition-opacity duration-100 ease-[ease] " +
+  "group-hover:opacity-100 hover:text-text-primary";
+
 // ── Component ──────────────────────────────────────────────────
 
 function NotificationRow({
@@ -467,58 +508,67 @@ function NotificationRow({
       : null;
 
   return (
-    <li>
+    <li className="[contain-intrinsic-size:0_72px] [content-visibility:auto]">
       <Link
         href={href}
-        className={`np-item${unread ? " np-item-unread" : ""}`}
+        className={cn(ITEM_BASE, unread && ITEM_UNREAD)}
         onClick={handleClick}
       >
-        {unread && <span className="np-unread-dot" />}
-        <span className={`np-item-icon np-icon-${category}`}>
+        {unread && (
+          <span className="absolute top-1/2 left-[6px] size-[6px] shrink-0 -translate-y-1/2 rounded-full bg-[var(--cc-accent-blue)]" />
+        )}
+        <span className={cn(ICON_BASE, ICON_CATEGORY[category])}>
           {getItemIcon(item)}
         </span>
-        <div className="np-item-body">
-          <div className="np-item-title">{getItemTitle(item)}</div>
-          <div className="np-item-meta">
+        <div className="min-w-0 flex-1">
+          <div
+            className={cn(
+              "overflow-hidden text-[0.78rem] text-ellipsis whitespace-nowrap text-text-primary",
+              unread ? "font-semibold" : "font-medium",
+            )}
+          >
+            {getItemTitle(item)}
+          </div>
+          <div className="mt-[1px] overflow-hidden font-mono text-[0.7rem] text-ellipsis whitespace-nowrap text-text-tertiary">
             {getItemContextLabel(item)}
             {item.type === "conversation" && item.backend && (
               <>
                 {" "}
-                <span
-                  className="cc-badge cc-badge--subtle"
-                  data-backend={item.backend}
+                <Badge
+                  backend={item.backend}
+                  subtle
                   aria-label={`agent: ${item.backend}`}
                 >
                   {item.backend}
-                </span>
+                </Badge>
               </>
             )}
           </div>
           {getErrorMessage(item) && (
-            <div className="np-item-error" title={getErrorMessage(item)}>
+            <div
+              className="mt-[2px] overflow-hidden font-mono text-[0.7rem] text-ellipsis whitespace-nowrap text-red opacity-[0.85]"
+              title={getErrorMessage(item)}
+            >
               {summarizeError(getErrorMessage(item)!)}
             </div>
           )}
           {readyToLandJob && (
-            <div
-              className="np-item-actions"
-              onClick={(e) => e.stopPropagation()}
-            >
+            <div onClick={(e) => e.stopPropagation()}>
               <LandPreparedMergeButton job={readyToLandJob} />
             </div>
           )}
         </div>
-        <div className="np-item-right">
-          <span className={`np-item-status np-status-${statusClass}`}>
+        <div className="flex shrink-0 flex-col items-end gap-[3px]">
+          <span className={cn(STATUS_BASE, STATUS_TONE[statusClass])}>
             {getItemLabel(item)}
           </span>
-          <span className="np-item-time">
+          <span className="font-mono text-[0.7rem] whitespace-nowrap text-text-tertiary">
             {formatRelativeTime(item.timestamp)}
           </span>
         </div>
         {canUseNotificationActions && onDismiss && (
           <button
-            className="np-item-dismiss"
+            className={DISMISS_BTN}
             onClick={handleDismiss}
             title="Dismiss"
           >
@@ -566,13 +616,18 @@ export default function NotificationsPanel({
 
   return (
     <>
-      <div className="np-backdrop" onClick={handleBackdropClick} />
-      <aside className="np-panel">
-        <div className="np-header">
-          <span className="np-title">Activity</span>
+      <div
+        className="fixed inset-0 top-[var(--topbar-height)] z-panel animate-[np-backdrop-in_0.2s_ease] bg-[var(--cc-notifications-backdrop)]"
+        onClick={handleBackdropClick}
+      />
+      <aside className="fixed top-[var(--topbar-height)] right-0 bottom-0 z-[91] flex w-[380px] max-w-[100vw] animate-[np-slide-in_0.2s_ease] flex-col border-y-0 border-r-0 border-l border-solid border-l-border-subtle bg-bg-surface max-768:w-[100vw]">
+        <div className="flex shrink-0 items-center justify-between border-x-0 border-t-0 border-b border-solid border-b-border-subtle px-md py-sm">
+          <span className="font-[family-name:var(--font-anybody)] text-[0.8rem] font-semibold tracking-[0.02em] text-text-primary uppercase">
+            Activity
+          </span>
           {unreadCount > 0 && onMarkAllAsRead && (
             <button
-              className="np-mark-all-read"
+              className="mr-sm ml-auto cursor-pointer rounded-sm border-0 bg-transparent px-[8px] py-[2px] font-mono text-[0.7rem] text-[var(--cc-accent-blue)] hover:bg-[var(--cc-accent-blue-bg-hover)]"
               onClick={onMarkAllAsRead}
               title="Mark all as read"
             >
@@ -580,7 +635,7 @@ export default function NotificationsPanel({
             </button>
           )}
           <button
-            className="btn-icon-only np-close"
+            className="relative inline-flex size-[30px] items-center justify-center rounded-sm border border-solid border-border-default bg-transparent p-0 text-[0.7rem] text-text-tertiary transition-all duration-150 ease-[ease] hover:border-border-strong hover:bg-bg-hover hover:text-text-primary max-768:size-[44px] max-768:text-[1rem] [&>svg]:size-[18px]"
             onClick={onClose}
             title="Close panel"
             aria-label="Close panel"
@@ -588,14 +643,16 @@ export default function NotificationsPanel({
             <CloseIcon />
           </button>
         </div>
-        <div className="np-body">
+        <div className="flex-1 overflow-y-auto px-0 py-xs">
           {loading ? (
-            <div className="np-empty">Loading...</div>
+            <div className="px-md py-xl text-center text-[0.78rem] leading-[1.6] text-text-tertiary">
+              Loading...
+            </div>
           ) : items.length === 0 ? (
-            <div className="np-empty">
+            <div className="px-md py-xl text-center text-[0.78rem] leading-[1.6] text-text-tertiary">
               No activity right now.
               <br />
-              <span className="np-empty-hint">
+              <span className="text-[0.72rem] opacity-70">
                 Active conversations, merge jobs, and commit results will appear
                 here.
               </span>
@@ -603,14 +660,16 @@ export default function NotificationsPanel({
           ) : (
             <>
               {conversations.length > 0 && (
-                <div className="np-section">
-                  <div className="np-section-header">
-                    <span className="np-section-label">Conversations</span>
-                    <span className="np-section-count">
+                <div className="pb-xs">
+                  <div className="flex items-center gap-xs px-md py-xs">
+                    <span className="font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+                      Conversations
+                    </span>
+                    <span className="rounded-sm bg-bg-raised px-[5px] py-[1px] font-mono text-[0.7rem] text-text-tertiary">
                       {conversations.length}
                     </span>
                   </div>
-                  <ul className="np-list">
+                  <ul className="m-0 list-none p-0">
                     {conversations.map((item) => (
                       <NotificationRow
                         key={item.id}
@@ -624,12 +683,22 @@ export default function NotificationsPanel({
                 </div>
               )}
               {jobs.length > 0 && (
-                <div className="np-section">
-                  <div className="np-section-header">
-                    <span className="np-section-label">Jobs</span>
-                    <span className="np-section-count">{jobs.length}</span>
+                <div
+                  className={cn(
+                    "pb-xs",
+                    conversations.length > 0 &&
+                      "border-x-0 border-t border-b-0 border-solid border-t-border-subtle pt-xs",
+                  )}
+                >
+                  <div className="flex items-center gap-xs px-md py-xs">
+                    <span className="font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+                      Jobs
+                    </span>
+                    <span className="rounded-sm bg-bg-raised px-[5px] py-[1px] font-mono text-[0.7rem] text-text-tertiary">
+                      {jobs.length}
+                    </span>
                   </div>
-                  <ul className="np-list">
+                  <ul className="m-0 list-none p-0">
                     {jobs.map((item) => (
                       <NotificationRow
                         key={item.id}

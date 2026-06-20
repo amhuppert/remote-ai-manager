@@ -1,9 +1,8 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
+import { cn } from "@/lib/ui/cn";
 import { useOverlayScope } from "@/hooks/useOverlayScope";
-import CopyableId from "@/components/CopyableId";
-import { shortenWorktreePath } from "@/lib/sessions/worktree-path";
 import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
 
 interface InfoDetailsPopoverProps {
@@ -36,6 +35,13 @@ function formatCreatedDate(iso: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function shortenWorktreePath(fullPath: string): string {
+  const marker = ".worktrees/";
+  const idx = fullPath.indexOf(marker);
+  if (idx === -1) return fullPath;
+  return fullPath.slice(idx + marker.length);
 }
 
 interface Row {
@@ -117,6 +123,13 @@ export default function InfoDetailsPopover({
     });
   }, []);
 
+  const copyVal = useCallback((key: string, value: string) => {
+    void navigator.clipboard?.writeText(value).then(() => {
+      setCopied(key);
+      setTimeout(() => setCopied(null), 1400);
+    });
+  }, []);
+
   const handleCopyContext = useCallback(() => {
     if (!onCopyContext) return;
     const result = onCopyContext();
@@ -166,14 +179,21 @@ export default function InfoDetailsPopover({
 
   return (
     <div
-      className={`info-details${open ? " open" : ""}${pinned ? " pinned" : ""}`}
+      data-open={open}
+      data-pinned={pinned}
+      className="group relative shrink-0"
       ref={containerRef}
       onMouseEnter={handleEnter}
       onMouseLeave={handleLeave}
     >
       <button
         type="button"
-        className="info-details-trigger"
+        className={cn(
+          "inline-flex size-[26px] cursor-pointer items-center justify-center rounded-sm border border-solid border-border-default bg-transparent text-[14px] leading-none text-text-secondary transition-[color,border-color,background,box-shadow] duration-150 ease-[ease]",
+          "group-data-[open=false]:hover:border-cyan group-data-[open=false]:hover:text-text-primary",
+          "group-data-[open=true]:border-cyan group-data-[open=true]:bg-bg-hover group-data-[open=true]:text-cyan",
+          "group-data-[pinned=true]:shadow-[0_0_0_2px_var(--cc-cyan-a18)]",
+        )}
         onClick={togglePin}
         title={
           pinned
@@ -208,38 +228,56 @@ export default function InfoDetailsPopover({
       </button>
       {open && (
         <div
-          className="info-details-popover"
+          className="absolute top-[calc(100%+6px)] right-0 z-panel w-[380px] animate-[info-details-pop-in_0.12s_ease-out] rounded-md border border-solid border-border-default bg-bg-elevated px-0 pt-[10px] pb-[8px] font-mono shadow-dropdown"
           role="dialog"
           aria-label="Session details"
         >
-          <div className="info-details-header">
-            <span className="info-details-title">Session details</span>
-            {pinned && <span className="info-details-pin">pinned</span>}
+          <div className="flex items-center gap-[8px] border-x-0 border-t-0 border-b border-solid border-border-default px-[14px] pb-[8px]">
+            <span className="font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-primary uppercase">
+              Session details
+            </span>
+            {pinned && (
+              <span className="rounded-full border border-solid border-[var(--cc-cyan-a35)] bg-[var(--cc-cyan-a06)] px-[6px] py-px font-mono text-[0.62rem] tracking-[0.06em] text-cyan uppercase">
+                pinned
+              </span>
+            )}
           </div>
-          <div className="info-details-grid">
+          <div className="px-[6px] py-[8px]">
             {rows.map((r) => (
-              <div key={r.key} className="info-details-row">
-                <span className="info-details-label">{r.label}</span>
-                {r.copyable ? (
-                  <CopyableId
-                    value={r.copyValue ?? r.value}
-                    displayValue={r.value}
-                    className="info-details-copyable"
-                    ariaLabel={`Copy ${r.label}`}
-                  />
-                ) : (
-                  <span className="info-details-value" title={r.value}>
-                    {r.value}
-                  </span>
+              <div
+                key={r.key}
+                className="grid grid-cols-[110px_1fr_auto] items-center gap-[8px] rounded-sm px-[10px] py-[6px] hover:bg-bg-hover"
+              >
+                <span className="font-mono text-[0.66rem] tracking-[0.06em] text-text-tertiary uppercase">
+                  {r.label}
+                </span>
+                <span
+                  className="overflow-hidden font-mono text-[0.72rem] text-ellipsis whitespace-nowrap text-text-primary"
+                  title={r.value}
+                >
+                  {r.value}
+                </span>
+                {r.copyable && (
+                  <button
+                    type="button"
+                    className="inline-flex size-[22px] cursor-pointer items-center justify-center rounded-sm border-none bg-transparent text-[12px] text-text-tertiary transition-[color,background] duration-150 ease-[ease] hover:bg-bg-hover hover:text-cyan"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      copyVal(r.key, r.copyValue ?? r.value);
+                    }}
+                    aria-label={`Copy ${r.label}`}
+                  >
+                    {copied === r.key ? "\u2713" : "\u2398"}
+                  </button>
                 )}
               </div>
             ))}
           </div>
-          <div className="info-details-footer">
+          <div className="mt-[6px] flex flex-wrap gap-[4px] border-x-0 border-t border-b-0 border-solid border-border-default px-[14px] pt-[10px] pb-0">
             {onCopyContext && (
               <button
                 type="button"
-                className="info-details-link"
+                className="cursor-pointer rounded-sm border border-solid border-border-default bg-transparent px-[10px] py-[4px] font-mono text-[0.66rem] text-text-secondary transition-all duration-150 ease-[ease] hover:border-cyan hover:bg-bg-hover hover:text-cyan"
                 onClick={handleCopyContext}
               >
                 {copied === "ctx" ? "Copied \u2713" : "Copy context"}
@@ -248,7 +286,7 @@ export default function InfoDetailsPopover({
             {onOpenMcpServers && (
               <button
                 type="button"
-                className="info-details-link"
+                className="cursor-pointer rounded-sm border border-solid border-border-default bg-transparent px-[10px] py-[4px] font-mono text-[0.66rem] text-text-secondary transition-all duration-150 ease-[ease] hover:border-cyan hover:bg-bg-hover hover:text-cyan"
                 onClick={() => {
                   setPinned(false);
                   setOpen(false);
@@ -261,7 +299,7 @@ export default function InfoDetailsPopover({
             {onOpenCapabilities && (
               <button
                 type="button"
-                className="info-details-link"
+                className="cursor-pointer rounded-sm border border-solid border-border-default bg-transparent px-[10px] py-[4px] font-mono text-[0.66rem] text-text-secondary transition-all duration-150 ease-[ease] hover:border-cyan hover:bg-bg-hover hover:text-cyan"
                 onClick={() => {
                   setPinned(false);
                   setOpen(false);

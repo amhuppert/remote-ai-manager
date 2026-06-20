@@ -251,7 +251,9 @@ describe("ConversationsPage", () => {
       renderPage({ url: "/conversations", active: activeData([]) });
 
       expect(screen.getByText("Select a conversation")).toBeInTheDocument();
-      expect(document.querySelector(".convo-sidebar")).not.toBeNull();
+      expect(
+        document.querySelector('[data-tooltip="Collapse sidebar"]'),
+      ).not.toBeNull();
       expect(window.location.search).toBe("");
       expect(routerPushMock).not.toHaveBeenCalled();
       expect(routerReplaceMock).not.toHaveBeenCalled();
@@ -267,7 +269,9 @@ describe("ConversationsPage", () => {
       });
 
       expect(screen.getByText("Conversation not found")).toBeInTheDocument();
-      expect(document.querySelector(".convo-sidebar")).not.toBeNull();
+      expect(
+        document.querySelector('[data-tooltip="Collapse sidebar"]'),
+      ).not.toBeNull();
       expect(window.location.search).toBe("?c=ghost");
       expect(routerPushMock).not.toHaveBeenCalled();
       expect(routerReplaceMock).not.toHaveBeenCalled();

@@ -1,10 +1,20 @@
 "use client";
 
+import { cn } from "@/lib/ui/cn";
 import type {
   CollaborationArtifactDisagreement,
   CollaborationUserQuestion,
 } from "@/lib/workflows/collaboration/types";
 import CollabSeverityCategoryChip from "@/features/session/conversation/collab/CollabSeverityCategoryChip";
+import {
+  idList,
+  idListItem,
+} from "@/features/session/conversation/collab/card-chrome";
+
+const cardClass =
+  "flex flex-col gap-md rounded-md border border-solid border-amber-dim border-l-4 border-l-amber bg-bg-raised p-md";
+const answerClass =
+  "m-0 rounded-sm border-0 border-l-2 border-solid border-l-cyan bg-bg-base p-sm font-mono text-[0.82rem] whitespace-pre-wrap text-text-primary";
 
 interface AwaitingProps {
   mode: "awaiting";
@@ -45,13 +55,13 @@ function QuestionMeta({
   lookup: Map<string, CollaborationArtifactDisagreement>;
 }): React.JSX.Element {
   return (
-    <div className="collab-open-conflicts-card-question-meta">
-      <span className="collab-open-conflicts-card-question-id">
+    <div className="flex flex-wrap items-center gap-[6px]">
+      <span className="font-mono text-[length:var(--font-size-floor)] font-bold tracking-[0.06em] text-text-secondary">
         {question.id}
       </span>
       {question.relatedDisagreementIds.length > 0 ? (
         <ul
-          className="collab-open-conflicts-card-question-link-list"
+          className="m-0 flex list-none flex-wrap items-center gap-[4px] p-0"
           aria-label={`Related disagreements for ${question.id}`}
         >
           {question.relatedDisagreementIds.map((id) => {
@@ -59,7 +69,7 @@ function QuestionMeta({
             return (
               <li
                 key={`${question.id}-link-${id}`}
-                className="collab-open-conflicts-card-question-link"
+                className="rounded-sm border border-solid border-border-subtle bg-bg-base px-[6px] py-[1px] font-mono text-[length:var(--font-size-floor)] text-cyan-dim"
                 title={target?.claim ?? id}
               >
                 {id}
@@ -80,15 +90,15 @@ function DisagreementsList({
   if (disagreements.length === 0) return null;
   return (
     <div
-      className="collab-open-conflicts-card-disagreements"
+      className="flex flex-col gap-[6px] rounded-sm border border-solid border-border-subtle bg-bg-base p-sm"
       aria-label="Open disagreements"
     >
-      <h4 className="collab-open-conflicts-card-disagreements-title">
+      <h4 className="m-0 font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-secondary uppercase">
         Open disagreements
       </h4>
-      <ul className="collab-id-list">
+      <ul className={idList}>
         {disagreements.map((d) => (
-          <li key={d.id} className="collab-id-list-item">
+          <li key={d.id} className={idListItem}>
             {d.id}: {d.claim}{" "}
             <CollabSeverityCategoryChip
               severity={d.severity}
@@ -109,12 +119,14 @@ function CardHeader({
   disagreementCount: number;
 }): React.JSX.Element {
   return (
-    <header className="collab-open-conflicts-card-header">
-      <span className="collab-open-conflicts-card-glyph" aria-hidden="true">
+    <header className="flex items-center gap-sm">
+      <span className="text-[1rem] leading-none text-amber" aria-hidden="true">
         ?
       </span>
-      <span className="collab-open-conflicts-card-title">Awaiting Alex</span>
-      <span className="collab-open-conflicts-card-count">
+      <span className="font-display text-[0.95rem] font-bold text-text-primary">
+        Awaiting Alex
+      </span>
+      <span className="ml-auto font-mono text-[0.72rem] text-text-secondary">
         {questionCount} {questionCount === 1 ? "question" : "questions"}
         {" · "}
         {disagreementCount}{" "}
@@ -132,7 +144,7 @@ export default function CollabOpenConflictsCard(
   if (props.mode === "answered") {
     return (
       <section
-        className="collab-open-conflicts-card"
+        className={cardClass}
         data-kind="open_conflicts"
         data-mode="answered"
         aria-label="Open conflicts answered by Alex"
@@ -144,27 +156,30 @@ export default function CollabOpenConflictsCard(
         <DisagreementsList disagreements={props.disagreements} />
         {props.questions.length > 0 ? (
           <ul
-            className="collab-open-conflicts-card-questions"
+            className="m-0 flex list-none flex-col gap-md p-0"
             aria-label="Questions answered by Alex"
           >
             {props.questions.map((q) => {
               const answer = props.submittedAnswers[q.id]?.trim() ?? "";
               return (
-                <li className="collab-open-conflicts-card-question" key={q.id}>
+                <li className="flex flex-col gap-[6px]" key={q.id}>
                   <QuestionMeta question={q} lookup={lookup} />
-                  <p className="collab-open-conflicts-card-question-text">
+                  <p className="text-[0.85rem] leading-[1.5] text-text-primary">
                     {q.question}
                   </p>
                   {answer.length > 0 ? (
                     <p
-                      className="collab-open-conflicts-card-answer"
+                      className={answerClass}
                       aria-label={`Submitted answer for ${q.id}`}
                     >
                       {answer}
                     </p>
                   ) : (
                     <p
-                      className="collab-open-conflicts-card-answer collab-open-conflicts-card-answer-empty"
+                      className={cn(
+                        answerClass,
+                        "border-l-border-default text-text-secondary italic",
+                      )}
                       aria-label={`Submitted answer for ${q.id}`}
                     >
                       No answer
@@ -182,7 +197,7 @@ export default function CollabOpenConflictsCard(
   const canSubmit = !props.isSubmitting && hasAtLeastOneAnswer(props.drafts);
   return (
     <section
-      className="collab-open-conflicts-card"
+      className={cardClass}
       data-kind="open_conflicts"
       data-mode="awaiting"
       aria-label="Open conflicts awaiting Alex"
@@ -194,32 +209,23 @@ export default function CollabOpenConflictsCard(
       <DisagreementsList disagreements={props.disagreements} />
       {props.questions.length > 0 ? (
         <ul
-          className="collab-open-conflicts-card-questions"
+          className="m-0 flex list-none flex-col gap-md p-0"
           aria-label="Questions for Alex"
         >
           {props.questions.map((q) => {
             const value = props.drafts[q.id] ?? "";
             return (
-              <li className="collab-open-conflicts-card-question" key={q.id}>
+              <li className="flex flex-col gap-[6px]" key={q.id}>
                 <QuestionMeta question={q} lookup={lookup} />
-                <p className="collab-open-conflicts-card-question-text">
+                <p className="text-[0.85rem] leading-[1.5] text-text-primary">
                   {q.question}
                 </p>
-                {/* a11y label. The conventional "screen reader only" utility
-                    class name is also a Tailwind utility; using it here would let
-                    the Tailwind integration hide this label, which had no CSS rule
-                    and rendered visibly. Kept as a BEM class to preserve that
-                    baseline; the visually-hidden treatment is restored when this
-                    card migrates to Tailwind. */}
-                <label
-                  className="collab-open-conflicts-card-answer-label"
-                  htmlFor={`collab-answer-${q.id}`}
-                >
+                <label className="sr-only" htmlFor={`collab-answer-${q.id}`}>
                   Answer for {q.id}
                 </label>
                 <textarea
                   id={`collab-answer-${q.id}`}
-                  className="collab-open-conflicts-card-textarea"
+                  className="min-h-[80px] w-full resize-y rounded-sm border border-solid border-border-default bg-bg-base p-sm font-mono text-[0.82rem] text-text-primary focus-visible:[outline:2px_solid_var(--cyan)] focus-visible:outline-offset-1 max-768:min-h-[100px]"
                   value={value}
                   onChange={(event) =>
                     props.onDraftChange(q.id, event.target.value)
@@ -232,10 +238,10 @@ export default function CollabOpenConflictsCard(
           })}
         </ul>
       ) : null}
-      <div className="collab-open-conflicts-card-actions">
+      <div className="flex justify-end">
         <button
           type="button"
-          className="collab-open-conflicts-card-submit"
+          className="cursor-pointer rounded-sm border border-solid border-cyan bg-cyan px-[16px] py-[8px] font-mono text-[0.78rem] font-semibold text-text-inverse disabled:cursor-not-allowed disabled:opacity-50 max-768:min-h-[var(--touch-target-min)] max-768:w-full"
           onClick={props.onSubmit}
           disabled={!canSubmit}
         >

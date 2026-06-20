@@ -168,7 +168,7 @@ describe("PeekPopover", () => {
 
     const editor = screen.getByLabelText("Reply text");
     expect(editor).toHaveAttribute("contenteditable", "true");
-    expect(document.querySelector(".peek__composer textarea")).toBeNull();
+    expect(document.querySelector("textarea")).toBeNull();
   });
 
   it("shows the voice tool when voice recording is available", async () => {
@@ -368,7 +368,9 @@ describe("PeekPopover", () => {
 
     it("scrolls the body to the bottom on mount so the last message is visible", () => {
       renderPeek();
-      const body = document.querySelector(".peek__body") as HTMLElement;
+      const body = document.querySelector(
+        '[data-testid="peek-body"]',
+      ) as HTMLElement;
       expect(body).not.toBeNull();
       expect(body.scrollTop).toBe(2000);
     });

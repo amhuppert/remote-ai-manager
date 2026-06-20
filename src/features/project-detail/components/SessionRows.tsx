@@ -5,8 +5,9 @@ import type {
   SessionListItem,
   DerivedSessionStatus,
 } from "@/lib/sessions/schemas";
+import { cn } from "@/lib/ui/cn";
 import CCCheckbox from "./CCCheckbox";
-import SessionRow from "./SessionRow";
+import SessionRow, { ROW_BASE } from "./SessionRow";
 
 type SortableColumn =
   | "sessionName"
@@ -67,18 +68,23 @@ function SortIndicator({
 }): React.JSX.Element {
   return (
     <svg
-      className={"v3-sort-indicator" + (active ? " active" : "")}
+      className={cn(
+        "inline-block shrink-0 -translate-y-px transition-[color,filter] duration-[120ms] ease-[ease] [&_polygon]:fill-current",
+        active
+          ? "text-cyan [filter:drop-shadow(0_0_4px_var(--color-cyan-glow-text))]"
+          : "text-text-tertiary group-hover:text-text-secondary",
+      )}
       viewBox="0 0 10 11"
       width={8}
       height={9}
       aria-hidden="true"
     >
       <polygon
-        className={active && desc ? "inactive" : undefined}
+        className={active && desc ? "opacity-30" : undefined}
         points="5,0 0,4 10,4"
       />
       <polygon
-        className={active && !desc ? "inactive" : undefined}
+        className={active && !desc ? "opacity-30" : undefined}
         points="0,7 10,7 5,11"
       />
     </svg>
@@ -104,9 +110,12 @@ function SortableHeader({
   return (
     <button
       type="button"
-      className={"v3-sort-header" + (active ? " active" : "")}
+      className={cn(
+        "group inline-flex cursor-pointer items-center gap-[6px] border-0 bg-transparent p-0 font-mono text-[0.72rem] leading-none font-semibold tracking-[0.08em] uppercase transition-[color] duration-[120ms] ease-[ease]",
+        align === "right" ? "justify-self-end" : "justify-self-start",
+        active ? "text-cyan" : "text-text-tertiary hover:text-text-primary",
+      )}
       onClick={() => onSortChange({ id, desc: active ? !sort.desc : false })}
-      style={{ justifySelf: align === "right" ? "end" : "start" }}
     >
       <span>{label}</span>
       <SortIndicator active={active} desc={sort.desc} />
@@ -153,10 +162,10 @@ export default function SessionRows({
   const someVisibleSelected = visibleSelectedCount > 0 && !allVisibleSelected;
 
   return (
-    <div className="v3-rows">
-      <div className="v3-row v3-row-header" role="row">
-        <span className="rail" style={{ visibility: "hidden" }} />
-        <span className="v3-check">
+    <div className="mx-xl flex flex-col border-x-0 border-t border-b-0 border-solid border-border-subtle max-768:mx-md">
+      <div className={cn(ROW_BASE, "bg-bg-base max-768:hidden")} role="row">
+        <span className="invisible absolute top-0 bottom-0 left-0 w-[3px]" />
+        <span className="ml-[16px]">
           <CCCheckbox
             checked={allVisibleSelected}
             indeterminate={someVisibleSelected}

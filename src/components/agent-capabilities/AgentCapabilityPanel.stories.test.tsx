@@ -95,12 +95,11 @@ describe("AgentCapabilityPanel stories", () => {
       within(row).getByRole("button", { name: /Reset Long Identifier/ }),
     );
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-    const compactId = within(row)
-      .getAllByText(/long-unbroken/)
-      .find((element) =>
-        element.className.includes("agent-capability-row__id"),
-      );
-    expect(compactId?.className).toContain("agent-capability-row__id");
+    expect(
+      within(row).getByText(
+        "long-unbroken-capability-identifier-with-diagnostics",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("renders query and mutation errors", async () => {

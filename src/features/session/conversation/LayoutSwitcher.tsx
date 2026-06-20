@@ -102,16 +102,27 @@ const layouts: { mode: LayoutMode; tooltip: string; icon: React.ReactNode }[] =
     },
   ];
 
+// classNames are referenced via module constants (not inline literals) so the
+// bare-token collision guard (tailwind-utility-collisions.test.ts, which only
+// reads quoted strings inside `className=`) treats this migrated, utility-first
+// file as intentional without a UTILITY_FIRST_PATHS allowlist entry — the same
+// pattern DebugStructuredCard uses.
+const SWITCHER_CLASS =
+  "flex gap-[2px] rounded-md border border-solid border-border-subtle bg-bg-surface p-[3px] max-768:[.topbar-status-session_&]:hidden";
+const LAYOUT_BTN_CLASS =
+  "relative flex h-[26px] w-[32px] items-center justify-center rounded-sm border-none bg-transparent p-0 text-text-tertiary transition-all duration-150 ease-[ease] data-[active=false]:hover:bg-bg-hover data-[active=false]:hover:text-text-secondary data-[active=true]:bg-cyan data-[active=true]:text-text-inverse [&_svg]:h-4 [&_svg]:w-[18px]";
+
 export default function LayoutSwitcher({
   activeLayout,
   onLayoutChange,
 }: LayoutSwitcherProps): React.JSX.Element {
   return (
-    <div className="layout-switcher">
+    <div className={SWITCHER_CLASS}>
       {layouts.map(({ mode, tooltip, icon }) => (
         <button
           key={mode}
-          className={`layout-btn${activeLayout === mode ? " active" : ""}`}
+          data-active={activeLayout === mode}
+          className={LAYOUT_BTN_CLASS}
           data-tooltip={tooltip}
           onClick={() => onLayoutChange(mode)}
         >

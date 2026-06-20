@@ -417,10 +417,10 @@ export default function WorkflowCanvasShell({
     <section className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-solid border-border-subtle bg-bg-surface max-1100:group-data-[mobile-panel=info]:hidden">
       <header className="flex shrink-0 items-center justify-between gap-md border-x-0 border-t-0 border-b border-solid border-border-subtle bg-bg-raised px-md py-sm max-768:flex-col max-768:items-stretch max-768:gap-sm">
         <div className="flex min-w-0 items-baseline gap-sm">
-          <h1 className="overflow-hidden text-ellipsis whitespace-nowrap font-display text-[1.4rem] font-bold tracking-[-0.01em] text-text-primary">
+          <h1 className="overflow-hidden font-display text-[1.4rem] font-bold tracking-[-0.01em] text-ellipsis whitespace-nowrap text-text-primary">
             {title}
           </h1>
-          <span className="shrink-0 rounded-sm border border-solid border-violet-dim bg-violet-glow px-[8px] py-[2px] font-mono text-[0.7rem] uppercase tracking-[0.08em] text-violet">
+          <span className="shrink-0 rounded-sm border border-solid border-violet-dim bg-violet-glow px-[8px] py-[2px] font-mono text-[0.7rem] tracking-[0.08em] text-violet uppercase">
             {character}
           </span>
         </div>
@@ -440,7 +440,7 @@ export default function WorkflowCanvasShell({
             −
           </button>
           <span
-            className="min-w-[42px] text-center font-mono text-[0.72rem] tabular-nums text-text-secondary"
+            className="min-w-[42px] text-center font-mono text-[0.72rem] text-text-secondary tabular-nums"
             aria-live="polite"
           >
             {zoomReadout}
@@ -468,12 +468,12 @@ export default function WorkflowCanvasShell({
       </header>
       <div
         ref={surfaceRef}
-        className="relative min-h-0 flex-1 select-none overflow-hidden [touch-action:none]"
+        className="relative min-h-0 flex-1 [touch-action:none] overflow-hidden select-none"
         onMouseDown={onMouseDown}
         style={{ cursor }}
       >
         <div
-          className="h-full w-full will-change-transform [transform-origin:center_center]"
+          className="h-full w-full [transform-origin:center_center] will-change-transform"
           style={{
             transform: `translate(${pan.x}px, ${pan.y}px)`,
           }}
@@ -483,7 +483,7 @@ export default function WorkflowCanvasShell({
           </CanvasZoomContext.Provider>
         </div>
       </div>
-      <footer className="flex shrink-0 items-center justify-between gap-sm border-x-0 border-b-0 border-t border-solid border-border-subtle bg-bg-raised px-md py-xs">
+      <footer className="flex shrink-0 items-center justify-between gap-sm border-x-0 border-t border-b-0 border-solid border-border-subtle bg-bg-raised px-md py-xs">
         <button
           type="button"
           className="relative inline-flex max-w-[45%] cursor-pointer items-center gap-[8px] overflow-hidden rounded-sm border border-solid border-border-subtle bg-transparent px-[12px] py-[6px] font-mono text-[0.78rem] text-text-secondary transition-all duration-150 ease-[ease] enabled:hover:border-border-strong enabled:hover:bg-bg-hover enabled:hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-35 max-768:min-h-[44px]"
@@ -505,7 +505,7 @@ export default function WorkflowCanvasShell({
           </span>
         </button>
         <span
-          className="font-mono text-[0.7rem] tabular-nums tracking-[0.06em] text-text-tertiary"
+          className="font-mono text-[0.7rem] tracking-[0.06em] text-text-tertiary tabular-nums"
           aria-label={`Workflow ${index} of ${total}`}
         >
           {index} / {total}

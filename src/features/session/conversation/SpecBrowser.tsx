@@ -1,8 +1,16 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { cn } from "@/lib/ui/cn";
+import { Tabs, Tab, TabCount } from "@/components/ui/Tabs";
 import MarkdownViewer from "@/components/MarkdownViewer";
 import { useKiroDocTreeQuery, useKiroDocFileQuery } from "@/lib/kiro/queries";
+
+// Shared file-item recipe (steering list + feature accordion). Differs only by
+// left indent: steering items sit flush (12px); feature files are indented
+// (30px) under their accordion group.
+const SPEC_ITEM_BASE =
+  "block w-full cursor-pointer border-y-0 border-r-0 border-l-2 border-solid border-l-transparent bg-transparent py-[5px] pr-[12px] text-left font-mono text-[0.72rem] font-normal text-text-secondary transition-all duration-150 ease-[ease] hover:bg-bg-hover hover:text-text-primary max-768:min-h-[44px] max-768:py-[10px] max-768:pr-[12px]";
 import {
   useSpecBrowserSelection,
   useSelectSpecCategory,
@@ -107,8 +115,8 @@ export function SpecBrowserView({
 }: SpecBrowserViewProps): React.JSX.Element {
   if (isLoading) {
     return (
-      <div className="spec-browser">
-        <div className="spec-browser-empty">
+      <div className="flex min-h-0 flex-1 flex-col rounded-b-lg border border-solid border-border-subtle bg-bg-surface">
+        <div className="flex flex-1 flex-col items-center justify-center gap-sm font-mono text-[0.78rem] text-text-tertiary">
           <div className="spinner" style={{ width: 24, height: 24 }} />
           <span>Loading specs...</span>
         </div>
@@ -121,8 +129,8 @@ export function SpecBrowserView({
     (tree.steering.length === 0 && Object.keys(tree.specs).length === 0)
   ) {
     return (
-      <div className="spec-browser">
-        <div className="spec-browser-empty">
+      <div className="flex min-h-0 flex-1 flex-col rounded-b-lg border border-solid border-border-subtle bg-bg-surface">
+        <div className="flex flex-1 flex-col items-center justify-center gap-sm font-mono text-[0.78rem] text-text-tertiary">
           <span>No spec or steering files found.</span>
         </div>
       </div>
@@ -146,32 +154,34 @@ export function SpecBrowserView({
     const currentFiles = getFilesForCategory(tree, selection!.category);
 
     return (
-      <div className="spec-browser">
-        <div className="spec-browser-header">
+      <div className="flex min-h-0 flex-1 flex-col rounded-b-lg border border-solid border-border-subtle bg-bg-surface">
+        <div className="flex shrink-0 items-center gap-[8px] border-x-0 border-t-0 border-b border-solid border-border-subtle px-[12px] py-[8px]">
           <button
-            className="spec-browser-back"
+            className="flex h-[24px] w-[24px] shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent font-mono text-[1rem] text-text-secondary transition-all duration-150 ease-[ease] hover:bg-bg-hover hover:text-cyan max-768:h-[44px] max-768:w-[44px]"
             onClick={onGoBack}
             type="button"
           >
             &#8249;
           </button>
-          <span className="spec-browser-context">{contextLabel}</span>
+          <span className="truncate font-mono text-[0.72rem] font-semibold tracking-[0.06em] text-text-primary uppercase">
+            {contextLabel}
+          </span>
         </div>
         {currentFiles.length > 1 && (
-          <div className="cc-tabs">
+          <Tabs>
             {currentFiles.map((file) => (
-              <button
+              <Tab
                 key={file}
-                className={`cc-tab${selection!.file === file ? " active" : ""}`}
+                active={selection!.file === file}
                 onClick={() => onSelectFile(selection!.category, file)}
                 type="button"
               >
                 {formatFileName(file)}
-              </button>
+              </Tab>
             ))}
-          </div>
+          </Tabs>
         )}
-        <div className="spec-browser-content">
+        <div className="spec-browser-content flex min-h-0 flex-1 flex-col">
           <MarkdownViewer
             content={fileContent ?? null}
             isLoading={isFileLoading}
@@ -186,33 +196,35 @@ export function SpecBrowserView({
   const sortedFeatures = Object.keys(tree.specs).sort();
 
   return (
-    <div className="spec-browser">
+    <div className="flex min-h-0 flex-1 flex-col rounded-b-lg border border-solid border-border-subtle bg-bg-surface">
       {showTabs && (
-        <div className="cc-tabs">
-          <button
-            className={`cc-tab${effectiveSegment === "steering" ? " active" : ""}`}
+        <Tabs>
+          <Tab
+            active={effectiveSegment === "steering"}
             onClick={() => onSegmentChange("steering")}
             type="button"
           >
             Steering
-          </button>
-          <button
-            className={`cc-tab${effectiveSegment === "features" ? " active" : ""}`}
+          </Tab>
+          <Tab
+            active={effectiveSegment === "features"}
             onClick={() => onSegmentChange("features")}
             type="button"
           >
             Features
-            <span className="cc-tab-count">{featureCount}</span>
-          </button>
-        </div>
+            <TabCount active={effectiveSegment === "features"}>
+              {featureCount}
+            </TabCount>
+          </Tab>
+        </Tabs>
       )}
 
-      <div className="spec-browser-list">
+      <div className="flex-1 overflow-y-auto py-xs">
         {effectiveSegment === "steering"
           ? sortSpecFiles(tree.steering).map((file) => (
               <button
                 key={file}
-                className="spec-browser-item"
+                className={cn(SPEC_ITEM_BASE, "pl-[12px]")}
                 onClick={() => onSelectFile("steering", file)}
                 type="button"
               >
@@ -225,28 +237,29 @@ export function SpecBrowserView({
               return (
                 <div key={featureKey}>
                   <button
-                    className={`spec-browser-group${isExpanded ? " expanded" : ""}`}
+                    className="group/spec-group flex w-full cursor-pointer items-center gap-[6px] border-0 bg-transparent px-[12px] py-[7px] text-left font-mono text-[0.72rem] font-medium text-text-secondary transition-all duration-150 ease-[ease] hover:bg-bg-hover hover:text-text-primary data-[expanded=true]:text-text-primary max-768:min-h-[44px] max-768:py-[10px]"
+                    data-expanded={isExpanded}
                     onClick={() =>
                       onExpandFeature(isExpanded ? null : featureKey)
                     }
                     type="button"
                   >
-                    <span className="spec-browser-group-chevron">
+                    <span className="w-[16px] shrink-0 text-[0.72rem] text-text-tertiary">
                       {isExpanded ? "\u25BE" : "\u25B8"}
                     </span>
-                    <span className="spec-browser-group-name">
+                    <span className="min-w-0 flex-1 truncate">
                       {formatFeatureName(featureKey)}
                     </span>
-                    <span className="spec-browser-group-count">
+                    <span className="shrink-0 rounded-[100px] bg-bg-raised px-[6px] py-[1px] text-[0.7rem] font-medium text-text-tertiary group-data-[expanded=true]/spec-group:bg-cyan-glow group-data-[expanded=true]/spec-group:text-cyan-dim">
                       {files.length}
                     </span>
                   </button>
                   {isExpanded && (
-                    <div className="spec-browser-group-files">
+                    <div className="pt-[2px] pb-[6px]">
                       {files.map((file) => (
                         <button
                           key={file}
-                          className="spec-browser-item"
+                          className={cn(SPEC_ITEM_BASE, "pl-[30px]")}
                           onClick={() => onSelectFile(featureKey, file)}
                           type="button"
                         >

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
+import { Button } from "@/components/ui/Button";
 import type { BackgroundJob } from "@/lib/jobs/schemas";
 import {
   useLandPreparedMergeMutation,
@@ -69,22 +70,25 @@ export default function LandPreparedMergeButton({
         )}
       </div>
       <div className="land-prepared-merge-actions">
-        <button
-          className="btn btn-primary btn-sm"
+        <Button
+          variant="primary"
+          size="sm"
+          touch
           onClick={handleLand}
           disabled={disableLand}
           type="button"
         >
           {landPending ? "Landing..." : "Land"}
-        </button>
-        <button
-          className="btn btn-sm"
+        </Button>
+        <Button
+          size="sm"
+          touch
           onClick={handleDiscard}
           disabled={disableDiscard}
           type="button"
         >
           {discardPending ? "Discarding..." : "Discard"}
-        </button>
+        </Button>
       </div>
     </div>
   );

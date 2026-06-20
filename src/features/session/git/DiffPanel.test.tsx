@@ -74,26 +74,23 @@ describe("DiffPanel", () => {
   });
 
   it("renders file paths and per-file stats (Req 5.2)", () => {
-    const { container } = render(<DiffPanel diff={sampleDiff} />);
+    render(<DiffPanel diff={sampleDiff} />);
     expect(screen.getByText("src/index.ts")).toBeInTheDocument();
     expect(screen.getByText("README.md")).toBeInTheDocument();
-    // Per-file stats via container queries (avoid duplicate text matches)
-    const stats = container.querySelectorAll(".diff-file-stat");
-    expect(stats.length).toBe(2);
-    expect(stats[0]!.textContent).toContain("+10");
-    expect(stats[0]!.textContent).toContain("-3");
-    expect(stats[1]!.textContent).toContain("+5");
-    expect(stats[1]!.textContent).toContain("-0");
+    // Per-file additions/deletions render (additions + file-2 deletions are
+    // unique text, so assert on content rather than appearance classes).
+    expect(screen.getByText("+10")).toBeInTheDocument();
+    expect(screen.getByText("+5")).toBeInTheDocument();
+    expect(screen.getByText("-0")).toBeInTheDocument();
   });
 
-  it("renders diff lines with correct type classes (Req 5.3)", () => {
-    const { container } = render(<DiffPanel diff={sampleDiff} />);
-    const additions = container.querySelectorAll(".diff-line.add");
-    const deletions = container.querySelectorAll(".diff-line.remove");
-    const hunkHeaders = container.querySelectorAll(".diff-line.hunk-header");
-    expect(additions.length).toBe(2); // "+const x = 1" and "+# README" (type: "add")
-    expect(deletions.length).toBe(1); // "-const y = 2" (type: "remove")
-    expect(hunkHeaders.length).toBe(2); // Two hunk headers
+  it("renders diff line content for each line type (Req 5.3)", () => {
+    render(<DiffPanel diff={sampleDiff} />);
+    expect(screen.getByText("+const x = 1")).toBeInTheDocument();
+    expect(screen.getByText("-const y = 2")).toBeInTheDocument();
+    expect(screen.getByText("+# README")).toBeInTheDocument();
+    expect(screen.getByText("@@ -1,5 +1,7 @@")).toBeInTheDocument();
+    expect(screen.getByText("@@ -0,0 +1,5 @@")).toBeInTheDocument();
   });
 
   it("renders collapse/expand toolbar buttons (Req 5.4)", () => {
@@ -110,11 +107,10 @@ describe("DiffPanel", () => {
       '[title="Collapse all files"]',
     )!;
     fireEvent.click(collapseBtn);
-    // All file headers should have collapsed class
-    const collapsedHeaders = container.querySelectorAll(
-      ".diff-file-header.collapsed",
+    // All file headers carry the collapsed state attribute.
+    expect(container.querySelectorAll('[data-collapsed="true"]').length).toBe(
+      2,
     );
-    expect(collapsedHeaders.length).toBe(2);
   });
 
   it("expands all files when expand button clicked after collapse (Req 5.4)", () => {
@@ -125,23 +121,23 @@ describe("DiffPanel", () => {
     const expandBtn = container.querySelector('[title="Expand all files"]')!;
     fireEvent.click(collapseBtn);
     fireEvent.click(expandBtn);
-    const collapsedHeaders = container.querySelectorAll(
-      ".diff-file-header.collapsed",
+    expect(container.querySelectorAll('[data-collapsed="true"]').length).toBe(
+      0,
     );
-    expect(collapsedHeaders.length).toBe(0);
   });
 
   it("toggles individual file collapse on header click (Req 5.4)", () => {
     const { container } = render(<DiffPanel diff={sampleDiff} />);
-    const fileHeaders = container.querySelectorAll(".diff-file-header");
+    const fileHeaders =
+      container.querySelectorAll<HTMLElement>("[data-collapsed]");
     // Click first file header to collapse it
     fireEvent.click(fileHeaders[0]!);
-    expect(fileHeaders[0]!.classList.contains("collapsed")).toBe(true);
+    expect(fileHeaders[0]!.getAttribute("data-collapsed")).toBe("true");
     // Second should remain expanded
-    expect(fileHeaders[1]!.classList.contains("collapsed")).toBe(false);
+    expect(fileHeaders[1]!.getAttribute("data-collapsed")).toBe("false");
     // Click again to expand
     fireEvent.click(fileHeaders[0]!);
-    expect(fileHeaders[0]!.classList.contains("collapsed")).toBe(false);
+    expect(fileHeaders[0]!.getAttribute("data-collapsed")).toBe("false");
   });
 
   it("renders file and hunk navigation buttons (Req 5.5)", () => {

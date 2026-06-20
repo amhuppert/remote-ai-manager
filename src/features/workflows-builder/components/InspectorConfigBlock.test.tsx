@@ -1,6 +1,4 @@
 // @vitest-environment jsdom
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import InspectorConfigBlock from "./InspectorConfigBlock";
@@ -9,6 +7,20 @@ const baseProps = {
   label: "Implementer",
   summary: "claude · sonnet · high",
 };
+
+function getHead(container: HTMLElement): HTMLElement {
+  const head = container.querySelector<HTMLElement>("button[aria-expanded]");
+  expect(head).not.toBeNull();
+  return head as HTMLElement;
+}
+
+function getBody(container: HTMLElement): HTMLElement {
+  const body = container.querySelector<HTMLElement>(
+    "[id^='wb-inspector-block__body--']",
+  );
+  expect(body).not.toBeNull();
+  return body as HTMLElement;
+}
 
 describe("InspectorConfigBlock", () => {
   describe("source badges", () => {
@@ -33,28 +45,18 @@ describe("InspectorConfigBlock", () => {
     });
   });
 
-  describe("source variant class (drives left border)", () => {
-    const cases: Array<{
-      source: "global" | "workflow" | "context-override" | "disabled";
-      cls: string;
-    }> = [
-      { source: "global", cls: "wb-inspector-block--source-global" },
-      { source: "workflow", cls: "wb-inspector-block--source-workflow" },
-      {
-        source: "context-override",
-        cls: "wb-inspector-block--source-context-override",
-      },
-      { source: "disabled", cls: "wb-inspector-block--source-disabled" },
-    ];
+  describe("source data attribute (drives left-border styling)", () => {
+    const sources: Array<
+      "global" | "workflow" | "context-override" | "disabled"
+    > = ["global", "workflow", "context-override", "disabled"];
 
-    for (const { source, cls } of cases) {
-      it(`applies ${cls} when source is ${source}`, () => {
+    for (const source of sources) {
+      it(`exposes data-source="${source}"`, () => {
         const { container } = render(
           <InspectorConfigBlock {...baseProps} source={source} />,
         );
-        const block = container.querySelector(".wb-inspector-block");
-        expect(block).not.toBeNull();
-        expect(block?.classList.contains(cls)).toBe(true);
+        const block = container.querySelector("[data-source]");
+        expect(block?.getAttribute("data-source")).toBe(source);
       });
     }
   });
@@ -64,44 +66,39 @@ describe("InspectorConfigBlock", () => {
       const { container } = render(
         <InspectorConfigBlock {...baseProps} source="global" />,
       );
-      const body = container.querySelector(".wb-inspector-block__body");
-      expect(body).not.toBeNull();
-      expect(body?.hasAttribute("hidden")).toBe(true);
+      expect(getBody(container).hasAttribute("hidden")).toBe(true);
     });
 
     it("is collapsed by default when source is workflow", () => {
       const { container } = render(
         <InspectorConfigBlock {...baseProps} source="workflow" />,
       );
-      const body = container.querySelector(".wb-inspector-block__body");
-      expect(body?.hasAttribute("hidden")).toBe(true);
+      expect(getBody(container).hasAttribute("hidden")).toBe(true);
     });
 
     it("is expanded by default when source is context-override", () => {
       const { container } = render(
         <InspectorConfigBlock {...baseProps} source="context-override" />,
       );
-      const body = container.querySelector(".wb-inspector-block__body");
-      expect(body?.hasAttribute("hidden")).toBe(false);
+      expect(getBody(container).hasAttribute("hidden")).toBe(false);
     });
 
     it("is expanded by default when source is disabled", () => {
       const { container } = render(
         <InspectorConfigBlock {...baseProps} source="disabled" />,
       );
-      const body = container.querySelector(".wb-inspector-block__body");
-      expect(body?.hasAttribute("hidden")).toBe(false);
+      expect(getBody(container).hasAttribute("hidden")).toBe(false);
     });
 
     it("toggles open/closed when the header is clicked", () => {
       const { container } = render(
         <InspectorConfigBlock {...baseProps} source="global" />,
       );
-      const head = container.querySelector(".wb-inspector-block__head");
-      const body = container.querySelector(".wb-inspector-block__body");
-      expect(body?.hasAttribute("hidden")).toBe(true);
-      fireEvent.click(head as Element);
-      expect(body?.hasAttribute("hidden")).toBe(false);
+      const head = getHead(container);
+      const body = getBody(container);
+      expect(body.hasAttribute("hidden")).toBe(true);
+      fireEvent.click(head);
+      expect(body.hasAttribute("hidden")).toBe(false);
     });
   });
 
@@ -113,33 +110,24 @@ describe("InspectorConfigBlock", () => {
     ];
 
     for (const source of inherited) {
-      it(`wraps children with --readonly when source is ${source}`, () => {
+      it(`marks children aria-disabled when source is ${source}`, () => {
         const { container } = render(
           <InspectorConfigBlock {...baseProps} source={source} defaultOpen>
             <span data-testid="child">body</span>
           </InspectorConfigBlock>,
         );
-        const controls = container.querySelector(
-          ".wb-inspector-block__controls",
-        );
-        expect(
-          controls?.classList.contains(
-            "wb-inspector-block__controls--readonly",
-          ),
-        ).toBe(true);
+        const controls = container.querySelector("[aria-disabled]");
+        expect(controls?.getAttribute("aria-disabled")).toBe("true");
       });
     }
 
-    it("does NOT wrap children with --readonly when source is context-override", () => {
+    it("does NOT mark children aria-disabled when source is context-override", () => {
       const { container } = render(
         <InspectorConfigBlock {...baseProps} source="context-override">
           <span data-testid="child">body</span>
         </InspectorConfigBlock>,
       );
-      const controls = container.querySelector(".wb-inspector-block__controls");
-      expect(
-        controls?.classList.contains("wb-inspector-block__controls--readonly"),
-      ).toBe(false);
+      expect(container.querySelector("[aria-disabled]")).toBeNull();
     });
   });
 
@@ -221,19 +209,6 @@ describe("InspectorConfigBlock", () => {
       expect(
         screen.queryByRole("button", { name: "Reset to inherit" }),
       ).toBeNull();
-    });
-  });
-
-  describe("mobile footer buttons", () => {
-    it("CSS rules give footer buttons min-height var(--touch-target-min) at max-width: 768px", () => {
-      const css = readFileSync(
-        path.resolve(__dirname, "../styles/workflows-builder.css"),
-        "utf8",
-      );
-      const match = css.match(
-        /@media \(max-width: 768px\) \{[\s\S]*?\.wb-inspector-block__foot[\s\S]*?min-height: var\(--touch-target-min\)[\s\S]*?\}/,
-      );
-      expect(match).not.toBeNull();
     });
   });
 });

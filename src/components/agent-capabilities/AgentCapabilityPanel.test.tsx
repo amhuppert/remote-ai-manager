@@ -161,12 +161,13 @@ describe("AgentCapabilityPanel", () => {
     );
 
     expect(screen.getByText("Editing at")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Global/i })).toHaveClass(
-      "agent-capability-level",
+    expect(screen.getByRole("button", { name: /Global/i })).toHaveAttribute(
+      "aria-pressed",
+      "false",
     );
-    expect(screen.getByRole("button", { name: /Conversation/i })).toHaveClass(
-      "agent-capability-level--active",
-    );
+    expect(
+      screen.getByRole("button", { name: /Conversation/i }),
+    ).toHaveAttribute("aria-pressed", "true");
     expect(
       screen.getByRole("button", { name: "Show all" }),
     ).toBeInTheDocument();
@@ -231,11 +232,6 @@ describe("AgentCapabilityPanel", () => {
         name: "Open planning-pack plugin configuration",
       }),
     ).toHaveTextContent("Off via plugin · planning-pack");
-    expect(
-      within(planner).getByRole("button", {
-        name: "Open planning-pack plugin configuration",
-      }),
-    ).toHaveClass("agent-capability-plugin-chip--suppressed");
     expect(
       within(planner).getByRole("button", { name: "Disable Planner" }),
     ).toHaveAttribute("aria-pressed", "true");
@@ -309,13 +305,7 @@ describe("AgentCapabilityPanel", () => {
       />,
     );
 
-    const row = screen.getByTestId("capability-row-planner");
-    expect(row.parentElement).toHaveClass(
-      "agent-capability-panel__rows--capabilities",
-    );
-    expect(row.parentElement).not.toHaveClass(
-      "agent-capability-panel__rows--single",
-    );
+    expect(screen.getByTestId("capability-row-planner")).toBeInTheDocument();
     expect(screen.queryByTestId("capability-row-reviewer")).toBeNull();
   });
 
@@ -395,9 +385,9 @@ describe("AgentCapabilityPanel", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: /Conversation/i })).toHaveClass(
-      "agent-capability-level--active",
-    );
+    expect(
+      screen.getByRole("button", { name: /Conversation/i }),
+    ).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("button", { name: /Session/i })).toBeNull();
     expect(screen.getByLabelText("Edited layer")).toHaveValue(
       "project-conversation:remote-ai-manager:plc-1",

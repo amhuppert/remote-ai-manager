@@ -154,7 +154,7 @@ export default function SessionsPanel({
       hidden={hidden}
     >
       <div className={HEADER_CLASS}>
-        <div className="flex gap-sm items-center">
+        <div className="flex items-center gap-sm">
           <input
             type="search"
             className={SEARCH_CLASS}
@@ -170,7 +170,7 @@ export default function SessionsPanel({
           />
         </div>
         {hasTokens && (
-          <div className="flex flex-wrap gap-xs items-center">
+          <div className="flex flex-wrap items-center gap-xs">
             {tokens.map((token) => (
               <span key={`${token.cat}:${token.value}`} className={CHIP_CLASS}>
                 {token.key}:{token.value}
@@ -219,7 +219,7 @@ export default function SessionsPanel({
         onClose={() => setConfirmKind(null)}
       />
 
-      <div className="flex-1 min-h-0 overflow-y-auto p-sm">
+      <div className="min-h-0 flex-1 overflow-y-auto p-sm">
         {noSessionsAtAll ? (
           <EmptyState>
             <EmptyStateTitle>No sessions yet</EmptyStateTitle>

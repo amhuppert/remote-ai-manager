@@ -13,7 +13,7 @@ function activeButton(): HTMLElement | null {
   return (
     screen
       .getAllByRole("button")
-      .find((b) => b.className.split(/\s+/).includes("active")) ?? null
+      .find((b) => b.getAttribute("data-active") === "true") ?? null
   );
 }
 

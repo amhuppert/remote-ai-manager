@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
+import { Button } from "@/components/ui/Button";
 import { useOverlayScope } from "@/hooks/useOverlayScope";
 
 interface ConfirmDialogProps {
@@ -27,13 +28,6 @@ export default function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps): React.JSX.Element | null {
-  const confirmButtonRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    confirmButtonRef.current?.focus();
-  }, [open]);
-
   useEffect(() => {
     if (!open) return;
     const handleKeyDown = (e: KeyboardEvent): void => {
@@ -57,23 +51,29 @@ export default function ConfirmDialog({
   if (!open) return null;
 
   return (
-    <div className="modal-overlay" data-testid="modal-overlay">
-      <div className="modal confirm-modal">
-        <h2 className="modal-title">{title}</h2>
-        <p className="confirm-message">{message}</p>
-        <div className="modal-actions">
+    <div
+      className="fixed inset-0 z-dropdown flex animate-[fadeIn_0.15s_ease] items-center justify-center bg-[var(--cc-overlay-scrim)] backdrop-blur-[8px] max-768:items-end"
+      data-testid="modal-overlay"
+    >
+      <div className="w-full max-w-[400px] animate-[slideUp_0.2s_ease] rounded-lg border border-solid border-border-default bg-bg-surface p-xl max-768:max-w-full max-768:animate-[slideUpSheet_0.25s_ease] max-768:rounded-b-none max-768:px-md max-768:py-lg max-768:pb-[calc(var(--space-lg)+env(safe-area-inset-bottom,0))]">
+        <h2 className="mb-lg font-display text-[1.2rem] font-bold">{title}</h2>
+        <p className="mb-lg font-mono text-[0.82rem] leading-[1.55] text-text-secondary">
+          {message}
+        </p>
+        <div className="flex justify-end gap-sm">
           {!hideCancel && (
-            <button className="btn btn-sm" onClick={onCancel}>
+            <Button variant="default" size="sm" onClick={onCancel}>
               {cancelLabel}
-            </button>
+            </Button>
           )}
-          <button
-            ref={confirmButtonRef}
-            className={`btn btn-sm ${danger ? "btn-danger" : "btn-primary"}`}
+          <Button
+            autoFocus
+            variant={danger ? "danger" : "primary"}
+            size="sm"
             onClick={onConfirm}
           >
             {confirmLabel}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

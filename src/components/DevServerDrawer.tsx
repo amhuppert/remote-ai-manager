@@ -3,7 +3,120 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { useOverlayScope } from "@/hooks/useOverlayScope";
+import { Button } from "@/components/ui/Button";
+import { cn } from "@/lib/ui/cn";
 import type { DevServerRuntimeState } from "@/lib/dev-server/schemas";
+
+const PANEL =
+  "fixed z-dropdown w-[320px] max-h-[calc(100dvh-var(--topbar-height)-80px)] " +
+  "bg-bg-surface border border-solid border-border-subtle rounded-lg " +
+  "shadow-[0_8px_32px_var(--cc-black-a45),0_0_1px_var(--cc-cyan-a08)] " +
+  "flex flex-col overflow-hidden animate-[ds-panel-in_0.15s_ease] " +
+  "[backdrop-filter:blur(16px)_saturate(140%)] " +
+  "max-768:top-auto max-768:bottom-0 max-768:left-0 max-768:right-0 max-768:w-full " +
+  "max-768:max-h-[60vh] max-768:rounded-t-lg max-768:rounded-b-none " +
+  "max-768:pb-[env(safe-area-inset-bottom,0px)] max-768:animate-[ds-sheet-in_0.2s_ease]";
+
+const BACKDROP = "fixed inset-0 z-dropdown max-768:bg-[var(--cc-black-a40)]";
+
+const HEADER =
+  "flex items-center justify-between px-md py-sm shrink-0 " +
+  "border-x-0 border-t-0 border-b border-solid border-border-subtle";
+
+const TITLE =
+  "font-mono text-[0.72rem] font-semibold uppercase tracking-[0.06em] text-text-secondary";
+
+const CLOSE =
+  "bg-transparent border-none text-text-tertiary text-[0.7rem] cursor-pointer " +
+  "px-[6px] py-[4px] leading-none rounded-sm font-mono " +
+  "transition-[color] duration-150 ease-[ease] hover:text-text-primary " +
+  "max-768:min-w-[44px] max-768:min-h-[44px] max-768:flex max-768:items-center max-768:justify-center";
+
+const BODY = "p-sm overflow-y-auto flex flex-col gap-xs";
+
+const ROW =
+  "flex flex-wrap items-center gap-sm py-[6px] px-sm rounded-md bg-bg-raised " +
+  // The Stop/Start <Button size="sm"> children carry no mobile sizing of their
+  // own (the panel needs the narrower 36px box, not the global 44px touch
+  // target). Re-home the full <=768px box onto the row's only <button> child:
+  // min-height 36px + the legacy `.btn-sm` mobile padding (10px 16px).
+  "max-768:[&_button]:min-h-[36px] max-768:[&_button]:px-[16px] max-768:[&_button]:py-[10px]";
+
+const ROW_INFO = "flex items-center gap-[6px] flex-1 min-w-0";
+
+const NAME_BASE =
+  "font-mono text-[0.78rem] font-semibold whitespace-nowrap overflow-hidden text-ellipsis";
+
+const STATUS_TEXT =
+  "font-mono text-[0.7rem] text-text-tertiary uppercase tracking-[0.04em]";
+
+const PORT = "font-mono text-[0.7rem] text-text-tertiary";
+
+const ERROR_OUTPUT =
+  "font-mono text-[0.7rem] text-red bg-bg-base border border-solid border-red-glow " +
+  "rounded-sm px-sm py-xs m-0 max-h-[60px] overflow-auto whitespace-pre-wrap break-all";
+
+const FOOTER =
+  "flex gap-xs justify-end px-md py-sm shrink-0 " +
+  "border-x-0 border-b-0 border-t border-solid border-border-subtle";
+
+const CONFLICT =
+  "mx-md my-sm px-md py-sm border border-solid border-border-subtle rounded-md " +
+  "bg-[var(--cc-amber-tint-a05)] flex flex-col gap-xs";
+
+// Inside the `.topbar-status-session` strip, the trigger is hidden on narrow
+// viewports via the descendant idiom.
+const TRIGGER_WRAPPER =
+  "relative inline-flex items-center max-768:[.topbar-status-session_&]:hidden";
+
+const TRIGGER_BASE =
+  "relative inline-flex items-center gap-[5px] h-[30px] px-[10px] py-[5px] " +
+  "border border-solid rounded-md font-mono text-[0.7rem] font-medium uppercase " +
+  "tracking-[0.05em] whitespace-nowrap cursor-pointer transition-all duration-150 ease-[ease] " +
+  "max-768:h-[36px] max-768:min-h-[36px] max-768:px-[12px] max-768:py-[6px] " +
+  // hover layer — bg/text always change on hover; border is gated per status
+  // (active deepens the cyan on hover).
+  "hover:bg-bg-hover hover:text-text-primary " +
+  "data-[status=active]:hover:border-[var(--cc-cyan-a40)] " +
+  "data-[status=error]:hover:border-border-default " +
+  "data-[status=default]:hover:border-border-default";
+
+type TriggerStatus = "active" | "error" | "default";
+
+function triggerStatic(status: TriggerStatus, open: boolean): string {
+  const bg = open ? "bg-bg-hover" : "bg-bg-surface";
+  const border =
+    status === "error"
+      ? "border-[var(--cc-red-a25)]"
+      : status === "active"
+        ? open
+          ? "border-border-strong"
+          : "border-[var(--cc-cyan-a25)]"
+        : open
+          ? "border-border-strong"
+          : "border-border-subtle";
+  const text =
+    status === "error"
+      ? "text-red"
+      : open
+        ? "text-text-primary"
+        : status === "active"
+          ? "text-cyan"
+          : "text-text-secondary";
+  return cn(bg, border, text);
+}
+
+const TRIGGER_DOT_BASE = "w-[6px] h-[6px] rounded-full shrink-0";
+
+const DOT_BASE = "w-[7px] h-[7px] rounded-full shrink-0";
+
+const DOT_STATUS: Record<DevServerRuntimeState["status"], string> = {
+  stopped: "bg-text-tertiary",
+  starting:
+    "bg-amber shadow-[0_0_6px_var(--amber-glow)] animate-[pulse-dot_1.5s_ease-in-out_infinite]",
+  running: "bg-green shadow-[0_0_6px_var(--green-glow)]",
+  error: "bg-red shadow-[0_0_6px_var(--red-glow)]",
+};
 
 export interface UnmanagedConflictInfo {
   serverName: string;
@@ -34,7 +147,7 @@ function ServerIcon() {
       height={14}
       viewBox="0 0 14 14"
       fill="none"
-      className="ds-trigger-icon"
+      className="shrink-0 opacity-60"
     >
       <rect
         x="1.5"
@@ -61,7 +174,7 @@ function ServerIcon() {
 }
 
 function StatusDot({ status }: { status: DevServerRuntimeState["status"] }) {
-  return <span className={`ds-dot ds-dot-${status}`} />;
+  return <span className={cn(DOT_BASE, DOT_STATUS[status])} />;
 }
 
 function ServerRow({
@@ -76,43 +189,41 @@ function ServerRow({
   const isActive = server.status === "running" || server.status === "starting";
 
   return (
-    <div className="ds-row">
-      <div className="ds-row-info">
+    <div className={ROW}>
+      <div className={ROW_INFO}>
         <StatusDot status={server.status} />
         {server.remoteUrl && server.status === "running" ? (
           <a
             href={server.remoteUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="ds-name ds-name-link"
+            className={cn(NAME_BASE, "text-cyan no-underline hover:underline")}
             onClick={(e) => e.stopPropagation()}
           >
             {server.serverName}
           </a>
         ) : (
-          <span className="ds-name">{server.serverName}</span>
+          <span className={cn(NAME_BASE, "text-text-primary")}>
+            {server.serverName}
+          </span>
         )}
-        <span className="ds-status-text">{server.status}</span>
-        {server.port != null && <span className="ds-port">:{server.port}</span>}
+        <span className={STATUS_TEXT}>{server.status}</span>
+        {server.port != null && <span className={PORT}>:{server.port}</span>}
       </div>
-      <div className="ds-row-actions">
+      <div className="shrink-0">
         {isActive ? (
-          <button className="btn btn-sm" onClick={onStop} type="button">
+          <Button size="sm" onClick={onStop} type="button">
             Stop
-          </button>
+          </Button>
         ) : (
-          <button
-            className="btn btn-sm btn-primary"
-            onClick={onStart}
-            type="button"
-          >
+          <Button variant="primary" size="sm" onClick={onStart} type="button">
             Start
-          </button>
+          </Button>
         )}
       </div>
       {server.status === "error" && server.errorMessage && (
-        <div className="ds-error">
-          <pre className="ds-error-output">
+        <div className="mt-xs w-full">
+          <pre className={ERROR_OUTPUT}>
             {server.errorMessage.slice(0, 500)}
           </pre>
         </div>
@@ -144,49 +255,53 @@ function UnmanagedConflictDialog({
 }) {
   return (
     <div
-      className="ds-conflict"
+      className={CONFLICT}
       role="dialog"
       aria-label="Unmanaged dev server detected"
     >
-      <div className="ds-conflict-title">
+      <div className="text-[0.85rem] font-semibold">
         Port {conflict.port} already in use
       </div>
-      <div className="ds-conflict-body">
+      <div className="text-[0.8rem] leading-[1.4] text-inherit">
         Another process (pid {conflict.pid}) inside this worktree is listening
         on port {conflict.port}. Command Center didn&apos;t start it, so it
         won&apos;t be managed here.
       </div>
-      <div className="ds-conflict-meta">
+      <div className="text-[0.75rem] break-all text-inherit">
         <div>
-          <span className="ds-conflict-meta-label">cwd:</span>{" "}
+          <span className="font-semibold">cwd:</span>{" "}
           <code>{conflict.cwd}</code>
         </div>
       </div>
-      <div className="ds-conflict-actions">
-        <button
+      <div className="mt-xs flex justify-end gap-xs">
+        <Button
           type="button"
-          className="btn btn-sm"
+          size="sm"
+          touch
           onClick={onCancel}
           disabled={isStopping}
         >
           Cancel
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
-          className="btn btn-sm"
+          size="sm"
+          touch
           onClick={onRetry}
           disabled={isStopping}
         >
           Try Again
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
-          className="btn btn-sm btn-danger"
+          variant="danger"
+          size="sm"
+          touch
           onClick={onStop}
           disabled={isStopping}
         >
           {isStopping ? "Stopping…" : "Stop Server & Retry"}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -244,17 +359,17 @@ export function DevServerPanel({
 
   return createPortal(
     <>
-      <div className="ds-backdrop" onClick={onClose} />
+      <div className={BACKDROP} onClick={onClose} />
       <div
-        className="ds-panel"
+        className={PANEL}
         style={{ top: panelPos.top, right: panelPos.right }}
         role="dialog"
         aria-label="Dev servers"
       >
-        <div className="ds-header">
-          <span className="ds-title">Dev Servers</span>
+        <div className={HEADER}>
+          <span className={TITLE}>Dev Servers</span>
           <button
-            className="ds-close"
+            className={CLOSE}
             onClick={onClose}
             type="button"
             title="Close"
@@ -262,7 +377,7 @@ export function DevServerPanel({
             &#10005;
           </button>
         </div>
-        <div className="ds-body">
+        <div className={BODY}>
           {unmanagedConflict && (
             <UnmanagedConflictDialog
               conflict={unmanagedConflict}
@@ -276,7 +391,7 @@ export function DevServerPanel({
             />
           )}
           {servers.length === 0 ? (
-            <div className="ds-empty">No dev servers configured</div>
+            <div>No dev servers configured</div>
           ) : (
             servers.map((server) => (
               <ServerRow
@@ -289,20 +404,22 @@ export function DevServerPanel({
           )}
         </div>
         {(hasStopped || hasStoppable) && (
-          <div className="ds-footer">
+          <div className={FOOTER}>
             {hasStopped && (
-              <button
-                className="btn btn-sm btn-primary"
+              <Button
+                variant="primary"
+                size="sm"
+                touch
                 onClick={onStartAll}
                 type="button"
               >
                 Start All
-              </button>
+              </Button>
             )}
             {hasStoppable && (
-              <button className="btn btn-sm" onClick={onStopAll} type="button">
+              <Button size="sm" touch onClick={onStopAll} type="button">
                 Stop All
-              </button>
+              </Button>
             )}
           </div>
         )}
@@ -336,31 +453,29 @@ export default function DevServerDrawer({
 
   if (servers.length === 0) return null;
 
-  const triggerClass = [
-    "ds-trigger",
-    hasRunning && "ds-trigger-active",
-    hasError && !hasRunning && "ds-trigger-error",
-    open && "ds-trigger-open",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const status: TriggerStatus = hasRunning
+    ? "active"
+    : hasError
+      ? "error"
+      : "default";
 
   const dotClass = hasRunning
-    ? "ds-trigger-dot running"
+    ? "bg-green shadow-[0_0_6px_var(--green-glow)] animate-pulse-dot"
     : hasError
-      ? "ds-trigger-dot error"
-      : "ds-trigger-dot";
+      ? "bg-red shadow-[0_0_6px_var(--red-glow)]"
+      : "bg-text-tertiary";
 
   return (
-    <div className="ds-wrapper">
+    <div className={TRIGGER_WRAPPER}>
       <button
         ref={triggerRef}
-        className={triggerClass}
+        data-status={status}
+        className={cn(TRIGGER_BASE, triggerStatic(status, open))}
         onClick={onToggle}
         type="button"
       >
-        <span className={dotClass} />
-        <span className="ds-trigger-label">
+        <span className={cn(TRIGGER_DOT_BASE, dotClass)} />
+        <span className="leading-none">
           {hasRunning
             ? `${runningCount}/${servers.length}`
             : hasError

@@ -104,10 +104,10 @@ export default function ConfigPage(): React.JSX.Element {
       <Topbar breadcrumbs={[{ label: "config" }]} page="projects" />
       <main className={MAIN_CLASS}>
         <div
-          className="grid grid-cols-[248px_minmax(0,1fr)] h-full min-h-0 bg-bg-base max-900:grid-cols-[1fr]"
+          className="grid h-full min-h-0 grid-cols-[248px_minmax(0,1fr)] bg-bg-base max-900:grid-cols-[1fr]"
           data-active-section={activeSection}
         >
-          <aside className="border-y-0 border-l-0 border-r border-solid border-border-subtle px-lg py-xl bg-bg-void overflow-y-auto max-900:border-r-0 max-900:border-b max-900:p-md">
+          <aside className="overflow-y-auto border-y-0 border-r border-l-0 border-solid border-border-subtle bg-bg-void px-lg py-xl max-900:border-r-0 max-900:border-b max-900:p-md">
             <nav
               className="flex flex-col gap-[2px] max-900:flex-row max-900:overflow-x-auto"
               aria-label="Settings"
@@ -128,11 +128,11 @@ export default function ConfigPage(): React.JSX.Element {
                     )}
                     onClick={() => setActiveSection(item.id)}
                   >
-                    <span className="flex-1 min-w-0 overflow-hidden text-ellipsis">
+                    <span className="min-w-0 flex-1 overflow-hidden text-ellipsis">
                       {item.label}
                     </span>
                     {item.id === "capabilities" ? (
-                      <span className="ml-auto px-[6px] py-px rounded-full bg-cyan-glow text-cyan text-[0.7rem] tracking-[0.05em]">
+                      <span className="ml-auto rounded-full bg-cyan-glow px-[6px] py-px text-[0.7rem] tracking-[0.05em] text-cyan">
                         cascading
                       </span>
                     ) : null}
@@ -141,10 +141,10 @@ export default function ConfigPage(): React.JSX.Element {
               })}
             </nav>
           </aside>
-          <div className="relative flex flex-col min-w-0 min-h-0 overflow-hidden bg-bg-base">
+          <div className="relative flex min-h-0 min-w-0 flex-col overflow-hidden bg-bg-base">
             <div
               className={cn(
-                "flex-auto min-h-0",
+                "min-h-0 flex-auto",
                 contentIsCapabilities
                   ? "grid overflow-hidden"
                   : "overflow-y-auto p-2xl",

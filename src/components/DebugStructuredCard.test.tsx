@@ -52,9 +52,7 @@ describe("DebugStructuredCard — hypothesizing with optional fields", () => {
 
     expect(screen.getByText("H1")).toBeInTheDocument();
     expect(screen.getByText("Race in cache invalidation")).toBeInTheDocument();
-    expect(
-      container.querySelector(".debug-structured-card__fallback"),
-    ).toBeNull();
+    expect(container.querySelector("pre")).toBeNull();
   });
 });
 
@@ -132,9 +130,7 @@ describe("DebugStructuredCard — analyzing_evidence (more_instrumentation)", ()
     expect(screen.getByText("H4")).toBeInTheDocument();
     expect(screen.getByText("Trigger background job")).toBeInTheDocument();
     expect(screen.getByText("Force socket reconnect")).toBeInTheDocument();
-    expect(
-      container.querySelector(".debug-structured-card__fallback"),
-    ).toBeNull();
+    expect(container.querySelector("pre")).toBeNull();
   });
 
   it("falls back when more_instrumentation hypothesis entries omit required fields", () => {
@@ -152,9 +148,7 @@ describe("DebugStructuredCard — analyzing_evidence (more_instrumentation)", ()
       <DebugStructuredCard phase="analyzing_evidence" payload={payload} />,
     );
 
-    expect(
-      container.querySelector(".debug-structured-card__fallback"),
-    ).not.toBeNull();
+    expect(container.querySelector("pre")).not.toBeNull();
   });
 });
 
@@ -183,13 +177,11 @@ describe("DebugStructuredCard — cleanup_instrumentation", () => {
       screen.getByText("Manifest left in place pending PR review."),
     ).toBeInTheDocument();
 
-    const checks = container.querySelectorAll(".debug-structured-card__check");
+    const checks = container.querySelectorAll("[data-ok]");
     expect(checks.length).toBe(3);
-    expect(checks[0]?.className).toContain("debug-structured-card__check--ok");
-    expect(checks[1]?.className).toContain("debug-structured-card__check--ok");
-    expect(checks[2]?.className).toContain(
-      "debug-structured-card__check--fail",
-    );
+    expect(checks[0]?.getAttribute("data-ok")).toBe("true");
+    expect(checks[1]?.getAttribute("data-ok")).toBe("true");
+    expect(checks[2]?.getAttribute("data-ok")).toBe("false");
   });
 });
 
@@ -201,9 +193,7 @@ describe("DebugStructuredCard — fallback rendering", () => {
       <DebugStructuredCard phase="hypothesizing" payload={payload} />,
     );
 
-    const fallback = container.querySelector(
-      ".debug-structured-card__fallback",
-    );
+    const fallback = container.querySelector("pre");
     expect(fallback).not.toBeNull();
     expect(fallback!.textContent).toContain("unexpected");
     expect(fallback!.textContent).toContain("shape");
@@ -218,9 +208,7 @@ describe("DebugStructuredCard — fallback rendering", () => {
       />,
     );
 
-    const fallback = container.querySelector(
-      ".debug-structured-card__fallback",
-    );
+    const fallback = container.querySelector("pre");
     expect(fallback).not.toBeNull();
   });
 

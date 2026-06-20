@@ -16,8 +16,38 @@ import ImageAttachmentPreview from "@/components/ImageAttachmentPreview";
 import { useFileAutocomplete } from "@/hooks/use-file-autocomplete";
 import { useBranchFromParent } from "@/stores/sessions.store";
 import TddToggle from "@/components/TddToggle";
+import { Button } from "@/components/ui/Button";
+import { ModalTitle, ModalActions } from "@/components/ui/ModalShell";
+import {
+  FormGroup,
+  FormLabel,
+  FormHint,
+  FormError,
+} from "@/components/ui/FormField";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionCreationMode } from "@/lib/sessions/schemas";
+
+// The `formInputBase` appearance the `FormInput` primitive owns, applied inline:
+// the two `.form-input` consumers here are a ref'd `<input>` (autofocus) and a
+// `<textarea rows={6}>`, neither of which the input-only, non-ref-forwarding
+// `FormInput` primitive can render. The string is the primitive's recipe verbatim
+// (the merged effective `.form-input` cascade: 9px/12px padding, 0.82rem, hover
+// border-strong, focus cyan + glow ring, placeholder text-tertiary).
+const FORM_INPUT_CLASS =
+  "w-full rounded-md border border-solid border-border-default bg-bg-base px-[12px] py-[9px] " +
+  "font-mono text-[0.82rem] text-text-primary outline-0 " +
+  "transition-[border-color,box-shadow] duration-150 ease-[ease] " +
+  "placeholder:text-text-tertiary hover:border-border-strong " +
+  "focus:border-cyan focus:shadow-[0_0_0_3px_var(--color-cyan-glow)]";
+
+/**
+ * Session-creation mode toggle button (Fast / Focus / Optimistic). Selection is
+ * `data-active`; active beats hover via mutually-exclusive `data-[active=…]`
+ * gating so the cascade does not depend on utility emission order.
+ */
+const modeButtonClass =
+  "flex flex-1 cursor-pointer items-center justify-center gap-xs rounded-sm border-none bg-transparent px-sm py-xs font-mono text-[0.75rem] transition-all duration-150 ease-[ease] data-[active=false]:text-text-tertiary data-[active=false]:hover:bg-bg-hover data-[active=false]:hover:text-text-secondary data-[active=true]:bg-cyan data-[active=true]:text-text-inverse";
+
 /** Derive a git-safe branch suffix from an arbitrary session name */
 function sanitizeBranchName(sessionName: string): string {
   return sessionName
@@ -303,14 +333,25 @@ export default function CreateSessionModal({
       : "Agent will research the codebase and clarify the objective first";
 
   return (
-    <div className="modal-overlay" data-testid="modal-overlay">
+    // ESCAPE HATCH (charter): the modal shell stays on the legacy `.modal-overlay` /
+    // `.modal` recipes rather than `<ModalShell>`. ModalShell is desktop-only — the
+    // mobile bottom-sheet (overlay `align-items: flex-end` + the card's square bottom
+    // corners, lg/md padding, and `slideUpSheet` entry; globals.css @media ≤768px)
+    // cannot be re-homed: ModalShell exposes no overlay className, and `layoutClassName`
+    // is layout-only (radius/padding/animation are appearance the primitive owns).
+    // Modifying ModalShell is outside this slice's ownership. Swapping regresses the
+    // mobile sheet to a centered card, so the shell is left on its leaf class; the
+    // title, actions, form fields, and buttons inside stay migrated. Integration: keep
+    // `.modal-overlay`/`.modal` until a ModalShell mobile-sheet variant lands.
+    <div className="modal-overlay" id="modal-overlay">
       <div className="modal">
-        <div className="modal-title">New Session</div>
-        <div className="form-group">
-          <div className="session-mode-toggle">
+        <ModalTitle>New Session</ModalTitle>
+        <FormGroup>
+          <div className="mt-sm flex gap-[2px] rounded-md border border-solid border-border-subtle bg-bg-surface p-[3px]">
             <button
               type="button"
-              className={`mode-btn${mode === "fast" ? " active" : ""}`}
+              className={modeButtonClass}
+              data-active={mode === "fast"}
               onClick={() => setMode("fast")}
               disabled={createMutation.isPending}
             >
@@ -318,7 +359,8 @@ export default function CreateSessionModal({
             </button>
             <button
               type="button"
-              className={`mode-btn${mode === "focus" ? " active" : ""}`}
+              className={modeButtonClass}
+              data-active={mode === "focus"}
               onClick={() => setMode("focus")}
               disabled={createMutation.isPending}
             >
@@ -326,7 +368,8 @@ export default function CreateSessionModal({
             </button>
             <button
               type="button"
-              className={`mode-btn${mode === "optimistic" ? " active" : ""}`}
+              className={modeButtonClass}
+              data-active={mode === "optimistic"}
               onClick={() => setMode("optimistic")}
               disabled={createMutation.isPending}
             >
@@ -336,12 +379,7 @@ export default function CreateSessionModal({
 
           {branchOptions.length > 0 && (
             <>
-              <label
-                className="form-label"
-                style={{ marginTop: "var(--space-sm)" }}
-              >
-                Branch from
-              </label>
+              <FormLabel layoutClassName="mt-sm">Branch from</FormLabel>
               <BranchSelector
                 sessions={branchOptions}
                 selectedParent={parentSessionName}
@@ -353,18 +391,14 @@ export default function CreateSessionModal({
 
           {mode === "fast" ? (
             <>
-              <label
-                className="form-label"
-                htmlFor="session-name-input"
-                style={{ marginTop: "var(--space-sm)" }}
-              >
+              <FormLabel htmlFor="session-name-input" layoutClassName="mt-sm">
                 Session name
-              </label>
+              </FormLabel>
               <input
                 ref={nameInputRef}
                 id="session-name-input"
                 type="text"
-                className="form-input"
+                className={FORM_INPUT_CLASS}
                 placeholder="e.g. Copy To Clipboard"
                 value={sessionName}
                 onChange={(e) => {
@@ -378,7 +412,7 @@ export default function CreateSessionModal({
                   }
                 }}
               />
-              <div className="form-hint">
+              <FormHint>
                 {sessionName.trim() && sanitizeBranchName(sessionName) ? (
                   <>
                     Branch: <code>csm/{sanitizeBranchName(sessionName)}</code>
@@ -392,17 +426,16 @@ export default function CreateSessionModal({
                 ) : (
                   "Branch name will be derived from the session name"
                 )}
-              </div>
+              </FormHint>
             </>
           ) : (
             <>
-              <label
-                className="form-label"
+              <FormLabel
                 htmlFor="session-objective-input"
-                style={{ marginTop: "var(--space-sm)" }}
+                layoutClassName="mt-sm"
               >
                 {textareaLabel}
-              </label>
+              </FormLabel>
               <div style={{ position: "relative" }}>
                 <FileAutocomplete
                   ref={fileAutocomplete.autocompleteRef}
@@ -419,7 +452,7 @@ export default function CreateSessionModal({
                 <textarea
                   ref={textareaRef}
                   id="session-objective-input"
-                  className="form-input"
+                  className={FORM_INPUT_CLASS}
                   rows={6}
                   placeholder={textareaPlaceholder}
                   value={textareaValue}
@@ -536,32 +569,35 @@ export default function CreateSessionModal({
                   />
                 </div>
               </div>
-              <div className="form-hint">{textareaHint}</div>
+              <FormHint>{textareaHint}</FormHint>
             </>
           )}
-          {error && <div className="form-error">{error}</div>}
+          {error && <FormError>{error}</FormError>}
           <TddToggle
             enabled={tddEnabled}
             onChange={setTddEnabled}
             disabled={createMutation.isPending}
           />
-        </div>
-        <div className="modal-actions">
-          <button
-            className="btn btn-sm"
+        </FormGroup>
+        <ModalActions>
+          <Button
+            size="sm"
+            touch
             onClick={onClose}
             disabled={createMutation.isPending}
           >
             Cancel
-          </button>
-          <button
-            className="btn btn-primary btn-sm"
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            touch
             onClick={handleSubmit}
             disabled={!canSubmit}
           >
             {createMutation.isPending ? "Creating..." : "Create Session"}
-          </button>
-        </div>
+          </Button>
+        </ModalActions>
       </div>
     </div>
   );

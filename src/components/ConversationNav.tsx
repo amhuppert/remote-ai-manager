@@ -1,3 +1,5 @@
+import { cn } from "@/lib/ui/cn";
+
 interface ConversationNavProps {
   currentIndex: number;
   totalCount: number;
@@ -6,6 +8,16 @@ interface ConversationNavProps {
   onNext: () => void;
   onLast: () => void;
 }
+
+// `msg-nav`, `nav-btn`, and `msg-counter` are retained as hooks for two slices'
+// mobile overrides re-homed here: the general ≤768px touch-sizing (44×44, from the
+// globals `.nav-btn`/`.msg-nav` rule) AND the prompt-panel-header tweaks (smaller
+// nav `svg`). The svg override is `!` so it beats the unlayered globals
+// `.nav-btn svg { 16px }` rule (layered utilities otherwise lose to unlayered CSS).
+const navBtn =
+  "nav-btn flex items-center justify-center w-[24px] h-[24px] p-0 border border-solid border-border-subtle bg-transparent text-text-tertiary text-[0.7rem] cursor-pointer transition-all duration-150 ease-[ease] [&_svg]:w-[16px] [&_svg]:h-[16px] [&_svg]:shrink-0 max-768:[&_svg]:w-[14px]! max-768:[&_svg]:h-[14px]! hover:bg-bg-hover hover:text-text-secondary hover:border-border-default hover:z-[1] max-768:w-[44px] max-768:h-[44px] max-768:min-w-[44px] max-768:min-h-[44px] max-768:text-[0.72rem]";
+const navBtnLeft = cn(navBtn, "rounded-l-sm rounded-r-none");
+const navBtnRight = cn(navBtn, "-ml-px rounded-l-none rounded-r-sm");
 
 export default function ConversationNav({
   currentIndex,
@@ -18,9 +30,9 @@ export default function ConversationNav({
   const isEmpty = totalCount === 0;
 
   return (
-    <div className="msg-nav">
-      <div className="msg-nav-group">
-        <button className="nav-btn" onClick={onFirst} title="First message">
+    <div className="msg-nav flex items-center gap-sm max-768:flex-1 max-768:justify-between max-768:gap-[4px]">
+      <div className="flex">
+        <button className={navBtnLeft} onClick={onFirst} title="First message">
           <svg
             width="10"
             height="10"
@@ -47,7 +59,7 @@ export default function ConversationNav({
           </svg>
         </button>
         <button
-          className="nav-btn"
+          className={navBtnRight}
           onClick={onPrevious}
           title="Previous message"
         >
@@ -68,11 +80,11 @@ export default function ConversationNav({
           </svg>
         </button>
       </div>
-      <span className="msg-counter">
+      <span className="msg-counter min-w-[28px] text-center font-mono text-[0.7rem] tracking-[0.02em] text-text-tertiary max-768:min-w-[24px] max-768:text-[0.66rem]">
         {isEmpty ? "0 / 0" : `${currentIndex + 1} / ${totalCount}`}
       </span>
-      <div className="msg-nav-group">
-        <button className="nav-btn" onClick={onNext} title="Next message">
+      <div className="flex">
+        <button className={navBtnLeft} onClick={onNext} title="Next message">
           <svg
             width="10"
             height="6"
@@ -89,7 +101,7 @@ export default function ConversationNav({
             />
           </svg>
         </button>
-        <button className="nav-btn" onClick={onLast} title="Last message">
+        <button className={navBtnRight} onClick={onLast} title="Last message">
           <svg
             width="10"
             height="10"

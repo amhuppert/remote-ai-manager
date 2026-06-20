@@ -2,7 +2,7 @@
 
 import { memo, useCallback } from "react";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
-import CopyMessageButton from "./CopyMessageButton";
+import CopyMessageButton, { msgActionBtnClass } from "./CopyMessageButton";
 
 interface MessageActionsProps {
   /** The 0-based index of this message in the conversation */
@@ -20,8 +20,8 @@ interface MessageActionsProps {
  * Hover action bar shown beneath every message. Always renders Copy; renders
  * Fork only when an `onFork` handler is wired.
  *
- * Render inside a `.message` element — the parent must have
- * `position: relative` (already set by `.message` class).
+ * Render inside a message row — the parent must be `position: relative`
+ * (MessageRow's row sets the `relative` utility).
  */
 function MessageActions({
   messageIndex,
@@ -33,11 +33,11 @@ function MessageActions({
   }, [messageIndex, onFork]);
 
   return (
-    <div className="msg-actions">
+    <div className="mt-xs ml-auto flex w-fit items-center gap-[2px]">
       <CopyMessageButton content={content} />
       {onFork && (
         <button
-          className="msg-action-btn"
+          className={msgActionBtnClass}
           onClick={handleFork}
           data-tooltip="Fork"
           title="Fork conversation from this message"

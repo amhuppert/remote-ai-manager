@@ -39,6 +39,21 @@ import CollabConnector, {
 import CollabPassageControls from "@/features/session/conversation/collab/CollabPassageControls";
 import { CollabCardOrchestrationProvider } from "@/features/session/conversation/collab/CollabCollapsibleCard";
 import type { CollabPassageStatus } from "@/features/session/conversation/collab/envelope-adapter";
+import { cn } from "@/lib/ui/cn";
+
+// Grid placement of a card host within the two-column passage row; collapses to
+// a single column below 900px (legacy `.collab-card-host[data-lane=…]`).
+const laneClass: Record<CollabConnectorAnchor, string> = {
+  left: "col-[1]",
+  right: "col-[2] max-900:col-[1]",
+  full: "col-[1/-1] max-900:col-[1]",
+};
+
+// Passage accent rail color by the primary agent (legacy `[data-primary=codex]`).
+const passageBorder: Record<CollaborationAgent, string> = {
+  claude: "border-l-cyan",
+  codex: "border-l-violet",
+};
 
 interface CollabPauseHandlers {
   drafts: Record<string, string>;
@@ -282,7 +297,14 @@ function CardHost({
   children: ReactNode;
 }): React.JSX.Element {
   return (
-    <div className="collab-card-host" data-card-id={cardId} data-lane={lane}>
+    <div
+      className={cn(
+        "group/collab-card min-w-0 scroll-mt-[88px]",
+        laneClass[lane],
+      )}
+      data-card-id={cardId}
+      data-lane={lane}
+    >
       {children}
     </div>
   );
@@ -296,7 +318,10 @@ function PassageRow({
   rowKind?: string;
 }): React.JSX.Element {
   return (
-    <div className="collab-passage-row" data-row-kind={rowKind}>
+    <div
+      className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start gap-md max-900:grid-cols-[1fr]"
+      data-row-kind={rowKind}
+    >
       {children}
     </div>
   );
@@ -732,7 +757,10 @@ export default function CollabPassage({
 
   const showBand = pinnedTopTarget != null || !hideInlinePhaseStrip;
   const bandElement = showBand ? (
-    <div className="collab-passage-band" data-band="phase-strip">
+    <div
+      className="flex min-w-0 flex-wrap items-center justify-between gap-sm"
+      data-band="phase-strip"
+    >
       <CollabPhaseStrip
         phases={phases}
         verdict={verdict}
@@ -753,7 +781,10 @@ export default function CollabPassage({
 
   return (
     <article
-      className="collab-passage"
+      className={cn(
+        "flex min-w-0 flex-col gap-md border-0 border-l-[3px] border-solid pl-md max-768:pl-sm",
+        passageBorder[primary],
+      )}
       data-workflow-id={workflowId}
       data-status={status}
       data-primary={primary}
@@ -765,20 +796,20 @@ export default function CollabPassage({
 
       {showErrorBanner ? (
         <div
-          className="collab-passage-error-banner"
+          className="mb-sm flex flex-col gap-xs rounded-md border border-solid [border-color:color-mix(in_srgb,var(--red)_30%,transparent)] px-md py-sm [background:color-mix(in_srgb,var(--red)_8%,transparent)]"
           role="alert"
           aria-label="Collaboration failure"
         >
-          <span className="collab-passage-error-banner-label">
+          <span className="font-mono text-[0.78rem] font-semibold text-red">
             Collaboration failed
           </span>
-          <span className="collab-passage-error-banner-message">
+          <span className="font-mono text-[0.78rem] [overflow-wrap:anywhere] whitespace-pre-wrap">
             {errorSummary}
           </span>
         </div>
       ) : null}
 
-      <div className="collab-passage-timeline" ref={containerRef}>
+      <div className="flex min-w-0 flex-col gap-0" ref={containerRef}>
         <CollabCardOrchestrationProvider
           forceState={forceState}
           tick={forceTick}
@@ -849,7 +880,7 @@ function renderTimelineSections(
         return (
           <Fragment key={sectionKey}>
             <section
-              className="collab-passage-section"
+              className="flex min-w-0 flex-col gap-0"
               data-section={dataSection}
               {...(round !== undefined ? { "data-round": round } : {})}
               aria-label={ariaLabel}

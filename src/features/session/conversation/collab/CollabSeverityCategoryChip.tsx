@@ -1,5 +1,6 @@
 "use client";
 
+import { cn } from "@/lib/ui/cn";
 import type {
   CollaborationDisagreementCategory,
   CollaborationDisagreementSeverity,
@@ -21,6 +22,18 @@ const SEVERITY_LABEL: Record<CollaborationDisagreementSeverity, string> = {
   minor: "MINOR",
 };
 
+const chipBySeverity: Record<CollaborationDisagreementSeverity, string> = {
+  blocking: "bg-red border-red text-text-inverse",
+  major: "bg-transparent border-red-dim text-red",
+  minor: "bg-transparent border-cyan-dim text-cyan-dim",
+};
+
+const dividerBySeverity: Record<CollaborationDisagreementSeverity, string> = {
+  blocking: "text-text-inverse",
+  major: "text-red opacity-70",
+  minor: "text-cyan-dim",
+};
+
 export default function CollabSeverityCategoryChip({
   severity,
   category,
@@ -30,20 +43,22 @@ export default function CollabSeverityCategoryChip({
 
   return (
     <span
-      className="collab-sev-cat-chip"
+      className={cn(
+        "inline-flex items-center gap-[4px] rounded-sm border border-solid px-[6px] py-[1px] font-mono text-[length:var(--font-size-floor)] leading-[1.4] font-bold tracking-[0.06em] uppercase",
+        chipBySeverity[severity],
+      )}
       data-severity={severity}
       data-category={category}
       aria-label={`${categoryText} ${severityText}`}
     >
-      <span className="collab-sev-cat-chip-segment collab-sev-cat-chip-category">
-        {categoryText}
-      </span>
-      <span className="collab-sev-cat-chip-divider" aria-hidden="true">
+      <span className="whitespace-nowrap">{categoryText}</span>
+      <span
+        className={cn("font-normal", dividerBySeverity[severity])}
+        aria-hidden="true"
+      >
         ·
       </span>
-      <span className="collab-sev-cat-chip-segment collab-sev-cat-chip-severity">
-        {severityText}
-      </span>
+      <span className="whitespace-nowrap">{severityText}</span>
     </span>
   );
 }

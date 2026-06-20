@@ -5,7 +5,11 @@ import type {
   MessageContentBlock,
   ToolResultMetrics,
 } from "@/lib/conversations/schemas";
-import { formatToolUse } from "@/lib/conversations/format-tool-use";
+import {
+  formatToolUse,
+  type FormattedToolUse,
+} from "@/lib/conversations/format-tool-use";
+import { cn } from "@/lib/ui/cn";
 import ToolUseGroup from "./ToolUseGroup";
 import DebugStructuredCard from "./DebugStructuredCard";
 import CommandIndicator from "./CommandIndicator";
@@ -87,6 +91,66 @@ export function buildToolResultLookup(
   };
 }
 
+/**
+ * A single tool-use row. Rendered standalone in a message stream and, with
+ * `nested`, inside a collapsed `ToolUseGroup` body (tighter margin, surface
+ * background, no accent border).
+ */
+export function ToolUseIndicator({
+  formatted,
+  nested = false,
+}: {
+  formatted: FormattedToolUse;
+  nested?: boolean;
+}): React.JSX.Element {
+  const { isError } = formatted;
+  return (
+    <div
+      className={cn(
+        "flex min-h-[30px] flex-wrap items-center gap-[6px] rounded-sm border-y-0 border-r-0 border-solid px-sm py-[6px] font-mono text-[0.78rem]",
+        nested
+          ? "my-[2px] border-l-0 bg-bg-surface"
+          : cn(
+              "my-sm border-l-2 bg-bg-raised",
+              isError ? "border-l-red" : "border-l-cyan-dim",
+            ),
+      )}
+    >
+      <span
+        className={cn(
+          "shrink-0 text-[0.85rem]",
+          isError ? "text-red" : "text-cyan-dim",
+        )}
+      >
+        {isError ? "✕" : "⚙"}
+      </span>
+      <span className="shrink-0 text-[0.75rem] font-semibold text-text-primary">
+        {formatted.name}
+      </span>
+      {formatted.context && (
+        <span className="min-w-0 overflow-hidden text-[0.72rem] font-normal text-ellipsis whitespace-nowrap text-text-tertiary">
+          {formatted.context}
+        </span>
+      )}
+      {formatted.metricsLabel && (
+        <span
+          className={cn(
+            "ml-auto shrink-0 pl-sm text-[0.7rem] font-normal",
+            isError ? "text-red" : "text-text-tertiary",
+          )}
+        >
+          {formatted.metricsLabel}
+        </span>
+      )}
+      {formatted.command && (
+        <pre className="m-0 basis-full rounded-[3px] bg-bg-surface px-[8px] py-[6px] font-mono text-[0.72rem] leading-[1.4] break-words whitespace-pre-wrap text-text-secondary">
+          {formatted.command}
+        </pre>
+      )}
+    </div>
+  );
+}
+
 interface Props {
   content: MessageContentBlock[];
   /** Session worktree path — used to display tool file paths as relative when nested. */
@@ -102,7 +166,7 @@ export default memo(function MessageContent({
 
   return (
     <>
-      {grouped.map((item) => {
+      {grouped.map((item, idx) => {
         if (item.kind === "tool_group") {
           return (
             <ToolUseGroup
@@ -125,19 +189,30 @@ export default memo(function MessageContent({
           );
         }
         if (block.type === "image") {
+          // A caption (image_marker) immediately before its image collapses the
+          // gap between them (legacy `.message-image-caption + .message-inline-image`).
+          const prev = grouped[idx - 1];
+          const afterCaption =
+            prev?.kind === "block" && prev.block.type === "image_marker";
           return (
             // eslint-disable-next-line @next/next/no-img-element -- base64 data URLs
             <img
               key={i}
               src={`data:${block.mediaType};base64,${block.base64Data}`}
               alt="Attached image"
-              className="message-inline-image"
+              className={cn(
+                "my-sm block max-h-[400px] max-w-full rounded-sm",
+                afterCaption && "mt-0",
+              )}
             />
           );
         }
         if (block.type === "image_marker") {
           return (
-            <span key={i} className="message-image-caption">
+            <span
+              key={i}
+              className="mt-sm mb-[2px] block font-mono text-[0.72rem] tracking-[0.04em] text-[var(--text-muted)]"
+            >
               #{block.index}
             </span>
           );
@@ -156,26 +231,7 @@ export default memo(function MessageContent({
             worktreePath,
             result: resultLookup.get(block.id),
           });
-          const className = `tool-use-indicator${formatted.isError ? " tool-use-error" : ""}`;
-          return (
-            <div key={i} className={className}>
-              <span className="tool-use-icon">
-                {formatted.isError ? "\u2715" : "\u2699"}
-              </span>
-              <span className="tool-use-name">{formatted.name}</span>
-              {formatted.context && (
-                <span className="tool-use-context">{formatted.context}</span>
-              )}
-              {formatted.metricsLabel && (
-                <span className="tool-use-metrics">
-                  {formatted.metricsLabel}
-                </span>
-              )}
-              {formatted.command && (
-                <pre className="tool-use-command">{formatted.command}</pre>
-              )}
-            </div>
-          );
+          return <ToolUseIndicator key={i} formatted={formatted} />;
         }
         // tool_result blocks are not rendered standalone; their data is folded
         // into the paired tool_use indicator via resultLookup above.

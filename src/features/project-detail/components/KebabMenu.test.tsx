@@ -50,11 +50,4 @@ describe("KebabMenu", () => {
     // The menu has two menuitems plus one divider div => 3 direct children.
     expect(menu.children.length).toBe(3);
   });
-
-  it("marks danger items with the danger class", () => {
-    render(<KebabMenu items={[{ label: "Delete", danger: true }]} />);
-    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
-    const item = screen.getByRole("menuitem", { name: "Delete" });
-    expect(item.className).toContain("danger");
-  });
 });

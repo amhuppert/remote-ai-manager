@@ -53,21 +53,25 @@ export default function SlashCommandChip(
   return (
     <NodeViewWrapper
       as="span"
-      className="slash-command-chip"
+      className="group inline-flex items-center gap-xs rounded-md border border-border-default bg-bg-raised py-2xs pr-xs pl-[6px] align-baseline font-mono text-[0.78rem] leading-none transition-[border-color,box-shadow] duration-150 data-[kind=skill]:border-amber-dim data-[selected=true]:border-cyan-dim data-[selected=true]:shadow-[0_0_0_2px_var(--cyan-glow)] max-768:min-h-[28px] max-768:pt-xs max-768:pr-[6px] max-768:pb-xs max-768:pl-sm"
       data-selected={selected ? "true" : "false"}
       data-kind={attrs.kind}
       data-trigger={attrs.trigger}
       contentEditable={false}
       title={attrs.description ?? attrs.name}
     >
-      <span className="slash-command-chip__trigger">{attrs.trigger}</span>
-      <span className="slash-command-chip__name">{displayName}</span>
+      <span className="font-semibold text-cyan group-data-[kind=skill]:text-amber">
+        {attrs.trigger}
+      </span>
+      <span className="text-text-primary">{displayName}</span>
       {attrs.source ? (
-        <span className="slash-command-chip__source">{attrs.source}</span>
+        <span className="rounded-[3px] bg-bg-surface px-xs py-[1px] text-[0.7rem] text-text-tertiary lowercase">
+          {attrs.source}
+        </span>
       ) : null}
       <button
         type="button"
-        className="slash-command-chip__remove"
+        className="h-[16px] w-[16px] cursor-pointer rounded-[3px] border-0 bg-transparent p-0 text-[12px] leading-none text-text-tertiary hover:bg-red-glow hover:text-red-text max-768:min-h-[24px] max-768:min-w-[24px]"
         onClick={handleRemove}
         onMouseDown={(e) => e.preventDefault()}
         aria-label={`Remove ${attrs.name}`}

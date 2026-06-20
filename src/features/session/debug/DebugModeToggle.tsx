@@ -1,5 +1,6 @@
 "use client";
 
+import { cn } from "@/lib/ui/cn";
 import { useDebugModeToggleMutation } from "@/lib/debug-log/mutations";
 import type { ConversationState } from "@/lib/conversations/schemas";
 interface DebugModeToggleProps {
@@ -30,14 +31,22 @@ export default function DebugModeToggle({
   return (
     <button
       type="button"
-      className={`debug-toggle${isActive ? " debug-toggle--on" : ""}`}
+      data-on={isActive}
+      className={cn(
+        "group flex h-[36px] items-center gap-[6px] rounded-md border border-solid px-[12px] font-mono text-[0.72rem] font-medium whitespace-nowrap transition-all duration-150 ease-[ease]",
+        "disabled:cursor-not-allowed disabled:opacity-40",
+        "data-[on=false]:border-border-default data-[on=false]:bg-bg-surface data-[on=false]:text-text-secondary",
+        "data-[on=false]:hover:border-border-strong data-[on=false]:hover:bg-bg-hover data-[on=false]:hover:text-text-primary",
+        "data-[on=true]:border-[var(--cc-amber-a40)] data-[on=true]:bg-amber-glow data-[on=true]:text-amber",
+        "data-[on=true]:hover:border-amber-dim data-[on=true]:hover:bg-[var(--cc-amber-a20)]",
+      )}
       onClick={() => toggleMutation.mutate(isActive ? "exit" : "enter")}
       disabled={disabled || toggleMutation.isPending}
       data-tooltip={isActive ? "Exit debug mode" : "Enter debug mode"}
       aria-pressed={isActive}
     >
-      <span className="debug-toggle__dot" />
-      <span className="debug-toggle__label">Debug</span>
+      <span className="size-[6px] shrink-0 rounded-full bg-text-tertiary transition-all duration-200 ease-[ease] group-data-[on=true]:bg-amber group-data-[on=true]:shadow-[0_0_6px_var(--color-amber)]" />
+      <span>Debug</span>
     </button>
   );
 }

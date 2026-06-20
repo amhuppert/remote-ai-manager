@@ -10,7 +10,7 @@ function Frame({ children }: { children: React.ReactNode }) {
         width: 520,
         padding: 16,
         background: "var(--bg-void)",
-        color: "var(--text-strong)",
+        color: "var(--text-primary)",
       }}
     >
       {children}

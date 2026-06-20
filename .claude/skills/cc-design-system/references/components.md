@@ -1,6 +1,26 @@
 # Components
 
-Foundation classes, canonical `.cc-*` patterns, composite components, the card recipe, hover/press states, and the Codex agent variant. Class names are the contract — the same selector appears in CSS, in TSX components, and in any prototypes; they must agree.
+Canonical component recipes, composite components, the card recipe, hover/press states, and the Codex agent variant.
+
+## Build with primitives first
+
+After the Tailwind migration, the contract for the canonical recipes is the set of **React primitives** in `src/components/ui/`, each emitting pure Tailwind utilities and shipping a `.stories.tsx`:
+
+| Primitive | Replaces recipe | Notes |
+|---|---|---|
+| `Button` | `.btn*` | variants primary/danger/success/ghost/warning + `-sm`; `layoutClassName` for external geometry. |
+| `IconButton` | `.btn-icon-only`, `.cc-ibtn`, pin-toggle | `square`/`pill`/`ghost`; `size="touch"`; `data-pressed` for toggles. Owns mobile 44px touch-enlarge. |
+| `Badge` | `.cc-badge*` (recipe **deleted**) | tier = `variant` (status/type/count/subtle), value = `data-status`/`data-type`/`data-backend`. |
+| `StatusDot` | `.status-dot`/`.status-indicator` | cyan/amber/green/idle; live states pulse. |
+| `Tabs` | `.cc-tabs`/`.cc-tab`/`.cc-tab-count` | active = cyan bg; mind the `data-[status=…]` underscore pitfall (use static maps). |
+| `SectionHeader` | `.cc-section-*` | header/chevron/label/count/actions. |
+| `EmptyState` | `.empty-state*` | icon/title/desc. |
+| `FormField` | `.form-*` | group/label/input/hint/error. |
+| `ModalShell` | `.modal-*` overlay/card | desktop modal shell (no mobile bottom-sheet — that path is still legacy CSS). |
+
+**Always build with the primitive, never a legacy recipe class.** The primitive-swap wave deleted the `.empty-state*`, `.cc-section-*`, `.form-*`, `.cc-primary`, `.cc-ibtn`, `.cc-checkbox`, `.cc-toast`, and `.btn-toggle` recipes (consumers now use the primitives or inline utilities); `.cc-badge*` and the `.cc-*` typography helpers were deleted earlier — use `Badge` and Tailwind `text-*` utilities. Five recipe families remain **only** because a few consumers need a primitive feature that does not exist yet (tracked in `docs/reports/leaf-recipe-swap-residual-report.md`): `.btn*` (needs a `Button` anchor/`as` + disabled variant), `.btn-icon-only*` (a 28px `IconButton` size), `.cc-tab*` (MobileBottomBar descendant overrides), `.status-dot*` (an 8px mobile dot), `.modal*` (a `ModalShell` mobile bottom-sheet). Do NOT author new markup against any of these — extend the primitive instead. Authoring rules (utilities, `cn()`, `data-*` state, `layoutClassName`) are in `docs/tailwind-conventions.md`.
+
+The tables below are the **visual contract** (colors/states) each primitive must reproduce — a spec, not an authoring guide. Most of the recipe class names they show (e.g. `.cc-badge--*`, `.modal-overlay`, `.cc-tabs`) are **deleted or parked** (see the list above); build with the `ui/` primitive, never author these classes.
 
 ---
 
@@ -47,7 +67,9 @@ Foundation classes, canonical `.cc-*` patterns, composite components, the card r
 
 ### Badges
 
-Base: `.cc-badge`. **Hybrid API:** BEM modifier for the **tier**; attribute selector for the **value within the tier**. This scales without modifier-class explosion.
+> The `.cc-badge*` CSS recipe was **deleted** in the migration; the `Badge` primitive (`ui/Badge.tsx`) now emits these styles as utilities. The API below is the primitive's contract: `variant` carries the tier, `data-*` carries the value.
+
+Tier via `variant` (was the BEM modifier); value within the tier via attribute selector. This scales without modifier-class explosion.
 
 **Tier** (always required — BEM modifier on `.cc-badge`):
 
@@ -67,9 +89,9 @@ Base: `.cc-badge`. **Hybrid API:** BEM modifier for the **tier**; attribute sele
 [data-backend="claude" | "codex"]   /* orthogonal — applies regardless of tier */
 ```
 
-Example: `<span class="cc-badge cc-badge--status" data-status="running">Running</span>`.
+Example: `<Badge variant="status" data-status="running">Running</Badge>`.
 
-The "use BEM, not attributes" decision was about replacing the original spec's tier-via-attribute pattern (`.cc-badge[data-status="..."]` with no tier modifier). Production correctly uses BEM for the tier and attributes for the value — keep this pattern.
+The tier-as-variant + value-as-attribute split (rather than the original spec's tier-via-attribute `.cc-badge[data-status="..."]` with no tier modifier) is the contract the `Badge` primitive implements — keep this pattern.
 
 **Status colors:**
 
@@ -151,9 +173,9 @@ Switch into Codex identity via the `[data-agent="codex"]` attribute selector. Co
 
 Before introducing a new component:
 
-1. **Can an existing canonical pattern handle it?** Most cases fit `.cc-tabs`, `.cc-section-header`, `.cc-badge--*`, or the card recipe.
-2. **Does it need a new class name, or just composition?** Prefer composition over new classes.
-3. **If new — does the class name use the `.cc-*` prefix?** Use `.cc-*` for shared canonical patterns; existing per-feature class names stay where they are.
+1. **Can an existing `ui/` primitive handle it?** Most button / icon-button / tab / badge / section-header / empty-state / form-field / modal / status-dot needs are already a primitive — compose it, don't re-author.
+2. **If not a primitive, can plain Tailwind utilities + `cn()` express it?** Prefer composition with utilities over any new CSS.
+3. **Still need something shared and new?** Make it a new `ui/` primitive (with a `.stories.tsx`) — do NOT author a new `.cc-*` recipe or a new stylesheet. The `no-unapproved-global-css` guardrail rejects new global CSS, and new shared visual patterns belong in a primitive, not a class.
 4. **Does it respect hover/elevation rules?** Background steps up one level on hover; border bumps to strong. No exceptions.
 
-When in doubt, check whether the surface should be a card variant rather than a new composite.
+When in doubt, check whether the surface should reuse a primitive or a card variant rather than introduce anything new.

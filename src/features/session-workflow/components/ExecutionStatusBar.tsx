@@ -1,8 +1,32 @@
 "use client";
 
 import { useMemo } from "react";
+import { cn } from "@/lib/ui/cn";
 import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 import ContextHaltCard from "@/components/workflow-graph/ContextHaltCard";
+
+const wbBtn =
+  "inline-flex items-center justify-center gap-[6px] font-medium rounded-sm cursor-pointer transition-all duration-150 border border-border-default whitespace-nowrap";
+const wbBtnXs = "text-[0.7rem] py-[3px] px-[8px] h-[22px]";
+const wbBtnDefault =
+  "bg-bg-raised text-text-secondary hover:bg-bg-elevated hover:text-text-primary hover:border-border-strong";
+const wbBtnPrimary =
+  "bg-[var(--cc-cyan-a12)] text-cyan border-[var(--cyan-glow-strong)] hover:bg-[var(--cc-cyan-a20)] hover:shadow-[0_0_12px_var(--cyan-glow)]";
+const execControlBtn = "max-768:min-h-[44px]";
+
+const execBadgeBase =
+  "text-[0.7rem] font-semibold uppercase tracking-[0.06em] py-[3px] px-[10px] rounded-[3px]";
+
+const execBadgeByStatus: Record<string, string> = {
+  running:
+    "bg-[var(--cc-cyan-a12)] text-cyan border border-[var(--cyan-glow-strong)]",
+  paused:
+    "bg-[var(--cc-amber-a12)] text-amber border border-[var(--cc-amber-a30)]",
+  completed:
+    "bg-[var(--cc-green-a08)] text-green border border-[var(--cc-green-border)]",
+  halted: "bg-[var(--cc-red-a08)] text-red border border-[var(--cc-red-a25)]",
+  aborted: "bg-bg-raised text-text-tertiary border border-border-default",
+};
 import {
   createExecutionIndex,
   type ExecutionIndex,
@@ -73,37 +97,57 @@ export default function ExecutionStatusBar({
   const secondaryHaltReasons = execution.secondaryHaltReasons;
 
   return (
-    <div className="wb-exec-bar">
-      <div className="wb-exec-status">
-        <span className={`wb-exec-badge ${execution.status}`}>
+    <div className="flex min-h-[44px] items-center gap-md border-b border-border-dim bg-bg-surface px-md py-2 max-768:flex-wrap max-768:gap-sm">
+      <div className="flex items-center gap-[8px]">
+        <span
+          className={cn(
+            execBadgeBase,
+            execBadgeByStatus[execution.status] ??
+              "border border-border-default bg-bg-raised text-text-tertiary",
+          )}
+        >
           {execution.status}
         </span>
         {awaitingApprovalCount > 0 && (
-          <span className="wb-exec-badge awaiting-approval">
-            <span className="wb-exec-badge__dot" aria-hidden="true" />
+          <span
+            className={cn(
+              execBadgeBase,
+              "inline-flex items-center gap-[6px] border border-[var(--cc-amber-a30)] bg-[var(--cc-amber-a12)] text-amber",
+            )}
+          >
+            <span
+              className="h-[7px] w-[7px] shrink-0 animate-[pulse-dot_2.5s_ease-in-out_infinite] rounded-full bg-amber shadow-[0_0_8px_var(--amber)]"
+              aria-hidden="true"
+            />
             {awaitingApprovalCount} awaiting approval
           </span>
         )}
       </div>
 
-      <div className="wb-exec-info">
+      <div className="text-[0.72rem] text-text-secondary max-768:hidden">
         {contextTitle && (
           <>
-            Context: <strong>{contextTitle}</strong>
+            Context:{" "}
+            <strong className="font-semibold text-text-primary">
+              {contextTitle}
+            </strong>
           </>
         )}
         {contextTitle && taskTitle && " · "}
         {taskTitle && (
           <>
-            Task: <strong>{taskTitle}</strong>
+            Task:{" "}
+            <strong className="font-semibold text-text-primary">
+              {taskTitle}
+            </strong>
           </>
         )}
       </div>
 
-      <div className="wb-exec-controls">
+      <div className="ml-auto flex gap-sm">
         {showPause && (
           <button
-            className="wb-btn wb-btn-xs wb-btn-default"
+            className={cn(wbBtn, wbBtnXs, wbBtnDefault, execControlBtn)}
             onClick={onPause}
             disabled={isMutating}
             type="button"
@@ -113,7 +157,7 @@ export default function ExecutionStatusBar({
         )}
         {showResume && (
           <button
-            className="wb-btn wb-btn-xs wb-btn-primary"
+            className={cn(wbBtn, wbBtnXs, wbBtnPrimary, execControlBtn)}
             onClick={onResume}
             disabled={isMutating}
             type="button"
@@ -123,7 +167,7 @@ export default function ExecutionStatusBar({
         )}
         {showAbort && (
           <button
-            className="wb-btn wb-btn-xs wb-btn-default"
+            className={cn(wbBtn, wbBtnXs, wbBtnDefault, execControlBtn)}
             onClick={onAbort}
             disabled={isMutating}
             style={{ color: "var(--red)" }}
@@ -134,7 +178,7 @@ export default function ExecutionStatusBar({
         )}
         {showClear && (
           <button
-            className="wb-btn wb-btn-xs wb-btn-default"
+            className={cn(wbBtn, wbBtnXs, wbBtnDefault, execControlBtn)}
             onClick={onClear}
             disabled={isMutating}
             type="button"

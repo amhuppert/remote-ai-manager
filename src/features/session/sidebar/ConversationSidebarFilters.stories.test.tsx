@@ -17,8 +17,9 @@ const { GroupBySession, GroupByProject } = composeStories(stories);
 describe("ConversationSidebarFilters stories", () => {
   it("GroupBySession activates the Session button", async () => {
     await GroupBySession.run();
-    expect(screen.getByRole("radio", { name: "Session" }).className).toContain(
-      "active",
+    expect(screen.getByRole("radio", { name: "Session" })).toHaveAttribute(
+      "aria-checked",
+      "true",
     );
     expect(screen.queryByRole("radio", { name: "None" })).toBeNull();
     expect(screen.queryByRole("radio", { name: "Status" })).toBeNull();
@@ -26,8 +27,9 @@ describe("ConversationSidebarFilters stories", () => {
 
   it("GroupByProject activates the Project button", async () => {
     await GroupByProject.run();
-    expect(screen.getByRole("radio", { name: "Project" }).className).toContain(
-      "active",
+    expect(screen.getByRole("radio", { name: "Project" })).toHaveAttribute(
+      "aria-checked",
+      "true",
     );
   });
 });

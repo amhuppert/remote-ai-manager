@@ -17,10 +17,8 @@ describe("MessageContent — image_marker caption", () => {
       },
       { type: "image", mediaType: "image/png", base64Data: TINY_PNG },
     ];
-    const { container } = render(<MessageContent content={content} />);
-    const caption = container.querySelector(".message-image-caption");
-    expect(caption).not.toBeNull();
-    expect(caption!.textContent).toBe("#3");
+    render(<MessageContent content={content} />);
+    expect(screen.getByText("#3")).toBeInTheDocument();
   });
 
   it("renders the caption above the image in document order", () => {
@@ -34,16 +32,13 @@ describe("MessageContent — image_marker caption", () => {
       { type: "image", mediaType: "image/png", base64Data: TINY_PNG },
     ];
     const { container } = render(<MessageContent content={content} />);
-    const children = container.firstChild?.childNodes ?? container.childNodes;
     // The caption should appear before the <img> in the rendered tree.
-    const caption = container.querySelector(".message-image-caption");
-    const img = container.querySelector("img.message-inline-image");
-    expect(caption).not.toBeNull();
+    const caption = screen.getByText("#1");
+    const img = container.querySelector("img");
     expect(img).not.toBeNull();
     const captionPosition =
-      caption!.compareDocumentPosition(img!) & Node.DOCUMENT_POSITION_FOLLOWING;
+      caption.compareDocumentPosition(img!) & Node.DOCUMENT_POSITION_FOLLOWING;
     expect(captionPosition).not.toBe(0);
-    void children;
   });
 
   it("renders multiple captions for interleaved markers", () => {

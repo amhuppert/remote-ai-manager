@@ -36,7 +36,7 @@ describe("ConversationSidebarHeader stories", () => {
   it("NeedsFilterActive shows the Needs filter active with its count", async () => {
     await NeedsFilterActive.run();
     const button = screen.getByRole("tab", { name: /needs 3/i });
-    expect(button.className).toContain("active");
+    expect(button).toHaveAttribute("aria-selected", "true");
     expect(button).toHaveTextContent("3");
   });
 

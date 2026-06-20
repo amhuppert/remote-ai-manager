@@ -817,14 +817,18 @@ describe("ConversationWorkspace", () => {
   describe("defaultEffort prop", () => {
     it("uses 'high' as initial effort when no defaultEffort is provided", () => {
       renderPage();
-      const effortTrigger = document.querySelector(".effort-selector-trigger");
+      const effortTrigger = document.querySelector(
+        '[data-testid="effort-selector-trigger"]',
+      );
       expect(effortTrigger).toBeTruthy();
       expect(effortTrigger!.getAttribute("title")).toContain("High");
     });
 
     it("uses defaultEffort prop as initial effort when provided", () => {
       renderPage({ defaultEffort: "low" });
-      const effortTrigger = document.querySelector(".effort-selector-trigger");
+      const effortTrigger = document.querySelector(
+        '[data-testid="effort-selector-trigger"]',
+      );
       expect(effortTrigger).toBeTruthy();
       expect(effortTrigger!.getAttribute("title")).toContain("Low");
     });
@@ -1166,9 +1170,11 @@ describe("ConversationWorkspace", () => {
       ];
       renderPage();
       const pinned = document.querySelectorAll(
-        ".collab-pinned-top-target .collab-phase-strip",
+        '.collab-pinned-top-target [aria-label="Collaboration phase progress"]',
       );
-      const allStrips = document.querySelectorAll(".collab-phase-strip");
+      const allStrips = document.querySelectorAll(
+        '[aria-label="Collaboration phase progress"]',
+      );
       expect(pinned).toHaveLength(1);
       expect(allStrips).toHaveLength(1);
     });
@@ -1184,9 +1190,11 @@ describe("ConversationWorkspace", () => {
       ];
       renderPage();
       const pinned = document.querySelectorAll(
-        ".collab-pinned-top-target .collab-phase-strip",
+        '.collab-pinned-top-target [aria-label="Collaboration phase progress"]',
       );
-      const allStrips = document.querySelectorAll(".collab-phase-strip");
+      const allStrips = document.querySelectorAll(
+        '[aria-label="Collaboration phase progress"]',
+      );
       expect(pinned).toHaveLength(1);
       expect(allStrips).toHaveLength(1);
     });
@@ -1291,7 +1299,9 @@ describe("ConversationWorkspace", () => {
 
       expect(container.querySelector(".app")).toBeNull();
       expect(container.querySelector("main.main")).toBeNull();
-      expect(container.querySelector(".convo-sidebar")).toBeNull();
+      expect(
+        container.querySelector('[data-tooltip="Collapse sidebar"]'),
+      ).toBeNull();
     });
 
     it("preserves host-owned rail state across a keyed workspace remount", () => {
@@ -1336,7 +1346,9 @@ describe("ConversationWorkspace", () => {
       });
       const { container } = renderWorkspace();
 
-      expect(container.querySelector(".convo-sidebar-expand-float")).toBeNull();
+      expect(
+        container.querySelector('[data-tooltip="Expand sidebar"]'),
+      ).toBeNull();
     });
 
     it("opens the host-owned mobile drawer from the Conversations toggle", () => {

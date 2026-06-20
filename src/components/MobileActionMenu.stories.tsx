@@ -18,8 +18,9 @@ const meta = {
     (Story) => (
       <div style={{ maxWidth: 390, margin: "0 auto" }}>
         <style>{`
-          /* Force mobile styles in story */
-          .mobile-action-menu-trigger {
+          /* The trigger only renders below 768px (max-768:flex); force its mobile
+             appearance here so the story previews it on the desktop canvas. */
+          button[aria-label="Session actions"] {
             display: flex !important;
             align-items: center;
             justify-content: center;
@@ -35,7 +36,7 @@ const meta = {
             line-height: 1;
             letter-spacing: 2px;
           }
-          .mobile-action-menu-trigger:hover {
+          button[aria-label="Session actions"]:hover {
             background: var(--bg-hover);
             color: var(--text-primary);
             border-color: var(--border-default);

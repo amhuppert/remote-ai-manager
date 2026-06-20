@@ -71,7 +71,9 @@ describe.skipIf(!shouldRun)("ConversationsPage Playwright smoke", () => {
   });
 
   it("exposes the layout switcher and toggles state", async () => {
-    const layoutButtons = page.locator(".layout-switcher .layout-btn");
+    const layoutButtons = page.locator(
+      'button[data-tooltip="Conversation + Diff sidebar"], button[data-tooltip="Split 50/50"], button[data-tooltip="Panes (split-screen)"], button[data-tooltip="Conversation only"], button[data-tooltip="Diff only"]',
+    );
     const count = await layoutButtons.count();
     expect(count).toBeGreaterThan(0);
     await layoutButtons.first().click();

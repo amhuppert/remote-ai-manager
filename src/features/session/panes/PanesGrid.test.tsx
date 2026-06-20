@@ -68,15 +68,17 @@ function renderGrid(props: {
   return { ...result, onActivate, onOpenFull, onClose, onAdd, onExit };
 }
 
-function panesContainer(container: HTMLElement): HTMLElement {
-  const el = container.querySelector(".panes");
-  if (!(el instanceof HTMLElement)) throw new Error("no .panes container");
+function panesRoot(container: HTMLElement): HTMLElement {
+  const el = container.firstElementChild;
+  if (!(el instanceof HTMLElement)) throw new Error("no panes root");
   return el;
 }
 
 function panesGrid(container: HTMLElement): HTMLElement {
-  const el = container.querySelector(".panes-grid");
-  if (!(el instanceof HTMLElement)) throw new Error("no .panes-grid container");
+  // The grid is the element carrying the computed shape + --cols/--rows.
+  const el = container.querySelector("[data-shape]");
+  if (!(el instanceof HTMLElement))
+    throw new Error("no panes grid (data-shape)");
   return el;
 }
 
@@ -101,7 +103,7 @@ describe("PanesGrid", () => {
     expect(screen.getByText("3 / 6 panes")).toBeInTheDocument();
   });
 
-  it("marks the active pane with data-active and leaves the others unmarked", () => {
+  it("marks the active conversation's pane with data-active and leaves the others unmarked", () => {
     const workingSet = [
       makeConversation("a"),
       makeConversation("b"),
@@ -109,7 +111,7 @@ describe("PanesGrid", () => {
     ];
     const { container } = renderGrid({ workingSet, activeId: "b" });
 
-    const panes = container.querySelectorAll<HTMLElement>(".pane");
+    const panes = container.querySelectorAll<HTMLElement>("section");
     expect(panes).toHaveLength(3);
 
     const active = Array.from(panes).filter(
@@ -143,7 +145,7 @@ describe("PanesGrid", () => {
     const workingSet = [makeConversation("a"), makeConversation("b")];
     const { container } = renderGrid({ workingSet, activeId: "a" });
 
-    const panes = panesContainer(container);
+    const panes = panesRoot(container);
     expect(panes.getAttribute("data-composer-focused")).toBeNull();
 
     act(() => {

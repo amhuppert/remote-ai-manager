@@ -10,6 +10,15 @@ import type {
 import CollabClaimsList from "@/features/session/conversation/collab/CollabClaimsList";
 import CollabCollapsibleCard from "@/features/session/conversation/collab/CollabCollapsibleCard";
 import CollabMarkdownText from "@/features/session/conversation/collab/CollabMarkdownText";
+import {
+  cardAgent,
+  cardEyebrow,
+  cardList,
+  cardNarrative,
+  cardSection,
+  cardSectionTitle,
+  cardSummary,
+} from "@/features/session/conversation/collab/card-chrome";
 
 export interface CollabCrossReviewCardProps {
   reviewerAgent: CollaborationAgent;
@@ -55,23 +64,17 @@ export default function CollabCrossReviewCard({
       defaultOpen={defaultOpen}
       header={
         <>
-          <span
-            className="collab-artifact-card-agent"
-            data-agent={reviewerAgent}
-          >
+          <span className={cardAgent} data-agent={reviewerAgent}>
             {AGENT_LABEL[reviewerAgent]}
           </span>
-          <span className="collab-artifact-card-eyebrow">
+          <span className={cardEyebrow}>
             Review of {AGENT_LABEL[targetAgent]}&rsquo;s draft
           </span>
-          <span className="collab-artifact-card-summary">{summary}</span>
+          <span className={cardSummary}>{summary}</span>
         </>
       }
     >
-      <CollabMarkdownText
-        content={narrative}
-        className="collab-artifact-card-narrative"
-      />
+      <CollabMarkdownText content={narrative} className={cardNarrative} />
 
       <CollabClaimsList
         agree={agree}
@@ -81,11 +84,9 @@ export default function CollabCrossReviewCard({
       />
 
       {supporting.length > 0 ? (
-        <section className="collab-artifact-card-section">
-          <h4 className="collab-artifact-card-section-title">
-            Evidence ({supporting.length})
-          </h4>
-          <ul className="collab-artifact-card-list">
+        <section className={cardSection}>
+          <h4 className={cardSectionTitle}>Evidence ({supporting.length})</h4>
+          <ul className={cardList}>
             {supporting.map((item, idx) => (
               <li key={`supporting-${idx}`}>{item}</li>
             ))}

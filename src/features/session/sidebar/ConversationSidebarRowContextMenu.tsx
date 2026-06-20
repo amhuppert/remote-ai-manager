@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useOverlayScope } from "@/hooks/useOverlayScope";
+import { cn } from "@/lib/ui/cn";
 
 interface ContextMenuActionItem {
   kind: "item";
@@ -87,7 +88,7 @@ export default function ConversationSidebarRowContextMenu({
   return createPortal(
     <div
       ref={measureAndPosition}
-      className="ctx-menu"
+      className="ctx-menu fixed z-[1000] max-w-[320px] min-w-[240px] rounded-md border border-solid border-border-subtle bg-bg-elevated p-xs font-mono text-[12px] text-text-secondary shadow-[0_4px_16px_var(--cc-black-a45),0_0_0_1px_var(--cc-white-a02)_inset] select-none"
       role="menu"
       style={{ left: pos.x, top: pos.y }}
       onContextMenu={(event) => event.preventDefault()}
@@ -97,20 +98,22 @@ export default function ConversationSidebarRowContextMenu({
           return (
             <div
               key={`div-${index}`}
-              className="ctx-menu__div"
-              aria-hidden="true"
+              className="my-xs h-px bg-border-subtle"
+              role="separator"
             />
           );
         }
-        const className = ["ctx-menu__item", item.danger ? "danger" : null]
-          .filter(Boolean)
-          .join(" ");
         return (
           <button
             key={`item-${index}-${item.label}`}
             type="button"
             role="menuitem"
-            className={className}
+            className={cn(
+              "flex min-h-[32px] w-full cursor-pointer items-center justify-between gap-sm rounded-[calc(var(--radius-md)-2px)] border-0 bg-transparent px-sm py-xs text-left [font:inherit] enabled:focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-45 max-768:min-h-[44px] max-768:text-[13px]",
+              item.danger
+                ? "text-red-text enabled:hover:bg-red-glow enabled:hover:text-red enabled:focus-visible:bg-red-glow enabled:focus-visible:text-red"
+                : "text-inherit enabled:hover:bg-bg-hover enabled:hover:text-text-primary enabled:focus-visible:bg-bg-hover enabled:focus-visible:text-text-primary",
+            )}
             disabled={item.disabled === true}
             onClick={() => {
               if (item.disabled === true) return;
@@ -118,9 +121,13 @@ export default function ConversationSidebarRowContextMenu({
               onClose();
             }}
           >
-            <span className="ctx-menu__label">{item.label}</span>
+            <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+              {item.label}
+            </span>
             {item.hotkey !== undefined && (
-              <span className="ctx-menu__kbd">{item.hotkey}</span>
+              <span className="shrink-0 rounded-[3px] border border-solid border-border-subtle bg-bg-surface px-[6px] py-px text-[10px] tracking-[0.04em] text-text-tertiary uppercase">
+                {item.hotkey}
+              </span>
             )}
           </button>
         );

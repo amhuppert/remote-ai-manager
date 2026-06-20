@@ -83,19 +83,6 @@ describe("ConversationSidebarRow", () => {
     expect(screen.getByText("12m")).toBeDefined();
   });
 
-  it("keeps the status dot in the title line", () => {
-    const { container } = render(
-      <ConversationSidebarRow conversation={BASE} />,
-    );
-
-    const titleLine = container.querySelector(
-      ".conversation-sidebar-row__title-line",
-    );
-    expect(
-      titleLine?.querySelector(".conversation-sidebar-row__dot"),
-    ).toBeDefined();
-  });
-
   it("labels only waiting_for_input activity as asking for input", () => {
     const { rerender } = render(
       <ConversationSidebarRow
@@ -254,7 +241,7 @@ describe("ConversationSidebarRow", () => {
 
   it("marks unread finished rows with the unread class and a Done prefix, and shows the acknowledge button", () => {
     const onAcknowledge = vi.fn();
-    const { container } = render(
+    render(
       <ConversationSidebarRow
         conversation={{
           ...BASE,
@@ -266,11 +253,7 @@ describe("ConversationSidebarRow", () => {
       />,
     );
 
-    const row = container.querySelector(".conversation-sidebar-row");
-    expect(row?.classList.contains("is-unread")).toBe(true);
-    expect(
-      container.querySelector(".conversation-sidebar-row__unread-dot"),
-    ).not.toBeNull();
+    expect(screen.getByLabelText("unread")).toBeDefined();
     expect(screen.getByText(/Done/)).toBeDefined();
 
     const ack = screen.getByRole("button", { name: /Mark .* as read/i });
@@ -394,7 +377,7 @@ describe("ConversationSidebarRow", () => {
   });
 
   it("renders project rows with main context, backend, status, unread, and focus href", () => {
-    const { container } = render(
+    render(
       <ConversationSidebarRow
         conversation={PROJECT_BASE}
         href="/projects/my-project?focus=project-convo-1"
@@ -405,17 +388,11 @@ describe("ConversationSidebarRow", () => {
     expect(row.getAttribute("href")).toBe(
       "/projects/my-project?focus=project-convo-1",
     );
+    expect(row.getAttribute("data-status")).toBe("awaiting");
     expect(screen.getByText("main")).toBeDefined();
     expect(screen.queryByText("my-session")).toBeNull();
     expect(screen.getByLabelText("agent: claude")).toBeDefined();
-    expect(
-      container.querySelector(
-        '.conversation-sidebar-row__dot[data-status="awaiting"]',
-      ),
-    ).not.toBeNull();
-    expect(
-      container.querySelector(".conversation-sidebar-row__unread-dot"),
-    ).not.toBeNull();
+    expect(screen.getByLabelText("unread")).toBeDefined();
     expect(screen.getByText(/Done/)).toBeDefined();
   });
 
@@ -431,13 +408,9 @@ describe("ConversationSidebarRow", () => {
       />,
     );
 
-    const breadcrumb = document.querySelector(
-      ".conversation-sidebar-row__breadcrumb",
-    );
-    expect(breadcrumb).not.toBeNull();
-    expect(breadcrumb?.textContent).toContain("root-tools");
-    expect(breadcrumb?.textContent).toContain("main");
-    expect(breadcrumb?.textContent).not.toContain("my-session");
+    expect(screen.getByText("root-tools")).toBeDefined();
+    expect(screen.getByText("main")).toBeDefined();
+    expect(screen.queryByText("my-session")).toBeNull();
     expect(screen.getByText("Checked repo root health")).toBeDefined();
   });
 

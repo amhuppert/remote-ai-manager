@@ -10,6 +10,7 @@ import { useWorkflowDefinitionsQuery } from "@/lib/workflows/queries";
 import { useStartGraphWorkflowMutation } from "@/lib/workflows/mutations";
 import { ApiCallError } from "@/lib/api/errors";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import { Button } from "@/components/ui/Button";
 
 interface GraphWorkflowCardProps {
   projectName: string;
@@ -95,38 +96,43 @@ export function ExecutionStatusCard({
   return (
     <Link
       href={`/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/workflow`}
-      className="workflow-card"
+      className="flex flex-col gap-sm rounded-md border border-solid border-border-subtle bg-bg-surface p-md text-inherit no-underline [transition:border-color_0.15s_ease,background_0.15s_ease] hover:border-border-strong hover:bg-bg-elevated"
     >
-      <div className="workflow-card-header">
-        <span className="workflow-card-badge" style={{ color: statusColor }}>
-          <span className="workflow-card-badge-icon">
-            {getStatusIcon(status)}
-          </span>
+      <div className="flex items-center gap-sm">
+        <span
+          className="inline-flex items-center gap-[4px] font-mono text-[0.7rem] tracking-[0.04em] uppercase"
+          style={{ color: statusColor }}
+        >
+          <span className="text-[0.75rem]">{getStatusIcon(status)}</span>
           {getStatusLabel(status)}
         </span>
         {activeContext && status === "running" && (
-          <span className="workflow-card-iteration">{activeContext.title}</span>
+          <span className="ml-auto font-mono text-[0.7rem] text-text-tertiary">
+            {activeContext.title}
+          </span>
         )}
       </div>
-      <div className="workflow-card-body">
-        <div className="workflow-card-label">Graph Workflow</div>
-        <div className="workflow-card-objective">
+      <div className="flex flex-col gap-[2px]">
+        <div className="font-mono text-[0.7rem] tracking-[0.06em] text-text-tertiary uppercase">
+          Graph Workflow
+        </div>
+        <div className="text-[0.85rem] leading-[1.4] text-text-secondary">
           {execution.workingDefinition.executionContexts
             .map((c) => c.title)
             .join(" \u2192 ")}
         </div>
       </div>
       {progress.total > 0 && (
-        <div className="workflow-card-footer">
-          <div className="workflow-card-progress-bar">
+        <div className="mt-xs flex items-center gap-sm">
+          <div className="h-[4px] flex-1 overflow-hidden rounded-[2px] bg-[var(--bg-inset)]">
             <div
-              className="workflow-card-progress-fill"
+              className="h-full rounded-[2px] bg-cyan [transition:width_0.3s_ease]"
               style={{
                 width: `${Math.round((progress.completed / progress.total) * 100)}%`,
               }}
             />
           </div>
-          <span className="workflow-card-progress-text">
+          <span className="font-mono text-[0.7rem] whitespace-nowrap text-text-tertiary">
             {progress.completed}/{progress.total} tasks completed
           </span>
         </div>
@@ -165,23 +171,29 @@ export function GraphWorkflowLauncher({
 
   if (loading) {
     return (
-      <div className="gw-launcher">
-        <div className="gw-launcher-label">Graph Workflow</div>
-        <div className="gw-launcher-empty">Loading definitions...</div>
+      <div className="flex flex-col gap-sm rounded-md border border-solid border-border-dim bg-bg-surface p-md">
+        <div className="font-mono text-[0.7rem] tracking-[0.06em] text-text-tertiary uppercase">
+          Graph Workflow
+        </div>
+        <div className="font-mono text-[0.78rem] text-text-tertiary">
+          Loading definitions...
+        </div>
       </div>
     );
   }
 
   if (definitions.length === 0) {
     return (
-      <div className="gw-launcher">
-        <div className="gw-launcher-label">Graph Workflow</div>
-        <div className="gw-launcher-empty">
+      <div className="flex flex-col gap-sm rounded-md border border-solid border-border-dim bg-bg-surface p-md">
+        <div className="font-mono text-[0.7rem] tracking-[0.06em] text-text-tertiary uppercase">
+          Graph Workflow
+        </div>
+        <div className="font-mono text-[0.78rem] text-text-tertiary">
           No workflow definitions found for this project.
         </div>
         <Link
           href={`/projects/${encodeURIComponent(projectName)}/workflows`}
-          className="gw-launcher-link"
+          className="font-mono text-[0.72rem] text-text-tertiary! no-underline [transition:color_0.15s] hover:text-cyan!"
         >
           Build a workflow definition \u2192
         </Link>
@@ -190,10 +202,12 @@ export function GraphWorkflowLauncher({
   }
 
   return (
-    <div className="gw-launcher">
-      <div className="gw-launcher-label">Graph Workflow</div>
+    <div className="flex flex-col gap-sm rounded-md border border-solid border-border-dim bg-bg-surface p-md">
+      <div className="font-mono text-[0.7rem] tracking-[0.06em] text-text-tertiary uppercase">
+        Graph Workflow
+      </div>
       <select
-        className="gw-launcher-select"
+        className="w-full cursor-pointer rounded-sm border border-solid border-border-default bg-bg-base px-[10px] py-[8px] font-mono text-[0.78rem] text-text-primary outline-none [transition:border-color_0.15s] focus:border-cyan focus:shadow-[0_0_0_1px_var(--cyan-glow)]"
         value={selectedId ?? ""}
         onChange={(e) => setSelectedId(e.target.value || null)}
       >
@@ -204,28 +218,34 @@ export function GraphWorkflowLauncher({
           </option>
         ))}
       </select>
-      <div className="gw-launcher-footer">
+      <div className="flex items-center justify-between gap-sm">
         {selected && (
-          <span className="gw-launcher-meta">rev {selected.revision}</span>
+          <span className="font-mono text-[0.7rem] text-text-tertiary">
+            rev {selected.revision}
+          </span>
         )}
-        <div className="gw-launcher-actions">
+        <div className="ml-auto flex items-center gap-sm">
           <Link
             href={`/projects/${encodeURIComponent(projectName)}/workflows`}
-            className="gw-launcher-link"
+            className="font-mono text-[0.72rem] text-text-tertiary! no-underline [transition:color_0.15s] hover:text-cyan!"
           >
             Edit definitions
           </Link>
-          <button
-            className="btn btn-primary btn-sm"
+          <Button
+            variant="primary"
+            size="sm"
+            touch
             disabled={!selectedId || starting}
             onClick={() => selectedId && onRun?.(selectedId)}
             type="button"
           >
             {starting ? "Starting..." : "Run Workflow"}
-          </button>
+          </Button>
         </div>
       </div>
-      {error && <div className="gw-launcher-error">{error}</div>}
+      {error && (
+        <div className="mt-xs font-mono text-[0.72rem] text-red">{error}</div>
+      )}
     </div>
   );
 }

@@ -37,18 +37,20 @@ describe.skipIf(!shouldRun)(
         timeout: 15_000,
       });
       // Open the first task transcript via the Inspector's "View" affordance.
-      // The Inspector lists tasks under `.wb-task-item`; clicking the item
-      // surfaces task details which include the view-transcript control.
-      const taskItems = page.locator(".wb-task-item-main");
+      // The Inspector lists tasks under `[data-testid="wf-task-item"]`; clicking
+      // the item surfaces task details which include the view-transcript control.
+      const taskItems = page.locator('[data-testid="wf-task-item"]');
       await taskItems.first().waitFor({ state: "visible", timeout: 10_000 });
       await taskItems.first().click();
       const viewBtn = page.locator(
-        '.wb-task-item button:has-text("View"), .wb-task-item button:has-text("Transcript"), .wb-task-item [aria-label*="transcript" i]',
+        '[data-testid="wf-task-item"] button:has-text("View"), [data-testid="wf-task-item"] button:has-text("Transcript"), [data-testid="wf-task-item"] [aria-label*="transcript" i]',
       );
       if ((await viewBtn.count()) > 0) {
         await viewBtn.first().click();
       }
-      await page.waitForSelector(".wb-transcript-viewer", { timeout: 10_000 });
+      await page.waitForSelector('[data-testid="wf-transcript-viewer"]', {
+        timeout: 10_000,
+      });
       await page.waitForSelector(".panel-body .conversation", {
         timeout: 10_000,
       });
@@ -106,7 +108,9 @@ describe.skipIf(!shouldRun)(
         (el as HTMLElement).scrollTop = 600;
       });
       await page.waitForTimeout(200);
-      const stillMounted = await page.locator(".wb-transcript-viewer").count();
+      const stillMounted = await page
+        .locator('[data-testid="wf-transcript-viewer"]')
+        .count();
       expect(stillMounted).toBe(1);
       const shellAfterScroll = await page
         .locator('[data-page="workflow"]')

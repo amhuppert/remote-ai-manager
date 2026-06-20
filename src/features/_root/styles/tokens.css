@@ -123,9 +123,21 @@
      several opacities across glows/borders that have no solid-color token; the
      shadow/filter geometry stays inline in the utility, only the color is a token. */
   --cc-shadow-soft: rgba(0, 0, 0, 0.4); /* card hover drop shadow */
+  --cc-cyan-a08: rgba(
+    0,
+    229,
+    255,
+    0.08
+  ); /* pinned-separator glow gradient stop */
   --cc-cyan-a12: rgba(0, 229, 255, 0.12); /* active-card outer glow (rest) */
   --cc-cyan-a18: rgba(0, 229, 255, 0.18); /* active-card outer glow (hover) */
   --cc-cyan-a25: rgba(0, 229, 255, 0.25); /* active-card inner glow (hover) */
+  --cc-amber-a12: rgba(
+    255,
+    179,
+    0,
+    0.12
+  ); /* pinned-separator glow gradient stop */
   --cc-amber-a40: rgba(255, 179, 0, 0.4); /* pin-toggle glow (hover) */
   --cc-amber-a50: rgba(255, 179, 0, 0.5); /* pin-toggle glow (pinned) */
   --cc-amber-a60: rgba(255, 179, 0, 0.6); /* pin-toggle glow (pinned hover) */
@@ -139,4 +151,427 @@
   --cc-red-border: rgba(255, 61, 90, 0.3); /* danger button border */
   --cc-green-border: rgba(0, 230, 118, 0.3); /* success button border */
   --cc-overlay-scrim: rgba(6, 9, 15, 0.8); /* modal overlay scrim */
+
+  /* ---- Popover / menu drop shadows ----
+     The canonical design-system popover/menu black drop shadow, extracted from
+     the inline composer-suggestions (dropdown) and sessions-filter (menu)
+     box-shadow literals so geometry + color live in one named token per surface.
+     Both resolve to the same value today; keeping the dropdown/menu split lets
+     the two surfaces be retuned independently. Exposed on the Tailwind @theme
+     surface as --shadow-dropdown / --shadow-menu (theme.css). */
+  --cc-shadow-dropdown: 0 12px 32px rgba(0, 0, 0, 0.35);
+  --cc-shadow-menu: 0 12px 32px rgba(0, 0, 0, 0.35);
+
+  /* ---- Stage B-2 shared-component extractions ----
+     Custom-alpha colors/shadows that the B-2 shared-component migrations kept as
+     inline parity literals (no solid-color token existed). Extracted here and
+     referenced via var(--…) so the migrated components pass no-hardcoded-color.
+     Each value is byte-identical to the literal it replaces — visually inert. */
+
+  /* NotificationsPanel — accent-blue family (legacy --accent-blue was never
+     defined; it resolved to its #63b3ed fallback, locked in here). */
+  --cc-accent-blue: #63b3ed; /* unread row left border, unread dot, mark-all-read text */
+  --cc-accent-blue-bg-subtle: rgba(
+    99,
+    179,
+    237,
+    0.04
+  ); /* unread row background */
+  --cc-accent-blue-bg-hover: rgba(
+    99,
+    179,
+    237,
+    0.08
+  ); /* mark-all-read hover background */
+  --cc-notifications-backdrop: rgba(
+    0,
+    0,
+    0,
+    0.4
+  ); /* notifications panel scrim */
+
+  /* TddToggle — TDD-on green glow alphas. */
+  --cc-tdd-border: rgba(0, 230, 118, 0.25); /* on border */
+  --cc-tdd-border-hover: rgba(0, 230, 118, 0.4); /* on hover border */
+  --cc-tdd-bg-hover: rgba(0, 230, 118, 0.06); /* on hover background */
+  --cc-tdd-knob-glow: 0 0 6px rgba(0, 230, 118, 0.5); /* on knob glow */
+
+  /* CardContextMenu — two-layer dropdown shadow (distinct from the single-layer
+     --cc-shadow-dropdown). */
+  --cc-shadow-card-dropdown:
+    0 8px 24px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.2);
+
+  /* Topbar. */
+  --cc-topbar-bg: rgba(
+    11,
+    16,
+    25,
+    0.85
+  ); /* translucent topbar background (under backdrop blur) */
+  --cc-topbar-needs-hover-bg: rgba(
+    255,
+    179,
+    0,
+    0.2
+  ); /* needs-attention pill hover background */
+
+  /* Model / reasoning selectors — UPWARD two-layer dropdown shadow (the menu
+     opens above the trigger; distinct from the downward --cc-shadow-dropdown). */
+  --cc-shadow-dropdown-up:
+    0 -8px 24px rgba(0, 0, 0, 0.35), 0 -2px 8px rgba(0, 0, 0, 0.2);
+
+  /* McpConfigPopover. */
+  --cc-shadow-popover: 0 12px 32px rgba(0, 0, 0, 0.5); /* popover drop shadow (0.5 alpha) */
+  --cc-accent-amber: #ffb000; /* mcp banner amber text (legacy --accent-amber fallback) */
+  --cc-amber-border-subtle: rgba(255, 175, 0, 0.25); /* mcp banner border */
+  --cc-amber-bg-subtle: rgba(255, 175, 0, 0.08); /* mcp banner background */
+
+  /* ---- Session diff viewer (full-page) ----
+     Alpha tints reproduced verbatim from the B-3 session.css / conversation.css
+     diff/commit rules, which SessionDiffViewer.tsx now renders as utilities. The
+     source rules stay for the sidebar diff panel until Stage B-3. */
+  --cc-green-a06: rgba(0, 230, 118, 0.06); /* diff add-line background */
+  --cc-red-a06: rgba(255, 61, 90, 0.06); /* diff remove-line background */
+  --cc-cyan-a04: rgba(
+    0,
+    229,
+    255,
+    0.04
+  ); /* expanded commit-header background */
+  --cc-cyan-a07: rgba(0, 229, 255, 0.07); /* commit-hash background */
+  --cc-cyan-a10: rgba(0, 229, 255, 0.1); /* expanded commit-hash shadow */
+  --cc-bg-base-a40: rgba(11, 16, 25, 0.4); /* diff-toolbar-group background */
+  --cc-bg-surface-a30: rgba(17, 24, 37, 0.3); /* diff-tab-bar background */
+  --cc-bg-void-a30: rgba(6, 9, 15, 0.3); /* inline commit-diff background */
+  --cc-bg-hover-a80: rgba(
+    28,
+    40,
+    65,
+    0.8
+  ); /* commit-header :active background */
+
+  /* ---- Reasoning-level rainbow trigger glow alphas ----
+     Reproduced from the legacy .effort-selector-trigger.cc-rainbow-border
+     box-shadows (which inlined these literals). */
+  --cc-rainbow-glow-blue-a15: rgba(77, 150, 255, 0.15);
+  --cc-rainbow-glow-violet-a15: rgba(200, 180, 255, 0.15);
+
+  /* ---- Stage B-3 confined-surface alpha tints / shadows ----
+     Reproduced verbatim from the inline parity literals the B-3 feature waves
+     shipped (project-detail chrome, session debug/git chrome, conversation
+     sidebar + PeekPopover). Referenced via var() so the migrated surfaces pass
+     no-hardcoded-color; value-identical, visually inert. */
+  --cc-amber-a04: rgba(
+    255,
+    179,
+    0,
+    0.04
+  ); /* debug status-strip recording-on bg */
+  --cc-amber-a09: rgba(
+    255,
+    179,
+    0,
+    0.09
+  ); /* debug status-strip recording-off bg */
+  --cc-amber-a18: rgba(255, 179, 0, 0.18); /* debug status-strip badge bg */
+  --cc-amber-a20: rgba(255, 179, 0, 0.2); /* debug toggle/divider amber tint */
+  --cc-amber-a22: rgba(255, 179, 0, 0.22); /* sidebar plan-pill hover bg */
+  --cc-amber-a25: rgba(
+    255,
+    179,
+    0,
+    0.25
+  ); /* agent-capability inheritance explicit-off chip border */
+  --cc-amber-a30: rgba(
+    255,
+    179,
+    0,
+    0.3
+  ); /* mode-dot / command-console fast border */
+  --cc-amber-a35: rgba(255, 179, 0, 0.35); /* sidebar row plan-badge border */
+  --cc-amber-a45: rgba(
+    255,
+    179,
+    0,
+    0.45
+  ); /* debug status-strip recording-off border */
+  --cc-cyan-a05: rgba(0, 229, 255, 0.05); /* session-row selected bg */
+  --cc-cyan-a06: rgba(0, 229, 255, 0.06); /* info-popover scope chip bg */
+  --cc-cyan-a35: rgba(0, 229, 255, 0.35); /* info-popover scope chip border */
+  --cc-red-a10: rgba(255, 61, 90, 0.1); /* kebab-menu danger item hover bg */
+  --cc-red-soft-a08: rgba(
+    248,
+    113,
+    113,
+    0.08
+  ); /* session-actions destructive item bg */
+  --cc-black-a45: rgba(0, 0, 0, 0.45); /* kebab-menu dropdown shadow */
+  --cc-black-a50: rgba(0, 0, 0, 0.5); /* peek-popover drop shadow */
+  --cc-bg-void-a60: rgba(6, 9, 15, 0.6); /* sidebar mobile backdrop scrim */
+
+  /* ---- Stage B-4 conversation/prompt/panes alpha tints / shadows ----
+     Reproduced verbatim from the inline parity literals the B-4 slices shipped.
+     Referenced via var() so the migrated surfaces pass no-hardcoded-color;
+     value-identical, visually inert. */
+  --cc-bg-base-a60: rgba(
+    11,
+    16,
+    25,
+    0.6
+  ); /* mobile prompt-input-area translucent bg */
+  --cc-black-a35: rgba(0, 0, 0, 0.35); /* split-screen pane separator shadow */
+  --cc-white-a02: rgba(
+    255,
+    255,
+    255,
+    0.02
+  ); /* collab passage-control resting bg */
+
+  /* ---- Stage B-5a globals.css chrome alpha tints / shadows / surfaces ----
+     Reproduced verbatim from the inline parity literals the B-5a slices shipped
+     (toast borders/shadow, autocomplete translucent surfaces, dev-server trigger
+     borders + backdrop). Referenced via var() so the migrated surfaces pass
+     no-hardcoded-color; value-identical, visually inert. */
+  --cc-black-a20: rgba(0, 0, 0, 0.2); /* toast drop-shadow 2nd layer */
+  --cc-black-a40: rgba(0, 0, 0, 0.4); /* dev-server mobile backdrop scrim */
+  --cc-green-a12: rgba(0, 230, 118, 0.12); /* autocomplete skill-badge fill */
+  --cc-surface-a85: rgba(
+    17,
+    24,
+    37,
+    0.85
+  ); /* autocomplete popup translucent surface */
+  --cc-surface-a95: rgba(17, 24, 37, 0.95); /* autocomplete header/footer bg */
+  --cc-white-a04: rgba(
+    255,
+    255,
+    255,
+    0.04
+  ); /* conversation archived-badge fill */
+  --cc-amber-tint-a05: rgba(255, 200, 0, 0.05); /* dev-server conflict bg */
+  --cc-black-a55: rgba(
+    0,
+    0,
+    0,
+    0.55
+  ); /* agent-capabilities drawer drop shadow */
+  --cc-cyan-a40: rgba(
+    0,
+    229,
+    255,
+    0.4
+  ); /* dev-server trigger active:hover border */
+  --cc-red-a25: rgba(255, 61, 90, 0.25); /* dev-server trigger error border */
+  --cc-devgreen-a50: rgba(
+    75,
+    200,
+    130,
+    0.5
+  ); /* dev-server strip-trigger active border (softer green) */
+  --cc-devgreen-a06: rgba(
+    75,
+    200,
+    130,
+    0.06
+  ); /* dev-server strip-trigger active bg (softer green) */
+  --cc-violet-a18: rgba(
+    199,
+    125,
+    255,
+    0.18
+  ); /* conversation panel codex header border */
+
+  /* ---- Stage B-6 foundation: parity-only tokens for the B-6 migration slices ----
+     Swept from the in-scope B-6 migratable CSS (conversation/prompt/session/globals/
+     workflow-graph JSX-chrome regions) for hardcoded color values with no existing
+     token. The slices reproduce these via token-backed arbitrary utilities
+     (bg-[var(--…)]) so they pass no-hardcoded-color without editing tokens.css.
+     Value-identical to the literals they replace — visually inert. */
+
+  /* conv-stop soft-red — the .conv-stop-btn red rgb(248,113,113), distinct from the
+     system --red (#ff3d5a). --cc-red-soft-a08 already exists (rgba(248,113,113,0.08)). */
+  --cc-red-soft-a45: rgba(248, 113, 113, 0.45); /* conv-stop button border */
+  --cc-red-soft-a14: rgba(
+    248,
+    113,
+    113,
+    0.14
+  ); /* conv-stop button hover background */
+  --cc-red-soft-a25: rgba(
+    248,
+    113,
+    113,
+    0.25
+  ); /* conv-stop button hover glow */
+
+  --cc-bg-void-a70: rgba(6, 9, 15, 0.7); /* mobile-action-menu backdrop scrim */
+  --cc-bg-base-a92: rgba(
+    11,
+    16,
+    25,
+    0.92
+  ); /* mobile-bottom-bar translucent bg */
+
+  /* DebugStructuredCard parity colors (B-6 session-chrome). Raw literals in the
+     original session.css with no design token; minted here so the migrated
+     DebugStructuredCard reproduces them via token-backed arbitrary utilities (the
+     amber row-divider border-top + the check-fail icon color) and passes
+     no-hardcoded-color. Value-identical to the literals they replace. */
+  --cc-amber-a08: rgba(
+    255,
+    179,
+    0,
+    0.08
+  ); /* debug structured-card row divider (between -a04 and -a09) */
+  --cc-red-check-fail: #ef4444; /* debug structured-card failed-check icon (distinct from --red #ff3d5a) */
+
+  /* ---- Stage B-6 foundation: graph/builder (workflow-graph.css) parity tokens ----
+     Swept from the CC-authored .graph-node* / .wb-* chrome in workflow-graph.css
+     (the migratable regions — NOT the preserved React Flow vendor DOM, the 7 graph
+     @keyframes, the .wb-markdown* rendered output, or scrollbars). Each is a status
+     tint / border / inset-panel background / node gradient with no existing token,
+     so the graph/builder migration slice can reproduce it via bg-[var(--…)] /
+     border-[var(--…)] arbitrary utilities without editing tokens.css. The green 0.4
+     used by .graph-node-progress-fill.merging is intentionally NOT re-minted — it is
+     value-identical to the existing --cc-tdd-border-hover (rgba(0,230,118,0.4)), which
+     the slice reuses. Value-identical to the literals they replace — visually inert. */
+
+  /* Node body gradient (.graph-node) + recessed graph panels (.graph-node-stat /
+     -validator-pill / -progress, .wb-exec-*-pre). rgb(4,8,16) is graph-only ink,
+     darker than --bg-void #06090f. */
+  --cc-graph-node-grad-top: #151e30; /* .graph-node gradient start */
+  --cc-graph-node-grad-bottom: #0a0f1a; /* .graph-node gradient end (also .react-flow__handle, preserved) */
+  --cc-graph-ink-a40: rgba(
+    4,
+    8,
+    16,
+    0.4
+  ); /* exec halt/event pre & issues panel bg */
+  --cc-graph-ink-a50: rgba(4, 8, 16, 0.5); /* .graph-node-progress track bg */
+  --cc-graph-ink-a55: rgba(
+    4,
+    8,
+    16,
+    0.55
+  ); /* .graph-node-stat / -validator-pill bg */
+
+  /* status-running / -validating cyan + amber accents */
+  --cc-cyan-a20: rgba(
+    0,
+    229,
+    255,
+    0.2
+  ); /* wb config-badge.claude / wb-toggle.on / wb-btn-primary hover */
+  --cc-cyan-a50: rgba(
+    0,
+    229,
+    255,
+    0.5
+  ); /* .graph-node.status-running border-top */
+  --cc-amber-a10: rgba(
+    255,
+    179,
+    0,
+    0.1
+  ); /* graph-node-badge.validating / .awaiting-approval bg */
+  --cc-amber-a55: rgba(
+    255,
+    179,
+    0,
+    0.55
+  ); /* .graph-node.status-validating border-top */
+
+  /* status-completed / -merging green accents */
+  --cc-green-a08: rgba(
+    0,
+    230,
+    118,
+    0.08
+  ); /* graph-node-badge.completed / wb-exec-badge.completed bg */
+  --cc-green-a10: rgba(
+    0,
+    230,
+    118,
+    0.1
+  ); /* status-completed glow / badge.merging / wb config-badge.enabled bg */
+  --cc-green-a18: rgba(0, 230, 118, 0.18); /* .graph-node.status-merging glow */
+  --cc-green-a20: rgba(
+    0,
+    230,
+    118,
+    0.2
+  ); /* status-completed border / wb config-badge.enabled border */
+  --cc-green-a32: rgba(
+    0,
+    230,
+    118,
+    0.32
+  ); /* .graph-node.status-merging border */
+  --cc-green-a35: rgba(
+    0,
+    230,
+    118,
+    0.35
+  ); /* .graph-node-badge.merging border */
+  --cc-green-a45: rgba(
+    0,
+    230,
+    118,
+    0.45
+  ); /* .graph-node.status-completed border-top */
+  --cc-green-a60: rgba(
+    0,
+    230,
+    118,
+    0.6
+  ); /* .graph-node.status-merging border-top */
+
+  /* status-halted + breaker/error red accents */
+  --cc-red-a08: rgba(
+    255,
+    61,
+    90,
+    0.08
+  ); /* node/exec halted badge & halt-chip hover bg */
+  --cc-red-a15: rgba(
+    255,
+    61,
+    90,
+    0.15
+  ); /* wb validation/save-error banner border */
+  --cc-red-a20: rgba(255, 61, 90, 0.2); /* .graph-node.status-halted border */
+  --cc-red-a35: rgba(255, 61, 90, 0.35); /* .wb-exec-halt-chip border */
+  --cc-red-a40: rgba(
+    255,
+    61,
+    90,
+    0.4
+  ); /* .wb-exec-event-dot--breaker shadow ring */
+  --cc-red-a45: rgba(
+    255,
+    61,
+    90,
+    0.45
+  ); /* .graph-node.status-halted border-top */
+  --cc-red-a50: rgba(
+    255,
+    61,
+    90,
+    0.5
+  ); /* .wb-exec-event-dot--breaker shadow glow */
+
+  /* Codex validator pill violet — rgb(139,92,246) #8b5cf6, distinct from --violet #c77dff. */
+  --cc-codex-violet-a35: rgba(
+    139,
+    92,
+    246,
+    0.35
+  ); /* .graph-node-validator-pill--codex border */
+
+  --cc-white-a015: rgba(
+    255,
+    255,
+    255,
+    0.015
+  ); /* .wb-exec-event.expanded faint row bg */
 }

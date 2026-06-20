@@ -1,5 +1,7 @@
 "use client";
 
+import { IconButton } from "@/components/ui/IconButton";
+
 interface SectionHeaderProps {
   filteredCount: number;
   tokenCount: number;
@@ -12,6 +14,12 @@ interface SectionHeaderProps {
   onBulkUnarchive: () => void;
   onBulkDelete: () => void;
 }
+
+const labelClass =
+  "font-mono text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-text-secondary";
+const countClass = "font-mono text-[0.7rem] text-text-tertiary";
+const linkClass =
+  "font-mono text-[0.7rem] text-text-secondary bg-transparent border-0 px-[6px] hover:text-cyan";
 
 export default function SectionHeader({
   filteredCount,
@@ -28,60 +36,65 @@ export default function SectionHeader({
   if (selectionSize > 0) {
     return (
       <div
-        className="v3-section-header bulk-mode"
+        className="mx-xl flex items-center gap-md rounded-md border border-solid border-cyan-dim bg-bg-elevated px-[12px] py-[8px] shadow-[inset_0_0_14px_-6px_var(--color-cyan-glow)] transition-[background,border-color] duration-150 ease-[ease] max-768:mx-md"
         role="region"
         aria-label="Bulk actions"
       >
-        <span className="bulk-count">
-          <span className="n">{selectionSize}</span>
+        <span className="inline-flex items-center gap-[8px] font-mono text-[0.74rem] font-semibold text-cyan">
+          <span className="inline-flex h-[22px] min-w-[22px] items-center justify-center rounded-full bg-cyan px-[6px] text-[0.7rem] font-bold text-text-inverse">
+            {selectionSize}
+          </span>
         </span>
-        <span className="label">sessions selected</span>
-        <div className="bulk-grp">
-          <button type="button" className="bulk-link" onClick={onDeselect}>
+        <span className="font-mono text-[0.8rem] font-semibold text-cyan">
+          sessions selected
+        </span>
+        <div className="ml-auto flex items-center gap-[6px]">
+          <button type="button" className={linkClass} onClick={onDeselect}>
             Deselect all
           </button>
           {bulkActionKind === "unarchive" ? (
-            <button
-              type="button"
-              className="cc-ibtn"
+            <IconButton
+              variant="pill"
               onClick={onBulkUnarchive}
               disabled={isBulkPending}
             >
               Unarchive {selectionSize}
-            </button>
+            </IconButton>
           ) : (
-            <button
-              type="button"
-              className="cc-ibtn"
+            <IconButton
+              variant="pill"
               onClick={onBulkArchive}
               disabled={isBulkPending}
             >
               Archive {selectionSize}
-            </button>
+            </IconButton>
           )}
-          <button
-            type="button"
-            className="cc-ibtn danger"
+          <IconButton
+            variant="pill"
             onClick={onBulkDelete}
             disabled={isBulkPending}
           >
             Delete {selectionSize}
-          </button>
+          </IconButton>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="v3-section-header" role="region" aria-label="Sessions">
-      <span className="label">Sessions</span>
-      <span className="count">{filteredCount}</span>
+    <div
+      className="flex items-center gap-md px-xl pt-md pb-sm max-768:px-md max-768:pb-xs"
+      role="region"
+      aria-label="Sessions"
+    >
+      <span className={labelClass}>Sessions</span>
+      <span className={countClass}>{filteredCount}</span>
       {tokenCount > 0 && (
         <>
-          <span className="count">
+          <span className={countClass}>
             · {tokenCount} filter{tokenCount === 1 ? "" : "s"} applied
           </span>
-          <button type="button" className="bulk-link" onClick={onClearFilters}>
+          <button type="button" className={linkClass} onClick={onClearFilters}>
             Clear
           </button>
         </>

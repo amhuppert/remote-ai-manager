@@ -11,6 +11,7 @@ import {
 import { createPortal } from "react-dom";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { useOverlayScope } from "@/hooks/useOverlayScope";
+import { cn } from "@/lib/ui/cn";
 interface ModelOption {
   id: string;
   label: string;
@@ -129,35 +130,77 @@ export default function ModelSelector({
   const dropdown = (
     <div
       ref={dropdownRef}
-      className={`model-selector-dropdown${open ? " open" : ""}`}
+      data-testid="model-selector-dropdown"
+      data-open={open}
+      className={cn(
+        "fixed z-[150] min-w-[180px] rounded-md border border-border-default bg-bg-raised p-[4px] [box-shadow:var(--cc-shadow-dropdown-up)] transition-[opacity,transform] duration-[120ms] ease-[ease] max-768:min-w-[200px]",
+        open
+          ? "pointer-events-auto [transform:translateY(0px)_scale(1)] opacity-100"
+          : "pointer-events-none [transform:translateY(4px)_scale(0.97)] opacity-0",
+      )}
       style={dropdownStyle}
     >
-      {options.map((option) => (
-        <button
-          key={option.id}
-          type="button"
-          className={`model-selector-option${option.id === value ? " active" : ""}`}
-          onClick={() => select(option.id)}
-        >
-          <span className="model-option-name">{option.label}</span>
-          <span className="model-option-desc">{option.description}</span>
-        </button>
-      ))}
+      {options.map((option) => {
+        const active = option.id === value;
+        return (
+          <button
+            key={option.id}
+            type="button"
+            data-testid="model-selector-option"
+            className={cn(
+              "flex w-full cursor-pointer items-center justify-between rounded-sm border-none px-[12px] py-[8px] text-left font-mono text-[0.75rem] font-medium transition-all duration-100 ease-[ease]",
+              active
+                ? "bg-cyan-glow text-cyan"
+                : "bg-transparent text-text-primary hover:bg-bg-hover",
+            )}
+            onClick={() => select(option.id)}
+          >
+            <span className="font-semibold">{option.label}</span>
+            <span
+              className={cn(
+                "text-[0.7rem] font-normal",
+                active ? "text-cyan-dim" : "text-text-tertiary",
+              )}
+            >
+              {option.description}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 
   return (
-    <div className="model-selector" ref={containerRef}>
+    <div
+      className="relative shrink-0"
+      ref={containerRef}
+      data-testid="model-selector"
+    >
       <button
         ref={triggerRef}
         type="button"
-        className={`model-selector-trigger${open ? " open" : ""}`}
+        data-testid="model-selector-trigger"
+        className={cn(
+          "group flex h-[36px] cursor-pointer items-center gap-[6px] rounded-md border px-[12px] font-mono text-[0.72rem] font-medium whitespace-nowrap transition-all duration-150 ease-[ease] disabled:cursor-not-allowed disabled:opacity-40 max-768:h-[44px]",
+          open
+            ? "border-cyan-dim text-text-primary shadow-[0_0_0_3px_var(--cyan-glow)]"
+            : "border-border-default bg-bg-surface text-text-secondary hover:border-border-strong hover:bg-bg-hover hover:text-text-primary",
+        )}
         onClick={toggle}
         disabled={disabled}
         title={`Model: ${selected.label} — ${selected.description}`}
       >
-        <span className="model-selector-label">{selected.label}</span>
-        <span className="model-selector-chevron">
+        <span data-testid="model-selector-label" className="tracking-[0.02em]">
+          {selected.label}
+        </span>
+        <span
+          className={cn(
+            "text-[0.7rem] transition-colors duration-150 ease-[ease]",
+            open
+              ? "text-text-secondary"
+              : "text-text-tertiary group-hover:text-text-secondary",
+          )}
+        >
           {open ? "\u25B2" : "\u25BC"}
         </span>
       </button>

@@ -65,13 +65,15 @@ describe("ConfirmDialog", () => {
   it("applies danger styling when danger=true (Req 7.4)", () => {
     render(<ConfirmDialog {...defaultProps} danger />);
     const confirmBtn = screen.getByText("Confirm");
-    expect(confirmBtn.className).toContain("btn-danger");
+    expect(confirmBtn.className).toContain("text-red");
+    expect(confirmBtn.className).toContain("border-[var(--cc-red-border)]");
   });
 
   it("applies primary styling when danger=false (Req 7.4)", () => {
     render(<ConfirmDialog {...defaultProps} danger={false} />);
     const confirmBtn = screen.getByText("Confirm");
-    expect(confirmBtn.className).toContain("btn-primary");
+    expect(confirmBtn.className).toContain("bg-cyan");
+    expect(confirmBtn.className).toContain("text-text-inverse");
   });
 
   it("uses custom confirm and cancel labels", () => {

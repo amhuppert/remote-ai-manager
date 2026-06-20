@@ -2,35 +2,49 @@
 
 import { getBezierPath } from "@xyflow/react";
 import type { EdgeProps, Edge } from "@xyflow/react";
+import { cn } from "@/lib/ui/cn";
 import type { ContextEdgeData } from "./derive-graph";
 
 type ContextEdgeType = Edge<ContextEdgeData>;
+type EdgeStatus = "default" | "active" | "completed";
 
-function getEdgeStatusClass(
+function getEdgeStatus(
   sourceStatus?: string,
   targetStatus?: string,
-): string {
-  if (!sourceStatus) return "edge-line";
+): EdgeStatus {
+  if (!sourceStatus) return "default";
 
   const sourceCompleted = sourceStatus === "completed";
   const targetCompleted = targetStatus === "completed";
   const targetRunning = targetStatus === "running";
   const targetReady = targetStatus === "ready";
 
-  if (sourceCompleted && targetCompleted) return "edge-line completed";
-  if (sourceCompleted && (targetRunning || targetReady))
-    return "edge-line active";
+  if (sourceCompleted && targetCompleted) return "completed";
+  if (sourceCompleted && (targetRunning || targetReady)) return "active";
   if ((sourceStatus === "running" || sourceCompleted) && targetRunning)
-    return "edge-line active";
+    return "active";
 
-  return "edge-line";
+  return "default";
 }
 
-function getArrowClass(lineClass: string): string {
-  if (lineClass.includes("completed")) return "edge-arrow completed";
-  if (lineClass.includes("active")) return "edge-arrow active";
-  return "edge-arrow";
-}
+// `edge-line` survives as a rule-less hook: the preserved
+// `.react-flow__edge.selected .edge-line` rule (workflow-graph.css) recolours the
+// path on selection via the React Flow wrapper's `.selected` class.
+const EDGE_LINE_BASE =
+  "edge-line fill-none stroke-2 transition-[stroke] duration-300";
+
+const EDGE_LINE_STATUS: Record<EdgeStatus, string> = {
+  default: "stroke-border-default",
+  active:
+    "stroke-cyan [stroke-dasharray:8_4] [animation:dash-flow_1s_linear_infinite]",
+  completed: "stroke-green-dim",
+};
+
+const EDGE_ARROW_STATUS: Record<EdgeStatus, string> = {
+  default: "fill-border-default",
+  active: "fill-cyan",
+  completed: "fill-green-dim",
+};
 
 export default function ContextEdge({
   id,
@@ -41,7 +55,6 @@ export default function ContextEdge({
   sourcePosition,
   targetPosition,
   data,
-  selected,
 }: EdgeProps<ContextEdgeType>) {
   const [edgePath] = getBezierPath({
     sourceX,
@@ -52,8 +65,7 @@ export default function ContextEdge({
     targetPosition,
   });
 
-  const lineClass = getEdgeStatusClass(data?.sourceStatus, data?.targetStatus);
-  const arrowClass = getArrowClass(lineClass);
+  const status = getEdgeStatus(data?.sourceStatus, data?.targetStatus);
   const markerId = `arrow-${id}`;
 
   return (
@@ -67,13 +79,13 @@ export default function ContextEdge({
           refY="4"
           orient="auto"
         >
-          <path d="M 0 0 L 8 4 L 0 8 Z" className={arrowClass} />
+          <path d="M 0 0 L 8 4 L 0 8 Z" className={EDGE_ARROW_STATUS[status]} />
         </marker>
       </defs>
       <path
         id={id}
         d={edgePath}
-        className={`${lineClass}${selected ? " selected" : ""}`}
+        className={cn(EDGE_LINE_BASE, EDGE_LINE_STATUS[status])}
         markerEnd={`url(#${markerId})`}
       />
     </>

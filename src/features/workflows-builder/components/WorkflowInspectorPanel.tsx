@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Tab, Tabs } from "@/components/ui/Tabs";
+import { cn } from "@/lib/ui/cn";
 import {
   addTaskToContext,
   clearContextBlockOverride,
@@ -47,6 +49,37 @@ import {
   IterationPolicyEditor,
   MutabilityEditor,
 } from "./InspectorFieldEditors";
+
+const WB_INSPECTOR_CLASS =
+  "flex w-[340px] min-w-[340px] flex-col overflow-hidden border-l border-solid border-border-subtle bg-bg-surface max-768:w-full max-768:min-w-0 max-768:flex-1 max-768:border-l-0 max-768:[.app[data-page=workflow-builder][data-mobile-panel=graph]_&]:hidden";
+
+const WB_BTN_BASE =
+  "inline-flex items-center justify-center gap-[6px] whitespace-nowrap cursor-pointer rounded-sm border border-solid border-border-default font-medium transition-all duration-150";
+const WB_BTN_SM = "h-[28px] px-[12px] py-[5px] text-[0.72rem]";
+const WB_BTN_XS = "h-[22px] px-[8px] py-[3px] text-[0.7rem]";
+const WB_BTN_DEFAULT =
+  "bg-bg-raised text-text-secondary hover:bg-bg-elevated hover:border-border-strong hover:text-text-primary";
+const WB_BTN_PRIMARY =
+  "bg-[var(--cc-cyan-a12)] text-cyan border-[var(--cyan-glow-strong)] hover:bg-[var(--cc-cyan-a20)] hover:shadow-[0_0_12px_var(--cyan-glow)]";
+const WB_BTN_DANGER =
+  "bg-bg-raised text-red border-[var(--cc-red-a25)] hover:bg-[var(--cc-red-a10)]";
+
+// .wb-field input/textarea/select recipe (descendant element rule reattached).
+const WB_FIELD_INPUT =
+  "w-full rounded-sm border border-solid border-border-default bg-bg-base px-[10px] py-[8px] font-[inherit] text-[0.78rem] text-text-primary outline-none transition-[border-color] duration-150 focus:border-cyan focus:shadow-[0_0_0_1px_var(--cyan-glow)]";
+const WB_FIELD_TEXTAREA = "min-h-[64px] resize-y leading-[1.5]";
+// .invalid override for .wb-field controls.
+const WB_FIELD_INVALID =
+  "border-red focus:border-red focus:shadow-[0_0_0_1px_var(--cc-red-a25)]";
+
+const WB_FIELD_LABEL =
+  "mb-xs block text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-text-tertiary";
+const WB_FIELD_HINT =
+  "mt-xs font-mono text-[0.7rem] leading-[1.5] text-text-tertiary";
+
+// .wb-task-detail-field input/textarea recipe.
+const WB_TASK_INPUT =
+  "box-border w-full rounded-sm border border-solid border-border-default bg-bg-base px-[10px] py-[7px] font-[inherit] text-[0.75rem] text-text-primary outline-none transition-[border-color] duration-150 focus:border-cyan focus:shadow-[0_0_0_1px_var(--cyan-glow)]";
 
 interface WorkflowInspectorPanelProps {
   onSave: () => Promise<void>;
@@ -130,11 +163,15 @@ function FieldError({
   error?: WorkflowGraphValidationError;
 }): React.JSX.Element | null {
   if (!error) return null;
-  return <div className="wb-field-error">{error.message}</div>;
+  return (
+    <div className="mt-[4px] text-[0.7rem] leading-[1.3] text-red">
+      {error.message}
+    </div>
+  );
 }
 
 function RequiredMark(): React.JSX.Element {
-  return <span className="wb-required">*</span>;
+  return <span className="font-semibold text-red">*</span>;
 }
 
 function summarizeImplementer(config: GraphWorkflowAgentConfig): string {
@@ -442,8 +479,10 @@ export default function WorkflowInspectorPanel({
 
   if (!draftDefinition || !draftLayout) {
     return (
-      <aside className="wb-inspector wb-inspector-panel">
-        <div className="wb-inspector-body">Loading workflow definition...</div>
+      <aside className={WB_INSPECTOR_CLASS}>
+        <div className="wb-inspector-body flex-1 overflow-y-auto p-md">
+          Loading workflow definition...
+        </div>
       </aside>
     );
   }
@@ -456,41 +495,48 @@ export default function WorkflowInspectorPanel({
   const workflowConfig = draftDefinition.workflowConfig ?? {};
 
   return (
-    <aside className="wb-inspector wb-inspector-panel">
-      <header className="wb-inspector-header">
-        <div
-          className="cc-tabs wb-inspector-tabs"
+    <aside className={WB_INSPECTOR_CLASS}>
+      <header className="flex min-h-[44px] items-center justify-between gap-sm border-b border-solid border-border-dim px-md py-[12px]">
+        <Tabs
           role="tablist"
           aria-label="Inspector scope"
+          layoutClassName="flex-[1_1_auto] min-w-0 overflow-hidden"
         >
-          <button
+          <Tab
             type="button"
             role="tab"
             aria-selected={activeTab === "workflow"}
-            className={`cc-tab cc-tab--fixed${activeTab === "workflow" ? " active" : ""}`}
+            active={activeTab === "workflow"}
+            layoutClassName="shrink-0"
             onClick={() => setActiveTab("workflow")}
           >
             Workflow
-          </button>
-          <button
+          </Tab>
+          <Tab
             type="button"
             role="tab"
             aria-selected={activeTab === "context"}
             aria-disabled={!contextTabEnabled}
             disabled={!contextTabEnabled}
+            active={activeTab === "context"}
             title={
               contextTabEnabled ? undefined : "Select a context in the graph"
             }
-            className={`cc-tab${activeTab === "context" ? " active" : ""}`}
+            layoutClassName="min-w-0 overflow-hidden text-ellipsis"
             onClick={() => {
               if (contextTabEnabled) setActiveTab("context");
             }}
           >
             {contextTabLabel}
-          </button>
-        </div>
+          </Tab>
+        </Tabs>
         <button
-          className={`wb-btn wb-btn-sm ${dirty ? "wb-btn-primary" : "wb-btn-default"}`}
+          className={cn(
+            WB_BTN_BASE,
+            WB_BTN_SM,
+            "flex-shrink-0",
+            dirty ? WB_BTN_PRIMARY : WB_BTN_DEFAULT,
+          )}
           disabled={!dirty || saving}
           onClick={() => void onSave()}
           title={
@@ -504,7 +550,7 @@ export default function WorkflowInspectorPanel({
         </button>
       </header>
 
-      <div className="wb-inspector-body">
+      <div className="wb-inspector-body flex-1 overflow-y-auto p-md">
         {activeTab === "workflow" || !selectedContext ? (
           <WorkflowTabBody
             workflowConfig={workflowConfig}
@@ -623,7 +669,7 @@ function WorkflowTabBody({
     source === "context-override";
 
   return (
-    <div className="wb-inspector-blocks" data-scope="workflow">
+    <div className="flex flex-col gap-sm" data-scope="workflow">
       <InspectorConfigBlock
         label="Implementer"
         summary={summarizeImplementer(cascade.implementer.value)}
@@ -816,49 +862,59 @@ function ContextTabBody({
   );
 
   return (
-    <div className="wb-inspector-blocks" data-scope="context">
-      <section className="wb-inspector-header-group" data-section="header">
-        <div className="wb-field">
-          <label className="wb-field-label" htmlFor="context-title">
+    <div className="flex flex-col gap-sm" data-scope="context">
+      <section
+        className="mb-xs flex flex-col gap-md border-b border-solid border-border-dim pb-md"
+        data-section="header"
+      >
+        <div className="mb-md">
+          <label className={WB_FIELD_LABEL} htmlFor="context-title">
             Title <RequiredMark />
           </label>
           <input
             id="context-title"
             type="text"
+            className={WB_FIELD_INPUT}
             value={context.title}
             onChange={(event) => onUpdateContext({ title: event.target.value })}
           />
         </div>
-        <div className="wb-field">
-          <label className="wb-field-label" htmlFor="context-description">
+        <div className="mb-md">
+          <label className={WB_FIELD_LABEL} htmlFor="context-description">
             Description
           </label>
           <textarea
             id="context-description"
             rows={2}
+            className={cn(WB_FIELD_INPUT, WB_FIELD_TEXTAREA)}
             value={context.description ?? ""}
             onChange={(event) =>
               onUpdateContext({ description: event.target.value })
             }
           />
         </div>
-        <div className="wb-field">
+        <div className="mb-md">
           <label
-            className="wb-field-label"
+            className={WB_FIELD_LABEL}
             htmlFor="context-acceptance-criteria"
           >
             Acceptance Criteria <RequiredMark />
           </label>
           <textarea
             id="context-acceptance-criteria"
-            className={acError ? "invalid wb-field-tall" : "wb-field-tall"}
+            className={cn(
+              WB_FIELD_INPUT,
+              WB_FIELD_TEXTAREA,
+              "min-h-[140px]",
+              acError && WB_FIELD_INVALID,
+            )}
             value={context.acceptanceCriteria}
             onChange={(event) =>
               onUpdateContext({ acceptanceCriteria: event.target.value })
             }
           />
           <FieldError error={acError} />
-          <div className="wb-field-hint">
+          <div className={WB_FIELD_HINT}>
             Acceptance criteria is passed to the implementer, and — when the
             validator is enabled — to the validator as well.
           </div>
@@ -1000,12 +1056,14 @@ function ContextTabBody({
         />
       </InspectorConfigBlock>
 
-      <section className="wb-section" data-section="tasks">
-        <div className="wb-section-header">
-          <span className="wb-section-title">Tasks</span>
+      <section className="mb-md" data-section="tasks">
+        <div className="flex cursor-pointer items-center justify-between py-[8px] select-none">
+          <span className="text-[0.72rem] font-semibold tracking-[0.08em] text-text-secondary uppercase">
+            Tasks
+          </span>
         </div>
-        <div className="wb-section-content">
-          <div className="wb-task-list">
+        <div className="border-t border-solid border-border-dim py-sm">
+          <div className="list-none">
             {tasks.map((task, index) => {
               const expanded = selectedTaskId === task.id;
               const firstTask = index === 0;
@@ -1028,11 +1086,18 @@ function ContextTabBody({
 
               return (
                 <div
-                  className={`wb-task-item${expanded ? " expanded active-task" : ""}${hasTaskErrors ? " has-errors" : ""}`}
+                  className={cn(
+                    "mb-[2px] rounded-sm border border-solid border-transparent",
+                    expanded && "border-border-dim bg-bg-base",
+                  )}
                   key={task.id}
                 >
                   <div
-                    className="wb-task-item-main"
+                    className={cn(
+                      "flex cursor-pointer items-center gap-[8px] rounded-sm px-[10px] py-[8px] transition-[background] duration-150 hover:bg-bg-elevated",
+                      expanded && "bg-bg-raised",
+                      hasTaskErrors && "border-l-2 border-solid border-l-red",
+                    )}
                     onClick={() => onSelectTask(task.id)}
                     role="button"
                     tabIndex={0}
@@ -1043,25 +1108,39 @@ function ContextTabBody({
                       }
                     }}
                   >
-                    <span className="wb-task-order">{task.order}</span>
-                    <span className="wb-task-title">
+                    <span className="w-[16px] flex-shrink-0 text-center text-[0.7rem] font-semibold text-text-tertiary">
+                      {task.order}
+                    </span>
+                    <span className="flex-1 overflow-hidden text-[0.75rem] text-ellipsis whitespace-nowrap text-text-primary">
                       {task.title || "(untitled)"}
                     </span>
-                    {hasTaskErrors && <span className="wb-task-error-dot" />}
-                    <span className="wb-task-expand">▸</span>
+                    {hasTaskErrors && (
+                      <span className="mr-[4px] ml-auto h-[6px] w-[6px] flex-shrink-0 rounded-full bg-red" />
+                    )}
+                    <span
+                      className={cn(
+                        "flex-shrink-0 text-[0.7rem] text-text-tertiary transition-transform duration-150",
+                        expanded && "rotate-90",
+                      )}
+                    >
+                      ▸
+                    </span>
                   </div>
 
                   {expanded ? (
-                    <div className="wb-task-detail">
-                      <div className="wb-task-detail-field">
+                    <div className="px-[10px] pt-[8px] pb-[10px] pl-[34px] text-[0.72rem] leading-[1.5] text-text-secondary">
+                      <div className="mb-[10px]">
                         <label
-                          className="wb-task-detail-label"
+                          className="mb-[4px] block text-[0.7rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase"
                           htmlFor={`task-title-${task.id}`}
                         >
                           Title <RequiredMark />
                         </label>
                         <input
-                          className={titleError ? "invalid" : undefined}
+                          className={cn(
+                            WB_TASK_INPUT,
+                            titleError && WB_FIELD_INVALID,
+                          )}
                           id={`task-title-${task.id}`}
                           onChange={(event) =>
                             onUpdateTask(task.id, {
@@ -1074,15 +1153,19 @@ function ContextTabBody({
                         <FieldError error={titleError} />
                       </div>
 
-                      <div className="wb-task-detail-field">
+                      <div className="mb-[10px]">
                         <label
-                          className="wb-task-detail-label"
+                          className="mb-[4px] block text-[0.7rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase"
                           htmlFor={`task-instructions-${task.id}`}
                         >
                           Instructions <RequiredMark />
                         </label>
                         <textarea
-                          className={instrError ? "invalid" : undefined}
+                          className={cn(
+                            WB_TASK_INPUT,
+                            "mb-[2px] min-h-[56px] resize-y",
+                            instrError && WB_FIELD_INVALID,
+                          )}
                           id={`task-instructions-${task.id}`}
                           onChange={(event) =>
                             onUpdateTask(task.id, {
@@ -1094,9 +1177,9 @@ function ContextTabBody({
                         <FieldError error={instrError} />
                       </div>
 
-                      <div className="wb-task-detail-actions">
+                      <div className="mt-[8px] flex gap-[6px] border-t border-solid border-border-dim pt-[8px]">
                         <button
-                          className="wb-btn wb-btn-xs wb-btn-default"
+                          className={cn(WB_BTN_BASE, WB_BTN_XS, WB_BTN_DEFAULT)}
                           disabled={firstTask}
                           onClick={() => onMoveTask(task.id, "up")}
                           type="button"
@@ -1104,7 +1187,7 @@ function ContextTabBody({
                           Move Up
                         </button>
                         <button
-                          className="wb-btn wb-btn-xs wb-btn-default"
+                          className={cn(WB_BTN_BASE, WB_BTN_XS, WB_BTN_DEFAULT)}
                           disabled={lastTask}
                           onClick={() => onMoveTask(task.id, "down")}
                           type="button"
@@ -1112,7 +1195,7 @@ function ContextTabBody({
                           Move Down
                         </button>
                         <button
-                          className="wb-btn wb-btn-xs wb-btn-danger"
+                          className={cn(WB_BTN_BASE, WB_BTN_XS, WB_BTN_DANGER)}
                           onClick={() => onRemoveTask(task.id)}
                           type="button"
                         >
@@ -1126,16 +1209,20 @@ function ContextTabBody({
             })}
           </div>
 
-          <button className="wb-btn-add-task" onClick={onAddTask} type="button">
+          <button
+            className="w-full cursor-pointer rounded-sm border border-dashed border-border-default bg-bg-base p-[8px] font-[inherit] text-[0.72rem] text-text-tertiary transition-all duration-150 hover:border-cyan-dim hover:bg-[var(--cc-cyan-a04)] hover:text-cyan"
+            onClick={onAddTask}
+            type="button"
+          >
             + Add Task
           </button>
         </div>
       </section>
 
-      <section className="wb-section" data-section="delete-context">
-        <div className="wb-section-content">
+      <section className="mb-md" data-section="delete-context">
+        <div className="border-t border-solid border-border-dim py-sm">
           <button
-            className="wb-btn wb-btn-sm wb-btn-danger"
+            className={cn(WB_BTN_BASE, WB_BTN_SM, WB_BTN_DANGER)}
             onClick={onDelete}
             type="button"
           >
@@ -1268,10 +1355,12 @@ function HumanApprovalGateBlock({
       onReset={cascade.source === "context-override" ? onReset : undefined}
     >
       <div
-        className={`wb-approval-gate-control${enabled ? " wb-approval-gate-control--on" : ""}`}
+        className={cn(
+          "flex flex-col gap-sm rounded-md transition-[background] duration-150 ease-[ease]",
+          enabled && "-m-sm bg-amber-glow p-sm",
+        )}
       >
         <div
-          className="config-toggle config-toggle--gate"
           onClick={() => onChange({ enabled: !enabled })}
           role="switch"
           aria-label={scopeLabel}
@@ -1284,12 +1373,17 @@ function HumanApprovalGateBlock({
             }
           }}
         >
-          <div className={`config-toggle-track${enabled ? " active" : ""}`}>
-            <div className="config-toggle-knob" />
+          <div
+            className={cn(
+              enabled &&
+                "border-[var(--amber-dim)] bg-amber-glow shadow-[0_0_10px_var(--amber-glow)]",
+            )}
+          >
+            <div className={cn(enabled && "bg-amber")} />
           </div>
-          <span className="config-toggle-label">{enabled ? "ON" : "OFF"}</span>
+          <span>{enabled ? "ON" : "OFF"}</span>
         </div>
-        <div className="wb-field-hint">{hint}</div>
+        <div className={WB_FIELD_HINT}>{hint}</div>
       </div>
     </InspectorConfigBlock>
   );
@@ -1305,9 +1399,8 @@ function ScriptValidatorControl({
   onChange: (value: boolean) => void;
 }): React.JSX.Element {
   return (
-    <div className="wb-script-validator-control">
+    <div className="flex flex-col gap-sm">
       <div
-        className="config-toggle"
         onClick={() => onChange(!value)}
         role="switch"
         aria-label={label}
@@ -1320,14 +1413,17 @@ function ScriptValidatorControl({
           }
         }}
       >
-        <div className={`config-toggle-track${value ? " active" : ""}`}>
-          <div className="config-toggle-knob" />
+        <div>
+          <div />
         </div>
-        <span className="config-toggle-label">{value ? "ON" : "OFF"}</span>
+        <span>{value ? "ON" : "OFF"}</span>
       </div>
-      <div className="wb-field-hint">
-        Runs the project&apos;s <code>preMergeCommand</code> before agent
-        validation.
+      <div className={WB_FIELD_HINT}>
+        Runs the project&apos;s{" "}
+        <code className="rounded-[3px] bg-bg-raised px-[5px] py-[1px] font-mono text-[0.7rem] text-cyan">
+          preMergeCommand
+        </code>{" "}
+        before agent validation.
       </div>
     </div>
   );
@@ -1339,11 +1435,15 @@ function ReadonlyBlockPreview({
   entries: Array<[string, string]>;
 }): React.JSX.Element {
   return (
-    <dl className="wb-inspector-block__preview">
+    <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-md gap-y-[3px] p-0 font-mono">
       {entries.map(([key, value]) => (
-        <div className="wb-inspector-block__preview-row" key={key}>
-          <dt>{key}</dt>
-          <dd>{value}</dd>
+        <div className="[display:contents]" key={key}>
+          <dt className="min-w-0 overflow-hidden text-[0.7rem] font-medium tracking-normal text-ellipsis whitespace-nowrap text-text-tertiary normal-case">
+            {key}
+          </dt>
+          <dd className="m-0 min-w-0 justify-self-end text-right text-[0.72rem] font-medium [overflow-wrap:anywhere] text-text-primary">
+            {value}
+          </dd>
         </div>
       ))}
     </dl>

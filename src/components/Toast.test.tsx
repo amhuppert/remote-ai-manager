@@ -18,6 +18,6 @@ describe("Toast", () => {
 
   it("uses role=status for accessibility", () => {
     render(<Toast message="hi" onDismiss={vi.fn()} />);
-    expect(screen.getByRole("status")).toHaveClass("cc-toast");
+    expect(screen.getByRole("status")).toBeInTheDocument();
   });
 });

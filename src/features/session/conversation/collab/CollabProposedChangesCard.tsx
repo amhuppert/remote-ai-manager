@@ -10,6 +10,24 @@ import type {
 import CollabClaimsList from "@/features/session/conversation/collab/CollabClaimsList";
 import CollabCollapsibleCard from "@/features/session/conversation/collab/CollabCollapsibleCard";
 import CollabMarkdownText from "@/features/session/conversation/collab/CollabMarkdownText";
+import {
+  cardAgent,
+  cardEyebrow,
+  cardList,
+  cardNarrative,
+  cardRound,
+  cardSection,
+  cardSectionTitle,
+  cardSummary,
+  changeList,
+  changeListAddresses,
+  changeListAddressesId,
+  changeListAddressesLabel,
+  changeListChange,
+  changeListId,
+  changeListItem,
+  changeListRationale,
+} from "@/features/session/conversation/collab/card-chrome";
 
 export interface CollabProposedChangesCardProps {
   fromAgent: CollaborationAgent;
@@ -56,24 +74,18 @@ export default function CollabProposedChangesCard({
       defaultOpen={defaultOpen}
       header={
         <>
-          <span className="collab-artifact-card-agent" data-agent={fromAgent}>
+          <span className={cardAgent} data-agent={fromAgent}>
             {AGENT_LABEL[fromAgent]}
           </span>
-          <span className="collab-artifact-card-eyebrow">Proposed changes</span>
-          <span
-            className="collab-artifact-card-round"
-            aria-label={`Round ${round}`}
-          >
+          <span className={cardEyebrow}>Proposed changes</span>
+          <span className={cardRound} aria-label={`Round ${round}`}>
             R{round}
           </span>
-          <span className="collab-artifact-card-summary">{summary}</span>
+          <span className={cardSummary}>{summary}</span>
         </>
       }
     >
-      <CollabMarkdownText
-        content={narrative}
-        className="collab-artifact-card-narrative"
-      />
+      <CollabMarkdownText content={narrative} className={cardNarrative} />
 
       {acceptedFromAgentTwoDraft.length > 0 ? (
         <CollabClaimsList
@@ -83,30 +95,23 @@ export default function CollabProposedChangesCard({
       ) : null}
 
       {proposedChanges.length > 0 ? (
-        <section className="collab-artifact-card-section">
-          <h4 className="collab-artifact-card-section-title">
+        <section className={cardSection}>
+          <h4 className={cardSectionTitle}>
             Proposed changes ({proposedChanges.length})
           </h4>
-          <ul className="collab-change-list">
+          <ul className={changeList}>
             {proposedChanges.map((change) => (
-              <li className="collab-change-list-item" key={change.id}>
-                <span className="collab-change-list-id">{change.id}</span>
-                <span className="collab-change-list-change">
-                  {change.change}
-                </span>
-                <span className="collab-change-list-rationale">
+              <li className={changeListItem} key={change.id}>
+                <span className={changeListId}>{change.id}</span>
+                <span className={changeListChange}>{change.change}</span>
+                <span className={changeListRationale}>
                   rationale: {change.rationale}
                 </span>
                 {change.addressesDisagreementIds.length > 0 ? (
-                  <span className="collab-change-list-addresses">
-                    <span className="collab-change-list-addresses-label">
-                      addresses:
-                    </span>
+                  <span className={changeListAddresses}>
+                    <span className={changeListAddressesLabel}>addresses:</span>
                     {change.addressesDisagreementIds.map((id) => (
-                      <span
-                        key={id}
-                        className="collab-change-list-addresses-id"
-                      >
+                      <span key={id} className={changeListAddressesId}>
                         {id}
                       </span>
                     ))}
@@ -126,11 +131,9 @@ export default function CollabProposedChangesCard({
       ) : null}
 
       {supporting.length > 0 ? (
-        <section className="collab-artifact-card-section">
-          <h4 className="collab-artifact-card-section-title">
-            Evidence ({supporting.length})
-          </h4>
-          <ul className="collab-artifact-card-list">
+        <section className={cardSection}>
+          <h4 className={cardSectionTitle}>Evidence ({supporting.length})</h4>
+          <ul className={cardList}>
             {supporting.map((item, idx) => (
               <li key={`supporting-${idx}`}>{item}</li>
             ))}

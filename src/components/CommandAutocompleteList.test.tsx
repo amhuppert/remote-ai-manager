@@ -51,9 +51,9 @@ describe("CommandAutocompleteList", () => {
         emptyLabel="No matching commands"
       />,
     );
-    const itemEls = container.querySelectorAll(".cmd-item");
-    expect(itemEls[0]?.className).not.toContain("active");
-    expect(itemEls[1]?.className).toContain("active");
+    const itemEls = container.querySelectorAll("[data-active]");
+    expect(itemEls[0]?.getAttribute("data-active")).toBe("false");
+    expect(itemEls[1]?.getAttribute("data-active")).toBe("true");
   });
 
   it("calls onSelect with the item when clicked", () => {
@@ -84,7 +84,7 @@ describe("CommandAutocompleteList", () => {
         emptyLabel="No matching commands"
       />,
     );
-    const itemEls = container.querySelectorAll(".cmd-item");
+    const itemEls = container.querySelectorAll("[data-active]");
     fireEvent.mouseEnter(itemEls[1]!);
     expect(onHover).toHaveBeenCalledWith(1);
   });

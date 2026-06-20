@@ -29,7 +29,7 @@ export default function ComposerSuggestions({
 
   return (
     <ul
-      className="m-0 max-h-72 list-none overflow-y-auto rounded-md border border-solid border-border-default bg-bg-elevated p-2xs shadow-[0_12px_32px_rgba(0,0,0,0.35)]"
+      className="m-0 max-h-72 list-none overflow-y-auto rounded-md border border-solid border-border-default bg-bg-elevated p-2xs shadow-dropdown"
       role="listbox"
       aria-label="Suggestions"
     >
@@ -39,7 +39,7 @@ export default function ComposerSuggestions({
           <li key={suggestionKey(s)} role="presentation">
             {showGroup && (
               <div
-                className="px-sm pt-xs pb-2xs font-mono text-[0.66rem] font-semibold uppercase tracking-[0.08em] text-text-tertiary"
+                className="px-sm pt-xs pb-2xs font-mono text-[0.66rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase"
                 aria-hidden="true"
               >
                 {s.grp}

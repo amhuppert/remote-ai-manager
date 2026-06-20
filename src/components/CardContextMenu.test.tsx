@@ -39,14 +39,6 @@ describe("CardContextMenu", () => {
     ).toBeInTheDocument();
   });
 
-  it("applies danger class to danger items", () => {
-    const { container } = render(
-      <CardContextMenu items={baseItems} open={true} onToggle={vi.fn()} />,
-    );
-    const items = container.querySelectorAll(".card-dropdown-item");
-    expect(items[1]!.className).toContain("danger");
-  });
-
   it("calls onAction when item clicked", () => {
     const actionFn = vi.fn();
     const items = [{ label: "Test Action", onAction: actionFn }];

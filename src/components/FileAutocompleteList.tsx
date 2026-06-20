@@ -1,6 +1,18 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { cn } from "@/lib/ui/cn";
+import {
+  autocompleteEmptyClass,
+  autocompleteErrorClass,
+  autocompleteFooterClass,
+  autocompleteFooterKbdClass,
+  autocompleteHeaderClass,
+  autocompleteHeaderCountClass,
+  autocompleteItemClass,
+  autocompleteListClass,
+  autocompletePopupClass,
+} from "./CommandAutocompleteList";
 
 export interface FileAutocompleteListItem {
   id: string;
@@ -52,22 +64,24 @@ export function FileAutocompleteList({
     : `${displayCount} ${displayCount === 1 ? "file" : "files"}`;
 
   return (
-    <div className="file-autocomplete">
-      <div className="file-header">
+    <div className={cn(autocompletePopupClass, "max-h-[340px]")}>
+      <div className={autocompleteHeaderClass}>
         <span>{sourceLabel ? `Files — ${sourceLabel}` : "Files"}</span>
-        <span className="file-header-count">
+        <span className={autocompleteHeaderCountClass}>
           {countLabel}
           {truncated ? " (truncated)" : ""}
         </span>
       </div>
 
-      <div className="file-list" ref={listRef}>
-        {loading && <div className="file-loading">Scanning files...</div>}
+      <div className={autocompleteListClass} ref={listRef}>
+        {loading && (
+          <div className={autocompleteEmptyClass}>Scanning files...</div>
+        )}
 
-        {error && <div className="file-error">{error}</div>}
+        {error && <div className={autocompleteErrorClass}>{error}</div>}
 
         {!loading && !error && items.length === 0 && (
-          <div className="file-empty">No matching files</div>
+          <div className={autocompleteEmptyClass}>No matching files</div>
         )}
 
         {!loading &&
@@ -75,7 +89,8 @@ export function FileAutocompleteList({
           items.map((item, i) => (
             <div
               key={item.id}
-              className={`file-item${i === selectedIndex ? " active" : ""}`}
+              data-active={i === selectedIndex}
+              className={autocompleteItemClass}
               onMouseEnter={() => onHover(i)}
               onClick={() => onSelect(item)}
             >
@@ -85,20 +100,34 @@ export function FileAutocompleteList({
           ))}
       </div>
 
-      <div className="file-footer">
+      <div className={autocompleteFooterClass}>
         <span>
-          <kbd>↑</kbd> <kbd>↓</kbd> navigate
+          <kbd className={autocompleteFooterKbdClass}>↑</kbd>{" "}
+          <kbd className={autocompleteFooterKbdClass}>↓</kbd> navigate
         </span>
         <span>
-          <kbd>Enter</kbd> select
+          <kbd className={autocompleteFooterKbdClass}>Enter</kbd> select
         </span>
         <span>
-          <kbd>Esc</kbd> close
+          <kbd className={autocompleteFooterKbdClass}>Esc</kbd> close
         </span>
       </div>
     </div>
   );
 }
+
+/** Directory chars dimmed, filename chars bright; matched indices override to cyan. */
+export const filePathClass =
+  "flex-1 min-w-0 overflow-hidden text-[0.8rem] text-ellipsis whitespace-nowrap";
+
+/** One color utility per char (never two — Tailwind orders color utils by palette, not source). */
+export function fileCharClass(isDir: boolean, isMatch: boolean): string {
+  if (isMatch) return "text-cyan";
+  return isDir ? "text-text-secondary" : "text-text-primary";
+}
+
+export const fileExtBadgeClass =
+  "shrink-0 rounded-full bg-[var(--cc-cyan-a08)] px-[6px] py-px text-[0.7rem] whitespace-nowrap text-text-tertiary max-768:hidden";
 
 function FilePath({ path, indices }: { path: string; indices: number[] }) {
   const lastSlash = path.lastIndexOf("/");
@@ -109,17 +138,14 @@ function FilePath({ path, indices }: { path: string; indices: number[] }) {
     const isDir = i <= lastSlash;
     const isMatch = indexSet.has(i);
 
-    let className = isDir ? "file-dir-char" : "file-name-char";
-    if (isMatch) className += " file-match";
-
     chars.push(
-      <span key={i} className={className}>
+      <span key={i} className={fileCharClass(isDir, isMatch)}>
         {path[i]}
       </span>,
     );
   }
 
-  return <span className="file-path">{chars}</span>;
+  return <span className={filePathClass}>{chars}</span>;
 }
 
 function FileExtBadge({ path }: { path: string }) {
@@ -128,5 +154,5 @@ function FileExtBadge({ path }: { path: string }) {
   if (lastDot <= lastSlash) return null;
 
   const ext = path.slice(lastDot);
-  return <span className="file-ext">{ext}</span>;
+  return <span className={fileExtBadgeClass}>{ext}</span>;
 }

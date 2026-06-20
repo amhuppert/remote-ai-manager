@@ -17,9 +17,7 @@ describe("CollabPhaseStrip", () => {
       />,
     );
 
-    const pips = Array.from(
-      container.querySelectorAll(".collab-phase-strip-pip"),
-    );
+    const pips = Array.from(container.querySelectorAll("[data-status]"));
     expect(pips).toHaveLength(4);
     expect(pips[0]?.getAttribute("data-status")).toBe("done");
     expect(pips[2]?.getAttribute("data-status")).toBe("active");
@@ -39,7 +37,7 @@ describe("CollabPhaseStrip", () => {
       />,
     );
 
-    const verdict = container.querySelector(".collab-phase-strip-verdict");
+    const verdict = container.querySelector("li[data-verdict]");
     expect(verdict).not.toBeNull();
     expect(verdict?.getAttribute("data-verdict")).toBe("converged");
     expect(verdict?.textContent ?? "").toContain("converged");
@@ -86,9 +84,7 @@ describe("CollabPhaseStrip", () => {
     );
 
     expect(
-      container
-        .querySelector(".collab-phase-strip")
-        ?.getAttribute("data-compact"),
+      container.querySelector("[data-compact]")?.getAttribute("data-compact"),
     ).toBe("false");
 
     rerender(
@@ -99,9 +95,7 @@ describe("CollabPhaseStrip", () => {
     );
 
     expect(
-      container
-        .querySelector(".collab-phase-strip")
-        ?.getAttribute("data-compact"),
+      container.querySelector("[data-compact]")?.getAttribute("data-compact"),
     ).toBe("true");
   });
 });

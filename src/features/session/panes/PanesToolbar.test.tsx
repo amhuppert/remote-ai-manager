@@ -70,8 +70,8 @@ describe("PanesToolbar", () => {
     expect(count).toBeTruthy();
   });
 
-  it("renders a focus hint element", () => {
-    const { container } = render(
+  it("renders the focus hint", () => {
+    render(
       <PanesToolbar
         count={2}
         isAtCap={false}
@@ -80,9 +80,9 @@ describe("PanesToolbar", () => {
         onExit={vi.fn()}
       />,
     );
-    const hint = container.querySelector(".panes-toolbar__hint");
-    expect(hint).toBeTruthy();
-    expect(hint?.textContent?.trim().length).toBeGreaterThan(0);
+    expect(
+      screen.getByText("Replies go to the active pane"),
+    ).toBeInTheDocument();
   });
 
   it("enables the add control when not at cap, opens the menu, and adds a selection (6.2)", () => {

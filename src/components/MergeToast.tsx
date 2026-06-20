@@ -2,6 +2,35 @@
 
 import { useState, useEffect, useCallback } from "react";
 
+import { cn } from "@/lib/ui/cn";
+
+// ── Shared toast recipe (consumed by InputNeededToast / PromptErrorToast) ──
+
+/** Layout/box/animation shared by every toast surface (no shadow, no border-color). */
+export const mergeToastBaseClass =
+  "fixed bottom-lg left-1/2 z-toast flex w-max max-w-[560px] -translate-x-1/2 items-start gap-sm rounded-md border border-solid bg-bg-surface px-md py-sm animate-[toastSlideIn_0.25s_ease] max-768:bottom-md max-768:left-md max-768:right-md max-768:w-auto max-768:max-w-none max-768:translate-x-0";
+
+/** Default two-layer black drop shadow. */
+export const mergeToastShadowClass =
+  "shadow-[0_8px_32px_var(--cc-shadow-soft),0_2px_8px_var(--cc-black-a20)]";
+
+/** Exit animation, important so it overrides the entry animation (legacy `!important`). */
+export const mergeToastExitClass =
+  "animate-[toastSlideOut_0.2s_ease_forwards]!";
+
+export const toastIconClass = "flex shrink-0 items-center";
+export const toastContentClass = "flex min-w-0 flex-1 flex-col gap-px";
+export const toastTitleClass =
+  "font-mono text-[0.75rem] font-semibold text-text-primary";
+export const toastDetailClass =
+  "font-mono text-[0.7rem] break-words whitespace-normal text-text-tertiary";
+export const toastDetailCodeClass =
+  "rounded-[2px] bg-bg-raised px-[4px] py-0 text-[0.7rem] text-cyan";
+export const toastActionClass =
+  "shrink-0 cursor-pointer rounded-sm border border-solid border-border-default bg-transparent px-[10px] py-[4px] font-mono text-[0.7rem] font-semibold text-cyan transition-all duration-150 ease-[ease] hover:border-cyan-glow-strong hover:bg-cyan-glow max-768:min-h-[36px] max-768:px-[12px] max-768:py-[6px]";
+export const toastCloseClass =
+  "flex h-[22px] w-[22px] shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent text-text-tertiary transition-all duration-150 ease-[ease] hover:bg-bg-hover hover:text-text-secondary max-768:h-[36px] max-768:w-[36px]";
+
 // ── Types ──────────────────────────────────────────────────────
 
 type MergeToastVariant = "success" | "conflicts" | "error" | "ready-to-land";
@@ -137,11 +166,12 @@ export default function MergeToast({
       title: "Merge complete",
       detail: (
         <>
-          <code>{branchName}</code> merged into <code>{targetBranch}</code>
+          <code className={toastDetailCodeClass}>{branchName}</code> merged into{" "}
+          <code className={toastDetailCodeClass}>{targetBranch}</code>
           {mergeHash && (
             <>
               {" "}
-              <span className="merge-toast-hash">{mergeHash}</span>
+              <span className="text-text-tertiary">{mergeHash}</span>
             </>
           )}
         </>
@@ -153,8 +183,9 @@ export default function MergeToast({
       title: `${conflictCount ?? 0} conflict${(conflictCount ?? 0) !== 1 ? "s" : ""} found`,
       detail: (
         <>
-          <code>{branchName}</code> has conflicts with{" "}
-          <code>{targetBranch}</code>
+          <code className={toastDetailCodeClass}>{branchName}</code> has
+          conflicts with{" "}
+          <code className={toastDetailCodeClass}>{targetBranch}</code>
         </>
       ),
       actionLabel: "Review",
@@ -164,7 +195,8 @@ export default function MergeToast({
       title: "Merge failed",
       detail: (
         <>
-          {errorMessage ?? "An error occurred"} — <code>{branchName}</code>
+          {errorMessage ?? "An error occurred"} —{" "}
+          <code className={toastDetailCodeClass}>{branchName}</code>
         </>
       ),
       actionLabel: "Details",
@@ -178,7 +210,8 @@ export default function MergeToast({
       ),
       detail: (
         <>
-          Awaiting clean <code>{targetBranch}</code> worktree
+          Awaiting clean{" "}
+          <code className={toastDetailCodeClass}>{targetBranch}</code> worktree
         </>
       ),
       actionLabel: "Land",
@@ -189,21 +222,43 @@ export default function MergeToast({
 
   return (
     <div
-      className={`merge-toast merge-toast-${variant} ${exiting ? "merge-toast-exit" : ""}`}
+      className={cn(
+        mergeToastBaseClass,
+        mergeToastShadowClass,
+        borderVariantClass[variant],
+        exiting && mergeToastExitClass,
+      )}
     >
-      <div className="merge-toast-icon">{config.icon}</div>
-      <div className="merge-toast-content">
-        <span className="merge-toast-title">{config.title}</span>
-        <span className="merge-toast-detail">{config.detail}</span>
+      <div className={cn(toastIconClass, iconVariantClass[variant])}>
+        {config.icon}
+      </div>
+      <div className={toastContentClass}>
+        <span className={toastTitleClass}>{config.title}</span>
+        <span className={toastDetailClass}>{config.detail}</span>
       </div>
       {onAction && (
-        <button className="merge-toast-action" onClick={onAction}>
+        <button className={toastActionClass} onClick={onAction}>
           {config.actionLabel}
         </button>
       )}
-      <button className="merge-toast-close" onClick={handleDismiss}>
+      <button className={toastCloseClass} onClick={handleDismiss}>
         <CloseIcon />
       </button>
     </div>
   );
 }
+
+/** Variant border-color. */
+const borderVariantClass: Record<MergeToastVariant, string> = {
+  success: "border-[var(--cc-green-border)]",
+  conflicts: "border-[var(--cc-amber-a30)]",
+  error: "border-[var(--cc-red-border)]",
+  "ready-to-land": "border-border-default",
+};
+
+const iconVariantClass: Record<MergeToastVariant, string> = {
+  success: "text-green",
+  conflicts: "text-amber",
+  error: "text-red",
+  "ready-to-land": "",
+};

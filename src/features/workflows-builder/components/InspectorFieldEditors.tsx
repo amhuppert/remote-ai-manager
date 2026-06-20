@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { cn } from "@/lib/ui/cn";
 import BackendToggle from "@/components/BackendToggle";
 import ModelSelector from "@/components/ModelSelector";
 import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
@@ -37,10 +38,16 @@ function FieldRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="wb-editor-field">
-      <div className="wb-editor-field-label">{label}</div>
-      <div className="wb-editor-field-control">{children}</div>
-      {hint ? <div className="wb-field-hint">{hint}</div> : null}
+    <div className="flex flex-col gap-[4px]">
+      <div className="font-mono text-[0.7rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase">
+        {label}
+      </div>
+      <div className="flex flex-wrap items-center gap-xs">{children}</div>
+      {hint ? (
+        <div className="mt-xs font-mono text-[0.7rem] leading-[1.5] text-text-tertiary">
+          {hint}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -58,7 +65,7 @@ function ToggleControl({
 }) {
   return (
     <div
-      className={`config-toggle${disabled ? " config-toggle--disabled" : ""}`}
+      className={cn(disabled && "cursor-not-allowed")}
       onClick={() => !disabled && onChange(!value)}
       role="switch"
       aria-label={ariaLabel}
@@ -73,10 +80,10 @@ function ToggleControl({
         }
       }}
     >
-      <div className={`config-toggle-track${value ? " active" : ""}`}>
-        <div className="config-toggle-knob" />
+      <div>
+        <div />
       </div>
-      <span className="config-toggle-label">{value ? "ON" : "OFF"}</span>
+      <span>{value ? "ON" : "OFF"}</span>
     </div>
   );
 }
@@ -107,7 +114,7 @@ function NumericInput({
   return (
     <input
       type="number"
-      className="wb-editor-number-input"
+      className="w-full rounded-sm border border-solid border-border-default bg-bg-base px-[8px] py-[6px] font-mono text-[0.75rem] text-text-primary transition-[border-color] duration-150 outline-none focus:border-cyan focus:shadow-[0_0_0_1px_var(--cyan-glow)] disabled:cursor-not-allowed disabled:opacity-60"
       disabled={disabled}
       value={local}
       min={min}
@@ -175,7 +182,7 @@ export function ImplementerEditor({
   };
 
   return (
-    <div className="wb-editor-stack">
+    <div className="flex flex-col gap-sm">
       <FieldRow label="Backend">
         <BackendToggle
           value={value.backend}
@@ -235,7 +242,7 @@ export function ContextValidatorEditor({
   };
 
   return (
-    <div className="wb-editor-stack">
+    <div className="flex flex-col gap-sm">
       <FieldRow label="Type">
         <BackendToggle
           value={value.type}
@@ -429,7 +436,7 @@ export function IterationPolicyEditor({
   const continuityEnabled = value.continuity?.enabled ?? true;
   const continuityLimit = value.continuity?.contextLimitTokens;
   return (
-    <div className="wb-editor-stack">
+    <div className="flex flex-col gap-sm">
       <FieldRow label="Max iterations">
         <NumericInput
           value={value.maxIterations}
@@ -487,7 +494,7 @@ export function CircuitBreakerEditor({
   readOnly,
 }: EditorBaseProps<GraphWorkflowCircuitBreakerPolicy>): React.JSX.Element {
   return (
-    <div className="wb-editor-stack">
+    <div className="flex flex-col gap-sm">
       <FieldRow
         label="Failure threshold"
         hint="Consecutive failures before the context is halted"
@@ -510,7 +517,7 @@ export function MutabilityEditor({
   readOnly,
 }: EditorBaseProps<GraphWorkflowMutabilityPolicy>): React.JSX.Element {
   return (
-    <div className="wb-editor-stack">
+    <div className="flex flex-col gap-sm">
       <FieldRow
         label="Allow agent task add"
         hint="Let agents add tasks during execution"
@@ -554,7 +561,7 @@ function ThresholdSegmented({
     <div
       role="radiogroup"
       aria-label={ariaLabel}
-      className="wb-editor-segmented"
+      className="inline-flex w-full flex-wrap gap-[2px] rounded-md border border-solid border-border-subtle bg-bg-base p-[3px]"
     >
       {THRESHOLD_OPTIONS.map((option) => {
         const active = value === option.value;
@@ -564,7 +571,12 @@ function ThresholdSegmented({
             type="button"
             role="radio"
             aria-checked={active}
-            className="wb-editor-segmented-option"
+            className={cn(
+              "min-h-[28px] flex-[1_1_auto] cursor-pointer appearance-none rounded-sm border-0 px-[10px] py-[4px] font-mono text-[0.7rem] tracking-[0.04em] uppercase transition-all duration-150 ease-[ease] disabled:cursor-not-allowed max-768:min-h-[44px]",
+              active
+                ? "bg-cyan font-semibold text-text-inverse"
+                : "bg-transparent font-medium text-text-secondary enabled:hover:bg-bg-hover enabled:hover:text-text-primary",
+            )}
             data-active={active ? "true" : "false"}
             title={option.hint}
             disabled={disabled}
@@ -588,9 +600,11 @@ export function CollaborationEditor({
   )?.hint;
 
   return (
-    <div className="wb-editor-stack">
-      <div className="wb-editor-field">
-        <div className="wb-editor-field-label">Second agent</div>
+    <div className="flex flex-col gap-sm">
+      <div className="flex flex-col gap-[4px]">
+        <div className="font-mono text-[0.7rem] font-semibold tracking-[0.06em] text-text-tertiary uppercase">
+          Second agent
+        </div>
         <ImplementerEditor
           value={value.secondAgent}
           onChange={(next) => onChange({ ...value, secondAgent: next })}

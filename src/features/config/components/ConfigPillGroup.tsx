@@ -15,7 +15,7 @@ export function ConfigPillGroup<T extends string>({
   disabled?: boolean;
 }) {
   return (
-    <div className="inline-flex flex-wrap w-fit max-w-full gap-[2px] p-[3px] rounded-md border border-solid border-border-subtle bg-bg-base">
+    <div className="inline-flex w-fit max-w-full flex-wrap gap-[2px] rounded-md border border-solid border-border-subtle bg-bg-base p-[3px]">
       {options.map((opt) => (
         <button
           key={opt}
@@ -23,8 +23,8 @@ export function ConfigPillGroup<T extends string>({
           className={cn(
             PILL_BASE,
             value === opt
-              ? "bg-cyan text-text-inverse font-semibold border border-solid border-cyan"
-              : "bg-transparent text-text-secondary font-medium hover:bg-bg-hover hover:text-text-primary",
+              ? "border border-solid border-cyan bg-cyan font-semibold text-text-inverse"
+              : "bg-transparent font-medium text-text-secondary hover:bg-bg-hover hover:text-text-primary",
           )}
           onClick={() => !disabled && onChange(opt)}
           disabled={disabled}

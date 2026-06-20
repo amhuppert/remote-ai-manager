@@ -1,8 +1,15 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { cn } from "@/lib/ui/cn";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import { extractCopyText } from "./copy-message-text";
+
+// Shared hover-action button recipe (Copy + Fork). The ≤768px touch sizing
+// (legacy globals `.msg-action-btn { width/height: 44px }`, svg 16px, and the
+// tooltip `::after` hidden) is re-homed here as `max-768:` variants.
+export const msgActionBtnClass =
+  "relative flex items-center justify-center w-[24px] h-[24px] p-0 border border-solid border-transparent rounded-sm bg-transparent text-text-tertiary cursor-pointer transition-all duration-[120ms] ease-[ease] enabled:hover:bg-bg-hover enabled:hover:text-text-secondary enabled:hover:border-border-default disabled:opacity-30 disabled:cursor-default max-768:w-[44px] max-768:h-[44px] max-768:[&_svg]:w-[16px] max-768:[&_svg]:h-[16px] max-768:after:hidden";
 
 interface CopyMessageButtonProps {
   content: MessageContentBlock[];
@@ -23,7 +30,8 @@ export default function CopyMessageButton({ content }: CopyMessageButtonProps) {
   return (
     <button
       type="button"
-      className={`msg-action-btn${copied ? " msg-action-btn--copied" : ""}`}
+      className={cn(msgActionBtnClass, "data-[copied=true]:text-green")}
+      data-copied={copied}
       onClick={handleCopy}
       data-tooltip={copied ? "Copied ✓" : "Copy"}
       title="Copy message as Markdown"

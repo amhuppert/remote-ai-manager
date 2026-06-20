@@ -1,9 +1,22 @@
 "use client";
 
-import "./styles/projects-index.css";
 import { useState, useMemo, useCallback } from "react";
+import { cn } from "@/lib/ui/cn";
 import Topbar from "@/components/Topbar";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import { Tabs, Tab, TabCount } from "@/components/ui/Tabs";
+import {
+  EmptyState,
+  EmptyStateIcon,
+  EmptyStateTitle,
+  EmptyStateDesc,
+} from "@/components/ui/EmptyState";
+import { StatusDot } from "@/components/ui/StatusDot";
+import {
+  SectionHeader,
+  SectionLabel,
+  SectionCount,
+} from "@/components/ui/SectionHeader";
 import ProjectCard from "./components/ProjectCard";
 import type { DiscoveredProject } from "@/lib/projects/schemas";
 import { useConfigQuery } from "@/lib/config/queries";
@@ -25,6 +38,24 @@ import {
   useOpenProjectMenu,
   useCloseProjectMenu,
 } from "@/stores/projects.store";
+
+// Parity reproduction of legacy `.btn.btn-sm.btn-toggle` (globals.css). No
+// `<Button>` variant matches the toggle appearance, and appearance utilities are
+// forbidden in the primitive's `layoutClassName`
+// (tailwind-guardrails/no-appearance-in-layout-classname), so this control is a
+// plain utility-only `<button>`. `TOGGLE_BOX` mirrors the `.btn` + `.btn-sm`
+// invariant box, including the `@media (max-width: 768px) .btn-sm` touch override
+// (min-height 44px + padding 10px 16px) folded as `max-768:` variants. The two
+// state maps are mutually exclusive (only one is applied), avoiding any
+// same-property conflict. The active border + active-hover background reuse
+// `--color-cyan-glow-strong`, exactly the legacy `rgba(0,229,255,0.3)` /
+// `--cyan-glow-strong` literal.
+const TOGGLE_BOX =
+  "inline-flex items-center gap-sm rounded-md border border-solid px-[12px] py-[6px] font-mono text-[0.72rem] font-medium transition-all duration-150 ease-[ease] max-768:min-h-[44px] max-768:px-[16px] max-768:py-[10px]";
+const TOGGLE_INACTIVE =
+  "bg-transparent border-border-default text-text-secondary hover:bg-bg-hover hover:text-text-primary hover:border-border-strong";
+const TOGGLE_ACTIVE =
+  "bg-cyan-glow border-[var(--color-cyan-glow-strong)] text-cyan hover:bg-[var(--color-cyan-glow-strong)]";
 
 export default function ProjectsIndexPage(): React.JSX.Element {
   const [searchQuery, setSearchQuery] = useState("");
@@ -202,39 +233,46 @@ export default function ProjectsIndexPage(): React.JSX.Element {
         breadcrumbs={[{ label: "projects", href: "/projects" }]}
         globalStatus={
           runningCount > 0 ? (
-            <div className="status-indicator">
-              <div className="status-dot warning" />
+            <div className="flex items-center gap-[6px] font-mono text-[0.72rem] font-medium tracking-[0.06em] text-text-secondary uppercase">
+              <StatusDot tone="warning" />
               {runningCount} session{runningCount !== 1 ? "s" : ""} running
             </div>
           ) : undefined
         }
       />
       <main className="main">
-        <div className="page-header">
-          <h1 className="page-title">
-            Ground <span className="accent">Control</span>
+        <div className="mb-2xl max-768:mb-lg">
+          <h1 className="mb-sm font-display text-[2.4rem] leading-[1.1] font-extrabold tracking-[-0.03em] text-text-primary max-768:text-[1.6rem]">
+            Ground{" "}
+            <span className="text-cyan [text-shadow:0_0_30px_var(--cyan-glow-text)]">
+              Control
+            </span>
           </h1>
-          {subtitle && <p className="page-subtitle">{subtitle}</p>}
+          {subtitle && (
+            <p className="font-mono text-[0.82rem] font-normal text-text-secondary">
+              {subtitle}
+            </p>
+          )}
         </div>
 
         {isLoading ? (
-          <div className="empty-state">
-            <div className="empty-state-title">Loading projects...</div>
-          </div>
+          <EmptyState>
+            <EmptyStateTitle>Loading projects...</EmptyStateTitle>
+          </EmptyState>
         ) : projectCount > 0 ? (
           <>
-            <div className="projects-controls">
-              <div className="search-wrapper">
+            <div className="mb-lg flex flex-wrap items-center gap-md">
+              <div className="relative max-w-[360px] min-w-[200px] flex-1">
                 <input
                   type="text"
-                  className="search-input"
+                  className="w-full rounded-md border border-solid border-border-default bg-bg-surface py-[8px] pr-[32px] pl-[12px] font-mono text-[0.78rem] text-text-primary transition-all duration-150 ease-[ease] outline-none placeholder:text-text-tertiary focus:border-cyan-dim focus:shadow-[0_0_0_3px_var(--cyan-glow)]"
                   placeholder="Search projects..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
                 {searchQuery && (
                   <button
-                    className="search-clear"
+                    className="absolute top-1/2 right-[6px] flex h-5 w-5 -translate-y-1/2 cursor-pointer items-center justify-center rounded-sm border-none bg-transparent p-0 text-[0.75rem] text-text-tertiary transition-all duration-100 ease-[ease] hover:bg-bg-hover hover:text-text-secondary"
                     onClick={() => setSearchQuery("")}
                     type="button"
                     aria-label="Clear search"
@@ -244,25 +282,30 @@ export default function ProjectsIndexPage(): React.JSX.Element {
                 )}
               </div>
 
-              <div className="cc-tabs">
+              <Tabs>
                 {(["all", "active", "running", "idle"] as const).map(
                   (filter) => (
-                    <button
+                    <Tab
                       key={filter}
-                      className={`cc-tab${statusFilter === filter ? " active" : ""}`}
+                      active={statusFilter === filter}
                       onClick={() => filterByStatus(filter)}
                       type="button"
                     >
                       {filter}
-                      <span className="cc-tab-count">{counts[filter]}</span>
-                    </button>
+                      <TabCount active={statusFilter === filter}>
+                        {counts[filter]}
+                      </TabCount>
+                    </Tab>
                   ),
                 )}
-              </div>
+              </Tabs>
 
               {archivedCount > 0 && (
                 <button
-                  className={`btn btn-sm btn-toggle${showArchived ? " active" : ""}`}
+                  className={cn(
+                    TOGGLE_BOX,
+                    showArchived ? TOGGLE_ACTIVE : TOGGLE_INACTIVE,
+                  )}
                   onClick={toggleArchived}
                   type="button"
                 >
@@ -273,14 +316,14 @@ export default function ProjectsIndexPage(): React.JSX.Element {
 
             {showPinnedSection && (
               <>
-                <div className="pinned-section">
-                  <div className="cc-section-header">
-                    <span className="cc-section-label">Pinned</span>
-                    <span className="cc-section-count">
+                <div className="mb-section">
+                  <SectionHeader>
+                    <SectionLabel>Pinned</SectionLabel>
+                    <SectionCount>
                       ({visiblePinnedProjects.length})
-                    </span>
-                  </div>
-                  <div className="projects-grid stagger-in">
+                    </SectionCount>
+                  </SectionHeader>
+                  <div className="stagger-in grid grid-cols-[repeat(auto-fill,minmax(340px,1fr))] gap-md max-900:grid-cols-1">
                     {visiblePinnedProjects.map((project) => (
                       <ProjectCard
                         key={project.path}
@@ -297,13 +340,13 @@ export default function ProjectsIndexPage(): React.JSX.Element {
                   </div>
                 </div>
                 {filteredProjects.length > 0 && (
-                  <div className="pinned-separator" />
+                  <div className="relative my-[var(--space-xl)] h-px bg-[linear-gradient(90deg,transparent,var(--border-default),var(--border-strong),var(--border-default),transparent)] before:absolute before:inset-x-0 before:-top-px before:h-[3px] before:bg-[linear-gradient(90deg,transparent,var(--cc-amber-a12),var(--cc-cyan-a08),transparent)] before:[filter:blur(2px)] before:content-['']" />
                 )}
               </>
             )}
 
             {filteredProjects.length > 0 ? (
-              <div className="projects-grid stagger-in">
+              <div className="stagger-in grid grid-cols-[repeat(auto-fill,minmax(340px,1fr))] gap-md max-900:grid-cols-1">
                 {filteredProjects.map((project) => (
                   <ProjectCard
                     key={project.path}
@@ -319,9 +362,11 @@ export default function ProjectsIndexPage(): React.JSX.Element {
                 ))}
               </div>
             ) : !showPinnedSection ? (
-              <div className="no-results">
-                <div className="no-results-title">No projects match</div>
-                <div className="no-results-desc">
+              <div className="flex flex-col items-center justify-center px-xl py-3xl text-center">
+                <div className="mb-sm font-display text-[1rem] font-bold text-text-secondary">
+                  No projects match
+                </div>
+                <div className="max-w-[320px] font-mono text-[0.75rem] text-text-tertiary">
                   Try adjusting your search or filters to find what you&apos;re
                   looking for.
                 </div>
@@ -329,15 +374,15 @@ export default function ProjectsIndexPage(): React.JSX.Element {
             ) : null}
           </>
         ) : (
-          <div className="empty-state">
-            <div className="empty-state-icon">&#128269;</div>
-            <div className="empty-state-title">No projects discovered</div>
-            <div className="empty-state-desc">
+          <EmptyState>
+            <EmptyStateIcon>&#128269;</EmptyStateIcon>
+            <EmptyStateTitle>No projects discovered</EmptyStateTitle>
+            <EmptyStateDesc>
               No git repositories found
               {config ? ` in ${config.baseDir}` : ""}. Ensure the base directory
               is configured correctly and contains repositories.
-            </div>
-          </div>
+            </EmptyStateDesc>
+          </EmptyState>
         )}
       </main>
       <ConfirmDialog

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect } from "react";
 import { useOverlayScope } from "@/hooks/useOverlayScope";
+import { ModalShell, ModalTitle } from "@/components/ui/ModalShell";
 import {
   HOTKEY_REGISTRY,
   formatHotkeyDisplay,
@@ -63,33 +64,41 @@ export default function HotkeyHelpModal({
   const groups = groupByCategory();
 
   return (
-    <div className="modal-overlay">
-      <div className="modal hotkey-help-modal">
-        <h2 className="modal-title">Keyboard Shortcuts</h2>
-        <div className="hotkey-help-content">
-          {CATEGORY_ORDER.map((category) => {
-            const entries = groups[category];
-            if (entries.length === 0) return null;
-            return (
-              <div key={category} className="hotkey-help-group">
-                <h3 className="hotkey-help-category">
-                  {getCategoryLabel(category)}
-                </h3>
-                <dl className="hotkey-help-list">
-                  {entries.map((def) => (
-                    <div key={def.id} className="hotkey-help-item">
-                      <dt className="hotkey-help-label">{def.label}</dt>
-                      <dd className="hotkey-help-key">
-                        <kbd>{formatHotkeyDisplay(def.keys)}</kbd>
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-              </div>
-            );
-          })}
-        </div>
+    <ModalShell
+      id="hotkey-help-modal"
+      overlayProps={{ id: "hotkey-help-overlay" }}
+    >
+      <ModalTitle>Keyboard Shortcuts</ModalTitle>
+      <div className="flex flex-col gap-lg">
+        {CATEGORY_ORDER.map((category) => {
+          const entries = groups[category];
+          if (entries.length === 0) return null;
+          return (
+            <div key={category} className="flex flex-col gap-sm">
+              <h3 className="m-0 font-mono text-[0.72rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+                {getCategoryLabel(category)}
+              </h3>
+              <dl className="m-0 flex flex-col gap-[2px]">
+                {entries.map((def) => (
+                  <div
+                    key={def.id}
+                    className="flex items-center justify-between rounded-sm px-sm py-xs hover:bg-bg-raised"
+                  >
+                    <dt className="text-[0.82rem] text-text-primary">
+                      {def.label}
+                    </dt>
+                    <dd className="m-0">
+                      <kbd className="inline-block min-w-[24px] rounded-sm border border-solid border-border-default bg-bg-raised px-[8px] py-[2px] text-center font-mono text-[0.72rem] leading-[1.6] text-text-secondary">
+                        {formatHotkeyDisplay(def.keys)}
+                      </kbd>
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          );
+        })}
       </div>
-    </div>
+    </ModalShell>
   );
 }

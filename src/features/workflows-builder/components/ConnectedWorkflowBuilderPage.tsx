@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import "@xyflow/react/dist/base.css";
 import "@/components/workflow-graph/workflow-graph.css";
-import "../styles/workflows-builder.css";
 import Topbar from "@/components/Topbar";
 import { ApiCallError } from "@/lib/api/errors";
 import {
@@ -237,8 +236,8 @@ export default function ConnectedWorkflowBuilderPage({
           },
         ]}
       />
-      <main className="main">
-        <div className="wb-page">
+      <main className="min-h-0 w-full flex-1 overflow-hidden p-0 max-768:pb-[calc(56px+env(safe-area-inset-bottom,0px))]">
+        <div className="flex h-full min-h-0 flex-1 max-768:flex-col">
           <WorkflowDefinitionsSidebar
             definitions={definitionsQuery.data ?? []}
             selectedId={selectedWorkflowId}
@@ -247,7 +246,7 @@ export default function ConnectedWorkflowBuilderPage({
             isLoading={definitionsQuery.isPending}
             footer={
               <Link
-                className="wb-sidebar-footer-link"
+                className="flex items-center gap-[6px] px-0 py-[6px] text-[0.72rem] font-medium text-text-secondary no-underline transition-colors duration-150 hover:text-text-primary"
                 href={`/projects/${encodeURIComponent(projectName)}`}
               >
                 ← Back to Sessions
@@ -255,16 +254,16 @@ export default function ConnectedWorkflowBuilderPage({
             }
           />
 
-          <div className="wb-content">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden max-768:min-w-0 max-768:flex-1 max-768:[.app[data-page=workflow-builder][data-mobile-panel=definitions]_&]:hidden">
             {selectedWorkflowId === null ? (
-              <div className="wb-empty-state">
-                <span className="wb-empty-state-text">
+              <div className="flex h-full flex-col items-center justify-center gap-md text-text-tertiary">
+                <span className="text-[0.82rem] font-medium">
                   Select or create a workflow
                 </span>
               </div>
             ) : selectedRecord.isPending ? (
-              <div className="wb-empty-state">
-                <span className="wb-empty-state-text">
+              <div className="flex h-full flex-col items-center justify-center gap-md text-text-tertiary">
+                <span className="text-[0.82rem] font-medium">
                   Loading workflow editor...
                 </span>
               </div>
@@ -287,8 +286,10 @@ export default function ConnectedWorkflowBuilderPage({
                 onAutoSwitchPanel={autoSwitchPanel}
               />
             ) : (
-              <div className="wb-empty-state">
-                <span className="wb-empty-state-text">Workflow not found</span>
+              <div className="flex h-full flex-col items-center justify-center gap-md text-text-tertiary">
+                <span className="text-[0.82rem] font-medium">
+                  Workflow not found
+                </span>
               </div>
             )}
           </div>

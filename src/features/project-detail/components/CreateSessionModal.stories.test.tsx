@@ -45,6 +45,6 @@ describe("CreateSessionModal stories", () => {
 
   it("Closed renders nothing when open=false", async () => {
     await Closed.run();
-    expect(document.querySelector(".modal-overlay")).toBeNull();
+    expect(screen.queryByText("New Session")).toBeNull();
   });
 });

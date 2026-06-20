@@ -191,10 +191,10 @@ function tabByTitle(title: string): HTMLElement {
   return tab;
 }
 
-/** The `.pane` <section> whose title text matches. */
+/** The pane <section> whose title text matches. */
 function paneByTitle(title: string): HTMLElement {
   const heading = screen.getByText(title);
-  const pane = heading.closest(".pane");
+  const pane = heading.closest("section");
   if (!(pane instanceof HTMLElement))
     throw new Error(`No pane with title "${title}"`);
   return pane;

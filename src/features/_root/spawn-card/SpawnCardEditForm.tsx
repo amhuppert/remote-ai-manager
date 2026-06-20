@@ -23,7 +23,7 @@ export default function SpawnCardEditForm({
   onChange: (index: number, field: EditableField, value: string) => void;
 }): React.JSX.Element {
   return (
-    <div className="grid grid-cols-2 gap-sm p-md bg-bg-base border border-solid border-border-dim rounded-md">
+    <div className="grid grid-cols-2 gap-sm rounded-md border border-solid border-border-dim bg-bg-base p-md">
       <label className="flex flex-col gap-2xs">
         <span className={META_LABEL_CLASS}>Name</span>
         <input
@@ -81,7 +81,7 @@ export default function SpawnCardEditForm({
           ))}
         </select>
       </label>
-      <label className="flex flex-col gap-2xs col-span-2">
+      <label className="col-span-2 flex flex-col gap-2xs">
         <span className={META_LABEL_CLASS}>Initial prompt</span>
         <textarea
           className={INPUT_CLASS}

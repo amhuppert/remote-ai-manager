@@ -148,23 +148,37 @@ function Stage({
 
 /**
  * Reproduces the real /conversations docked layout chain so the overlay's
- * anchoring can be verified in the same CSS context it ships in:
- * `.session-detail-layout` (grid) → `.conversation-docked-stage` (the positioned
- * stage) → `.session-content-area` (tall conversation) + `.pinned-composer-row`
- * (where the panel renders). Without the stage the overlay has no positioned
- * ancestor and renders nowhere — the bug this story guards against.
+ * anchoring can be verified in the same CSS context it ships in: the detail grid
+ * → `.conversation-docked-stage` (the positioned stage) → the tall conversation
+ * content area + the pinned composer row (where the panel renders). Without the
+ * stage the overlay has no positioned ancestor and renders nowhere — the bug
+ * this story guards against.
  */
 function DockedConversationLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="session-detail-layout has-tab-strip">
+    <div
+      style={{
+        display: "grid",
+        minHeight: "500px",
+        minWidth: 0,
+        gridTemplateColumns: "minmax(0, 1fr)",
+        gridTemplateRows: "auto auto 1fr",
+        gap: 0,
+      }}
+    >
       <div
-        className="session-info-strip"
-        style={{ padding: "var(--space-sm) var(--space-md)" }}
+        style={{
+          padding: "var(--space-sm) var(--space-md)",
+          borderBottom: "1px solid var(--border-default)",
+          background: "var(--bg-base)",
+          fontFamily: "var(--font-mono)",
+          fontSize: "0.72rem",
+          color: "var(--text-tertiary)",
+        }}
       >
         branch csm/demo · waiting_for_input
       </div>
       <div
-        className="conversation-tab-strip-host"
         style={{
           padding: "var(--space-xs) var(--space-md)",
           borderBottom: "1px solid var(--border-default)",
@@ -175,8 +189,26 @@ function DockedConversationLayout({ children }: { children: ReactNode }) {
       >
         Demo conversation 1 · 2 · 3
       </div>
-      <div className="conversation-docked-stage">
-        <div className="session-content-area" data-layout="conversation">
+      <div
+        className="conversation-docked-stage"
+        style={{
+          position: "relative",
+          display: "flex",
+          flexDirection: "column",
+          minHeight: 0,
+          minWidth: 0,
+        }}
+      >
+        <div
+          data-layout="conversation"
+          style={{
+            display: "grid",
+            minHeight: 0,
+            flex: 1,
+            gridTemplateColumns: "minmax(0, 1fr)",
+            gap: 0,
+          }}
+        >
           <div className="prompt-panel" data-agent="claude">
             <div className="conversation-stage">
               <div className="panel-body">
@@ -200,7 +232,16 @@ function DockedConversationLayout({ children }: { children: ReactNode }) {
             </div>
           </div>
         </div>
-        <div className="pinned-composer-row">{children}</div>
+        <div
+          style={{
+            minWidth: 0,
+            flexShrink: 0,
+            borderTop: "1px solid var(--border-default)",
+            background: "var(--bg-base)",
+          }}
+        >
+          {children}
+        </div>
       </div>
     </div>
   );

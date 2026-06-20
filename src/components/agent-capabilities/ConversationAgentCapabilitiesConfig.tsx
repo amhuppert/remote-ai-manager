@@ -5,6 +5,8 @@ import { createPortal } from "react-dom";
 
 import { useOverlayScope } from "@/hooks/useOverlayScope";
 import type { AgentCapabilityScope } from "@/hooks/use-agent-capabilities";
+import { triggerBase, triggerHover } from "@/components/mcp/styles";
+import { cn } from "@/lib/ui/cn";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 
 import { AgentCapabilitiesConfigurator } from "./AgentCapabilitiesConfigurator";
@@ -83,14 +85,14 @@ export default function ConversationAgentCapabilitiesConfig({
     <>
       <button
         type="button"
-        className="mcp-config-trigger agent-capability-trigger"
+        className={cn(triggerBase, triggerHover, "min-w-[118px]")}
         onClick={() => setOpen(true)}
         disabled={disabled}
         aria-label={title}
         aria-expanded={open}
         title={title}
       >
-        <span className="mcp-config-trigger__label">Capabilities</span>
+        <span className="whitespace-nowrap">Capabilities</span>
       </button>
       <AgentCapabilitiesModal
         open={open}
@@ -120,12 +122,12 @@ function AgentCapabilitiesModal({
   const overlay = (
     <>
       <div
-        className="agent-capabilities-drawer-overlay"
+        className="fixed inset-0 z-dropdown bg-[var(--cc-bg-void-a60)] [backdrop-filter:blur(4px)_saturate(120%)]"
         data-testid="agent-capabilities-drawer-overlay"
         onClick={onClose}
       />
       <aside
-        className="agent-capabilities-drawer"
+        className="fixed top-0 right-0 bottom-0 z-dropdown flex w-[min(720px,100vw)] flex-col border-y-0 border-r-0 border-l border-solid border-border-default bg-bg-base shadow-[-16px_0_48px_var(--cc-black-a55)]"
         role="dialog"
         aria-label="Agent capabilities configuration"
       >

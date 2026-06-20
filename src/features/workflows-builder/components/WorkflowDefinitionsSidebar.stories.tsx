@@ -58,7 +58,10 @@ export const Loading = {
 export const WithFooter = {
   args: {
     footer: (
-      <a className="wb-sidebar-footer-link" href="#">
+      <a
+        className="flex items-center gap-[6px] px-0 py-[6px] text-[0.72rem] font-medium text-text-secondary no-underline transition-colors duration-150 hover:text-text-primary"
+        href="#"
+      >
         ← Back to Sessions
       </a>
     ),

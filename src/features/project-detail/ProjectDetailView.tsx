@@ -16,6 +16,11 @@ import {
 } from "@/stores/sessions.store";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { PlusIcon } from "@/components/icons";
+import {
+  EmptyState,
+  EmptyStateTitle,
+  EmptyStateDesc,
+} from "@/components/ui/EmptyState";
 import ScopedAgentCapabilitiesConfig from "@/components/agent-capabilities/ScopedAgentCapabilitiesConfig";
 import CreateSessionModal from "./components/CreateSessionModal";
 import ConfirmDialog from "@/components/ConfirmDialog";
@@ -39,6 +44,36 @@ import {
 interface ProjectDetailViewProps {
   projectName: string;
 }
+
+// Byte-for-byte reproduction of the `.cc-ibtn` leaf recipe (project-detail.css).
+// The matching primitive is `IconButton variant="pill"`, but it renders a
+// `<button>` while this control is a navigation `<Link>` (anchor) — swapping the
+// element would drop native link behaviour (middle-click/open-in-new-tab/href),
+// a functional regression. So the pill appearance is re-homed as inline utilities
+// on the Link instead. This consumer is never toggled (`.active`), so only the
+// base + hover state is transcribed. The `@media (max-width:768px)` 44px touch
+// target the recipe carried is folded into the `max-768:` utilities.
+const CC_IBTN_LINK_CLASS =
+  "inline-flex h-[30px] items-center gap-[6px] rounded-md border border-solid " +
+  "border-border-subtle bg-transparent px-[10px] py-0 font-mono text-[0.72rem] " +
+  "font-medium text-text-secondary transition-all duration-150 ease-[ease] " +
+  "[&_svg]:text-text-tertiary [&_svg]:transition-colors [&_svg]:duration-150 [&_svg]:ease-[ease] " +
+  "hover:border-border-strong hover:bg-bg-hover hover:text-text-primary hover:[&_svg]:text-cyan " +
+  "max-768:h-[44px] max-768:min-h-[44px] max-768:flex-1 max-768:justify-center";
+
+// Byte-for-byte reproduction of the `.cc-primary` leaf recipe (project-detail.css).
+// NOT swapped to `Button variant="primary"`: that primitive is the global
+// `.btn-primary` recipe (px-18/py-10, 0.78rem, hover `0 0 20px cyan-glow`), which
+// is NOT byte-identical to this compact page-redesign button (h-30/px-14, 0.74rem,
+// hover `0 0 18px cyan-glow-strong`). Reproducing it as utilities preserves
+// zero-visual-change (the charter invariant outranks the literal AC mapping). The
+// `@media (max-width:768px)` 44px touch target is folded into `max-768:` utilities.
+const CC_PRIMARY_CLASS =
+  "inline-flex h-[30px] shrink-0 items-center gap-[6px] whitespace-nowrap rounded-md " +
+  "border border-solid border-cyan bg-cyan px-[14px] py-0 font-mono text-[0.74rem] " +
+  "font-semibold text-text-inverse transition-all duration-150 ease-[ease] " +
+  "hover:border-cyan-dim hover:bg-cyan-dim hover:shadow-[0_0_18px_var(--color-cyan-glow-strong)] " +
+  "max-768:h-[44px] max-768:min-h-[44px] max-768:flex-1 max-768:self-center max-768:px-md";
 
 function WorkflowGlyph(): React.JSX.Element {
   return (
@@ -223,6 +258,14 @@ export default function ProjectDetailView({
         globalStatus={
           runningCount > 0 ? (
             <div className="status-indicator">
+              {/* ESCAPE HATCH (charter): the topbar status dot stays on the legacy
+                  `.status-dot` leaf class rather than `<StatusDot>`. The mobile rule
+                  `.topbar-status-default .status-indicator .status-dot { width:8px;
+                  height:8px }` (globals.css @media ≤768px) enlarges it to 8px;
+                  StatusDot is fixed at 7px and cannot re-home 8px via layoutClassName
+                  (height/size are not layout-allowlisted), and the `.topbar-status-*`
+                  ancestor is topbar-owned. Same resolution as the ConversationList
+                  topbar dot — see .cc/graph-workflow-docs/swap-session-conversation-notes.md. */}
               <div className="status-dot warning" />
               {runningCount} session{runningCount !== 1 ? "s" : ""} running
             </div>
@@ -231,39 +274,44 @@ export default function ProjectDetailView({
       />
       <main className="main">
         {isLoading ? (
-          <div className="empty-state">
-            <div className="empty-state-title">Loading sessions...</div>
-          </div>
+          <EmptyState>
+            <EmptyStateTitle>Loading sessions...</EmptyStateTitle>
+          </EmptyState>
         ) : (
           <>
             <div className="stagger-in project-detail-shell">
-              <div className="cc-page-header cc-page-header--compact">
+              <div className="flex min-h-[44px] items-center justify-between gap-md border-x-0 border-t-0 border-b border-solid border-border-dim px-xl py-sm max-768:flex-col max-768:items-stretch max-768:gap-sm max-768:px-md">
                 <div
-                  className="cc-page-summaryrow"
+                  className="flex min-w-0 flex-1 items-center gap-sm max-768:flex-wrap max-768:gap-y-xs"
                   aria-label="Project summary"
                 >
-                  <div className="cc-page-title">
-                    {projectName} <span className="accent">·</span>
+                  <div className="font-display text-[1.05rem] leading-[1.05] font-extrabold tracking-[0] whitespace-nowrap text-text-primary max-768:text-[1rem] max-768:[overflow-wrap:anywhere] max-768:whitespace-normal">
+                    {projectName}{" "}
+                    <span className="text-cyan [text-shadow:0_0_24px_var(--color-cyan-glow-text)]">
+                      ·
+                    </span>
                   </div>
-                  <span className="cc-page-meta cc-page-path">
+                  <span className="inline-flex max-w-[min(48vw,58ch)] min-w-0 items-center overflow-hidden font-mono text-[0.72rem] text-ellipsis whitespace-nowrap text-text-tertiary max-768:max-w-full max-768:basis-full">
                     {projectPath ?? projectName}
                   </span>
                   {runningCount > 0 && (
-                    <span className="pill">
-                      <span className="live-dot" />
+                    <span className="inline-flex items-center gap-[5px] rounded-full border border-solid border-border-subtle bg-bg-raised px-[7px] py-[1px] text-[0.7rem] whitespace-nowrap text-text-secondary">
+                      <span className="size-[6px] animate-[pulse-dot_2.5s_ease_infinite] rounded-full bg-green shadow-[0_0_6px_var(--color-green-glow)]" />
                       {runningCount} running
                     </span>
                   )}
-                  <span className="cc-page-meta">
+                  <span className="inline-flex min-w-0 items-center font-mono text-[0.72rem] whitespace-nowrap text-text-tertiary">
                     {sessions.length} session
                     {sessions.length === 1 ? "" : "s"}
                   </span>
-                  <span className="cc-page-meta">{archivedCount} archived</span>
+                  <span className="inline-flex min-w-0 items-center font-mono text-[0.72rem] whitespace-nowrap text-text-tertiary">
+                    {archivedCount} archived
+                  </span>
                 </div>
-                <div className="cc-page-actions">
+                <div className="flex shrink-0 items-center gap-sm max-768:self-stretch">
                   <Link
                     href={`/projects/${encodeURIComponent(projectName)}/workflows`}
-                    className="cc-ibtn"
+                    className={CC_IBTN_LINK_CLASS}
                     title="Open the Workflow Builder"
                   >
                     <WorkflowGlyph />
@@ -271,14 +319,16 @@ export default function ProjectDetailView({
                   </Link>
                   <button
                     type="button"
-                    className="cc-primary"
+                    className={CC_PRIMARY_CLASS}
                     onClick={() => openCreateModal()}
                   >
-                    <span className="plus">
+                    <span className="text-[0.85rem] leading-none font-bold">
                       <PlusIcon size={12} />
                     </span>
                     New session
-                    <span className="cc-primary-kbd">⌘N</span>
+                    <span className="ml-[6px] rounded-[3px] bg-black/[0.18] px-[5px] py-px text-[0.62rem] opacity-80 max-768:hidden">
+                      ⌘N
+                    </span>
                   </button>
                 </div>
               </div>
@@ -306,15 +356,15 @@ export default function ProjectDetailView({
                 }
               />
               {visibleUnavailableFocusId !== null && (
-                <div className="empty-state" role="status" aria-live="polite">
-                  <div className="empty-state-title">
+                <EmptyState role="status" aria-live="polite">
+                  <EmptyStateTitle>
                     Project conversation unavailable
-                  </div>
-                  <div className="empty-state-desc">
+                  </EmptyStateTitle>
+                  <EmptyStateDesc>
                     Could not open project conversation{" "}
                     <code>{visibleUnavailableFocusId}</code>.
-                  </div>
-                </div>
+                  </EmptyStateDesc>
+                </EmptyState>
               )}
             </div>
 

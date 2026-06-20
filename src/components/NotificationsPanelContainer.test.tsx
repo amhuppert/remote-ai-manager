@@ -308,7 +308,6 @@ describe("NotificationsPanel project conversation rows", () => {
     );
     expect(screen.getByText("app / main")).toBeInTheDocument();
     expect(screen.getByLabelText("agent: codex")).toBeInTheDocument();
-    expect(row.querySelector(".np-unread-dot")).not.toBeNull();
 
     row.addEventListener("click", (event) => event.preventDefault());
     fireEvent.click(row);

@@ -117,7 +117,7 @@ describe("PromptComposer composer-focus wiring", () => {
     expect(composerFocused()).toBe(false);
 
     const attach = container.querySelector(
-      ".attachment-btn",
+      '[title="Attach image"]',
     ) as HTMLButtonElement;
     expect(attach).not.toBeNull();
 
@@ -133,10 +133,10 @@ describe("PromptComposer composer-focus wiring", () => {
     const { container } = renderWithQuery(<PromptComposer {...makeProps()} />);
     const region = container.querySelector(".prompt-input-area") as HTMLElement;
     const attach = container.querySelector(
-      ".attachment-btn",
+      '[title="Attach image"]',
     ) as HTMLButtonElement;
     const modelTrigger = region.querySelector(
-      ".model-selector-trigger",
+      '[data-testid="model-selector-trigger"]',
     ) as HTMLButtonElement;
 
     fireEvent.focus(attach);
@@ -154,7 +154,7 @@ describe("PromptComposer composer-focus wiring", () => {
     // The desktop toolbar's capabilities trigger opens the portaled drawer,
     // which reports its open-state to the focus hook via onOpenChange.
     const capsTrigger = region.querySelector(
-      ".agent-capability-trigger",
+      'button[aria-label="Agent capability configuration"]',
     ) as HTMLButtonElement;
     expect(capsTrigger).not.toBeNull();
 

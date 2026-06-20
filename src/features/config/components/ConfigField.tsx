@@ -37,7 +37,7 @@ export function ConfigField({
       )}
       data-field={fieldPath}
     >
-      <div className="flex items-center gap-sm mb-sm min-h-[18px]">
+      <div className="mb-sm flex min-h-[18px] items-center gap-sm">
         <span className={FIELD_LABEL}>{label}</span>
         {readOnly && <span className={FIELD_BADGE_BASE}>LOCKED</span>}
         {isDefault && (

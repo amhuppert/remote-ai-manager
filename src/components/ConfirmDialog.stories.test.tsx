@@ -24,7 +24,8 @@ describe("ConfirmDialog stories", () => {
     await Danger.run();
     expect(screen.getByText("Delete Session")).toBeInTheDocument();
     const confirmBtn = screen.getByText("Delete");
-    expect(confirmBtn.className).toContain("btn-danger");
+    expect(confirmBtn.className).toContain("text-red");
+    expect(confirmBtn.className).toContain("border-[var(--cc-red-border)]");
   });
 
   it("CustomLabels renders with overridden button text", async () => {

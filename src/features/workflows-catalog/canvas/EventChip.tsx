@@ -39,7 +39,7 @@ export default function EventChip({
   return (
     <div
       className={cn(
-        "pointer-events-none absolute z-raised inline-flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-[1px] whitespace-nowrap rounded-sm border border-solid px-[8px] py-[2px] font-mono text-[0.7rem] tracking-[0.02em]",
+        "pointer-events-none absolute z-raised inline-flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-[1px] rounded-sm border border-solid px-[8px] py-[2px] font-mono text-[0.7rem] tracking-[0.02em] whitespace-nowrap",
         toneClass,
       )}
       style={{

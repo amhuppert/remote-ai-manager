@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { CloseIcon } from "@/components/icons";
+import { cn } from "@/lib/ui/cn";
 import type { Suggestion } from "./command-suggestions";
 import type { FilterCategory, FilterToken } from "./filter-tokens";
 
@@ -17,6 +18,24 @@ export interface CommandConsoleProps {
   onBlur: () => void;
   inputRef: RefObject<HTMLInputElement | null>;
 }
+
+const barBase =
+  "relative flex items-center h-[44px] bg-bg-surface border border-solid rounded-md px-md transition-[border-color,box-shadow] duration-150 ease-[ease]";
+
+const tokenBase =
+  "inline-flex items-center gap-[6px] py-[3px] pr-[4px] pl-[8px] rounded-[4px] border border-solid font-mono text-[0.72rem] font-semibold whitespace-nowrap";
+// "target"/"branch" fall to the cyan default, matching the legacy
+// `.console-token` base.
+const tokenCat: Record<FilterCategory, string> = {
+  status: "bg-amber-glow border-[var(--cc-amber-a30)] text-amber",
+  archived: "bg-bg-raised border-border-default text-text-secondary",
+  target: "bg-cyan-glow border-cyan-glow-strong text-cyan",
+  branch: "bg-cyan-glow border-cyan-glow-strong text-cyan",
+};
+
+const hintKbd =
+  "font-mono text-[0.7rem] font-semibold py-[2px] px-[6px] rounded-[4px] bg-bg-base border border-solid border-border-subtle text-text-tertiary";
+const hintWord = "text-text-tertiary font-mono text-[0.66rem]";
 
 export default function CommandConsole({
   tokens,
@@ -111,20 +130,30 @@ export default function CommandConsole({
   const suggestListId = "command-console-suggestions";
 
   return (
-    <div className="v2-console" ref={wrapperRef}>
+    <div
+      className="relative z-header flex flex-col gap-sm px-xl py-md max-768:px-md max-768:py-sm"
+      ref={wrapperRef}
+    >
       <div
-        className={"console-bar" + (focused ? " focused" : "")}
+        className={cn(
+          barBase,
+          focused
+            ? "border-cyan shadow-[0_0_0_3px_var(--color-cyan-glow)]"
+            : "border-border-default",
+        )}
         onClick={() => inputRef.current?.focus()}
       >
-        <span className="prompt-glyph">›</span>
-        <div className="console-tokens">
+        <span className="mr-[10px] font-mono font-bold text-cyan [text-shadow:0_0_6px_var(--color-cyan-glow)]">
+          ›
+        </span>
+        <div className="flex flex-wrap items-center gap-[6px]">
           {tokens.map((t) => (
-            <span key={t.cat} className="console-token" data-cat={t.cat}>
-              <span className="tk-key">{t.key}:</span>
+            <span key={t.cat} className={cn(tokenBase, tokenCat[t.cat])}>
+              <span className="font-medium text-text-secondary">{t.key}:</span>
               <span>{t.value}</span>
               <button
                 type="button"
-                className="tk-x"
+                className="inline-flex size-[16px] items-center justify-center rounded-[3px] text-text-tertiary hover:bg-cyan-glow hover:text-cyan"
                 onClick={(e) => {
                   e.stopPropagation();
                   onRemoveToken(t.cat);
@@ -146,61 +175,29 @@ export default function CommandConsole({
             onFocus={onFocus}
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
-            style={{ minWidth: 200 }}
+            className="h-[44px] min-w-[200px] flex-1 border-0 bg-transparent font-mono text-[0.9rem] text-text-primary outline-0 placeholder:text-text-tertiary"
           />
         </div>
-        <div className="console-hints">
+        <div className="ml-md flex shrink-0 gap-[6px] max-768:hidden">
           {!focused ? (
             <>
-              <kbd>⌘K</kbd>
-              <span
-                style={{
-                  color: "var(--text-tertiary)",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: ".66rem",
-                  padding: "0 6px 0 2px",
-                }}
-              >
-                focus
-              </span>
-              <kbd>/</kbd>
-              <span
-                style={{
-                  color: "var(--text-tertiary)",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: ".66rem",
-                  padding: "0 6px 0 2px",
-                }}
-              >
-                actions
-              </span>
-              <kbd>:</kbd>
-              <span
-                style={{
-                  color: "var(--text-tertiary)",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: ".66rem",
-                  padding: "0 2px",
-                }}
-              >
-                filter
-              </span>
+              <kbd className={hintKbd}>⌘K</kbd>
+              <span className={cn(hintWord, "px-[2px] pr-[6px]")}>focus</span>
+              <kbd className={hintKbd}>/</kbd>
+              <span className={cn(hintWord, "px-[2px] pr-[6px]")}>actions</span>
+              <kbd className={hintKbd}>:</kbd>
+              <span className={cn(hintWord, "px-[2px]")}>filter</span>
             </>
           ) : (
-            <span
-              style={{
-                color: "var(--text-tertiary)",
-                fontFamily: "var(--font-mono)",
-                fontSize: ".66rem",
-              }}
-            >
-              ↑↓ nav · ⏎ apply · esc close
-            </span>
+            <span className={hintWord}>↑↓ nav · ⏎ apply · esc close</span>
           )}
         </div>
 
         {focused && suggestions.length > 0 && (
-          <div className="console-suggest" id={suggestListId}>
+          <div
+            className="absolute top-[calc(100%+8px)] right-0 left-0 z-header animate-[kebab-in_0.12s_ease] rounded-md border border-solid border-border-default bg-bg-elevated p-[6px] shadow-[var(--cc-shadow-popover)]"
+            id={suggestListId}
+          >
             <SuggestionGroups
               suggestions={suggestions}
               activeIdx={activeIdx}
@@ -220,6 +217,13 @@ interface SuggestionGroupsProps {
   onApply: (s: Suggestion) => void;
   onHover: (idx: number) => void;
 }
+
+const suggestItemBase =
+  "flex items-center gap-[10px] w-full py-[7px] px-[10px] border-0 rounded-sm text-text-primary font-mono text-[0.76rem] text-left [&_svg]:text-text-tertiary";
+const kindColor = {
+  action: "text-violet",
+  filter: "text-cyan",
+} as const;
 
 function SuggestionGroups({
   suggestions,
@@ -241,16 +245,19 @@ function SuggestionGroups({
     <>
       {Array.from(groups.entries()).map(([grp, items]) => (
         <div key={grp}>
-          <div className="grp-label">{grp}</div>
+          <div className="block px-[10px] pt-[6px] pb-[4px] font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+            {grp}
+          </div>
           {items.map(({ suggestion, idx }) => (
             <button
               key={idx}
               type="button"
-              className={
-                "suggest-item " +
-                suggestion.kind +
-                (idx === activeIdx ? " active" : "")
-              }
+              className={cn(
+                suggestItemBase,
+                idx === activeIdx
+                  ? "bg-cyan-glow"
+                  : "bg-transparent hover:bg-cyan-glow",
+              )}
               onMouseEnter={() => onHover(idx)}
               onMouseDown={(e) => e.preventDefault()}
               onClick={(e) => {
@@ -259,7 +266,14 @@ function SuggestionGroups({
               }}
             >
               <span>{suggestion.label}</span>
-              <span className="kind">{suggestion.kind}</span>
+              <span
+                className={cn(
+                  "ml-auto text-[0.7rem] tracking-[0.08em] uppercase",
+                  kindColor[suggestion.kind],
+                )}
+              >
+                {suggestion.kind}
+              </span>
             </button>
           ))}
         </div>

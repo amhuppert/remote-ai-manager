@@ -85,7 +85,7 @@ export default function ConversationTabs({
             )}
             {!active && tab.unread && (
               <span
-                className="size-[6px] rounded-full bg-amber shrink-0"
+                className="size-[6px] shrink-0 rounded-full bg-amber"
                 aria-label="Unread activity"
               />
             )}

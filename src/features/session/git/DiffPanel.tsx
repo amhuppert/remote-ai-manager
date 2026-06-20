@@ -1,11 +1,29 @@
 "use client";
 
 import { useState, useRef, useCallback } from "react";
+import { cn } from "@/lib/ui/cn";
+import { Tabs, Tab, TabCount } from "@/components/ui/Tabs";
+import { EmptyStateTitle, EmptyStateDesc } from "@/components/ui/EmptyState";
 import type { SessionDiff, CommitLogEntry } from "@/lib/git/schemas";
 import CommitHistory from "@/features/session/git/CommitHistory";
+import {
+  DIFF_FILE_SECTION_CLASS,
+  DIFF_FILE_HEADER_CLASS,
+  DIFF_FILE_NAME_CLASS,
+  DIFF_FILE_STAT_CLASS,
+  DIFF_LINE_BASE,
+  DIFF_LINE_TYPE,
+} from "@/features/session/git/diff-row-classes";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 
 type DiffTab = "uncommitted" | "commits";
+
+const NAV_BTN_CLASS =
+  "flex h-[28px] min-w-[28px] cursor-pointer items-center justify-center rounded-sm border border-solid border-border-default bg-transparent px-[6px] font-mono text-[0.75rem] font-medium text-text-secondary transition-all duration-150 ease-[ease] hover:border-border-strong hover:bg-bg-hover hover:text-text-primary hover:shadow-[0_0_8px_var(--color-cyan-glow)] [&_svg]:size-[16px] [&_svg]:shrink-0 max-768:h-[36px] max-768:min-h-[36px] max-768:min-w-[36px] max-768:px-xs max-768:[&_svg]:size-[14px]";
+const TOOLBAR_GROUP_CLASS =
+  "flex items-center gap-[3px] rounded-sm bg-[var(--cc-bg-base-a40)] p-[2px]";
+const TOOLBAR_SEP_CLASS =
+  "h-[20px] w-px shrink-0 bg-border-default mx-xs max-768:h-[16px]";
 
 interface DiffPanelProps {
   diff: SessionDiff;
@@ -134,51 +152,49 @@ export default function DiffPanel({
     <div className="sidebar-diff-panel">
       <div className="panel-header">
         <span className="panel-title">Diff vs {targetBranch}</span>
-        <span
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: "0.68rem",
-            color: "var(--text-tertiary)",
-          }}
-        >
-          <span style={{ color: "var(--green)" }}>+{diff.totalAdditions}</span>{" "}
-          <span style={{ color: "var(--red)" }}>-{diff.totalDeletions}</span>{" "}
-          &middot; {diff.files.length} file{diff.files.length !== 1 ? "s" : ""}
+        <span className="font-mono text-[0.68rem] text-text-tertiary">
+          <span className="text-green">+{diff.totalAdditions}</span>{" "}
+          <span className="text-red">-{diff.totalDeletions}</span> &middot;{" "}
+          {diff.files.length} file{diff.files.length !== 1 ? "s" : ""}
         </span>
       </div>
 
       {/* Tab bar */}
-      <div className="diff-tab-bar">
-        <div className="cc-tabs">
-          <button
-            className={`cc-tab${activeTab === "uncommitted" ? " active" : ""}`}
+      <div className="shrink-0 border-x-0 border-t-0 border-b border-solid border-border-subtle bg-[var(--cc-bg-surface-a30)] px-md py-sm">
+        <Tabs>
+          <Tab
+            active={activeTab === "uncommitted"}
             onClick={() => setActiveTab("uncommitted")}
             type="button"
           >
             Uncommitted
             {diff.files.length > 0 && (
-              <span className="cc-tab-count">{diff.files.length}</span>
+              <TabCount active={activeTab === "uncommitted"}>
+                {diff.files.length}
+              </TabCount>
             )}
-          </button>
-          <button
-            className={`cc-tab${activeTab === "commits" ? " active" : ""}`}
+          </Tab>
+          <Tab
+            active={activeTab === "commits"}
             onClick={() => setActiveTab("commits")}
             type="button"
           >
             Commits
             {commits.length > 0 && (
-              <span className="cc-tab-count">{commits.length}</span>
+              <TabCount active={activeTab === "commits"}>
+                {commits.length}
+              </TabCount>
             )}
-          </button>
-        </div>
+          </Tab>
+        </Tabs>
       </div>
 
       {activeTab === "uncommitted" ? (
         <>
-          <div className="diff-toolbar">
-            <div className="diff-toolbar-group">
+          <div className="flex shrink-0 items-center gap-sm border-x-0 border-t-0 border-b border-solid border-border-subtle bg-bg-raised px-md py-sm max-768:flex-nowrap max-768:px-sm max-768:py-xs">
+            <div className={TOOLBAR_GROUP_CLASS}>
               <button
-                className="diff-nav-btn"
+                className={NAV_BTN_CLASS}
                 onClick={collapseAll}
                 title="Collapse all files"
               >
@@ -195,7 +211,7 @@ export default function DiffPanel({
                 </svg>
               </button>
               <button
-                className="diff-nav-btn"
+                className={NAV_BTN_CLASS}
                 onClick={expandAll}
                 title="Expand all files"
               >
@@ -213,9 +229,12 @@ export default function DiffPanel({
                 </svg>
               </button>
             </div>
-            <div className="diff-toolbar-sep" />
-            <div className="diff-toolbar-group">
-              <button className="diff-nav-btn" onClick={() => navigateFile(-1)}>
+            <div className={TOOLBAR_SEP_CLASS} />
+            <div className={TOOLBAR_GROUP_CLASS}>
+              <button
+                className={NAV_BTN_CLASS}
+                onClick={() => navigateFile(-1)}
+              >
                 <svg
                   viewBox="0 0 14 14"
                   fill="none"
@@ -227,8 +246,10 @@ export default function DiffPanel({
                   <polyline points="9,2 5,7 9,12" />
                 </svg>
               </button>
-              <span className="diff-toolbar-label">Files</span>
-              <button className="diff-nav-btn" onClick={() => navigateFile(1)}>
+              <span className="mx-xs font-mono text-[0.7rem] font-semibold tracking-[0.06em] text-text-secondary uppercase max-768:hidden">
+                Files
+              </span>
+              <button className={NAV_BTN_CLASS} onClick={() => navigateFile(1)}>
                 <svg
                   viewBox="0 0 14 14"
                   fill="none"
@@ -241,9 +262,12 @@ export default function DiffPanel({
                 </svg>
               </button>
             </div>
-            <div className="diff-toolbar-sep" />
-            <div className="diff-toolbar-group">
-              <button className="diff-nav-btn" onClick={() => navigateHunk(-1)}>
+            <div className={TOOLBAR_SEP_CLASS} />
+            <div className={TOOLBAR_GROUP_CLASS}>
+              <button
+                className={NAV_BTN_CLASS}
+                onClick={() => navigateHunk(-1)}
+              >
                 <svg
                   viewBox="0 0 14 14"
                   fill="none"
@@ -255,8 +279,10 @@ export default function DiffPanel({
                   <polyline points="9,2 5,7 9,12" />
                 </svg>
               </button>
-              <span className="diff-toolbar-label">Changes</span>
-              <button className="diff-nav-btn" onClick={() => navigateHunk(1)}>
+              <span className="mx-xs font-mono text-[0.7rem] font-semibold tracking-[0.06em] text-text-secondary uppercase max-768:hidden">
+                Changes
+              </span>
+              <button className={NAV_BTN_CLASS} onClick={() => navigateHunk(1)}>
                 <svg
                   viewBox="0 0 14 14"
                   fill="none"
@@ -271,39 +297,47 @@ export default function DiffPanel({
             </div>
           </div>
 
-          <div className="diff-content" ref={contentRef}>
+          <div
+            className="flex-1 overflow-auto p-0 font-mono text-[0.75rem] leading-[1.7]"
+            ref={contentRef}
+          >
             {diff.files.length === 0 ? (
-              <div
-                className="empty-state"
-                style={{ padding: "var(--space-xl)" }}
-              >
-                <div className="empty-state-title">No changes</div>
-                <div className="empty-state-desc">
+              // Legacy `.empty-state` flattened its `3xl xl` padding to a flat
+              // `var(--space-xl)` via inline style; the EmptyState primitive's
+              // baked `px-xl py-3xl` cannot reproduce that, so the container is
+              // inlined with the effective `px-xl py-xl` utilities (mirroring
+              // SessionDiffViewer) while title/desc use the family primitives.
+              <div className="flex flex-col items-center justify-center px-xl py-xl text-center">
+                <EmptyStateTitle>No changes</EmptyStateTitle>
+                <EmptyStateDesc>
                   This session has no uncommitted changes.
-                </div>
+                </EmptyStateDesc>
               </div>
             ) : (
               diff.files.map((file, fileIdx) => {
                 const isCollapsed = collapsedFiles.has(fileIdx);
                 return (
-                  <div key={file.filePath} className="diff-file-section">
+                  <div key={file.filePath} className={DIFF_FILE_SECTION_CLASS}>
                     <div
                       ref={(el) => {
                         fileHeaderRefs.current[fileIdx] = el;
                       }}
-                      className={`diff-file-header${isCollapsed ? " collapsed" : ""}`}
+                      data-collapsed={isCollapsed}
+                      className={cn(DIFF_FILE_HEADER_CLASS, "group/dfh")}
                       onClick={() => toggleFile(fileIdx)}
                     >
-                      <span className="diff-file-chevron">&#9662;</span>
-                      <span className="diff-file-name">{file.filePath}</span>
-                      <span className="diff-file-stat">
-                        <span className="add-count">+{file.additions}</span>{" "}
-                        <span className="rm-count">-{file.deletions}</span>
+                      <span className="shrink-0 text-[0.7rem] leading-none text-text-tertiary transition-transform duration-150 ease-[ease] group-data-[collapsed=true]/dfh:-rotate-90">
+                        &#9662;
+                      </span>
+                      <span className={DIFF_FILE_NAME_CLASS}>
+                        {file.filePath}
+                      </span>
+                      <span className={DIFF_FILE_STAT_CLASS}>
+                        <span className="text-green">+{file.additions}</span>{" "}
+                        <span className="text-red">-{file.deletions}</span>
                       </span>
                     </div>
-                    <div
-                      className={`diff-file-lines${isCollapsed ? " collapsed" : ""}`}
-                    >
+                    <div className={cn("min-w-fit", isCollapsed && "hidden")}>
                       {file.hunks.map((hunk, hunkIdx) => {
                         const currentHunkRefIdx = hunkRefIndex++;
                         return (
@@ -316,7 +350,10 @@ export default function DiffPanel({
                                     ref={(el) => {
                                       hunkRefs.current[currentHunkRefIdx] = el;
                                     }}
-                                    className="diff-line hunk-header"
+                                    className={cn(
+                                      DIFF_LINE_BASE,
+                                      DIFF_LINE_TYPE["hunk-header"],
+                                    )}
                                   >
                                     {line.content}
                                   </div>
@@ -325,7 +362,10 @@ export default function DiffPanel({
                               return (
                                 <div
                                   key={lineIdx}
-                                  className={`diff-line ${line.type}`}
+                                  className={cn(
+                                    DIFF_LINE_BASE,
+                                    DIFF_LINE_TYPE[line.type],
+                                  )}
                                 >
                                   {line.content}
                                 </div>
@@ -342,7 +382,7 @@ export default function DiffPanel({
           </div>
         </>
       ) : (
-        <div className="diff-content">
+        <div className="flex-1 overflow-auto p-0 font-mono text-[0.75rem] leading-[1.7]">
           <CommitHistory
             commits={commits}
             projectName={projectName}

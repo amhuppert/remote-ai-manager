@@ -59,9 +59,7 @@ describe("ImageMarkerChip", () => {
         })}
       />,
     );
-    const img = container.querySelector(
-      "img.image-marker-chip__thumbnail",
-    ) as HTMLImageElement | null;
+    const img = container.querySelector("img") as HTMLImageElement | null;
     expect(img).not.toBeNull();
     expect(img!.getAttribute("src")).toBe("blob:abc-123");
   });
@@ -70,7 +68,7 @@ describe("ImageMarkerChip", () => {
     const { container } = render(
       <ImageMarkerChip {...buildProps({ attrs: { index: 7 } })} />,
     );
-    const label = container.querySelector(".image-marker-chip__index");
+    const label = container.querySelector("[data-attachment-id] > span");
     expect(label?.textContent).toBe("#7");
   });
 
@@ -78,7 +76,7 @@ describe("ImageMarkerChip", () => {
     const { container } = render(
       <ImageMarkerChip {...buildProps({ attrs: { index: 42 } })} />,
     );
-    const label = container.querySelector(".image-marker-chip__index");
+    const label = container.querySelector("[data-attachment-id] > span");
     expect(label?.textContent).toBe("#42");
   });
 
@@ -88,7 +86,7 @@ describe("ImageMarkerChip", () => {
       <ImageMarkerChip {...buildProps({ deleteNode })} />,
     );
     const btn = container.querySelector(
-      ".image-marker-chip__remove",
+      '[aria-label="Remove image"]',
     ) as HTMLButtonElement | null;
     expect(btn).not.toBeNull();
     fireEvent.click(btn!);
@@ -106,7 +104,7 @@ describe("ImageMarkerChip", () => {
       />,
     );
     const btn = container.querySelector(
-      ".image-marker-chip__remove",
+      '[aria-label="Remove image"]',
     ) as HTMLButtonElement | null;
     fireEvent.click(btn!);
     expect(onRemoveAttachment).toHaveBeenCalledWith("att-xyz");
@@ -117,7 +115,7 @@ describe("ImageMarkerChip", () => {
       <ImageMarkerChip {...buildProps({ onRemoveAttachment: null })} />,
     );
     const btn = container.querySelector(
-      ".image-marker-chip__remove",
+      '[aria-label="Remove image"]',
     ) as HTMLButtonElement | null;
     expect(() => fireEvent.click(btn!)).not.toThrow();
   });
@@ -126,7 +124,7 @@ describe("ImageMarkerChip", () => {
     const { container } = render(
       <ImageMarkerChip {...buildProps({ selected: true })} />,
     );
-    const wrapper = container.querySelector(".image-marker-chip");
+    const wrapper = container.querySelector("[data-attachment-id]");
     expect(wrapper?.getAttribute("data-selected")).toBe("true");
   });
 
@@ -134,7 +132,7 @@ describe("ImageMarkerChip", () => {
     const { container } = render(
       <ImageMarkerChip {...buildProps({ selected: false })} />,
     );
-    const wrapper = container.querySelector(".image-marker-chip");
+    const wrapper = container.querySelector("[data-attachment-id]");
     expect(wrapper?.getAttribute("data-selected")).toBe("false");
   });
 
@@ -144,9 +142,7 @@ describe("ImageMarkerChip", () => {
         {...buildProps({ attrs: { fileName: "screenshot.png" } })}
       />,
     );
-    const img = container.querySelector(
-      "img.image-marker-chip__thumbnail",
-    ) as HTMLImageElement | null;
+    const img = container.querySelector("img") as HTMLImageElement | null;
     expect(img?.getAttribute("alt")).toBe("screenshot.png");
   });
 
@@ -154,9 +150,7 @@ describe("ImageMarkerChip", () => {
     const { container } = render(
       <ImageMarkerChip {...buildProps({ attrs: { fileName: null } })} />,
     );
-    const img = container.querySelector(
-      "img.image-marker-chip__thumbnail",
-    ) as HTMLImageElement | null;
+    const img = container.querySelector("img") as HTMLImageElement | null;
     expect(img?.getAttribute("alt")).toBe("");
   });
 });

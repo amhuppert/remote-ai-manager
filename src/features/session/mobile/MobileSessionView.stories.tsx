@@ -8,28 +8,6 @@ import ModelSelector from "@/components/ModelSelector";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import ConversationNav from "@/components/ConversationNav";
 import { ContextFillIndicator } from "@/components/ContextFillIndicator";
-import MobileInfoPanel from "@/features/session/mobile/MobileInfoPanel";
-import { sessionStateSchema } from "@/lib/sessions/schemas";
-import { conversationStateSchema } from "@/lib/conversations/schemas";
-
-const infoPanelConversation = conversationStateSchema.parse({
-  id: "9d0b1290-c2a6-4d9d-b62f-6e6637442d1e",
-  transcriptPath: null,
-  status: "awaiting",
-  promptCount: 7,
-  createdAt: "2026-03-18T14:30:00Z",
-  lastActivityAt: "2026-03-18T14:30:00Z",
-  backendRef: { backend: "claude", sessionId: "sess_abc123xyz456" },
-});
-
-const infoPanelSession = sessionStateSchema.parse({
-  sessionName: "fix-authentication-flow-issue",
-  worktreePath: "/home/user/projects/my-app/.worktrees/fix-auth",
-  branchName: "csm/fix-authentication-flow-issue",
-  createdAt: "2026-03-18T14:30:00Z",
-  lastActivityAt: "2026-03-18T14:30:00Z",
-  conversations: [infoPanelConversation],
-});
 
 /**
  * Full mobile session view mockup demonstrating the optimized mobile layout:
@@ -325,15 +303,85 @@ function MobileSessionViewDemo({
 
             {/* Info panel */}
             {panel === "info" && (
-              <MobileInfoPanel
-                session={infoPanelSession}
-                activeConversation={infoPanelConversation}
-                conversationId={infoPanelConversation.id}
-                statusDotClass="amber"
-                displayStatus="awaiting"
-                contextPercent={contextPercent}
-                buildContext={() => "Mobile session context"}
-              />
+              <div className="flex flex-col gap-[2px] overflow-y-auto px-sm py-md">
+                <div className="flex items-center gap-sm rounded-sm p-sm font-mono text-[0.78rem] odd:bg-[var(--cc-bg-surface-a30)]">
+                  <span className="min-w-[80px] shrink-0 text-[0.7rem] font-semibold uppercase tracking-[0.06em] text-text-tertiary">
+                    Status
+                  </span>
+                  <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-text-secondary">
+                    <span
+                      className="status-dot"
+                      style={{
+                        width: 6,
+                        height: 6,
+                        display: "inline-block",
+                        marginRight: 6,
+                      }}
+                    />
+                    awaiting
+                  </span>
+                </div>
+                <div className="flex items-center gap-sm rounded-sm p-sm font-mono text-[0.78rem] odd:bg-[var(--cc-bg-surface-a30)]">
+                  <span className="min-w-[80px] shrink-0 text-[0.7rem] font-semibold uppercase tracking-[0.06em] text-text-tertiary">
+                    Branch
+                  </span>
+                  <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-text-secondary">
+                    csm/fix-authentication-flow-issue
+                  </span>
+                </div>
+                <div className="flex items-center gap-sm rounded-sm p-sm font-mono text-[0.78rem] odd:bg-[var(--cc-bg-surface-a30)]">
+                  <span className="min-w-[80px] shrink-0 text-[0.7rem] font-semibold uppercase tracking-[0.06em] text-text-tertiary">
+                    Created
+                  </span>
+                  <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-text-secondary">
+                    Mar 18, 2:30 PM
+                  </span>
+                </div>
+                <div className="flex items-center gap-sm rounded-sm p-sm font-mono text-[0.78rem] odd:bg-[var(--cc-bg-surface-a30)]">
+                  <span className="min-w-[80px] shrink-0 text-[0.7rem] font-semibold uppercase tracking-[0.06em] text-text-tertiary">
+                    Prompts
+                  </span>
+                  <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-text-secondary">
+                    7
+                  </span>
+                </div>
+                <div className="flex items-center gap-sm rounded-sm p-sm font-mono text-[0.78rem] odd:bg-[var(--cc-bg-surface-a30)]">
+                  <span className="min-w-[80px] shrink-0 text-[0.7rem] font-semibold uppercase tracking-[0.06em] text-text-tertiary">
+                    Worktree
+                  </span>
+                  <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-text-secondary">
+                    /home/user/projects/my-app/.worktrees/fix-auth
+                  </span>
+                </div>
+                <div className="flex items-center gap-sm rounded-sm p-sm font-mono text-[0.78rem] odd:bg-[var(--cc-bg-surface-a30)]">
+                  <span className="min-w-[80px] shrink-0 text-[0.7rem] font-semibold uppercase tracking-[0.06em] text-text-tertiary">
+                    Conv ID
+                  </span>
+                  <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-text-secondary">
+                    9d0b1290-c2a6-4d9d-b62f-6e6637442d1e
+                  </span>
+                </div>
+                <div className="flex items-center gap-sm rounded-sm p-sm font-mono text-[0.78rem] odd:bg-[var(--cc-bg-surface-a30)]">
+                  <span className="min-w-[80px] shrink-0 text-[0.7rem] font-semibold uppercase tracking-[0.06em] text-text-tertiary">
+                    Context
+                  </span>
+                  <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-text-secondary">
+                    <ContextFillIndicator percentage={42} />
+                  </span>
+                </div>
+                <div className="border-x-0 border-b-0 border-t border-solid border-border-subtle px-sm py-md">
+                  <button
+                    className="btn btn-sm"
+                    style={{
+                      display: "flex",
+                      width: "100%",
+                      justifyContent: "center",
+                    }}
+                  >
+                    {"\u2398"} Copy Context
+                  </button>
+                </div>
+              </div>
             )}
           </div>
         </div>
@@ -450,7 +498,7 @@ const meta = {
         }}
       >
         <style>{`
-          .mobile-action-menu-trigger {
+          button[aria-label="Session actions"] {
             display: flex !important;
             align-items: center;
             justify-content: center;
@@ -466,7 +514,7 @@ const meta = {
             line-height: 1;
             letter-spacing: 2px;
           }
-          .mobile-action-menu-trigger:hover {
+          button[aria-label="Session actions"]:hover {
             background: var(--bg-hover);
             color: var(--text-primary);
             border-color: var(--border-default);

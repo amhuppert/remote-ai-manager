@@ -14,6 +14,7 @@ import {
   useInteractions,
 } from "@floating-ui/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { cn } from "@/lib/ui/cn";
 import { useOverlayScope } from "@/hooks/useOverlayScope";
 import ApprovalGatePanel from "@/components/ApprovalGatePanel";
 import AskQuestionPanel from "@/components/AskQuestionPanel";
@@ -65,6 +66,23 @@ const STATUS_LABEL: Record<ActiveConversationStatus, string> = {
 };
 const EMPTY_IMAGE_ATTACHMENTS: ImageAttachment[] = [];
 const DEFAULT_REPLY_PLACEHOLDER = "Reply to this conversation...";
+
+// Status dot color (legacy `.peek__dot--<status>`).
+const PEEK_DOT: Record<ActiveConversationStatus, string> = {
+  running:
+    "bg-cyan shadow-[0_0_6px_var(--color-cyan-glow-strong)] animate-[peek-dot-pulse_1.6s_ease-in-out_infinite]",
+  waiting_for_input: "bg-amber shadow-[0_0_6px_var(--color-amber-glow)]",
+  awaiting: "bg-green shadow-[0_0_4px_var(--color-green-glow)]",
+  new: "bg-blue shadow-[0_0_6px_var(--color-blue-glow)]",
+};
+
+// Status pill color (legacy `.peek__status--<status>`); approval reuses amber.
+const PEEK_STATUS_COLOR: Record<ActiveConversationStatus, string> = {
+  waiting_for_input: "text-amber",
+  running: "text-cyan",
+  awaiting: "text-green",
+  new: "text-blue",
+};
 
 function formatPeekTime(isoDate: string): string {
   const timestamp = new Date(isoDate).getTime();
@@ -193,7 +211,7 @@ function PeekReplyComposer({
   const sendDisabled = !hasReplyContent || isRecording || isProcessing;
 
   return (
-    <div className="peek__composer-box">
+    <div className="peek__composer-box grid grid-cols-[minmax(0,1fr)_auto] items-end gap-sm rounded-md border border-solid border-cyan-dim bg-bg-surface px-[10px] py-[8px] shadow-[0_0_0_3px_var(--color-cyan-glow)] focus-within:border-cyan focus-within:shadow-[0_0_0_3px_var(--color-cyan-glow-strong)]">
       <PromptEditor
         ref={editorRef}
         conversationId={conversation.id}
@@ -211,7 +229,7 @@ function PeekReplyComposer({
         placeholder={placeholder}
         onShowPlaceholder={setPlaceholder}
       />
-      <div className="peek__composer-actions">
+      <div className="inline-flex items-center gap-xs [&_.voice-btn]:size-[28px] [&_.voice-btn]:rounded-sm [&_.voice-btn_svg]:size-[16px]">
         <VoiceRecordButton
           isRecording={isRecording}
           isProcessing={isProcessing}
@@ -221,7 +239,7 @@ function PeekReplyComposer({
         />
         <button
           type="button"
-          className="peek__send"
+          className="inline-flex min-h-[28px] cursor-pointer items-center justify-center rounded-sm border-0 bg-cyan px-[10px] py-[4px] font-mono text-[9.5px] font-semibold tracking-[0.06em] text-text-inverse uppercase disabled:cursor-not-allowed disabled:opacity-50"
           onClick={handleSubmit}
           disabled={sendDisabled}
         >
@@ -318,9 +336,11 @@ export default function PeekPopover({
   const title = getConversationTitle(conversation);
   const timeLabel = formatPeekTime(conversation.lastActivityAt);
   const sessionLabel = conversation.branchName ?? conversation.sessionName;
-  const className = ["peek", hasPendingQuestions ? "peek--asking" : null]
-    .filter(Boolean)
-    .join(" ");
+  // The ≤800px reposition pins the popover to the bottom of the viewport,
+  // overriding the inline floating-ui positioning (hence `!`).
+  const className = cn(
+    "z-popover flex max-h-[620px] w-[460px] animate-[peek-in_0.16s_cubic-bezier(0.2,0.7,0.3,1)] flex-col overflow-hidden rounded-lg border border-solid border-border-strong bg-bg-surface font-body text-text-primary shadow-[0_18px_48px_var(--cc-black-a50),0_0_0_1px_var(--cc-cyan-a04)] max-800:fixed! max-800:inset-[auto_12px_12px]! max-800:max-h-[min(72dvh,620px)]! max-800:w-auto max-800:transform-none!",
+  );
 
   useEffect(() => {
     refs.setReference(anchorEl);
@@ -391,40 +411,49 @@ export default function PeekPopover({
           aria-label="Conversation peek"
           {...getFloatingProps()}
         >
-          <header className="peek__head">
-            <div className="peek__top">
+          <header className="border-x-0 border-t-0 border-b border-solid border-border-default bg-bg-base p-md">
+            <div className="mb-xs flex min-w-0 items-center gap-sm">
               <span
-                className={`peek__dot peek__dot--${conversation.status}`}
+                className={cn(
+                  "size-[7px] flex-none rounded-full bg-text-tertiary",
+                  PEEK_DOT[conversation.status],
+                )}
                 aria-hidden="true"
               />
-              <span className="peek__title" title={title}>
+              <span
+                className="min-w-0 flex-1 overflow-hidden font-display text-[14px] font-semibold text-ellipsis whitespace-nowrap text-text-primary"
+                title={title}
+              >
                 {title}
               </span>
               <button
                 type="button"
-                className="peek__btn peek__btn--primary"
+                className="inline-flex min-h-[28px] cursor-pointer items-center justify-center gap-[5px] rounded-sm border border-solid border-cyan-dim bg-cyan-glow px-[9px] py-[4px] font-mono text-[9.5px] font-semibold tracking-[0.07em] whitespace-nowrap text-cyan uppercase hover:border-cyan hover:bg-cyan hover:text-text-inverse"
                 onClick={handleOpenFull}
               >
                 Open conversation
               </button>
               <button
                 type="button"
-                className="peek__close"
+                className="inline-flex size-[24px] flex-none cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent text-text-tertiary hover:bg-bg-hover hover:text-text-primary"
                 onClick={onClose}
                 aria-label="Close peek"
               >
                 <CloseIcon size={16} />
               </button>
             </div>
-            <div className="peek__meta">
+            <div className="flex min-w-0 flex-wrap items-center gap-[6px] font-mono text-[10.5px] leading-[1.4] text-text-tertiary [&_b]:font-medium [&_b]:text-text-secondary">
               {conversation.pendingApproval !== null ? (
-                <span className="peek__status peek__status--approval">
+                <span className="inline-flex flex-none items-center gap-xs font-mono text-[10px] leading-[1.4] font-semibold tracking-[0.08em] text-amber uppercase">
                   awaiting approval ·{" "}
                   {formatPeekTime(conversation.pendingApproval.requestedAt)}
                 </span>
               ) : (
                 <span
-                  className={`peek__status peek__status--${conversation.status}`}
+                  className={cn(
+                    "inline-flex flex-none items-center gap-xs font-mono text-[10px] leading-[1.4] font-semibold tracking-[0.08em] uppercase",
+                    PEEK_STATUS_COLOR[conversation.status],
+                  )}
                 >
                   {STATUS_LABEL[conversation.status]}
                 </span>
@@ -432,7 +461,7 @@ export default function PeekPopover({
               <span aria-hidden="true">·</span>
               <b>{conversation.projectName}</b>
               <span aria-hidden="true">·</span>
-              <span className="peek__meta-session">
+              <span className="inline-flex min-w-0 items-center gap-[4px] overflow-hidden text-ellipsis whitespace-nowrap [&_svg]:flex-none">
                 <BranchIcon size={12} />
                 {sessionLabel}
               </span>
@@ -447,16 +476,27 @@ export default function PeekPopover({
             </div>
           </header>
 
-          <div className="peek__stage">
-            <div className="peek__body" ref={setBodyRef}>
+          <div className="relative flex min-h-0 flex-auto flex-col">
+            <div
+              className={cn(
+                "flex min-h-0 flex-auto flex-col gap-md overflow-y-auto bg-bg-surface",
+                hasPendingQuestions
+                  ? "max-h-none px-md pt-md pb-[66px]"
+                  : "max-h-[310px] p-md",
+              )}
+              ref={setBodyRef}
+              data-testid="peek-body"
+            >
               {showFallbackBanner && (
-                <div className="peek__awaiting">
+                <div className="flex flex-col gap-xs rounded-sm border border-solid border-amber-dim bg-amber-glow px-[11px] py-[8px] font-body text-[11.5px] leading-[1.5] text-amber">
                   {conversation.pendingQuestion}
                 </div>
               )}
 
               {transcriptMessages.length === 0 ? (
-                <div className="peek__empty">No transcript messages yet.</div>
+                <div className="px-0 py-md text-center font-body text-[12px] text-text-tertiary">
+                  No transcript messages yet.
+                </div>
               ) : (
                 transcriptMessages.map((message, index) => (
                   <MessageRow
@@ -481,7 +521,7 @@ export default function PeekPopover({
             {(!hasPendingQuestions ||
               (conversation.pendingApproval !== null &&
                 approvalGate != null)) && (
-              <footer className="peek__composer">
+              <footer className="flex-none border-x-0 border-t border-b-0 border-solid border-border-default bg-bg-base px-md pt-[9px] pb-md">
                 {conversation.pendingApproval !== null &&
                   approvalGate != null && (
                     <ApprovalGatePanel

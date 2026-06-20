@@ -2,6 +2,7 @@
 
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps, Node } from "@xyflow/react";
+import { cn } from "@/lib/ui/cn";
 import type {
   ContextDisplayPhase,
   DisplayValidators,
@@ -13,6 +14,126 @@ import {
   getDisplayValidators,
 } from "./derive-graph";
 import type { ContextWaitState } from "./derive-wait-state";
+
+type WaitKind = ContextWaitState["kind"];
+
+/**
+ * Base appearance of the custom graph node. `graph-node` / `selected` survive as
+ * rule-less class hooks because preserved React Flow rules in workflow-graph.css
+ * (`.graph-node:hover .react-flow__handle`, `.graph-node.selected .react-flow__handle`)
+ * still target the handle through them, and the handle reads the inherited
+ * `--node-color` set here. The `::before`/`::after` decorative gradients are
+ * carried as `before:`/`after:` utilities; their opacity is toggled per status.
+ */
+const NODE_BASE = cn(
+  "graph-node",
+  "relative w-[248px] overflow-hidden rounded-[14px] pt-[18px] pr-[16px] pb-[14px] pl-[16px]",
+  "cursor-pointer border border-solid border-border-subtle transition-opacity duration-200",
+  "bg-[linear-gradient(175deg,var(--cc-graph-node-grad-top)_0%,var(--cc-graph-node-grad-bottom)_100%)]",
+  "[--node-color-glow:transparent] [--node-color:var(--border-subtle)]",
+  "before:absolute before:top-[-1px] before:right-[10%] before:left-[10%] before:h-[2px] before:rounded-[2px] before:bg-[linear-gradient(90deg,transparent_0%,var(--node-color)_30%,var(--node-color)_70%,transparent_100%)] before:opacity-0 before:transition-opacity before:duration-300 before:content-['']",
+  "after:pointer-events-none after:absolute after:top-0 after:right-[15%] after:left-[15%] after:h-[24px] after:bg-[radial-gradient(ellipse_at_top_center,var(--node-color-glow)_0%,transparent_70%)] after:opacity-0 after:transition-opacity after:duration-300 after:content-['']",
+);
+
+const HOVER_LIFT = "hover:shadow-[0_4px_20px_var(--cc-black-a35)]";
+
+/** Effective node appearance per status when NOT selected (cascade resolved). */
+const STATUS_UNSELECTED: Partial<Record<WaitKind, string>> = {
+  running:
+    "[--node-color:var(--cyan)] [--node-color-glow:var(--cyan-glow)] border-[var(--cc-cyan-a25)] [border-top-color:var(--cc-cyan-a50)] [animation:pulse-node_2s_ease-in-out_infinite] before:opacity-100 after:opacity-100",
+  validating:
+    "[--node-color:var(--amber)] [--node-color-glow:var(--amber-glow)] border-[var(--cc-amber-a30)] [border-top-color:var(--cc-amber-a55)] [animation:pulse-node_2s_ease-in-out_infinite] before:opacity-100 after:opacity-100",
+  "awaiting-approval":
+    "[--node-color:var(--amber)] [--node-color-glow:var(--amber-glow)] border-[var(--cc-amber-a40)] [border-top-color:var(--cc-amber-a60)] [animation:pulse-node_2.5s_ease-in-out_infinite] before:opacity-100 after:opacity-100",
+  completed:
+    "[--node-color:var(--green)] [--node-color-glow:var(--cc-green-a10)] border-[var(--cc-green-a20)] [border-top-color:var(--cc-green-a45)] before:opacity-100 after:opacity-70 " +
+    HOVER_LIFT,
+  merging:
+    "[--node-color:var(--green)] [--node-color-glow:var(--cc-green-a18)] border-[var(--cc-green-a32)] [border-top-color:var(--cc-green-a60)] [animation:pulse-node_1.6s_ease-in-out_infinite] before:opacity-100 after:opacity-100",
+  halted:
+    "[--node-color:var(--red)] [--node-color-glow:var(--red-glow)] border-[var(--cc-red-a20)] [border-top-color:var(--cc-red-a45)] before:opacity-100 after:opacity-70 " +
+    HOVER_LIFT,
+};
+
+/** Effective node appearance per status when selected (compound rules resolved). */
+const STATUS_SELECTED: Partial<Record<WaitKind, string>> = {
+  running:
+    "[--node-color:var(--cyan)] [--node-color-glow:var(--cyan-glow)] border-[var(--cc-cyan-a40)] [animation:pulse-node-selected_2s_ease-in-out_infinite] before:opacity-100 after:opacity-100",
+  validating:
+    "[--node-color:var(--amber)] [--node-color-glow:var(--amber-glow)] border-[var(--cc-amber-a45)] [animation:pulse-node-validating-selected_2s_ease-in-out_infinite] before:opacity-100 after:opacity-100",
+  "awaiting-approval":
+    "[--node-color:var(--amber)] [--node-color-glow:var(--amber-glow)] border-[var(--cc-amber-a40)] [border-top-color:var(--cc-amber-a60)] [animation:pulse-node_2.5s_ease-in-out_infinite] before:opacity-100 after:opacity-100",
+  completed:
+    "[--node-color:var(--green)] [--node-color-glow:var(--cc-green-a10)] border-[var(--cc-green-a20)] [border-top-color:var(--cc-green-a45)] shadow-[0_0_20px_var(--cyan-glow)] before:opacity-100 after:opacity-70",
+  merging:
+    "[--node-color:var(--green)] [--node-color-glow:var(--cc-green-a18)] border-[color-mix(in_srgb,var(--green)_50%,transparent)] [animation:pulse-node-merging-selected_1.6s_ease-in-out_infinite] before:opacity-100 after:opacity-100",
+  halted:
+    "[--node-color:var(--red)] [--node-color-glow:var(--red-glow)] border-[var(--cc-red-a20)] [border-top-color:var(--cc-red-a45)] shadow-[0_0_20px_var(--cyan-glow)] before:opacity-100 after:opacity-70",
+};
+
+/** Selected with a status that has no status-specific styling (e.g. ready). */
+const SELECTED_BASE =
+  "[--node-color:var(--cyan)] [--node-color-glow:var(--cc-cyan-a12)] border-[var(--cc-cyan-a35)] shadow-[0_0_20px_var(--cyan-glow)] before:opacity-100 after:opacity-100";
+
+function nodeAppearance(kind: WaitKind | undefined, selected: boolean): string {
+  if (!selected) {
+    return (kind && STATUS_UNSELECTED[kind]) ?? HOVER_LIFT;
+  }
+  return (kind && STATUS_SELECTED[kind]) ?? SELECTED_BASE;
+}
+
+const BADGE_BASE =
+  "mt-[2px] shrink-0 whitespace-nowrap rounded-[20px] px-[10px] py-[4px] text-[0.7rem] font-semibold uppercase tracking-[0.06em]";
+
+const BADGE_VARIANT: Record<string, string> = {
+  pending:
+    "border border-solid border-border-default bg-transparent text-text-tertiary",
+  running:
+    "border border-solid border-[var(--cyan-glow-strong)] bg-[var(--cc-cyan-a08)] text-cyan",
+  validating:
+    "border border-solid border-[var(--cc-amber-a30)] bg-[var(--cc-amber-a10)] text-amber",
+  completed:
+    "border border-solid border-[var(--cc-green-border)] bg-[var(--cc-green-a08)] text-green",
+  halted:
+    "border border-solid border-[var(--cc-red-a25)] bg-[var(--cc-red-a08)] text-red",
+  "awaiting-approval":
+    "border border-solid border-[var(--cc-amber-a30)] bg-[var(--cc-amber-a10)] text-amber",
+  merging:
+    "border border-solid border-[var(--cc-green-a35)] bg-[var(--cc-green-a10)] text-green",
+};
+
+const PROGRESS_FILL_BASE =
+  "h-full rounded-[4px] transition-[width] duration-[400ms] ease-[ease]";
+
+const PROGRESS_FILL_VARIANT: Record<string, string> = {
+  pending: "bg-border-default",
+  running: "bg-cyan shadow-[0_0_6px_var(--cyan-glow)]",
+  validating: "bg-amber shadow-[0_0_6px_var(--amber-glow)]",
+  completed: "bg-green shadow-[0_0_6px_var(--green-glow)]",
+  halted: "bg-red",
+  merging:
+    "bg-[linear-gradient(90deg,var(--green)_0%,var(--cc-tdd-border-hover)_50%,var(--green)_100%)] [background-size:24px_100%] shadow-[0_0_6px_var(--green-glow)] [animation:merging-chevron_1.1s_linear_infinite]",
+};
+
+const FOOTER_COLOR: Partial<Record<WaitKind, string>> = {
+  running: "text-text-secondary",
+  validating: "text-amber",
+  completed: "text-text-secondary",
+  halted: "text-text-secondary",
+};
+
+const VALIDATOR_PILL_BASE =
+  "inline-flex items-center gap-[4px] rounded-[4px] border border-solid px-[8px] py-[3px] text-[0.68rem] font-semibold uppercase tracking-[0.05em]";
+
+const VALIDATOR_PILL_VARIANT = {
+  empty:
+    "border-dashed border-border-subtle bg-[var(--cc-graph-ink-a55)] normal-case italic tracking-normal text-text-tertiary",
+  script:
+    "border-border-default bg-[var(--cc-graph-ink-a55)] text-text-primary",
+  claude: "border-[var(--cyan-glow-strong)] bg-[var(--cc-cyan-a06)] text-cyan",
+  codex: "border-[var(--cc-codex-violet-a35)] bg-violet-glow text-violet",
+  approval: "border-[var(--amber-dim)] bg-[var(--amber-glow)] text-amber",
+} as const;
 
 type ExecutionContextNodeType = Node<
   ExecutionContextNodeData,
@@ -134,11 +255,15 @@ function ValidatorPills({
     pills.push({ kind: "agent", backend: validators.agent });
 
   return (
-    <div className="graph-node-validators">
-      <div className="graph-node-validators-label">Validators</div>
-      <div className="graph-node-validator-pills">
+    <div className="relative z-[1] mb-[10px]">
+      <div className="mb-[4px] text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+        Validators
+      </div>
+      <div className="flex flex-wrap gap-[4px]">
         {pills.length === 0 ? (
-          <span className="graph-node-validator-pill graph-node-validator-pill--empty">
+          <span
+            className={cn(VALIDATOR_PILL_BASE, VALIDATOR_PILL_VARIANT.empty)}
+          >
             none
           </span>
         ) : (
@@ -146,10 +271,13 @@ function ValidatorPills({
             pill.kind === "script" ? (
               <span
                 key={`script-${idx}`}
-                className="graph-node-validator-pill graph-node-validator-pill--script"
+                className={cn(
+                  VALIDATOR_PILL_BASE,
+                  VALIDATOR_PILL_VARIANT.script,
+                )}
                 title="Script validator enabled"
               >
-                <span className="graph-node-validator-glyph" aria-hidden="true">
+                <span className="text-[0.7rem] leading-none" aria-hidden="true">
                   ▣
                 </span>
                 Script
@@ -157,10 +285,13 @@ function ValidatorPills({
             ) : (
               <span
                 key={`agent-${idx}`}
-                className={`graph-node-validator-pill graph-node-validator-pill--${pill.backend}`}
+                className={cn(
+                  VALIDATOR_PILL_BASE,
+                  VALIDATOR_PILL_VARIANT[pill.backend],
+                )}
                 title={`Agent validator: ${pill.backend === "codex" ? "Codex" : "Claude"}`}
               >
-                <span className="graph-node-validator-glyph" aria-hidden="true">
+                <span className="text-[0.7rem] leading-none" aria-hidden="true">
                   ◆
                 </span>
                 {pill.backend === "codex" ? "Codex" : "Claude"}
@@ -170,12 +301,12 @@ function ValidatorPills({
         )}
       </div>
       {approvalGate && (
-        <div className="graph-node-gate">
+        <div className="relative mt-[8px] pt-[8px] before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-[linear-gradient(90deg,var(--amber-dim),transparent_70%)] before:opacity-60 before:content-['']">
           <span
-            className="graph-node-validator-pill graph-node-validator-pill--approval"
+            className={cn(VALIDATOR_PILL_BASE, VALIDATOR_PILL_VARIANT.approval)}
             title="Human approval gate — requires manual sign-off before this context can complete"
           >
-            <span className="graph-node-validator-glyph" aria-hidden="true">
+            <span className="text-[0.7rem] leading-none" aria-hidden="true">
               ✓
             </span>
             Human approval
@@ -218,48 +349,58 @@ export default function ExecutionContextNode({
   const validators = getDisplayValidators(context);
   const approvalGate = getDisplayApprovalGate(context);
 
-  const nodeClassName = [
-    "graph-node",
-    selected && "selected",
-    waitState && `status-${waitState.kind}`,
-    waitState?.kind === "dependency-blocked" &&
-      waitState.blockedByApproval &&
-      "gate-blocked",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const gateBlocked =
+    waitState?.kind === "dependency-blocked" && waitState.blockedByApproval;
 
   return (
-    <div className={nodeClassName}>
+    <div
+      className={cn(
+        NODE_BASE,
+        selected && "selected",
+        nodeAppearance(waitState?.kind, selected ?? false),
+        gateBlocked && "opacity-[0.55]",
+      )}
+    >
       <Handle type="target" position={Position.Left} id="left" />
       <Handle type="source" position={Position.Right} id="right" />
 
-      <div className="graph-node-header">
-        <span className="graph-node-title">{context.title}</span>
-        <span className={`graph-node-badge ${badge.className}`}>
+      <div className="relative z-[1] mb-[6px] flex items-start justify-between gap-[8px]">
+        <span className="text-[0.95rem] leading-[1.2] font-bold text-text-primary">
+          {context.title}
+        </span>
+        <span className={cn(BADGE_BASE, BADGE_VARIANT[badge.className])}>
           {badge.label}
         </span>
       </div>
 
       {context.description && (
-        <div className="graph-node-desc">{context.description}</div>
+        <div className="relative z-[1] mb-[14px] line-clamp-3 overflow-hidden text-[0.72rem] leading-[1.5] font-normal text-text-secondary">
+          {context.description}
+        </div>
       )}
 
-      <div className="graph-node-stats">
-        <div className="graph-node-stat">
-          <div className="graph-node-stat-label">Tasks</div>
-          <div className="graph-node-stat-value">
+      <div className="relative z-[1] mb-[10px] flex gap-[8px]">
+        <div className="min-w-0 flex-1 rounded-[10px] border border-solid border-border-subtle bg-[var(--cc-graph-ink-a55)] px-[12px] py-[8px]">
+          <div className="mb-[3px] text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+            Tasks
+          </div>
+          <div className="text-[0.88rem] font-bold text-text-primary">
             {mode === "execution"
               ? `${completedCount}/${totalCount}`
               : `0/${totalCount}`}
           </div>
         </div>
-        <div className="graph-node-stat">
-          <div className="graph-node-stat-label">Implementer</div>
+        <div className="min-w-0 flex-1 rounded-[10px] border border-solid border-border-subtle bg-[var(--cc-graph-ink-a55)] px-[12px] py-[8px]">
+          <div className="mb-[3px] text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+            Implementer
+          </div>
           <div
-            className={`graph-node-stat-value graph-node-stat-value--agent graph-node-stat-value--${implementerBackend}`}
+            className={cn(
+              "inline-flex items-center gap-[5px] text-[0.78rem] font-semibold tracking-[0.05em] uppercase",
+              implementerBackend === "codex" ? "text-violet" : "text-cyan",
+            )}
           >
-            <span className="graph-node-validator-glyph" aria-hidden="true">
+            <span className="text-[0.7rem] leading-none" aria-hidden="true">
               ◆
             </span>
             {implementerBackend === "codex" ? "Codex" : "Claude"}
@@ -269,14 +410,22 @@ export default function ExecutionContextNode({
 
       <ValidatorPills validators={validators} approvalGate={approvalGate} />
 
-      <div className="graph-node-progress">
+      <div className="relative z-[1] mb-[10px] h-[4px] overflow-hidden rounded-[4px] bg-[var(--cc-graph-ink-a50)]">
         <div
-          className={`graph-node-progress-fill ${progressStatus}`}
+          className={cn(
+            PROGRESS_FILL_BASE,
+            PROGRESS_FILL_VARIANT[progressStatus],
+          )}
           style={{ width: `${progressPercent}%` }}
         />
       </div>
 
-      <div className={`graph-node-footer ${waitState?.kind ?? ""}`}>
+      <div
+        className={cn(
+          "relative z-[1] text-[0.7rem] font-medium",
+          (waitState && FOOTER_COLOR[waitState.kind]) ?? "text-text-tertiary",
+        )}
+      >
         {footerText}
       </div>
     </div>

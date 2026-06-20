@@ -107,7 +107,7 @@ describe("ConversationTabStrip", () => {
 
     const dots = screen
       .getAllByRole("tab")
-      .map((t) => t.querySelector(".conversation-tab__dot"));
+      .map((t) => t.querySelector("[data-status]"));
     expect(dots.map((d) => d?.getAttribute("data-status"))).toEqual([
       "running",
       "waiting_for_input",

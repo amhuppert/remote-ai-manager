@@ -278,7 +278,7 @@ describe("PromptEditor", () => {
 
     expect(onAddImage).toHaveBeenCalledTimes(1);
     expect(onAddImage.mock.calls[0]?.[0]).toBe(file);
-    const chip = container.querySelector(".image-marker-chip");
+    const chip = container.querySelector("[data-attachment-id]");
     expect(chip).not.toBeNull();
   });
 
@@ -314,7 +314,7 @@ describe("PromptEditor", () => {
     });
 
     expect(onAddImage).toHaveBeenCalledTimes(1);
-    const chip = container.querySelector(".image-marker-chip");
+    const chip = container.querySelector("[data-attachment-id]");
     expect(chip).toBeNull();
   });
 
@@ -526,7 +526,7 @@ describe("PromptEditor — backend-dependent slash/skill triggers", () => {
     });
     const { container } = render(editorTree("claude", ref, client));
     await typeTrigger(ref, "$");
-    expect(container.querySelector(".cmd-autocomplete")).toBeNull();
+    expect(container.textContent).not.toContain("Skills");
   });
 
   it("opens the Skills popup when typing $ on the Codex backend", async () => {
@@ -537,11 +537,8 @@ describe("PromptEditor — backend-dependent slash/skill triggers", () => {
     const { container } = render(editorTree("codex", ref, client));
     await typeTrigger(ref, "$");
     await waitFor(() => {
-      expect(container.querySelector(".cmd-autocomplete")).not.toBeNull();
+      expect(container.textContent).toContain("Skills");
     });
-    expect(container.querySelector(".cmd-header")?.textContent).toContain(
-      "Skills",
-    );
   });
 
   it("opens the Commands popup when typing / on the Codex backend", async () => {
@@ -552,11 +549,8 @@ describe("PromptEditor — backend-dependent slash/skill triggers", () => {
     const { container } = render(editorTree("codex", ref, client));
     await typeTrigger(ref, "/");
     await waitFor(() => {
-      expect(container.querySelector(".cmd-autocomplete")).not.toBeNull();
+      expect(container.textContent).toContain("Commands");
     });
-    expect(container.querySelector(".cmd-header")?.textContent).toContain(
-      "Commands",
-    );
   });
 
   // Regression: the editor is created once and never rebuilt. Toggling the
@@ -581,11 +575,8 @@ describe("PromptEditor — backend-dependent slash/skill triggers", () => {
 
     await typeTrigger(ref, "$");
     await waitFor(() => {
-      expect(container.querySelector(".cmd-autocomplete")).not.toBeNull();
+      expect(container.textContent).toContain("Skills");
     });
-    expect(container.querySelector(".cmd-header")?.textContent).toContain(
-      "Skills",
-    );
   });
 
   it("still submits with Ctrl+Enter after typing $ on the Claude backend", async () => {
@@ -631,6 +622,6 @@ describe("PromptEditor — backend-dependent slash/skill triggers", () => {
     });
 
     await typeTrigger(ref, "$");
-    expect(container.querySelector(".cmd-autocomplete")).toBeNull();
+    expect(container.textContent).not.toContain("Skills");
   });
 });

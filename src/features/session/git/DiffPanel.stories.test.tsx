@@ -21,10 +21,9 @@ describe("DiffPanel stories", () => {
   it("SingleFile renders file name and stats", async () => {
     await SingleFile.run();
     expect(screen.getByText("src/lib/sessions.ts")).toBeInTheDocument();
-    // File-level stat is inside the diff-file-stat span
-    const fileStat = document.querySelector(".diff-file-stat");
-    expect(fileStat?.textContent).toContain("+12");
-    expect(fileStat?.textContent).toContain("-3");
+    // Single file → +12/-3 render in both the header total and the file row.
+    expect(screen.getAllByText("+12").length).toBe(2);
+    expect(screen.getAllByText("-3").length).toBe(2);
   });
 
   it("MultipleFiles renders all file headers", async () => {
@@ -44,9 +43,12 @@ describe("DiffPanel stories", () => {
 
   it("CommitsOnly defaults to commits tab when no uncommitted changes", async () => {
     await CommitsOnly.run();
-    // With no uncommitted files, the component defaults to the commits tab
+    // With no uncommitted files, the component defaults to the commits tab.
+    // The Tabs primitive carries active state via the data-active attribute
+    // (the className always contains the static data-[active=...] utilities, so
+    // a className substring check would be a false positive).
     const commitsTab = screen.getByText("Commits");
-    expect(commitsTab.className).toContain("active");
+    expect(commitsTab).toHaveAttribute("data-active", "true");
     // The uncommitted empty state should not be in the DOM
     expect(screen.queryByText("No changes")).toBeNull();
   });

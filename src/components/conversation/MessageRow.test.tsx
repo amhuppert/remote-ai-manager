@@ -217,7 +217,7 @@ describe("MessageRow", () => {
 
   describe("notice messages", () => {
     it("renders a notice as a distinct system row with its content", () => {
-      const { container } = renderWithQuery(
+      renderWithQuery(
         <MessageRow
           msg={makeMessage({
             role: "notice",
@@ -231,7 +231,7 @@ describe("MessageRow", () => {
           lastMessageExtras={null}
         />,
       );
-      expect(container.querySelector(".message.notice")).not.toBeNull();
+      expect(screen.getByText("System")).toBeInTheDocument();
       expect(screen.getByText("Commit job started.")).toBeInTheDocument();
     });
 

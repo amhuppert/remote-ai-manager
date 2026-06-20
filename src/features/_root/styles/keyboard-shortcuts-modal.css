@@ -1,73 +1,46 @@
 /* ============================================================
-   Keyboard Shortcuts Modal (.hotkey-help-*)
+   Keyboard Shortcuts Modal — preserved residual (floor 2)
+   ============================================================
+   The modal chrome and content migrated to the ModalShell primitive +
+   utilities (HotkeyHelpModal.tsx). Two selectors are preserved here, both
+   targeted by `id` (the ModalShell card carries `id="hotkey-help-modal"` via
+   its passthrough props) so no migrated element carries a legacy class:
+
+   1. The scroll/size container — `max-height` + `overflow-y` are NOT in the
+      layoutClassName allowlist and ModalShell omits `className`, so the modal's
+      scroll behaviour cannot be expressed as utilities.
+   2. The mobile (≤768px) bottom-sheet transform — the shared `.modal` /
+      `.modal-overlay` become a bottom-anchored sheet on mobile (globals.css),
+      but ModalShell does NOT own that responsive behaviour. This is the modal's
+      mobile portal positioning; reattach it for parity via the overlay + card
+      ids. (A future ModalShell that bakes in the mobile sheet would let this
+      block retire — flag for the shared-modal chain.)
+
+   NOTE on width: the legacy `.hotkey-help-modal { max-width: 520px }` was a DEAD
+   rule — `.modal { max-width: 480px }` (same specificity, defined later in
+   globals.css) always overrode it, so the modal has always rendered at 480px.
+   ModalShell's `max-w-[480px]` reproduces that exactly; we intentionally do NOT
+   re-assert 520px here (an id selector would beat `.modal` and widen the modal —
+   a visual regression).
    ============================================================ */
 
-.hotkey-help-modal {
-  max-width: 520px;
+#hotkey-help-modal {
   max-height: 80vh;
   overflow-y: auto;
 }
 
-.hotkey-help-content {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-lg);
-}
+/* Mobile bottom-sheet — reproduces the shared `.modal` mobile transform that
+   ModalShell does not own (see note 2 above). */
+@media (max-width: 768px) {
+  #hotkey-help-overlay {
+    align-items: flex-end;
+  }
 
-.hotkey-help-group {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-}
-
-.hotkey-help-category {
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-tertiary);
-  margin: 0;
-}
-
-.hotkey-help-list {
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.hotkey-help-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-xs) var(--space-sm);
-  border-radius: var(--radius-sm);
-}
-
-.hotkey-help-item:hover {
-  background: var(--bg-raised);
-}
-
-.hotkey-help-label {
-  font-size: 0.82rem;
-  color: var(--text-primary);
-}
-
-.hotkey-help-key {
-  margin: 0;
-}
-
-.hotkey-help-key kbd {
-  display: inline-block;
-  min-width: 24px;
-  padding: 2px 8px;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  line-height: 1.6;
-  color: var(--text-secondary);
-  background: var(--bg-raised);
-  text-align: center;
+  #hotkey-help-modal {
+    max-width: 100%;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    padding: var(--space-lg) var(--space-md);
+    padding-bottom: calc(var(--space-lg) + env(safe-area-inset-bottom, 0));
+    animation: slideUpSheet 0.25s ease;
+  }
 }

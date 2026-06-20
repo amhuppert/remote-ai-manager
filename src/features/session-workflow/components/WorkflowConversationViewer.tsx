@@ -87,24 +87,33 @@ export default function WorkflowConversationViewer({
   >(() => null, []);
 
   return (
-    <div className="wb-transcript-viewer">
-      <header className="wb-transcript-header">
+    <div
+      data-testid="wf-transcript-viewer"
+      className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg-void [&>.prompt-panel]:min-h-0 [&>.prompt-panel]:flex-1 max-768:[.app[data-page=workflow][data-mobile-panel=graph]_&]:hidden max-768:[.app[data-page=workflow][data-mobile-panel=inspector]_&]:hidden"
+    >
+      <header className="flex min-h-[44px] shrink-0 items-center gap-[10px] border-b border-border-dim bg-bg-surface px-md py-2">
         <button
-          className="wb-transcript-close"
+          className="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-sm border border-border-subtle bg-transparent p-0 text-[0.72rem] text-text-tertiary transition-all duration-150 hover:border-border-default hover:bg-bg-hover hover:text-text-secondary"
           onClick={onClose}
           type="button"
           aria-label="Close transcript"
         >
           ✕
         </button>
-        <div className="wb-transcript-label">
-          <span className="wb-transcript-context">{contextTitle}</span>
-          <span className="wb-transcript-sep">/</span>
-          <span className="wb-transcript-task">{taskTitle}</span>
+        <div className="flex min-w-0 items-center gap-[6px] overflow-hidden">
+          <span className="overflow-hidden font-mono text-[0.72rem] font-semibold text-ellipsis whitespace-nowrap text-text-secondary">
+            {contextTitle}
+          </span>
+          <span className="shrink-0 font-mono text-[0.72rem] text-text-tertiary">
+            /
+          </span>
+          <span className="overflow-hidden font-mono text-[0.72rem] font-medium text-ellipsis whitespace-nowrap text-text-primary">
+            {taskTitle}
+          </span>
         </div>
         {isLive && (
-          <span className="wb-transcript-live">
-            <span className="wb-transcript-live-dot" />
+          <span className="ml-auto flex shrink-0 items-center gap-[6px] font-mono text-[0.7rem] font-semibold tracking-[0.06em] text-cyan uppercase">
+            <span className="h-[6px] w-[6px] shrink-0 animate-[pulse-dot_2s_ease-in-out_infinite] rounded-full bg-cyan shadow-[0_0_6px_var(--cyan-glow)]" />
             Live
           </span>
         )}

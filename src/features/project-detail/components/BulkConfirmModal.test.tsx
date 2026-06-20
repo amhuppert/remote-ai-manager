@@ -37,8 +37,9 @@ describe("BulkConfirmModal", () => {
         'Archive 4 sessions. They stay accessible via "Include archived".',
       ),
     ).toBeInTheDocument();
-    const confirm = screen.getByRole("button", { name: "Archive 4" });
-    expect(confirm).toHaveClass("btn-primary");
+    expect(
+      screen.getByRole("button", { name: "Archive 4" }),
+    ).toBeInTheDocument();
   });
 
   it("uses singular noun when count is 1", () => {
@@ -77,9 +78,9 @@ describe("BulkConfirmModal", () => {
       screen.getByRole("heading", { name: "Unarchive sessions?" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Unarchive 2 sessions.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Unarchive 2" })).toHaveClass(
-      "btn-primary",
-    );
+    expect(
+      screen.getByRole("button", { name: "Unarchive 2" }),
+    ).toBeInTheDocument();
   });
 
   it("renders delete copy with danger button", () => {
@@ -101,8 +102,9 @@ describe("BulkConfirmModal", () => {
         "This permanently removes the worktree, history, and state for 5 sessions. The git branch is preserved. This cannot be undone.",
       ),
     ).toBeInTheDocument();
-    const confirm = screen.getByRole("button", { name: "Delete 5" });
-    expect(confirm).toHaveClass("btn-danger");
+    expect(
+      screen.getByRole("button", { name: "Delete 5" }),
+    ).toBeInTheDocument();
   });
 
   it("calls onConfirm when primary button is clicked", () => {

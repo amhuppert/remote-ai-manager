@@ -1,8 +1,18 @@
 "use client";
 
 import { useState } from "react";
+import { cn } from "@/lib/ui/cn";
+import { EmptyStateTitle, EmptyStateDesc } from "@/components/ui/EmptyState";
 import type { CommitLogEntry } from "@/lib/git/schemas";
 import { useCommitDiffQuery } from "@/lib/git/queries";
+import {
+  DIFF_FILE_SECTION_CLASS,
+  DIFF_FILE_HEADER_CLASS,
+  DIFF_FILE_NAME_CLASS,
+  DIFF_FILE_STAT_CLASS,
+  DIFF_LINE_BASE,
+  DIFF_LINE_TYPE,
+} from "@/features/session/git/diff-row-classes";
 
 interface CommitHistoryProps {
   commits: CommitLogEntry[];
@@ -41,41 +51,54 @@ function CommitEntry({
   );
 
   return (
-    <div className="commit-entry">
+    <div className="relative border-x-0 border-t-0 border-b border-solid border-border-subtle before:absolute before:top-0 before:bottom-0 before:left-[18px] before:z-0 before:w-px before:bg-border-default before:content-[''] after:absolute after:top-[50%] after:left-[14px] after:z-[1] after:h-[9px] after:w-[9px] after:-translate-y-1/2 after:rounded-full after:border-2 after:border-solid after:border-border-strong after:bg-bg-surface after:content-[''] after:[transition:all_0.2s_ease] first:before:top-[50%] last:border-b-0 last:before:bottom-[50%] has-[[data-expanded=true]]:before:top-0 has-[[data-expanded=true]]:after:top-[20px] has-[[data-expanded=true]]:after:translate-y-0 has-[[data-expanded=true]]:after:border-cyan-dim has-[[data-expanded=true]]:after:bg-cyan-glow has-[[data-expanded=true]]:after:shadow-[0_0_6px_var(--cyan-glow-strong)] first:has-[[data-expanded=true]]:before:top-[20px]">
       <div
-        className={`commit-header${isExpanded ? " expanded" : ""}`}
+        className="group/commit-header relative z-[1] grid cursor-pointer grid-cols-[auto_1fr] grid-rows-[auto_auto] items-center gap-x-[8px] gap-y-[2px] pt-[10px] pr-md pb-[10px] pl-[32px] select-none [transition:background_0.15s_ease] hover:bg-bg-hover active:bg-[var(--cc-bg-hover-a80)] data-[expanded=true]:border-x-0 data-[expanded=true]:border-t-0 data-[expanded=true]:border-b data-[expanded=true]:border-solid data-[expanded=true]:border-border-subtle data-[expanded=true]:bg-[var(--cc-cyan-a04)]"
+        data-expanded={isExpanded}
         onClick={onToggle}
       >
-        <span className="commit-hash">{commit.hash}</span>
-        <span className="commit-message">{commit.message}</span>
-        <span className="commit-meta">
-          <span className="commit-files">
+        <span className="col-start-1 row-start-1 w-fit rounded-[3px] border border-solid border-[var(--cc-cyan-a12)] bg-[var(--cc-cyan-a07)] px-[6px] py-[1px] font-mono text-[0.7rem] font-semibold tracking-[0.03em] text-cyan-dim [transition:all_0.2s_ease] group-hover/commit-header:border-[var(--cc-cyan-a25)] group-hover/commit-header:bg-cyan-glow group-hover/commit-header:text-cyan group-data-[expanded=true]/commit-header:border-cyan-glow-strong group-data-[expanded=true]/commit-header:bg-cyan-glow group-data-[expanded=true]/commit-header:text-cyan group-data-[expanded=true]/commit-header:shadow-[0_0_8px_var(--cc-cyan-a10)]">
+          {commit.hash}
+        </span>
+        <span className="col-start-2 row-start-1 truncate font-body text-[0.78rem] leading-[1.3] font-medium text-text-primary">
+          {commit.message}
+        </span>
+        <span className="[grid-column:1/3] row-start-2 flex items-center gap-sm pt-[1px] font-mono text-[0.7rem] text-text-tertiary">
+          <span className="flex items-center gap-[3px] after:ml-[4px] after:opacity-40 after:content-['·']">
             {commit.filesChanged} file
             {commit.filesChanged !== 1 ? "s" : ""}
           </span>
-          <span className="commit-date">{formatRelativeTime(commit.date)}</span>
+          <span className="opacity-70">{formatRelativeTime(commit.date)}</span>
         </span>
       </div>
 
       {isExpanded && (
-        <div className="commit-diff-inline">
+        <div className="relative ml-[32px] border-y-0 border-r-0 border-l border-solid border-l-border-subtle bg-[var(--cc-bg-void-a30)] font-mono text-[0.75rem] leading-[1.7]">
           {diffQuery.isPending ? (
-            <div className="commit-diff-loading">Loading diff...</div>
+            <div className="flex items-center gap-sm px-md py-lg font-mono text-[0.72rem] text-text-tertiary before:h-[16px] before:w-[16px] before:animate-[spin_0.7s_linear_infinite] before:rounded-full before:border-2 before:border-solid before:border-border-default before:border-t-cyan-dim before:content-['']">
+              Loading diff...
+            </div>
           ) : diffQuery.data ? (
             diffQuery.data.files.map((file) => (
-              <div key={file.filePath} className="diff-file-section">
-                <div className="diff-file-header">
-                  <span className="diff-file-name">{file.filePath}</span>
-                  <span className="diff-file-stat">
-                    <span className="add-count">+{file.additions}</span>{" "}
-                    <span className="rm-count">-{file.deletions}</span>
+              <div key={file.filePath} className={DIFF_FILE_SECTION_CLASS}>
+                <div className={DIFF_FILE_HEADER_CLASS}>
+                  <span className={DIFF_FILE_NAME_CLASS}>{file.filePath}</span>
+                  <span className={DIFF_FILE_STAT_CLASS}>
+                    <span className="text-green">+{file.additions}</span>{" "}
+                    <span className="text-red">-{file.deletions}</span>
                   </span>
                 </div>
-                <div className="diff-file-lines">
+                <div className="min-w-fit">
                   {file.hunks.map((hunk, hunkIdx) => (
                     <div key={hunkIdx}>
                       {hunk.lines.map((line, lineIdx) => (
-                        <div key={lineIdx} className={`diff-line ${line.type}`}>
+                        <div
+                          key={lineIdx}
+                          className={cn(
+                            DIFF_LINE_BASE,
+                            DIFF_LINE_TYPE[line.type],
+                          )}
+                        >
                           {line.content}
                         </div>
                       ))}
@@ -85,7 +108,9 @@ function CommitEntry({
               </div>
             ))
           ) : (
-            <div className="commit-diff-loading">Failed to load diff.</div>
+            <div className="flex items-center gap-sm px-md py-lg font-mono text-[0.72rem] text-text-tertiary before:h-[16px] before:w-[16px] before:animate-[spin_0.7s_linear_infinite] before:rounded-full before:border-2 before:border-solid before:border-border-default before:border-t-cyan-dim before:content-['']">
+              Failed to load diff.
+            </div>
           )}
         </div>
       )}
@@ -101,18 +126,21 @@ export default function CommitHistory({
   const [expandedHash, setExpandedHash] = useState<string | null>(null);
 
   if (commits.length === 0) {
+    // The legacy `.empty-state` overrode its `3xl xl` padding to a flat
+    // `var(--space-xl)` via inline style, which the EmptyState primitive's baked
+    // `px-xl py-3xl` cannot reproduce; the container is inlined with the
+    // effective `px-xl py-xl` utilities (mirroring the migrated SessionDiffViewer)
+    // while the title/desc use the EmptyState-family primitives.
     return (
-      <div className="empty-state" style={{ padding: "var(--space-xl)" }}>
-        <div className="empty-state-title">No commits</div>
-        <div className="empty-state-desc">
-          Commit changes to see them listed here.
-        </div>
+      <div className="flex flex-col items-center justify-center px-xl py-xl text-center">
+        <EmptyStateTitle>No commits</EmptyStateTitle>
+        <EmptyStateDesc>Commit changes to see them listed here.</EmptyStateDesc>
       </div>
     );
   }
 
   return (
-    <div className="commit-history">
+    <div className="py-sm">
       {commits.map((commit) => (
         <CommitEntry
           key={commit.fullHash}

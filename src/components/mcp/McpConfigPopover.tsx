@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useOverlayScope } from "@/hooks/useOverlayScope";
 import McpServerList from "./McpServerList";
+import { pendingDot } from "./styles";
 import type { McpServerCardActions, McpServerView } from "./types";
 
 interface McpConfigPopoverProps {
@@ -75,20 +76,26 @@ export default function McpConfigPopover({
   const body = (
     <div
       ref={popoverRef}
-      className="mcp-config-popover"
+      className="z-menu flex flex-col overflow-hidden rounded-[8px] border border-solid border-border-subtle bg-bg-elevated shadow-[var(--cc-shadow-popover)] max-640:max-h-[calc(100vh-24px)]! max-640:w-[calc(100vw-16px)]!"
       style={style}
       role="dialog"
       aria-label="MCP configuration"
     >
-      <header className="mcp-config-popover__head">
-        <div className="mcp-config-popover__title">
-          <span className="mcp-config-popover__eyebrow">CONVERSATION</span>
-          <span className="mcp-config-popover__heading">MCP Servers</span>
+      <header className="flex items-center gap-sm border-x-0 border-t-0 border-b border-solid border-border-subtle bg-bg-surface px-md py-sm">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <span className="font-mono text-[0.7rem] font-bold tracking-[0.12em] text-[var(--accent-cyan)]">
+            CONVERSATION
+          </span>
+          <span className="font-mono text-[0.85rem] font-semibold text-text-primary">
+            MCP Servers
+          </span>
         </div>
-        <span className="mcp-config-popover__summary">{summary}</span>
+        <span className="font-mono text-[0.7rem] whitespace-nowrap text-[var(--text-muted)]">
+          {summary}
+        </span>
         <button
           type="button"
-          className="mcp-config-popover__close"
+          className="cursor-pointer appearance-none rounded-[3px] border-0 bg-transparent px-[0.4rem] py-[0.2rem] text-[1.2rem] leading-none text-text-secondary hover:bg-bg-hover hover:text-text-primary"
           onClick={onClose}
           aria-label="Close"
         >
@@ -97,8 +104,11 @@ export default function McpConfigPopover({
       </header>
 
       {hasPending || pendingCount > 0 ? (
-        <div className="mcp-config-popover__pending" role="status">
-          <span className="mcp-pending-dot" aria-hidden />
+        <div
+          className="flex items-center gap-sm border-x-0 border-t-0 border-b border-solid border-[var(--cc-amber-border-subtle)] bg-[var(--cc-amber-bg-subtle)] px-md py-xs font-mono text-[0.72rem] text-[var(--cc-accent-amber)]"
+          role="status"
+        >
+          <span className={pendingDot} aria-hidden />
           <span>
             {pendingCount > 0
               ? `${pendingCount} change${pendingCount === 1 ? "" : "s"} queued — will apply on next turn`
@@ -107,7 +117,7 @@ export default function McpConfigPopover({
         </div>
       ) : null}
 
-      <div className="mcp-config-popover__body">
+      <div className="flex-1 overflow-y-auto px-md pt-sm pb-md">
         <McpServerList
           viewLevel="conversation"
           servers={servers}
