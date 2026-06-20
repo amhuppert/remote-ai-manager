@@ -1102,6 +1102,127 @@ describe("conversations-repo findAll caching", () => {
   });
 });
 
+describe("conversations-repo findBySession caching", () => {
+  it("returns identical conversation references for unchanged rows across calls (cache hit)", () => {
+    repo.upsert(PROJECT_PATH, SESSION_NAME, makeFullConversation({ id: "c-a" }));
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-b" }),
+    );
+
+    const first = repo.findBySession(PROJECT_PATH, SESSION_NAME);
+    const second = repo.findBySession(PROJECT_PATH, SESSION_NAME);
+
+    expect(second).toHaveLength(first.length);
+    for (let i = 0; i < first.length; i += 1) {
+      // Reference equality proves the parsed conversation was reused from the
+      // cache, not re-parsed (the whole point of the findBySession cache).
+      expect(second[i]).toBe(first[i]);
+    }
+  });
+
+  it("returns a fresh array each call so in-place sort/push by callers is safe", () => {
+    repo.upsert(PROJECT_PATH, SESSION_NAME, makeMinimalConversation({ id: "c-a" }));
+    repo.upsert(PROJECT_PATH, SESSION_NAME, makeMinimalConversation({ id: "c-b" }));
+
+    const first = repo.findBySession(PROJECT_PATH, SESSION_NAME);
+    const second = repo.findBySession(PROJECT_PATH, SESSION_NAME);
+
+    // The array container must NOT be shared: getSessionConversations sorts the
+    // result in place, so a shared array would corrupt the cache on first sort.
+    expect(second).not.toBe(first);
+    first.reverse();
+    expect(repo.findBySession(PROJECT_PATH, SESSION_NAME).map((c) => c.id)).toEqual(
+      ["c-a", "c-b"],
+    );
+  });
+
+  it("re-parses only the changed conversation after upsert; siblings keep their reference", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeFullConversation({ id: "c-changed", promptCount: 1 }),
+    );
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-stable" }),
+    );
+
+    const first = repo.findBySession(PROJECT_PATH, SESSION_NAME);
+    const firstChanged = first.find((c) => c.id === "c-changed");
+    const firstStable = first.find((c) => c.id === "c-stable");
+    expect(firstChanged).toBeDefined();
+    expect(firstStable).toBeDefined();
+
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeFullConversation({ id: "c-changed", promptCount: 99 }),
+    );
+
+    const second = repo.findBySession(PROJECT_PATH, SESSION_NAME);
+    const secondChanged = second.find((c) => c.id === "c-changed");
+    const secondStable = second.find((c) => c.id === "c-stable");
+    expect(secondChanged?.promptCount).toBe(99);
+    expect(secondChanged).not.toBe(firstChanged);
+    expect(secondStable).toBe(firstStable);
+  });
+
+  it("does not re-parse this session's conversations when another session is written", () => {
+    insertParentSession(PROJECT_PATH, "other");
+    repo.upsert(PROJECT_PATH, SESSION_NAME, makeFullConversation({ id: "c-a" }));
+
+    const first = repo.findBySession(PROJECT_PATH, SESSION_NAME);
+
+    // A write to a DIFFERENT session bumps the global cacheVersion, but must not
+    // force this session's rows to be re-parsed.
+    repo.upsert(PROJECT_PATH, "other", makeMinimalConversation({ id: "c-x" }));
+
+    const second = repo.findBySession(PROJECT_PATH, SESSION_NAME);
+    expect(second).toHaveLength(1);
+    expect(second[0]).toBe(first[0]);
+  });
+
+  it("reflects an upsert with correct content (no stale cache)", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-u", summary: "v1" }),
+    );
+    expect(
+      repo.findBySession(PROJECT_PATH, SESSION_NAME)[0]?.summary,
+    ).toBe("v1");
+
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-u", summary: "v2" }),
+    );
+    expect(
+      repo.findBySession(PROJECT_PATH, SESSION_NAME)[0]?.summary,
+    ).toBe("v2");
+  });
+
+  it("reflects a delete (dropped row no longer returned)", () => {
+    repo.upsert(PROJECT_PATH, SESSION_NAME, makeMinimalConversation({ id: "c-keep" }));
+    repo.upsert(PROJECT_PATH, SESSION_NAME, makeMinimalConversation({ id: "c-drop" }));
+    expect(
+      repo
+        .findBySession(PROJECT_PATH, SESSION_NAME)
+        .map((c) => c.id)
+        .sort(),
+    ).toEqual(["c-drop", "c-keep"]);
+
+    repo.delete("c-drop");
+
+    expect(
+      repo.findBySession(PROJECT_PATH, SESSION_NAME).map((c) => c.id),
+    ).toEqual(["c-keep"]);
+  });
+});
+
 /**
  * Build a conversation with EVERY introspectable persisted key path populated
  * to a distinctive non-default value, so the schema-driven durability harness

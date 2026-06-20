@@ -340,6 +340,18 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
   let cacheVersion = 0;
   let lastFindAllVersion = -1;
   let lastFindAllResult: ParsedRow[] = [];
+  // Per-session result memo (Pattern 3), keyed by
+  // `${projectPath}\u0000${sessionName}` and invalidated by the shared monotonic
+  // `cacheVersion`. Stores only the ordered row ids, not parsed rows, so it can
+  // never keep a parsed conversation alive after `findAllCache` evicts it. On a
+  // warm hit the ids resolve through `findAllCache` (the version gate guarantees
+  // every id is still present — any delete bumps `cacheVersion`), and the result
+  // is a FRESH array each call because callers such as getSessionConversations
+  // sort it in place, so the array container must never be shared.
+  const findBySessionCache = new Map<
+    string,
+    { version: number; ids: string[] }
+  >();
   const findByIdStmt = db.prepare(
     `SELECT * FROM conversations WHERE id = ? LIMIT 1`,
   );
@@ -540,11 +552,31 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
     },
     findBySession(projectPath, sessionName) {
       return timed("findBySession", { projectPath, sessionName }, () => {
-        const rows = findBySessionStmt.all(
-          projectPath,
-          sessionName,
-        ) as unknown[];
-        return rows.map((row) => rowToDomain(row).conversation);
+        const cacheKey = `${projectPath}\u0000${sessionName}`;
+        const memo = findBySessionCache.get(cacheKey);
+        if (memo !== undefined && memo.version === cacheVersion) {
+          return memo.ids.map((id) => findAllCache.get(id)!.parsed.conversation);
+        }
+        const rows = findBySessionStmt.all(projectPath, sessionName) as Array<
+          Record<string, unknown>
+        >;
+        const ids: string[] = new Array(rows.length);
+        const conversations: ConversationState[] = new Array(rows.length);
+        for (let i = 0; i < rows.length; i += 1) {
+          const row = rows[i]!;
+          const id = row.id as string;
+          ids[i] = id;
+          const cached = findAllCache.get(id);
+          if (cached !== undefined && rawRowsEqual(cached.rawRow, row)) {
+            conversations[i] = cached.parsed.conversation;
+            continue;
+          }
+          const parsed = rowToDomain(row);
+          findAllCache.set(id, { rawRow: row, parsed });
+          conversations[i] = parsed.conversation;
+        }
+        findBySessionCache.set(cacheKey, { version: cacheVersion, ids });
+        return conversations;
       });
     },
     findListItemsForProject(projectPath) {
