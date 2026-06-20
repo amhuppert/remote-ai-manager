@@ -83,6 +83,20 @@ Verification: `src/components/ReactScanInstrumentation.tsx` is mounted in dev vi
 
 Heuristic: if a hook returns state that changes on user interaction *within* a panel, put the hook call inside that panel's container — not above it.
 
+### 7. Every unbounded collection in a persisted blob must be declared bounded
+
+The recurring root cause behind several entries below is the same: an array or open map nested inside a value that is `JSON.stringify`'d whole into one SQLite TEXT column grows without eviction, so a per-element write rewrites the entire column and the row balloons. The fixes (prune to an active working set, cap to last N, normalize into a child table) are durable only if the *next* such field is caught when it is added, not in production.
+
+`src/lib/state-store/persisted-blob-bounds.contract.test.ts` is the gate. It registers every schema serialized whole into a blob column (the conversation row, the session row, the `graph_workflow_execution` document) and, for each, walks its JSON Schema projection (`z.toJSONSchema`, via `findUnboundedCollections` in `src/lib/shared/testing/persisted-blob-bounds.ts`) for arrays without `maxItems` and open maps. Every one must carry an explicit discharge or the suite fails:
+
+- `not-persisted` — dropped on write (cross-check the durability contract's `fieldPolicies`).
+- `normalized: <table>` — not a blob; lives in its own child table.
+- `pruned: <where>` — evicted to a bounded working set by named code.
+- `bounded: <why>` — capped by construction (author-fixed graph, one in-flight set, config-keyed map).
+- `tracked: <item>` — honestly still unbounded, pointing at the structural change that will fix it.
+
+Discharge keys match **exactly** by default (so a collection added beside a discharged one is still flagged); suffix a key with `.**` only to cover a genuinely immutable subtree. Stale keys (covering nothing) also fail, so the registry cannot rot as schemas change. When you add a persisted field that is (or contains) a collection, expect this gate to fail until you cap it with `.max()` or record why it is bounded — that decision is the whole point.
+
 ## Resolved issues
 
 Each entry: symptom → root cause → fix → lesson. Add new entries at the top.
