@@ -46,6 +46,22 @@ const GRANDFATHERED_LEGACY_CSS = [
   "/features/workflows-catalog/styles/workflows-catalog.css",
 ];
 
+// Whole-state escape hatches. `readState` hydrates, and `mutateState` /
+// `writeState` rewrite, the ENTIRE ManagerState tree on every call — a whole-tree
+// cost regardless of how little you touch (PERFORMANCE.md patterns 1–2;
+// structural change #2). Focused accessors/setters are the default; importing
+// these is the explicit, greppable exception. Only files that genuinely operate
+// over the whole tree may import them, each listed here with why. Do NOT add a
+// file to make a single-row read/write convenient — add a focused accessor.
+const WHOLE_STATE_ALLOWED = [
+  "src/instrumentation.node.ts", // startup recovery sweep across all projects/sessions
+  "src/lib/projects/discovery.ts", // reconciles the full project/session tree against disk
+  "src/lib/sessions/service.ts", // session CRUD + bulk lifecycle over the whole tree
+  "src/lib/active-conversations/route-handlers.ts", // cross-project active-conversation aggregation
+  "src/lib/debug-log/ingest-route-handlers.ts", // resolves an arbitrary project/session for a debug entry
+  "src/lib/conversations/cross-project-list.ts", // lists/finds conversations across every project
+];
+
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -103,6 +119,39 @@ const eslintConfig = defineConfig([
         {
           approvedAreas: APPROVED_GLOBAL_CSS_AREAS,
           grandfathered: GRANDFATHERED_LEGACY_CSS,
+        },
+      ],
+    },
+  },
+  // Focused-first default: importing the whole-state escape hatches is the
+  // explicit exception (PERFORMANCE.md patterns 1–2; structural change #2). New
+  // importers must reach for a focused accessor or be added to
+  // WHOLE_STATE_ALLOWED with a reason. Placed before the collaboration block so
+  // that block's own no-restricted-imports config wins for its four files (which
+  // do not import whole-state anyway).
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: [
+      ...WHOLE_STATE_ALLOWED,
+      "**/*.test.{ts,tsx}",
+      "**/*.stories.tsx",
+    ],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: [
+                "**/state-store",
+                "**/state-store/accessors",
+                "**/state-store/store",
+              ],
+              importNames: ["readState", "mutateState", "writeState"],
+              message:
+                "readState/mutateState/writeState hydrate or rewrite the ENTIRE ManagerState on every call (PERFORMANCE.md patterns 1–2). Use a focused accessor/setter instead. If you genuinely need the whole tree, add this file to WHOLE_STATE_ALLOWED in eslint.config.mjs with a reason.",
+            },
+          ],
         },
       ],
     },

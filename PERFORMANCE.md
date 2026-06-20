@@ -32,6 +32,8 @@ If your route needs one project/session/conversation slice, use the matching acc
 
 A regression guard lives in `src/lib/state-store/createStateStore-focused-read.test.ts` — it injects a spy `StateAggregate` that throws if `readAll` or `diffAndCommit` is touched, then asserts each focused accessor still returns correct data. When you add a new focused accessor, extend this test.
 
+**Enforced by lint:** `eslint.config.mjs` restricts importing `readState`, `mutateState`, and `writeState` (`no-restricted-imports`) everywhere except the `WHOLE_STATE_ALLOWED` allowlist (startup recovery, project discovery, cross-project aggregation, session lifecycle). The import is the chokepoint — a module handed one of these via DI is unaffected — so a *new* whole-state importer fails lint with a message pointing here. To add a legitimate whole-state caller, list it in `WHOLE_STATE_ALLOWED` with a reason; otherwise add or use a focused accessor. This is what makes focused-first the default rather than a convention.
+
 ### 2. Never run a whole-state mutate for a single-column update
 
 `mutateState`, `mutateSession`, and `mutateConversation` are general-purpose: they hydrate the entire state, run the user-provided mutator on the in-memory copy, canonicalize siblings, and `diffAndCommit` the whole tree. For a single-column update (e.g. setting a draft prompt, toggling a flag) the cost is *the same* as a structural change — which means a per-keystroke endpoint blocks the event loop for seconds.
@@ -43,7 +45,7 @@ For frequent single-column updates, add a focused repo-level setter that runs a 
 - `repos.projects.setPinned(...)` + `state-store.setProjectPinned(...)`
 - `repos.sessions.setArchived(...)`, `setTddEnabled(...)`, `setFinished(...)`
 
-Heuristic: if the only field you're touching is a single column on a single row, write a focused setter. If a focused setter doesn't exist yet, add one rather than reaching for `mutate*`.
+Heuristic: if the only field you're touching is a single column on a single row, write a focused setter. If a focused setter doesn't exist yet, add one rather than reaching for `mutate*`. The same lint gate described in pattern 1 blocks new `mutateState`/`writeState` imports.
 
 ### 3. Cache Zod-parsed rows; invalidate via a monotonic version counter
 
