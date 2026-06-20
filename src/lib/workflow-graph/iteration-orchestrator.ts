@@ -1238,8 +1238,14 @@ export function createGraphWorkflowIterationOrchestrator(
     input: GraphWorkflowIterationInput;
     execLogger: ReturnType<typeof getExecutionLogger>;
     conversationId: string;
+    terminatedByTerminalError?: boolean;
   }): Promise<GraphWorkflowIterationResult> {
-    const { input, execLogger, conversationId } = params;
+    const {
+      input,
+      execLogger,
+      conversationId,
+      terminatedByTerminalError = false,
+    } = params;
     const currentExecution = await loadCurrentExecution(
       input.projectPath,
       input.sessionName,
@@ -1264,6 +1270,7 @@ export function createGraphWorkflowIterationOrchestrator(
     let remainingTaskCount = 0;
     let shouldContinueInContext = false;
     let iterationNumber = 0;
+    let consecutiveFailureCount = 0;
     let approvalRequestedAt: string | null = null;
 
     const persistedExecution = await deps.executionRepository.mutateActive(
@@ -1283,6 +1290,16 @@ export function createGraphWorkflowIterationOrchestrator(
           finalizedExecution,
           input.contextId,
         );
+
+        if (terminatedByTerminalError) {
+          // A swallowed IterationHaltedError still counts as a consecutive
+          // failure so a terminal-error loop trips the circuit breaker at the
+          // threshold rather than running to maxIterations.
+          finalizedContextState.consecutiveFailureCount =
+            (finalizedContextState.consecutiveFailureCount ?? 0) + 1;
+        }
+        consecutiveFailureCount =
+          finalizedContextState.consecutiveFailureCount ?? 0;
 
         remainingTaskCount = countRemainingTasks(
           finalizedExecution,
@@ -1333,6 +1350,7 @@ export function createGraphWorkflowIterationOrchestrator(
       completedTaskCount,
       remainingTaskCount,
       shouldContinueInContext,
+      consecutiveFailureCount,
     });
     logger.info("graph-workflow.iteration.completed", {
       executionId: persistedExecution.id,
@@ -1435,6 +1453,7 @@ export function createGraphWorkflowIterationOrchestrator(
       }
     }
 
+    let terminalErrorCaught = false;
     try {
       await processContextCompletionValidation({
         input,
@@ -1453,13 +1472,19 @@ export function createGraphWorkflowIterationOrchestrator(
           message: error.message,
         },
       );
+      terminalErrorCaught = true;
     }
 
     const conversationId = pickConversationIdForValidationOnlyIteration(
       initialExecution,
       input.contextId,
     );
-    return finalizeIterationResult({ input, execLogger, conversationId });
+    return finalizeIterationResult({
+      input,
+      execLogger,
+      conversationId,
+      terminatedByTerminalError: terminalErrorCaught,
+    });
   }
 
   async function runIteration(
@@ -1762,6 +1787,7 @@ export function createGraphWorkflowIterationOrchestrator(
 
     const MAX_FOLLOW_UPS = 2;
     let completedTurnCount = 0;
+    let terminalErrorCaught = false;
 
     try {
       const agentCallBase = {
@@ -2127,6 +2153,7 @@ export function createGraphWorkflowIterationOrchestrator(
           message: error.message,
         },
       );
+      terminalErrorCaught = true;
     } finally {
       await toolServer.close?.();
     }
@@ -2135,6 +2162,7 @@ export function createGraphWorkflowIterationOrchestrator(
       input,
       execLogger,
       conversationId: conversation.id,
+      terminatedByTerminalError: terminalErrorCaught,
     });
   }
 

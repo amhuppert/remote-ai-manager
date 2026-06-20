@@ -1164,6 +1164,31 @@ export function createGraphWorkflowExecutionLoop(
             return;
           }
 
+          if (
+            execution.pendingHaltReason !== null &&
+            iterationResult.shouldContinueInContext
+          ) {
+            // A halt was recorded (by this or a sibling context) but the
+            // execution is still in the drain-then-halt window: pendingHaltReason
+            // is set while status stays "running" and this context's status is
+            // not yet "halted". Stop seeding another iteration so the in-flight
+            // task settles and the outer loop applies the halt. Without this, a
+            // context with remaining tasks spins a full agent turn per iteration
+            // until maxIterations. A context that just COMPLETED its tasks
+            // (shouldContinueInContext === false) is not stopped here — it falls
+            // through to commit/merge so the drain still lands successful
+            // siblings before halting.
+            execLogger?.iteration(contextId, "loop.pending_halt_detected", {
+              haltReasonType: execution.pendingHaltReason.type,
+            });
+            logger.info("graph-workflow.parallel.pending_halt_detected", {
+              executionId: execution.id,
+              contextId,
+              haltReasonType: execution.pendingHaltReason.type,
+            });
+            return;
+          }
+
           const contextState = execution.contextStates[contextId];
           const contextDef = execution.workingDefinition.executionContexts.find(
             (c) => c.id === contextId,

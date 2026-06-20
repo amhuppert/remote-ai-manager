@@ -32,7 +32,10 @@ import { createWorkflowContinuityService } from "./workflow-continuity-service";
 
 type MutateActiveReturn =
   | GraphWorkflowExecution
-  | { execution: GraphWorkflowExecution; events: GraphWorkflowExecutionEvent[] };
+  | {
+      execution: GraphWorkflowExecution;
+      events: GraphWorkflowExecutionEvent[];
+    };
 
 interface InMemoryExecutionRepository {
   getActive(
@@ -52,9 +55,7 @@ interface InMemoryExecutionRepository {
   ): Promise<GraphWorkflowExecutionEvent | null>;
 }
 
-function isResultWithEvents(
-  value: MutateActiveReturn,
-): value is {
+function isResultWithEvents(value: MutateActiveReturn): value is {
   execution: GraphWorkflowExecution;
   events: GraphWorkflowExecutionEvent[];
 } {
@@ -2783,6 +2784,70 @@ describe("mid-iteration halt via signalHalt", () => {
     expect(result.execution.status).toBe("halted");
     expect(result.execution.haltReason?.type).toBe("validator_infra_error");
     expect(result.shouldContinueInContext).toBe(false);
+  });
+
+  it("increments consecutiveFailureCount when an iteration is terminated by a pending-halt terminal error while still running", async () => {
+    const repository = seedRepoWithConsecutiveFailures(0);
+
+    const createToolServer = vi.fn(() => ({
+      server: {},
+      close: vi.fn(async () => undefined),
+    }));
+    const createConversation = vi.fn(async () => ({ id: "conv-drain" }));
+
+    // Faithful drain-window halt: a sibling already recorded the halt, so
+    // signalHalt is a no-op here and the execution stays "running" until the
+    // outer loop drains.
+    const signalHalt = vi.fn(async () => repository.read());
+
+    const runAgentIteration = vi.fn(async () => {
+      // Simulate a sibling recording a halt during this context's turn: set
+      // pendingHaltReason without flipping status or completing any task.
+      await repository.mutateActive("/repo", "session-1", (current) => {
+        current.pendingHaltReason = {
+          type: "collaboration_failure",
+          status: "objective_disagreement",
+          brief: "sibling blocked",
+          executionContextId: "ctx-other",
+          conversationId: "conv-other",
+          summary: "sibling blocked",
+        };
+        return current;
+      });
+      return {
+        conversationId: "conv-mock",
+        contextTokens: null,
+        contextWindowMax: null,
+      };
+    });
+
+    const orchestrator = createGraphWorkflowIterationOrchestrator({
+      executionRepository: repository,
+      findLatestContextValidationEvent:
+        repository.findLatestContextValidationEvent,
+      createConversation,
+      createToolServer,
+      runAgentIteration,
+      signalHalt,
+      now: () => NOW,
+    });
+
+    const result = await orchestrator.runIteration({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session-1",
+      contextId: "context-plan",
+    });
+
+    // The swallowed IterationHaltedError must count toward the circuit breaker
+    // so a terminal-error loop is bounded by the consecutive-failure threshold,
+    // not only by maxIterations.
+    expect(
+      result.execution.contextStates["context-plan"]?.consecutiveFailureCount,
+    ).toBe(1);
+    // Tasks remain and the execution is still running, so the iteration would
+    // otherwise loop — the breaker is the backstop.
+    expect(result.shouldContinueInContext).toBe(true);
   });
 
   it("triggers mid-iteration circuit_breaker halt when failure count crosses threshold inside a single iteration", async () => {

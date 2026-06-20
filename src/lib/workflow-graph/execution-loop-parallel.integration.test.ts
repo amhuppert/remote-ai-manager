@@ -910,6 +910,117 @@ describe("execution loop — parallel integration", () => {
     expect(result.contextStates["ctx-c"]?.mergeStatus).toBe("merged-success");
   });
 
+  it("scenario 5c: one sibling's pending halt stops the other sibling from looping to maxIterations", async () => {
+    _resetActiveLoopsForTesting();
+
+    const definition = createParallelDefinition(["ctx-a", "ctx-b"]);
+    const initial = createInitialExecution(definition);
+    const repository = createRepository(initial);
+    const parallelWorktrees = createParallelWorktreesStub();
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+      parallelWorktrees,
+      async getSession() {
+        return createSession();
+      },
+    });
+
+    const runIterationCalls: string[] = [];
+    // ctx-b only proceeds once ctx-a has recorded the halt, so ctx-b's first
+    // iteration deterministically observes pendingHaltReason.
+    const haltRecorded = deferred<void>();
+
+    const iterationOrchestrator = {
+      async runIteration(input: {
+        contextId: string;
+      }): Promise<GraphWorkflowIterationResult> {
+        runIterationCalls.push(input.contextId);
+        if (input.contextId === "ctx-a") {
+          const result = await manager.recordPendingHaltReason({
+            projectPath: "/repo",
+            sessionName: "session-1",
+            reason: {
+              type: "collaboration_failure",
+              status: "objective_disagreement",
+              brief: "ctx-a is blocked",
+              executionContextId: "ctx-a",
+              conversationId: "conv-a",
+              summary: "ctx-a is blocked",
+            },
+          });
+          haltRecorded.resolve();
+          return {
+            conversationId: "conv-a",
+            execution: result.execution,
+            shouldContinueInContext: false,
+          };
+        }
+        // ctx-b always has remaining work and would loop forever without the
+        // pending-halt guard. It clones the latest execution (now carrying
+        // pendingHaltReason), so the loop must stop after a single iteration.
+        await haltRecorded.promise;
+        const next = await manager.mutateActive("/repo", "session-1", (e) => {
+          const updated = structuredClone(e);
+          const cs = updated.contextStates["ctx-b"];
+          if (cs) cs.iterationCount += 1;
+          return updated;
+        });
+        return {
+          conversationId: "conv-b",
+          execution: next,
+          shouldContinueInContext: true,
+        };
+      },
+    };
+
+    const mergeRunner: GraphMergeRunner = {
+      async run() {
+        return buildSuccessMergeOutput();
+      },
+    };
+
+    const loop = createGraphWorkflowExecutionLoop({
+      workflowManager: manager,
+      iterationOrchestrator,
+      parallelWorktrees,
+      mergeMutex: createPerSessionMergeMutex(),
+      sessionGitLock: createSessionGitLock({
+        acquireSessionLock: () => () => {},
+      }),
+      mergeRunner,
+      joinRunner: createNoopJoinRunner(),
+      soloContextCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      laneCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      executionTargetResolver: createExecutionTargetResolver(),
+      async getSession() {
+        return createSession();
+      },
+    });
+
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(result.status).toBe("halted");
+    expect(result.haltReason?.type).toBe("collaboration_failure");
+    // The guard stops ctx-b after its first iteration instead of spinning to
+    // maxIterations (5). Without the fix this is 5.
+    expect(runIterationCalls.filter((c) => c === "ctx-b")).toHaveLength(1);
+    // ctx-b never completed, so it must not have committed/merged.
+    expect(result.contextStates["ctx-b"]?.mergeStatus).toBe("not-applicable");
+  });
+
   it("scenario 5b: orchestrator signalHalt records pending halt, skips failed sibling merge, and drains successful siblings", async () => {
     _resetActiveLoopsForTesting();
 

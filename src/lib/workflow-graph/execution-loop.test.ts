@@ -1196,6 +1196,75 @@ describe("execution loop", () => {
     expect(harness.drainAndHaltSpy).toHaveBeenCalled();
   });
 
+  it("stops seeding iterations when a halt is pending during the drain window", async () => {
+    const definition = createSingleContextDefinition(10);
+    const initial = createRunningExecution(definition, {
+      activeContextIds: ["ctx-1"],
+      contextStates: {
+        "ctx-1": {
+          pendingApproval: null,
+          contextId: "ctx-1",
+          status: "running",
+          totalTaskCount: 1,
+          completedTaskCount: 0,
+          iterationCount: 0,
+          consecutiveFailureCount: 0,
+          worktreePath: null,
+          branchName: null,
+          isolation: "session",
+          batchId: null,
+          laneId: null,
+          joinId: null,
+          mergeStatus: "not-applicable",
+          cleanupStatus: "not-applicable",
+          lastMergeError: null,
+        },
+      },
+    });
+
+    let iterationCallCount = 0;
+    const harness = buildHarness({
+      initialExecution: initial,
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          iterationCallCount += 1;
+          const next = structuredClone(harness.getCurrent());
+          next.contextStates["ctx-1"]!.iterationCount += 1;
+          // A sibling context recorded a halt mid-flight: pendingHaltReason is
+          // set while the execution is still "running" (the drain-then-halt
+          // window). The per-context loop must stop seeding iterations.
+          next.pendingHaltReason = {
+            type: "collaboration_failure",
+            status: "objective_disagreement",
+            brief: "sibling blocked",
+            executionContextId: "ctx-other",
+            conversationId: "conv-other",
+            summary: "sibling blocked",
+          };
+          harness.setCurrent(next);
+          return {
+            conversationId: "conv-1",
+            execution: next,
+            shouldContinueInContext: true,
+          };
+        },
+      },
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(iterationCallCount).toBe(1);
+    expect(result.status).toBe("halted");
+    expect(result.haltReason?.type).toBe("collaboration_failure");
+    expect(harness.drainAndHaltSpy).toHaveBeenCalled();
+  });
+
   it("continues iterating when consecutiveFailureCount is below threshold", async () => {
     const definition = createSingleContextDefinition(10);
     const initial = createRunningExecution(definition, {
@@ -3006,7 +3075,9 @@ describe("execution loop", () => {
         });
         expect(acquireConversationLock).not.toHaveBeenCalled();
         expect(soloCommit).not.toHaveBeenCalled();
-        expect(findApprovalResolvedEvents(harness.appendedEvents)).toHaveLength(0);
+        expect(findApprovalResolvedEvents(harness.appendedEvents)).toHaveLength(
+          0,
+        );
         expect(broadcast).not.toHaveBeenCalled();
         expect(harness.sendSpy).not.toHaveBeenCalled();
       },
@@ -3078,7 +3149,9 @@ describe("execution loop", () => {
       expect(iterationCallCount).toBe(1);
       expect(release).toHaveBeenCalledTimes(1);
       expect(soloCommit).not.toHaveBeenCalled();
-      expect(findApprovalResolvedEvents(harness.appendedEvents)).toHaveLength(0);
+      expect(findApprovalResolvedEvents(harness.appendedEvents)).toHaveLength(
+        0,
+      );
       expect(broadcast).not.toHaveBeenCalled();
       expect(harness.sendSpy).not.toHaveBeenCalled();
     });
