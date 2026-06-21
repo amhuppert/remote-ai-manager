@@ -58,10 +58,18 @@ const TRIGGER_OPEN =
  * the rainbow gradient through `border-box`) with the animated background shift.
  * The hover/open box-shadows override the base ones unconditionally, matching the
  * legacy rule that applies them across the plain, `:hover`, and `.open` states.
+ *
+ * The background MUST be expressed as `background-image`/`-size`/`-clip`/`-origin`
+ * longhands rather than the `background` shorthand: Tailwind emits the `background`
+ * shorthand utility AFTER the `background-size`/`background-clip` longhand utilities,
+ * so a shorthand here would reset size back to `auto` and clip back to `border-box`,
+ * breaking the 200% scroll animation and the per-layer padding/border clipping.
  */
 const TRIGGER_RAINBOW = cn(
   "border border-transparent",
-  "[background:var(--rainbow-tint)_padding-box,linear-gradient(var(--bg-surface),var(--bg-surface))_padding-box,var(--rainbow-gradient)_border-box]",
+  "[background-image:var(--rainbow-tint),linear-gradient(var(--bg-surface),var(--bg-surface)),var(--rainbow-gradient)]",
+  "[background-origin:padding-box,padding-box,border-box]",
+  "[background-clip:padding-box,padding-box,border-box]",
   "[background-size:200%_auto,100%_100%,200%_auto]",
   "[animation:rainbow-border-shift_3s_linear_infinite]",
   "shadow-[0_0_8px_var(--rainbow-glow),0_0_20px_var(--rainbow-glow-blue)]",
@@ -71,8 +79,11 @@ const TRIGGER_RAINBOW = cn(
 const TRIGGER_RAINBOW_OPEN =
   "data-open:shadow-[0_0_0_3px_var(--rainbow-glow),0_0_14px_var(--cc-rainbow-glow-violet-a15)]";
 
+// `background-image` longhand (not the `background` shorthand) so Tailwind cannot
+// reset `background-clip: text` back to `border-box` — without the clip the
+// transparent text fill renders the label invisible instead of rainbow-colored.
 const RAINBOW_TEXT_CLIP =
-  "[background:var(--rainbow-gradient)] [background-size:200%_auto] [-webkit-background-clip:text] [background-clip:text] [-webkit-text-fill-color:transparent] [animation:rainbow-shift_3s_linear_infinite]";
+  "[background-image:var(--rainbow-gradient)] [background-size:200%_auto] [-webkit-background-clip:text] [background-clip:text] [-webkit-text-fill-color:transparent] [animation:rainbow-shift_3s_linear_infinite]";
 
 export default function ReasoningLevelSelector({
   value,

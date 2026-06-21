@@ -42,8 +42,11 @@ const CONFIG_NAV: Array<{ id: ConfigNavSection; label: string }> = [
   { id: "notifications", label: "Notifications" },
 ];
 
+// `appearance-none border-none` neutralizes the UA button chrome (a `2px outset`
+// bevel) so the flat, token-driven appearance below is what renders; the active
+// accent is the inset cyan box-shadow applied per-state, not a border.
 const NAV_ITEM_BASE =
-  "flex items-center gap-[8px] w-full min-h-[34px] px-[10px] py-[8px] rounded-sm font-mono text-[0.76rem] text-left whitespace-nowrap cursor-pointer transition-all duration-150 ease-[ease] max-900:flex-[0_0_auto] max-900:w-auto";
+  "flex items-center gap-[8px] w-full min-h-[34px] px-[10px] py-[8px] appearance-none border-none rounded-sm font-mono text-[0.76rem] text-left whitespace-nowrap cursor-pointer transition-all duration-150 ease-[ease] max-900:flex-[0_0_auto] max-900:w-auto";
 
 // The config route's main region: the shell's flex-1 scroll box (flex-1/w-full/
 // min-h-0) with the shared fadeIn page-transition, run full-bleed with no padding,
