@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { registerTrustedSchema } from "@/lib/shared/parse-trusted";
 
 export const jobTypeSchema = z.enum(["commit", "merge", "resolve-conflicts"]);
 export type JobType = z.infer<typeof jobTypeSchema>;
@@ -20,46 +21,52 @@ export type JobStatus = z.infer<typeof jobStatusSchema>;
 // Phase-clearing rule: phase is cleared on terminal transitions to completed,
 // failed, conflicts, or discarded; phase "awaiting-land" is retained on
 // ready-to-land terminal entry.
-export const backgroundJobSchema = z.object({
-  jobId: z.string(),
-  jobType: jobTypeSchema,
-  status: jobStatusSchema,
-  projectName: z.string(),
-  sessionName: z.string(),
-  branchName: z.string(),
-  targetBranch: z.string().optional(),
-  startedAt: z.string(),
-  completedAt: z.string().optional(),
-  mergeHash: z.string().optional(),
-  commitHash: z.string().optional(),
-  conflictCount: z.number().optional(),
-  conflictFiles: z.array(z.string()).optional(),
-  errorMessage: z.string().optional(),
-  phase: z.string().optional(),
-  parkedRef: z.string().optional(),
-  preparedSha: z.string().optional(),
-  expectedTargetSha: z.string().optional(),
-  refreshWarning: z.string().optional(),
-});
+export const backgroundJobSchema = registerTrustedSchema(
+  z.object({
+    jobId: z.string(),
+    jobType: jobTypeSchema,
+    status: jobStatusSchema,
+    projectName: z.string(),
+    sessionName: z.string(),
+    branchName: z.string(),
+    targetBranch: z.string().optional(),
+    startedAt: z.string(),
+    completedAt: z.string().optional(),
+    mergeHash: z.string().optional(),
+    commitHash: z.string().optional(),
+    conflictCount: z.number().optional(),
+    conflictFiles: z.array(z.string()).optional(),
+    errorMessage: z.string().optional(),
+    phase: z.string().optional(),
+    parkedRef: z.string().optional(),
+    preparedSha: z.string().optional(),
+    expectedTargetSha: z.string().optional(),
+    refreshWarning: z.string().optional(),
+  }),
+  "backgroundJobSchema",
+);
 export type BackgroundJob = z.infer<typeof backgroundJobSchema>;
 
-export const jobRecordSchema = backgroundJobSchema
-  .pick({
-    jobId: true,
-    jobType: true,
-    status: true,
-    projectName: true,
-    sessionName: true,
-    branchName: true,
-    startedAt: true,
-    completedAt: true,
-    mergeHash: true,
-    commitHash: true,
-    conflictCount: true,
-    conflictFiles: true,
-    errorMessage: true,
-  })
-  .strict();
+export const jobRecordSchema = registerTrustedSchema(
+  backgroundJobSchema
+    .pick({
+      jobId: true,
+      jobType: true,
+      status: true,
+      projectName: true,
+      sessionName: true,
+      branchName: true,
+      startedAt: true,
+      completedAt: true,
+      mergeHash: true,
+      commitHash: true,
+      conflictCount: true,
+      conflictFiles: true,
+      errorMessage: true,
+    })
+    .strict(),
+  "jobRecordSchema",
+);
 export type JobRecord = z.infer<typeof jobRecordSchema>;
 
 export const jobStatusEventSchema = z.object({

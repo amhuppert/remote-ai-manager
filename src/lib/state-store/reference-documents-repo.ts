@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createLogger } from "@/lib/logging";
 import { referenceDocumentSchema } from "@/lib/reference-documents/schemas";
 import { PersistenceError } from "../shared/errors";
+import { parseTrusted, registerTrustedSchema } from "../shared/parse-trusted";
 import type { ReferenceDocument } from "@/lib/reference-documents/schemas";
 type Db = InstanceType<typeof Database>;
 
@@ -24,14 +25,17 @@ export interface ReferenceDocumentsRepo {
   delete(id: string): void;
 }
 
-const referenceDocumentsTableRowSchema = z.object({
-  id: z.string(),
-  project_path: z.string(),
-  session_name: z.string(),
-  file_path: z.string(),
-  description: z.string(),
-  created_at: z.string(),
-});
+const referenceDocumentsTableRowSchema = registerTrustedSchema(
+  z.object({
+    id: z.string(),
+    project_path: z.string(),
+    session_name: z.string(),
+    file_path: z.string(),
+    description: z.string(),
+    created_at: z.string(),
+  }),
+  "referenceDocumentsTableRowSchema",
+);
 type ReferenceDocumentsTableRow = z.infer<
   typeof referenceDocumentsTableRowSchema
 >;
@@ -126,11 +130,11 @@ function rowToDomain(rawRow: unknown): {
       ? (rawRow as { id: string }).id
       : "<unknown>";
 
-  const rowResult = referenceDocumentsTableRowSchema.safeParse(rawRow);
-  if (!rowResult.success) {
-    return logAndThrowValidationFailure(fallbackId, rowResult.error.issues);
-  }
-  const row: ReferenceDocumentsTableRow = rowResult.data;
+  const row: ReferenceDocumentsTableRow = parseTrusted(
+    referenceDocumentsTableRowSchema,
+    rawRow,
+    (issues) => logAndThrowValidationFailure(fallbackId, issues),
+  );
 
   const candidate = {
     id: row.id,
@@ -139,14 +143,13 @@ function rowToDomain(rawRow: unknown): {
     createdAt: row.created_at,
   };
 
-  const result = referenceDocumentSchema.safeParse(candidate);
-  if (!result.success) {
-    return logAndThrowValidationFailure(row.id, result.error.issues);
-  }
+  const doc = parseTrusted(referenceDocumentSchema, candidate, (issues) =>
+    logAndThrowValidationFailure(row.id, issues),
+  );
   return {
     projectPath: row.project_path,
     sessionName: row.session_name,
-    doc: result.data,
+    doc,
   };
 }
 

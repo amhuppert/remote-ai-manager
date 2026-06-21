@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { agentBackendSchema } from "@/lib/shared/schemas";
+import { registerTrustedSchema } from "@/lib/shared/parse-trusted";
 
 // ============================================================
 // MCP Configuration Schemas
@@ -59,9 +60,12 @@ export const mcpServerOverrideSchema = z.object({
 });
 export type McpServerOverride = z.infer<typeof mcpServerOverrideSchema>;
 
-export const mcpOverridesSchema = z.object({
-  servers: z.record(z.string(), mcpServerOverrideSchema),
-});
+export const mcpOverridesSchema = registerTrustedSchema(
+  z.object({
+    servers: z.record(z.string(), mcpServerOverrideSchema),
+  }),
+  "mcpOverridesSchema",
+);
 export type McpOverrides = z.infer<typeof mcpOverridesSchema>;
 
 export const mcpGlobalStateSchema = z.object({

@@ -70,6 +70,34 @@ afterEach(() => {
   _resetForTesting();
 });
 
+describe("rowToNotification — production parse skip", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  function insertRawNotification(type: string): void {
+    getSharedStateDb()
+      .prepare(
+        `INSERT INTO notifications (id, source, type, title, message, read, project_name, created_at, session_name, branch_name, job_id, job_type)
+         VALUES (?, 'job', ?, 'T', 'M', 0, 'p', '2026-01-01 00:00:00', 's', 'csm/s', 'job-1', 'merge')`,
+      )
+      .run("notif-x", type);
+  }
+
+  it("throws on a schema-violating row outside production", () => {
+    insertRawNotification("bogus-type");
+    expect(() => getNotifications()).toThrow(PersistenceError);
+  });
+
+  it("returns the row as-is without validating in production", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    insertRawNotification("bogus-type");
+    const result = getNotifications();
+    expect(result.notifications).toHaveLength(1);
+    expect(result.notifications[0]?.type as string).toBe("bogus-type");
+  });
+});
+
 // ============================================================
 // Schema initialization (Task 2.1)
 // ============================================================

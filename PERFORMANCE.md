@@ -99,6 +99,17 @@ The recurring root cause behind several entries below is the same: an array or o
 
 Discharge keys match **exactly** by default (so a collection added beside a discharged one is still flagged); suffix a key with `.**` only to cover a genuinely immutable subtree. Stale keys (covering nothing) also fail, so the registry cannot rot as schemas change. When you add a persisted field that is (or contains) a collection, expect this gate to fail until you cap it with `.max()` or record why it is bounded — that decision is the whole point.
 
+### 8. Skip Zod parsing of trusted state in production via `parseTrusted` / `revalidateTrusted`
+
+Command Center state that is always valid absent a bug does not need Zod re-validation on every read in production. Two helpers in `src/lib/shared/parse-trusted.ts` skip the parse when `process.env.NODE_ENV === "production"` and validate normally in every other environment (dev, test, CI, Storybook), so serialization drift is always caught before it can reach production:
+
+- **`parseTrusted(schema, data, onInvalid?)`** — first-parse of trusted state read from storage (repo `rowToDomain`). The skip is safe only when the schema is **effect-free** (no `.default()` / `.transform()` / `.preprocess()` / `.catch()` / coercion), so `parse(raw)` would deep-equal `raw`. Enforced by a registry: wrap each such schema's definition with `registerTrustedSchema(schema, name)`. The guardrail `src/lib/shared/trusted-schemas.contract.test.ts` proves every registered schema is effect-free (`isEffectFree`, `src/lib/shared/testing/effect-free.ts`, which walks Zod v4's `_zod.def` tree). Adding a `.default()` to a registered schema fails that test instead of shipping a production-only divergence; `parseTrusted` also throws on an unregistered schema outside production, so a new skip site can't escape the guardrail.
+- **`revalidateTrusted(schema, data, onInvalid?)`** — re-validation of already-canonical state (the whole-state assertion sites `readState` / `cloneAndValidate` / `diffAndCommit`). No effect-free requirement: the input already passed a first parse, so re-parsing is idempotent and the skip is safe regardless of schema effects. Safety comes from the caller's canonical-input contract.
+
+Deliberately **kept parsing**: every write-path validation (cheap, a real integrity gate, and it canonicalizes effect-bearing objects before serialization); and the effect-bearing hot reads — `conversationStateSchema`, `sessionStateSchema`, `graphWorkflowExecutionSchema` — whose pervasive backward-compat `.default()`s make `parse(raw) ≠ raw` for legacy rows. Their per-row cost is already mitigated by the Pattern 3 parsed-row caches; making them skip-eligible would require eliminating those defaults via a full backfill migration (disproportionate — not done).
+
+When you add a new effect-free trusted-state read, register the schema and route the read through `parseTrusted`. Never pass an effect-bearing schema to `parseTrusted` (the guardrail will fail); use `revalidateTrusted` only where the input is provably already-canonical. Per Pattern 5, do not annotate the skip in code — the rationale lives here.
+
 ## Resolved issues
 
 Each entry: symptom → root cause → fix → lesson. Add new entries at the top.

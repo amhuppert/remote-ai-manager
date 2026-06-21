@@ -18,10 +18,8 @@ import { createProjectConversationsRepo } from "./project-conversations-repo";
 import { createProjectsRepo } from "./projects-repo";
 import { createReferenceDocumentsRepo } from "./reference-documents-repo";
 import { createSetters } from "./setters";
-import {
-  createSessionsRepo,
-  diffChangedSessionColumns,
-} from "./sessions-repo";
+import { revalidateTrusted } from "../shared/parse-trusted";
+import { createSessionsRepo, diffChangedSessionColumns } from "./sessions-repo";
 import { getDb } from "./state-db";
 import { createStateAggregate, type StateAggregate } from "./state-aggregate";
 import type { AllRepos, Db, StateStoreCore, StateStoreDeps } from "./schemas";
@@ -158,11 +156,7 @@ export function createStateStore(deps: StateStoreDeps = {}) {
   }
 
   function cloneAndValidate(snapshot: ManagerState): ManagerState {
-    const cloned = structuredClone(snapshot);
-    if (process.env.NODE_ENV !== "production") {
-      return managerStateSchema.parse(cloned);
-    }
-    return cloned;
+    return revalidateTrusted(managerStateSchema, structuredClone(snapshot));
   }
 
   /**

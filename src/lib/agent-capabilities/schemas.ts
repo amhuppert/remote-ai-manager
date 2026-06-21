@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { registerTrustedSchema } from "@/lib/shared/parse-trusted";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import { agentBackendSchema, type AgentBackendId } from "@/lib/shared/schemas";
 
@@ -253,9 +254,12 @@ export type AgentCapabilityCascadesOverride = z.infer<
   typeof agentCapabilityCascadesOverrideSchema
 >;
 
-export const agentCapabilityOverridesSchema = z.object({
-  cascades: agentCapabilityCascadesOverrideSchema,
-});
+export const agentCapabilityOverridesSchema = registerTrustedSchema(
+  z.object({
+    cascades: agentCapabilityCascadesOverrideSchema,
+  }),
+  "agentCapabilityOverridesSchema",
+);
 export type AgentCapabilityOverrides = z.infer<
   typeof agentCapabilityOverridesSchema
 >;

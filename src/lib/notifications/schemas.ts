@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { jobTypeSchema } from "@/lib/jobs/schemas";
+import { registerTrustedSchema } from "@/lib/shared/parse-trusted";
 
 // ============================================================
 // Push Notification Config
@@ -110,10 +111,13 @@ export const projectConversationNotificationSchema =
     errorMessage: z.string().optional(),
   });
 
-export const notificationSchema = z.discriminatedUnion("source", [
-  jobNotificationSchema,
-  projectConversationNotificationSchema,
-]);
+export const notificationSchema = registerTrustedSchema(
+  z.discriminatedUnion("source", [
+    jobNotificationSchema,
+    projectConversationNotificationSchema,
+  ]),
+  "notificationSchema",
+);
 export type Notification = z.infer<typeof notificationSchema>;
 export type JobNotification = z.infer<typeof jobNotificationSchema>;
 export type ProjectConversationNotification = z.infer<

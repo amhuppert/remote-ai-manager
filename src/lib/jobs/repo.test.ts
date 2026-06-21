@@ -34,6 +34,34 @@ afterEach(() => {
   _resetForTesting();
 });
 
+describe("getJobRecord — production parse skip", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  function insertRawJobRow(status: string): void {
+    getSharedStateDb()
+      .prepare(
+        `INSERT INTO job_records (job_id, job_type, status, project_name, session_name, branch_name, started_at)
+         VALUES (?, 'merge', ?, 'p', 's', 'csm/s', '2026-01-01T00:00:00Z')`,
+      )
+      .run("job-x", status);
+  }
+
+  it("throws on a schema-violating row outside production", () => {
+    insertRawJobRow("bogus-status");
+    expect(() => getJobRecord("job-x")).toThrow(PersistenceError);
+  });
+
+  it("returns the row as-is without validating in production", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    insertRawJobRow("bogus-status");
+    const job = getJobRecord("job-x");
+    expect(job).not.toBeNull();
+    if (job) expect(job.status as string).toBe("bogus-status");
+  });
+});
+
 describe("createJobRecord", () => {
   it("inserts a running job record", () => {
     createJobRecord({

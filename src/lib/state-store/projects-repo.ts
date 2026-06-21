@@ -8,6 +8,7 @@ import {
 } from "@/lib/agent-capabilities/schemas";
 import { projectRowSchema } from "@/lib/projects/schemas";
 import { PersistenceError, getErrorMessage } from "../shared/errors";
+import { parseTrusted, registerTrustedSchema } from "../shared/parse-trusted";
 import type { ProjectRow } from "@/lib/projects/schemas";
 type Db = InstanceType<typeof Database>;
 
@@ -37,16 +38,19 @@ export interface ProjectsRepo {
  * value (e.g. `archived = 2`, non-integer `pin_order`) trips Zod
  * `safeParse` failure rather than being silently coerced.
  */
-const projectsTableRowSchema = z.object({
-  root_path: z.string(),
-  archived: z.union([z.literal(0), z.literal(1)]),
-  pinned: z.union([z.literal(0), z.literal(1)]),
-  pin_order: z.number().int().nullable(),
-  mcp_overrides: z.string().nullable(),
-  agent_capability_overrides: z.string().nullable(),
-  created_at: z.string(),
-  updated_at: z.string(),
-});
+const projectsTableRowSchema = registerTrustedSchema(
+  z.object({
+    root_path: z.string(),
+    archived: z.union([z.literal(0), z.literal(1)]),
+    pinned: z.union([z.literal(0), z.literal(1)]),
+    pin_order: z.number().int().nullable(),
+    mcp_overrides: z.string().nullable(),
+    agent_capability_overrides: z.string().nullable(),
+    created_at: z.string(),
+    updated_at: z.string(),
+  }),
+  "projectsTableRowSchema",
+);
 type ProjectsTableRow = z.infer<typeof projectsTableRowSchema>;
 
 interface SqlBindRow {
@@ -134,9 +138,12 @@ function parseMcpOverridesColumn(
       ],
     };
   }
-  const result = mcpOverridesSchema.safeParse(parsed);
-  if (!result.success) return { ok: false, issues: result.error.issues };
-  return { ok: true, value: result.data };
+  try {
+    return { ok: true, value: parseTrusted(mcpOverridesSchema, parsed) };
+  } catch (err) {
+    if (err instanceof z.ZodError) return { ok: false, issues: err.issues };
+    throw err;
+  }
 }
 
 function parseAgentCapabilityOverridesColumn(
@@ -162,9 +169,15 @@ function parseAgentCapabilityOverridesColumn(
       ],
     };
   }
-  const result = agentCapabilityOverridesSchema.safeParse(parsed);
-  if (!result.success) return { ok: false, issues: result.error.issues };
-  return { ok: true, value: result.data };
+  try {
+    return {
+      ok: true,
+      value: parseTrusted(agentCapabilityOverridesSchema, parsed),
+    };
+  } catch (err) {
+    if (err instanceof z.ZodError) return { ok: false, issues: err.issues };
+    throw err;
+  }
 }
 
 function logAndThrowValidationFailure(
@@ -191,14 +204,11 @@ function rowToDomain(rawRow: unknown): ProjectRow {
       ? (rawRow as { root_path: string }).root_path
       : "<unknown>";
 
-  const rowResult = projectsTableRowSchema.safeParse(rawRow);
-  if (!rowResult.success) {
-    return logAndThrowValidationFailure(
-      candidateRootPath,
-      rowResult.error.issues,
-    );
-  }
-  const row: ProjectsTableRow = rowResult.data;
+  const row: ProjectsTableRow = parseTrusted(
+    projectsTableRowSchema,
+    rawRow,
+    (issues) => logAndThrowValidationFailure(candidateRootPath, issues),
+  );
 
   const mcpResult = parseMcpOverridesColumn(row.root_path, row.mcp_overrides);
   if (!mcpResult.ok) {
@@ -226,11 +236,9 @@ function rowToDomain(rawRow: unknown): ProjectRow {
     candidate.agentCapabilityOverrides = capResult.value;
   }
 
-  const result = projectRowSchema.safeParse(candidate);
-  if (!result.success) {
-    return logAndThrowValidationFailure(row.root_path, result.error.issues);
-  }
-  return result.data;
+  return parseTrusted(projectRowSchema, candidate, (issues) =>
+    logAndThrowValidationFailure(row.root_path, issues),
+  );
 }
 
 function timed<T>(op: string, rootPath: string | undefined, fn: () => T): T {

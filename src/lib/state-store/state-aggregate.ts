@@ -9,6 +9,7 @@ import {
 } from "@/lib/projects/schemas";
 import { type SessionState } from "@/lib/sessions/schemas";
 import { PersistenceError } from "../shared/errors";
+import { revalidateTrusted } from "../shared/parse-trusted";
 import { type ProjectsRepo } from "./projects-repo";
 import { type SessionsRepo, canonicalSessionRow } from "./sessions-repo";
 import {
@@ -197,32 +198,32 @@ export function createStateAggregate(repos: AllRepos): StateAggregate {
     const pinnedProjects = pinnedProjectsRaw.map((p) => p.rootPath);
 
     const candidate = { projects, archivedProjects, pinnedProjects };
-    const result = managerStateSchema.safeParse(candidate);
+    const validated = revalidateTrusted(
+      managerStateSchema,
+      candidate,
+      (issues) => {
+        logger.error("state-store.aggregate.merge_failure", {
+          side: "schema",
+          issues,
+        });
+        throw new PersistenceError({
+          kind: "validation",
+          entity: "ManagerState",
+          issues,
+        });
+      },
+    );
     const totalMs = +(performance.now() - start).toFixed(3);
-
-    if (!result.success) {
-      logger.error("state-store.aggregate.merge_failure", {
-        side: "schema",
-        issues: result.error.issues,
-      });
-      throw new PersistenceError({
-        kind: "validation",
-        entity: "ManagerState",
-        issues: result.error.issues,
-      });
-    }
 
     logger.info("state.read.timing", {
       accessor: "readState",
       totalMs,
     });
-    return result.data;
+    return validated;
   }
 
   function diffAndCommit(snapshot: ManagerState, mutated: ManagerState): void {
-    if (process.env.NODE_ENV !== "production") {
-      managerStateSchema.parse(mutated);
-    }
+    revalidateTrusted(managerStateSchema, mutated);
 
     const start = performance.now();
 

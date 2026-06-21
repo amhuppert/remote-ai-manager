@@ -43,6 +43,32 @@ afterEach(() => {
   db.close();
 });
 
+describe("rowToDomain — production parse skip", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  function insertRawProject(pinOrder: number): void {
+    db.prepare(
+      `INSERT INTO projects (root_path, archived, pinned, pin_order, created_at, updated_at)
+       VALUES (?, 0, 0, ?, '2026-01-01 00:00:00', '2026-01-01 00:00:00')`,
+    ).run("/p-raw", pinOrder);
+  }
+
+  it("throws on a schema-violating row outside production", () => {
+    insertRawProject(1.5);
+    expect(() => repo.findByRootPath("/p-raw")).toThrow(PersistenceError);
+  });
+
+  it("returns the row as-is without validating in production", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    insertRawProject(1.5);
+    const project = repo.findByRootPath("/p-raw");
+    expect(project).not.toBeNull();
+    if (project) expect(project.pinOrder).toBe(1.5);
+  });
+});
+
 function timingEvents(op: string) {
   return loggerInfo.mock.calls.filter(
     ([name]) => name === `state-store.projects.${op}.timing`,

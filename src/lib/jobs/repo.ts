@@ -4,6 +4,7 @@ import { getStateDb } from "../state-store/store";
 import { createLogger } from "../logging";
 import { timedSync } from "../logging/timed";
 import { PersistenceError } from "../shared/errors";
+import { parseTrusted, registerTrustedSchema } from "../shared/parse-trusted";
 import { jobNotificationSchema } from "../notifications/schemas";
 import {
   backgroundJobSchema,
@@ -17,22 +18,30 @@ import type {
 } from "@/lib/notifications/schemas";
 const jobRecordLogger = createLogger("state-store.job-records");
 
-const jobRecordRowSchema = z.object({
-  job_id: z.string(),
-  job_type: z.string(),
-  status: z.string(),
-  project_name: z.string(),
-  session_name: z.string(),
-  branch_name: z.string(),
-  started_at: z.string(),
-  completed_at: z.string().nullable(),
-  merge_hash: z.string().nullable(),
-  commit_hash: z.string().nullable(),
-  conflict_count: z.number().int().nullable(),
-  conflict_files: z.string().nullable(),
-  error_message: z.string().nullable(),
-});
+const jobRecordRowSchema = registerTrustedSchema(
+  z.object({
+    job_id: z.string(),
+    job_type: z.string(),
+    status: z.string(),
+    project_name: z.string(),
+    session_name: z.string(),
+    branch_name: z.string(),
+    started_at: z.string(),
+    completed_at: z.string().nullable(),
+    merge_hash: z.string().nullable(),
+    commit_hash: z.string().nullable(),
+    conflict_count: z.number().int().nullable(),
+    conflict_files: z.string().nullable(),
+    error_message: z.string().nullable(),
+  }),
+  "jobRecordRowSchema",
+);
 type JobRecordRow = z.infer<typeof jobRecordRowSchema>;
+
+const jobConflictFilesSchema = registerTrustedSchema(
+  z.array(z.string()),
+  "jobRecord.conflictFiles",
+);
 
 const jobRecordUpdateSchema = z.object({
   status: jobStatusSchema,
@@ -110,9 +119,12 @@ function parseConflictFilesColumn(
       ],
     };
   }
-  const result = z.array(z.string()).safeParse(parsed);
-  if (!result.success) return { ok: false, issues: result.error.issues };
-  return { ok: true, value: result.data };
+  try {
+    return { ok: true, value: parseTrusted(jobConflictFilesSchema, parsed) };
+  } catch (err) {
+    if (err instanceof z.ZodError) return { ok: false, issues: err.issues };
+    throw err;
+  }
 }
 
 /**
@@ -134,14 +146,9 @@ function rowToBackgroundJob(rawRow: unknown): BackgroundJob {
       ? (rawRow as { job_id: string }).job_id
       : undefined;
 
-  const rowResult = jobRecordRowSchema.safeParse(rawRow);
-  if (!rowResult.success) {
-    return logAndThrowJobRecordValidationFailure(
-      candidateId,
-      rowResult.error.issues,
-    );
-  }
-  const row: JobRecordRow = rowResult.data;
+  const row: JobRecordRow = parseTrusted(jobRecordRowSchema, rawRow, (issues) =>
+    logAndThrowJobRecordValidationFailure(candidateId, issues),
+  );
 
   const conflictFilesResult = parseConflictFilesColumn(
     row.job_id,
@@ -171,7 +178,9 @@ function rowToBackgroundJob(rawRow: unknown): BackgroundJob {
     candidate.conflictFiles = conflictFilesResult.value;
   if (row.error_message !== null) candidate.errorMessage = row.error_message;
 
-  return parseBackgroundJobOrFail(candidate, row.job_id);
+  return parseTrusted(backgroundJobSchema, candidate, (issues) =>
+    logAndThrowJobRecordValidationFailure(row.job_id, issues),
+  );
 }
 
 export interface JobRecordUpdate {
@@ -281,7 +290,7 @@ export function getJobRecord(jobId: string): JobRecord | null {
       if (job.errorMessage !== undefined)
         durable.errorMessage = job.errorMessage;
 
-      return jobRecordSchema.parse(durable);
+      return parseTrusted(jobRecordSchema, durable);
     },
     (result) => ({ found: result !== null }),
   );

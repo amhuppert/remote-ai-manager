@@ -25,6 +25,10 @@ import type {
   ProjectConversationNotificationType,
 } from "@/lib/notifications/schemas";
 import { PersistenceError } from "@/lib/shared/errors";
+import {
+  parseTrusted,
+  registerTrustedSchema,
+} from "@/lib/shared/parse-trusted";
 import { dispatchPushForNotification } from "@/lib/push-notification/dispatcher";
 
 const defaultBroadcast: BroadcastFn = (event) => {
@@ -39,31 +43,39 @@ const notificationLogger = createLogger("state-store.notifications");
 // Row schemas (raw SQLite shape) — first-pass validation gate
 // ============================================================
 
-const notificationRowSchema = z.object({
-  id: z.string(),
-  source: z.enum(["job", "project-conversation"]),
-  type: z.string(),
-  title: z.string(),
-  message: z.string(),
-  read: z.union([z.literal(0), z.literal(1)]),
-  project_name: z.string(),
-  session_name: z.string().nullable(),
-  branch_name: z.string().nullable(),
-  job_id: z.string().nullable(),
-  job_type: z.string().nullable(),
-  merge_hash: z.string().nullable(),
-  commit_hash: z.string().nullable(),
-  conflict_count: z.number().int().nullable(),
-  conflict_files: z.string().nullable(),
-  target_branch: z.string().nullable(),
-  conversation_id: z.string().nullable(),
-  conversation_name: z.string().nullable(),
-  conversation_status: z.string().nullable(),
-  dedupe_key: z.string().nullable(),
-  error_message: z.string().nullable(),
-  created_at: z.string(),
-});
+const notificationRowSchema = registerTrustedSchema(
+  z.object({
+    id: z.string(),
+    source: z.enum(["job", "project-conversation"]),
+    type: z.string(),
+    title: z.string(),
+    message: z.string(),
+    read: z.union([z.literal(0), z.literal(1)]),
+    project_name: z.string(),
+    session_name: z.string().nullable(),
+    branch_name: z.string().nullable(),
+    job_id: z.string().nullable(),
+    job_type: z.string().nullable(),
+    merge_hash: z.string().nullable(),
+    commit_hash: z.string().nullable(),
+    conflict_count: z.number().int().nullable(),
+    conflict_files: z.string().nullable(),
+    target_branch: z.string().nullable(),
+    conversation_id: z.string().nullable(),
+    conversation_name: z.string().nullable(),
+    conversation_status: z.string().nullable(),
+    dedupe_key: z.string().nullable(),
+    error_message: z.string().nullable(),
+    created_at: z.string(),
+  }),
+  "notificationRowSchema",
+);
 type NotificationRow = z.infer<typeof notificationRowSchema>;
+
+const notificationConflictFilesSchema = registerTrustedSchema(
+  z.array(z.string()),
+  "notification.conflictFiles",
+);
 
 // ============================================================
 // Row → domain mappers (Zod safeParse at the persistence boundary)
@@ -148,9 +160,15 @@ function parseConflictFilesColumn(
       ],
     };
   }
-  const result = z.array(z.string()).safeParse(parsed);
-  if (!result.success) return { ok: false, issues: result.error.issues };
-  return { ok: true, value: result.data };
+  try {
+    return {
+      ok: true,
+      value: parseTrusted(notificationConflictFilesSchema, parsed),
+    };
+  } catch (err) {
+    if (err instanceof z.ZodError) return { ok: false, issues: err.issues };
+    throw err;
+  }
 }
 
 function rowToNotification(rawRow: unknown): Notification {
@@ -161,14 +179,11 @@ function rowToNotification(rawRow: unknown): Notification {
       ? (rawRow as { id: string }).id
       : undefined;
 
-  const rowResult = notificationRowSchema.safeParse(rawRow);
-  if (!rowResult.success) {
-    return logAndThrowNotificationValidationFailure(
-      candidateId,
-      rowResult.error.issues,
-    );
-  }
-  const row: NotificationRow = rowResult.data;
+  const row: NotificationRow = parseTrusted(
+    notificationRowSchema,
+    rawRow,
+    (issues) => logAndThrowNotificationValidationFailure(candidateId, issues),
+  );
 
   const conflictFilesResult = parseConflictFilesColumn(
     row.id,
@@ -212,7 +227,9 @@ function rowToNotification(rawRow: unknown): Notification {
 
   if (row.error_message !== null) candidate.errorMessage = row.error_message;
 
-  return parseNotificationOrFail(candidate, row.id);
+  return parseTrusted(notificationSchema, candidate, (issues) =>
+    logAndThrowNotificationValidationFailure(row.id, issues),
+  );
 }
 
 // ============================================================
