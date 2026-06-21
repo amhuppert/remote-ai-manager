@@ -8,7 +8,6 @@ import {
   useGraphWorkflowExecutionQuery,
 } from "@/lib/workflows/queries";
 import { useSessionQuery } from "@/lib/sessions/queries";
-import { useSessionDiffQuery, useCommitsQuery } from "@/lib/git/queries";
 
 export function useSessionPageQueries(
   projectName: string,
@@ -31,19 +30,11 @@ export function useSessionPageQueries(
     sessionName,
     conversationId,
   );
-  const diffQuery = useSessionDiffQuery(projectName, sessionName);
-  const commitsQuery = useCommitsQuery(projectName, sessionName);
 
   const rawMessages = useMemo(
     () => messagesQuery.data ?? [],
     [messagesQuery.data],
   );
-  const diff = diffQuery.data ?? {
-    files: [],
-    totalAdditions: 0,
-    totalDeletions: 0,
-  };
-  const commits = commitsQuery.data ?? [];
 
   return {
     sessionQuery,
@@ -51,10 +42,6 @@ export function useSessionPageQueries(
     collaborationListQuery,
     graphWorkflowExecutionQuery,
     messagesQuery,
-    diffQuery,
-    commitsQuery,
     rawMessages,
-    diff,
-    commits,
   };
 }

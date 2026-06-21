@@ -57,8 +57,6 @@ interface SessionInfoStripProps {
   dsStopUnmanagedAndRetry?: () => void;
   dsIsStoppingUnmanaged?: boolean;
 
-  changesAdd: number;
-  changesDel: number;
   targetBranch: string;
   onDelete: () => void;
 }
@@ -90,8 +88,6 @@ function SessionInfoStrip({
   dsDismissUnmanagedConflict,
   dsStopUnmanagedAndRetry,
   dsIsStoppingUnmanaged = false,
-  changesAdd,
-  changesDel,
   targetBranch,
   onDelete,
 }: SessionInfoStripProps): React.JSX.Element {
@@ -130,15 +126,6 @@ function SessionInfoStrip({
             aria-hidden="true"
           />
           {displayStatus}
-        </div>
-        <span className="inline-block h-4 w-px shrink-0 bg-border-default" />
-        <div className="flex shrink-0 items-center gap-[6px]">
-          <span className="text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
-            Changes
-          </span>
-          <span className="font-semibold text-text-primary">
-            +{changesAdd} −{changesDel}
-          </span>
         </div>
         {contextPercent != null && (
           <>

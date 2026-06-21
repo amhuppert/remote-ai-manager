@@ -68,9 +68,6 @@ export interface UseSessionPageViewPropsArgs {
   tddDisabled: boolean;
   onLayoutChange: SessionContentProps["onLayoutChange"];
 
-  // diff/commits/queries
-  diff: SessionContentProps["diff"];
-  commits: SessionContentProps["commits"];
   cumulativeImageCount: number;
   messagesPending: boolean;
   messages: readonly TranscriptMessage[];
@@ -220,8 +217,6 @@ export function useSessionPageViewProps(
       targetBranch: args.targetBranch,
       layout: store.layout,
       mobilePanel: store.mobilePanel,
-      diff: args.diff,
-      commits: args.commits,
       panelContainerProps,
       openTabs: args.openTabs,
       tddEnabled: args.tddEnabled,

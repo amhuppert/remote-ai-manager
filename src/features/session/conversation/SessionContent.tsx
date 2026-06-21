@@ -16,7 +16,6 @@ import type { ConversationState } from "@/lib/conversations/schemas";
 type MobilePanel = "chat" | "diff" | "docs" | "specs" | "info";
 
 type PanelContainerProps = ComponentProps<typeof ConversationPanelContainer>;
-type RightPaneProps = ComponentProps<typeof RightPane>;
 type SessionInfoStripProps = ComponentProps<typeof SessionInfoStrip>;
 
 // classNames are referenced via module constants (not inline literals) so the
@@ -49,8 +48,6 @@ export interface SessionContentProps {
   targetBranch: string;
   layout: LayoutMode;
   mobilePanel: MobilePanel;
-  diff: RightPaneProps["diff"];
-  commits: RightPaneProps["commits"];
   panelContainerProps: PanelContainerProps;
   promptInputSlot: ReactNode;
   /**
@@ -94,8 +91,6 @@ export default function SessionContent({
   targetBranch,
   layout,
   mobilePanel,
-  diff,
-  commits,
   panelContainerProps,
   promptInputSlot,
   openTabs,
@@ -155,8 +150,6 @@ export default function SessionContent({
         dsDismissUnmanagedConflict={dsDismissUnmanagedConflict}
         dsStopUnmanagedAndRetry={dsStopUnmanagedAndRetry}
         dsIsStoppingUnmanaged={dsIsStoppingUnmanaged}
-        changesAdd={diff.totalAdditions}
-        changesDel={diff.totalDeletions}
         targetBranch={targetBranch}
         onDelete={onDelete}
       />
@@ -222,8 +215,6 @@ export default function SessionContent({
                 mobilePanel === "docs" ||
                 mobilePanel === "specs") && (
                 <RightPane
-                  diff={diff}
-                  commits={commits}
                   projectName={projectName}
                   sessionName={session.sessionName}
                   targetBranch={targetBranch}

@@ -22,7 +22,6 @@ import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import { useConversationsQuery } from "@/lib/conversations/queries";
 import { useSessionQuery } from "@/lib/sessions/queries";
 import { useGraphWorkflowExecutionQuery } from "@/lib/workflows/queries";
-import { useSessionDiffQuery, useCommitsQuery } from "@/lib/git/queries";
 import {
   useCreateConversationMutation,
   useArchiveConversationMutation,
@@ -38,7 +37,6 @@ import ConfirmDialog from "@/components/ConfirmDialog";
 import CopyableId from "@/components/CopyableId";
 import ScopedAgentCapabilitiesConfig from "@/components/agent-capabilities/ScopedAgentCapabilitiesConfig";
 import GraphWorkflowCard from "@/features/session/conversation/GraphWorkflowCard";
-import SessionGitPanel from "@/features/session/git/SessionGitPanel";
 
 interface Props {
   projectName: string;
@@ -123,8 +121,6 @@ export default function ConversationList({
     projectName,
     sessionName,
   );
-  const diffQuery = useSessionDiffQuery(projectName, sessionName);
-  const commitsQuery = useCommitsQuery(projectName, sessionName);
 
   // --- Zustand ---
   const showArchived = useShowArchivedConversations();
@@ -155,12 +151,6 @@ export default function ConversationList({
     () => conversationsQuery.data ?? [],
     [conversationsQuery.data],
   );
-  const diff = diffQuery.data ?? {
-    files: [],
-    totalAdditions: 0,
-    totalDeletions: 0,
-  };
-  const commits = commitsQuery.data ?? [];
   const decodedProjectName = decodeURIComponent(projectName);
   const isFinished = session?.finished ?? false;
   const targetBranch = session?.targetBranch ?? "main";
@@ -430,19 +420,6 @@ export default function ConversationList({
                 read-only.
               </div>
             )}
-
-            {/* Git Panel */}
-            <SessionGitPanel
-              diff={diff}
-              commits={commits}
-              projectName={projectName}
-              sessionName={sessionName}
-              isRefreshing={diffQuery.isFetching || commitsQuery.isFetching}
-              onRefresh={() => {
-                void diffQuery.refetch();
-                void commitsQuery.refetch();
-              }}
-            />
 
             {/* Conversation cards */}
             {filteredConversations.length > 0 ? (

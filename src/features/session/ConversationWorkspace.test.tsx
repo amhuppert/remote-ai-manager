@@ -249,8 +249,12 @@ vi.mock("@/lib/sessions/queries", async (importOriginal) => ({
 }));
 
 vi.mock("@/lib/git/queries", () => ({
-  useSessionDiffQuery: () => ({ data: testDiff, isPending: false }),
-  useCommitsQuery: () => ({ data: [], isPending: false }),
+  useSessionDiffQuery: () => ({
+    data: testDiff,
+    isPending: false,
+    isLoading: false,
+  }),
+  useCommitsQuery: () => ({ data: [], isPending: false, isLoading: false }),
 }));
 
 vi.mock("@/lib/notifications/queries", () => ({

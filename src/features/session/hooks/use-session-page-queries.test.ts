@@ -24,14 +24,6 @@ describe("useSessionPageQueries", () => {
     expect(result.current.conversationsQuery).toBeDefined();
     expect(result.current.collaborationListQuery).toBeDefined();
     expect(result.current.messagesQuery).toBeDefined();
-    expect(result.current.diffQuery).toBeDefined();
-    expect(result.current.commitsQuery).toBeDefined();
     expect(result.current.rawMessages).toEqual([]);
-    expect(result.current.diff).toEqual({
-      files: [],
-      totalAdditions: 0,
-      totalDeletions: 0,
-    });
-    expect(result.current.commits).toEqual([]);
   });
 });

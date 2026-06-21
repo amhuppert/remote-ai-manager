@@ -1,32 +1,49 @@
 "use client";
 
-import type { SessionDiff, CommitLogEntry } from "@/lib/git/schemas";
+import type { SessionDiff } from "@/lib/git/schemas";
 import { Tabs, Tab } from "@/components/ui/Tabs";
+import { EmptyState, EmptyStateTitle } from "@/components/ui/EmptyState";
 import DiffPanel from "@/features/session/git/DiffPanel";
 import SpecBrowser from "@/features/session/conversation/SpecBrowser";
 import DocsPanel from "@/features/session/conversation/DocsPanel";
+import { useSessionDiffQuery, useCommitsQuery } from "@/lib/git/queries";
 import {
   useRightPaneTab,
   useSwitchRightPaneTab,
 } from "@/stores/session-detail.store";
 
+const EMPTY_DIFF: SessionDiff = {
+  files: [],
+  totalAdditions: 0,
+  totalDeletions: 0,
+};
+
 interface RightPaneProps {
-  diff: SessionDiff;
-  commits: CommitLogEntry[];
   projectName: string;
   sessionName: string;
   targetBranch?: string;
 }
 
 export default function RightPane({
-  diff,
-  commits,
   projectName,
   sessionName,
   targetBranch,
 }: RightPaneProps): React.JSX.Element {
   const rightPaneTab = useRightPaneTab();
   const switchRightPaneTab = useSwitchRightPaneTab();
+
+  // Diff/commits are fetched here (not page-level) so git only runs when the
+  // diff tab is the visible right-pane content.
+  const diffEnabled = rightPaneTab === "diff";
+  const diffQuery = useSessionDiffQuery(projectName, sessionName, {
+    enabled: diffEnabled,
+  });
+  const commitsQuery = useCommitsQuery(projectName, sessionName, {
+    enabled: diffEnabled,
+  });
+  const isLoading = diffQuery.isLoading || commitsQuery.isLoading;
+  const diff = diffQuery.data ?? EMPTY_DIFF;
+  const commits = commitsQuery.data ?? [];
 
   return (
     <div className="right-pane sidebar-diff-panel">
@@ -60,14 +77,22 @@ export default function RightPane({
       {/* Panel body — all panels mounted, inactive hidden via display:none */}
       <div className="right-pane-body flex min-h-0 flex-1 flex-col">
         <div style={{ display: rightPaneTab === "diff" ? "contents" : "none" }}>
-          <DiffPanel
-            diff={diff}
-            commits={commits}
-            projectName={projectName}
-            sessionName={sessionName}
-            targetBranch={targetBranch}
-            hotkeysEnabled={rightPaneTab === "diff"}
-          />
+          {isLoading ? (
+            <div className="sidebar-diff-panel">
+              <EmptyState layoutClassName="grow">
+                <EmptyStateTitle>Loading diff…</EmptyStateTitle>
+              </EmptyState>
+            </div>
+          ) : (
+            <DiffPanel
+              diff={diff}
+              commits={commits}
+              projectName={projectName}
+              sessionName={sessionName}
+              targetBranch={targetBranch}
+              hotkeysEnabled={rightPaneTab === "diff"}
+            />
+          )}
         </div>
         <div
           style={{

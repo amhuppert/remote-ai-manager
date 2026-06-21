@@ -161,8 +161,6 @@ function makeProps(overrides: Partial<Props> = {}): Props {
     targetBranch: "main",
     layout: "default",
     mobilePanel: "chat",
-    diff: { files: [], totalAdditions: 0, totalDeletions: 0 },
-    commits: [],
     panelContainerProps: {} as Props["panelContainerProps"],
     promptInputSlot: null,
     tddEnabled: false,

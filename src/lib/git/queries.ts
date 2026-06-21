@@ -60,7 +60,11 @@ export function useMainWorktreeDiffQuery(
   });
 }
 
-export function useSessionDiffQuery(projectName: string, sessionName: string) {
+export function useSessionDiffQuery(
+  projectName: string,
+  sessionName: string,
+  options?: { enabled?: boolean },
+) {
   return useQuery({
     queryKey: gitKeys.diff(projectName, sessionName),
     queryFn: () =>
@@ -68,10 +72,15 @@ export function useSessionDiffQuery(projectName: string, sessionName: string) {
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/diff`,
         sessionDiffSchema,
       ),
+    enabled: options?.enabled ?? true,
   });
 }
 
-export function useCommitsQuery(projectName: string, sessionName: string) {
+export function useCommitsQuery(
+  projectName: string,
+  sessionName: string,
+  options?: { enabled?: boolean },
+) {
   return useQuery({
     queryKey: gitKeys.commits(projectName, sessionName),
     queryFn: async () => {
@@ -81,6 +90,7 @@ export function useCommitsQuery(projectName: string, sessionName: string) {
       );
       return data.commits;
     },
+    enabled: options?.enabled ?? true,
   });
 }
 

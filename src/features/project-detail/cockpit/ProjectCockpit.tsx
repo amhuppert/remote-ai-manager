@@ -20,7 +20,6 @@ import {
   useCloseProjectConversation,
 } from "@/lib/project-conversations-client/mutations";
 import { useProjectConversationMessagesQuery } from "@/lib/project-conversations-client/queries";
-import { useMainWorktreeDiffQuery } from "@/lib/git/queries";
 import { useConversationSpawnCards } from "@/features/_root/spawn-card/useConversationSpawnCards";
 import type { FilterToken } from "../components/filter-tokens";
 import ConversationTabs, { type ConversationTabItem } from "./ConversationTabs";
@@ -289,20 +288,6 @@ export default function ProjectCockpit({
     sessions,
   });
 
-  // Live +/− stat for the `main · worktree` review chip. A 404 (endpoint not
-  // shipped) or clean tree resolves to no stat; the chip still opens the
-  // read-only diff slide-over.
-  const diffQuery = useMainWorktreeDiffQuery(projectName);
-  const diffStat = useMemo(() => {
-    const d = diffQuery.data;
-    if (!d) return null;
-    return {
-      additions: d.totalAdditions,
-      deletions: d.totalDeletions,
-      fileCount: d.files.length,
-    };
-  }, [diffQuery.data]);
-
   const handleNewChat = useCallback(() => {
     createConversation.mutate(
       { agentBackend: selectedBackend },
@@ -363,7 +348,6 @@ export default function ProjectCockpit({
       <ConversationPane
         agentBackend={agentBackend}
         projectName={projectName}
-        diffStat={diffStat}
         {...(activeConversation ? { status: activeConversation.status } : {})}
         tabs={
           <ConversationTabs

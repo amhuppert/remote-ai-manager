@@ -7,13 +7,6 @@ import type { ConversationStatus } from "@/lib/conversations/schemas";
 import { presentConversationStatus } from "./conversation-status";
 import DiffSlideover from "./DiffSlideover";
 
-/** Live +/− summary of the main worktree, shown on the review chip. */
-export interface MainWorktreeDiffStat {
-  additions: number;
-  deletions: number;
-  fileCount: number;
-}
-
 export interface ConversationPaneProps {
   /** Drives the violet recolor for Codex conversations. */
   agentBackend: AgentBackendId;
@@ -29,8 +22,6 @@ export interface ConversationPaneProps {
   composer: ReactNode;
   /** MainDiffSurface slot, hosted in the diff slide-over. */
   diffSurface?: ReactNode;
-  /** Live main-worktree diff stat for the review chip (null = none/unknown). */
-  diffStat?: MainWorktreeDiffStat | null;
 }
 
 // The pane fills the workspace column (legacy `.plc-workspace-pane > .plc-pane`
@@ -48,9 +39,6 @@ const WORKTREE_BTN_CLASS =
   "bg-bg-base text-text-secondary font-mono text-[0.72rem] cursor-pointer " +
   "transition-[border-color,background,color] duration-150 ease-[ease] " +
   "hover:border-border-strong hover:bg-bg-surface hover:text-text-primary";
-
-const WORKTREE_STAT_CLASS =
-  "inline-flex gap-2xs ml-2xs pl-xs border-y-0 border-r-0 border-l border-solid border-border-subtle";
 
 function ExternalGlyph(): React.JSX.Element {
   return (
@@ -84,7 +72,6 @@ export default function ConversationPane({
   transcript,
   composer,
   diffSurface,
-  diffStat,
 }: ConversationPaneProps): React.JSX.Element {
   const [diffOpen, setDiffOpen] = useState(false);
   const statusPresentation =
@@ -106,12 +93,6 @@ export default function ConversationPane({
             <span className="text-text-primary">main</span>
             <span className="text-text-tertiary">·</span>
             <span>worktree</span>
-            {diffStat && diffStat.fileCount > 0 && (
-              <span className={WORKTREE_STAT_CLASS}>
-                <span className="text-green">+{diffStat.additions}</span>
-                <span className="text-red">−{diffStat.deletions}</span>
-              </span>
-            )}
             <ExternalGlyph />
           </button>
         ) : (

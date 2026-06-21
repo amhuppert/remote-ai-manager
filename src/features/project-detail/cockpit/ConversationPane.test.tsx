@@ -56,13 +56,6 @@ describe("ConversationPane", () => {
     expect(screen.getByText("transcript")).toBeInTheDocument();
   });
 
-  it("shows the live +/− stat on the chip when the worktree is dirty", () => {
-    renderPane({ diffStat: { additions: 12, deletions: 3, fileCount: 2 } });
-    const chip = screen.getByRole("button", { name: /worktree/i });
-    expect(chip).toHaveTextContent("+12");
-    expect(chip).toHaveTextContent("−3");
-  });
-
   it("renders worktree context as plain text (no chip) without a diff surface", () => {
     renderPane({ diffSurface: undefined });
     expect(screen.getByText("worktree")).toBeInTheDocument();

@@ -87,8 +87,6 @@ export default function ConversationWorkspace({
     graphWorkflowExecutionQuery,
     messagesQuery,
     rawMessages,
-    diff,
-    commits,
   } = useSessionPageQueries(projectName, sessionName, conversationId);
 
   const store = useSessionPageStoreBundle();
@@ -391,8 +389,6 @@ export default function ConversationWorkspace({
         onTddChange: (val) => tddMutation.mutate(val),
         tddDisabled: tddMutation.isPending,
         onLayoutChange: handleLayoutChange,
-        diff,
-        commits,
         cumulativeImageCount,
         messagesPending: messagesQuery.isPending,
         messages: rawMessages,
