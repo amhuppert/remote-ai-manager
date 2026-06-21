@@ -44,6 +44,7 @@ export function createWriteQueue(): WriteQueue {
       const releasedAt = performance.now();
       logger.info("state-store.write_queue.timing", {
         label,
+        durationMs: +(releasedAt - enqueuedAt).toFixed(2),
         waitMs: +(acquiredAt - enqueuedAt).toFixed(2),
         holdMs: +(releasedAt - acquiredAt).toFixed(2),
       });

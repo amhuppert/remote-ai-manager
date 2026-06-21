@@ -213,11 +213,11 @@ export function createStateAggregate(repos: AllRepos): StateAggregate {
         });
       },
     );
-    const totalMs = +(performance.now() - start).toFixed(3);
+    const durationMs = +(performance.now() - start).toFixed(3);
 
     logger.info("state.read.timing", {
       accessor: "readState",
-      totalMs,
+      durationMs,
     });
     return validated;
   }

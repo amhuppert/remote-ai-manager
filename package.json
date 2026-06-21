@@ -18,6 +18,7 @@
     "css:inventory": "bun scripts/css-inventory.ts",
     "css:progress": "bun scripts/css-migration-progress.ts --check",
     "logs:analyze": "bun scripts/analyze-logs.ts",
+    "logs:duckdb": "scripts/duckdb-logs/run.sh",
     "trace:speedscope": "bun scripts/speedscope-export.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

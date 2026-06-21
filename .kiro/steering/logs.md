@@ -60,7 +60,20 @@ Setting `CC_LOG_FILE` or `CC_LOG_SCOPED=0` collapses all writes to a single file
 - `CC_LOG_FILE` — explicit single-file destination (overrides scoped routing)
 - `CC_LOG_SCOPED` — set to `0` to disable scoped routing (everything → `global.log`)
 - `CC_LOG_SILENT` — set to `1` to suppress stderr emission entirely
+- `CC_LOG_MAX_BYTES` — rotate a log file once an append would exceed this size (default `104857600` = 100 MiB; `0` disables rotation → unbounded growth)
+- `CC_LOG_MAX_FILES` — rotated backups retained per file (default `5`; total disk per file ≈ `CC_LOG_MAX_BYTES × (CC_LOG_MAX_FILES + 1)`)
 - `warn`/`error` also go to stderr unless `CC_LOG_SILENT=1`
+
+### Rotation & retention
+
+Size-based, applied in `appendLine` so it covers `global.log` and the scoped
+session/conversation logs uniformly. When an append would push a file past
+`CC_LOG_MAX_BYTES`, it rotates: `<file>.<N>` is dropped, `<file>.i` → `<file>.(i+1)`,
+`<file>` → `<file>.1`, and the fresh file opens with a `logger.rotate` marker line.
+Per-file size is tracked in memory (seeded by one `stat` per path) so the
+synchronous-append hot path does not stat on every line; a restart re-seeds from
+the existing file and rotates it on the next write. Only `global.log` realistically
+reaches the threshold — scoped logs are bounded by session lifetime.
 
 ### Timing & performance config
 
@@ -89,6 +102,8 @@ jq 'select(.message == "sse.broadcast.complete" and .durationMs > 10)' "$LOG"
 
 All `timed()`-emitted logs inherit `traceId`/`action`/`projectName`/`sessionName`/`conversationId` from AsyncLocalStorage. Each event emits `<event>.complete` on success (level by duration threshold) and `<event>.error` at `warn` on throw; optional `<event>.start` at `debug` when `CC_TIMING_START=1`.
 
+Every timed event records its primary duration under a canonical **`durationMs`** field. A few events additionally emit a sub-phase breakdown alongside `durationMs`: the write queue's `waitMs`/`holdMs` (`durationMs = waitMs + holdMs`) and `diff.timing`'s `paramsMs`/`resolveMs`/`sessionMs`/`diffMs`/`serializeMs`. Legacy logs (pre-canonicalization) recorded `state.read.timing` / `diff.timing` durations under `totalMs`; the analysis parser still reads it as a fallback.
+
 | Module | Event | Fields |
 |---|---|---|
 | `exec` | `exec.complete` / `exec.error` | `command`, `argsPreview`, `cwd`, `durationMs`, `stdoutBytes`, `stderrBytes`, `exitCode` |
@@ -103,8 +118,8 @@ All `timed()`-emitted logs inherit `traceId`/`action`/`projectName`/`sessionName
 | `transcript` | `transcript.read.complete` | `messageCount`, `durationMs` |
 | `state-db` (via `notification-db`) | `state-db.createNotification` / `.createJobRecord` / `.updateJobRecord` / `.recoverStaleJobs` / `.cleanupOldNotifications` `.complete` | Per-write fields (`notificationId`, `jobId`, `status`, `deleted`, `recoveredCount`) |
 | `state-store` | `state.mutate.complete` | `label`, `sessionName`, `durationMs` |
-| `state-store` | `state.read.timing` | `accessor`, `totalMs` (and optionally `projectPath`, `sessionName`, `conversationId`); only emitted when `totalMs >= STATE_READ_TIMING_LOG_THRESHOLD_MS` |
-| `state-store` | `state-store.write_queue.timing` | `label`, `waitMs`, `holdMs` — feeds the log-analysis `state-store` finding |
+| `state-store` | `state.read.timing` | `accessor`, `durationMs` (and optionally `projectPath`, `sessionName`, `conversationId`); only emitted when `durationMs >= STATE_READ_TIMING_LOG_THRESHOLD_MS` |
+| `state-store` | `state-store.write_queue.timing` | `label`, `durationMs`, `waitMs`, `holdMs` (`durationMs = waitMs + holdMs`) — feeds the log-analysis `state-store` finding |
 | `file-scanner` | `file-scanner.scan.complete` | `rootPath`, `fileCount`, `truncated`, `durationMs` |
 | `worktree` | `worktree.create.complete` / `worktree.remove.complete` | `laneId`, `worktreePath`, `branchName`, `status`, `durationMs` |
 | `diff` | `diff.compute.complete` | `worktreePath`, `fileCount`, `durationMs` |
@@ -165,7 +180,7 @@ Options shared across commands:
 --slow-ms <n> --hotspot-ms <n> --include-self --pretty
 ```
 
-Default log path resolution (analysis CLI only) checks `CC_LOG_FILE`, `<config-dir>/logs/global.log`, `<config-dir>/cc-debug.log` (legacy), `./.config/logs/global.log`, and `./.config/cc-debug.log` (legacy). Scoped per-session/per-conversation files under `logs/sessions/` are not auto-discovered — pass them explicitly with `--in`.
+Default log path resolution (analysis CLI only) checks `CC_LOG_FILE`, `<config-dir>/logs/global.log`, `<config-dir>/cc-debug.log` (legacy), `./.config/logs/global.log`, and `./.config/cc-debug.log` (legacy). Scoped per-session/per-conversation files under `logs/sessions/` are not auto-discovered — pass them explicitly with `--in`. Rotated backups (`global.log.1`, `global.log.2`, …) are likewise not auto-discovered, so default discovery sees only the active file; pass the backups explicitly (or a glob) with `--in` to analyze across rotations.
 
 ## Speedscope Export (hotspot aggregation)
 

@@ -21,11 +21,28 @@
  * - CC_LOG_LEVEL: "debug" | "info" | "warn" | "error" (default: "info")
  * - CC_LOG_FILE: explicit single-file destination (overrides scoped routing)
  * - CC_LOG_SCOPED: "0" disables scoped routing (everything → global.log)
+ * - CC_LOG_MAX_BYTES: rotate a log file once an append would exceed this size
+ *   (default: 100 MiB; "0" disables rotation → unbounded growth)
+ * - CC_LOG_MAX_FILES: number of rotated backups to retain per file
+ *   (default: 5; total disk per file ≈ CC_LOG_MAX_BYTES × (CC_LOG_MAX_FILES + 1))
+ *
+ * Rotation is size-based with numbered backups (`global.log` → `global.log.1` →
+ * … → `global.log.N`, oldest dropped). It is applied in appendLine, so it covers
+ * the global log and the scoped session/conversation logs uniformly. File sizes
+ * are tracked in memory (seeded by a single stat per path) to keep the
+ * synchronous-append hot path off the filesystem on every line.
  *
  * The logger never throws — failed writes are silently dropped.
  */
 
-import { appendFileSync, mkdirSync, existsSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  existsSync,
+  statSync,
+  renameSync,
+  rmSync,
+} from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { getTraceContext, type TraceContext } from "./context";
@@ -48,6 +65,24 @@ const HASH_SUFFIX_LENGTH = 8;
 
 const TRACING_MODULE = "tracing";
 const TRACING_DUAL_MESSAGES = new Set(["request.start", "request.complete"]);
+
+const DEFAULT_MAX_BYTES = 100 * 1024 * 1024;
+const DEFAULT_MAX_FILES = 5;
+
+/**
+ * Parse a non-negative integer env override, falling back on absent/invalid
+ * values (with a stderr note, matching the CC_LOG_LEVEL convention).
+ */
+function parseNonNegativeInt(envName: string, fallback: number): number {
+  const raw = process.env[envName];
+  if (raw === undefined || raw === "") return fallback;
+  const parsed = Number(raw);
+  if (Number.isInteger(parsed) && parsed >= 0) return parsed;
+  process.stderr.write(
+    `[cc] Invalid ${envName}="${raw}", falling back to ${fallback}\n`,
+  );
+  return fallback;
+}
 
 /**
  * Sanitize a single path component (projectSlug / sessionSlug / conversationSlug).
@@ -98,8 +133,13 @@ let logLevel: LogLevel | undefined;
 let logsRoot: string | undefined;
 let singleFileOverride: string | undefined;
 let scopedRoutingEnabled = true;
+let maxBytes = DEFAULT_MAX_BYTES;
+let maxFiles = DEFAULT_MAX_FILES;
 let initialized = false;
 const ensuredDirs = new Set<string>();
+
+/** Per-path running byte size, so the hot path avoids a stat on every line. */
+const fileSizes = new Map<string, number>();
 
 function ensureInitialized(): void {
   if (initialized) return;
@@ -108,6 +148,8 @@ function ensureInitialized(): void {
 
   singleFileOverride = process.env["CC_LOG_FILE"] || undefined;
   scopedRoutingEnabled = process.env["CC_LOG_SCOPED"] !== "0";
+  maxBytes = parseNonNegativeInt("CC_LOG_MAX_BYTES", DEFAULT_MAX_BYTES);
+  maxFiles = parseNonNegativeInt("CC_LOG_MAX_FILES", DEFAULT_MAX_FILES);
   logsRoot = path.join(resolveConfigDir(), "logs");
 }
 
@@ -273,11 +315,100 @@ function buildEntry(
   return entry;
 }
 
+function currentFileSize(filePath: string): number {
+  try {
+    return statSync(filePath).size;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Shift numbered backups and move the current file aside:
+ *   <file>.N is dropped, <file>.i → <file>.(i+1), <file> → <file>.1.
+ * With keep <= 0 the current file is simply removed (no history retained).
+ * Best-effort: any individual fs error is swallowed so logging never throws.
+ */
+function rotateFile(filePath: string, keep: number): void {
+  if (keep < 1) {
+    try {
+      rmSync(filePath, { force: true });
+    } catch {
+      // ignore
+    }
+    return;
+  }
+
+  try {
+    rmSync(`${filePath}.${keep}`, { force: true });
+  } catch {
+    // ignore
+  }
+  for (let i = keep - 1; i >= 1; i--) {
+    const from = `${filePath}.${i}`;
+    if (!existsSync(from)) continue;
+    try {
+      renameSync(from, `${filePath}.${i + 1}`);
+    } catch {
+      // ignore
+    }
+  }
+  try {
+    if (existsSync(filePath)) renameSync(filePath, `${filePath}.1`);
+  } catch {
+    // ignore
+  }
+}
+
+/** Open a freshly-rotated file with a marker line for post-hoc forensics. */
+function writeRotationNotice(filePath: string): void {
+  const entry = {
+    timestamp: new Date().toISOString(),
+    level: "info",
+    module: "logger",
+    message: "logger.rotate",
+    file: path.basename(filePath),
+    maxBytes,
+    maxFiles,
+  };
+  try {
+    const line = JSON.stringify(entry) + "\n";
+    appendFileSync(filePath, line, "utf-8");
+    fileSizes.set(filePath, Buffer.byteLength(line, "utf-8"));
+  } catch {
+    fileSizes.set(filePath, 0);
+  }
+}
+
+/**
+ * Rotate `filePath` when appending `lineBytes` more would exceed maxBytes.
+ * Size is tracked in memory (seeded lazily by one stat) so the common path
+ * touches the filesystem only for the actual append.
+ */
+function maybeRotate(filePath: string, lineBytes: number): void {
+  if (maxBytes <= 0) return;
+
+  let size = fileSizes.get(filePath);
+  if (size === undefined) {
+    size = currentFileSize(filePath);
+    fileSizes.set(filePath, size);
+  }
+
+  if (size > 0 && size + lineBytes > maxBytes) {
+    rotateFile(filePath, maxFiles);
+    fileSizes.set(filePath, 0);
+    writeRotationNotice(filePath);
+  }
+}
+
 function appendLine(filePath: string, entry: Record<string, unknown>): void {
   try {
     ensureDir(path.dirname(filePath));
     const line = JSON.stringify(entry) + "\n";
+    const lineBytes = Buffer.byteLength(line, "utf-8");
+    maybeRotate(filePath, lineBytes);
     appendFileSync(filePath, line, "utf-8");
+    fileSizes.set(filePath, (fileSizes.get(filePath) ?? 0) + lineBytes);
   } catch {
     // Never throw — silently drop on write failure.
   }
@@ -357,5 +488,8 @@ export function _resetLoggerForTesting(): void {
   logsRoot = undefined;
   singleFileOverride = undefined;
   scopedRoutingEnabled = true;
+  maxBytes = DEFAULT_MAX_BYTES;
+  maxFiles = DEFAULT_MAX_FILES;
   ensuredDirs.clear();
+  fileSizes.clear();
 }

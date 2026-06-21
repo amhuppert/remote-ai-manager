@@ -84,11 +84,13 @@ describe("createWriteQueue", () => {
 
     const firstPayload = events[0]![1] as {
       label: string;
+      durationMs: number;
       waitMs: number;
       holdMs: number;
     };
     const secondPayload = events[1]![1] as {
       label: string;
+      durationMs: number;
       waitMs: number;
       holdMs: number;
     };
@@ -96,9 +98,17 @@ describe("createWriteQueue", () => {
     expect(firstPayload.label).toBe("first");
     expect(firstPayload.waitMs).toBeLessThan(5);
     expect(firstPayload.holdMs).toBeGreaterThanOrEqual(20);
+    expect(firstPayload.durationMs).toBeCloseTo(
+      firstPayload.waitMs + firstPayload.holdMs,
+      1,
+    );
 
     expect(secondPayload.label).toBe("second");
     expect(secondPayload.waitMs).toBeGreaterThanOrEqual(20);
+    expect(secondPayload.durationMs).toBeCloseTo(
+      secondPayload.waitMs + secondPayload.holdMs,
+      1,
+    );
   });
 
   it("isolates queues across factory instances", async () => {

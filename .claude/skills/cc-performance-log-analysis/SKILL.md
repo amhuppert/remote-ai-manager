@@ -1,11 +1,15 @@
 ---
 name: cc-performance-log-analysis
-description: Use when diagnosing Command Center performance issues from structured server logs, slow API requests, operation timing, state-store latency, duplicate work, SSE broadcast cost, external command latency, or before/after performance regressions. Triggers include "analyze performance logs", "find slow requests", "why is CC slow", "trace this request", "compare log performance", and "identify bottlenecks".
+description: Use when diagnosing Command Center performance issues from structured server logs, slow API requests, operation timing, state-store latency, duplicate work, SSE broadcast cost, external command latency, or before/after performance regressions. Triggers include "analyze performance logs", "find slow requests", "why is CC slow", "trace this request", "compare log performance", "identify bottlenecks", and ad-hoc SQL questions over the logs (DuckDB / `logs:duckdb`).
 ---
 
 # CC Performance Log Analysis
 
 Use `bun run logs:analyze` as the first tool for Command Center performance log diagnosis. It produces bounded JSON for agents and concise Markdown for human handoff. Use manual `jq` only for ad hoc checks after the CLI narrows the problem.
+
+**Two tools.** `logs:analyze` answers the known questions with ranked, severity-tagged findings and trace reconstruction — start there. When you have a question its report does not surface (a custom grouping, a percentile distribution, a cross-cutting join, "is X correlated with Y"), use `bun run logs:duckdb` to query the raw log with SQL — see [Ad-hoc SQL with DuckDB](#ad-hoc-sql-with-duckdb-logsduckdb) below.
+
+> **Rotation awareness.** `global.log` rotates by size (`CC_LOG_MAX_BYTES`, default 100 MiB) into `global.log.1`, `global.log.2`, …. The default `logs:analyze` discovery reads **only the active file**, so a regression older than the current window — or a `--since` range that predates it — is silently absent. `--in` takes a single path and does **not** glob, so analyzing the full retained history means merging the rotated set first (see "Analyze across rotated logs"). The active file may also open with a `logger.rotate` marker line, indicating earlier history is in the backups.
 
 ## Workflow
 
@@ -55,6 +59,15 @@ Analyze a time window:
 bun run logs:analyze -- report --since 2026-05-21T12:00:00Z --top 20
 ```
 
+Analyze across rotated logs (full retained history, not just the active window):
+
+```bash
+# --in reads ONE file and does not glob, so merge the rotated set first.
+# Order is irrelevant — every record is timestamped; --since/--until still apply.
+cat "<config-dir>"/logs/global.log* > /tmp/cc-global-merged.log
+bun run logs:analyze -- report --in /tmp/cc-global-merged.log --format json --pretty
+```
+
 Deep-dive a trace:
 
 ```bash
@@ -78,6 +91,44 @@ Create a human-readable handoff:
 ```bash
 bun run logs:analyze -- report --format json --markdown-out /tmp/cc-log-analysis.md
 ```
+
+## Ad-hoc SQL with DuckDB (`logs:duckdb`)
+
+When the answer isn't one of the report's findings, query the NDJSON directly with
+`bun run logs:duckdb` (DuckDB CLI; requires `duckdb` on PATH). It is stateless and
+always current, and — unlike `logs:analyze` — reads `global.log*` (active **plus**
+rotated backups) by default, so the full retained history is in scope with no merge
+step.
+
+Built-in questions (all take `--since` / `--until <ISO>`, `--limit N`, and
+`--format box|markdown|csv|json`; the `# source/window` header prints to stderr so
+piped stdout stays clean):
+
+```bash
+bun run logs:duckdb overview                        # span, levels, top events by total time
+bun run logs:duckdb slow-requests --since 2026-06-20 # slowest requests (trace_id to drill in)
+bun run logs:duckdb endpoints                       # per-route p50/p95/p99/max
+bun run logs:duckdb state-store                     # SQLite read hotspots by cumulative time
+bun run logs:duckdb write-queue                     # mutation wait (contention) vs hold
+bun run logs:duckdb trace <traceId>                 # one request's full timeline
+bun run logs:duckdb list                            # every question
+```
+
+Ad-hoc — query the typed `logs` view directly (filter on the `since_ok`/`until_ok`
+macros, normalize routes with `route(path)`, reach un-projected fields via
+`raw ->> '$.field'`):
+
+```bash
+bun run logs:duckdb sql "SELECT route(path) AS route,
+  count(*) n, round(quantile_cont(duration_ms,0.95),1) p95
+  FROM logs WHERE message='request.complete' AND since_ok(ts)
+  GROUP BY route ORDER BY p95 DESC LIMIT 20" --since 2026-06-20 --format markdown
+```
+
+Use `--format markdown` for pasteable tables and `--format json`/`csv` for machine
+parsing. The full schema, macros, and the query library live in
+`scripts/duckdb-logs/README.md` (the `queries/*.sql` files are copy-pasteable
+exemplars). The interpretation rules below apply to DuckDB output too.
 
 ## Interpretation Rules
 
@@ -111,3 +162,4 @@ Residual uncertainty:
 - Do not ignore high malformed-line counts; the report may be incomplete.
 - Do not merge client timing conclusions into server timing conclusions unless `traceId` or event type connects them.
 - Do not treat Speedscope's aggregated time order as real wall-clock order; use trace mode for a single request timeline.
+- Do not conclude "no such trace" or "no regression in range" from a default report alone — the active `global.log` is only the most recent window. Merge the rotated `global.log*` set (above) before ruling out anything historical.

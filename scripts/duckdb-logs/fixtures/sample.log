@@ -1,0 +1,18 @@
+{"timestamp":"2026-06-20T10:00:00.000Z","level":"info","module":"tracing","message":"request.start","traceId":"t-rich","method":"POST","path":"/api/projects/cc/sessions"}
+{"timestamp":"2026-06-20T10:00:00.010Z","level":"info","module":"state-store.projects","message":"state-store.projects.listAll.timing","traceId":"t-rich","durationMs":0.4}
+{"timestamp":"2026-06-20T10:00:00.030Z","level":"info","module":"state-store.sessions","message":"state-store.sessions.findAll.timing","traceId":"t-rich","durationMs":18.2}
+{"timestamp":"2026-06-20T10:00:00.060Z","level":"info","module":"state-store.aggregate","message":"state.read.timing","traceId":"t-rich","accessor":"readState","durationMs":31.5}
+{"timestamp":"2026-06-20T10:00:00.075Z","level":"info","module":"state-store.sessions","message":"state-store.sessions.findByKey.timing","traceId":"t-rich","durationMs":12.1}
+{"timestamp":"2026-06-20T10:00:00.090Z","level":"info","module":"state-store.sessions","message":"state-store.sessions.findByKey.timing","traceId":"t-rich","durationMs":11.7}
+{"timestamp":"2026-06-20T10:00:00.100Z","level":"info","module":"state-store.write-queue","message":"state-store.write_queue.timing","label":"createSession[/Users/alex/cc]","durationMs":210.4,"waitMs":180.2,"holdMs":30.2}
+{"timestamp":"2026-06-20T10:00:03.500Z","level":"warn","module":"exec","message":"git.complete","traceId":"t-rich","command":"git","argsPreview":"worktree add -b csm/x /Users/alex/cc/.worktrees/x main","cwd":"/Users/alex/cc","durationMs":3200.0,"exitCode":0}
+{"timestamp":"2026-06-20T10:00:08.900Z","level":"info","module":"tracing","message":"request.complete","traceId":"t-rich","method":"POST","path":"/api/projects/cc/sessions","status":201,"durationMs":8900.0}
+{"timestamp":"2026-06-20T10:05:00.000Z","level":"info","module":"tracing","message":"request.start","traceId":"t-2","method":"GET","path":"/api/projects/cc/sessions/My%20Sess/conversations/bd3f68bc-819c-4650-813a-7bfa83d2dffe/messages"}
+{"timestamp":"2026-06-20T10:05:00.220Z","level":"info","module":"tracing","message":"request.complete","traceId":"t-2","method":"GET","path":"/api/projects/cc/sessions/My%20Sess/conversations/bd3f68bc-819c-4650-813a-7bfa83d2dffe/messages","status":200,"durationMs":220.0}
+{"timestamp":"2026-06-20T10:06:00.000Z","level":"info","module":"tracing","message":"request.complete","traceId":"t-3","method":"GET","path":"/api/projects/cc/sessions/My%20Sess/diff","status":200,"durationMs":1450.0}
+{"timestamp":"2026-06-20T10:06:30.000Z","level":"info","module":"tracing","message":"request.complete","traceId":"t-4","method":"GET","path":"/api/projects/cc/sessions/Other/diff","status":200,"durationMs":540.0}
+{"timestamp":"2026-06-20T10:07:00.000Z","level":"info","module":"state-store.aggregate","message":"state.read.timing","traceId":"t-5","accessor":"getSession","durationMs":140.0}
+{"timestamp":"2026-06-20T10:07:01.000Z","level":"info","module":"state-store.aggregate","message":"state.read.timing","traceId":"t-6","accessor":"getSession","durationMs":95.0}
+{"timestamp":"2026-06-20T10:08:00.000Z","level":"info","module":"exec","message":"git.complete","traceId":"t-7","command":"git","argsPreview":"status --porcelain","cwd":"/Users/alex/cc","durationMs":42.0,"exitCode":0}
+{"timestamp":"2026-06-20T10:09:00.000Z","level":"error","module":"state-store","message":"state.mutate.error","traceId":"t-8","label":"createConversation","durationMs":12.0}
+{"timestamp":"2026-06-20T10:10:00.000Z","level":"warn","module":"sse","message":"broadcast.no_clients","eventType":"conversation-status"}

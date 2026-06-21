@@ -61,7 +61,7 @@ export const getSessionDiff = withTracing(
         sessionMs: +(tSession - tResolve).toFixed(2),
         diffMs: +(tDiff - tSession).toFixed(2),
         serializeMs: +(tSerialize - tDiff).toFixed(2),
-        totalMs: +(tSerialize - t0).toFixed(2),
+        durationMs: +(tSerialize - t0).toFixed(2),
       });
 
       return response;

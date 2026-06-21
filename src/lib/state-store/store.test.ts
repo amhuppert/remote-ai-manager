@@ -441,10 +441,10 @@ describe("state.read.timing log threshold", () => {
       expect(timingCalls).toHaveLength(1);
       const payload = timingCalls[0]![1] as {
         accessor: string;
-        totalMs: number;
+        durationMs: number;
       };
       expect(payload.accessor).toBe("getArchivedProjects");
-      expect(payload.totalMs).toBe(100);
+      expect(payload.durationMs).toBe(100);
     } finally {
       nowSpy.mockRestore();
       void realPerfNow;

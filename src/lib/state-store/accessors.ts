@@ -28,7 +28,7 @@ const STATE_READ_TIMING_LOG_THRESHOLD_MS = 5;
 
 interface ReadTimingPayload {
   accessor: string;
-  totalMs: number;
+  durationMs: number;
   projectPath?: string;
   sessionName?: string;
   conversationId?: string;
@@ -36,11 +36,11 @@ interface ReadTimingPayload {
 
 function emitReadTiming(
   start: number,
-  payload: Omit<ReadTimingPayload, "totalMs">,
+  payload: Omit<ReadTimingPayload, "durationMs">,
 ): void {
-  const totalMs = +(performance.now() - start).toFixed(3);
-  if (totalMs < STATE_READ_TIMING_LOG_THRESHOLD_MS) return;
-  logger.info("state.read.timing", { ...payload, totalMs });
+  const durationMs = +(performance.now() - start).toFixed(3);
+  if (durationMs < STATE_READ_TIMING_LOG_THRESHOLD_MS) return;
+  logger.info("state.read.timing", { ...payload, durationMs });
 }
 
 export function createAccessors(core: StateStoreCore) {
@@ -476,7 +476,7 @@ export function createAccessors(core: StateStoreCore) {
 
   /**
    * Every active graph-workflow execution across all sessions, keyed by
-   * `${projectPath} ${sessionName}` (NUL-separated). Backs the
+   * `${projectPath}\0${sessionName}` (NUL-separated). Backs the
    * active-conversations feed, which needs the executions of many sessions in a
    * single read instead of N per-session point lookups.
    */

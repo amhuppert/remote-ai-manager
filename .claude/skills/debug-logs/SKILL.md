@@ -11,21 +11,32 @@ Structured NDJSON logs trace every user action from UI through API routes to the
 
 Default routing is scoped: writes land in `<config-dir>/logs/global.log`, `<config-dir>/logs/sessions/<projectSlug>__<sessionSlug>/session.log`, or `<config-dir>/logs/sessions/<projectSlug>__<sessionSlug>/conversations/<conversationSlug>.log` depending on the active trace context. `request.start` / `request.complete` from the `tracing` module are dual-written to BOTH the scoped destination and `global.log`, so `global.log` retains a full cross-session timeline.
 
+`global.log` rotates by size (`CC_LOG_MAX_BYTES`, default 100 MiB) into `global.log.1`, `global.log.2`, … (oldest dropped past `CC_LOG_MAX_FILES`, default 5). **The active `global.log` holds only the most recent window**; each freshly-rotated file opens with a `logger.rotate` marker line. This matters for queries: "latest"/`tail` checks use the active file, but aggregate counts over time — or tracing a `traceId` older than the current window — must scan the rotated backups too, or they silently miss data.
+
 ```bash
 # Linux (default)
 CONFIG_DIR="${CC_CONFIG_DIR:-$HOME/.config/cc}"
 # macOS (default)
 CONFIG_DIR="${CC_CONFIG_DIR:-$HOME/Library/Application Support/cc}"
 
-LOG="${CC_LOG_FILE:-$CONFIG_DIR/logs/global.log}"
+LOG="${CC_LOG_FILE:-$CONFIG_DIR/logs/global.log}"   # active file only (newest window)
 # Per-session / per-conversation files:
 ls "$CONFIG_DIR/logs/sessions/"
 ls "$CONFIG_DIR/logs/sessions/<projectSlug>__<sessionSlug>/conversations/"
 ```
 
-`CC_LOG_FILE` collapses everything to one file. `CC_LOG_SCOPED=0` disables scoped routing (everything → `global.log`).
+`CC_LOG_FILE` collapses everything to one file (and disables rotation if you also set `CC_LOG_MAX_BYTES=0`). `CC_LOG_SCOPED=0` disables scoped routing (everything → `global.log`).
 
-Verify: `wc -l "$LOG"` to confirm file exists and check size before querying. Start with `global.log` for cross-session triage; switch to the scoped file once narrowed to one session/conversation for deep drill-downs.
+Verify: `wc -l "$LOG"` to confirm the file exists and check size before querying. A surprisingly small/empty active file usually means it just rotated — the history is in `global.log.1`+. Start with `global.log` for cross-session triage; switch to the scoped file once narrowed to one session/conversation for deep drill-downs.
+
+**Querying across rotations.** When an aggregate or an older `traceId` may predate the active window, grep the whole rotated set. Use `grep -h` to drop the `filename:` prefixes so output stays valid NDJSON for `jq` (line order is irrelevant for `grep | jq` — each record is timestamped):
+
+```bash
+# Substitute "$LOG" with the rotated glob in any recipe below that aggregates
+# over time or hunts a possibly-old traceId:
+grep -h '"level":"error"' "$CONFIG_DIR"/logs/global.log* | jq -r .message | sort | uniq -c | sort -rn
+grep -h 'TRACE_ID'        "$CONFIG_DIR"/logs/global.log* | jq '{timestamp,module,message,durationMs}'
+```
 
 ## Log Entry Structure
 
@@ -129,11 +140,11 @@ grep '"message":"state-store.aggregate.merge_failure"' "$LOG" | jq '{error,stack
 # Fatal state-store errors
 grep '"message":"state-store.fatal"' "$LOG" | jq '{error,stack}'
 
-# Read accessor timing (only emitted when totalMs >= threshold)
-grep '"message":"state.read.timing"' "$LOG" | jq '{accessor,totalMs,sessionName,conversationId}'
+# Read accessor timing (only emitted when durationMs >= threshold)
+grep '"message":"state.read.timing"' "$LOG" | jq '{accessor,durationMs,sessionName,conversationId}'
 
 # Write-queue hold/wait timing (feeds cc-performance-log-analysis state-store finding)
-grep '"message":"state-store.write_queue.timing"' "$LOG" | jq 'select(.holdMs > 100) | {label,waitMs,holdMs}'
+grep '"message":"state-store.write_queue.timing"' "$LOG" | jq 'select(.holdMs > 100) | {label,durationMs,waitMs,holdMs}'
 ```
 
 ### Lock Contention (Concurrent Prompts)
@@ -176,10 +187,12 @@ grep "\"timestamp\":\"$(date -u +%Y-%m-%dT%H)" "$LOG" | jq .
 
 | Variable        | Default                         | Effect                                                                  |
 | --------------- | ------------------------------- | ----------------------------------------------------------------------- |
-| `CC_LOG_LEVEL`  | `info`                          | Filter: `debug` / `info` / `warn` / `error`                             |
-| `CC_LOG_FILE`   | (scoped routing)                | Collapse all writes to a single file at this path                       |
-| `CC_LOG_SCOPED` | `1`                             | Set to `0` to disable scoped routing (everything → `global.log`)         |
-| `CC_LOG_SILENT` | `0`                             | Set to `1` to suppress stderr emission entirely                          |
+| `CC_LOG_LEVEL`    | `info`                          | Filter: `debug` / `info` / `warn` / `error`                             |
+| `CC_LOG_FILE`     | (scoped routing)                | Collapse all writes to a single file at this path                       |
+| `CC_LOG_SCOPED`   | `1`                             | Set to `0` to disable scoped routing (everything → `global.log`)         |
+| `CC_LOG_SILENT`   | `0`                             | Set to `1` to suppress stderr emission entirely                          |
+| `CC_LOG_MAX_BYTES`| `104857600` (100 MiB)           | Rotate a log file once an append would exceed this size; `0` disables rotation (unbounded) |
+| `CC_LOG_MAX_FILES`| `5`                             | Rotated backups retained per file (`global.log.1` … `global.log.N`)     |
 
 Set `CC_LOG_LEVEL=debug` to include lock events (`lock.acquired`, `lock.released`) and verbose internals.
 
@@ -224,8 +237,8 @@ State persistence runs through a write queue over SQLite (`notifications.db`, WA
 
 | Message                                            | Level | Key Fields                                  | Meaning                                                  |
 | -------------------------------------------------- | ----- | ------------------------------------------- | -------------------------------------------------------- |
-| `state.read.timing`                                | info  | accessor, totalMs, sessionName, conversationId | Slow read accessor (only above threshold)            |
-| `state-store.write_queue.timing`                   | info  | label, waitMs, holdMs                       | Per-write queue cost; feeds the perf log-analysis tool   |
+| `state.read.timing`                                | info  | accessor, durationMs, sessionName, conversationId | Slow read accessor (only above threshold)            |
+| `state-store.write_queue.timing`                   | info  | label, durationMs, waitMs, holdMs           | Per-write queue cost; feeds the perf log-analysis tool   |
 | `state-store.aggregate.diff.timing`                | info  | label, durationMs                           | Diff/commit cost during a mutation                       |
 | `state-store.aggregate.merge_failure`              | error | error, stack                                | Aggregate merge produced an invalid snapshot             |
 | `state-store.*.schema_validation_failure`          | error | module, error                               | Stored row failed Zod schema validation                  |

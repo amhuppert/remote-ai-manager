@@ -31,11 +31,9 @@ function durationFromRecord(
   const durationMs = finiteNonNegativeNumber(record["durationMs"]);
   if (durationMs !== undefined) return durationMs;
 
-  if (record["message"] === "state.read.timing") {
-    return finiteNonNegativeNumber(record["totalMs"]);
-  }
-
-  return undefined;
+  // Legacy logs (pre-canonicalization) recorded the duration under `totalMs`
+  // on state.read.timing / diff.timing; fall back so old logs still parse.
+  return finiteNonNegativeNumber(record["totalMs"]);
 }
 
 function parseRecord(

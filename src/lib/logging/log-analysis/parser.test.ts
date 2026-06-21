@@ -58,7 +58,7 @@ describe("parseServerLogLines", () => {
     expect(result.malformedLineCount).toBe(1);
   });
 
-  it("uses state.read.timing totalMs as normalized durationMs", () => {
+  it("falls back to legacy totalMs when durationMs is absent (pre-canonicalization logs)", () => {
     const result = parseServerLogLines([
       JSON.stringify({
         timestamp: "2026-05-21T12:00:01.000Z",
