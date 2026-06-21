@@ -13,6 +13,7 @@ import {
   registerExecutionLogger,
   unregisterExecutionLogger,
 } from "./execution-logger";
+import type { ValidationDiffScope } from "./validation-diff-scope";
 import type {
   ExecuteWorkflowTaskRunInput,
   TaskRunResult,
@@ -1405,5 +1406,181 @@ describe("validator-runner executionTarget override", () => {
         }),
       }),
     );
+  });
+});
+
+describe("buildContextValidationPrompt diff scope", () => {
+  it("inserts the diff-scope section after the acceptance criteria and before the context section", () => {
+    const prompt = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: validatorConfig,
+      diffScopeSection: "## Changes Under Review\n\nSCOPE_MARKER_BODY",
+    });
+
+    const acIdx = prompt.indexOf("Every task summary is complete");
+    const scopeIdx = prompt.indexOf("SCOPE_MARKER_BODY");
+    const contextIdx = prompt.indexOf("## Context");
+    expect(acIdx).toBeGreaterThanOrEqual(0);
+    expect(acIdx).toBeLessThan(scopeIdx);
+    expect(scopeIdx).toBeLessThan(contextIdx);
+  });
+
+  it("omits the diff-scope section when none is supplied", () => {
+    const prompt = buildContextValidationPrompt({
+      context,
+      tasks,
+      taskStates,
+      validator: validatorConfig,
+    });
+
+    expect(prompt).not.toContain("## Changes Under Review");
+  });
+});
+
+describe("createValidatorRunner diff scope", () => {
+  const availableScope: ValidationDiffScope = {
+    kind: "available",
+    diff: {
+      files: [
+        {
+          filePath: "src/widget.ts",
+          additions: 1,
+          deletions: 0,
+          hunks: [
+            {
+              header: "@@ -0,0 +1 @@",
+              lines: [
+                { type: "hunk-header", content: "@@ -0,0 +1 @@" },
+                { type: "add", content: "export const widget = true;" },
+              ],
+            },
+          ],
+        },
+      ],
+      totalAdditions: 1,
+      totalDeletions: 0,
+    },
+    fileCount: 1,
+    totalAdditions: 1,
+    totalDeletions: 0,
+  };
+
+  function planContext(execution: GraphWorkflowExecution) {
+    return execution.workingDefinition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    )!;
+  }
+
+  it("computes diff scope from the resolved session worktree and injects it into the prompt", async () => {
+    const executeWorkflowTaskRun = vi.fn(
+      async (_input: ExecuteWorkflowTaskRunInput) =>
+        textTaskRun(JSON.stringify({ summary: "ok", issues: [] })),
+    );
+    const computeValidationDiffScope = vi.fn(
+      async (_wt: string) => availableScope,
+    );
+    const resolveWorktreePath = vi.fn(async () => "/session-worktree");
+    const runner = createValidatorRunner({
+      resolveWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
+      computeValidationDiffScope,
+    });
+
+    const execution = buildExecutionWithContextValidation();
+    const contextDef = planContext(execution);
+
+    await runner.runContextValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      validator: contextDef.contextValidator!,
+    });
+
+    expect(computeValidationDiffScope).toHaveBeenCalledWith(
+      "/session-worktree",
+    );
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input.prompt).toContain("## Changes Under Review");
+    expect(input.prompt).toContain("src/widget.ts");
+    expect(input.prompt).toContain("+export const widget = true;");
+  });
+
+  it("computes diff scope from executionTarget.worktreePath when supplied", async () => {
+    const executeWorkflowTaskRun = vi.fn(
+      async (_input: ExecuteWorkflowTaskRunInput) =>
+        textTaskRun(JSON.stringify({ summary: "ok", issues: [] })),
+    );
+    const computeValidationDiffScope = vi.fn(
+      async (_wt: string) => availableScope,
+    );
+    const runner = createValidatorRunner({
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
+      computeValidationDiffScope,
+    });
+
+    const execution = buildExecutionWithContextValidation();
+    const contextDef = planContext(execution);
+
+    await runner.runContextValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      validator: contextDef.contextValidator!,
+      executionTarget: {
+        worktreePath: "/repo/.worktrees/session-1.context-plan",
+        branchName: "csm/session-1-context-plan",
+        isolation: "worktree",
+        laneId: null,
+      },
+    });
+
+    expect(computeValidationDiffScope).toHaveBeenCalledWith(
+      "/repo/.worktrees/session-1.context-plan",
+    );
+  });
+
+  it("still dispatches the validator turn when diff scope is unavailable", async () => {
+    const executeWorkflowTaskRun = vi.fn(
+      async (_input: ExecuteWorkflowTaskRunInput) =>
+        textTaskRun(JSON.stringify({ summary: "ok", issues: [] })),
+    );
+    const computeValidationDiffScope = vi.fn(
+      async (): Promise<ValidationDiffScope> => ({
+        kind: "unavailable",
+        reason: "git boom",
+      }),
+    );
+    const runner = createValidatorRunner({
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
+      computeValidationDiffScope,
+    });
+
+    const execution = buildExecutionWithContextValidation();
+    const contextDef = planContext(execution);
+
+    const result = await runner.runContextValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      validator: contextDef.contextValidator!,
+    });
+
+    expect(executeWorkflowTaskRun).toHaveBeenCalledTimes(1);
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input.prompt).toContain("Diff scope unavailable (git boom)");
+    expect(result.result.kind).toBe("pass");
   });
 });

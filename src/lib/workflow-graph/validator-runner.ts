@@ -35,6 +35,11 @@ import {
 } from "@/lib/workflows/conversation/execute-workflow-task-run";
 import type { EnsureActorInputData } from "@/lib/workflows/conversation/manager";
 import { getProjectDisplayName as defaultGetProjectDisplayName } from "@/lib/projects/resolver";
+import {
+  computeValidationDiffScope as defaultComputeValidationDiffScope,
+  renderDiffScopeSection,
+  type ValidationDiffScope,
+} from "./validation-diff-scope";
 
 export const VALIDATOR_OUTPUT_SCHEMA = {
   type: "object",
@@ -66,6 +71,10 @@ export interface BuildContextValidationPromptInput {
   // Optional because the resolved context carries an optional charter; when
   // present the digest is prepended so the prompt opens with it (4.2).
   charter?: WorkflowCharter;
+  // Pre-rendered "Changes under review" section anchoring the validator on the
+  // context's diff. Inserted after the acceptance criteria. Omitted when scope
+  // computation is disabled or fails to produce a section.
+  diffScopeSection?: string;
 }
 
 function buildCharterSection(charter: WorkflowCharter): string {
@@ -118,6 +127,7 @@ export function buildContextValidationPrompt(
     "",
     input.context.acceptanceCriteria,
     "",
+    ...(input.diffScopeSection ? [input.diffScopeSection, ""] : []),
     "## Context",
     "",
     `Execution context: ${input.context.title}`,
@@ -379,6 +389,13 @@ export interface ValidatorRunnerDeps {
    * conversations — no state-store side effects depend on it.
    */
   getProjectDisplayName?: (projectPath: string) => string;
+  /**
+   * Optional override for diff-scope computation. Defaults to the real
+   * working-tree-vs-HEAD computation. Injected in tests to avoid spawning git.
+   */
+  computeValidationDiffScope?: (
+    worktreePath: string,
+  ) => Promise<ValidationDiffScope>;
 }
 
 const backendRefCache = new Map<string, AgentSessionRef>();
@@ -536,6 +553,8 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
   const getProjectDisplayName =
     deps.getProjectDisplayName ?? defaultGetProjectDisplayName;
+  const computeValidationDiffScope =
+    deps.computeValidationDiffScope ?? defaultComputeValidationDiffScope;
 
   async function dispatchValidatorTurn(
     invocation: ValidatorTaskInvocation,
@@ -955,6 +974,75 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       input.execution,
     );
     const contextTasks = index.tasksByContext.get(input.context.id) ?? [];
+    const execLogger = getExecutionLogger(input.execution.id);
+    const contextLimitTokens = input.validator.continuity.contextLimitTokens;
+    const allowedTaskIds = getContextTaskIds(index, input.context.id);
+
+    // Resolve the exact worktree the validator will inspect, then compute the
+    // context's uncommitted change set there. Diff scoping is default-on and
+    // degraded-not-fatal: any failure yields an "unavailable" scope rather than
+    // halting validation, and the validator falls back to AC-only review.
+    const targetWorktreePath = input.executionTarget?.worktreePath;
+    let resolvedWorktreePath: string | undefined;
+    let diffScope: ValidationDiffScope;
+    try {
+      resolvedWorktreePath =
+        targetWorktreePath ??
+        (await deps.resolveWorktreePath(input.projectPath, input.sessionName));
+      diffScope = await computeValidationDiffScope(resolvedWorktreePath);
+    } catch (error) {
+      diffScope = {
+        kind: "unavailable",
+        reason: `scope computation error: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      };
+    }
+
+    const renderedDiffScope = renderDiffScopeSection(diffScope, {
+      contextLimitTokens,
+    });
+    const diffScopeWorktreePath =
+      resolvedWorktreePath ?? targetWorktreePath ?? null;
+
+    if (diffScope.kind === "unavailable") {
+      execLogger?.validation(input.context.id, "diff_scope.unavailable", {
+        worktreePath: diffScopeWorktreePath,
+        reason: diffScope.reason,
+      });
+      validatorLogger.warn("graph-workflow.validator.diff_scope.unavailable", {
+        executionId: input.execution.id,
+        contextId: input.context.id,
+        worktreePath: diffScopeWorktreePath,
+        reason: diffScope.reason,
+      });
+    } else {
+      const fileCount =
+        diffScope.kind === "available" ? diffScope.fileCount : 0;
+      const totalAdditions =
+        diffScope.kind === "available" ? diffScope.totalAdditions : 0;
+      const totalDeletions =
+        diffScope.kind === "available" ? diffScope.totalDeletions : 0;
+      const diffScopeMetadata = {
+        worktreePath: diffScopeWorktreePath,
+        status: diffScope.kind,
+        fileCount,
+        totalAdditions,
+        totalDeletions,
+        truncated: renderedDiffScope.truncated,
+        omittedFileCount: renderedDiffScope.omittedFileCount,
+      };
+      execLogger?.validation(
+        input.context.id,
+        "diff_scope.computed",
+        diffScopeMetadata,
+      );
+      validatorLogger.info("graph-workflow.validator.diff_scope.computed", {
+        executionId: input.execution.id,
+        contextId: input.context.id,
+        ...diffScopeMetadata,
+      });
+    }
 
     const prompt = buildContextValidationPrompt({
       context: input.context,
@@ -962,9 +1050,9 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       taskStates: input.execution.taskStates,
       validator: input.validator,
       ...(input.context.charter ? { charter: input.context.charter } : {}),
+      diffScopeSection: renderedDiffScope.section,
     });
 
-    const execLogger = getExecutionLogger(input.execution.id);
     execLogger?.writePrompt(input.context.id, "context-validator.md", prompt);
     execLogger?.validation(input.context.id, "context_validator.started", {
       engine: input.validator.type,
@@ -972,10 +1060,10 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
       taskCount: contextTasks.length,
     });
 
-    const contextLimitTokens = input.validator.continuity.contextLimitTokens;
-    const allowedTaskIds = getContextTaskIds(index, input.context.id);
-
-    const overrideWorktreePath = input.executionTarget?.worktreePath;
+    // Pass the worktree we already resolved so runValidatorTurn does not
+    // re-resolve it; fall back to the target path (or undefined) when scope
+    // resolution failed, preserving runValidatorTurn's own error surfacing.
+    const overrideWorktreePath = resolvedWorktreePath ?? targetWorktreePath;
 
     try {
       if (input.validator.type === "codex") {
