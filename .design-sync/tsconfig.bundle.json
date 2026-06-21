@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "baseUrl": "..",
+    "paths": {
+      "@/lib/logging": [".storybook/logging-stub.mjs"],
+      "mermaid": [".design-sync/stubs/mermaid.ts"],
+      "@/*": ["src/*"]
+    }
+  }
+}

@@ -1,0 +1,25 @@
+/* Brand font variables for the /design-sync bundle.
+ *
+ * In the app these `--font-*` variables are injected at runtime by next/font
+ * (RootLayout.tsx). The stories don't render RootLayout, so they're undefined in
+ * the scraped CSS — and `--font-display: var(--font-anybody), "Anybody", …` is
+ * guaranteed-invalid when `--font-anybody` is undefined (the var() poisons the
+ * whole declaration before the literal fallback is reached). Defining them here
+ * points the token chain at the shipped @font-face families (brand-faces.css). */
+:root {
+  --font-anybody: "Anybody";
+  --font-manrope: "Manrope";
+  --font-geist-mono: "Geist Mono";
+}
+
+/* Command Center is a dark-themed design system: the scraped global CSS sets
+ * body{color:var(--text-primary)} (light text) and every component assumes the
+ * app's dark background. The DS preview-card template hardcodes an inline
+ * `body{background:#fff}`, which leaves light text on white (invisible) and
+ * misrepresents the components. Force the real app background so previews — and
+ * therefore every design the agent builds — render on the dark surface the
+ * components were designed for. `html body` beats the card's inline `body` by
+ * specificity (no !important needed); harmless in the reference (already dark). */
+html body {
+  background: var(--bg-void);
+}

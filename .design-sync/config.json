@@ -1,0 +1,28 @@
+{
+  "projectId": "ed3a3cc5-6a74-4d4a-819f-db4d5b29b1c4",
+  "pkg": "command-center",
+  "globalName": "CommandCenterUI",
+  "shape": "storybook",
+  "storybookStatic": ".design-sync/sb-reference",
+  "storybookConfigDir": ".design-sync/sb-config",
+  "tsconfig": ".design-sync/tsconfig.bundle.json",
+  "extraEntries": ["./.design-sync/ds-entry.tsx"],
+  "cssEntry": ".design-sync/full-styles.css",
+  "buildCmd": "npx @tailwindcss/cli -i .design-sync/styles-input.css -o .design-sync/full-styles.css",
+  "readmeHeader": ".design-sync/conventions.md",
+  "extraFonts": [".design-sync/fonts/brand-faces.css"],
+  "overrides": {
+    "BackendToggle": { "cardMode": "single", "primaryStory": "Default" },
+    "ConfirmDialog": { "cardMode": "single", "primaryStory": "Default", "skip": ["components-confirmdialog--closed"] },
+    "ModelSelector": { "cardMode": "single", "primaryStory": "Default" },
+    "ReasoningLevelSelector": { "cardMode": "single", "primaryStory": "Default" },
+    "ModalShell": { "cardMode": "single", "primaryStory": "Default" },
+    "MergeToast": { "cardMode": "single", "primaryStory": "Success" },
+    "TddToggle": { "cardMode": "column" },
+    "Button": { "cardMode": "column" },
+    "ContextFillIndicator": { "cardMode": "column" },
+    "IconButton": { "cardMode": "column" },
+    "SectionHeader": { "cardMode": "column" },
+    "Tabs": { "cardMode": "column" }
+  }
+}
