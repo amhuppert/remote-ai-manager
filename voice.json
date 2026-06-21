@@ -1,5 +1,6 @@
 {
   "contextFile": "./voice-context.md",
+  "vocabularyFile": "./voice-vocabulary.md",
   "outputFile": "PROMPT.md",
   "claudeModel": "sonnet"
 }
