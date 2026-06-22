@@ -21,6 +21,7 @@ import { createGraphWorkflowRuntimeEditService } from "@/lib/workflow-graph/runt
 import { createGraphWorkflowSharedDocumentRegistryService } from "@/lib/workflow-graph/shared-documents";
 import { createSharedDocumentStore } from "@/lib/workflow-graph/shared-document-store";
 import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
+import { scopeForTier } from "@/lib/workflow-graph/template-library-service";
 import { createParallelWorktrees } from "@/lib/workflow-graph/parallel-worktrees";
 import { createGraphWorkflowCollaborationCoordinator } from "@/lib/workflow-graph/workflow-collaboration-coordinator";
 import { createWorkflowCollaboratorCaller } from "@/lib/workflow-graph/workflow-collaborator-caller";
@@ -110,8 +111,8 @@ const executionRepository = createGraphWorkflowExecutionRepository({
 const workflowStorage = createWorkflowStorageService();
 const workflowManager = createGraphWorkflowManager({
   executionRepository,
-  loadDefinition: (projectPath, definitionId) =>
-    workflowStorage.get(projectPath, definitionId),
+  loadDefinition: (projectPath, definitionId, tier) =>
+    workflowStorage.get(scopeForTier(tier, projectPath), definitionId),
   parallelWorktrees: createParallelWorktrees(),
   getSession,
 });
@@ -182,7 +183,7 @@ const defaultWorkflowExecutionMcpServerDeps: WorkflowExecutionMcpServerDeps = {
     // cascade with the original per-node + workflow-level overrides.
     const globalConfig = await readConfig();
     const definitionRecord = await workflowStorage.get(
-      projectPath,
+      scopeForTier(execution.launchedTier, projectPath),
       execution.seedDefinitionId,
     );
     const rawExecutionContext =

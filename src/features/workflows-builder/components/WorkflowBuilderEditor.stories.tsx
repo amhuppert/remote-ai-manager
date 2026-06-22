@@ -31,6 +31,8 @@ export const EmptyWorkflow = {
         schemaVersion: 1,
         workflowConfig: {},
         charter: makeTestCharter(),
+        parameters: [],
+        prerequisites: [],
         executionContexts: [],
         tasks: [],
         edges: [],

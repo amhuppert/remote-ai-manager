@@ -12,12 +12,14 @@ import {
   createWorkflowDefinition,
   createWorkflowDefinitionRecord,
 } from "./test-fixtures";
-import { createWorkflowStorageService } from "./storage";
+import { createWorkflowStorageService, type WorkflowScope } from "./storage";
 import { createWorkflowCharterService } from "./charter/service";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 
 const TEST_DIR = path.join("/tmp", `cc-graph-workflow-${Date.now()}`);
+
+const REPO_SCOPE: WorkflowScope = { kind: "project", projectPath: "/repo" };
 
 function createServices() {
   const configReader = createConfigReader(TEST_DIR);
@@ -71,7 +73,7 @@ describe("workflow-graph storage", () => {
   it("creates, lists, gets, updates, and deletes workflow definitions", async () => {
     const { storage } = createServices();
 
-    const created = await storage.create("/repo", {
+    const created = await storage.create(REPO_SCOPE, {
       name: "My Workflow",
       description: "Stored workflow",
       definition: createWorkflowDefinition(),
@@ -81,14 +83,14 @@ describe("workflow-graph storage", () => {
     expect(created.id).toBeTruthy();
     expect(created.revision).toBe(1);
 
-    const listed = await storage.list("/repo");
+    const listed = await storage.list(REPO_SCOPE);
     expect(listed).toHaveLength(1);
     expect(listed[0]?.id).toBe(created.id);
 
-    const loaded = await storage.get("/repo", created.id);
+    const loaded = await storage.get(REPO_SCOPE, created.id);
     expect(loaded?.name).toBe("My Workflow");
 
-    const updated = await storage.update("/repo", created.id, {
+    const updated = await storage.update(REPO_SCOPE, created.id, {
       name: "Updated Workflow",
       description: "Updated description",
       definition: createWorkflowDefinition(),
@@ -97,15 +99,15 @@ describe("workflow-graph storage", () => {
     expect(updated.revision).toBe(2);
     expect(updated.name).toBe("Updated Workflow");
 
-    expect(await storage.delete("/repo", created.id)).toBe(true);
-    expect(await storage.get("/repo", created.id)).toBeNull();
+    expect(await storage.delete(REPO_SCOPE, created.id)).toBe(true);
+    expect(await storage.get(REPO_SCOPE, created.id)).toBeNull();
   });
 
   it("rejects invalid definitions before persisting", async () => {
     const { storage } = createServices();
 
     await expect(
-      storage.create("/repo", {
+      storage.create(REPO_SCOPE, {
         name: "Bad Workflow",
         description: null,
         definition: createWorkflowDefinition({
@@ -123,6 +125,83 @@ describe("workflow-graph storage", () => {
         layout: createWorkflowDefinitionRecord().layout,
       }),
     ).rejects.toThrow("unknown-task-context");
+  });
+
+  it("rejects create with an undeclared parameter reference (accept-time lint via choke point)", async () => {
+    const { storage } = createServices();
+    const base = createWorkflowDefinition();
+
+    await expect(
+      storage.create(REPO_SCOPE, {
+        name: "Parameterized",
+        description: null,
+        definition: createWorkflowDefinition({
+          tasks: base.tasks.map((task, index) =>
+            index === 0
+              ? { ...task, instructions: "Build {{inputs.unknown-name}} now" }
+              : task,
+          ),
+        }),
+        layout: createWorkflowDefinitionRecord().layout,
+      }),
+    ).rejects.toThrow("undeclared-parameter-reference");
+  });
+
+  it("persists a clean parameterized definition through create", async () => {
+    const { storage } = createServices();
+    const base = createWorkflowDefinition();
+
+    const created = await storage.create(REPO_SCOPE, {
+      name: "Parameterized",
+      description: null,
+      definition: createWorkflowDefinition({
+        parameters: [
+          {
+            type: "string",
+            name: "feature-name",
+            label: "Feature",
+            required: true,
+          },
+        ],
+        tasks: base.tasks.map((task, index) =>
+          index === 0
+            ? { ...task, instructions: "Build {{inputs.feature-name}} now" }
+            : task,
+        ),
+      }),
+      layout: createWorkflowDefinitionRecord().layout,
+    });
+
+    const loaded = await storage.get(REPO_SCOPE, created.id);
+    expect(loaded?.definition.parameters).toHaveLength(1);
+    expect(loaded?.definition.parameters[0]?.name).toBe("feature-name");
+  });
+
+  it("rejects update with an undeclared parameter reference (accept-time lint via choke point)", async () => {
+    const { storage } = createServices();
+    const base = createWorkflowDefinition();
+
+    const created = await storage.create(REPO_SCOPE, {
+      name: "Clean",
+      description: null,
+      definition: createWorkflowDefinition(),
+      layout: createWorkflowDefinitionRecord().layout,
+    });
+
+    await expect(
+      storage.update(REPO_SCOPE, created.id, {
+        name: "Now Broken",
+        description: null,
+        definition: createWorkflowDefinition({
+          tasks: base.tasks.map((task, index) =>
+            index === 0
+              ? { ...task, instructions: "Build {{inputs.unknown-name}} now" }
+              : task,
+          ),
+        }),
+        layout: createWorkflowDefinitionRecord().layout,
+      }),
+    ).rejects.toThrow("undeclared-parameter-reference");
   });
 });
 
@@ -155,6 +234,8 @@ describe("graph workflow execution repository", () => {
       definitionRevision: 2,
       executionId: "execution-1",
       startedAt: "2026-03-27T12:00:00.000Z",
+      inputs: {},
+      launchedTier: "project",
     });
 
     expect(created.status).toBe("pending");

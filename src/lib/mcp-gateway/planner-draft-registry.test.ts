@@ -15,6 +15,8 @@ describe("mcp-gateway/planner-draft-registry", () => {
       schemaVersion: 1,
       workflowConfig: {},
       charter: makeTestCharter(),
+      parameters: [],
+      prerequisites: [],
       executionContexts: [],
       tasks: [],
       edges: [],

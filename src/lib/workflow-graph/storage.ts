@@ -11,13 +11,15 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type {
   GraphWorkflowVisualLayout,
+  ParameterDeclaration,
   WorkflowDefinitionRecord,
+  WorkflowPrerequisite,
   WorkflowSemanticDefinition,
 } from "@/lib/workflows/schemas";
 import { getConfigDirPath } from "../config/loader";
 import { createLogger } from "../logging";
 import { timed } from "../logging/timed";
-import { validateWorkflowDefinition } from "./validation";
+import { validateAuthoredDefinition } from "./validation";
 import {
   assertDefinitionRecordSupported,
   assertNoLegacyWorkflowFields,
@@ -28,6 +30,23 @@ const logger = createLogger("workflow-storage");
 export interface WorkflowStorageDeps {
   resolveConfigDir?: () => string;
 }
+
+/**
+ * Storage scope discriminator. A `project` scope keys storage by an opaque
+ * project path; the `global` scope is a single cross-project tier shared by
+ * every project.
+ */
+export type WorkflowScope =
+  | { kind: "project"; projectPath: string }
+  | { kind: "global" };
+
+/**
+ * Reserved directory key for the global tier. It contains a `.` — a character
+ * outside the base64url alphabet (`A–Za–z0–9-_`) — so it can never equal
+ * `base64url(projectPath)` for any project path. This makes a collision with a
+ * per-project key structurally impossible, with no runtime guard required.
+ */
+const GLOBAL_SCOPE_KEY = "global.shared";
 
 export interface WorkflowDefinitionDraft {
   name: string;
@@ -43,11 +62,19 @@ export interface WorkflowDefinitionSummary {
   revision: number;
   createdAt: string;
   updatedAt: string;
+  // Surfaced from the underlying definition so a launcher (UI/agent) can build a
+  // parameterized, prerequisite-aware launch from a single list call — no N+1
+  // per-item fetch. Populated in `list` from the already-read record.
+  parameters: ParameterDeclaration[];
+  prerequisites: WorkflowPrerequisite[];
 }
 
-function getProjectStorageDir(configDir: string, projectPath: string): string {
-  const projectKey = Buffer.from(projectPath).toString("base64url");
-  return path.join(configDir, "workflows", projectKey);
+function getScopeStorageDir(configDir: string, scope: WorkflowScope): string {
+  const scopeKey =
+    scope.kind === "global"
+      ? GLOBAL_SCOPE_KEY
+      : Buffer.from(scope.projectPath).toString("base64url");
+  return path.join(configDir, "workflows", scopeKey);
 }
 
 async function ensureDir(dir: string): Promise<void> {
@@ -73,9 +100,13 @@ async function readRecord(filePath: string): Promise<WorkflowDefinitionRecord> {
 }
 
 function assertValidDefinition(definition: WorkflowSemanticDefinition): void {
-  const result = validateWorkflowDefinition(definition);
+  const result = validateAuthoredDefinition(definition);
   if (!result.ok) {
-    throw new Error(result.errors.map((error) => error.code).join(", "));
+    const codes = result.errors.map((error) => error.code);
+    // Log rejection codes only — never the offending field values — to keep
+    // authored content (and any inadvertent secrets in it) out of logs.
+    logger.warn("workflow-storage.accept-time-rejected", { codes });
+    throw new Error(codes.join(", "));
   }
 }
 
@@ -83,14 +114,14 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
   const resolveConfigDir = deps.resolveConfigDir ?? getConfigDirPath;
 
   async function list(
-    projectPath: string,
+    scope: WorkflowScope,
   ): Promise<WorkflowDefinitionSummary[]> {
     return timed(
       logger,
       "workflow-storage.list",
-      { projectPath },
+      { scope: scope.kind },
       async () => {
-        const dir = getProjectStorageDir(resolveConfigDir(), projectPath);
+        const dir = getScopeStorageDir(resolveConfigDir(), scope);
         if (!existsSync(dir)) {
           return [];
         }
@@ -109,6 +140,8 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
           revision: record.revision,
           createdAt: record.createdAt,
           updatedAt: record.updatedAt,
+          parameters: record.definition.parameters,
+          prerequisites: record.definition.prerequisites,
         }));
       },
       (summaries) => ({ workflowCount: summaries.length }),
@@ -116,7 +149,7 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
   }
 
   async function get(
-    projectPath: string,
+    scope: WorkflowScope,
     workflowId: string,
   ): Promise<WorkflowDefinitionRecord | null> {
     return timed(
@@ -125,7 +158,7 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
       { workflowId },
       async () => {
         const filePath = path.join(
-          getProjectStorageDir(resolveConfigDir(), projectPath),
+          getScopeStorageDir(resolveConfigDir(), scope),
           `${workflowId}.json`,
         );
         if (!existsSync(filePath)) {
@@ -138,7 +171,7 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
   }
 
   async function create(
-    projectPath: string,
+    scope: WorkflowScope,
     draft: WorkflowDefinitionDraft,
   ): Promise<WorkflowDefinitionRecord> {
     assertNoLegacyWorkflowFields(
@@ -171,7 +204,7 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
         };
 
         const filePath = path.join(
-          getProjectStorageDir(resolveConfigDir(), projectPath),
+          getScopeStorageDir(resolveConfigDir(), scope),
           `${workflowId}.json`,
         );
         await writeJsonAtomically(filePath, record);
@@ -181,7 +214,7 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
   }
 
   async function update(
-    projectPath: string,
+    scope: WorkflowScope,
     workflowId: string,
     draft: WorkflowDefinitionDraft,
   ): Promise<WorkflowDefinitionRecord> {
@@ -196,7 +229,7 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
       "workflow-storage.update",
       { workflowId },
       async () => {
-        const existing = await get(projectPath, workflowId);
+        const existing = await get(scope, workflowId);
         if (!existing) {
           throw new Error(`Workflow "${workflowId}" not found`);
         }
@@ -215,7 +248,7 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
         };
 
         const filePath = path.join(
-          getProjectStorageDir(resolveConfigDir(), projectPath),
+          getScopeStorageDir(resolveConfigDir(), scope),
           `${workflowId}.json`,
         );
         await writeJsonAtomically(filePath, record);
@@ -226,7 +259,7 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
   }
 
   async function remove(
-    projectPath: string,
+    scope: WorkflowScope,
     workflowId: string,
   ): Promise<boolean> {
     return timed(
@@ -235,7 +268,7 @@ export function createWorkflowStorageService(deps: WorkflowStorageDeps = {}) {
       { workflowId },
       async () => {
         const filePath = path.join(
-          getProjectStorageDir(resolveConfigDir(), projectPath),
+          getScopeStorageDir(resolveConfigDir(), scope),
           `${workflowId}.json`,
         );
         if (!existsSync(filePath)) {

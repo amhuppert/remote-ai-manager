@@ -47,8 +47,10 @@ interface InMemoryExecutionRepository {
       definitionRevision: number;
       executionId: string;
       startedAt: string;
+      inputs: Record<string, string>;
     },
   ): Promise<GraphWorkflowExecution>;
+  archiveActive(projectPath: string, sessionName: string): Promise<void>;
   mutateActive(
     projectPath: string,
     sessionName: string,
@@ -82,6 +84,9 @@ function createRepository(
     },
     async create() {
       throw new Error("create not used in integration tests");
+    },
+    async archiveActive() {
+      throw new Error("archiveActive not used in integration tests");
     },
     async mutateActive(_p, _s, fn) {
       const previous = chain;
@@ -238,6 +243,8 @@ function createParallelDefinition(
     schemaVersion: 1,
     workflowConfig: {},
     charter: makeTestCharter(),
+    parameters: [],
+    prerequisites: [],
     executionContexts: contextIds.map((id) => ({
       id,
       title: `Context ${id}`,
@@ -307,6 +314,8 @@ function createInitialExecution(
     id: "exec-1",
     seedDefinitionId: "def-1",
     seedDefinitionRevision: 1,
+    boundInputs: {},
+    launchedTier: "project",
     workingDefinition:
       definition as unknown as ResolvedWorkflowSemanticDefinition,
     charter: makeTestCharter(),
@@ -1537,6 +1546,8 @@ describe("execution loop — parallel integration", () => {
       schemaVersion: 1,
       workflowConfig: {},
       charter: makeTestCharter(),
+      parameters: [],
+      prerequisites: [],
       executionContexts: contextIds.map((id) => ({
         id,
         title: `Context ${id}`,
@@ -1699,6 +1710,8 @@ describe("execution loop — parallel integration", () => {
       schemaVersion: 1,
       workflowConfig: {},
       charter: makeTestCharter(),
+      parameters: [],
+      prerequisites: [],
       executionContexts: contextIds.map((id) => ({
         id,
         title: `Context ${id}`,

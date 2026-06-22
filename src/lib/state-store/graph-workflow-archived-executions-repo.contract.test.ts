@@ -214,6 +214,11 @@ function buildMaximalExecution(): unknown {
     id: "wf-maximal",
     seedDefinitionId: "seed-maximal",
     seedDefinitionRevision: 3,
+    boundInputs: {
+      feature: "search box",
+      notes: "first line\nsecond line",
+    },
+    launchedTier: "global",
     workingDefinition: {
       schemaVersion: 2,
       executionContexts: [
@@ -407,7 +412,11 @@ function buildMaximalExecution(): unknown {
     ],
     startedAt: "2026-01-01T00:00:00Z",
     completedAt: "2026-01-02T07:00:00Z",
-    haltReason: { type: "max_iterations", contextId: "ctx-1", iterationCount: 7 },
+    haltReason: {
+      type: "max_iterations",
+      contextId: "ctx-1",
+      iterationCount: 7,
+    },
     pendingHaltReason: {
       type: "recovery_error",
       message: "could not recover lane state",

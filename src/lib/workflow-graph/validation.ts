@@ -12,6 +12,11 @@ import {
   isContextOutputCommittedToLane,
   isUpstreamVisibleToDownstream,
 } from "./lane-readiness";
+import {
+  lintParameterReferences,
+  validateParameterDeclarations,
+} from "./parameter-validation";
+import { validatePrerequisites } from "./prerequisite-validation";
 
 type ValidatableDefinition =
   | WorkflowSemanticDefinition
@@ -205,6 +210,34 @@ export function validateWorkflowDefinition(
       message: "Execution-context dependency graph must be acyclic",
     });
   }
+
+  return resultFromErrors(errors);
+}
+
+/**
+ * Composite accept-time (authoring) validator. Runs, in order, the parameter
+ * shape checks, the placeholder-grammar + reference lint, and the structural
+ * graph validation, COLLECTING every error from all three (no short-circuit).
+ *
+ * The grammar lint (`lintParameterReferences`) is attached here ALONGSIDE the
+ * structural validator, NEVER folded inside it. `validateWorkflowDefinition`
+ * stays purely structural so the seed-time re-validation (a substituted concrete
+ * definition) can call it alone without re-applying the grammar lint — a bound
+ * launcher value may legitimately contain a literal `{{...}}` (R5.1, R5.5).
+ *
+ * Prerequisite shape checks (`validatePrerequisites`) compose here ALONGSIDE the
+ * parameter checks — neither owns the other — so both author paths and both
+ * tiers reject an invalid prerequisite at the same choke point (gwt R4.4, R4.6).
+ */
+export function validateAuthoredDefinition(
+  definition: WorkflowSemanticDefinition,
+): WorkflowGraphValidationResult {
+  const errors: WorkflowGraphValidationError[] = [
+    ...validatePrerequisites(definition.prerequisites),
+    ...validateParameterDeclarations(definition.parameters),
+    ...lintParameterReferences(definition),
+    ...validateWorkflowDefinition(definition).errors,
+  ];
 
   return resultFromErrors(errors);
 }

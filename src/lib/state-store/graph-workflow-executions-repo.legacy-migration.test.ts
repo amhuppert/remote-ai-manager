@@ -111,6 +111,8 @@ function buildCleanExecution(): GraphWorkflowExecution {
     id: "exec-clean-1",
     seedDefinitionId: "seed-1",
     seedDefinitionRevision: 1,
+    boundInputs: {},
+    launchedTier: "project",
     workingDefinition: {
       schemaVersion: 1,
       executionContexts: [],

@@ -7,6 +7,7 @@ import {
   graphWorkflowExecutionKeys,
   graphWorkflowHistoryKeys,
   collaborationKeys,
+  projectTemplatesKeys,
 } from "@/lib/workflows/query-keys";
 import {
   workflowDefinitionsResponseSchema,
@@ -15,8 +16,40 @@ import {
 import {
   graphWorkflowExecutionEventsResponseSchema,
   graphWorkflowExecutionFullResponseSchema,
+  parameterDeclarationSchema,
+  prerequisiteSchema,
 } from "@/lib/workflows/schemas";
 import { collaborationListResponseSchema } from "@/lib/collaboration/schemas";
+import type { TemplateLibraryItem } from "@/lib/workflow-graph/template-library-service";
+
+// The cross-tier library listing returned by the project-templates endpoint.
+// Item validation is derived from the canonical parameter/prerequisite schemas
+// so a drift in either surface fails the parse at the boundary rather than
+// silently passing a malformed declaration into the launch form.
+const templateLibraryItemSchema = z.object({
+  tier: z.enum(["project", "global"]),
+  id: z.string(),
+  name: z.string(),
+  description: z.string().nullable(),
+  revision: z.number(),
+  parameters: z.array(parameterDeclarationSchema),
+  prerequisites: z.array(prerequisiteSchema),
+});
+
+const projectTemplatesResponseSchema = z.object({
+  items: z.array(templateLibraryItemSchema),
+});
+
+export function useProjectTemplatesQuery(projectName: string) {
+  return useQuery<TemplateLibraryItem[]>({
+    queryKey: projectTemplatesKeys.list(projectName),
+    queryFn: () =>
+      apiFetch(
+        `/api/projects/${encodeURIComponent(projectName)}/workflow-templates`,
+        projectTemplatesResponseSchema,
+      ).then((r) => r.items),
+  });
+}
 
 export function useWorkflowDefinitionsQuery(projectName: string) {
   return useQuery({

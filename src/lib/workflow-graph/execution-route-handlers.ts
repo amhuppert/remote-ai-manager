@@ -45,6 +45,7 @@ import {
   type ScriptValidatorOutcome,
 } from "./script-validator-runner";
 import { createWorkflowStorageService } from "./storage";
+import { scopeForTier } from "./template-library-service";
 import { buildGraphWorkflowPortableMcp } from "@/lib/mcp-gateway/portable-config";
 import {
   createGraphWorkflowExecutionLoop,
@@ -56,12 +57,15 @@ import {
 } from "@/lib/workflow-graph/iteration-orchestrator";
 import {
   createGraphWorkflowManager,
+  WorkflowPrerequisitesUnmetError,
+  WorkflowStartGuardError,
+  WorkflowStartInputError,
   type RecordPendingHaltReasonInput,
   type RecordPendingHaltReasonResult,
   type DrainAndHaltInput,
 } from "@/lib/workflow-graph/workflow-manager";
+import { createPreflightPrerequisiteService } from "@/lib/workflow-graph/preflight-prerequisite-service";
 import { toHaltReason } from "@/lib/workflow-graph/errors";
-import type { DirtyPath } from "@/lib/workflow-graph/errors";
 import { readWorktreeDirtyPaths } from "@/lib/git/worktree";
 import { createWorkflowContinuityService } from "@/lib/workflow-graph/workflow-continuity-service";
 import { createGraphWorkflowImplementerRunner } from "./implementer-runner";
@@ -90,6 +94,11 @@ type RouteContext = {
 
 const startExecutionSchema = z.object({
   definitionId: z.string().trim().min(1),
+  parameters: z.record(z.string(), z.unknown()).optional(),
+  // Additive tier discriminator (the schema is not `.strict()`, so this
+  // preserves every existing caller). Defaults to `project` — the per-project
+  // load — so an omitted tier behaves exactly as today.
+  tier: z.enum(["project", "global"]).default("project"),
 });
 
 const resolveApprovalSchema = z.discriminatedUnion("decision", [
@@ -128,11 +137,15 @@ const parallelWorktrees = createParallelWorktrees();
 
 const workflowManager = createGraphWorkflowManager({
   executionRepository,
-  loadDefinition: (projectPath, definitionId) =>
-    workflowStorage.get(projectPath, definitionId),
+  loadDefinition: (projectPath, definitionId, tier) =>
+    workflowStorage.get(scopeForTier(tier, projectPath), definitionId),
   isExecutionLoopActive,
   parallelWorktrees,
   getSession: defaultGetSession,
+  readSessionWorktreeDirtyPaths: (worktreePath) =>
+    readWorktreeDirtyPaths(worktreePath),
+  preflightService: createPreflightPrerequisiteService(),
+  readGlobalConfig: readConfig,
   abortConversation: ({ projectPath, sessionName, conversationId }) => {
     abortConversationRegistry(conversationId);
     const accepted = sendConversationEvent(
@@ -380,6 +393,8 @@ export interface GraphWorkflowExecutionRouteDeps {
     projectPath: string;
     sessionName: string;
     definitionId: string;
+    tier?: "project" | "global";
+    parameters?: Record<string, unknown>;
   }): Promise<GraphWorkflowExecution>;
   pauseExecution(
     projectPath: string,
@@ -416,16 +431,6 @@ export interface GraphWorkflowExecutionRouteDeps {
   recordApprovalDecision(
     input: RecordDecisionInput,
   ): Promise<RecordDecisionResult>;
-  /**
-   * Read the uncommitted (tracked + untracked, non-ignored) changes in the
-   * session worktree. Defaults to a real `git status --porcelain` reader.
-   * START uses this to refuse a workflow whose session worktree is dirty:
-   * lanes fork from the committed session branch, so uncommitted files (e.g.
-   * a freshly-written, never-committed Kiro spec) are invisible to them.
-   */
-  readSessionWorktreeDirtyPaths?(
-    sessionWorktreePath: string,
-  ): Promise<DirtyPath[]>;
   /**
    * List the session's archived (terminal, moved-out) graph-workflow
    * executions. Defaults to the real archived-executions repo via the store.
@@ -474,8 +479,6 @@ const defaultDeps: GraphWorkflowExecutionRouteDeps = {
     workflowManager.recordPendingHaltReason(input),
   drainAndHalt: (input) => workflowManager.drainAndHalt(input),
   recordApprovalDecision: (input) => approvalGateService.recordDecision(input),
-  readSessionWorktreeDirtyPaths: (sessionWorktreePath) =>
-    readWorktreeDirtyPaths(sessionWorktreePath),
   listArchivedExecutions: (projectPath, sessionName) =>
     listArchivedGraphWorkflowExecutions(projectPath, sessionName),
   getEventsTail: (executionId, limit) =>
@@ -602,7 +605,9 @@ async function summarizeHistory(
   const listArchived =
     deps.listArchivedExecutions ?? listArchivedGraphWorkflowExecutions;
   const archived = await listArchived(projectPath, sessionName);
-  const items = archived.map((execution) => summarizeExecution(execution, true));
+  const items = archived.map((execution) =>
+    summarizeExecution(execution, true),
+  );
 
   const active = await deps.getActiveExecution(projectPath, sessionName);
   if (active && isTerminalStatus(active.status)) {
@@ -802,7 +807,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
       return resolved.error;
     }
 
-    const { projectPath, sessionName, session } = resolved;
+    const { projectPath, sessionName } = resolved;
 
     const parsed = startExecutionSchema.safeParse(await request.json());
     if (!parsed.success) {
@@ -814,69 +819,69 @@ export function createGraphWorkflowExecutionRouteHandlers(
       );
     }
 
-    const existingExecution = await deps.getActiveExecution(
-      projectPath,
-      sessionName,
-    );
-    if (existingExecution) {
-      if (isTerminalStatus(existingExecution.status)) {
-        await deps.archiveExecution(projectPath, sessionName);
-      } else {
+    let execution: GraphWorkflowExecution;
+    try {
+      // The active-execution and uncommitted-changes guards plus start-input
+      // validation all run inside the shared start path so HTTP and MCP enforce
+      // an identical pre-seed chain. Guard/input rejections seed nothing, so
+      // they map directly to a response without engaging the loop-failure halt
+      // path (which only applies to a seeded execution).
+      execution = await deps.startExecution({
+        projectPath,
+        sessionName,
+        definitionId: parsed.data.definitionId,
+        tier: parsed.data.tier,
+        ...(parsed.data.parameters !== undefined
+          ? { parameters: parsed.data.parameters }
+          : {}),
+      });
+    } catch (error) {
+      if (error instanceof WorkflowStartGuardError) {
+        if (error.guard === "uncommitted_changes") {
+          const dirtyPaths = error.dirtyPaths ?? [];
+          return NextResponse.json(
+            {
+              error: error.message,
+              code: "uncommitted_changes",
+              details: {
+                totalCount: dirtyPaths.length,
+                paths: dirtyPaths.slice(0, 20).map((entry) => entry.path),
+              },
+            } satisfies ApiError,
+            { status: 409 },
+          );
+        }
+        return NextResponse.json({ error: error.message } satisfies ApiError, {
+          status: 409,
+        });
+      }
+      if (error instanceof WorkflowPrerequisitesUnmetError) {
         return NextResponse.json(
           {
-            error: `Session "${sessionName}" already has an active graph workflow execution`,
+            error: error.message,
+            code: "prerequisites_unmet",
+            details: {
+              missing: error.missing,
+            },
           } satisfies ApiError,
           { status: 409 },
         );
       }
-    }
-
-    // Lanes fork from the committed session branch, so any uncommitted change
-    // in the session worktree (e.g. a freshly-written, never-committed Kiro
-    // spec — which is untracked) would be missing from every lane. Refuse the
-    // start and tell the user to commit. Checked after the active-execution
-    // guard so an already-running workflow reports the more specific message.
-    const readSessionDirty =
-      deps.readSessionWorktreeDirtyPaths ??
-      ((sessionWorktreePath: string) =>
-        readWorktreeDirtyPaths(sessionWorktreePath));
-    let dirtyPaths: DirtyPath[] = [];
-    try {
-      dirtyPaths = (await readSessionDirty(session.worktreePath)) ?? [];
-    } catch (error) {
-      // Don't wedge a legitimate start if the status probe itself fails; the
-      // dirty gate is a guard, not a hard precondition we can always evaluate.
-      logger.warn("graph-workflow.start.dirty_check_failed", {
+      if (error instanceof WorkflowStartInputError) {
+        return NextResponse.json({ error: error.message } satisfies ApiError, {
+          status: 400,
+        });
+      }
+      await reportExecutionLoopFailure({
         projectPath,
         sessionName,
-        error: error instanceof Error ? error.message : String(error),
+        error,
+        phase: "start",
       });
-    }
-    if (dirtyPaths.length > 0) {
-      logger.info("graph-workflow.start.blocked_uncommitted_changes", {
-        projectPath,
-        sessionName,
-        dirtyCount: dirtyPaths.length,
-      });
-      return NextResponse.json(
-        {
-          error: `Cannot start the workflow while the session worktree has ${dirtyPaths.length} uncommitted change(s). Workflow lanes are created from the committed branch, so uncommitted files would be missing. Commit your changes and try again.`,
-          code: "uncommitted_changes",
-          details: {
-            totalCount: dirtyPaths.length,
-            paths: dirtyPaths.slice(0, 20).map((entry) => entry.path),
-          },
-        } satisfies ApiError,
-        { status: 409 },
-      );
+      return respondToManagerError(error);
     }
 
     try {
-      const execution = await deps.startExecution({
-        projectPath,
-        sessionName,
-        definitionId: parsed.data.definitionId,
-      });
       void Promise.resolve(
         deps.kickOffExecutionLoop({
           projectPath,
@@ -910,6 +915,58 @@ export function createGraphWorkflowExecutionRouteHandlers(
       });
       return respondToManagerError(error);
     }
+  }
+
+  /**
+   * Production start+kickoff seam shared by the HTTP START handler and the MCP
+   * `start_graph_workflow` tool. Both surfaces must launch identically: run the
+   * shared start path (guards + input validation + substitution + seed via
+   * `startExecution`), then fire-and-forget kick off the execution loop exactly
+   * as START does so the run actually executes. Guard/input/not-found errors
+   * from the shared start path propagate to the caller (which maps them to its
+   * surface's error shape); nothing is seeded on a rejection, so the loop is
+   * never engaged for a rejected launch.
+   */
+  async function launch(input: {
+    projectPath: string;
+    projectName: string;
+    sessionName: string;
+    definitionId: string;
+    tier?: "project" | "global";
+    parameters?: Record<string, unknown>;
+  }): Promise<GraphWorkflowExecution> {
+    const execution = await deps.startExecution({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      definitionId: input.definitionId,
+      ...(input.tier !== undefined ? { tier: input.tier } : {}),
+      ...(input.parameters !== undefined
+        ? { parameters: input.parameters }
+        : {}),
+    });
+
+    void Promise.resolve(
+      deps.kickOffExecutionLoop({
+        projectPath: input.projectPath,
+        projectName: input.projectName,
+        sessionName: input.sessionName,
+        execution,
+      }),
+    ).catch(async (error) => {
+      logger.warn("graph-workflow.execution_loop_start_failed", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      await reportExecutionLoopFailure({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        error,
+        phase: "start",
+      });
+    });
+
+    return execution;
   }
 
   async function STATUS(
@@ -1265,6 +1322,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
 
   return {
     START,
+    launch,
     STATUS,
     EXECUTION,
     HISTORY,
@@ -1276,6 +1334,27 @@ export function createGraphWorkflowExecutionRouteHandlers(
     RESOLVE_APPROVAL,
     CLEAR,
   };
+}
+
+/**
+ * Launch a graph workflow run through the production start+kickoff seam,
+ * reusing the same singletons (workflow manager, execution loop) as the HTTP
+ * START handler. The MCP `start_graph_workflow` tool wires `startWorkflow` to
+ * this so an agent launch behaves exactly like a human launch. The `deps`
+ * parameter keeps the seam unit-testable.
+ */
+export async function launchGraphWorkflowExecution(
+  input: {
+    projectPath: string;
+    projectName: string;
+    sessionName: string;
+    definitionId: string;
+    tier?: "project" | "global";
+    parameters?: Record<string, unknown>;
+  },
+  deps: GraphWorkflowExecutionRouteDeps = defaultDeps,
+): Promise<GraphWorkflowExecution> {
+  return createGraphWorkflowExecutionRouteHandlers(deps).launch(input);
 }
 
 const defaultGraphWorkflowExecutionHandlers =

@@ -110,6 +110,8 @@ export function createDefaultPlannerRunner(
       schemaVersion: 1,
       workflowConfig: {},
       charter: PLACEHOLDER_PLANNER_CHARTER,
+      parameters: [],
+      prerequisites: [],
       executionContexts: [],
       tasks: [],
       edges: [],
@@ -215,7 +217,10 @@ const defaultDeps: WorkflowPlannerDeps = {
       return null;
     }
 
-    return defaultStorage.get(projectPath, seedDefinitionId);
+    return defaultStorage.get(
+      { kind: "project", projectPath },
+      seedDefinitionId,
+    );
   },
   runPlannerQuery: createDefaultPlannerRunner(),
 };

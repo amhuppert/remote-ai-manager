@@ -1,3 +1,4 @@
+import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { readConfig } from "@/lib/config/loader";
 import { sendAgentNotification } from "@/lib/notifications/push";
@@ -20,6 +21,15 @@ import { resolveConfiguredTimeoutMs } from "@/lib/agent-backends/timeout";
 import { createWorkflowStorageService } from "@/lib/workflow-graph/storage";
 import { createGraphWorkflowExecutionEventPublisher } from "@/lib/workflow-graph/execution-events";
 import { registerPlannerTools } from "@/lib/workflow-graph/planner-tools";
+import {
+  registerStartGraphWorkflowTool,
+  type StartGraphWorkflowToolContext,
+} from "@/lib/workflow-graph/start-graph-workflow-tool";
+import {
+  registerListTemplatesTool,
+  type ListTemplatesToolContext,
+} from "@/lib/workflow-graph/list-templates-tool";
+import { createTemplateLibraryService } from "@/lib/workflow-graph/template-library-service";
 import { getConversationRuntime } from "@/lib/workflows/conversation/runtime-state";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import type { GlobalConfig } from "@/lib/config/schemas";
@@ -58,6 +68,14 @@ export interface SessionMcpServerDeps {
     server: McpServer,
     context: { projectPath: string; sessionName: string },
   ): void;
+  registerStartGraphWorkflowTool(
+    server: McpServer,
+    context: StartGraphWorkflowToolContext,
+  ): void;
+  registerListTemplatesTool(
+    server: McpServer,
+    context: ListTemplatesToolContext,
+  ): void;
   registerNotificationTool(
     server: McpServer,
     context: { projectName: string; sessionName: string },
@@ -95,15 +113,53 @@ const defaultSessionMcpServerDeps: SessionMcpServerDeps = {
     const eventPublisher = createGraphWorkflowExecutionEventPublisher();
     registerPlannerTools(server, context, {
       readConfig,
-      listWorkflows: storage.list,
-      getWorkflow: storage.get,
-      createWorkflow: storage.create,
-      updateWorkflow: storage.update,
-      deleteWorkflow: storage.delete,
+      // The planner tools edit the current project's workflow library, so each
+      // storage call is bound to that project's scope.
+      listWorkflows: (projectPath) =>
+        storage.list({ kind: "project", projectPath }),
+      getWorkflow: (projectPath, workflowId) =>
+        storage.get({ kind: "project", projectPath }, workflowId),
+      createWorkflow: (projectPath, draft) =>
+        storage.create({ kind: "project", projectPath }, draft),
+      updateWorkflow: (projectPath, workflowId, draft) =>
+        storage.update({ kind: "project", projectPath }, workflowId, draft),
+      deleteWorkflow: (projectPath, workflowId) =>
+        storage.delete({ kind: "project", projectPath }, workflowId),
       async getActiveExecution(projectPath, sessionName) {
         return getActiveGraphWorkflowExecution(projectPath, sessionName);
       },
       publishCharterUpdated: eventPublisher.publishCharterUpdated,
+    });
+  },
+  registerStartGraphWorkflowTool(server, context) {
+    registerStartGraphWorkflowTool(server, context, {
+      // Bind the production start+kickoff seam lazily. A static import would
+      // close an init cycle: execution-route-handlers → implementer-runner →
+      // sdk-driver → agent-backends/registry → conversation-runtime →
+      // session-server. Loading the seam at tool-call time keeps the module
+      // graph acyclic while sharing the same production singletons.
+      async startWorkflow(input) {
+        const { launchGraphWorkflowExecution } =
+          await import("@/lib/workflow-graph/execution-route-handlers");
+        return launchGraphWorkflowExecution({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          // The execution loop derives lane provisioning from the project name;
+          // fall back to the directory name when the caller did not thread it.
+          projectName: input.projectName ?? path.basename(input.projectPath),
+          definitionId: input.definitionId,
+          tier: input.tier,
+          ...(input.parameters !== undefined
+            ? { parameters: input.parameters }
+            : {}),
+        });
+      },
+    });
+  },
+  registerListTemplatesTool(server, context) {
+    const library = createTemplateLibraryService();
+    registerListTemplatesTool(server, context, {
+      listTemplates: (projectPath) => library.list(projectPath),
     });
   },
   registerNotificationTool(server, context) {
@@ -214,6 +270,15 @@ export async function createSessionMcpServer(
     worktreePath: session.worktreePath,
   });
   deps.registerPlannerTools(server, {
+    projectPath,
+    sessionName: session.sessionName,
+  });
+  deps.registerStartGraphWorkflowTool(server, {
+    projectPath,
+    sessionName: session.sessionName,
+    projectName: params.name,
+  });
+  deps.registerListTemplatesTool(server, {
     projectPath,
     sessionName: session.sessionName,
   });

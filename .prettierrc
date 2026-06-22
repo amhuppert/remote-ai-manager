@@ -91,7 +91,9 @@
         "src/features/session/conversation/**/*.{ts,tsx}",
         "src/components/LandPreparedMergeButton.tsx",
         "src/features/session/ConversationWorkspace.tsx",
-        "src/app/projects/[name]/[session]/conflicts/page.tsx"
+        "src/app/projects/[name]/[session]/conflicts/page.tsx",
+        "src/components/WorkflowLaunchForm.tsx",
+        "src/features/workflow-templates/**/*.{ts,tsx}"
       ],
       "options": {
         "plugins": ["prettier-plugin-tailwindcss"],

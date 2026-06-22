@@ -22,6 +22,8 @@ const FIXTURE_DRAFT: WorkflowSemanticDefinition = {
   schemaVersion: 1,
   workflowConfig: {},
   charter: makeTestCharter(),
+  parameters: [],
+  prerequisites: [],
   executionContexts: [
     {
       id: "context-plan",
@@ -229,6 +231,8 @@ describe("planner workflow generation — fixture snapshot", () => {
               "title": "Implement",
             },
           ],
+          "parameters": [],
+          "prerequisites": [],
           "schemaVersion": 1,
           "tasks": [
             {

@@ -135,6 +135,8 @@ function makeDefinition(): WorkflowSemanticDefinition {
     charter: makeTestCharter({
       mission: "Resolve every source conflict identically across all agents",
     }),
+    parameters: [],
+    prerequisites: [],
     executionContexts: [
       {
         id: "ctx-1",

@@ -12,11 +12,14 @@ import {
   buildInitialTaskStates,
 } from "./execution-state";
 import { computeLanePlan } from "./lane-plan";
+import { substituteContent } from "./parameter-substitution";
+import type { TemplateTier } from "./template-library-service";
 import { resolveWorkflowDefinition } from "./resolve-config";
 import { assertNoLegacyWorkflowFields } from "./schema-cutover-guard";
 import {
   GraphWorkflowValidationError,
   validateResolvedWorkflow,
+  validateWorkflowDefinition,
 } from "./validation";
 import type { GlobalConfig } from "@/lib/config/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
@@ -35,6 +38,18 @@ export interface GraphWorkflowExecutionSeed {
   definitionRevision: number;
   executionId: string;
   startedAt: string;
+  /**
+   * Validated bound launch inputs (every declared name → its string value),
+   * already normalized by the start service. Snapshotted onto the execution as
+   * `boundInputs` and substituted into the definition before resolution.
+   */
+  inputs: Record<string, string>;
+  /**
+   * The tier the template was resolved from. Snapshotted onto the execution as
+   * the additive `launchedTier` audit annotation, parallel to `boundInputs` —
+   * it rides the definition tier and never mutates after seed.
+   */
+  launchedTier: TemplateTier;
 }
 
 /**
@@ -120,8 +135,37 @@ async function createExecutionFromSeed(
     seed.definition,
     "Workflow definition (execution start)",
   );
+
+  // Substitute BEFORE resolution so the resolver, charter snapshot, and state
+  // build all run over the concrete (placeholder-free) definition — the
+  // persisted `workingDefinition` + `charter` are the post-substitution record
+  // of what actually ran (R4.6, R4.7).
+  const concrete = substituteContent(seed.definition, seed.inputs);
+
+  logger.info("graph-workflow.substitution", {
+    definitionId: seed.definitionId,
+    revision: seed.definitionRevision,
+    parameterCount: seed.definition.parameters.length,
+    boundInputCount: Object.keys(seed.inputs).length,
+  });
+
+  // Re-validate the concrete definition through the STRUCTURAL graph validator
+  // ONLY (graph/spec-lint + non-empty required-content checks) — NOT the
+  // placeholder-grammar lint. A substituted launcher value may legitimately
+  // contain a literal `{{...}}` (e.g. a GitHub Actions `${{ … }}` expression),
+  // and re-scanning data for the placeholder grammar would reject a valid launch
+  // (R5.1, R5.5). Failure fails closed here, before any state is built or
+  // persisted — seed nothing (R5.2, R5.3).
+  const structuralValidation = validateWorkflowDefinition(concrete);
+  if (!structuralValidation.ok) {
+    throw new GraphWorkflowValidationError(
+      structuralValidation.errors,
+      "Substituted workflow definition failed structural validation",
+    );
+  }
+
   const global = await readConfigDep();
-  const workingDefinition = resolveWorkflowDefinition(global, seed.definition);
+  const workingDefinition = resolveWorkflowDefinition(global, concrete);
 
   const resolvedValidation = validateResolvedWorkflow(workingDefinition);
   if (!resolvedValidation.ok) {
@@ -139,8 +183,10 @@ async function createExecutionFromSeed(
     id: seed.executionId,
     seedDefinitionId: seed.definitionId,
     seedDefinitionRevision: seed.definitionRevision,
+    boundInputs: seed.inputs,
+    launchedTier: seed.launchedTier,
     workingDefinition,
-    charter: seed.definition.charter,
+    charter: concrete.charter,
     status: "pending",
     activeContextIds: [],
     activeTaskId: null,
@@ -214,16 +260,14 @@ export function createGraphWorkflowExecutionRepository(
     // charter onto the execution, and compute the charter-registered event. A
     // render/write/register failure throws here, halting the seed with no
     // partial charter state.
-    const {
-      nextExecution: seededExecution,
-      events: charterEvents,
-    } = await charterService.seedCharter({
-      charter: baseExecution.charter,
-      worktreePath: session.worktreePath,
-      execution: baseExecution,
-      projectPath,
-      sessionName,
-    });
+    const { nextExecution: seededExecution, events: charterEvents } =
+      await charterService.seedCharter({
+        charter: baseExecution.charter,
+        worktreePath: session.worktreePath,
+        execution: baseExecution,
+        projectPath,
+        sessionName,
+      });
 
     return deps.mutateActiveGraphWorkflowExecution(
       projectPath,

@@ -39,6 +39,8 @@ function createDeps(overrides: Record<string, unknown> = {}) {
     readConfig: vi.fn(async () => makeConfig()),
     registerReferenceDocumentTools: vi.fn(),
     registerPlannerTools: vi.fn(),
+    registerStartGraphWorkflowTool: vi.fn(),
+    registerListTemplatesTool: vi.fn(),
     registerNotificationTool: vi.fn(),
     registerCodexTool: vi.fn(),
     registerAskUserQuestionTool: vi.fn(),
@@ -63,6 +65,23 @@ describe("mcp-gateway/session-server", () => {
 
     expect(deps.registerReferenceDocumentTools).toHaveBeenCalledOnce();
     expect(deps.registerPlannerTools).toHaveBeenCalledOnce();
+    expect(deps.registerStartGraphWorkflowTool).toHaveBeenCalledOnce();
+    const startToolCall = (
+      deps.registerStartGraphWorkflowTool as ReturnType<typeof vi.fn>
+    ).mock.calls[0]!;
+    expect(startToolCall[1]).toMatchObject({
+      projectPath: "/projects/test",
+      sessionName: "test session",
+      projectName: "my-project",
+    });
+    expect(deps.registerListTemplatesTool).toHaveBeenCalledOnce();
+    const listTemplatesCall = (
+      deps.registerListTemplatesTool as ReturnType<typeof vi.fn>
+    ).mock.calls[0]!;
+    expect(listTemplatesCall[1]).toMatchObject({
+      projectPath: "/projects/test",
+      sessionName: "test session",
+    });
     expect(deps.registerDevServerTools).toHaveBeenCalledOnce();
     const devServerCall = (
       deps.registerDevServerTools as ReturnType<typeof vi.fn>
@@ -259,6 +278,8 @@ describe("mcp-gateway/session-server", () => {
       expect(deps.registerDevServerTools).not.toHaveBeenCalled();
       expect(deps.registerReferenceDocumentTools).not.toHaveBeenCalled();
       expect(deps.registerPlannerTools).not.toHaveBeenCalled();
+      expect(deps.registerStartGraphWorkflowTool).not.toHaveBeenCalled();
+      expect(deps.registerListTemplatesTool).not.toHaveBeenCalled();
       expect(deps.registerCodexTool).not.toHaveBeenCalled();
     });
 

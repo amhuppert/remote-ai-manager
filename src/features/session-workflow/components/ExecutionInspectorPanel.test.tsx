@@ -1241,3 +1241,41 @@ describe("ExecutionInspectorPanel — Reset Context", () => {
     expect(screen.queryByText("Discarded by reset")).not.toBeInTheDocument();
   });
 });
+
+describe("ExecutionInspectorPanel — Launch Inputs audit surface", () => {
+  it("renders the bound input snapshot for human inspection (R6.3)", () => {
+    const execution = createWorkflowExecution({
+      boundInputs: { feature: "search box", priority: "high" },
+    });
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        events={[]}
+        selectedContextId={null}
+        {...baseHandlers}
+      />,
+    );
+
+    expect(screen.getByText("Launch Inputs")).toBeInTheDocument();
+    expect(screen.getByText("feature")).toBeInTheDocument();
+    expect(screen.getByText("search box")).toBeInTheDocument();
+    expect(screen.getByText("priority")).toBeInTheDocument();
+    expect(screen.getByText("high")).toBeInTheDocument();
+  });
+
+  it("omits the Launch Inputs section for a zero-input execution", () => {
+    const execution = createWorkflowExecution({ boundInputs: {} });
+
+    render(
+      <ExecutionInspectorPanel
+        execution={execution}
+        events={[]}
+        selectedContextId={null}
+        {...baseHandlers}
+      />,
+    );
+
+    expect(screen.queryByText("Launch Inputs")).not.toBeInTheDocument();
+  });
+});

@@ -63,6 +63,8 @@ const emptyDefinition: WorkflowSemanticDefinition = {
   schemaVersion: 1,
   workflowConfig: {},
   charter: placeholderCharter,
+  parameters: [],
+  prerequisites: [],
   executionContexts: [],
   tasks: [],
   edges: [],

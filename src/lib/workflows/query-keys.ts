@@ -8,6 +8,12 @@ export const workflowDefinitionKeys = {
     [...workflowDefinitionKeys.details(), projectName, workflowId] as const,
 };
 
+export const projectTemplatesKeys = {
+  all: ["project-templates"] as const,
+  list: (projectName: string) =>
+    [...projectTemplatesKeys.all, projectName] as const,
+};
+
 export const graphWorkflowEventsKeys = {
   all: ["graph-workflow-events"] as const,
   list: (projectName: string, sessionName: string, executionId: string) =>

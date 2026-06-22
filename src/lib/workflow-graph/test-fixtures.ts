@@ -15,6 +15,8 @@ export function createWorkflowDefinition(
     schemaVersion: 1,
     workflowConfig: {},
     charter: makeTestCharter(),
+    parameters: [],
+    prerequisites: [],
     executionContexts: [
       {
         id: "context-plan",
@@ -192,6 +194,8 @@ export function createWorkflowExecution(
     id: "execution-1",
     seedDefinitionId: "workflow-1",
     seedDefinitionRevision: 1,
+    boundInputs: {},
+    launchedTier: "project",
     workingDefinition: definition,
     charter: makeTestCharter(),
     status: "pending",

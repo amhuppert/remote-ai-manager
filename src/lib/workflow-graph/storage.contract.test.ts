@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -83,6 +83,39 @@ function buildMaximalDefinition(): WorkflowSemanticDefinition {
       humanApprovalGate: { enabled: true },
     },
     charter: makeTestCharter(),
+    parameters: [
+      {
+        type: "string",
+        name: "feature-name",
+        label: "Feature name",
+        required: true,
+        default: "widget",
+        minLength: 1,
+        maxLength: 64,
+      },
+      {
+        type: "text",
+        name: "design-notes",
+        label: "Design notes",
+        required: false,
+        default: "first line\nsecond line",
+        minLength: 0,
+        maxLength: 4000,
+      },
+      {
+        type: "enum",
+        name: "priority",
+        label: "Priority",
+        required: true,
+        options: ["low", "medium", "high"],
+        default: "medium",
+      },
+    ],
+    prerequisites: [
+      { kind: "path", path: ".kiro/specs", label: "Kiro specs directory" },
+      { kind: "skill", skill: "kiro-spec-design", backend: "claude" },
+      { kind: "skill", skill: "kiro:spec-init" },
+    ],
     executionContexts: [
       {
         id: "ctx-1",
@@ -196,14 +229,21 @@ describe("workflow-graph storage durability contract", () => {
         // create() generates id/revision/createdAt/updatedAt and pins
         // layout.workflowId, so the record it returns is the authoritative
         // persisted value the reload must match. Return it as `expected`.
-        return storage.create(PROJECT_PATH, {
-          name: fixture.name,
-          description: fixture.description,
-          definition: fixture.definition,
-          layout: fixture.layout,
-        });
+        return storage.create(
+          { kind: "project", projectPath: PROJECT_PATH },
+          {
+            name: fixture.name,
+            description: fixture.description,
+            definition: fixture.definition,
+            layout: fixture.layout,
+          },
+        );
       },
-      reload: (expected) => storage.get(PROJECT_PATH, expected.id),
+      reload: (expected) =>
+        storage.get(
+          { kind: "project", projectPath: PROJECT_PATH },
+          expected.id,
+        ),
       fieldPolicies: {
         // `schemaVersion` is a writer-pinned storage-format constant: create()
         // always sets it to 1, which is also the schema default. The harness
@@ -222,5 +262,70 @@ describe("workflow-graph storage durability contract", () => {
         "layout.workflowId": "derived-on-write",
       },
     });
+  });
+
+  it("round-trips the same maximal definition record through the GLOBAL scope under the reserved key", async () => {
+    const storage = createWorkflowStorageService({
+      resolveConfigDir: () => tempDir,
+    });
+
+    await assertRoundTripDurability({
+      label: "workflow-definition-storage-global",
+      schema: workflowDefinitionRecordSchema,
+      buildMaximalFixture: buildMaximalRecord,
+      persist: async (fixture) =>
+        storage.create(
+          { kind: "global" },
+          {
+            name: fixture.name,
+            description: fixture.description,
+            definition: fixture.definition,
+            layout: fixture.layout,
+          },
+        ),
+      reload: (expected) => storage.get({ kind: "global" }, expected.id),
+      fieldPolicies: {
+        schemaVersion: "not-persisted",
+        id: "derived-on-write",
+        createdAt: "derived-on-write",
+        updatedAt: "derived-on-write",
+        "layout.workflowId": "derived-on-write",
+      },
+    });
+  });
+
+  it("stores a global record under the reserved scope, isolated from any project scope", async () => {
+    const storage = createWorkflowStorageService({
+      resolveConfigDir: () => tempDir,
+    });
+
+    const created = await storage.create(
+      { kind: "global" },
+      {
+        name: "Global-only template",
+        description: null,
+        definition: buildMaximalDefinition(),
+        layout: {
+          workflowId: "placeholder-id",
+          contextPositions: { "ctx-1": { x: 1, y: 2 } },
+          viewport: { x: 0, y: 0, zoom: 1 },
+        },
+      },
+    );
+
+    // The global record is retrievable under the global scope...
+    expect((await storage.get({ kind: "global" }, created.id))?.id).toBe(
+      created.id,
+    );
+    // ...and a project scope (a distinct, base64url-derived directory key) does
+    // not see it, proving the reserved global key routes to its own store.
+    expect(
+      await storage.get(
+        { kind: "project", projectPath: PROJECT_PATH },
+        created.id,
+      ),
+    ).toBeNull();
+    const globalList = await storage.list({ kind: "global" });
+    expect(globalList.map((r) => r.id)).toContain(created.id);
   });
 });

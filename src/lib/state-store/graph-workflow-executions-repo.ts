@@ -16,14 +16,18 @@ const parallelLogger = createLogger("graph-workflow-parallel");
 
 /**
  * Heavy, near-static fields of a {@link GraphWorkflowExecution} — the working
- * definition, charter, and lane plan plus the execution's identity. Written to
+ * definition, charter, and lane plan plus the execution's identity and the
+ * seed-time audit snapshot (`boundInputs`, `launchedTier`). Written to
  * `definition_json` only when its content hash changes (the definition rarely
- * mutates after a workflow starts).
+ * mutates after a workflow starts; `boundInputs` and `launchedTier` are fixed
+ * at seed and never mutate).
  */
 export const DEFINITION_TIER_KEYS = [
   "id",
   "seedDefinitionId",
   "seedDefinitionRevision",
+  "boundInputs",
+  "launchedTier",
   "startedAt",
   "workingDefinition",
   "charter",
@@ -75,7 +79,9 @@ interface SplitExecution {
  * exactly one tier (enforced by the split-symmetry contract test) so a merge of
  * the two tiers reconstructs the whole execution losslessly.
  */
-export function splitExecution(execution: GraphWorkflowExecution): SplitExecution {
+export function splitExecution(
+  execution: GraphWorkflowExecution,
+): SplitExecution {
   const definitionTier: Record<string, unknown> = {};
   for (const key of DEFINITION_TIER_KEYS) {
     definitionTier[key] = execution[key];
@@ -133,11 +139,17 @@ function isListRow(value: unknown): value is ListStorageRow {
   );
 }
 
-function logAndThrowValidationFailure(identifier: string, issues: unknown): never {
-  logger.error("state-store.graph-workflow-executions.schema_validation_failure", {
-    identifier,
-    issues,
-  });
+function logAndThrowValidationFailure(
+  identifier: string,
+  issues: unknown,
+): never {
+  logger.error(
+    "state-store.graph-workflow-executions.schema_validation_failure",
+    {
+      identifier,
+      issues,
+    },
+  );
   throw new PersistenceError({
     kind: "validation",
     entity: "graph_workflow_execution",
@@ -157,7 +169,10 @@ function logAndThrowValidationFailure(identifier: string, issues: unknown): neve
 function mergeRow(
   identifier: string,
   row: ActiveStorageRow,
-): { value: GraphWorkflowExecution; migration: GraphWorkflowExecutionMigration | null } {
+): {
+  value: GraphWorkflowExecution;
+  migration: GraphWorkflowExecutionMigration | null;
+} {
   let definition: unknown;
   let runtime: unknown;
   try {
@@ -189,7 +204,11 @@ function mergeRow(
     runtime === null
   ) {
     return logAndThrowValidationFailure(identifier, [
-      { code: "invalid_tier_shape", path: [], message: "tier blob is not an object" },
+      {
+        code: "invalid_tier_shape",
+        path: [],
+        message: "tier blob is not an object",
+      },
     ]);
   }
   const candidate = {
@@ -202,7 +221,11 @@ function mergeRow(
   }
   if (decoded.value === null) {
     return logAndThrowValidationFailure(identifier, [
-      { code: "null_execution", path: [], message: "merged tiers decoded to null" },
+      {
+        code: "null_execution",
+        path: [],
+        message: "merged tiers decoded to null",
+      },
     ]);
   }
   return { value: decoded.value, migration: decoded.migration };
@@ -328,7 +351,10 @@ export function createGraphWorkflowExecutionsRepo(
       if (identifier.sessionName !== undefined) {
         payload.sessionName = identifier.sessionName;
       }
-      logger.info(`state-store.graph-workflow-executions.${op}.timing`, payload);
+      logger.info(
+        `state-store.graph-workflow-executions.${op}.timing`,
+        payload,
+      );
     }
   }
 
@@ -348,7 +374,11 @@ export function createGraphWorkflowExecutionsRepo(
     }
     if (!isActiveRow(row)) {
       return logAndThrowValidationFailure(`${projectPath}::${sessionName}`, [
-        { code: "invalid_row_shape", path: [], message: "unexpected row shape" },
+        {
+          code: "invalid_row_shape",
+          path: [],
+          message: "unexpected row shape",
+        },
       ]);
     }
     const merged = mergeRow(`${projectPath}::${sessionName}`, row);
@@ -383,7 +413,10 @@ export function createGraphWorkflowExecutionsRepo(
       runtime_json: split.runtimeJson,
       updated_at: updatedAt,
     });
-    definitionHashCache.set(key(projectPath, sessionName), split.definitionJson);
+    definitionHashCache.set(
+      key(projectPath, sessionName),
+      split.definitionJson,
+    );
   }
 
   /**

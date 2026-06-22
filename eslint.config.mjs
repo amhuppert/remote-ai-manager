@@ -140,6 +140,11 @@ const MIGRATED_UTILITY_FIRST = [
   "src/components/LandPreparedMergeButton.tsx",
   "src/features/session/ConversationWorkspace.tsx",
   "src/app/projects/[name]/[session]/conflicts/page.tsx",
+  // global-workflow-templates library + launch UI: authored utility-first against
+  // the design system. Mirrors the .prettierrc class-sort override and the
+  // tailwind-utility-collisions UTILITY_FIRST_PATHS allowlist.
+  "src/components/WorkflowLaunchForm.tsx",
+  "src/features/workflow-templates/**/*.{ts,tsx}",
 ];
 
 // Foundation/vendor areas where authored global CSS is allowed. Feature `styles/`

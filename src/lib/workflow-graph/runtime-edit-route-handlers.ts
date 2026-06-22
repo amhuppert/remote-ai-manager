@@ -17,6 +17,7 @@ import type {
 } from "@/lib/workflows/schemas";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import { createWorkflowStorageService } from "./storage";
+import { scopeForTier } from "./template-library-service";
 import { createGraphWorkflowManager } from "@/lib/workflow-graph/workflow-manager";
 import { createParallelWorktrees } from "./parallel-worktrees";
 import {
@@ -38,8 +39,8 @@ const executionRepository = createGraphWorkflowExecutionRepository({
 const workflowStorage = createWorkflowStorageService();
 const workflowManager = createGraphWorkflowManager({
   executionRepository,
-  loadDefinition: (projectPath, definitionId) =>
-    workflowStorage.get(projectPath, definitionId),
+  loadDefinition: (projectPath, definitionId, tier) =>
+    workflowStorage.get(scopeForTier(tier, projectPath), definitionId),
   parallelWorktrees: createParallelWorktrees(),
   getSession: defaultGetSession,
 });

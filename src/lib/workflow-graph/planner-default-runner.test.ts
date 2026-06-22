@@ -19,6 +19,8 @@ const submittedDefinition: WorkflowSemanticDefinition = {
   schemaVersion: 1,
   workflowConfig: {},
   charter: makeTestCharter(),
+  parameters: [],
+  prerequisites: [],
   executionContexts: [
     {
       id: "context-plan",

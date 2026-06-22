@@ -46,6 +46,8 @@ function createSingleContextDefinition(
     schemaVersion: 1,
     workflowConfig: {},
     charter: makeTestCharter(),
+    parameters: [],
+    prerequisites: [],
     executionContexts: [
       {
         id: "ctx-1",
@@ -84,6 +86,8 @@ function createRunningExecution(
     id: "exec-1",
     seedDefinitionId: "def-1",
     seedDefinitionRevision: 1,
+    boundInputs: {},
+    launchedTier: "project",
     workingDefinition:
       definition as unknown as ResolvedWorkflowSemanticDefinition,
     charter: makeTestCharter(),

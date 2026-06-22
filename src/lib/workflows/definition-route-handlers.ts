@@ -52,15 +52,16 @@ const defaultStorage = createWorkflowStorageService();
 const defaultDeps: WorkflowDefinitionRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,
   readConfig,
-  listDefinitions: (projectPath) => defaultStorage.list(projectPath),
+  listDefinitions: (projectPath) =>
+    defaultStorage.list({ kind: "project", projectPath }),
   getDefinition: (projectPath, workflowId) =>
-    defaultStorage.get(projectPath, workflowId),
+    defaultStorage.get({ kind: "project", projectPath }, workflowId),
   createDefinition: (projectPath, draft) =>
-    defaultStorage.create(projectPath, draft),
+    defaultStorage.create({ kind: "project", projectPath }, draft),
   updateDefinition: (projectPath, workflowId, draft) =>
-    defaultStorage.update(projectPath, workflowId, draft),
+    defaultStorage.update({ kind: "project", projectPath }, workflowId, draft),
   deleteDefinition: (projectPath, workflowId) =>
-    defaultStorage.delete(projectPath, workflowId),
+    defaultStorage.delete({ kind: "project", projectPath }, workflowId),
 };
 
 async function resolveProjectOr404(

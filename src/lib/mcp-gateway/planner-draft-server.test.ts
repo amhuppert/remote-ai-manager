@@ -59,6 +59,8 @@ describe("mcp-gateway/planner-draft-server", () => {
       schemaVersion: 1,
       workflowConfig: {},
       charter: makeTestCharter(),
+      parameters: [],
+      prerequisites: [],
       executionContexts: [],
       tasks: [],
       edges: [],

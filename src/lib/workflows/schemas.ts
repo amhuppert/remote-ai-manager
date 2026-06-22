@@ -5,6 +5,7 @@ import {
   codexReasoningEffortSchema,
   effortLevelSchema,
 } from "@/lib/agent-backends/schemas";
+import { agentBackendSchema } from "@/lib/shared/schemas";
 import { workflowCharterSchema } from "./charter-schemas";
 
 // ============================================================
@@ -291,10 +292,168 @@ export type GraphWorkflowContextEdge = z.infer<
   typeof graphWorkflowContextEdgeSchema
 >;
 
+// ============================================================
+// Workflow Parameter Declarations (launch inputs)
+// ============================================================
+// A definition may declare zero or more typed launch parameters so one
+// definition can be launched repeatedly with run-specific values. This schema
+// is intentionally PARSE-PERMISSIVE: it pins only the structural shape. The
+// accept-time shape checks owned downstream (non-empty enum options,
+// duplicate-name detection, default-conformance) are deliberately NOT enforced
+// here so they can surface as graph-validation-shaped locator errors rather than
+// Zod parse failures. All supported types bind to string values.
+
+const parameterDeclarationCommonShape = {
+  name: z.string().trim().min(1),
+  label: z.string().trim().min(1),
+  required: z.boolean().default(false),
+};
+
+const stringParameterDeclarationSchema = z.object({
+  type: z.literal("string"),
+  ...parameterDeclarationCommonShape,
+  default: z.string().optional(),
+  minLength: z.number().int().min(0).optional(),
+  maxLength: z.number().int().min(0).optional(),
+});
+export type StringParameterDeclaration = z.infer<
+  typeof stringParameterDeclarationSchema
+>;
+
+const textParameterDeclarationSchema = z.object({
+  type: z.literal("text"),
+  ...parameterDeclarationCommonShape,
+  default: z.string().optional(),
+  minLength: z.number().int().min(0).optional(),
+  maxLength: z.number().int().min(0).optional(),
+});
+export type TextParameterDeclaration = z.infer<
+  typeof textParameterDeclarationSchema
+>;
+
+const enumParameterDeclarationSchema = z.object({
+  type: z.literal("enum"),
+  ...parameterDeclarationCommonShape,
+  options: z.array(z.string()),
+  default: z.string().optional(),
+});
+export type EnumParameterDeclaration = z.infer<
+  typeof enumParameterDeclarationSchema
+>;
+
+export const parameterDeclarationSchema = z.discriminatedUnion("type", [
+  stringParameterDeclarationSchema,
+  textParameterDeclarationSchema,
+  enumParameterDeclarationSchema,
+]);
+export type ParameterDeclaration = z.infer<typeof parameterDeclarationSchema>;
+
+// ============================================================
+// Workflow Prerequisites (declarative environment requirements)
+// ============================================================
+// A definition may declare zero or more environment-level prerequisites a
+// target project must satisfy before a launch proceeds. Prerequisites are
+// literal/environment-level declarations and are NEVER a substitution target.
+
+// Normalizes a skill reference for matching against discovered command/skill
+// names: trims ASCII whitespace and removes AT MOST ONE leading invocation
+// sigil (`/` or `$`). Case, namespace separators (`:`), and the `-`/`:`
+// distinction are all significant — no case folding, suffix matching, namespace
+// stripping, colon-to-hyphen translation, or basename fallback. This is the
+// single source of skill-reference normalization, shared by accept-time
+// validation, the start-time skill probe, and their tests.
+export function normalizeSkillReference(value: string): string {
+  // ASCII whitespace only (space, tab, LF, VT, FF, CR) — deliberately not the
+  // Unicode-aware String.prototype.trim, so the rule matches the spec exactly
+  // and normalizes identically to any future cross-runtime reimplementation.
+  const trimmed = value.replace(/^[\t\n\v\f\r ]+|[\t\n\v\f\r ]+$/g, "");
+  if (trimmed.startsWith("/") || trimmed.startsWith("$")) {
+    return trimmed.slice(1);
+  }
+  return trimmed;
+}
+
+// A path segment of exactly `..` escapes the worktree; a literal `..` substring
+// inside a filename (e.g. `foo..bar`) does not. Shared with the accept-time
+// prerequisite validator so the R4.8 worktree-relative policy has one source.
+export function pathHasParentSegment(path: string): boolean {
+  return path.split(/[/\\]/).some((segment) => segment === "..");
+}
+
+export function isAbsolutePath(path: string): boolean {
+  // POSIX absolute, Windows drive-letter absolute, or UNC.
+  return (
+    path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) || /^\\\\/.test(path)
+  );
+}
+
+const prerequisiteLabelShape = {
+  // Optional human-readable label/rationale; non-empty when present.
+  label: z.string().trim().min(1).optional(),
+};
+
+// `.strict()` mirrors the payload-isolation pattern in
+// `src/lib/agent-capabilities/schemas.ts`: any unmodeled field (including a
+// `backend` on a `path` variant) is rejected at parse time so a prerequisite
+// declaration carries no unmodeled channel.
+const pathPrerequisiteSchema = z
+  .object({
+    kind: z.literal("path"),
+    path: z.string().trim().min(1),
+    ...prerequisiteLabelShape,
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    // Schema-level first line of defence for the worktree-relative path policy
+    // (R4.8); the start-time realpath containment check (R5.3) is the second.
+    if (isAbsolutePath(value.path)) {
+      ctx.addIssue({
+        code: "custom",
+        message: `path prerequisite '${value.path}' must be worktree-relative (absolute paths are rejected)`,
+        path: ["path"],
+      });
+    }
+    if (pathHasParentSegment(value.path)) {
+      ctx.addIssue({
+        code: "custom",
+        message: `path prerequisite '${value.path}' must not contain a '..' parent-directory segment`,
+        path: ["path"],
+      });
+    }
+  });
+
+const skillPrerequisiteSchema = z
+  .object({
+    kind: z.literal("skill"),
+    skill: z.string().trim().min(1),
+    // Optional backend scope; an omitted backend applies to every backend the
+    // launched workflow uses. A `path` prerequisite has no `backend` field.
+    backend: agentBackendSchema.optional(),
+    ...prerequisiteLabelShape,
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (normalizeSkillReference(value.skill).length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        message: `skill prerequisite '${value.skill}' normalizes to an empty reference`,
+        path: ["skill"],
+      });
+    }
+  });
+
+export const prerequisiteSchema = z.discriminatedUnion("kind", [
+  pathPrerequisiteSchema,
+  skillPrerequisiteSchema,
+]);
+export type WorkflowPrerequisite = z.infer<typeof prerequisiteSchema>;
+
 export const workflowSemanticDefinitionSchema = z.object({
   schemaVersion: z.number().int().positive().default(1),
   workflowConfig: workflowConfigOverrideSchema.default({}),
   charter: workflowCharterSchema,
+  parameters: z.array(parameterDeclarationSchema).default([]),
+  prerequisites: z.array(prerequisiteSchema).default([]),
   executionContexts: z
     .array(graphWorkflowExecutionContextDefinitionSchema)
     .default([]),
@@ -1210,6 +1369,15 @@ export const graphWorkflowExecutionSchema = z.object({
   id: z.string().trim().min(1),
   seedDefinitionId: z.string().trim().min(1),
   seedDefinitionRevision: z.number().int().min(1),
+  // Raw bound-input snapshot recording which parameter values produced the run.
+  // All supported parameter types (string/text/enum) bind to string values, so
+  // the value type is `string`. `.default({})` lets legacy execution rows that
+  // predate parameter support parse back as zero-input audit shape (R6.5, R10.2).
+  boundInputs: z.record(z.string(), z.string()).default({}),
+  // Additive audit annotation recording the tier the template was launched
+  // from. `.default("project")` lets legacy execution rows that predate the
+  // global tier parse back as project-tier launches (R3.3, R9.3).
+  launchedTier: z.enum(["project", "global"]).default("project"),
   workingDefinition: resolvedWorkflowSemanticDefinitionSchema,
   charter: workflowCharterSchema,
   status: graphWorkflowStatusSchema,
@@ -1334,6 +1502,8 @@ const workflowGraphValidationErrorSchema = z.object({
   taskId: z.string().trim().min(1).optional(),
   edgeId: z.string().trim().min(1).optional(),
   operationIndex: z.number().int().min(0).optional(),
+  parameterName: z.string().trim().min(1).optional(),
+  field: z.string().trim().min(1).optional(),
 });
 export type WorkflowGraphValidationError = z.infer<
   typeof workflowGraphValidationErrorSchema

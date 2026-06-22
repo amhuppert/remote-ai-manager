@@ -218,6 +218,86 @@ describe("WorkflowBuilderEditor", () => {
     expect(codes).toContain("empty-task-instructions");
   }, 30000);
 
+  it("blocks save and surfaces the accept-time parameter lint error when content references an undeclared parameter", async () => {
+    resetStore();
+    const onSave = vi.fn();
+
+    // Structurally valid definition whose task instruction references an
+    // undeclared parameter — only the accept-time lint (not the structural
+    // validator) rejects it. This pins R8.3: the builder save must run the
+    // full accept-time validation so the undeclared-reference error lands in
+    // the store and surfaces in the parameter editor.
+    const definitionWithUndeclaredRef = createWorkflowDefinition({
+      parameters: [],
+      tasks: [
+        {
+          id: "task-plan-1",
+          contextId: "context-plan",
+          order: 1,
+          title: "Inspect code",
+          instructions: "Implement {{inputs.feature}} carefully.",
+          source: "user",
+        },
+        {
+          id: "task-implement-1",
+          contextId: "context-implement",
+          order: 1,
+          title: "Write code",
+          instructions: "Implement the feature.",
+          source: "user",
+        },
+        {
+          id: "task-verify-1",
+          contextId: "context-verify",
+          order: 1,
+          title: "Run checks",
+          instructions: "Verify behavior.",
+          source: "user",
+        },
+      ],
+    });
+
+    const record = createWorkflowDefinitionRecord({
+      definition: definitionWithUndeclaredRef,
+    });
+
+    render(
+      <WorkflowBuilderEditor
+        record={record}
+        {...defaultHeaderProps}
+        onSave={onSave}
+      />,
+    );
+
+    act(() => {
+      _useGraphWorkflowBuilderStore.setState({ dirty: true });
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Save Draft/i }));
+
+    await waitFor(() => {
+      expect(
+        _useGraphWorkflowBuilderStore.getState().validationErrors.length,
+      ).toBeGreaterThan(0);
+    });
+    expect(onSave).not.toHaveBeenCalled();
+
+    const undeclared = _useGraphWorkflowBuilderStore
+      .getState()
+      .validationErrors.find(
+        (error) => error.code === "undeclared-parameter-reference",
+      );
+    expect(undeclared?.parameterName).toBe("feature");
+    expect(undeclared?.field).toContain("instructions");
+
+    // R8.3: the error surfaces in the parameter editor (the Workflow tab is the
+    // default, so the parameter-declaration editor is mounted), naming the
+    // offending field and undeclared parameter.
+    expect(
+      screen.getByText(/references undeclared parameter "feature"/),
+    ).toBeInTheDocument();
+  });
+
   it("adds a context with no implementer block so it inherits from workflow defaults", () => {
     resetStore();
     render(

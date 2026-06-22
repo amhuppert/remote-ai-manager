@@ -16,6 +16,7 @@ import {
   graphWorkflowIterationPolicySchema,
   graphWorkflowMutabilityPolicySchema,
   graphWorkflowScriptValidatorConfigSchema,
+  parameterDeclarationSchema,
 } from "@/lib/workflows/schemas";
 import {
   workflowConfigOverrideSchema,
@@ -151,6 +152,12 @@ const createWorkflowSchema = z.object({
     .describe(
       "Optional workflow-level config overrides. Omit unless the user explicitly asked for non-default workflow-wide settings.",
     ),
+  parameters: z
+    .array(parameterDeclarationSchema)
+    .optional()
+    .describe(
+      "Optional typed launch parameters (string/text/enum) this workflow declares. Reference them as {{inputs.<name>}} in task instructions, context fields, and charter text.",
+    ),
   charter: workflowCharterSchema.describe(
     "Workflow-global charter declaring the source-of-truth precedence hierarchy and mission/conventions narrative shared by every implementer and validator.",
   ),
@@ -193,6 +200,12 @@ const replaceWorkflowSchema = z.object({
     .optional()
     .describe(
       "Optional workflow-level config overrides. Omit unless the user explicitly asked for non-default workflow-wide settings.",
+    ),
+  parameters: z
+    .array(parameterDeclarationSchema)
+    .optional()
+    .describe(
+      "Optional typed launch parameters (string/text/enum) this workflow declares. Reference them as {{inputs.<name>}} in task instructions, context fields, and charter text.",
     ),
   charter: workflowCharterSchema.describe(
     "Workflow-global charter declaring the source-of-truth precedence hierarchy and mission/conventions narrative shared by every implementer and validator.",
@@ -273,6 +286,7 @@ function inflateToSemanticDefinition(
   return workflowSemanticDefinitionSchema.parse({
     schemaVersion: 1,
     workflowConfig: input.workflowConfig ?? {},
+    ...(input.parameters !== undefined ? { parameters: input.parameters } : {}),
     charter: input.charter,
     executionContexts,
     tasks,

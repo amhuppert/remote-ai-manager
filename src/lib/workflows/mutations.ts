@@ -102,6 +102,22 @@ export function useDeleteWorkflowDefinitionMutation(projectName: string) {
   });
 }
 
+export interface StartGraphWorkflowVariables {
+  definitionId: string;
+  /**
+   * Run-specific values for the definition's declared launch parameters. Omitted
+   * for a zero-input launch so the request body is identical to a parameterless
+   * start (the start route treats `parameters` as optional).
+   */
+  parameters?: Record<string, string>;
+  /**
+   * Which storage tier to resolve `definitionId` from. Omitted for a per-project
+   * launch so the request body is identical to today's project-only start (the
+   * start route defaults an absent tier to `project`).
+   */
+  tier?: "project" | "global";
+}
+
 export function useStartGraphWorkflowMutation(
   projectName: string,
   sessionName: string,
@@ -109,14 +125,22 @@ export function useStartGraphWorkflowMutation(
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (definitionId: string) =>
+    mutationFn: ({
+      definitionId,
+      parameters,
+      tier,
+    }: StartGraphWorkflowVariables) =>
       mutationFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow`,
         "start-graph-workflow",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ definitionId }),
+          body: JSON.stringify({
+            definitionId,
+            ...(parameters !== undefined ? { parameters } : {}),
+            ...(tier !== undefined ? { tier } : {}),
+          }),
         },
       ),
     onSuccess: () => {

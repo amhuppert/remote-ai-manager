@@ -285,6 +285,84 @@ describe("WorkflowInspectorPanel — workflow tab body", () => {
   });
 });
 
+describe("WorkflowInspectorPanel — launch parameters editor", () => {
+  it("binds the editor to draftDefinition.parameters", () => {
+    resetStore();
+    const def = createWorkflowDefinition();
+    setupStore({
+      selectedContextId: null,
+      definition: {
+        ...def,
+        parameters: [
+          {
+            type: "string",
+            name: "feature",
+            label: "Feature name",
+            required: true,
+          },
+        ],
+      },
+    });
+
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    // The declared parameter's label value renders in its Label input.
+    const labelInput = screen.getByDisplayValue("Feature name");
+    expect(labelInput).toBeInTheDocument();
+  });
+
+  it("editing a parameter field writes the declarations onto the draft definition", () => {
+    resetStore();
+    setupStore({ selectedContextId: null });
+
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    // Start from zero parameters → add one.
+    fireEvent.click(screen.getByRole("button", { name: /add parameter/i }));
+
+    const params =
+      _useGraphWorkflowBuilderStore.getState().draftDefinition?.parameters;
+    expect(params).toHaveLength(1);
+    expect(params?.[0]).toMatchObject({ type: "string", name: "", label: "" });
+    expect(_useGraphWorkflowBuilderStore.getState().dirty).toBe(true);
+
+    // Type a name into the new parameter's Name field.
+    const nameInput = screen.getByLabelText("Name");
+    fireEvent.change(nameInput, { target: { value: "feature" } });
+
+    expect(
+      _useGraphWorkflowBuilderStore.getState().draftDefinition?.parameters?.[0]
+        ?.name,
+    ).toBe("feature");
+  });
+
+  it("surfaces a save validation error for an undeclared reference as the editor saveError", () => {
+    resetStore();
+    setupStore({ selectedContextId: null });
+    act(() => {
+      _useGraphWorkflowBuilderStore.setState({
+        validationErrors: [
+          {
+            code: "undeclared-parameter-reference",
+            message:
+              'Field "charter.mission" references undeclared parameter "feature"',
+            field: "charter.mission",
+            parameterName: "feature",
+          },
+        ],
+      });
+    });
+
+    render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    expect(
+      screen.getByText(
+        'Field "charter.mission" references undeclared parameter "feature"',
+      ),
+    ).toBeInTheDocument();
+  });
+});
+
 describe("WorkflowInspectorPanel — context tab body", () => {
   it("renders AC header, eight blocks, tasks editor, and delete button", () => {
     resetStore();

@@ -92,6 +92,8 @@ const PERSISTED_BLOBS: readonly PersistedBlob[] = [
         "bounded: immutable resolved workflow definition (contexts, tasks, edges, per-context charters) fixed at resolve time, never mutated at runtime. In graph_workflow_executions.definition_json.",
       "charter.**":
         "bounded: author-fixed workflow charter. In graph_workflow_executions.definition_json.",
+      boundInputs:
+        "bounded: one string value per author-declared launch parameter, fixed at seed and never mutated. In graph_workflow_executions.definition_json.",
       // --- runtime_json tier (hot, rewritten every tick) ---
       activeContextIds:
         "bounded: subset of the author-fixed execution contexts. In graph_workflow_executions.runtime_json.",

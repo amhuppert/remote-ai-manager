@@ -605,6 +605,23 @@ function OverviewView({
           </div>
         </div>
 
+        {Object.keys(execution.boundInputs).length > 0 && (
+          <section className={wbOverviewSection}>
+            <div className={wbOverviewSectionTitle}>Launch Inputs</div>
+            {Object.entries(execution.boundInputs).map(([name, value]) => (
+              <div key={name} className={wbExecEvent}>
+                <div className={wbExecEventHeader}>
+                  <span className={wbExecEventText}>{name}</span>
+                </div>
+                {/* whitespace-pre-line preserves newlines in `text` values. */}
+                <div className={cn(wbExecEventDetail, "whitespace-pre-line")}>
+                  {value}
+                </div>
+              </div>
+            ))}
+          </section>
+        )}
+
         <section className={wbOverviewSection}>
           <div className={wbOverviewSectionTitle}>Events</div>
           <WorkflowEventLog

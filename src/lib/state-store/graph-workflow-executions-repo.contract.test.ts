@@ -49,7 +49,9 @@ function seedSession(): void {
 }
 
 function maximalExecution(): GraphWorkflowExecution {
-  return graphWorkflowExecutionSchema.parse(buildMaximalGraphWorkflowExecution());
+  return graphWorkflowExecutionSchema.parse(
+    buildMaximalGraphWorkflowExecution(),
+  );
 }
 
 beforeEach(() => {
@@ -96,7 +98,12 @@ describe("graph-workflow-executions-repo durability contract", () => {
       schema: graphWorkflowExecutionSchema,
       buildMaximalFixture: maximalExecution,
       persist: (fixture) => {
-        repo.setActive(PROJECT_PATH, SESSION_NAME, fixture, "2026-03-01T00:00:00Z");
+        repo.setActive(
+          PROJECT_PATH,
+          SESSION_NAME,
+          fixture,
+          "2026-03-01T00:00:00Z",
+        );
         return fixture;
       },
       reload: () => repo.getActive(PROJECT_PATH, SESSION_NAME),
@@ -130,7 +137,12 @@ describe("graph-workflow-executions-repo behavior", () => {
 
   it("rewrites runtime-only when the definition tier is unchanged but the runtime changes", () => {
     const execution = maximalExecution();
-    repo.setActive(PROJECT_PATH, SESSION_NAME, execution, "2026-03-01T00:00:00Z");
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      execution,
+      "2026-03-01T00:00:00Z",
+    );
 
     const definitionBefore = db
       .prepare(
@@ -173,10 +185,89 @@ describe("graph-workflow-executions-repo behavior", () => {
     expect(reloaded?.completedAt).toBe("2026-03-05T00:00:00Z");
   });
 
+  it("admits a pre-feature row with no bound-input snapshot via the additive default", () => {
+    // Write a normal execution, then strip `boundInputs` from the stored
+    // definition tier to simulate a row persisted before the field existed.
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      maximalExecution(),
+      "2026-03-01T00:00:00Z",
+    );
+    const row = db
+      .prepare(
+        `SELECT definition_json FROM graph_workflow_executions
+          WHERE project_path = ? AND session_name = ?`,
+      )
+      .get(PROJECT_PATH, SESSION_NAME) as { definition_json: string };
+    const definition = JSON.parse(row.definition_json) as Record<
+      string,
+      unknown
+    >;
+    expect(definition.boundInputs, "fixture must persist boundInputs").toEqual({
+      feature: "search box",
+      notes: "first line\nsecond line",
+    });
+    delete definition.boundInputs;
+    db.prepare(
+      `UPDATE graph_workflow_executions SET definition_json = ?
+        WHERE project_path = ? AND session_name = ?`,
+    ).run(JSON.stringify(definition), PROJECT_PATH, SESSION_NAME);
+
+    // A fresh repo instance bypasses the parsed-row cache, decoding the edited
+    // row; the schema's `.default({})` admits the legacy shape.
+    const freshRepo = createGraphWorkflowExecutionsRepo(db);
+    const loaded = freshRepo.getActive(PROJECT_PATH, SESSION_NAME);
+    expect(loaded).not.toBeNull();
+    expect(loaded?.boundInputs).toEqual({});
+  });
+
+  it("admits a pre-feature row with no launched-tier via the additive 'project' default", () => {
+    // Write a normal execution, then strip `launchedTier` from the stored
+    // definition tier to simulate a row persisted before the field existed.
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      maximalExecution(),
+      "2026-03-01T00:00:00Z",
+    );
+    const row = db
+      .prepare(
+        `SELECT definition_json FROM graph_workflow_executions
+          WHERE project_path = ? AND session_name = ?`,
+      )
+      .get(PROJECT_PATH, SESSION_NAME) as { definition_json: string };
+    const definition = JSON.parse(row.definition_json) as Record<
+      string,
+      unknown
+    >;
+    expect(
+      definition.launchedTier,
+      "fixture must persist a non-default launchedTier",
+    ).toBe("global");
+    delete definition.launchedTier;
+    db.prepare(
+      `UPDATE graph_workflow_executions SET definition_json = ?
+        WHERE project_path = ? AND session_name = ?`,
+    ).run(JSON.stringify(definition), PROJECT_PATH, SESSION_NAME);
+
+    // A fresh repo instance bypasses the parsed-row cache, decoding the edited
+    // row; the schema's `.default("project")` admits the legacy shape.
+    const freshRepo = createGraphWorkflowExecutionsRepo(db);
+    const loaded = freshRepo.getActive(PROJECT_PATH, SESSION_NAME);
+    expect(loaded).not.toBeNull();
+    expect(loaded?.launchedTier).toBe("project");
+  });
+
   it("recreates the row via a full upsert when the runtime-only UPDATE matches zero rows", () => {
     const execution = maximalExecution();
     // First write warms the per-instance definition-hash cache.
-    repo.setActive(PROJECT_PATH, SESSION_NAME, execution, "2026-03-01T00:00:00Z");
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      execution,
+      "2026-03-01T00:00:00Z",
+    );
 
     // Delete the row out-of-band WITHOUT going through setActive(null), so the
     // hash cache still believes the (unchanged) definition is already on disk.
@@ -188,7 +279,12 @@ describe("graph-workflow-executions-repo behavior", () => {
     // A re-write with the SAME definition tier takes the runtime-only UPDATE
     // path (hash matches). Without the defensive fallback the UPDATE would
     // match 0 rows and the execution would be lost while events accumulate.
-    repo.setActive(PROJECT_PATH, SESSION_NAME, execution, "2026-03-02T00:00:00Z");
+    repo.setActive(
+      PROJECT_PATH,
+      SESSION_NAME,
+      execution,
+      "2026-03-02T00:00:00Z",
+    );
 
     const row = db
       .prepare(

@@ -13,7 +13,14 @@ import { createWorkflowExecution } from "./test-fixtures";
 import {
   createGraphWorkflowExecutionRouteHandlers,
   createGraphWorkflowRouteScriptValidatorService,
+  launchGraphWorkflowExecution,
+  type GraphWorkflowExecutionRouteDeps,
 } from "./execution-route-handlers";
+import {
+  WorkflowPrerequisitesUnmetError,
+  WorkflowStartGuardError,
+  WorkflowStartInputError,
+} from "./workflow-manager";
 
 function makeRequest(url: string, method: string, body?: unknown): NextRequest {
   return new NextRequest(`http://localhost${url}`, {
@@ -71,7 +78,6 @@ describe("graph workflow execution route handlers", () => {
   const recordPendingHaltReason = vi.fn();
   const drainAndHalt = vi.fn();
   const recordApprovalDecision = vi.fn();
-  const readSessionWorktreeDirtyPaths = vi.fn();
   const listArchivedExecutions =
     vi.fn<
       (
@@ -95,7 +101,6 @@ describe("graph workflow execution route handlers", () => {
     recordPendingHaltReason,
     drainAndHalt,
     recordApprovalDecision,
-    readSessionWorktreeDirtyPaths,
     listArchivedExecutions,
   });
 
@@ -114,23 +119,14 @@ describe("graph workflow execution route handlers", () => {
     );
   });
 
-  it("starts an execution and archives a previous terminal run first", async () => {
-    const archivedExecution = createWorkflowExecution({
-      id: "execution-archived",
-      status: "completed",
-      completedAt: "2026-03-27T13:00:00.000Z",
-    });
+  it("delegates a zero-input start to the shared start path and returns 202", async () => {
     const startedExecution = createWorkflowExecution({
       id: "execution-active",
       status: "running",
     });
 
     resolveProjectPath.mockResolvedValue("/repo");
-    getSession.mockResolvedValue(
-      makeSession({
-        graphWorkflowExecution: archivedExecution,
-      }),
-    );
+    getSession.mockResolvedValue(makeSession());
     startExecution.mockResolvedValue(startedExecution);
 
     const response = await handlers.START(
@@ -143,11 +139,13 @@ describe("graph workflow execution route handlers", () => {
     );
 
     expect(response.status).toBe(202);
-    expect(archiveExecution).toHaveBeenCalledWith("/repo", "session-1");
+    // The active-execution archive + dirty guard now live in the shared start
+    // path; the handler delegates without owning either guard.
     expect(startExecution).toHaveBeenCalledWith({
       projectPath: "/repo",
       sessionName: "session-1",
       definitionId: "workflow-1",
+      tier: "project",
     });
     expect(kickOffExecutionLoop).toHaveBeenCalledWith({
       projectPath: "/repo",
@@ -164,17 +162,154 @@ describe("graph workflow execution route handlers", () => {
     });
   });
 
-  it("blocks the start with a 409 when the session worktree has uncommitted changes", async () => {
+  it("threads supplied parameters into the shared start path on a parameterized start", async () => {
+    const startedExecution = createWorkflowExecution({
+      id: "execution-param",
+      status: "running",
+    });
+
     resolveProjectPath.mockResolvedValue("/repo");
     getSession.mockResolvedValue(makeSession());
-    readSessionWorktreeDirtyPaths.mockResolvedValue([
-      {
-        path: ".kiro/specs/new-feature/requirements.md",
-        statusCode: "??",
-        tracked: false,
+    startExecution.mockResolvedValue(startedExecution);
+
+    const response = await handlers.START(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow",
+        "POST",
+        { definitionId: "workflow-1", parameters: { ticket: "CC-42" } },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(202);
+    expect(startExecution).toHaveBeenCalledWith({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      definitionId: "workflow-1",
+      tier: "project",
+      parameters: { ticket: "CC-42" },
+    });
+  });
+
+  it("threads an explicit global tier into the shared start path (R3.4)", async () => {
+    const startedExecution = createWorkflowExecution({
+      id: "execution-global",
+      status: "running",
+    });
+
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+    startExecution.mockResolvedValue(startedExecution);
+
+    const response = await handlers.START(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow",
+        "POST",
+        { definitionId: "workflow-1", tier: "global" },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(202);
+    expect(startExecution).toHaveBeenCalledWith({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      definitionId: "workflow-1",
+      tier: "global",
+    });
+  });
+
+  it("maps a prerequisites-unmet rejection to a structured 409 with itemized details.missing and starts no loop (R6.2, R6.3)", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+    startExecution.mockRejectedValue(
+      new WorkflowPrerequisitesUnmetError(
+        [
+          { kind: "path", path: ".kiro", label: null, reason: "absent" },
+          {
+            kind: "skill",
+            skill: "kiro-spec-init",
+            backend: "codex",
+            label: null,
+            reason: "probe_error",
+          },
+        ],
+        "Cannot start the workflow: 2 declared prerequisite(s) are unmet in the session worktree.",
+      ),
+    );
+
+    const response = await handlers.START(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow",
+        "POST",
+        { definitionId: "workflow-1", tier: "global" },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "prerequisites_unmet",
+      details: {
+        missing: [
+          { kind: "path", path: ".kiro", reason: "absent" },
+          {
+            kind: "skill",
+            skill: "kiro-spec-init",
+            backend: "codex",
+            reason: "probe_error",
+          },
+        ],
       },
-      { path: "src/edited.ts", statusCode: " M", tracked: true },
-    ]);
+    });
+    expect(kickOffExecutionLoop).not.toHaveBeenCalled();
+    expect(recordPendingHaltReason).not.toHaveBeenCalled();
+  });
+
+  it("maps the active-execution guard error to a 409", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+    startExecution.mockRejectedValue(
+      new WorkflowStartGuardError(
+        "active_execution",
+        'Session "session-1" already has an active graph workflow execution',
+      ),
+    );
+
+    const response = await handlers.START(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow",
+        "POST",
+        { definitionId: "workflow-1" },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error:
+        'Session "session-1" already has an active graph workflow execution',
+    });
+    expect(kickOffExecutionLoop).not.toHaveBeenCalled();
+  });
+
+  it("maps the uncommitted-changes guard error to a structured 409", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+    startExecution.mockRejectedValue(
+      new WorkflowStartGuardError(
+        "uncommitted_changes",
+        "Cannot start the workflow while the session worktree has 2 uncommitted change(s). Workflow lanes are created from the committed branch, so uncommitted files would be missing. Commit your changes and try again.",
+        [
+          {
+            path: ".kiro/specs/new-feature/requirements.md",
+            statusCode: "??",
+            tracked: false,
+          },
+          { path: "src/edited.ts", statusCode: " M", tracked: true },
+        ],
+      ),
+    );
 
     const response = await handlers.START(
       makeRequest(
@@ -188,12 +323,59 @@ describe("graph workflow execution route handlers", () => {
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toMatchObject({
       code: "uncommitted_changes",
-      details: { totalCount: 2 },
+      details: {
+        totalCount: 2,
+        paths: [".kiro/specs/new-feature/requirements.md", "src/edited.ts"],
+      },
     });
-    expect(readSessionWorktreeDirtyPaths).toHaveBeenCalledWith(
-      "/repo/.worktrees/session-1",
+    expect(kickOffExecutionLoop).not.toHaveBeenCalled();
+  });
+
+  it("maps a start-input rejection to a 400 naming the offending parameter", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+    startExecution.mockRejectedValue(
+      new WorkflowStartInputError(
+        { kind: "missing_required", name: "ticket" },
+        'Required parameter "ticket" was not supplied',
+      ),
     );
-    expect(startExecution).not.toHaveBeenCalled();
+
+    const response = await handlers.START(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow",
+        "POST",
+        { definitionId: "workflow-1", parameters: {} },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain("ticket");
+    expect(kickOffExecutionLoop).not.toHaveBeenCalled();
+  });
+
+  it("maps a missing-definition error from the shared start path to a 404", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+    startExecution.mockRejectedValue(
+      new Error('Workflow definition "workflow-1" was not found'),
+    );
+
+    const response = await handlers.START(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow",
+        "POST",
+        { definitionId: "workflow-1" },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Workflow definition "workflow-1" was not found',
+    });
     expect(kickOffExecutionLoop).not.toHaveBeenCalled();
   });
 
@@ -207,10 +389,10 @@ describe("graph workflow execution route handlers", () => {
     getSession.mockResolvedValue(makeSession());
     startExecution.mockResolvedValue(startedExecution);
     kickOffExecutionLoop.mockRejectedValue(new Error("loop boom"));
-    // The pre-start guard sees no active execution; the post-crash halt path
-    // then reads the just-started execution.
+    // The shared start path owns the active-execution guard now, so the handler
+    // only reads getActiveExecution from the post-crash halt path, which finds
+    // the just-started execution.
     getActiveExecution.mockReset();
-    getActiveExecution.mockResolvedValueOnce(null);
     getActiveExecution.mockResolvedValue(startedExecution);
     recordPendingHaltReason.mockResolvedValue({
       execution: startedExecution,
@@ -1833,5 +2015,170 @@ describe("implementer runner wiring (unified executePromptStream path)", () => {
         expect.objectContaining({ backend: "codex", autonomous: true }),
       );
     }
+  });
+});
+
+describe("launchGraphWorkflowExecution (production start+kickoff seam)", () => {
+  const PROJECT_PATH = "/repo";
+  const PROJECT_NAME = "repo";
+  const SESSION_NAME = "session-1";
+
+  function makeSeamDeps(
+    overrides: Partial<GraphWorkflowExecutionRouteDeps> = {},
+  ): GraphWorkflowExecutionRouteDeps {
+    const unused = (name: string) => {
+      return async (): Promise<never> => {
+        throw new Error(
+          `${name} should not be called by the start+kickoff seam`,
+        );
+      };
+    };
+    return {
+      resolveProjectPath: unused("resolveProjectPath"),
+      getSession: unused("getSession"),
+      normalizeExecutionAfterRestart: unused("normalizeExecutionAfterRestart"),
+      startExecution: unused("startExecution"),
+      pauseExecution: unused("pauseExecution"),
+      resumeExecution: unused("resumeExecution"),
+      abortExecution: unused("abortExecution"),
+      resetExecutionContext: unused("resetExecutionContext"),
+      archiveExecution: unused("archiveExecution"),
+      kickOffExecutionLoop: unused("kickOffExecutionLoop"),
+      getActiveExecution: unused("getActiveExecution"),
+      recordPendingHaltReason: unused("recordPendingHaltReason"),
+      drainAndHalt: unused("drainAndHalt"),
+      recordApprovalDecision: unused("recordApprovalDecision"),
+      ...overrides,
+    };
+  }
+
+  it("calls startExecution with the supplied parameters, kicks off the loop, and returns the started execution", async () => {
+    const started = createWorkflowExecution({
+      id: "execution-seam",
+      status: "running",
+    });
+    const startExecution = vi.fn(async () => started);
+    const kickOffExecutionLoop = vi.fn(async () => {});
+
+    const result = await launchGraphWorkflowExecution(
+      {
+        projectPath: PROJECT_PATH,
+        projectName: PROJECT_NAME,
+        sessionName: SESSION_NAME,
+        definitionId: "wf-1",
+        parameters: { ticket: "CC-42" },
+      },
+      makeSeamDeps({ startExecution, kickOffExecutionLoop }),
+    );
+
+    expect(result).toBe(started);
+    expect(startExecution).toHaveBeenCalledWith({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      definitionId: "wf-1",
+      parameters: { ticket: "CC-42" },
+    });
+    // Kickoff is fire-and-forget; flush microtasks so the queued call lands.
+    await Promise.resolve();
+    expect(kickOffExecutionLoop).toHaveBeenCalledWith({
+      projectPath: PROJECT_PATH,
+      projectName: PROJECT_NAME,
+      sessionName: SESSION_NAME,
+      execution: started,
+    });
+  });
+
+  it("starts a zero-input launch without forwarding a parameters key", async () => {
+    const started = createWorkflowExecution({
+      id: "execution-zero",
+      status: "running",
+    });
+    const startExecution = vi.fn(async () => started);
+    const kickOffExecutionLoop = vi.fn(async () => {});
+
+    await launchGraphWorkflowExecution(
+      {
+        projectPath: PROJECT_PATH,
+        projectName: PROJECT_NAME,
+        sessionName: SESSION_NAME,
+        definitionId: "wf-static",
+      },
+      makeSeamDeps({ startExecution, kickOffExecutionLoop }),
+    );
+
+    expect(startExecution).toHaveBeenCalledWith({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      definitionId: "wf-static",
+    });
+  });
+
+  it("propagates a guard error without kicking off the loop", async () => {
+    const startExecution = vi.fn(async () => {
+      throw new WorkflowStartGuardError(
+        "active_execution",
+        'Session "session-1" already has an active graph workflow execution',
+      );
+    });
+    const kickOffExecutionLoop = vi.fn(async () => {});
+
+    await expect(
+      launchGraphWorkflowExecution(
+        {
+          projectPath: PROJECT_PATH,
+          projectName: PROJECT_NAME,
+          sessionName: SESSION_NAME,
+          definitionId: "wf-1",
+        },
+        makeSeamDeps({ startExecution, kickOffExecutionLoop }),
+      ),
+    ).rejects.toBeInstanceOf(WorkflowStartGuardError);
+
+    expect(kickOffExecutionLoop).not.toHaveBeenCalled();
+  });
+
+  it("propagates an input error without kicking off the loop", async () => {
+    const startExecution = vi.fn(async () => {
+      throw new WorkflowStartInputError(
+        { kind: "missing_required", name: "env" },
+        'Required parameter "env" was not supplied',
+      );
+    });
+    const kickOffExecutionLoop = vi.fn(async () => {});
+
+    await expect(
+      launchGraphWorkflowExecution(
+        {
+          projectPath: PROJECT_PATH,
+          projectName: PROJECT_NAME,
+          sessionName: SESSION_NAME,
+          definitionId: "wf-1",
+        },
+        makeSeamDeps({ startExecution, kickOffExecutionLoop }),
+      ),
+    ).rejects.toBeInstanceOf(WorkflowStartInputError);
+
+    expect(kickOffExecutionLoop).not.toHaveBeenCalled();
+  });
+
+  it("propagates a not-found error without kicking off the loop", async () => {
+    const startExecution = vi.fn(async () => {
+      throw new Error('Workflow definition "nope" was not found');
+    });
+    const kickOffExecutionLoop = vi.fn(async () => {});
+
+    await expect(
+      launchGraphWorkflowExecution(
+        {
+          projectPath: PROJECT_PATH,
+          projectName: PROJECT_NAME,
+          sessionName: SESSION_NAME,
+          definitionId: "nope",
+        },
+        makeSeamDeps({ startExecution, kickOffExecutionLoop }),
+      ),
+    ).rejects.toThrow('Workflow definition "nope" was not found');
+
+    expect(kickOffExecutionLoop).not.toHaveBeenCalled();
   });
 });

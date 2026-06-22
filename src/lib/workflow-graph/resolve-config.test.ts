@@ -14,6 +14,7 @@ import type {
   WorkflowSemanticDefinition,
 } from "@/lib/workflows/schemas";
 import {
+  computeUsedBackends,
   resolveCollaborationConfigWithProvenance,
   resolveContext,
   resolveWorkflowConfig,
@@ -104,6 +105,8 @@ function makeDefinition(
     schemaVersion: 1,
     workflowConfig: {},
     charter: makeTestCharter(),
+    parameters: [],
+    prerequisites: [],
     executionContexts: [makeContext()],
     tasks: [],
     edges: [],
@@ -711,5 +714,150 @@ describe("resolveCollaborationConfigWithProvenance", () => {
       expect(resolved.autonomousResolutionThreshold.source).toBe("global");
       expect(resolved.autonomousResolutionThreshold.value).toBe("none");
     });
+  });
+});
+
+describe("computeUsedBackends", () => {
+  const CLAUDE_IMPL: GraphWorkflowAgentConfig = {
+    backend: "claude",
+    model: "opus",
+    reasoningEffort: "medium",
+  };
+  const CODEX_IMPL: GraphWorkflowAgentConfig = {
+    backend: "codex",
+    model: "gpt-5.4",
+    reasoningEffort: "high",
+  };
+  const CLAUDE_VALIDATOR: GraphWorkflowAgentValidatorConfig = {
+    type: "claude",
+    enabled: true,
+    continuity: { enabled: true },
+    agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+  };
+  const CODEX_VALIDATOR: GraphWorkflowAgentValidatorConfig = {
+    type: "codex",
+    enabled: true,
+    continuity: { enabled: true },
+    codex: {},
+  };
+
+  it("returns the distinct implementer + enabled-validator backends across contexts (R5.2a)", () => {
+    const definition = makeDefinition({
+      executionContexts: [
+        makeContext({
+          id: "ctx-claude",
+          implementer: CLAUDE_IMPL,
+          contextValidator: { kind: "use", value: CLAUDE_VALIDATOR },
+        }),
+        makeContext({
+          id: "ctx-codex",
+          implementer: CODEX_IMPL,
+          contextValidator: { kind: "use", value: CODEX_VALIDATOR },
+        }),
+      ],
+    });
+
+    const backends = computeUsedBackends(makeGlobalConfig(), definition);
+
+    expect([...backends].sort()).toEqual(["claude", "codex"]);
+  });
+
+  it("collects a validator backend that differs from its context's implementer backend", () => {
+    const definition = makeDefinition({
+      executionContexts: [
+        makeContext({
+          id: "ctx-1",
+          implementer: CLAUDE_IMPL,
+          contextValidator: { kind: "use", value: CODEX_VALIDATOR },
+        }),
+      ],
+    });
+
+    const backends = computeUsedBackends(makeGlobalConfig(), definition);
+
+    expect([...backends].sort()).toEqual(["claude", "codex"]);
+  });
+
+  it("returns a singleton set for a single-backend workflow", () => {
+    const definition = makeDefinition({
+      executionContexts: [
+        makeContext({
+          id: "ctx-1",
+          implementer: CLAUDE_IMPL,
+          contextValidator: { kind: "use", value: CLAUDE_VALIDATOR },
+        }),
+        makeContext({
+          id: "ctx-2",
+          implementer: CLAUDE_IMPL,
+          contextValidator: { kind: "disabled" },
+        }),
+      ],
+    });
+
+    const backends = computeUsedBackends(makeGlobalConfig(), definition);
+
+    expect([...backends]).toEqual(["claude"]);
+  });
+
+  it("excludes a disabled validator's backend (a disabled validator does not run)", () => {
+    const disabledCodexValidator: GraphWorkflowAgentValidatorConfig = {
+      type: "codex",
+      enabled: false,
+      continuity: { enabled: true },
+      codex: {},
+    };
+    const definition = makeDefinition({
+      executionContexts: [
+        makeContext({
+          id: "ctx-1",
+          implementer: CLAUDE_IMPL,
+          contextValidator: { kind: "use", value: disabledCodexValidator },
+        }),
+      ],
+    });
+
+    const backends = computeUsedBackends(makeGlobalConfig(), definition);
+
+    expect([...backends]).toEqual(["claude"]);
+  });
+
+  it("excludes a context that opts out of the validator entirely", () => {
+    const definition = makeDefinition({
+      executionContexts: [
+        makeContext({
+          id: "ctx-1",
+          implementer: CODEX_IMPL,
+          contextValidator: { kind: "disabled" },
+        }),
+      ],
+    });
+
+    const backends = computeUsedBackends(makeGlobalConfig(), definition);
+
+    expect([...backends]).toEqual(["codex"]);
+  });
+
+  it("resolves backends through the cascade (workflow-level implementer override), not a hardcoded launch backend", () => {
+    const definition = makeDefinition({
+      workflowConfig: { implementer: CODEX_IMPL },
+      executionContexts: [
+        makeContext({ id: "ctx-1", contextValidator: { kind: "disabled" } }),
+      ],
+    });
+
+    const backends = computeUsedBackends(makeGlobalConfig(), definition);
+
+    expect([...backends]).toEqual(["codex"]);
+  });
+
+  it("falls back to the global-default implementer + validator backends when a context omits both", () => {
+    const definition = makeDefinition({
+      executionContexts: [makeContext({ id: "ctx-1" })],
+    });
+
+    const backends = computeUsedBackends(makeGlobalConfig(), definition);
+
+    // GLOBAL_DEFAULTS uses a claude implementer + an enabled claude validator.
+    expect([...backends]).toEqual(["claude"]);
   });
 });

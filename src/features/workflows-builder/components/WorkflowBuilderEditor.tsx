@@ -17,7 +17,7 @@ import {
 } from "@/lib/workflow-graph/builder-draft";
 import { generateWorkflowLayout } from "@/lib/workflow-graph/layout";
 import { collectNodeDimensions } from "@/components/workflow-graph/AutoLayout";
-import { validateWorkflowDefinition } from "@/lib/workflow-graph/validation";
+import { validateAuthoredDefinition } from "@/lib/workflow-graph/validation";
 import { _useGraphWorkflowBuilderStore } from "@/stores/graph-workflow-builder.store";
 import WorkflowBuilderCanvas from "./WorkflowBuilderCanvas";
 import WorkflowInspectorPanel from "./WorkflowInspectorPanel";
@@ -117,7 +117,13 @@ function WorkflowBuilderEditorInner({
   async function handleSave() {
     if (!onSave || !draftDefinition || !draftLayout) return;
 
-    const validation = validateWorkflowDefinition(draftDefinition);
+    // Run the SAME accept-time validation the storage choke point applies
+    // (parameter shape checks + placeholder/reference lint + structural graph
+    // validation). Routing the builder save through it lands the rich
+    // parameter lint errors — each carrying its offending field and undeclared
+    // name — in the store so the parameter editor surfaces them on save (R8.3),
+    // instead of only the comma-joined codes the server throw produces.
+    const validation = validateAuthoredDefinition(draftDefinition);
     if (!validation.ok) {
       setValidationErrors(validation.errors);
       return;

@@ -17,6 +17,8 @@ function makeDefinition(
     schemaVersion: 1,
     workflowConfig: {},
     charter: makeTestCharter(),
+    parameters: [],
+    prerequisites: [],
     executionContexts: [],
     tasks: [],
     edges: [],
@@ -93,6 +95,8 @@ function makeExecution(
     id: "exec-1",
     seedDefinitionId: "def-1",
     seedDefinitionRevision: 1,
+    boundInputs: {},
+    launchedTier: "project",
     workingDefinition:
       makeDefinition() as unknown as ResolvedWorkflowSemanticDefinition,
     charter: makeTestCharter(),

@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   useResetExecutionContextMutation,
   useResolveApprovalMutation,
+  useStartGraphWorkflowMutation,
 } from "@/lib/workflows/mutations";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
@@ -205,6 +206,107 @@ describe("useResolveApprovalMutation", () => {
     expect(invalidationState(client)).toEqual({
       active: false,
       session: false,
+    });
+  });
+});
+
+describe("useStartGraphWorkflowMutation", () => {
+  const fetchSpy = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    fetchSpy.mockResolvedValue(
+      jsonResponse({ execution: { id: "exec-1" } }, 202),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function requestBody(): unknown {
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    return JSON.parse(String(init.body));
+  }
+
+  it("omits `parameters` from the body for a zero-input launch", async () => {
+    const { result } = renderHook(
+      () => useStartGraphWorkflowMutation("proj-1", "sess-1"),
+      { wrapper },
+    );
+
+    await result.current.mutateAsync({ definitionId: "def-1" });
+
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/projects/proj-1/sessions/sess-1/graph-workflow");
+    expect(init.method).toBe("POST");
+    expect(requestBody()).toEqual({ definitionId: "def-1" });
+  });
+
+  it("includes `parameters` in the body when supplied", async () => {
+    const { result } = renderHook(
+      () => useStartGraphWorkflowMutation("proj-1", "sess-1"),
+      { wrapper },
+    );
+
+    await result.current.mutateAsync({
+      definitionId: "def-1",
+      parameters: { feature: "Search", mode: "fast" },
+    });
+
+    expect(requestBody()).toEqual({
+      definitionId: "def-1",
+      parameters: { feature: "Search", mode: "fast" },
+    });
+  });
+
+  it("includes `tier` in the body when supplied", async () => {
+    const { result } = renderHook(
+      () => useStartGraphWorkflowMutation("proj-1", "sess-1"),
+      { wrapper },
+    );
+
+    await result.current.mutateAsync({
+      definitionId: "def-1",
+      tier: "global",
+    });
+
+    expect(requestBody()).toEqual({ definitionId: "def-1", tier: "global" });
+  });
+
+  it("omits `tier` from the body for a project-tier launch", async () => {
+    const { result } = renderHook(
+      () => useStartGraphWorkflowMutation("proj-1", "sess-1"),
+      { wrapper },
+    );
+
+    await result.current.mutateAsync({ definitionId: "def-1" });
+
+    expect(requestBody()).toEqual({ definitionId: "def-1" });
+  });
+
+  it("surfaces a 400 input-validation rejection as an ApiCallError with the engine message", async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse(
+        { error: 'Parameter "feature" is required but was not supplied' },
+        400,
+      ),
+    );
+
+    const { result } = renderHook(
+      () => useStartGraphWorkflowMutation("proj-1", "sess-1"),
+      { wrapper },
+    );
+
+    await expect(
+      result.current.mutateAsync({
+        definitionId: "def-1",
+        parameters: {},
+      }),
+    ).rejects.toMatchObject({
+      name: "ApiCallError",
+      message: 'Parameter "feature" is required but was not supplied',
     });
   });
 });

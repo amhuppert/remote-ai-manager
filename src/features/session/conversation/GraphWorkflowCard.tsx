@@ -6,11 +6,16 @@ import type {
   GraphWorkflowExecution,
   GraphWorkflowStatus,
 } from "@/lib/workflows/schemas";
-import { useWorkflowDefinitionsQuery } from "@/lib/workflows/queries";
+import {
+  useWorkflowDefinitionsQuery,
+  useWorkflowDefinitionQuery,
+} from "@/lib/workflows/queries";
 import { useStartGraphWorkflowMutation } from "@/lib/workflows/mutations";
 import { ApiCallError } from "@/lib/api/errors";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { Button } from "@/components/ui/Button";
+import { ModalShell } from "@/components/ui/ModalShell";
+import WorkflowLaunchForm from "@/components/WorkflowLaunchForm";
 
 interface GraphWorkflowCardProps {
   projectName: string;
@@ -158,6 +163,7 @@ export function GraphWorkflowLauncher({
   starting = false,
   error,
   onRun,
+  onSelectionChange,
 }: {
   projectName: string;
   definitions: DefinitionSummary[];
@@ -165,9 +171,16 @@ export function GraphWorkflowLauncher({
   starting?: boolean;
   error?: string | null;
   onRun?: (definitionId: string) => void;
+  /** Reports the currently selected definition id (null when cleared). */
+  onSelectionChange?: (definitionId: string | null) => void;
 }): React.JSX.Element {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = definitions.find((d) => d.id === selectedId);
+
+  function selectDefinition(definitionId: string | null): void {
+    setSelectedId(definitionId);
+    onSelectionChange?.(definitionId);
+  }
 
   if (loading) {
     return (
@@ -209,7 +222,7 @@ export function GraphWorkflowLauncher({
       <select
         className="w-full cursor-pointer rounded-sm border border-solid border-border-default bg-bg-base px-[10px] py-[8px] font-mono text-[0.78rem] text-text-primary outline-none [transition:border-color_0.15s] focus:border-cyan focus:shadow-[0_0_0_1px_var(--cyan-glow)]"
         value={selectedId ?? ""}
-        onChange={(e) => setSelectedId(e.target.value || null)}
+        onChange={(e) => selectDefinition(e.target.value || null)}
       >
         <option value="">Select a definition{"\u2026"}</option>
         {definitions.map((d) => (
@@ -263,14 +276,84 @@ function ConnectedLauncherCard({
 }): React.JSX.Element {
   const definitionsQuery = useWorkflowDefinitionsQuery(projectName);
   const startMutation = useStartGraphWorkflowMutation(projectName, sessionName);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [uncommittedMessage, setUncommittedMessage] = useState<string | null>(
     null,
   );
+  // The definition whose launch form is open. Held separately from `selectedId`
+  // so the modal keeps showing the launched definition even if the dropdown
+  // selection changes underneath it.
+  const [launchDefinitionId, setLaunchDefinitionId] = useState<string | null>(
+    null,
+  );
+  // Engine-side launch rejection surfaced inside the form (the start route's 400
+  // input-validation error names the offending parameter).
+  const [engineError, setEngineError] = useState<string | null>(null);
+
+  const selectedDefinitionQuery = useWorkflowDefinitionQuery(
+    projectName,
+    selectedId,
+  );
+  const selectedParameters =
+    selectedDefinitionQuery.data?.item.definition.parameters ?? [];
+
+  const launchDefinitionQuery = useWorkflowDefinitionQuery(
+    projectName,
+    launchDefinitionId,
+  );
+  const launchParameters =
+    launchDefinitionQuery.data?.item.definition.parameters ?? [];
 
   const startError = startMutation.error;
   const isUncommittedBlock =
     startError instanceof ApiCallError &&
     startError.code === "uncommitted_changes";
+
+  function startWorkflow(
+    definitionId: string,
+    parameters: Record<string, string> | undefined,
+  ): void {
+    startMutation.mutate(
+      { definitionId, ...(parameters !== undefined ? { parameters } : {}) },
+      {
+        onSuccess: () => {
+          setLaunchDefinitionId(null);
+          setEngineError(null);
+        },
+        onError: (error) => {
+          if (
+            error instanceof ApiCallError &&
+            error.code === "uncommitted_changes"
+          ) {
+            setUncommittedMessage(error.message);
+            setLaunchDefinitionId(null);
+            return;
+          }
+          // Any other launch failure (e.g. a 400 input-validation rejection)
+          // belongs inside the open form so the offending parameter is named in
+          // context.
+          if (definitionId === launchDefinitionId) {
+            setEngineError(
+              error instanceof Error
+                ? error.message
+                : "Failed to start workflow",
+            );
+          }
+        },
+      },
+    );
+  }
+
+  function handleRun(definitionId: string): void {
+    // A parameterized definition collects run-specific values in a modal first;
+    // a zero-input definition keeps the one-click behaviour (no parameters sent).
+    if (selectedParameters.length > 0) {
+      setEngineError(null);
+      setLaunchDefinitionId(definitionId);
+      return;
+    }
+    startWorkflow(definitionId, undefined);
+  }
 
   return (
     <>
@@ -282,27 +365,43 @@ function ConnectedLauncherCard({
           revision: d.revision,
         }))}
         loading={definitionsQuery.isPending}
-        starting={startMutation.isPending}
+        starting={startMutation.isPending && launchDefinitionId === null}
         error={
-          startMutation.isError && !isUncommittedBlock
+          startMutation.isError &&
+          !isUncommittedBlock &&
+          launchDefinitionId === null
             ? startError instanceof Error
               ? startError.message
               : "Failed to start workflow"
             : null
         }
-        onRun={(definitionId) =>
-          startMutation.mutate(definitionId, {
-            onError: (error) => {
-              if (
-                error instanceof ApiCallError &&
-                error.code === "uncommitted_changes"
-              ) {
-                setUncommittedMessage(error.message);
-              }
-            },
-          })
-        }
+        onSelectionChange={setSelectedId}
+        onRun={handleRun}
       />
+      {launchDefinitionId !== null && (
+        <ModalShell
+          role="dialog"
+          aria-modal="true"
+          aria-label="Launch workflow"
+          overlayProps={{
+            onClick: () => {
+              if (!startMutation.isPending) setLaunchDefinitionId(null);
+            },
+          }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <WorkflowLaunchForm
+            parameters={launchParameters}
+            isLaunching={startMutation.isPending}
+            engineError={engineError}
+            onLaunch={(values) => startWorkflow(launchDefinitionId, values)}
+            onCancel={() => {
+              setLaunchDefinitionId(null);
+              setEngineError(null);
+            }}
+          />
+        </ModalShell>
+      )}
       <ConfirmDialog
         open={uncommittedMessage !== null}
         title="Commit changes before starting"

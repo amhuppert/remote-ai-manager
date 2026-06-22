@@ -15,6 +15,7 @@ import { createWorkflowDefinition } from "./test-fixtures";
 import type {
   GraphWorkflowExecutionEvent,
   GraphWorkflowSSEEvent,
+  WorkflowSemanticDefinition,
 } from "@/lib/workflows/schemas";
 
 const WORKTREE_PATH = "/repo/.worktrees/session-1";
@@ -54,6 +55,7 @@ function createInMemoryRepo(config: GlobalConfig = {} as GlobalConfig) {
   });
 
   const appendedEvents: GraphWorkflowExecutionEvent[] = [];
+  const mutateCalls: string[] = [];
 
   function getOrCreateSession(projectPath: string, sessionName: string) {
     const key = `${projectPath}:${sessionName}`;
@@ -70,14 +72,16 @@ function createInMemoryRepo(config: GlobalConfig = {} as GlobalConfig) {
       return getOrCreateSession(projectPath, sessionName);
     },
     async getActiveGraphWorkflowExecution(projectPath, sessionName) {
-      return getOrCreateSession(projectPath, sessionName).graphWorkflowExecution;
+      return getOrCreateSession(projectPath, sessionName)
+        .graphWorkflowExecution;
     },
     async mutateActiveGraphWorkflowExecution(
       projectPath,
       sessionName,
-      _label,
+      label,
       mutate,
     ) {
+      mutateCalls.push(label);
       const session = getOrCreateSession(projectPath, sessionName);
       const { execution, events } = await mutate(
         session.graphWorkflowExecution,
@@ -98,7 +102,7 @@ function createInMemoryRepo(config: GlobalConfig = {} as GlobalConfig) {
     readConfig: async () => config,
   });
 
-  return { repo, sessions, broadcasts, writes, appendedEvents };
+  return { repo, sessions, broadcasts, writes, appendedEvents, mutateCalls };
 }
 
 describe("createGraphWorkflowExecutionRepository.create", () => {
@@ -129,6 +133,8 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         definitionRevision: 1,
         executionId: "exec-1",
         startedAt: "2026-04-04T00:00:00.000Z",
+        inputs: {},
+        launchedTier: "project",
       }),
     ).rejects.toThrow(LegacyWorkflowSchemaError);
   });
@@ -160,6 +166,8 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         definitionRevision: 1,
         executionId: "exec-1",
         startedAt: "2026-04-04T00:00:00.000Z",
+        inputs: {},
+        launchedTier: "project",
       }),
     ).rejects.toThrow(LegacyWorkflowSchemaError);
   });
@@ -172,6 +180,8 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       definitionRevision: 1,
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      launchedTier: "project",
     });
 
     expect(execution.id).toBe("exec-1");
@@ -186,6 +196,8 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       definitionRevision: 1,
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      launchedTier: "project",
     });
 
     expect(execution.lanePlan.continuationMap).toEqual({
@@ -207,6 +219,8 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       definitionRevision: 1,
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      launchedTier: "project",
     });
 
     expect(execution.activeContextIds).toEqual([]);
@@ -276,6 +290,8 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       definitionRevision: 1,
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      launchedTier: "project",
     });
 
     for (const context of execution.workingDefinition.executionContexts) {
@@ -308,6 +324,8 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
       definitionRevision: 1,
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      launchedTier: "project",
     });
 
     const byId = Object.fromEntries(
@@ -347,6 +365,8 @@ describe("createGraphWorkflowExecutionRepository.create", () => {
         definitionRevision: 1,
         executionId: "exec-1",
         startedAt: "2026-04-04T00:00:00.000Z",
+        inputs: {},
+        launchedTier: "project",
       }),
     ).rejects.toBeInstanceOf(GraphWorkflowValidationError);
   });
@@ -363,6 +383,8 @@ describe("createGraphWorkflowExecutionRepository.create charter seed propagation
       definitionRevision: 1,
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      launchedTier: "project",
     });
 
     const stored = sessions.get("/repo:session-1")?.graphWorkflowExecution;
@@ -386,6 +408,8 @@ describe("createGraphWorkflowExecutionRepository.create charter seed propagation
       definitionRevision: 1,
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      launchedTier: "project",
     });
 
     expect(writes).toHaveLength(1);
@@ -404,6 +428,8 @@ describe("createGraphWorkflowExecutionRepository.create charter seed propagation
       definitionRevision: 2,
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      launchedTier: "project",
     });
 
     const charterBroadcast = broadcasts.find(
@@ -437,7 +463,187 @@ describe("createGraphWorkflowExecutionRepository.create charter seed propagation
         definitionRevision: 1,
         executionId: "exec-1",
         startedAt: "2026-04-04T00:00:00.000Z",
+        inputs: {},
+        launchedTier: "project",
       }),
     ).rejects.toThrow(/worktree/);
+  });
+});
+
+describe("createGraphWorkflowExecutionRepository.create parameter substitution", () => {
+  it("substitutes bound inputs into content + charter and persists boundInputs (R4.7, R6.1)", async () => {
+    const { repo, sessions } = createInMemoryRepo();
+    const baseline = createWorkflowDefinition();
+    const definition: WorkflowSemanticDefinition = {
+      ...baseline,
+      parameters: [
+        {
+          name: "feature",
+          label: "Feature",
+          type: "string",
+          required: true,
+        },
+        {
+          name: "ac",
+          label: "Acceptance criteria",
+          type: "text",
+          required: true,
+        },
+      ],
+      charter: makeTestCharter({ mission: "Deliver {{inputs.feature}}" }),
+      executionContexts: [
+        {
+          ...baseline.executionContexts[0]!,
+          acceptanceCriteria: "{{inputs.ac}}",
+        },
+        ...baseline.executionContexts.slice(1),
+      ],
+    };
+
+    const inputs = {
+      feature: "the payments flow",
+      ac: "All payment paths covered",
+    };
+
+    const execution = await repo.create("/repo", "session-1", {
+      definition,
+      definitionId: "wf-1",
+      definitionRevision: 1,
+      executionId: "exec-1",
+      startedAt: "2026-04-04T00:00:00.000Z",
+      inputs,
+      launchedTier: "project",
+    });
+
+    expect(execution.charter.mission).toBe("Deliver the payments flow");
+    expect(execution.charter.mission).not.toContain("{{inputs.");
+
+    const planContext = execution.workingDefinition.executionContexts.find(
+      (context) => context.id === "context-plan",
+    );
+    expect(planContext?.acceptanceCriteria).toBe("All payment paths covered");
+
+    const serialized = JSON.stringify(execution.workingDefinition);
+    expect(serialized).not.toContain("{{inputs.");
+
+    expect(execution.boundInputs).toEqual(inputs);
+
+    const stored = sessions.get("/repo:session-1")?.graphWorkflowExecution;
+    expect(stored?.boundInputs).toEqual(inputs);
+  });
+
+  it("seeds nothing when substitution empties required content (R5.2, R5.3)", async () => {
+    const { repo, mutateCalls } = createInMemoryRepo();
+    const baseline = createWorkflowDefinition();
+    const definition: WorkflowSemanticDefinition = {
+      ...baseline,
+      parameters: [
+        {
+          name: "ac",
+          label: "Acceptance criteria",
+          type: "text",
+          required: false,
+        },
+      ],
+      executionContexts: [
+        {
+          ...baseline.executionContexts[0]!,
+          acceptanceCriteria: "{{inputs.ac}}",
+        },
+        ...baseline.executionContexts.slice(1),
+      ],
+    };
+
+    await expect(
+      repo.create("/repo", "session-1", {
+        definition,
+        definitionId: "wf-1",
+        definitionRevision: 1,
+        executionId: "exec-1",
+        startedAt: "2026-04-04T00:00:00.000Z",
+        inputs: { ac: "   " },
+        launchedTier: "project",
+      }),
+    ).rejects.toBeInstanceOf(GraphWorkflowValidationError);
+
+    expect(mutateCalls.length).toBe(0);
+  });
+
+  it("seeds successfully when a bound value contains a literal {{...}} (R5.5)", async () => {
+    const { repo } = createInMemoryRepo();
+    const baseline = createWorkflowDefinition();
+    const definition: WorkflowSemanticDefinition = {
+      ...baseline,
+      parameters: [
+        {
+          name: "ci",
+          label: "CI matrix expression",
+          type: "string",
+          required: true,
+        },
+      ],
+      executionContexts: [
+        {
+          ...baseline.executionContexts[0]!,
+          acceptanceCriteria: "Runs on {{inputs.ci}}",
+        },
+        ...baseline.executionContexts.slice(1),
+      ],
+    };
+
+    const literal = "${{ matrix.os }} and a brief mentioning {{inputs.y}}";
+
+    const execution = await repo.create("/repo", "session-1", {
+      definition,
+      definitionId: "wf-1",
+      definitionRevision: 1,
+      executionId: "exec-1",
+      startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: { ci: literal },
+      launchedTier: "project",
+    });
+
+    const planContext = execution.workingDefinition.executionContexts.find(
+      (context) => context.id === "context-plan",
+    );
+    expect(planContext?.acceptanceCriteria).toBe(`Runs on ${literal}`);
+    expect(planContext?.acceptanceCriteria).toContain("${{ matrix.os }}");
+    expect(planContext?.acceptanceCriteria).toContain("{{inputs.y}}");
+  });
+
+  it("seeds a static definition with empty boundInputs (R6.5)", async () => {
+    const { repo } = createInMemoryRepo();
+
+    const execution = await repo.create("/repo", "session-1", {
+      definition: createWorkflowDefinition(),
+      definitionId: "wf-1",
+      definitionRevision: 1,
+      executionId: "exec-1",
+      startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      launchedTier: "project",
+    });
+
+    expect(execution.boundInputs).toEqual({});
+    expect(execution.status).toBe("pending");
+  });
+
+  it("snapshots the seed's launchedTier onto the execution, parallel to boundInputs (R3.3)", async () => {
+    const { repo, sessions } = createInMemoryRepo();
+
+    const execution = await repo.create("/repo", "session-1", {
+      definition: createWorkflowDefinition(),
+      definitionId: "wf-1",
+      definitionRevision: 1,
+      executionId: "exec-1",
+      startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      launchedTier: "global",
+    });
+
+    expect(execution.launchedTier).toBe("global");
+
+    const stored = sessions.get("/repo:session-1")?.graphWorkflowExecution;
+    expect(stored?.launchedTier).toBe("global");
   });
 });

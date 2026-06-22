@@ -23,7 +23,22 @@ import {
   type ProvisionResult,
 } from "@/lib/workflow-graph/parallel-worktrees";
 import type { SessionState } from "@/lib/sessions/schemas";
+import type { DirtyPath } from "@/lib/workflow-graph/errors";
+import { readWorktreeDirtyPaths } from "@/lib/git/worktree";
+import {
+  validateLaunchInputs,
+  type LaunchInputError,
+} from "@/lib/workflow-graph/start-input-service";
 import type { MutateActiveResult } from "@/lib/workflow-graph/execution-repository";
+import type { TemplateTier } from "@/lib/workflow-graph/template-library-service";
+import { computeUsedBackends } from "@/lib/workflow-graph/resolve-config";
+import {
+  createPreflightPrerequisiteService,
+  type MissingPrerequisite,
+  type PreflightPrerequisiteService,
+} from "@/lib/workflow-graph/preflight-prerequisite-service";
+import { readConfig } from "@/lib/config/loader";
+import type { GlobalConfig } from "@/lib/config/schemas";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowHaltReason,
@@ -37,6 +52,10 @@ interface GraphWorkflowExecutionSeed {
   definitionRevision: number;
   executionId: string;
   startedAt: string;
+  inputs: Record<string, string>;
+  // The tier the template was launched from. Rides the definition tier onto the
+  // execution as an additive audit annotation, parallel to `inputs`/boundInputs.
+  launchedTier: TemplateTier;
 }
 
 interface GraphWorkflowExecutionRepository {
@@ -49,6 +68,7 @@ interface GraphWorkflowExecutionRepository {
     sessionName: string,
     seed: GraphWorkflowExecutionSeed,
   ): Promise<GraphWorkflowExecution>;
+  archiveActive(projectPath: string, sessionName: string): Promise<void>;
   mutateActive(
     projectPath: string,
     sessionName: string,
@@ -86,6 +106,98 @@ export interface GraphWorkflowStartInput {
   projectPath: string;
   sessionName: string;
   definitionId: string;
+  /**
+   * Template tier to resolve the definition from. Omitted defaults to
+   * `"project"`, preserving every current caller (the per-project load).
+   */
+  tier?: TemplateTier;
+  /**
+   * Raw supplied launch values (parameter name → unvalidated value). Validated
+   * by `validateLaunchInputs` inside the shared start path; omitted/empty is a
+   * behavior-neutral zero-input launch.
+   */
+  parameters?: Record<string, unknown>;
+}
+
+/**
+ * Raised by the shared start path when a pre-seed guard rejects the launch. The
+ * `guard` discriminator lets the thin HTTP/MCP surface reconstruct the exact
+ * 409 response (the active-execution message, or the structured
+ * `uncommitted_changes` payload built from `dirtyPaths`) without re-deriving it
+ * from a message string.
+ */
+export class WorkflowStartGuardError extends Error {
+  readonly guard: "active_execution" | "uncommitted_changes";
+  readonly dirtyPaths?: DirtyPath[];
+
+  constructor(
+    guard: "active_execution" | "uncommitted_changes",
+    message: string,
+    dirtyPaths?: DirtyPath[],
+  ) {
+    super(message);
+    this.name = "WorkflowStartGuardError";
+    this.guard = guard;
+    if (dirtyPaths !== undefined) {
+      this.dirtyPaths = dirtyPaths;
+    }
+  }
+}
+
+/**
+ * Raised by the shared start path when start-input validation rejects the
+ * launch. Carries the structured `LaunchInputError` so the surface can map it to
+ * a 400 naming the offending parameter without re-parsing the message.
+ */
+export class WorkflowStartInputError extends Error {
+  readonly inputError: LaunchInputError;
+
+  constructor(inputError: LaunchInputError, message: string) {
+    super(message);
+    this.name = "WorkflowStartInputError";
+    this.inputError = inputError;
+  }
+}
+
+/**
+ * Raised by the shared start path when the requested template does not exist in
+ * the indicated tier (R3.4). Carries the `definitionId` + `tier` so a surface
+ * can identify the missing template distinctly from every other rejection class.
+ * The `message` keeps the established `'Workflow definition "<id>" was not
+ * found'` shape so the HTTP handler's string-based 404 mapping and the MCP
+ * tool's `not_found` detection continue to fire unchanged.
+ */
+export class WorkflowDefinitionNotFoundError extends Error {
+  readonly definitionId: string;
+  readonly tier: TemplateTier;
+
+  constructor(definitionId: string, tier: TemplateTier) {
+    super(`Workflow definition "${definitionId}" was not found`);
+    this.name = "WorkflowDefinitionNotFoundError";
+    this.definitionId = definitionId;
+    this.tier = tier;
+  }
+}
+
+/**
+ * Raised by the shared start path when the deterministic prerequisite gate
+ * rejects the launch (a declared path/skill prerequisite is unmet on the target
+ * worktree, or its probe errored — fail-closed, R5.10). Carries the itemized
+ * `missing` so the thin HTTP/MCP surface can reconstruct the structured
+ * `prerequisites_unmet` response (each item's kind, scoped backend for a skill,
+ * and `reason` of `absent`|`probe_error`) without re-deriving it from a message
+ * string. Distinct from `WorkflowStartGuardError` (active-execution /
+ * uncommitted-changes), `WorkflowStartInputError` (missing/invalid input), and
+ * the not-found error so the rejection class is unambiguous (R6.2).
+ */
+export class WorkflowPrerequisitesUnmetError extends Error {
+  readonly missing: MissingPrerequisite[];
+
+  constructor(missing: MissingPrerequisite[], message: string) {
+    super(message);
+    this.name = "WorkflowPrerequisitesUnmetError";
+    this.missing = missing;
+  }
 }
 
 export interface GraphWorkflowRetryableIterationErrorInput {
@@ -104,6 +216,7 @@ export interface GraphWorkflowManagerDeps {
   loadDefinition(
     projectPath: string,
     definitionId: string,
+    tier: TemplateTier,
   ): Promise<WorkflowDefinitionRecord | null>;
   now?(): string;
   createExecutionId?(): string;
@@ -117,6 +230,26 @@ export interface GraphWorkflowManagerDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<SessionState | null>;
+  /**
+   * Read the uncommitted (tracked + untracked, non-ignored) changes in a
+   * session worktree. The shared start path uses it for the dirty-worktree
+   * guard. Defaults to the real `git status --porcelain` reader.
+   */
+  readSessionWorktreeDirtyPaths?(worktreePath: string): Promise<DirtyPath[]>;
+  /**
+   * Deterministic pre-flight prerequisite gate. The shared start path invokes
+   * it after the dirty-worktree guard + tier resolve and before start-input
+   * validation/substitution, so a missing prerequisite halts the launch with a
+   * distinct diagnostic and seeds nothing. Defaults to the real report-only
+   * service over the production probes.
+   */
+  preflightService?: PreflightPrerequisiteService;
+  /**
+   * Read the global config, used to resolve the workflow's used-backend set
+   * (per-context implementer + enabled context-validator backends) for the
+   * prerequisite gate. Defaults to the real config loader.
+   */
+  readGlobalConfig?(): Promise<GlobalConfig>;
   createBatchId?(): string;
   /**
    * Signal the in-flight Claude Code SDK query for a running task's
@@ -188,6 +321,17 @@ export interface DrainAndHaltInput {
 }
 
 const logger = createLogger("graph-workflow-manager");
+
+function describeLaunchInputError(error: LaunchInputError): string {
+  switch (error.kind) {
+    case "missing_required":
+      return `Required parameter "${error.name}" was not supplied`;
+    case "invalid_value":
+      return `Parameter "${error.name}" is invalid: ${error.message}`;
+    case "unknown_parameter":
+      return `Unknown parameter "${error.name}" is not declared by this workflow`;
+  }
+}
 
 function cloneExecution(
   execution: GraphWorkflowExecution,
@@ -353,28 +497,162 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
     }
   }
 
+  async function readStartSession(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<SessionState | null> {
+    if (!deps.getSession) {
+      return null;
+    }
+    return deps.getSession(projectPath, sessionName);
+  }
+
+  async function readSessionDirtyPaths(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<DirtyPath[]> {
+    if (!deps.getSession) {
+      return [];
+    }
+    const session = await deps.getSession(projectPath, sessionName);
+    if (!session) {
+      return [];
+    }
+    const readDirty =
+      deps.readSessionWorktreeDirtyPaths ?? readWorktreeDirtyPaths;
+    try {
+      return (await readDirty(session.worktreePath)) ?? [];
+    } catch (error) {
+      // Don't wedge a legitimate start if the status probe itself fails; the
+      // dirty gate is a guard, not a hard precondition we can always evaluate.
+      logger.warn("graph-workflow.start.dirty_check_failed", {
+        projectPath,
+        sessionName,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
+  }
+
   async function start(
     input: GraphWorkflowStartInput,
   ): Promise<GraphWorkflowExecution> {
+    // Guard order is behavior-preserving and load-bearing: active-execution
+    // first, then the dirty-worktree guard, both BEFORE loadDefinition. The
+    // dirty 409 must still win over a 404 when both apply (the HTTP handler
+    // historically checked dirty before resolving the definition), and the
+    // active-execution guard precedes everything so an already-running workflow
+    // reports the more specific message.
     const existing = await deps.executionRepository.getActive(
       input.projectPath,
       input.sessionName,
     );
     if (existing) {
-      throw new Error(
-        `Session "${input.sessionName}" already has an active graph workflow execution`,
+      const terminalStatuses: GraphWorkflowStatus[] = [
+        "completed",
+        "halted",
+        "aborted",
+      ];
+      if (terminalStatuses.includes(existing.status)) {
+        await deps.executionRepository.archiveActive(
+          input.projectPath,
+          input.sessionName,
+        );
+      } else {
+        throw new WorkflowStartGuardError(
+          "active_execution",
+          `Session "${input.sessionName}" already has an active graph workflow execution`,
+        );
+      }
+    }
+
+    // Lanes fork from the committed session branch, so any uncommitted change in
+    // the session worktree (e.g. a freshly-written, never-committed Kiro spec —
+    // which is untracked) would be missing from every lane. Refuse the start.
+    const dirtyPaths = await readSessionDirtyPaths(
+      input.projectPath,
+      input.sessionName,
+    );
+    if (dirtyPaths.length > 0) {
+      logger.info("graph-workflow.start.blocked_uncommitted_changes", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        dirtyCount: dirtyPaths.length,
+      });
+      throw new WorkflowStartGuardError(
+        "uncommitted_changes",
+        `Cannot start the workflow while the session worktree has ${dirtyPaths.length} uncommitted change(s). Workflow lanes are created from the committed branch, so uncommitted files would be missing. Commit your changes and try again.`,
+        dirtyPaths,
       );
     }
 
+    const tier: TemplateTier = input.tier ?? "project";
     const definition = await deps.loadDefinition(
       input.projectPath,
       input.definitionId,
+      tier,
     );
     if (!definition) {
-      throw new Error(
-        `Workflow definition "${input.definitionId}" was not found`,
+      throw new WorkflowDefinitionNotFoundError(input.definitionId, tier);
+    }
+
+    // Deterministic prerequisite gate. It sits AFTER the dirty-worktree guard
+    // (mirroring the existing chain — a dirty worktree is reported before a
+    // missing prerequisite, both are pre-token gates) and BEFORE start-input
+    // validation/substitution, so a prerequisite miss is attributed distinctly
+    // and seeds nothing — no conversation, no agent turn (R5.9, R6.1, R6.3).
+    const session = await readStartSession(
+      input.projectPath,
+      input.sessionName,
+    );
+    if (session) {
+      const preflightService =
+        deps.preflightService ?? createPreflightPrerequisiteService();
+      const global = await (deps.readGlobalConfig ?? readConfig)();
+      // Backends are not a parameterizable field, so the used-backend set is
+      // resolved from the RAW resolved definition pre-substitution — the same
+      // resolution the run uses (per-context → workflow → global). It scopes
+      // backend-dependent (skill) prerequisites to the backend(s) that actually
+      // run the launch, never a single assumed launch backend (R5.2a, R5.4b).
+      const usedBackends = computeUsedBackends(global, definition.definition);
+      const preflight = await preflightService.evaluate({
+        definition: definition.definition,
+        worktreePath: session.worktreePath,
+        usedBackends,
+      });
+      if (preflight.status === "prerequisites_unmet") {
+        logger.info("graph-workflow.start.blocked_prerequisites_unmet", {
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          definitionId: input.definitionId,
+          tier,
+          missingCount: preflight.missing.length,
+        });
+        throw new WorkflowPrerequisitesUnmetError(
+          preflight.missing,
+          `Cannot start the workflow: ${preflight.missing.length} declared prerequisite(s) are unmet in the session worktree.`,
+        );
+      }
+    }
+
+    const validation = validateLaunchInputs({
+      parameters: definition.definition.parameters,
+      supplied: input.parameters,
+    });
+    if (!validation.ok) {
+      logger.info("graph-workflow.start.input_rejected", {
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        definitionId: input.definitionId,
+        rejectionKind: validation.error.kind,
+        parameterName: validation.error.name,
+      });
+      throw new WorkflowStartInputError(
+        validation.error,
+        describeLaunchInputError(validation.error),
       );
     }
+    const boundInputs = validation.boundInputs;
 
     await deps.executionRepository.create(
       input.projectPath,
@@ -385,6 +663,8 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         definitionRevision: definition.revision,
         executionId: getExecutionId(deps),
         startedAt: getNow(deps),
+        inputs: boundInputs,
+        launchedTier: tier,
       },
     );
 
@@ -419,6 +699,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       executionId: nextExecution.id,
       definitionId: definition.id,
       definitionRevision: definition.revision,
+      tier,
     });
 
     return nextExecution;

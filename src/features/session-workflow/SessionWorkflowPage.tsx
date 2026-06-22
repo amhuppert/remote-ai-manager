@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import "@/components/workflow-graph/workflow-graph.css";
 import {
@@ -74,6 +75,12 @@ export default function SessionWorkflowPage() {
             <EmptyStateDesc>
               Start a graph workflow for this session to monitor it here.
             </EmptyStateDesc>
+            <Link
+              href={`/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/templates`}
+              className="mt-md inline-flex items-center gap-sm rounded-md border border-solid border-cyan bg-cyan px-[18px] py-[10px] font-mono text-[0.78rem] font-semibold text-text-inverse no-underline transition-all duration-150 ease-[ease] hover:bg-cyan-dim hover:shadow-[0_0_20px_var(--color-cyan-glow)]"
+            >
+              Browse templates
+            </Link>
           </EmptyState>
         ) : (
           <div className="flex h-full min-h-0 flex-col overflow-hidden">

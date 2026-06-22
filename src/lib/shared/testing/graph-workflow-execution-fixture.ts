@@ -16,6 +16,11 @@ export function buildMaximalGraphWorkflowExecution(): unknown {
     id: "wf-maximal",
     seedDefinitionId: "seed-maximal",
     seedDefinitionRevision: 3,
+    boundInputs: {
+      feature: "search box",
+      notes: "first line\nsecond line",
+    },
+    launchedTier: "global",
     workingDefinition: {
       schemaVersion: 2,
       executionContexts: [

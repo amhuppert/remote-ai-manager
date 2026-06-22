@@ -20,6 +20,8 @@ describe("workflow graph planner", () => {
           schemaVersion: 1,
           workflowConfig: {},
           charter: makeTestCharter(),
+          parameters: [],
+          prerequisites: [],
           executionContexts: [
             {
               id: "context-plan",
@@ -110,6 +112,8 @@ describe("workflow graph planner", () => {
           schemaVersion: 1,
           workflowConfig: {},
           charter: makeTestCharter(),
+          parameters: [],
+          prerequisites: [],
           executionContexts: [
             {
               id: "context-1",
@@ -164,6 +168,8 @@ describe("workflow graph planner", () => {
         schemaVersion: 1,
         workflowConfig: {},
         charter: makeTestCharter(),
+        parameters: [],
+        prerequisites: [],
         executionContexts: [],
         tasks: [],
         edges: [],

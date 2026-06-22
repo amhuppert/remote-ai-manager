@@ -41,6 +41,9 @@ import {
 import InspectorConfigBlock, {
   type InspectorConfigBlockSource,
 } from "./InspectorConfigBlock";
+import ParameterDeclarationEditor from "./ParameterDeclarationEditor";
+import { SectionLabel } from "@/components/ui/SectionHeader";
+import type { ParameterDeclaration } from "@/lib/workflows/schemas";
 import {
   CircuitBreakerEditor,
   CollaborationEditor,
@@ -155,6 +158,29 @@ function findFieldError(
       (contextId === undefined || e.contextId === contextId) &&
       (taskId === undefined || e.taskId === taskId),
   );
+}
+
+// Accept-time lint codes that pertain to parameter declarations and their
+// references. Surfaced as the parameter editor's `saveError` so the offending
+// field/parameter is named in context (R8.3).
+const PARAMETER_LINT_CODES = new Set<string>([
+  "undeclared-parameter-reference",
+  "duplicate-parameter-name",
+  "referenced-parameter-without-value",
+  "invalid-placeholder-token",
+  "empty-enum-options",
+  "default-not-in-enum-options",
+  "default-length-out-of-bounds",
+]);
+
+// First parameter-related lint error (if any) formatted into a concise message.
+// Each error already carries a locator-rich `message`; this just selects the
+// parameter-relevant one so it renders on the editor rather than nowhere.
+function parameterSaveError(
+  errors: WorkflowGraphValidationError[],
+): string | null {
+  const match = errors.find((error) => PARAMETER_LINT_CODES.has(error.code));
+  return match ? match.message : null;
 }
 
 function FieldError({
@@ -555,6 +581,11 @@ export default function WorkflowInspectorPanel({
           <WorkflowTabBody
             workflowConfig={workflowConfig}
             globalDefaults={defaults}
+            parameters={draftDefinition.parameters}
+            parameterSaveError={parameterSaveError(validationErrors)}
+            onParametersChange={(next) => {
+              updateDefinition({ ...draftDefinition, parameters: next });
+            }}
             onSetOverride={(block, value) => {
               updateDefinition(
                 setWorkflowConfigOverride(draftDefinition, block, value),
@@ -653,11 +684,17 @@ export default function WorkflowInspectorPanel({
 function WorkflowTabBody({
   workflowConfig,
   globalDefaults,
+  parameters,
+  parameterSaveError,
+  onParametersChange,
   onSetOverride,
   onClearOverride,
 }: {
   workflowConfig: WorkflowConfigOverride;
   globalDefaults: WorkflowDefaults;
+  parameters: ParameterDeclaration[];
+  parameterSaveError: string | null;
+  onParametersChange: (next: ParameterDeclaration[]) => void;
   onSetOverride: <K extends keyof WorkflowConfigOverride>(
     block: K,
     value: NonNullable<WorkflowConfigOverride[K]>,
@@ -670,6 +707,18 @@ function WorkflowTabBody({
 
   return (
     <div className="flex flex-col gap-sm" data-scope="workflow">
+      <section
+        className="mb-xs flex flex-col gap-md border-b border-solid border-border-dim pb-md"
+        data-section="parameters"
+      >
+        <SectionLabel>Launch parameters</SectionLabel>
+        <ParameterDeclarationEditor
+          parameters={parameters}
+          onChange={onParametersChange}
+          saveError={parameterSaveError}
+        />
+      </section>
+
       <InspectorConfigBlock
         label="Implementer"
         summary={summarizeImplementer(cascade.implementer.value)}

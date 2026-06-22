@@ -7,6 +7,11 @@ import type {
 import { registerPlannerTools, type PlannerToolDeps } from "./planner-tools";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import { computeCharterHash } from "./charter/render";
+import { validateAuthoredDefinition } from "./validation";
+import type {
+  ParameterDeclaration,
+  WorkflowSemanticDefinition,
+} from "@/lib/workflows/schemas";
 
 const TOOLS_KEY = "__test_planner_tools";
 type ToolHandler = (args: unknown) => Promise<unknown>;
@@ -129,6 +134,7 @@ type CreatedDraft = {
   description: string | null;
   definition: {
     workflowConfig: Record<string, unknown>;
+    parameters: ParameterDeclaration[];
     executionContexts: Array<Record<string, unknown>>;
     tasks: Array<{ id: string; contextId: string; order: number }>;
     edges: Array<{ sourceContextId: string; targetContextId: string }>;
@@ -309,6 +315,106 @@ describe("graph workflow planner tools", () => {
     expect(draft.definition.workflowConfig).toEqual({});
   });
 
+  const MIXED_PARAMETERS: ParameterDeclaration[] = [
+    {
+      type: "string",
+      name: "service-name",
+      label: "Service name",
+      required: true,
+    },
+    {
+      type: "text",
+      name: "context-notes",
+      label: "Context notes",
+      required: false,
+      default: "none",
+    },
+    {
+      type: "enum",
+      name: "target-env",
+      label: "Target environment",
+      required: true,
+      options: ["staging", "production"],
+    },
+  ];
+
+  it("create_graph_workflow: declared parameters of mixed types are threaded onto the inflated definition", async () => {
+    const deps = createMockDeps();
+
+    registerTools(deps);
+
+    const result = (await getHandler("create_graph_workflow")({
+      ...MINIMAL_INPUT,
+      parameters: MIXED_PARAMETERS,
+    })) as { content: Array<{ text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeUndefined();
+
+    const draft = captureCreatedDraft(deps);
+    expect(draft.definition.parameters).toEqual(MIXED_PARAMETERS);
+  });
+
+  it("replace_graph_workflow: declared parameters of mixed types are threaded onto the inflated definition", async () => {
+    const deps = createMockDeps();
+
+    registerTools(deps);
+
+    const result = (await getHandler("replace_graph_workflow")({
+      workflowId: "wf-test-1",
+      ...MINIMAL_INPUT,
+      parameters: MIXED_PARAMETERS,
+    })) as { content: Array<{ text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeUndefined();
+
+    const [, , draft] = (deps.updateWorkflow as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [string, string, CreatedDraft];
+    expect(draft.definition.parameters).toEqual(MIXED_PARAMETERS);
+  });
+
+  it("create_graph_workflow: omitting parameters defaults to []", async () => {
+    const deps = createMockDeps();
+
+    registerTools(deps);
+
+    await getHandler("create_graph_workflow")(MINIMAL_INPUT);
+
+    const draft = captureCreatedDraft(deps);
+    expect(draft.definition.parameters).toEqual([]);
+  });
+
+  it("planner-authored definition referencing an undeclared parameter is rejected by the shared accept-time validation", async () => {
+    const deps = createMockDeps();
+
+    registerTools(deps);
+
+    await getHandler("create_graph_workflow")({
+      ...MINIMAL_INPUT,
+      tasks: [
+        {
+          id: "create-auth-middleware",
+          contextId: "auth-setup",
+          title: "Create auth middleware",
+          instructions:
+            "Wire up middleware for {{inputs.undeclared-thing}} and verify it.",
+        },
+      ],
+    });
+
+    const [, draft] = (deps.createWorkflow as ReturnType<typeof vi.fn>).mock
+      .calls[0] as [string, { definition: WorkflowSemanticDefinition }];
+    const validation = validateAuthoredDefinition(draft.definition);
+
+    expect(validation.ok).toBe(false);
+    expect(
+      validation.errors.some(
+        (error) =>
+          error.code === "undeclared-parameter-reference" &&
+          error.parameterName === "undeclared-thing",
+      ),
+    ).toBe(true);
+  });
+
   it("create_graph_workflow: context missing acceptanceCriteria is rejected with a targeted Zod error", async () => {
     const deps = createMockDeps();
 
@@ -478,6 +584,8 @@ describe("graph workflow planner tools", () => {
           revision: 3,
           createdAt: "2026-03-30T00:00:00.000Z",
           updatedAt: "2026-03-30T01:00:00.000Z",
+          parameters: [],
+          prerequisites: [],
         },
       ]),
     });
@@ -516,6 +624,8 @@ describe("graph workflow planner tools", () => {
         schemaVersion: 1,
         workflowConfig: {},
         charter: makeTestCharter(),
+        parameters: [],
+        prerequisites: [],
         executionContexts: [],
         tasks: [],
         edges: [],
@@ -618,6 +728,8 @@ describe("graph workflow planner tools", () => {
           schemaVersion: 1,
           workflowConfig: {},
           charter,
+          parameters: [],
+          prerequisites: [],
           executionContexts: [],
           tasks: [],
           edges: [],

@@ -11,9 +11,11 @@ import {
 } from "@/lib/mcp-gateway/route-handler";
 import { createWorkflowDefinitionRouteHandlers } from "@/lib/workflows/definition-route-handlers";
 import { createWorkflowGenerateRouteHandlers } from "@/lib/workflows/generate-route-handlers";
+import { createTemplateLibraryRouteHandlers } from "@/lib/workflow-graph/template-library-route-handlers";
 
 const definitionHandlers = createWorkflowDefinitionRouteHandlers();
 const generateHandlers = createWorkflowGenerateRouteHandlers();
+const templateLibraryHandlers = createTemplateLibraryRouteHandlers();
 
 export const listWorkflowDefinitions = withTracing(async (request, context) =>
   definitionHandlers.LIST(request, context),
@@ -37,6 +39,26 @@ export const deleteWorkflowDefinition = withTracing(async (request, context) =>
 
 export const generateWorkflowDraft = withTracing(async (request, context) =>
   generateHandlers.POST(request, context),
+);
+
+export const listProjectTemplates = withTracing(async (request, context) =>
+  templateLibraryHandlers.LIST_TEMPLATES(request, context),
+);
+
+export const createGlobalTemplate = withTracing(async (request, context) =>
+  templateLibraryHandlers.CREATE(request, context),
+);
+
+export const getGlobalTemplate = withTracing(async (request, context) =>
+  templateLibraryHandlers.GET(request, context),
+);
+
+export const updateGlobalTemplate = withTracing(async (request, context) =>
+  templateLibraryHandlers.UPDATE(request, context),
+);
+
+export const deleteGlobalTemplate = withTracing(async (request, context) =>
+  templateLibraryHandlers.DELETE(request, context),
 );
 
 const draftMcpHandlers = createMcpRouteHandlers(async (_request, params) => {

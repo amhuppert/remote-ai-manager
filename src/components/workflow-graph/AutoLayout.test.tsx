@@ -39,6 +39,8 @@ function makeDefinition(contextIds: string[]): WorkflowSemanticDefinition {
     schemaVersion: 1,
     workflowConfig: {},
     charter: makeTestCharter(),
+    parameters: [],
+    prerequisites: [],
     executionContexts: contextIds.map(makeContext),
     tasks: [],
     edges: [],

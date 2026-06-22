@@ -1,6 +1,8 @@
 import type { GlobalConfig, WorkflowDefaults } from "@/lib/config/schemas";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
   CollaborationConfigSource,
+  GraphWorkflowAgentValidatorConfig,
   GraphWorkflowExecutionContextDefinition,
   GraphWorkflowResolvedContext,
   ResolvedCollaborationConfig,
@@ -197,6 +199,50 @@ export function resolveWorkflowDefinition(
     tasks: definition.tasks,
     edges: definition.edges,
   };
+}
+
+// The backend a (resolved, enabled) context-validator runs on: a `codex`
+// validator is fixed to the codex backend; a `claude` validator carries an
+// explicit `agent.backend`.
+function validatorBackend(
+  validator: GraphWorkflowAgentValidatorConfig,
+): AgentBackendId {
+  return validator.type === "codex" ? "codex" : validator.agent.backend;
+}
+
+/**
+ * The distinct set of agent backends the resolved workflow actually uses
+ * (R5.2a). For every execution context, resolve it through the same config
+ * cascade the run uses (per-context → workflow → global) and collect the
+ * implementer's backend (always present) plus the context-validator's backend
+ * when that validator is non-null AND enabled. A disabled validator does not
+ * run, so its backend is NOT "used"; a `disabled`/null validator and a script
+ * validator contribute no backend.
+ *
+ * Backends are not a parameterizable field, so this set is computed from the
+ * RAW resolved definition before any `{{...}}` substitution — substitution only
+ * touches content/charter text, never the operational config that selects a
+ * backend. The start gate hands this set to the pre-flight service so an
+ * unscoped skill prerequisite is checked on every backend the launch will run,
+ * not a single assumed launch backend.
+ */
+export function computeUsedBackends(
+  global: GlobalConfig,
+  definition: WorkflowSemanticDefinition,
+): Set<AgentBackendId> {
+  const defaults = coerceGlobalDefaults(global.workflowDefaults);
+  const workflowConfig = definition.workflowConfig ?? {};
+  const backends = new Set<AgentBackendId>();
+
+  for (const context of definition.executionContexts) {
+    const resolved = resolveContext(defaults, workflowConfig, context);
+    backends.add(resolved.implementer.backend);
+    if (resolved.contextValidator && resolved.contextValidator.enabled) {
+      backends.add(validatorBackend(resolved.contextValidator));
+    }
+  }
+
+  return backends;
 }
 
 // Per-field cascade: per-node → workflow → global. Each field is computed

@@ -203,6 +203,11 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}components${path.sep}Toast.tsx`,
   `${path.sep}features${path.sep}session${path.sep}ConversationWorkspace.tsx`,
   `${path.sep}app${path.sep}projects${path.sep}[name]${path.sep}[session]${path.sep}conflicts${path.sep}page.tsx`,
+  // global-workflow-templates library + launch UI: authored utility-first against
+  // the design system. Registered in all three mirrored allowlists (here +
+  // eslint.config.mjs MIGRATED_UTILITY_FIRST + .prettierrc).
+  `${path.sep}components${path.sep}WorkflowLaunchForm.tsx`,
+  `${path.sep}features${path.sep}workflow-templates${path.sep}`,
 ];
 
 function srcFiles(ext: string): string[] {

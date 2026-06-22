@@ -1,4 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import nodePath from "node:path";
+import type { GlobalConfig } from "@/lib/config/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type {
   GraphWorkflowExecution,
@@ -8,6 +12,7 @@ import type {
 } from "@/lib/workflows/schemas";
 import {
   createResolvedWorkflowDefinition,
+  createWorkflowDefinition,
   createWorkflowDefinitionRecord,
   createWorkflowExecution,
 } from "@/lib/workflow-graph/test-fixtures";
@@ -26,7 +31,25 @@ import type {
   ProvisionLaneInput,
   ProvisionResult,
 } from "@/lib/workflow-graph/parallel-worktrees";
-import { createGraphWorkflowManager } from "./workflow-manager";
+import type { DirtyPath } from "@/lib/workflow-graph/errors";
+import {
+  createGraphWorkflowManager,
+  WorkflowDefinitionNotFoundError,
+  WorkflowPrerequisitesUnmetError,
+  WorkflowStartGuardError,
+  WorkflowStartInputError,
+} from "./workflow-manager";
+import type { PreflightPrerequisiteService } from "./preflight-prerequisite-service";
+import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { TemplateTier } from "./template-library-service";
+import { createGraphWorkflowExecutionRepository } from "./execution-repository";
+import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
+import { createWorkflowCharterService } from "./charter/service";
+import {
+  createPersistenceFixture,
+  type PersistenceFixture,
+} from "@/lib/shared/testing/persistence-fixture";
+import type { WorkflowSemanticDefinition } from "@/lib/workflows/schemas";
 
 interface InMemoryExecutionRepository {
   getActive(
@@ -42,8 +65,11 @@ interface InMemoryExecutionRepository {
       definitionRevision: number;
       executionId: string;
       startedAt: string;
+      inputs: Record<string, string>;
+      launchedTier: TemplateTier;
     },
   ): Promise<GraphWorkflowExecution>;
+  archiveActive(projectPath: string, sessionName: string): Promise<void>;
   update(
     projectPath: string,
     sessionName: string,
@@ -70,30 +96,57 @@ interface InMemoryExecutionRepository {
   ): Promise<number>;
 }
 
+type CreateSeedCapture = {
+  definitionId: string;
+  definitionRevision: number;
+  executionId: string;
+  startedAt: string;
+  inputs: Record<string, string>;
+  launchedTier: TemplateTier;
+};
+
 function createRepository(
   initialExecution: GraphWorkflowExecution | null = null,
 ): InMemoryExecutionRepository & {
   read(): GraphWorkflowExecution | null;
   preResetCalls: Array<{ executionId: string; contextId: string }>;
+  createCalls: CreateSeedCapture[];
+  archiveCalls: number;
 } {
   let activeExecution = initialExecution;
   let lock: Promise<void> = Promise.resolve();
   const preResetCalls: Array<{ executionId: string; contextId: string }> = [];
+  const createCalls: CreateSeedCapture[] = [];
+  let archiveCalls = 0;
 
   return {
     async getActive() {
       return activeExecution;
     },
     async create(_projectPath, _sessionName, seed) {
+      createCalls.push({
+        definitionId: seed.definitionId,
+        definitionRevision: seed.definitionRevision,
+        executionId: seed.executionId,
+        startedAt: seed.startedAt,
+        inputs: seed.inputs,
+        launchedTier: seed.launchedTier,
+      });
       activeExecution = createWorkflowExecution({
         id: seed.executionId,
         seedDefinitionId: seed.definitionId,
         seedDefinitionRevision: seed.definitionRevision,
+        boundInputs: seed.inputs,
+        launchedTier: seed.launchedTier,
         workingDefinition:
           seed.definition as unknown as ResolvedWorkflowSemanticDefinition,
         startedAt: seed.startedAt,
       });
       return activeExecution;
+    },
+    async archiveActive() {
+      archiveCalls += 1;
+      activeExecution = null;
     },
     async update(_projectPath, _sessionName, execution) {
       activeExecution = execution;
@@ -134,6 +187,10 @@ function createRepository(
       return activeExecution;
     },
     preResetCalls,
+    createCalls,
+    get archiveCalls() {
+      return archiveCalls;
+    },
   };
 }
 
@@ -174,6 +231,186 @@ describe("graph workflow manager", () => {
       activeContextId: null,
       recoveryMode: "none",
       hasLiveIteration: false,
+    });
+  });
+
+  describe("start threads the launch tier through resolution and the seed", () => {
+    const PROJECT_PATH = "/repo";
+    const SESSION_NAME = "session-1";
+
+    let fixture: PersistenceFixture;
+
+    beforeEach(() => {
+      fixture = createPersistenceFixture();
+      fixture.seedProject(PROJECT_PATH);
+      fixture.seedSession(PROJECT_PATH, SESSION_NAME);
+    });
+
+    afterEach(() => {
+      fixture.close();
+    });
+
+    /**
+     * Wire the manager over the REAL execution repository (backed by the
+     * fixture's real `:memory:` store + `graph_workflow_executions` table) so a
+     * persisted `launchedTier` is proven by reloading through the store, not by
+     * a JS-object fake. `loadDefinition` is tier-aware and returns a DISTINCT
+     * definition id per tier, so resolving the wrong tier would surface a wrong
+     * `seedDefinitionId` — the assertion exercises the manager's tier plumbing,
+     * not a mock echo.
+     */
+    function buildManager(input: {
+      tierDefinitions: Record<TemplateTier, WorkflowDefinitionRecord>;
+      loadCalls: Array<{ definitionId: string; tier: TemplateTier }>;
+    }) {
+      const eventPublisher = createGraphWorkflowExecutionEventPublisher({
+        broadcast: () => {},
+        dispatchPush: () => {},
+      });
+      const charterService = createWorkflowCharterService({
+        writeFile: async () => {},
+        ensureDir: async () => {},
+        publishCharterRegistered: eventPublisher.publishCharterRegistered,
+      });
+      const repository = createGraphWorkflowExecutionRepository({
+        getSession: fixture.store.getSession,
+        getActiveGraphWorkflowExecution:
+          fixture.store.getActiveGraphWorkflowExecution,
+        mutateActiveGraphWorkflowExecution:
+          fixture.store.mutateActiveGraphWorkflowExecution,
+        archiveActiveGraphWorkflowExecution:
+          fixture.store.archiveActiveGraphWorkflowExecution,
+        markGraphWorkflowContextEventsPreReset:
+          fixture.store.markGraphWorkflowContextEventsPreReset,
+        eventPublisher,
+        charterService,
+        readConfig: async () => ({}) as GlobalConfig,
+      });
+      return createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition(_projectPath, definitionId, tier) {
+          input.loadCalls.push({ definitionId, tier });
+          return input.tierDefinitions[tier];
+        },
+        now() {
+          return "2026-06-21T00:00:00.000Z";
+        },
+        createExecutionId() {
+          return "execution-started";
+        },
+      });
+    }
+
+    it("loads the GLOBAL definition and persists launchedTier='global' (R3.1, R3.2, R3.3)", async () => {
+      const loadCalls: Array<{ definitionId: string; tier: TemplateTier }> = [];
+      const manager = buildManager({
+        tierDefinitions: {
+          project: createWorkflowDefinitionRecord({ id: "project-def" }),
+          global: createWorkflowDefinitionRecord({ id: "global-def" }),
+        },
+        loadCalls,
+      });
+
+      const execution = await manager.start({
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        definitionId: "global-def",
+        tier: "global",
+      });
+
+      expect(loadCalls).toEqual([
+        { definitionId: "global-def", tier: "global" },
+      ]);
+      expect(execution.seedDefinitionId).toBe("global-def");
+      expect(execution.launchedTier).toBe("global");
+
+      const reloaded = await fixture.store.getActiveGraphWorkflowExecution(
+        PROJECT_PATH,
+        SESSION_NAME,
+      );
+      expect(reloaded?.seedDefinitionId).toBe("global-def");
+      expect(reloaded?.launchedTier).toBe("global");
+    });
+
+    it("defaults an omitted tier to project, loading the per-project definition and persisting launchedTier='project' (R3.3)", async () => {
+      const loadCalls: Array<{ definitionId: string; tier: TemplateTier }> = [];
+      const manager = buildManager({
+        tierDefinitions: {
+          project: createWorkflowDefinitionRecord({ id: "project-def" }),
+          global: createWorkflowDefinitionRecord({ id: "global-def" }),
+        },
+        loadCalls,
+      });
+
+      const execution = await manager.start({
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        definitionId: "project-def",
+      });
+
+      expect(loadCalls).toEqual([
+        { definitionId: "project-def", tier: "project" },
+      ]);
+      expect(execution.seedDefinitionId).toBe("project-def");
+      expect(execution.launchedTier).toBe("project");
+
+      const reloaded = await fixture.store.getActiveGraphWorkflowExecution(
+        PROJECT_PATH,
+        SESSION_NAME,
+      );
+      expect(reloaded?.seedDefinitionId).toBe("project-def");
+      expect(reloaded?.launchedTier).toBe("project");
+    });
+
+    it("records boundInputs unchanged alongside the additive launchedTier on a parameterized launch (R3.3)", async () => {
+      const baseline = createWorkflowDefinition();
+      const parameterized: WorkflowSemanticDefinition = {
+        ...baseline,
+        parameters: [
+          {
+            name: "feature",
+            label: "Feature",
+            type: "string",
+            required: true,
+          },
+        ],
+        executionContexts: [
+          {
+            ...baseline.executionContexts[0]!,
+            acceptanceCriteria: "Deliver {{inputs.feature}}",
+          },
+          ...baseline.executionContexts.slice(1),
+        ],
+      };
+      const loadCalls: Array<{ definitionId: string; tier: TemplateTier }> = [];
+      const manager = buildManager({
+        tierDefinitions: {
+          project: createWorkflowDefinitionRecord({ id: "project-def" }),
+          global: createWorkflowDefinitionRecord({
+            id: "global-def",
+            definition: parameterized,
+          }),
+        },
+        loadCalls,
+      });
+
+      const execution = await manager.start({
+        projectPath: PROJECT_PATH,
+        sessionName: SESSION_NAME,
+        definitionId: "global-def",
+        tier: "global",
+        parameters: { feature: "payments" },
+      });
+
+      expect(execution.boundInputs).toEqual({ feature: "payments" });
+      expect(execution.launchedTier).toBe("global");
+
+      const reloaded = await fixture.store.getActiveGraphWorkflowExecution(
+        PROJECT_PATH,
+        SESSION_NAME,
+      );
+      expect(reloaded?.boundInputs).toEqual({ feature: "payments" });
+      expect(reloaded?.launchedTier).toBe("global");
     });
   });
 
@@ -5267,6 +5504,795 @@ describe("graph workflow manager", () => {
       ).rejects.toThrow(
         "Session does not have an active graph workflow execution",
       );
+    });
+  });
+
+  describe("start (shared start path)", () => {
+    function makeStartSession(
+      overrides: Partial<SessionState> = {},
+    ): SessionState {
+      return {
+        sessionName: "session-1",
+        worktreePath: "/repo/.worktrees/session-1",
+        branchName: "csm/session-1",
+        createdAt: "2026-03-27T12:00:00.000Z",
+        lastActivityAt: "2026-03-27T12:00:00.000Z",
+        archived: false,
+        finished: false,
+        conversations: [],
+        source: "cc",
+        objective: null,
+        creationMode: "fast",
+        tddEnabled: true,
+        targetBranch: "main",
+        parentSessionName: null,
+        graphWorkflowExecution: null,
+        referenceDocuments: [],
+        ...overrides,
+      };
+    }
+
+    function startInput(parameters?: Record<string, unknown>) {
+      return {
+        projectPath: "/repo",
+        sessionName: "session-1",
+        definitionId: "workflow-1",
+        ...(parameters !== undefined ? { parameters } : {}),
+      };
+    }
+
+    it("seeds with empty inputs for a zero-input launch and runs the full guard chain", async () => {
+      const definition = createWorkflowDefinitionRecord({ revision: 3 });
+      const repository = createRepository();
+
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return definition;
+        },
+        getSession: async () => makeStartSession(),
+        readSessionWorktreeDirtyPaths: async () => [],
+        now: () => "2026-03-27T15:00:00.000Z",
+        createExecutionId: () => "execution-started",
+      });
+
+      const execution = await manager.start(startInput());
+
+      expect(execution.status).toBe("running");
+      expect(repository.createCalls).toHaveLength(1);
+      expect(repository.createCalls[0]?.inputs).toEqual({});
+      expect(execution.boundInputs).toEqual({});
+    });
+
+    it("seeds with applied defaults for a valid parameterized launch", async () => {
+      const definition = createWorkflowDefinitionRecord({
+        definition: createWorkflowDefinition({
+          parameters: [
+            {
+              type: "string",
+              name: "ticket",
+              label: "Ticket",
+              required: true,
+            },
+            {
+              type: "enum",
+              name: "severity",
+              label: "Severity",
+              required: false,
+              options: ["low", "high"],
+              default: "low",
+            },
+          ],
+        }),
+      });
+      const repository = createRepository();
+
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return definition;
+        },
+        getSession: async () => makeStartSession(),
+        readSessionWorktreeDirtyPaths: async () => [],
+      });
+
+      const execution = await manager.start(startInput({ ticket: "CC-42" }));
+
+      expect(repository.createCalls).toHaveLength(1);
+      expect(repository.createCalls[0]?.inputs).toEqual({
+        ticket: "CC-42",
+        severity: "low",
+      });
+      expect(execution.boundInputs).toEqual({
+        ticket: "CC-42",
+        severity: "low",
+      });
+    });
+
+    it("throws a non-terminal active-execution guard error and seeds nothing", async () => {
+      const repository = createRepository(
+        createWorkflowExecution({ id: "active-1", status: "running" }),
+      );
+
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return createWorkflowDefinitionRecord();
+        },
+        getSession: async () => makeStartSession(),
+        readSessionWorktreeDirtyPaths: async () => [],
+      });
+
+      await expect(manager.start(startInput())).rejects.toMatchObject({
+        guard: "active_execution",
+      });
+      await expect(manager.start(startInput())).rejects.toThrow(
+        'Session "session-1" already has an active graph workflow execution',
+      );
+      expect(repository.createCalls).toHaveLength(0);
+      expect(repository.archiveCalls).toBe(0);
+    });
+
+    it("archives a terminal active execution then proceeds to seed", async () => {
+      const repository = createRepository(
+        createWorkflowExecution({
+          id: "old-terminal",
+          status: "completed",
+          completedAt: "2026-03-27T13:00:00.000Z",
+        }),
+      );
+
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return createWorkflowDefinitionRecord();
+        },
+        getSession: async () => makeStartSession(),
+        readSessionWorktreeDirtyPaths: async () => [],
+        createExecutionId: () => "execution-new",
+      });
+
+      const execution = await manager.start(startInput());
+
+      expect(repository.archiveCalls).toBe(1);
+      expect(repository.createCalls).toHaveLength(1);
+      expect(execution.id).toBe("execution-new");
+      expect(execution.status).toBe("running");
+    });
+
+    it("throws an uncommitted-changes guard error carrying dirty paths and seeds nothing", async () => {
+      const dirtyPaths: DirtyPath[] = [
+        { path: "src/edited.ts", statusCode: " M", tracked: true },
+        {
+          path: ".kiro/specs/new/requirements.md",
+          statusCode: "??",
+          tracked: false,
+        },
+      ];
+      const repository = createRepository();
+
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return createWorkflowDefinitionRecord();
+        },
+        getSession: async () => makeStartSession(),
+        readSessionWorktreeDirtyPaths: async () => dirtyPaths,
+      });
+
+      let caught: unknown;
+      try {
+        await manager.start(startInput());
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(WorkflowStartGuardError);
+      const guardError = caught as WorkflowStartGuardError;
+      expect(guardError.guard).toBe("uncommitted_changes");
+      expect(guardError.dirtyPaths).toEqual(dirtyPaths);
+      expect(repository.createCalls).toHaveLength(0);
+    });
+
+    it("runs the dirty guard before loadDefinition so a dirty worktree wins over a missing definition", async () => {
+      const dirtyPaths: DirtyPath[] = [
+        { path: "src/edited.ts", statusCode: " M", tracked: true },
+      ];
+      const repository = createRepository();
+      let loadDefinitionCalled = false;
+
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          loadDefinitionCalled = true;
+          return null;
+        },
+        getSession: async () => makeStartSession(),
+        readSessionWorktreeDirtyPaths: async () => dirtyPaths,
+      });
+
+      await expect(manager.start(startInput())).rejects.toMatchObject({
+        guard: "uncommitted_changes",
+      });
+      expect(loadDefinitionCalled).toBe(false);
+    });
+
+    it("treats a thrown dirty-path probe as not-dirty and proceeds", async () => {
+      const repository = createRepository();
+
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return createWorkflowDefinitionRecord();
+        },
+        getSession: async () => makeStartSession(),
+        readSessionWorktreeDirtyPaths: async () => {
+          throw new Error("git status failed");
+        },
+      });
+
+      const execution = await manager.start(startInput());
+      expect(execution.status).toBe("running");
+      expect(repository.createCalls).toHaveLength(1);
+    });
+
+    it("throws the existing not-found error and seeds nothing for a missing definition", async () => {
+      const repository = createRepository();
+
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return null;
+        },
+        getSession: async () => makeStartSession(),
+        readSessionWorktreeDirtyPaths: async () => [],
+      });
+
+      await expect(manager.start(startInput())).rejects.toThrow(
+        'Workflow definition "workflow-1" was not found',
+      );
+      expect(repository.createCalls).toHaveLength(0);
+    });
+
+    it("throws a WorkflowStartInputError naming the offending parameter and seeds nothing", async () => {
+      const definition = createWorkflowDefinitionRecord({
+        definition: createWorkflowDefinition({
+          parameters: [
+            {
+              type: "string",
+              name: "ticket",
+              label: "Ticket",
+              required: true,
+            },
+          ],
+        }),
+      });
+      const repository = createRepository();
+
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return definition;
+        },
+        getSession: async () => makeStartSession(),
+        readSessionWorktreeDirtyPaths: async () => [],
+      });
+
+      let caught: unknown;
+      try {
+        await manager.start(startInput({}));
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(WorkflowStartInputError);
+      const inputError = caught as WorkflowStartInputError;
+      expect(inputError.inputError).toEqual({
+        kind: "missing_required",
+        name: "ticket",
+      });
+      expect(repository.createCalls).toHaveLength(0);
+    });
+
+    it("enforces guard order: active-execution before dirty before not-found", async () => {
+      const repository = createRepository(
+        createWorkflowExecution({ id: "active-1", status: "running" }),
+      );
+      let dirtyChecked = false;
+      let loadDefinitionCalled = false;
+
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          loadDefinitionCalled = true;
+          return null;
+        },
+        getSession: async () => makeStartSession(),
+        readSessionWorktreeDirtyPaths: async () => {
+          dirtyChecked = true;
+          return [{ path: "src/edited.ts", statusCode: " M", tracked: true }];
+        },
+      });
+
+      await expect(manager.start(startInput())).rejects.toMatchObject({
+        guard: "active_execution",
+      });
+      expect(dirtyChecked).toBe(false);
+      expect(loadDefinitionCalled).toBe(false);
+    });
+
+    describe("prerequisite gate", () => {
+      function okPreflight(): PreflightPrerequisiteService {
+        return { evaluate: async () => ({ status: "ok" }) };
+      }
+
+      it("throws a distinct WorkflowPrerequisitesUnmetError carrying the itemized missing items and seeds nothing (R6.2, R6.3)", async () => {
+        const definition = createWorkflowDefinitionRecord();
+        const repository = createRepository();
+        let substitutionReached = false;
+
+        const manager = createGraphWorkflowManager({
+          executionRepository: repository,
+          async loadDefinition() {
+            return definition;
+          },
+          getSession: async () => makeStartSession(),
+          readSessionWorktreeDirtyPaths: async () => [],
+          readGlobalConfig: async () => ({}) as GlobalConfig,
+          preflightService: {
+            async evaluate() {
+              return {
+                status: "prerequisites_unmet",
+                missing: [
+                  {
+                    kind: "path",
+                    path: ".kiro",
+                    label: null,
+                    reason: "absent",
+                  },
+                  {
+                    kind: "skill",
+                    skill: "kiro-spec-init",
+                    backend: "claude",
+                    label: null,
+                    reason: "probe_error",
+                  },
+                ],
+              };
+            },
+          },
+          // A throwing input validator would prove the gate ran before
+          // start-input validation/substitution if it were reached.
+          createExecutionId: () => {
+            substitutionReached = true;
+            return "should-not-seed";
+          },
+        });
+
+        let caught: unknown;
+        try {
+          await manager.start(startInput());
+        } catch (error) {
+          caught = error;
+        }
+
+        expect(caught).toBeInstanceOf(WorkflowPrerequisitesUnmetError);
+        const prereqError = caught as WorkflowPrerequisitesUnmetError;
+        expect(prereqError.missing).toHaveLength(2);
+        expect(prereqError.missing[0]).toMatchObject({
+          kind: "path",
+          path: ".kiro",
+          reason: "absent",
+        });
+        expect(prereqError.missing[1]).toMatchObject({
+          kind: "skill",
+          skill: "kiro-spec-init",
+          backend: "claude",
+          reason: "probe_error",
+        });
+        // Nothing seeded; substitution/seed never reached.
+        expect(repository.createCalls).toHaveLength(0);
+        expect(repository.read()).toBeNull();
+        expect(substitutionReached).toBe(false);
+      });
+
+      it("is distinguishable from active-execution, uncommitted-changes, not-found, and missing-input rejections (R6.2)", async () => {
+        const prereqError = new WorkflowPrerequisitesUnmetError([], "unmet");
+        expect(prereqError).toBeInstanceOf(WorkflowPrerequisitesUnmetError);
+        expect(prereqError).not.toBeInstanceOf(WorkflowStartGuardError);
+        expect(prereqError).not.toBeInstanceOf(WorkflowStartInputError);
+        expect(prereqError).not.toBeInstanceOf(WorkflowDefinitionNotFoundError);
+        expect(prereqError.name).toBe("WorkflowPrerequisitesUnmetError");
+      });
+
+      it("halts a multi-backend workflow whose validator lacks a skill on its OWN backend — checked against the resolved used-backend set, not a single launch backend", async () => {
+        // ctx-1: claude implementer. ctx-2: claude implementer + an enabled
+        // CODEX validator. The resolved used-backend set is {claude, codex}.
+        // The crafted preflight reports unmet ONLY when "codex" is in the set —
+        // a single-assumed-launch-backend (claude only) gate would false-pass.
+        const definition = createWorkflowDefinitionRecord({
+          definition: createWorkflowDefinition({
+            executionContexts: [
+              {
+                id: "ctx-1",
+                title: "One",
+                acceptanceCriteria: "ok",
+                implementer: {
+                  backend: "claude",
+                  model: "opus",
+                  reasoningEffort: "medium",
+                },
+                mutability: { allowAgentTaskAdd: false },
+                circuitBreaker: {},
+                iterationPolicy: {
+                  maxIterations: 2,
+                  continuity: { enabled: true },
+                },
+              },
+              {
+                id: "ctx-2",
+                title: "Two",
+                acceptanceCriteria: "ok",
+                implementer: {
+                  backend: "claude",
+                  model: "opus",
+                  reasoningEffort: "medium",
+                },
+                contextValidator: {
+                  kind: "use",
+                  value: {
+                    type: "codex",
+                    enabled: true,
+                    continuity: { enabled: true },
+                    codex: {},
+                  },
+                },
+                mutability: { allowAgentTaskAdd: false },
+                circuitBreaker: {},
+                iterationPolicy: {
+                  maxIterations: 2,
+                  continuity: { enabled: true },
+                },
+              },
+            ],
+            tasks: [
+              {
+                id: "t1",
+                contextId: "ctx-1",
+                order: 1,
+                title: "a",
+                instructions: "a",
+                source: "user",
+              },
+              {
+                id: "t2",
+                contextId: "ctx-2",
+                order: 1,
+                title: "b",
+                instructions: "b",
+                source: "user",
+              },
+            ],
+            edges: [
+              {
+                id: "e1",
+                sourceContextId: "ctx-1",
+                targetContextId: "ctx-2",
+              },
+            ],
+          }),
+        });
+        const repository = createRepository();
+        let receivedBackends: AgentBackendId[] = [];
+
+        const manager = createGraphWorkflowManager({
+          executionRepository: repository,
+          async loadDefinition() {
+            return definition;
+          },
+          getSession: async () => makeStartSession(),
+          readSessionWorktreeDirtyPaths: async () => [],
+          readGlobalConfig: async () => ({}) as GlobalConfig,
+          preflightService: {
+            async evaluate({ usedBackends }) {
+              receivedBackends = [...usedBackends].sort();
+              if (usedBackends.has("codex")) {
+                return {
+                  status: "prerequisites_unmet",
+                  missing: [
+                    {
+                      kind: "skill",
+                      skill: "needed-on-codex",
+                      backend: null,
+                      label: null,
+                      reason: "absent",
+                    },
+                  ],
+                };
+              }
+              return { status: "ok" };
+            },
+          },
+        });
+
+        await expect(manager.start(startInput())).rejects.toBeInstanceOf(
+          WorkflowPrerequisitesUnmetError,
+        );
+        expect(receivedBackends).toEqual(["claude", "codex"]);
+        expect(repository.createCalls).toHaveLength(0);
+      });
+
+      it("proceeds to seed unchanged when the prerequisite gate returns ok", async () => {
+        const definition = createWorkflowDefinitionRecord({ revision: 7 });
+        const repository = createRepository();
+
+        const manager = createGraphWorkflowManager({
+          executionRepository: repository,
+          async loadDefinition() {
+            return definition;
+          },
+          getSession: async () => makeStartSession(),
+          readSessionWorktreeDirtyPaths: async () => [],
+          readGlobalConfig: async () => ({}) as GlobalConfig,
+          preflightService: okPreflight(),
+          createExecutionId: () => "execution-ok",
+        });
+
+        const execution = await manager.start(startInput());
+
+        expect(execution.status).toBe("running");
+        expect(execution.id).toBe("execution-ok");
+        expect(repository.createCalls).toHaveLength(1);
+      });
+
+      it("reports a dirty worktree BEFORE a missing prerequisite (gate sits after the dirty guard)", async () => {
+        const repository = createRepository();
+        let preflightCalled = false;
+
+        const manager = createGraphWorkflowManager({
+          executionRepository: repository,
+          async loadDefinition() {
+            return createWorkflowDefinitionRecord();
+          },
+          getSession: async () => makeStartSession(),
+          readSessionWorktreeDirtyPaths: async () => [
+            { path: "src/edited.ts", statusCode: " M", tracked: true },
+          ],
+          readGlobalConfig: async () => ({}) as GlobalConfig,
+          preflightService: {
+            async evaluate() {
+              preflightCalled = true;
+              return {
+                status: "prerequisites_unmet",
+                missing: [
+                  {
+                    kind: "path",
+                    path: ".kiro",
+                    label: null,
+                    reason: "absent",
+                  },
+                ],
+              };
+            },
+          },
+        });
+
+        await expect(manager.start(startInput())).rejects.toMatchObject({
+          guard: "uncommitted_changes",
+        });
+        expect(preflightCalled).toBe(false);
+        expect(repository.createCalls).toHaveLength(0);
+      });
+
+      it("does not probe a zero-prerequisite template — the real service short-circuits to ok with no probing (R5.7)", async () => {
+        // No injected preflightService → the manager uses the real
+        // createPreflightPrerequisiteService(), which short-circuits an empty
+        // prerequisites array to { status: "ok" } without invoking any probe.
+        const definition = createWorkflowDefinitionRecord();
+        expect(definition.definition.prerequisites).toEqual([]);
+        const repository = createRepository();
+
+        const manager = createGraphWorkflowManager({
+          executionRepository: repository,
+          async loadDefinition() {
+            return definition;
+          },
+          getSession: async () => makeStartSession(),
+          readSessionWorktreeDirtyPaths: async () => [],
+          readGlobalConfig: async () => ({}) as GlobalConfig,
+          createExecutionId: () => "execution-zero-prereq",
+        });
+
+        const execution = await manager.start(startInput());
+
+        expect(execution.status).toBe("running");
+        expect(repository.createCalls).toHaveLength(1);
+      });
+
+      it("throws a distinct WorkflowDefinitionNotFoundError naming the tier when the template is absent (R3.4)", async () => {
+        const repository = createRepository();
+
+        const manager = createGraphWorkflowManager({
+          executionRepository: repository,
+          async loadDefinition() {
+            return null;
+          },
+          getSession: async () => makeStartSession(),
+          readSessionWorktreeDirtyPaths: async () => [],
+        });
+
+        let caught: unknown;
+        try {
+          await manager.start({ ...startInput(), tier: "global" });
+        } catch (error) {
+          caught = error;
+        }
+        expect(caught).toBeInstanceOf(WorkflowDefinitionNotFoundError);
+        const notFound = caught as WorkflowDefinitionNotFoundError;
+        expect(notFound.tier).toBe("global");
+        expect(notFound.definitionId).toBe("workflow-1");
+        expect(notFound.message).toBe(
+          'Workflow definition "workflow-1" was not found',
+        );
+        expect(repository.createCalls).toHaveLength(0);
+      });
+    });
+
+    // gwt 6.2 — end-to-end cross-tier launch + prerequisite gating exercised
+    // through the REAL preflight service (no injected preflightService) against
+    // a REAL temporary session worktree, so the whole chain — used-backend
+    // resolution, the path/skill probes, the gate, and the seed — runs as it
+    // does in production. The example prerequisites (a `.kiro/` path + a
+    // missing skill) are fixtures only; gating is asserted to be identical for
+    // a differently-identified template, proving no behavior is conditioned on
+    // a specific workflow identity (R9.2, R9.4).
+    describe("prerequisite gating, end-to-end via the real preflight service (gwt 6.2)", () => {
+      let worktreePath: string;
+
+      beforeEach(async () => {
+        worktreePath = await mkdtemp(nodePath.join(tmpdir(), "cc-gwt-62-"));
+      });
+
+      afterEach(async () => {
+        await rm(worktreePath, { recursive: true, force: true });
+      });
+
+      function definitionWithPrerequisites(
+        prerequisites: WorkflowSemanticDefinition["prerequisites"],
+        overrides: Partial<WorkflowDefinitionRecord> = {},
+      ): WorkflowDefinitionRecord {
+        return createWorkflowDefinitionRecord({
+          definition: createWorkflowDefinition({ prerequisites }),
+          ...overrides,
+        });
+      }
+
+      function managerFor(
+        definition: WorkflowDefinitionRecord,
+        repository: ReturnType<typeof createRepository>,
+      ) {
+        // No preflightService override → the manager builds the real
+        // createPreflightPrerequisiteService(), which runs the real fs path
+        // probe and the real skill-discovery probe against `worktreePath`.
+        return createGraphWorkflowManager({
+          executionRepository: repository,
+          async loadDefinition() {
+            return definition;
+          },
+          getSession: async () => makeStartSession({ worktreePath }),
+          readSessionWorktreeDirtyPaths: async () => [],
+          readGlobalConfig: async () => ({}) as GlobalConfig,
+          now: () => "2026-03-27T15:00:00.000Z",
+          createExecutionId: () => "execution-62",
+        });
+      }
+
+      it("halts a launch whose declared .kiro path and skill are both absent in the worktree — itemized, nothing seeded, no tokens spent (R5.5, R6.3)", async () => {
+        const definition = definitionWithPrerequisites([
+          { kind: "path", path: ".kiro/specs", label: "Kiro specs" },
+          {
+            kind: "skill",
+            skill: "definitely-missing-skill-xyz",
+            backend: "claude",
+            label: "A required skill",
+          },
+        ]);
+        const repository = createRepository();
+        const manager = managerFor(definition, repository);
+
+        let caught: unknown;
+        try {
+          await manager.start(startInput());
+        } catch (error) {
+          caught = error;
+        }
+
+        expect(caught).toBeInstanceOf(WorkflowPrerequisitesUnmetError);
+        const missing = (caught as WorkflowPrerequisitesUnmetError).missing;
+        expect(missing).toContainEqual(
+          expect.objectContaining({
+            kind: "path",
+            path: ".kiro/specs",
+            reason: "absent",
+          }),
+        );
+        // The skill probe reuses the real runtime discovery; the fixture skill
+        // is not discoverable, so it is reported unmet (absent or, if discovery
+        // itself errors, the fail-closed probe_error — never satisfied).
+        expect(missing).toContainEqual(
+          expect.objectContaining({
+            kind: "skill",
+            skill: "definitely-missing-skill-xyz",
+            backend: "claude",
+          }),
+        );
+        // Halted before substitution/seed: no execution, conversation, or agent
+        // turn — the gate spends no tokens.
+        expect(repository.createCalls).toHaveLength(0);
+        expect(repository.read()).toBeNull();
+      });
+
+      it("launches the SAME template once the declared path exists — recording the launched tier, through the unchanged engine (satisfy → launch)", async () => {
+        const definition = definitionWithPrerequisites([
+          { kind: "path", path: ".kiro/specs", label: "Kiro specs" },
+        ]);
+
+        // Unmet: the path is absent → the real gate halts and seeds nothing.
+        const beforeRepo = createRepository();
+        await expect(
+          managerFor(definition, beforeRepo).start(startInput()),
+        ).rejects.toBeInstanceOf(WorkflowPrerequisitesUnmetError);
+        expect(beforeRepo.createCalls).toHaveLength(0);
+
+        // Satisfy the prerequisite by creating the declared worktree-relative
+        // path, then launch the same template from the GLOBAL tier.
+        await mkdir(nodePath.join(worktreePath, ".kiro", "specs"), {
+          recursive: true,
+        });
+        const afterRepo = createRepository();
+        const execution = await managerFor(definition, afterRepo).start({
+          ...startInput(),
+          tier: "global",
+        });
+
+        expect(execution.status).toBe("running");
+        expect(execution.launchedTier).toBe("global");
+        expect(afterRepo.createCalls).toHaveLength(1);
+        expect(afterRepo.createCalls[0]?.launchedTier).toBe("global");
+        // launchedTier is recorded on the seeded execution read back from the
+        // repository, proving the audit annotation survives the seed.
+        expect(afterRepo.read()?.launchedTier).toBe("global");
+      });
+
+      it("applies identical gating to a differently-identified template — no behavior conditioned on workflow identity (R9.2, R9.4)", async () => {
+        const otherDefinition = definitionWithPrerequisites(
+          [{ kind: "path", path: ".kiro/specs", label: "Kiro specs" }],
+          { id: "unrelated-flow-9", name: "Totally Different Flow" },
+        );
+
+        // Same unmet → halt, nothing seeded — for a template with a distinct
+        // id and name.
+        const beforeRepo = createRepository();
+        await expect(
+          managerFor(otherDefinition, beforeRepo).start({
+            ...startInput(),
+            definitionId: "unrelated-flow-9",
+          }),
+        ).rejects.toBeInstanceOf(WorkflowPrerequisitesUnmetError);
+        expect(beforeRepo.createCalls).toHaveLength(0);
+
+        // Same satisfy → launch transition, identical outcome.
+        await mkdir(nodePath.join(worktreePath, ".kiro", "specs"), {
+          recursive: true,
+        });
+        const afterRepo = createRepository();
+        const execution = await managerFor(otherDefinition, afterRepo).start({
+          ...startInput(),
+          definitionId: "unrelated-flow-9",
+        });
+
+        expect(execution.status).toBe("running");
+        expect(afterRepo.createCalls).toHaveLength(1);
+        expect(afterRepo.createCalls[0]?.definitionId).toBe("unrelated-flow-9");
+      });
     });
   });
 });

@@ -94,14 +94,16 @@ function setupAcceptance() {
 
   const deps: PlannerToolDeps = {
     readConfig: async () => MOCK_CONFIG,
-    listWorkflows: (projectPath) => storage.list(projectPath),
+    listWorkflows: (projectPath) =>
+      storage.list({ kind: "project", projectPath }),
     getWorkflow: (projectPath, workflowId) =>
-      storage.get(projectPath, workflowId),
-    createWorkflow: (projectPath, draft) => storage.create(projectPath, draft),
+      storage.get({ kind: "project", projectPath }, workflowId),
+    createWorkflow: (projectPath, draft) =>
+      storage.create({ kind: "project", projectPath }, draft),
     updateWorkflow: (projectPath, workflowId, draft) =>
-      storage.update(projectPath, workflowId, draft),
+      storage.update({ kind: "project", projectPath }, workflowId, draft),
     deleteWorkflow: (projectPath, workflowId) =>
-      storage.delete(projectPath, workflowId),
+      storage.delete({ kind: "project", projectPath }, workflowId),
     getActiveExecution: async () => null,
     publishCharterUpdated: (input) => {
       charterUpdates.push({
@@ -191,7 +193,9 @@ describe("charter lifecycle integration — Acceptance", () => {
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text ?? "").toContain("charter_missing");
     // The real store is empty — nothing was persisted.
-    expect(await storage.list(PROJECT_PATH)).toEqual([]);
+    expect(
+      await storage.list({ kind: "project", projectPath: PROJECT_PATH }),
+    ).toEqual([]);
   });
 
   it("rejects create with a duplicate-rank charter (charter_invalid naming the entry) and persists nothing", async () => {
@@ -205,7 +209,9 @@ describe("charter lifecycle integration — Acceptance", () => {
     const text = result.content[0]?.text ?? "";
     expect(text).toContain("charter_invalid");
     expect(text).toContain("acceptance-criteria");
-    expect(await storage.list(PROJECT_PATH)).toEqual([]);
+    expect(
+      await storage.list({ kind: "project", projectPath: PROJECT_PATH }),
+    ).toEqual([]);
   });
 
   it("rejects replace with no charter (charter_missing) and persists nothing", async () => {
@@ -219,7 +225,9 @@ describe("charter lifecycle integration — Acceptance", () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text ?? "").toContain("charter_missing");
-    expect(await storage.list(PROJECT_PATH)).toEqual([]);
+    expect(
+      await storage.list({ kind: "project", projectPath: PROJECT_PATH }),
+    ).toEqual([]);
   });
 
   it("persists and reloads a charter-bearing definition through the real store", async () => {
@@ -232,10 +240,16 @@ describe("charter lifecycle integration — Acceptance", () => {
 
     expect(result.isError).toBeUndefined();
 
-    const summaries = await storage.list(PROJECT_PATH);
+    const summaries = await storage.list({
+      kind: "project",
+      projectPath: PROJECT_PATH,
+    });
     expect(summaries).toHaveLength(1);
 
-    const reloaded = await storage.get(PROJECT_PATH, summaries[0]!.id);
+    const reloaded = await storage.get(
+      { kind: "project", projectPath: PROJECT_PATH },
+      summaries[0]!.id,
+    );
     expect(reloaded).not.toBeNull();
     // The charter survived persist -> reload byte-for-byte (3.1 tie).
     expect(reloaded?.definition.charter).toEqual(charter);
@@ -352,7 +366,9 @@ describe("charter lifecycle integration — Migration", () => {
     // Observed through the REAL storage service: the workflow store is empty
     // (the purge removed the whole workflows directory, so list() returns []).
     expect(existsSync(legacyDefFile)).toBe(false);
-    expect(await storage.list(PROJECT_PATH)).toEqual([]);
+    expect(
+      await storage.list({ kind: "project", projectPath: PROJECT_PATH }),
+    ).toEqual([]);
     expect(readExecution(migrated, "legacy-a")).toBeNull();
     expect(markerCount(migrated)).toBe(1);
 
@@ -373,21 +389,27 @@ describe("charter lifecycle integration — Migration", () => {
 
     // Persist a NEW charter-bearing definition through the real storage service
     // (a valid record, unlike the legacy stub) so list() can surface it.
-    const freshRecord = await storage.create(PROJECT_PATH, {
-      name: "Post-migration workflow",
-      description: null,
-      definition: createWorkflowDefinition(),
-      layout: {
-        workflowId: "x",
-        contextPositions: {},
-        viewport: { x: 0, y: 0, zoom: 1 },
+    const freshRecord = await storage.create(
+      { kind: "project", projectPath: PROJECT_PATH },
+      {
+        name: "Post-migration workflow",
+        description: null,
+        definition: createWorkflowDefinition(),
+        layout: {
+          workflowId: "x",
+          contextPositions: {},
+          viewport: { x: 0, y: 0, zoom: 1 },
+        },
       },
-    });
+    );
 
     // Reopen again: the purge is recorded, so it must NOT touch the new state.
     const reopened = open(dbPath);
     expect(readExecution(reopened, "legacy-a")).toBe(freshExecution);
-    const survivors = await storage.list(PROJECT_PATH);
+    const survivors = await storage.list({
+      kind: "project",
+      projectPath: PROJECT_PATH,
+    });
     expect(survivors).toHaveLength(1);
     expect(survivors[0]?.id).toBe(freshRecord.id);
     expect(markerCount(reopened)).toBe(1);
@@ -488,8 +510,7 @@ describe("charter lifecycle integration — Observability", () => {
     const definition: WorkflowSemanticDefinition = createWorkflowDefinition({
       charter,
     });
-    const { repo, sessions, broadcasts, appendedEvents } =
-      setupObservability();
+    const { repo, sessions, broadcasts, appendedEvents } = setupObservability();
 
     await repo.create("/repo", "session-1", {
       definition,
@@ -497,6 +518,8 @@ describe("charter lifecycle integration — Observability", () => {
       definitionRevision: 3,
       executionId: "exec-1",
       startedAt: "2026-04-04T00:00:00.000Z",
+      inputs: {},
+      launchedTier: "project",
     });
 
     // 7.3: broadcast in real time to connected clients.
