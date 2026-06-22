@@ -17,6 +17,10 @@ interface CopyableIdProps {
   displayValue?: string;
   /** Accessible label for the copy action (falls back to the visible text). */
   ariaLabel?: string;
+  /** Extra classes for the root target, for context-specific layout/styling. */
+  className?: string;
+  /** Extra classes for the value text span (e.g. flex-grow + truncate). */
+  valueClassName?: string;
 }
 
 export default function CopyableId({
@@ -25,6 +29,8 @@ export default function CopyableId({
   truncateAt = 8,
   displayValue,
   ariaLabel,
+  className,
+  valueClassName,
 }: CopyableIdProps) {
   const [copied, setCopied] = useState(false);
 
@@ -47,6 +53,7 @@ export default function CopyableId({
     <div
       className={cn(
         "group/cid relative -mx-[4px] -my-px flex cursor-pointer items-center gap-[4px] rounded-sm px-[4px] py-px text-[0.72rem] transition-[background] duration-150 ease-[ease] hover:bg-bg-hover",
+        className,
         copied && "copied",
       )}
       onClick={handleCopy}
@@ -60,7 +67,12 @@ export default function CopyableId({
           {label}
         </span>
       )}
-      <span className="font-mono tracking-[0.02em] text-text-primary">
+      <span
+        className={cn(
+          "font-mono tracking-[0.02em] text-text-primary",
+          valueClassName,
+        )}
+      >
         {display}
       </span>
       <span

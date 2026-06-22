@@ -10,7 +10,9 @@ import LayoutSwitcher from "@/features/session/conversation/LayoutSwitcher";
 import DevServersButton from "@/features/session/conversation/DevServersButton";
 import SessionActionsMenu from "@/features/session/conversation/SessionActionsMenu";
 import InfoDetailsPopover from "@/features/session/conversation/InfoDetailsPopover";
+import CopyableId from "@/components/CopyableId";
 import { deriveSessionPromptCount } from "@/lib/sessions/derived";
+import { shortenWorktreePath } from "@/lib/sessions/worktree-path";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { SessionState, LayoutMode } from "@/lib/sessions/schemas";
 import type { DevServerRuntimeState } from "@/lib/dev-server/schemas";
@@ -108,14 +110,11 @@ function SessionInfoStrip({
         <span className="text-text-secondary">{session.branchName}</span>
       </div>
       <div className="flex items-center gap-lg px-md py-[6px]">
-        <div className="flex shrink-0 items-center gap-[6px]">
-          <span className="text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
-            branch
-          </span>
-          <span className="font-semibold text-text-primary">
-            {session.branchName}
-          </span>
-        </div>
+        <CopyableId
+          label="worktree"
+          value={session.worktreePath}
+          displayValue={shortenWorktreePath(session.worktreePath)}
+        />
         <span className="inline-block h-4 w-px shrink-0 bg-border-default" />
         <div className="inline-flex shrink-0 items-center gap-[6px] font-mono text-[0.72rem] leading-none font-medium tracking-[0.05em] text-text-secondary uppercase">
           <span

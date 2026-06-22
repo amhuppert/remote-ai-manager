@@ -3,6 +3,8 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { cn } from "@/lib/ui/cn";
 import { useOverlayScope } from "@/hooks/useOverlayScope";
+import CopyableId from "@/components/CopyableId";
+import { shortenWorktreePath } from "@/lib/sessions/worktree-path";
 import type { AgentSessionRef } from "@/lib/agent-backends/schemas";
 
 interface InfoDetailsPopoverProps {
@@ -35,13 +37,6 @@ function formatCreatedDate(iso: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function shortenWorktreePath(fullPath: string): string {
-  const marker = ".worktrees/";
-  const idx = fullPath.indexOf(marker);
-  if (idx === -1) return fullPath;
-  return fullPath.slice(idx + marker.length);
 }
 
 interface Row {
@@ -120,13 +115,6 @@ export default function InfoDetailsPopover({
       const next = !prev;
       setOpen(next);
       return next;
-    });
-  }, []);
-
-  const copyVal = useCallback((key: string, value: string) => {
-    void navigator.clipboard?.writeText(value).then(() => {
-      setCopied(key);
-      setTimeout(() => setCopied(null), 1400);
     });
   }, []);
 
@@ -246,29 +234,26 @@ export default function InfoDetailsPopover({
             {rows.map((r) => (
               <div
                 key={r.key}
-                className="grid grid-cols-[110px_1fr_auto] items-center gap-[8px] rounded-sm px-[10px] py-[6px] hover:bg-bg-hover"
+                className="grid grid-cols-[110px_1fr] items-center gap-[8px] rounded-sm px-[10px] py-[6px] hover:bg-bg-hover"
               >
                 <span className="font-mono text-[0.66rem] tracking-[0.06em] text-text-tertiary uppercase">
                   {r.label}
                 </span>
-                <span
-                  className="overflow-hidden font-mono text-[0.72rem] text-ellipsis whitespace-nowrap text-text-primary"
-                  title={r.value}
-                >
-                  {r.value}
-                </span>
-                {r.copyable && (
-                  <button
-                    type="button"
-                    className="inline-flex size-[22px] cursor-pointer items-center justify-center rounded-sm border-none bg-transparent text-[12px] text-text-tertiary transition-[color,background] duration-150 ease-[ease] hover:bg-bg-hover hover:text-cyan"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      copyVal(r.key, r.copyValue ?? r.value);
-                    }}
-                    aria-label={`Copy ${r.label}`}
+                {r.copyable ? (
+                  <CopyableId
+                    value={r.copyValue ?? r.value}
+                    displayValue={r.value}
+                    ariaLabel={`Copy ${r.label}`}
+                    className="min-w-0"
+                    valueClassName="min-w-0 flex-1 truncate"
+                  />
+                ) : (
+                  <span
+                    className="overflow-hidden font-mono text-[0.72rem] text-ellipsis whitespace-nowrap text-text-primary"
+                    title={r.value}
                   >
-                    {copied === r.key ? "\u2713" : "\u2398"}
-                  </button>
+                    {r.value}
+                  </span>
                 )}
               </div>
             ))}
