@@ -11,6 +11,7 @@ import type { ParsedConversationCommand } from "@/lib/conversation-commands/sche
 import type { SSEEvent } from "@/lib/api/sse-events";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import type { MessageContentBlock } from "@/lib/conversations/message-content-schemas";
+import { pendingQueuedMessageSchema } from "@/lib/conversations/message-queue-schemas";
 import type {
   PendingQueuedMessage,
   QueuedMessageView,
@@ -60,6 +61,24 @@ export function appendPendingEntry(
   entry: PendingQueuedMessage,
 ): PendingQueuedMessage[] {
   return [...queue, entry];
+}
+
+/**
+ * Deep-detach a queue row from the Immer draft it was built over. A row that is
+ * pruned from the queue (a terminal `delivered`/`failed`/`cancelled` result) is
+ * never re-inserted into the finalized state tree, so the store's
+ * `createDraft`/`finishDraft` cycle revokes the draft proxies it still aliases —
+ * notably the nested `content` array. Without this snapshot the post-mutation
+ * broadcast throws "Cannot perform 'get' on a proxy that has been revoked" on
+ * the first read of `content`. Retained rows do not need this: Immer finalizes
+ * them in place because they remain reachable from `pendingQueue`.
+ *
+ * Must be called while the draft is still live (inside the mutator), so the
+ * JSON round-trip reads through the proxy to plain data. `structuredClone`
+ * cannot be used here: it rejects the Immer proxy with a DataCloneError.
+ */
+function detachQueueRow(entry: PendingQueuedMessage): PendingQueuedMessage {
+  return pendingQueuedMessageSchema.parse(JSON.parse(JSON.stringify(entry)));
 }
 
 /** Active rows are `pending` and `delivering`; order is preserved. Pure. */
@@ -228,11 +247,15 @@ function applyDeliveryResult(
       continue;
     }
     const updated = update(entry);
-    affected.push(updated);
     // Terminal results (delivered/failed) are pruned from the persisted queue:
     // nothing reads a terminal entry and retaining them grows the row
     // unboundedly. markPending is a retry (back to pending) and must be kept.
-    if (!prune) next.push(updated);
+    if (prune) {
+      affected.push(detachQueueRow(updated));
+    } else {
+      affected.push(updated);
+      next.push(updated);
+    }
   }
   return { queue: next, affected };
 }
@@ -367,13 +390,14 @@ export function cancelTransform(
       continue;
     }
     // Pruned: returned as `cancelled` for the broadcast but dropped from the
-    // persisted queue (a terminal entry is never read again).
-    cancelled = {
+    // persisted queue (a terminal entry is never read again). Detached from the
+    // draft so the broadcast can read its content after finalization.
+    cancelled = detachQueueRow({
       ...entry,
       status: "cancelled",
       cancelledAt: now,
       updatedAt: now,
-    };
+    });
   }
   return { queue: next, result: "cancelled", cancelled };
 }
