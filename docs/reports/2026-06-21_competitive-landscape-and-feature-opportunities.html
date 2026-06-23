@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Command Center — Competitive Landscape &amp; Feature Opportunities</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --bg-elev: #121722;
+    --bg-elev-2: #161c29;
+    --border: #232b3a;
+    --border-soft: #1b2230;
+    --text: #e4e8f0;
+    --text-soft: #aeb6c6;
+    --text-mute: #7a8499;
+    --accent: #6ea8ff;
+    --accent-soft: #2a3a57;
+    --gold: #f5c451;
+    --silver: #c7cedd;
+    --bronze: #d8956a;
+    --green: #4ec98a;
+    --green-bg: #11251c;
+    --red: #f06b6b;
+    --red-bg: #2a1518;
+    --amber: #e7a94a;
+    --amber-bg: #2a2113;
+    --violet: #b18cf0;
+    --shadow: 0 1px 3px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.25);
+    --radius: 12px;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    background:
+      radial-gradient(1200px 600px at 80% -10%, #14203a 0%, transparent 60%),
+      radial-gradient(900px 500px at 0% 0%, #1a1426 0%, transparent 55%),
+      var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 940px; margin: 0 auto; padding: 0 28px 120px; }
+
+  /* ---------- Header ---------- */
+  header.hero { padding: 72px 0 40px; border-bottom: 1px solid var(--border-soft); margin-bottom: 44px; }
+  .kicker {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 12px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--accent); background: var(--accent-soft); border: 1px solid #34507e;
+    padding: 6px 12px; border-radius: 999px; margin-bottom: 22px;
+  }
+  .kicker .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); }
+  h1 {
+    font-size: 42px; line-height: 1.12; margin: 0 0 18px; letter-spacing: -0.02em; font-weight: 700;
+    background: linear-gradient(180deg, #ffffff 0%, #b9c4da 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .subtitle { font-size: 18px; color: var(--text-soft); max-width: 700px; margin: 0 0 28px; }
+  .subtitle em { color: var(--text); font-style: italic; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+  .chip { font-family: var(--mono); font-size: 12.5px; color: var(--text-soft); background: var(--bg-elev); border: 1px solid var(--border); padding: 7px 12px; border-radius: 8px; }
+  .chip b { color: var(--text); font-weight: 600; }
+
+  /* ---------- Stat strip ---------- */
+  .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin: 36px 0 48px; }
+  .stat { background: linear-gradient(180deg, var(--bg-elev) 0%, var(--bg-elev-2) 100%); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 16px; text-align: center; }
+  .stat .num { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; color: var(--text); font-variant-numeric: tabular-nums; }
+  .stat .lbl { font-size: 12px; color: var(--text-mute); text-transform: uppercase; letter-spacing: .06em; margin-top: 4px; }
+  .stat.green .num { color: var(--green); }
+  .stat.red .num { color: var(--red); }
+
+  /* ---------- Sections ---------- */
+  section { margin-bottom: 52px; scroll-margin-top: 24px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .16em; color: var(--accent); font-family: var(--mono); font-weight: 600; margin: 0 0 22px; padding-bottom: 12px; border-bottom: 1px solid var(--border-soft); }
+  h3 { font-size: 22px; margin: 0 0 12px; letter-spacing: -0.01em; }
+  p { color: var(--text-soft); }
+  p strong, li strong { color: var(--text); font-weight: 600; }
+  a { color: var(--accent); text-decoration: none; border-bottom: 1px solid transparent; transition: border-color .15s; }
+  a:hover { border-bottom-color: var(--accent); }
+  .lead { font-size: 17px; color: var(--text-soft); }
+  .note { font-size: 14px; color: var(--text-mute); font-style: italic; margin-bottom: 18px; }
+
+  /* ---------- TOC ---------- */
+  .toc { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px 26px; margin-bottom: 48px; }
+  .toc h4 { margin: 0 0 14px; font-size: 12px; text-transform: uppercase; letter-spacing: .14em; color: var(--text-mute); font-family: var(--mono); }
+  .toc ol { margin: 0; padding: 0; list-style: none; counter-reset: toc; columns: 2; column-gap: 40px; }
+  .toc li { counter-increment: toc; padding: 5px 0; break-inside: avoid; }
+  .toc li a { color: var(--text-soft); }
+  .toc li a:hover { color: var(--accent); }
+  .toc li::before { content: counter(toc, decimal-leading-zero); font-family: var(--mono); font-size: 12px; color: var(--accent); margin-right: 10px; }
+
+  /* ---------- Tables ---------- */
+  .table-scroll { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; background: var(--bg-elev); }
+  th { text-align: left; padding: 13px 14px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-mute); background: var(--bg-elev-2); border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { padding: 13px 14px; border-bottom: 1px solid var(--border-soft); color: var(--text-soft); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td strong { color: var(--text); }
+  .formfactor { font-family: var(--mono); font-size: 11.5px; color: var(--text-mute); }
+  .stars { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--silver); white-space: nowrap; }
+  .stars.big { color: var(--gold); }
+  .stars.none { color: var(--text-mute); font-weight: 400; font-style: italic; }
+  .st-dead { color: var(--red); }
+  .st-hot { color: var(--green); }
+
+  /* ---------- Deep-dive cards ---------- */
+  .deepdive { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px 24px; margin-bottom: 14px; }
+  .deepdive h3 { font-size: 18px; margin: 0 0 4px; display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; }
+  .deepdive h3 .ff { font-family: var(--mono); font-size: 12px; font-weight: 400; color: var(--accent); background: var(--accent-soft); border: 1px solid #34507e; padding: 2px 9px; border-radius: 6px; }
+  .deepdive .tag { font-size: 13px; color: var(--violet); font-weight: 600; margin: 0 0 10px; }
+  .deepdive p { margin: 0; font-size: 14.5px; }
+  .deepdive p + p { margin-top: 10px; }
+
+  /* ---------- Popularity ---------- */
+  .poprank { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .popcol h3 { font-size: 16px; margin: 0 0 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border-soft); }
+  .popcol h3 .ic { color: var(--accent); margin-right: 8px; }
+  .poprow { display: flex; gap: 12px; align-items: flex-start; padding: 11px 0; border-bottom: 1px solid var(--border-soft); }
+  .poprow:last-child { border-bottom: none; }
+  .poprow .rk { flex-shrink: 0; font-family: var(--mono); font-size: 12px; color: var(--text-mute); width: 16px; text-align: right; padding-top: 2px; }
+  .poprow .body { font-size: 13.5px; color: var(--text-soft); }
+  .poprow .body b { color: var(--text); }
+  .poprow .metric { font-family: var(--mono); font-size: 12px; color: var(--gold); }
+  .poprow .metric.money { color: var(--green); }
+
+  /* ---------- Opportunity cards ---------- */
+  .opp { background: linear-gradient(180deg, var(--bg-elev) 0%, var(--bg-elev-2) 100%); border: 1px solid var(--border); border-radius: var(--radius); padding: 26px 28px; margin-bottom: 18px; box-shadow: var(--shadow); position: relative; overflow: hidden; }
+  .opp::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--accent); }
+  .opp.rank1::before { background: linear-gradient(180deg, var(--gold), #b8901f); }
+  .opp.rank2::before, .opp.rank3::before { background: linear-gradient(180deg, var(--accent), #3a6bb5); }
+  .opp-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 14px; }
+  .opp-rank { flex-shrink: 0; width: 42px; height: 42px; border-radius: 10px; background: var(--bg-elev-2); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 19px; font-weight: 700; font-family: var(--mono); color: var(--text); }
+  .rank1 .opp-rank { color: var(--gold); border-color: #5a4a1e; background: #1e1a10; }
+  .opp-titles { flex: 1; min-width: 0; }
+  .opp h3 { margin: 0 0 8px; font-size: 20px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; }
+  .badge { font-family: var(--mono); font-size: 11.5px; padding: 4px 10px; border-radius: 6px; border: 1px solid; white-space: nowrap; }
+  .badge.vote { color: var(--green); background: var(--green-bg); border-color: #1f5238; }
+  .badge.vote.contested { color: var(--amber); background: var(--amber-bg); border-color: #5a4520; }
+  .badge.val-highest { color: var(--gold); background: #211c0e; border-color: #5a4a1e; }
+  .badge.val-high { color: var(--accent); background: var(--accent-soft); border-color: #34507e; }
+  .badge.val-med { color: var(--silver); background: #1c2130; border-color: #2f3850; }
+  .opp p { margin: 12px 0; }
+  .opp .nuance { background: var(--bg); border: 1px solid var(--border-soft); border-left: 3px solid var(--amber); border-radius: 8px; padding: 12px 16px; font-size: 14.5px; color: var(--text-soft); margin: 14px 0 0; }
+  .opp .nuance strong { color: var(--amber); }
+  .src-line { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border-soft); font-size: 13px; color: var(--text-mute); }
+  .src-line .lbl { font-family: var(--mono); text-transform: uppercase; letter-spacing: .08em; font-size: 11px; margin-right: 8px; }
+
+  /* ---------- Callouts ---------- */
+  .callout { border-radius: var(--radius); padding: 20px 24px; margin: 22px 0; border: 1px solid var(--border); background: var(--bg-elev); }
+  .callout.good { border-left: 4px solid var(--green); }
+  .callout.rec { border-left: 4px solid var(--gold); background: linear-gradient(180deg, #1a1710 0%, var(--bg-elev) 100%); }
+  .callout.fix { border-left: 4px solid var(--violet); }
+  .callout.key { border-left: 4px solid var(--accent); background: linear-gradient(180deg, #101725 0%, var(--bg-elev) 100%); }
+  .callout h3 { margin: 0 0 12px; font-size: 18px; }
+  .callout.good h3 { color: var(--green); }
+  .callout.rec h3 { color: var(--gold); }
+  .callout.fix h3 { color: var(--violet); }
+  .callout.key h3 { color: var(--accent); }
+  .callout ul { margin: 8px 0 0; padding-left: 20px; }
+  .callout li { margin: 6px 0; color: var(--text-soft); }
+  .callout p { margin: 8px 0; }
+
+  ul.clean { list-style: none; padding: 0; margin: 0; }
+  ul.clean li { padding: 12px 0 12px 28px; border-bottom: 1px solid var(--border-soft); position: relative; color: var(--text-soft); }
+  ul.clean li:last-child { border-bottom: none; }
+  ul.clean li::before { content: ""; position: absolute; left: 4px; top: 21px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+
+  ol.q { padding-left: 22px; }
+  ol.q li { margin: 12px 0; color: var(--text-soft); }
+
+  /* ---------- Refuted ---------- */
+  .refuted-item { display: flex; gap: 14px; align-items: baseline; padding: 11px 0; border-bottom: 1px solid var(--border-soft); font-size: 14.5px; color: var(--text-soft); }
+  .refuted-item:last-child { border-bottom: none; }
+  .refuted-item .v { flex-shrink: 0; font-family: var(--mono); font-size: 11.5px; color: var(--red); background: var(--red-bg); border: 1px solid #4a2024; padding: 3px 9px; border-radius: 6px; white-space: nowrap; min-width: 92px; text-align: center; }
+
+  /* ---------- Caveats ---------- */
+  .caveat { display: flex; gap: 14px; padding: 14px 0; border-bottom: 1px solid var(--border-soft); }
+  .caveat:last-child { border-bottom: none; }
+  .caveat .ic { flex-shrink: 0; color: var(--amber); font-size: 16px; line-height: 1.6; }
+  .caveat p { margin: 0; font-size: 14.5px; }
+
+  /* ---------- Sources ---------- */
+  .src-group { margin-bottom: 24px; }
+  .src-group h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--text-mute); font-family: var(--mono); margin: 0 0 12px; }
+  .src-list { list-style: none; padding: 0; margin: 0; }
+  .src-list li { padding: 7px 0; font-size: 13.5px; word-break: break-word; border-bottom: 1px solid var(--border-soft); }
+  .src-list li:last-child { border-bottom: none; }
+  .quality-tag { display: inline-block; font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; padding: 2px 7px; border-radius: 4px; margin-right: 10px; border: 1px solid var(--border); color: var(--text-mute); min-width: 64px; text-align: center; }
+  .quality-tag.primary { color: var(--green); border-color: #1f5238; background: var(--green-bg); }
+  .quality-tag.secondary { color: var(--accent); border-color: #34507e; background: var(--accent-soft); }
+  .quality-tag.data { color: var(--gold); border-color: #5a4a1e; background: #211c0e; }
+
+  /* ---------- Footer ---------- */
+  footer { margin-top: 72px; padding-top: 28px; border-top: 1px solid var(--border-soft); font-size: 13px; color: var(--text-mute); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  footer .mono { font-family: var(--mono); }
+
+  code { font-family: var(--mono); font-size: 0.88em; background: var(--bg-elev-2); border: 1px solid var(--border-soft); padding: 1px 6px; border-radius: 5px; color: var(--silver); }
+
+  @media (max-width: 760px) {
+    h1 { font-size: 32px; }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .toc ol { columns: 1; }
+    .poprank { grid-template-columns: 1fr; }
+    .wrap { padding: 0 18px 80px; }
+    header.hero { padding: 48px 0 32px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <span class="kicker"><span class="dot"></span>Competitive Analysis</span>
+    <h1>Competitive Landscape &amp;<br>Feature Opportunities</h1>
+    <p class="subtitle">Where Command Center sits in the <em>agent-orchestrator</em> market, how comparable tools differ in UX and popularity, what they offer that CC lacks, and which gaps are worth closing.</p>
+    <div class="meta-row">
+      <span class="chip"><b>Report date</b> &nbsp;2026-06-21</span>
+      <span class="chip"><b>Competitor metrics as of</b> &nbsp;2026-06-22</span>
+    </div>
+  </header>
+
+  <div class="stats">
+    <div class="stat"><div class="num">9</div><div class="lbl">Direct competitors</div></div>
+    <div class="stat"><div class="num">147</div><div class="lbl">Projects in category</div></div>
+    <div class="stat green"><div class="num">78k</div><div class="lbl">Top star count</div></div>
+    <div class="stat"><div class="num">$1.5B</div><div class="lbl">Best-funded rival</div></div>
+    <div class="stat"><div class="num">6</div><div class="lbl">Feature opportunities</div></div>
+  </div>
+
+  <!-- TOC -->
+  <nav class="toc">
+    <h4>Contents</h4>
+    <ol>
+      <li><a href="#summary">Executive summary</a></li>
+      <li><a href="#category">The category is real</a></li>
+      <li><a href="#competitors">Direct competitors (at a glance)</a></li>
+      <li><a href="#deepdives">Competitor deep-dives — UX</a></li>
+      <li><a href="#popularity">Relative popularity &amp; momentum</a></li>
+      <li><a href="#opportunities">Feature opportunities</a></li>
+      <li><a href="#differentiators">CC differentiators</a></li>
+      <li><a href="#questions">Open questions</a></li>
+      <li><a href="#caveats">Caveats</a></li>
+      <li><a href="#recommendation">Recommendation</a></li>
+      <li><a href="#sources">Sources</a></li>
+    </ol>
+  </nav>
+
+  <!-- SUMMARY -->
+  <section id="summary">
+    <h2>Executive Summary</h2>
+    <p class="lead">Command Center competes in a populated, <strong>named</strong> market — "agent orchestrators" — with 140+ tracked projects. Its closest competitors share its core model: multiple parallel AI coding sessions, each isolated in a git worktree + branch. They diverge sharply on <strong>what they put in front of the human</strong> (a board, a diff, a terminal, an IDE, a governance dashboard) and on <strong>commercial trajectory</strong>.</p>
+    <p>The highest-value feature gaps these tools expose, ranked:</p>
+    <ul class="clean">
+      <li><strong>Autonomous feedback loops</strong> — fixing CI failures from logs, routing reviewer change-requests back to the agent, end-to-end PR management <em>(Agent Orchestrator, Factory, Conductor)</em>.</li>
+      <li><strong>Multi-agent-backend support</strong> — user-selectable Codex/Cursor/Gemini sessions <em>(nearly every competitor)</em>.</li>
+      <li><strong>In-browser interactive primitives</strong> — file explorer with live editing + built-in terminal <em>(Claude Code UI, Nimbalyst, Conductor)</em>.</li>
+      <li><strong>Kanban board task UI</strong> <em>(Vibe Kanban, Nimbalyst, Agent Orchestrator)</em>.</li>
+      <li><strong>Multi-surface delivery</strong> — IDE/Slack/terminal reach <em>(Factory)</em>.</li>
+      <li><strong>Cloud / async-persistent execution + sub-agent delegation</strong> <em>(OpenHands)</em>.</li>
+    </ul>
+    <p>CC's differentiators that hold up: web-control-plane delivery (vs. mostly Mac-desktop competitors), per-session dev-server automation with remote Tailscale URLs, voice input, and a declarative graph-workflow engine with validation/retries/circuit breakers.</p>
+  </section>
+
+  <!-- CATEGORY -->
+  <section id="category">
+    <h2>The Category Is Real and Crowded</h2>
+    <p>CC sits inside a populated, <em>named</em> market — "agent orchestrators." A curated list (<a href="https://github.com/andyrewlee/awesome-agent-orchestrators">awesome-agent-orchestrators</a>) tracks <strong>147 projects</strong>; a second independent list (<a href="https://github.com/bradAGI/awesome-cli-coding-agents">bradAGI/awesome-cli-coding-agents</a>) covers the same space. CC lands in the <strong>Parallel Agent Runner + Autonomous Loop Runner</strong> overlap.</p>
+    <div class="callout good">
+      <h3>✓ The foundation is sound</h3>
+      <p>Every competitor uses the same core architecture: <em>multiple parallel AI sessions, each isolated in its own git worktree + branch, with computed diffs and a review path.</em> Agent Orchestrator, Crystal, Conductor, Vibe Kanban, and Claude Squad all converge on this independently.</p>
+      <p style="margin-bottom:0"><strong>Differentiation happens at the feature layer, not the isolation model</strong> — the worktree-per-session bet is correct.</p>
+    </div>
+  </section>
+
+  <!-- COMPETITORS -->
+  <section id="competitors">
+    <h2>Direct Competitors — At a Glance</h2>
+    <p class="note">Stars are a mindshare proxy only — two of the strongest commercial players (Conductor, Factory) are closed-source with <em>no stars at all</em>, while the highest-starred tool (Vibe Kanban) belongs to a company that just shut down. Read stars and funding as two different signals.</p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Tool</th><th>Form factor</th><th>Backends</th><th>GitHub ★</th><th>Backing</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Conductor</strong></td>
+            <td class="formfactor">Mac desktop</td>
+            <td>Claude, Codex, Cursor</td>
+            <td class="stars none">closed</td>
+            <td>Melty Labs · YC&nbsp;S24 · <strong>$22M&nbsp;A</strong> (Mar&nbsp;'26)</td>
+            <td class="st-hot">Active, fast-growing</td>
+          </tr>
+          <tr>
+            <td><strong>Factory Droids</strong></td>
+            <td class="formfactor">Multi-surface</td>
+            <td>Claude, GPT, Gemini, any</td>
+            <td class="stars none">closed</td>
+            <td><strong>$150M&nbsp;C · ~$1.5B</strong> (Apr&nbsp;'26)</td>
+            <td class="st-hot">Best-funded; enterprise</td>
+          </tr>
+          <tr>
+            <td><strong>OpenHands</strong></td>
+            <td class="formfactor">Web + CLI + cloud</td>
+            <td>Any (Claude Code, Codex, Gemini, ACP)</td>
+            <td class="stars big">78,000</td>
+            <td>All Hands AI · ~$23.8M</td>
+            <td class="st-hot">Active; fleet platform</td>
+          </tr>
+          <tr>
+            <td><strong>Vibe Kanban</strong></td>
+            <td class="formfactor">Local web (board)</td>
+            <td>~10 curated CLIs</td>
+            <td class="stars big">27,097</td>
+            <td>Bloop AI · YC&nbsp;S21 · ~$7.4M</td>
+            <td class="st-dead">⚠ Company shut down Apr&nbsp;'26; OSS lives</td>
+          </tr>
+          <tr>
+            <td><strong>Claude Code UI / CloudCLI</strong></td>
+            <td class="formfactor">Web + mobile</td>
+            <td>Claude, Cursor, Codex, Gemini</td>
+            <td class="stars">12,061</td>
+            <td>Siteboon AI (indie SaaS)</td>
+            <td class="st-hot">Very active</td>
+          </tr>
+          <tr>
+            <td><strong>Claude Squad</strong></td>
+            <td class="formfactor">Terminal TUI</td>
+            <td>Claude, Codex, Gemini, Aider, OpenCode, Amp</td>
+            <td class="stars">7,882</td>
+            <td>none (small OSS)</td>
+            <td>Alive; irregular cadence</td>
+          </tr>
+          <tr>
+            <td><strong>Agent Orchestrator</strong> (<code>ao</code>)</td>
+            <td class="formfactor">CLI + dashboard</td>
+            <td>7 adapters (Claude default)</td>
+            <td class="stars">7,626</td>
+            <td>Composio · $29M (side project)</td>
+            <td>Active, pre-1.0 (v0.9.5)</td>
+          </tr>
+          <tr>
+            <td><strong>Crystal → Nimbalyst</strong></td>
+            <td class="formfactor">Desktop + iOS</td>
+            <td>Claude, Codex (+alpha)</td>
+            <td class="stars">3.1k → 907</td>
+            <td>Stravu (self-funded)</td>
+            <td>Crystal deprecated Feb&nbsp;'26; niche</td>
+          </tr>
+          <tr>
+            <td><strong>CliDeck</strong></td>
+            <td class="formfactor">Local browser</td>
+            <td>Claude, Codex, Gemini, OpenCode, Pi</td>
+            <td class="stars">115</td>
+            <td>solo dev</td>
+            <td>Early-stage, low traction</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- DEEP DIVES -->
+  <section id="deepdives">
+    <h2>Competitor Deep-Dives — UX &amp; How They Differ</h2>
+    <p class="note">Same worktree-per-session foundation, very different surfaces. The distinguishing axis is what each tool puts in front of the human: a board, a diff, a terminal, a chat list, an IDE, or a governance dashboard.</p>
+
+    <div class="deepdive">
+      <h3>Conductor <span class="ff">Mac desktop</span></h3>
+      <p class="tag">The polished PR-review workflow</p>
+      <p>Native macOS app showing what each agent is doing at a glance. The tightest create flow in the category: <strong>⌘+N spins up a git worktree, runs your setup script, and auto-names the branch in ~10 seconds.</strong> Its signature is <strong>inline, PR-style diff review</strong> — read the agent's diff, leave inline comments, and the agent reads them and responds "just like a normal PR review," then opens a real GitHub PR and responds to review comments there too.</p>
+      <p>Extras: <strong>checkpoints</strong> (snapshot/rollback), <strong>Spotlight testing</strong> (sync a workspace's changes back to main to test), <strong>multi-model mode</strong> (run Claude and Codex on the same prompt in side-by-side tabs), finish/attention notifications, and <strong>Linear</strong> integration. Backends: Claude Code, Codex, Cursor (per-workspace; no Gemini). Free (BYO AI login), closed-source. <em>Main gripe: a broad GitHub-permissions model — it clones from GitHub rather than managing a local repo.</em></p>
+    </div>
+
+    <div class="deepdive">
+      <h3>Factory Droids <span class="ff">SaaS</span></h3>
+      <p class="tag">Multi-surface + role-specialized TDD loop</p>
+      <p>The most ambitious surface story: Droids run in <strong>VS Code, JetBrains, Vim, the terminal (flagship TUI), browser, and Slack</strong>, with <strong>sessions synced across desktop/web/CLI/IDE</strong> ("start on your laptop, check from your phone, review diffs on a tablet"). Factory Desktop gives native machine access with three compute modes (cloud computers / BYO machine / fully local on your GPU).</p>
+      <p>The quality differentiator is a <strong>role-separated Spec→Test→Implement→Verify loop</strong>: a spec droid defines acceptance criteria, a <strong>test-writer droid</strong> turns them into failing tests, a <strong>coding droid</strong> writes minimal code to pass, and a <strong>Review Droid that "never writes features"</strong> gates the PR — "one prompt to PR" end to end. Per-task model routing (Claude/GPT/Gemini/any). Pricing: $20 Pro / $100 Plus / $200 Max / Teams / Enterprise (on-prem at top tier). <em>Caveat: token billing is unpredictable, and reviews note agents "can hallucinate logic, miss edge cases" on vague prompts.</em></p>
+    </div>
+
+    <div class="deepdive">
+      <h3>OpenHands <span class="ff">web + CLI + cloud</span></h3>
+      <p class="tag">The open-source, self-hostable fleet platform</p>
+      <p>Repositioned in 2026 from the "OpenDevin autonomous SWE agent" into <strong>"the open platform for cloud coding agents"</strong> — model- and agent-agnostic (its own agent <em>or</em> Claude Code, Codex, Gemini CLI, any ACP agent), across local/Docker/Kubernetes/VPC. Primary surface is the <strong>Agent Canvas</strong> web GUI plus a full CLI/TUI.</p>
+      <p>Three capabilities matter most: <strong>Cloud</strong> ("agents that don't stop when you do" — async/persistent background agents); <strong>sub-agent delegation</strong> via <code>DelegateTool</code> (parallel) and <code>TaskToolSet</code> (sequential lifecycle); and the <strong>Agent Control Plane</strong> (launched May 6, 2026) — an enterprise "single pane of glass to observe and audit every agentic workflow," with central guardrails (LLM routing, secrets/budgets), least-privilege scoping, and per-workflow cost/ROI attribution. <em>Caveat: the Control Plane is described via capability claims, not demonstrated UI; reviewers say it's the most serious self-hostable option but not the easiest to set up.</em> SWE-Bench Verified ~72–77.6% on an open, reproducible harness.</p>
+    </div>
+
+    <div class="deepdive">
+      <h3>Vibe Kanban <span class="ff">local web app · company defunct</span></h3>
+      <p class="tag">The kanban board</p>
+      <p><code>npx vibe-kanban</code> launches a local web app (Rust + React). The board has <strong>five columns — To do / In Progress / In Review / Done / Cancelled.</strong> Starting a card spins up a <strong>git worktree per task attempt</strong> (branch + terminal + dev server), and the card moves across columns showing the agent's reasoning, commands, and file ops live.</p>
+      <p>Its standout is the review loop: <strong>side-by-side diffs with inline comments collected into one combined review message that bumps the card back to In Progress</strong> for the agent to address — feedback without leaving the UI. Also ships a built-in browser with devtools/inspect/device-emulation. ~10 curated CLI agents (no Aider). <em>Status: the company (Bloop) shut down Apr 10, 2026 ("couldn't find a business model") and wound down its hosted tier with refunds, but the Apache-2.0 OSS repo remains live and community-maintained (not archived). Downloads are declining.</em></p>
+    </div>
+
+    <div class="deepdive">
+      <h3>Agent Orchestrator (<code>ao</code>) <span class="ff">CLI + dashboard</span></h3>
+      <p class="tag">The autonomous "reactions" engine</p>
+      <p><code>ao start &lt;repo&gt;</code> launches a Next.js dashboard plus the orchestrator — which is itself an <strong>AI agent that reads your backlog, decomposes a feature into parallel tasks, and assigns each to a worker agent</strong> (own worktree + branch + PR). The dashboard is an <strong>attention-prioritized kanban</strong> (Red = stuck, Orange = PR-ready, Green = working, Grey = done) with an embedded xterm.js terminal; agents run in <strong>tmux</strong> panes.</p>
+      <p>The core is a <strong>two-tier reactions engine</strong>: Tier 1 auto-handles (<code>ci-failed</code> → inject failure output, agent fixes, retries:2; <code>changes-requested</code> → route reviewer comments back; <code>merge-conflicts</code> → rebase); Tier 2 notifies the human. Governed by <code>auto:true</code> (act, optional auto-merge) vs <code>auto:false</code> (notify and wait — the default for merging). <em>Reality check: 7 agent adapters are genuinely implemented, but the advertised container/cloud runtimes are vaporware (only tmux/process ship), there's no native diff UI (delegated to GitHub), and the 7.6k stars are brand-amplified against a 3-point Show HN. Repo moved to <code>AgentWrapper/</code>; npm is now <code>@aoagents/ao</code>.</em></p>
+    </div>
+
+    <div class="deepdive">
+      <h3>Crystal → Nimbalyst <span class="ff">cross-platform desktop + iOS</span></h3>
+      <p class="tag">Visual editors + kanban</p>
+      <p>Crystal (the original Electron app — parallel Claude/Codex sessions in worktrees, AI-named sessions, per-session build/test scripts) was <strong>deprecated Feb 2026 and replaced by Nimbalyst.</strong> Nimbalyst is the most scope-ambitious product here: a multi-pane workspace with a <strong>session kanban</strong> (backlog/planning/implementing/complete), an inline diff approve/reject/iterate loop, an embedded <strong>Ghostty terminal</strong>, and — its real differentiator — <strong>visual WYSIWYG editors</strong> (markdown, UI mockups, Mermaid, Excalidraw, CSV/spreadsheets, a Monaco code editor) with an extensions marketplace, plus an <strong>iOS companion app</strong> (review diffs, voice replies, push notifications). Cross-platform (Mac/Win/Linux/iOS), open-source MIT, free. <em>Caveat: despite the rich feature set, adoption is thin — 907 stars, an 8-point Show HN.</em></p>
+    </div>
+
+    <div class="deepdive">
+      <h3>Claude Code UI / CloudCLI <span class="ff">web + mobile</span></h3>
+      <p class="tag">In-browser editor + mobile</p>
+      <p>React SPA over a Node/Express + WebSocket server that auto-discovers projects from the local <code>~/.claude</code> folder. The headline primitives are exactly CC's gaps: a <strong>file explorer with syntax highlighting and live in-browser editing (CodeMirror)</strong> and an <strong>integrated shell terminal</strong> with direct CLI access. Responsive on mobile (drive the agent from a phone browser — though not an installable PWA). Backends: Claude Code, Cursor CLI, Codex, Gemini CLI (+OpenCode), per session. Real plugin system. <em>Caveats: parallelism is weak/undocumented (it surfaces existing <code>~/.claude</code> sessions rather than orchestrating isolated parallel worktrees — a genuine gap vs CC), and the OSS version ships no built-in auth (BYO reverse proxy before exposing a shell + editor).</em> AGPL-3.0 OSS; paid cloud (€7–€20/mo).</p>
+    </div>
+
+    <div class="deepdive">
+      <h3>Claude Squad <span class="ff">TUI</span></h3>
+      <p class="tag">Terminal-native parallelism</p>
+      <p>The closest model to CC, but terminal-native: a full-screen TUI (<code>cs</code>) with a session list on the left and <strong>Preview / Diff / Terminal tabs</strong> on the right. Isolation is <strong>git worktrees + tmux</strong> (persistent, survives disconnect) — essentially CC's model without a web UI. Review is a per-agent Diff tab plus branch-level commit/push via <code>gh</code>; experimental <code>--autoyes</code> "yolo" mode (Claude Code + Aider only). Backends via <code>-p</code> flag (codex/aider/gemini/opencode/amp). No mobile/remote, hard tmux dependency (no real Windows). AGPL-3.0, Go, no funding.</p>
+    </div>
+
+    <div class="deepdive">
+      <h3>CliDeck <span class="ff">local browser dashboard</span></h3>
+      <p class="tag">Chat-style multiplexer</p>
+      <p>A deliberately different metaphor: a <strong>chat/messaging layout ("WhatsApp-like")</strong> rather than panes — a sidebar of sessions with live working/idle status. Crucially <strong>NOT worktree- or tmux-based</strong>: each session is a raw PTY (node-pty) rendered via xterm.js, so it's a terminal multiplexer, not a git orchestrator. No diff/review. Its genuinely novel bits: <strong>"ask another session"</strong> (inject a prompt into another agent's terminal and get its reply — cross-agent coordination) and <strong>QR-pair a phone with E2E encryption</strong> to monitor/answer agents remotely. MIT, free, fully local. Solo project, 115 stars — an idea source, not a competitive threat.</p>
+    </div>
+  </section>
+
+  <!-- POPULARITY -->
+  <section id="popularity">
+    <h2>Relative Popularity &amp; Momentum</h2>
+    <p class="note">Two distinct signals, pointing in different directions — weigh them separately.</p>
+    <div class="poprank">
+      <div class="popcol">
+        <h3><span class="ic">★</span>Open-source mindshare (GitHub stars)</h3>
+        <div class="poprow"><span class="rk">1</span><span class="body"><b>OpenHands</b> — <span class="metric">78,000 ★</span><br>A different league; one of the most-starred AI-agent repos overall. The OSS heavyweight.</span></div>
+        <div class="poprow"><span class="rk">2</span><span class="body"><b>Vibe Kanban</b> — <span class="metric">27,097 ★</span><br>Huge mindshare + strongest organic launch (195 HN pts), but the company is now defunct; momentum fading.</span></div>
+        <div class="poprow"><span class="rk">3</span><span class="body"><b>Claude Code UI / CloudCLI</b> — <span class="metric">12,061 ★</span><br>Steady organic growth (~8k→12k in 3mo), very high release velocity. Healthiest mid-tier OSS project.</span></div>
+        <div class="poprow"><span class="rk">4</span><span class="body"><b>Claude Squad</b> <span class="metric">7,882 ★</span> &amp; <b>Agent Orchestrator</b> <span class="metric">7,626 ★</span><br>Similar counts, different signal: Squad's is older/organic-thin; <code>ao</code>'s is brand-amplified vs a 3-pt Show HN.</span></div>
+        <div class="poprow"><span class="rk">5</span><span class="body"><b>Crystal → Nimbalyst</b> — <span class="metric">3.1k (frozen) → 907 ★</span><br>The rename reset its star base; feature-rich but niche.</span></div>
+        <div class="poprow"><span class="rk">6</span><span class="body"><b>CliDeck</b> — <span class="metric">115 ★</span><br>Solo, early-stage.</span></div>
+      </div>
+      <div class="popcol">
+        <h3><span class="ic">$</span>Commercial backing &amp; traction</h3>
+        <div class="poprow"><span class="rk">1</span><span class="body"><b>Factory</b> — <span class="metric money">$150M Series C · ~$1.5B</span><br>By far the best-capitalized, closed-source, enterprise-focused — and zero GitHub stars (not open). Names Nvidia/Adobe/Morgan Stanley (vendor-stated).</span></div>
+        <div class="poprow"><span class="rk">2</span><span class="body"><b>Conductor</b> — <span class="metric money">$22M Series A</span><br>Strong launch (228 HN pts, #7 Product of the Day), claims 10× growth since Jan '26. Closed-source → no stars.</span></div>
+        <div class="poprow"><span class="rk">3</span><span class="body"><b>Composio</b> — <span class="metric money">$29M</span><br>But <code>ao</code> is a side/showcase project, not the company's core product.</span></div>
+        <div class="poprow"><span class="rk">4</span><span class="body"><b>OpenHands</b> — <span class="metric money">~$23.8M</span><br>Far richer in credibility/stars than cash — ~7× behind Factory and a stage behind.</span></div>
+        <div class="poprow"><span class="rk">5</span><span class="body"><b>Bloop AI</b> — <span class="metric money">~$7.4M</span><br><span class="st-dead">Shut down Apr 2026</span> despite 27k stars — the cautionary tale that stars ≠ a business model.</span></div>
+        <div class="poprow"><span class="rk">6</span><span class="body"><b>Nimbalyst, Claude Squad, CliDeck</b> — <span class="metric">no disclosed funding</span><br>Small/solo efforts.</span></div>
+      </div>
+    </div>
+    <div class="callout key">
+      <h3>The key takeaway for CC</h3>
+      <p>The two best-funded, fastest-growing commercial players (<strong>Factory, Conductor</strong>) are <strong>closed-source desktop/SaaS</strong> products competing on <em>workflow polish</em> (PR review, multi-surface, TDD loops) — not on open-source mindshare. The OSS star leaders (<strong>OpenHands, Vibe Kanban, Claude Code UI</strong>) compete on <em>self-hostability and interactive UI</em>.</p>
+      <p style="margin-bottom:0">CC's web-control-plane-with-graph-workflows position is relatively uncontested — but the feature bar on both axes (autonomous loops from the commercial camp, interactive primitives from the OSS camp) is exactly what the opportunities below target. <strong>Vibe Kanban's death is also a warning: a great free tool with 27k stars still needs a reason to exist beyond the feature list.</strong></p>
+    </div>
+  </section>
+
+  <!-- OPPORTUNITIES -->
+  <section id="opportunities">
+    <h2>Feature Opportunities, Ranked by Value</h2>
+
+    <article class="opp rank1">
+      <div class="opp-head">
+        <div class="opp-rank">1</div>
+        <div class="opp-titles">
+          <h3>Autonomous feedback loops — CI-fix, reviewer routing, PR management</h3>
+          <div class="badges"><span class="badge val-highest">★ Highest value</span></div>
+        </div>
+      </div>
+      <p>The single highest-value gap. <strong>Agent Orchestrator</strong>: "agents autonomously fix CI failures, address review comments, and open PRs" — <em>CI fails → agent gets the logs and fixes it</em>; <em>reviewer requests changes → agent addresses them</em> (<code>auto:true</code> routes them automatically). PR merging stays human-gated by default. <strong>Conductor</strong> does the same reviewer-comment round-trip in its inline-diff UI. <strong>Factory Droids</strong>: "one prompt to PR" via a real Spec→Test→Implement→Verify loop with a dedicated Review Droid.</p>
+      <div class="nuance"><strong>Fit for CC:</strong> CC's graph workflows already do validation/retries/circuit-breakers but do not natively ingest CI logs or route PR reviewer comments back into a session. Closest fit to CC's composable-primitives philosophy — likely expressible as new validator types/actors over the existing iteration policy + circuit breaker, <em>if</em> a GitHub-PR-events ingestion primitive is added.</div>
+      <div class="src-line"><span class="lbl">Sources</span><a href="https://github.com/ComposioHQ/agent-orchestrator">ComposioHQ/agent-orchestrator</a> · <a href="https://factory.ai/product/droids">factory.ai/droids</a> · <a href="https://www.conductor.build/">conductor.build</a></div>
+    </article>
+
+    <article class="opp rank2">
+      <div class="opp-head">
+        <div class="opp-rank">2</div>
+        <div class="opp-titles">
+          <h3>Multi-agent-backend support — Codex / Cursor / Gemini sessions</h3>
+          <div class="badges"><span class="badge val-high">High value</span></div>
+        </div>
+      </div>
+      <p>Conductor runs Claude + Codex + Cursor; Claude Code UI runs Claude/Cursor/Codex/Gemini; Vibe Kanban exposes a ~10-CLI roster; Crystal/Nimbalyst run Claude + Codex; Claude Squad and CliDeck switch backends via flags. <strong>Nearly every competitor lets the user pick the backend; CC's sessions are Claude Agent SDK <code>query()</code> only.</strong></p>
+      <div class="nuance"><strong>Honest qualifier:</strong> "any coding agent" marketing is overstated everywhere — each tool ships a <em>closed adapter set</em>, not arbitrary-backend support. CC isn't 100% Claude-internal either — its graph-workflow validator/collab lanes already reference a <code>codex</code> lane. Open question: are user-facing multi-backend <em>sessions</em> worth diluting CC's tight Claude SDK integration?</div>
+      <div class="src-line"><span class="lbl">Sources</span><a href="https://www.conductor.build/">conductor.build</a> · <a href="https://github.com/siteboon/claudecodeui">siteboon/claudecodeui</a> · <a href="https://github.com/BloopAI/vibe-kanban">BloopAI/vibe-kanban</a> · <a href="https://github.com/smtg-ai/claude-squad">smtg-ai/claude-squad</a></div>
+    </article>
+
+    <article class="opp rank3">
+      <div class="opp-head">
+        <div class="opp-rank">3</div>
+        <div class="opp-titles">
+          <h3>In-browser interactive primitives — file editor + terminal</h3>
+          <div class="badges"><span class="badge val-high">High value</span></div>
+        </div>
+      </div>
+      <p><strong>Claude Code UI</strong> ships an interactive file tree with syntax highlighting + live editing (CodeMirror) and a built-in shell. <strong>Conductor</strong> and <strong>Nimbalyst</strong> bundle per-task terminals; Nimbalyst adds Monaco + visual editors — <strong>terminal-and-editor-in-UI is becoming table stakes.</strong> CC has none of these — no <code>monaco</code>/<code>codemirror</code>/<code>xterm</code>/<code>node-pty</code> dependencies, and its observability is JSONL transcripts + computed diffs only.</p>
+      <div class="nuance"><strong>Tension to resolve:</strong> does manual in-browser editing conflict with CC's agent-offloading principle, or complement it?</div>
+      <div class="src-line"><span class="lbl">Sources</span><a href="https://github.com/siteboon/claudecodeui">siteboon/claudecodeui</a> · <a href="https://nimbalyst.com/">nimbalyst.com</a></div>
+    </article>
+
+    <article class="opp">
+      <div class="opp-head">
+        <div class="opp-rank">4</div>
+        <div class="opp-titles">
+          <h3>Kanban board task UI</h3>
+          <div class="badges"><span class="badge val-med">Medium-high value</span></div>
+        </div>
+      </div>
+      <p><strong>Vibe Kanban</strong>: a 5-column board (To do / In Progress / In Review / Done / Cancelled) where starting a card spins up a worktree per attempt and the card advances as the agent runs — with a confirmed <strong>inline-diff-comment-to-agent</strong> review loop. <strong>Nimbalyst</strong> and <strong>Agent Orchestrator</strong> also use board metaphors (the latter attention-prioritized by color). CC uses a session-list/cockpit + declarative-graph model with no board view.</p>
+      <div class="nuance"><strong>Caveat:</strong> Bloop AI (Vibe Kanban's maker) shut down Apr 2026, though the Apache-2.0 OSS repo lives on and is the category's most-starred (27k). Question whether a board is additive or duplicates CC's graph paradigm.</div>
+      <div class="src-line"><span class="lbl">Sources</span><a href="https://github.com/BloopAI/vibe-kanban">BloopAI/vibe-kanban</a> · <a href="https://nimbalyst.com/">nimbalyst.com</a></div>
+    </article>
+
+    <article class="opp">
+      <div class="opp-head">
+        <div class="opp-rank">5</div>
+        <div class="opp-titles">
+          <h3>Multi-surface delivery — IDE / Slack / terminal</h3>
+          <div class="badges"><span class="badge val-med">Medium value</span></div>
+        </div>
+      </div>
+      <p><strong>Factory</strong> Droids work natively in VS Code, JetBrains, Vim, the browser, Slack, and the terminal, with sessions synced across surfaces. <strong>Nimbalyst</strong>'s iOS companion app is a lighter-weight version of the same idea (review/reply from a phone). Strategic positioning, not a bolt-on — relevant if CC wants reach beyond the browser (e.g. a Slack delegation surface or IDE bridge).</p>
+      <div class="src-line"><span class="lbl">Sources</span><a href="https://factory.ai/product/droids">factory.ai/droids</a> · <a href="https://nimbalyst.com/">nimbalyst.com</a></div>
+    </article>
+
+    <article class="opp">
+      <div class="opp-head">
+        <div class="opp-rank">6</div>
+        <div class="opp-titles">
+          <h3>Cloud / async-persistent execution + sub-agent delegation</h3>
+          <div class="badges"><span class="badge val-med">Longer horizon</span></div>
+        </div>
+      </div>
+      <p><strong>OpenHands</strong>: a Cloud option ("agents that don't stop when you do") for async parallel campaigns; sub-agent delegation via <code>TaskToolSet</code>; and an enterprise <strong>Agent Control Plane</strong> (May 2026) — a "pane of glass" with scheduling/retries/state/audit. Mostly enterprise-fleet scope vs. CC's single-user model — directional inspiration. The most portable idea: <strong>sub-agent delegation</strong>, which partially overlaps CC's graph-workflow multi-context model.</p>
+      <div class="src-line"><span class="lbl">Sources</span><a href="https://www.openhands.dev/blog/openhands-product-update---may-2026">Product update May 2026</a> · <a href="https://docs.openhands.dev/sdk/guides/task-tool-set">TaskToolSet</a> · <a href="https://www.openhands.dev/blog/agent-control-plane">Agent Control Plane</a></div>
+    </article>
+  </section>
+
+  <!-- DIFFERENTIATORS -->
+  <section id="differentiators">
+    <h2>CC Differentiators That Hold Up Well</h2>
+    <div class="callout good">
+      <h3>What no competitor matched cleanly</h3>
+      <ul>
+        <li><strong>Web control plane</strong> delivery (most competitors are Mac desktop apps)</li>
+        <li><strong>Per-session dev-server automation with remote Tailscale URLs</strong> — no competitor matched this</li>
+        <li><strong>Voice input</strong> (Whisper-based prompt transcription) — only Nimbalyst's iOS app has voice, and only on mobile</li>
+        <li><strong>Declarative graph-workflow engine</strong> with validation/retries/circuit breakers</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- QUESTIONS -->
+  <section id="questions">
+    <h2>Open Questions</h2>
+    <ol class="q">
+      <li>Of the highest-value gaps, can autonomous CI-failure remediation and reviewer-comment routing be expressed as new graph-workflow validator types/actors (reusing the existing iteration policy + circuit breaker), or does it require a new GitHub-PR-events ingestion primitive CC doesn't yet have?</li>
+      <li>What is the actual demand for multi-agent-backend sessions (Codex/Cursor/Gemini), and would adding it dilute CC's tight Claude Agent SDK integration — given CC already has a <code>codex</code> validator lane internally?</li>
+      <li>Would an in-browser file editor + interactive terminal materially improve CC's workflow, or does it conflict with CC's agent-offloading principle?</li>
+      <li>Is a kanban board a genuinely additive UI layer over CC's existing session-list/graph model, or would it duplicate the declarative graph-workflow paradigm?</li>
+    </ol>
+  </section>
+
+  <!-- CAVEATS -->
+  <section id="caveats">
+    <h2>Caveats</h2>
+    <div class="caveat"><span class="ic">⚠</span><p><strong>Fast-moving category.</strong> Crystal was deprecated and replaced by Nimbalyst (Feb 2026), and Bloop AI — maker of Vibe Kanban — shut down (Apr 2026) though its OSS repo lives on. Treat these as category exemplars whose commercial backing may not persist.</p></div>
+    <div class="caveat"><span class="ic">⚠</span><p><strong>Stars ≠ traction ≠ revenue.</strong> The most-starred tool (Vibe Kanban, 27k) belongs to a defunct company; the best-funded tools (Factory $150M, Conductor $22M) are closed-source with zero stars; <code>ao</code>'s 7.6k stars are brand-amplified against a 3-point Show HN. Read each signal in isolation.</p></div>
+    <div class="caveat"><span class="ic">⚠</span><p><strong>Vendor-reported figures.</strong> Adoption/quality numbers — Factory's "hundreds of thousands of developers" and named enterprise customers (Nvidia/Adobe/Morgan Stanley, with no customer-side confirmation), the 84.6% CI self-correction rate, Conductor's enterprise logo wall, OpenHands' "7M downloads" — are vendor self-reporting, not audited data. Factory reviews do note real quality issues (hallucinated logic, missed edge cases).</p></div>
+    <div class="caveat"><span class="ic">⚠</span><p><strong>Marketing overstatement.</strong> "Any coding agent" framing (Vibe Kanban, CliDeck, <code>ao</code>) means a <em>closed adapter set</em>, not arbitrary backends; <code>ao</code>'s advertised container/cloud runtimes are not shipped (only tmux/process exist).</p></div>
+    <div class="caveat"><span class="ic">⚠</span><p><strong>Scope mismatch.</strong> OpenHands' enterprise control plane and Factory's IDE/Slack reach target a different scope (fleet/enterprise) than CC's single-user web UI — directional inspiration, not strict apples-to-apples gaps.</p></div>
+  </section>
+
+  <!-- RECOMMENDATION -->
+  <section id="recommendation">
+    <h2>Recommendation</h2>
+    <div class="callout rec">
+      <h3>★ Lead with autonomous CI/PR feedback loops</h3>
+      <p style="margin-bottom:0"><strong>#1 is the strongest play</strong> — it extends CC's existing graph-workflow strength rather than bolting on a new paradigm, and it's where the well-funded players (Factory, Composio, Conductor) are concentrating effort. The natural next step is to spec the CI-failure / reviewer-comment loop as new graph-workflow validator types/actors plus a GitHub-PR-events ingestion primitive.</p>
+    </div>
+  </section>
+
+  <!-- SOURCES -->
+  <section id="sources">
+    <h2>Sources</h2>
+
+    <div class="src-group">
+      <h4>Primary — competitor repos / product pages</h4>
+      <ul class="src-list">
+        <li><span class="quality-tag primary">primary</span><a href="https://github.com/ComposioHQ/agent-orchestrator">github.com/ComposioHQ/agent-orchestrator</a> (now <a href="https://github.com/AgentWrapper/agent-orchestrator">AgentWrapper/agent-orchestrator</a>)</li>
+        <li><span class="quality-tag primary">primary</span><a href="https://github.com/stravu/crystal">github.com/stravu/crystal</a> · <a href="https://nimbalyst.com/">nimbalyst.com</a> · <a href="https://github.com/Nimbalyst/nimbalyst">github.com/Nimbalyst/nimbalyst</a></li>
+        <li><span class="quality-tag primary">primary</span><a href="https://www.conductor.build/">conductor.build</a> · <a href="https://www.conductor.build/docs/">/docs</a> · <a href="https://www.conductor.build/blog/series-a">/blog/series-a</a></li>
+        <li><span class="quality-tag primary">primary</span><a href="https://github.com/siteboon/claudecodeui">github.com/siteboon/claudecodeui</a> · <a href="https://cloudcli.ai">cloudcli.ai</a></li>
+        <li><span class="quality-tag primary">primary</span><a href="https://github.com/BloopAI/vibe-kanban">github.com/BloopAI/vibe-kanban</a></li>
+        <li><span class="quality-tag primary">primary</span><a href="https://github.com/smtg-ai/claude-squad">github.com/smtg-ai/claude-squad</a></li>
+        <li><span class="quality-tag primary">primary</span><a href="https://github.com/rustykuntz/clideck">github.com/rustykuntz/clideck</a></li>
+        <li><span class="quality-tag primary">primary</span><a href="https://factory.ai/product/droids">factory.ai/product/droids</a> · <a href="https://factory.ai/product/desktop">/desktop</a> · <a href="https://factory.ai/pricing">/pricing</a> · <a href="https://factory.ai/news/series-c">/news/series-c</a></li>
+        <li><span class="quality-tag primary">primary</span><a href="https://github.com/All-Hands-AI/OpenHands">github.com/All-Hands-AI/OpenHands</a> · <a href="https://www.openhands.dev/pricing">/pricing</a> · <a href="https://www.openhands.dev/blog/agent-control-plane">/blog/agent-control-plane</a></li>
+        <li><span class="quality-tag primary">primary</span><a href="https://docs.openhands.dev/sdk/guides/task-tool-set">docs.openhands.dev — TaskToolSet</a> · <a href="https://docs.openhands.dev/sdk/guides/agent-delegation">agent-delegation</a></li>
+      </ul>
+    </div>
+
+    <div class="src-group">
+      <h4>Popularity / funding / adoption</h4>
+      <ul class="src-list">
+        <li><span class="quality-tag data">data</span>GitHub &amp; npm REST APIs — star/fork/contributor/download counts, observed 2026-06-22</li>
+        <li><span class="quality-tag secondary">secondary</span><a href="https://www.ycombinator.com/companies/conductor">YC — Conductor</a> · <a href="https://www.ycombinator.com/companies/bloop">YC — Bloop</a></li>
+        <li><span class="quality-tag secondary">secondary</span><a href="https://news.ycombinator.com/item?id=44594584">Show HN — Conductor (228 pts)</a> · <a href="https://news.ycombinator.com/item?id=44533004">Show HN — Vibe Kanban (195 pts)</a></li>
+        <li><span class="quality-tag secondary">secondary</span><a href="https://www.businesswire.com/news/home/20260506314667/en/">BusinessWire — OpenHands Agent Control Plane launch</a></li>
+        <li><span class="quality-tag secondary">secondary</span><a href="https://factory.ai/news/terminal-bench">Factory Terminal-Bench</a> · <a href="https://www.openhands.dev/blog/openhands-index">OpenHands Index (benchmarks)</a></li>
+        <li><span class="quality-tag secondary">secondary</span><a href="https://fritz.ai/factory-ai-review/">fritz.ai</a> · <a href="https://www.digitalapplied.com/blog/factory-ai-multi-agent-coding-platform-review">digitalapplied.com</a> (independent reviews)</li>
+      </ul>
+    </div>
+
+    <div class="src-group">
+      <h4>Category lists &amp; landscape</h4>
+      <ul class="src-list">
+        <li><span class="quality-tag secondary">secondary</span><a href="https://github.com/andyrewlee/awesome-agent-orchestrators">awesome-agent-orchestrators</a> · <a href="https://github.com/bradAGI/awesome-cli-coding-agents">awesome-cli-coding-agents</a></li>
+        <li><span class="quality-tag">blog</span><a href="https://madewithlove.com/blog/conductor-running-multiple-ai-coding-agents-in-parallel/">madewithlove.com — Conductor</a> · <a href="https://nimbalyst.com/blog/best-claude-code-gui-tools-2026/">nimbalyst.com roundups</a></li>
+      </ul>
+    </div>
+  </section>
+
+  <footer>
+    <span class="mono">Command Center · Competitive Analysis</span>
+    <span class="mono">9 competitors · metrics as of 2026-06-22</span>
+  </footer>
+
+</div>
+</body>
+</html>
