@@ -2,7 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 import { apiFetch } from "@/lib/api/fetcher";
 import {
-  workflowDefinitionKeys,
   graphWorkflowEventsKeys,
   graphWorkflowExecutionKeys,
   graphWorkflowHistoryKeys,
@@ -20,6 +19,10 @@ import {
   prerequisiteSchema,
 } from "@/lib/workflows/schemas";
 import { collaborationListResponseSchema } from "@/lib/collaboration/schemas";
+import {
+  workflowDefinitionScopeApi,
+  type WorkflowDefinitionScope,
+} from "@/lib/workflows/definition-scope";
 import type { TemplateLibraryItem } from "@/lib/workflow-graph/template-library-service";
 
 // The cross-tier library listing returned by the project-templates endpoint.
@@ -51,12 +54,15 @@ export function useProjectTemplatesQuery(projectName: string) {
   });
 }
 
-export function useWorkflowDefinitionsQuery(projectName: string) {
+export function useScopedWorkflowDefinitionsQuery(
+  scope: WorkflowDefinitionScope,
+) {
+  const api = workflowDefinitionScopeApi(scope);
   return useQuery({
-    queryKey: workflowDefinitionKeys.list(projectName),
+    queryKey: api.listKey,
     queryFn: async () => {
       const data = await apiFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/workflows`,
+        api.collectionUrl,
         workflowDefinitionsResponseSchema,
       );
       return data.items;
@@ -64,20 +70,35 @@ export function useWorkflowDefinitionsQuery(projectName: string) {
   });
 }
 
-export function useWorkflowDefinitionQuery(
-  projectName: string,
+export function useWorkflowDefinitionsQuery(projectName: string) {
+  return useScopedWorkflowDefinitionsQuery({ kind: "project", projectName });
+}
+
+export function useScopedWorkflowDefinitionQuery(
+  scope: WorkflowDefinitionScope,
   workflowId: string | null,
 ) {
+  const api = workflowDefinitionScopeApi(scope);
   return useQuery({
-    queryKey: workflowDefinitionKeys.detail(projectName, workflowId ?? ""),
+    queryKey: api.detailKey(workflowId ?? ""),
     queryFn: async () => {
       return await apiFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/workflows/${encodeURIComponent(workflowId!)}`,
+        api.itemUrl(workflowId!),
         workflowDefinitionGetResponseSchema,
       );
     },
     enabled: workflowId != null,
   });
+}
+
+export function useWorkflowDefinitionQuery(
+  projectName: string,
+  workflowId: string | null,
+) {
+  return useScopedWorkflowDefinitionQuery(
+    { kind: "project", projectName },
+    workflowId,
+  );
 }
 
 /**

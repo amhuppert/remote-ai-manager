@@ -37,6 +37,8 @@ interface WorkflowDefinitionsSidebarProps {
   onCreate: () => void;
   isLoading: boolean;
   footer?: React.ReactNode;
+  /** Heading shown above the list. Defaults to "Definitions". */
+  title?: string;
 }
 
 type DotState =
@@ -99,12 +101,13 @@ export default function WorkflowDefinitionsSidebar({
   onCreate,
   isLoading,
   footer,
+  title = "Definitions",
 }: WorkflowDefinitionsSidebarProps) {
   return (
     <aside className="flex w-[240px] min-w-[240px] flex-col overflow-hidden border-r border-solid border-border-subtle bg-bg-surface max-768:w-full max-768:min-w-0 max-768:flex-1 max-768:border-r-0 max-768:border-b max-768:border-solid max-768:border-b-border-dim max-768:[.app[data-page=workflow-builder][data-mobile-panel=graph]_&]:hidden max-768:[.app[data-page=workflow-builder][data-mobile-panel=inspector]_&]:hidden">
       <div className="flex min-h-[44px] items-center justify-between border-b border-solid border-border-dim px-md py-[10px]">
         <span className="text-[0.72rem] font-semibold tracking-[0.08em] text-text-secondary uppercase">
-          Definitions
+          {title}
         </span>
         <button
           className={cn(WB_BTN_BASE, WB_BTN_XS, WB_BTN_DEFAULT)}

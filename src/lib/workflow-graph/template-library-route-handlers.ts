@@ -1,15 +1,19 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { readConfig as defaultReadConfig } from "@/lib/config/loader";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import type { ApiError } from "@/lib/api/errors";
+import type { GlobalConfig } from "@/lib/config/schemas";
 import type { WorkflowDefinitionRecord } from "@/lib/workflows/schemas";
 import {
   workflowSemanticDefinitionSchema,
   graphWorkflowVisualLayoutSchema,
 } from "@/lib/workflows/schemas";
+import { resolveWorkflowDefinition } from "./resolve-config";
 import {
   createWorkflowStorageService,
   type WorkflowDefinitionDraft,
+  type WorkflowDefinitionSummary,
 } from "./storage";
 import {
   createTemplateLibraryService,
@@ -35,7 +39,9 @@ type RouteContext = {
  */
 export interface TemplateLibraryRouteDeps {
   resolveProjectPath(name: string): Promise<string | null>;
+  readConfig(): Promise<GlobalConfig>;
   list(projectPath: string): Promise<TemplateLibraryItem[]>;
+  listGlobal(): Promise<WorkflowDefinitionSummary[]>;
   createGlobal(
     draft: WorkflowDefinitionDraft,
   ): Promise<WorkflowDefinitionRecord>;
@@ -54,7 +60,9 @@ const defaultLibrary = createTemplateLibraryService({
 
 const defaultDeps: TemplateLibraryRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,
+  readConfig: defaultReadConfig,
   list: (projectPath) => defaultLibrary.list(projectPath),
+  listGlobal: () => defaultStorage.list({ kind: "global" }),
   createGlobal: (draft) => defaultStorage.create({ kind: "global" }, draft),
   getGlobal: (workflowId) => defaultStorage.get({ kind: "global" }, workflowId),
   updateGlobal: (workflowId, draft) =>
@@ -121,6 +129,14 @@ export function createTemplateLibraryRouteHandlers(
     return NextResponse.json({ items });
   }
 
+  async function LIST_GLOBAL(
+    _request: Request,
+    _context: RouteContext,
+  ): Promise<Response> {
+    const items = await deps.listGlobal();
+    return NextResponse.json({ items });
+  }
+
   async function CREATE(
     request: Request,
     _context: RouteContext,
@@ -158,7 +174,9 @@ export function createTemplateLibraryRouteHandlers(
       );
     }
 
-    return NextResponse.json({ item });
+    const globalConfig = await deps.readConfig();
+    const resolved = resolveWorkflowDefinition(globalConfig, item.definition);
+    return NextResponse.json({ item, resolved });
   }
 
   async function UPDATE(
@@ -205,5 +223,5 @@ export function createTemplateLibraryRouteHandlers(
     return NextResponse.json({ ok: true });
   }
 
-  return { LIST_TEMPLATES, CREATE, GET, UPDATE, DELETE };
+  return { LIST_TEMPLATES, LIST_GLOBAL, CREATE, GET, UPDATE, DELETE };
 }

@@ -7,14 +7,15 @@ import "@/components/workflow-graph/workflow-graph.css";
 import Topbar from "@/components/Topbar";
 import { ApiCallError } from "@/lib/api/errors";
 import {
-  useCreateWorkflowDefinitionMutation,
-  useDeleteWorkflowDefinitionMutation,
-  useUpdateWorkflowDefinitionMutation,
+  useScopedCreateWorkflowDefinitionMutation,
+  useScopedDeleteWorkflowDefinitionMutation,
+  useScopedUpdateWorkflowDefinitionMutation,
 } from "@/lib/workflows/mutations";
 import {
-  useWorkflowDefinitionQuery,
-  useWorkflowDefinitionsQuery,
+  useScopedWorkflowDefinitionQuery,
+  useScopedWorkflowDefinitionsQuery,
 } from "@/lib/workflows/queries";
+import type { WorkflowDefinitionScope } from "@/lib/workflows/definition-scope";
 import { useWorkflowMobilePanel } from "@/components/workflow-graph/useWorkflowMobilePanel";
 import { WorkflowMobileTabBar } from "@/components/workflow-graph/WorkflowMobileTabBar";
 import { useGlobalDefaults } from "@/hooks/use-global-defaults";
@@ -35,7 +36,7 @@ import WorkflowDefinitionsSidebar from "./WorkflowDefinitionsSidebar";
 import type { InspectorTab } from "./WorkflowInspectorPanel";
 
 interface ConnectedWorkflowBuilderPageProps {
-  projectName: string;
+  scope: WorkflowDefinitionScope;
   defaultImplementerConfig: GraphWorkflowAgentConfig;
   codexConfig?: CodexConfig;
 }
@@ -87,13 +88,15 @@ export function resolveDefinitionClientSide(
 }
 
 export default function ConnectedWorkflowBuilderPage({
-  projectName,
+  scope,
   defaultImplementerConfig,
   codexConfig,
 }: ConnectedWorkflowBuilderPageProps): React.JSX.Element {
+  const isGlobal = scope.kind === "global";
+  const projectName = scope.kind === "project" ? scope.projectName : null;
   const { isMobile, mobilePanel, setMobilePanel, autoSwitchPanel } =
     useWorkflowMobilePanel<BuilderMobilePanel>("graph");
-  const definitionsQuery = useWorkflowDefinitionsQuery(projectName);
+  const definitionsQuery = useScopedWorkflowDefinitionsQuery(scope);
   const { workflowDefaults } = useGlobalDefaults();
   const [requestedWorkflowId, setRequestedWorkflowId] = useState<string | null>(
     null,
@@ -129,16 +132,16 @@ export default function ConnectedWorkflowBuilderPage({
 
     return definitions[0]?.id ?? null;
   }, [definitionsQuery.data, requestedWorkflowId]);
-  const selectedRecord = useWorkflowDefinitionQuery(
-    projectName,
+  const selectedRecord = useScopedWorkflowDefinitionQuery(
+    scope,
     selectedWorkflowId,
   );
-  const createMutation = useCreateWorkflowDefinitionMutation(projectName);
-  const updateMutation = useUpdateWorkflowDefinitionMutation(
-    projectName,
+  const createMutation = useScopedCreateWorkflowDefinitionMutation(scope);
+  const updateMutation = useScopedUpdateWorkflowDefinitionMutation(
+    scope,
     selectedWorkflowId ?? "",
   );
-  const deleteMutation = useDeleteWorkflowDefinitionMutation(projectName);
+  const deleteMutation = useScopedDeleteWorkflowDefinitionMutation(scope);
 
   const selectedSummary = useMemo(() => {
     return (
@@ -227,20 +230,26 @@ export default function ConnectedWorkflowBuilderPage({
     >
       <Topbar
         page="sessions"
-        breadcrumbs={[
-          { label: "projects", href: "/projects" },
-          {
-            label: projectName,
-            href: `/projects/${encodeURIComponent(projectName)}`,
-          },
-          {
-            label: "workflow-builder",
-          },
-        ]}
+        breadcrumbs={
+          isGlobal || projectName === null
+            ? [
+                { label: "templates", href: "/templates" },
+                { label: "global-builder" },
+              ]
+            : [
+                { label: "projects", href: "/projects" },
+                {
+                  label: projectName,
+                  href: `/projects/${encodeURIComponent(projectName)}`,
+                },
+                { label: "workflow-builder" },
+              ]
+        }
       />
       <main className="min-h-0 w-full flex-1 overflow-hidden p-0 max-768:pb-[calc(56px+env(safe-area-inset-bottom,0px))]">
         <div className="flex h-full min-h-0 flex-1 max-768:flex-col">
           <WorkflowDefinitionsSidebar
+            title={isGlobal ? "Global Templates" : "Definitions"}
             definitions={definitionsQuery.data ?? []}
             selectedId={selectedWorkflowId}
             onSelect={handleSelectDefinition}
@@ -249,9 +258,15 @@ export default function ConnectedWorkflowBuilderPage({
             footer={
               <Link
                 className="flex items-center gap-[6px] px-0 py-[6px] text-[0.72rem] font-medium text-text-secondary no-underline transition-colors duration-150 hover:text-text-primary"
-                href={`/projects/${encodeURIComponent(projectName)}`}
+                href={
+                  projectName === null
+                    ? "/projects"
+                    : `/projects/${encodeURIComponent(projectName)}`
+                }
               >
-                ← Back to Sessions
+                {projectName === null
+                  ? "← Back to Projects"
+                  : "← Back to Sessions"}
               </Link>
             }
           />

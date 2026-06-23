@@ -45,6 +45,10 @@ export const listProjectTemplates = withTracing(async (request, context) =>
   templateLibraryHandlers.LIST_TEMPLATES(request, context),
 );
 
+export const listGlobalTemplates = withTracing(async (request, context) =>
+  templateLibraryHandlers.LIST_GLOBAL(request, context),
+);
+
 export const createGlobalTemplate = withTracing(async (request, context) =>
   templateLibraryHandlers.CREATE(request, context),
 );

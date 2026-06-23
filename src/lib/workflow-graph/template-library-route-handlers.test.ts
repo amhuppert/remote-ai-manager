@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { GlobalConfig } from "@/lib/config/schemas";
 import { createWorkflowStorageService } from "./storage";
 import { createTemplateLibraryService } from "./template-library-service";
 import {
@@ -10,6 +11,14 @@ import {
   createWorkflowLayout,
 } from "./test-fixtures";
 import { createTemplateLibraryRouteHandlers } from "./template-library-route-handlers";
+
+const MOCK_CONFIG: GlobalConfig = {
+  baseDir: "/projects",
+  ignorePatterns: [],
+  claudeTimeoutMs: 3600000,
+  defaultModel: "opus",
+  defaultAgentBackend: "claude",
+};
 
 function makeRequest(url: string, method: string, body?: unknown): NextRequest {
   return new NextRequest(`http://localhost${url}`, {
@@ -43,7 +52,9 @@ function realHandlers() {
   const library = createTemplateLibraryService({ storage });
   return createTemplateLibraryRouteHandlers({
     resolveProjectPath: async (name) => (name === "repo" ? PROJECT_PATH : null),
+    readConfig: async () => MOCK_CONFIG,
     list: (projectPath) => library.list(projectPath),
+    listGlobal: () => storage.list({ kind: "global" }),
     createGlobal: (draft) => storage.create({ kind: "global" }, draft),
     getGlobal: (workflowId) => storage.get({ kind: "global" }, workflowId),
     updateGlobal: (workflowId, draft) =>
@@ -114,7 +125,83 @@ describe("template library route handlers — cross-tier listing", () => {
   });
 });
 
+describe("template library route handlers — global-tier listing", () => {
+  it("lists only global templates, excluding project templates", async () => {
+    const handlers = realHandlers();
+    const storage = createWorkflowStorageService({
+      resolveConfigDir: () => tempDir,
+    });
+    await storage.create(
+      { kind: "global" },
+      {
+        name: "Global A",
+        description: "global",
+        definition: createWorkflowDefinition(),
+        layout: createWorkflowLayout(),
+      },
+    );
+    await storage.create(
+      { kind: "project", projectPath: PROJECT_PATH },
+      {
+        name: "Project A",
+        description: "project",
+        definition: createWorkflowDefinition(),
+        layout: createWorkflowLayout(),
+      },
+    );
+
+    const response = await handlers.LIST_GLOBAL(
+      makeRequest("/api/workflow-templates", "GET"),
+      makeContext({}),
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      items: Array<{ name: string }>;
+    };
+    expect(body.items.map((item) => item.name)).toEqual(["Global A"]);
+  });
+
+  it("returns an empty list when no global templates exist", async () => {
+    const handlers = realHandlers();
+
+    const response = await handlers.LIST_GLOBAL(
+      makeRequest("/api/workflow-templates", "GET"),
+      makeContext({}),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ items: [] });
+  });
+});
+
 describe("template library route handlers — global-tier CRUD", () => {
+  it("GET returns the global template with its resolved definition", async () => {
+    const handlers = realHandlers();
+
+    const createResponse = await handlers.CREATE(
+      makeRequest("/api/workflow-templates", "POST", mutationBody("Resolved")),
+      makeContext({}),
+    );
+    const created = (await createResponse.json()) as { item: { id: string } };
+
+    const getResponse = await handlers.GET(
+      makeRequest(`/api/workflow-templates/${created.item.id}`, "GET"),
+      makeContext({ workflowId: created.item.id }),
+    );
+
+    expect(getResponse.status).toBe(200);
+    const fetched = (await getResponse.json()) as {
+      item: { id: string };
+      resolved?: { executionContexts: unknown[] };
+    };
+    expect(fetched.item.id).toBe(created.item.id);
+    // The detail response carries a resolved definition so it satisfies the
+    // same `workflowDefinitionGetResponseSchema` contract as the project GET.
+    expect(fetched.resolved).toBeDefined();
+    expect(Array.isArray(fetched.resolved?.executionContexts)).toBe(true);
+  });
+
   it("round-trips a clean global template through create→get→update→delete", async () => {
     const handlers = realHandlers();
 

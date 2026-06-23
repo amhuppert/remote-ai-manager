@@ -39,7 +39,7 @@ export default async function WorkflowsBuilderPage({
   const config = await readConfig();
   return (
     <ConnectedWorkflowBuilderPage
-      projectName={name}
+      scope={{ kind: "project", projectName: name }}
       defaultImplementerConfig={buildDefaultImplementerConfig(config)}
       codexConfig={config.codex}
     />

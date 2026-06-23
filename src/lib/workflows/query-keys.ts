@@ -14,6 +14,15 @@ export const projectTemplatesKeys = {
     [...projectTemplatesKeys.all, projectName] as const,
 };
 
+export const globalWorkflowTemplateKeys = {
+  all: ["global-workflow-templates"] as const,
+  lists: () => [...globalWorkflowTemplateKeys.all, "list"] as const,
+  details: () => [...globalWorkflowTemplateKeys.all, "detail"] as const,
+  list: () => globalWorkflowTemplateKeys.lists(),
+  detail: (workflowId: string) =>
+    [...globalWorkflowTemplateKeys.details(), workflowId] as const,
+};
+
 export const graphWorkflowEventsKeys = {
   all: ["graph-workflow-events"] as const,
   list: (projectName: string, sessionName: string, executionId: string) =>

@@ -2,10 +2,11 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { mutationFetch } from "@/lib/api/fetcher";
 import { ApiCallError } from "@/lib/api/errors";
 import { tracedFetch } from "@/lib/shared/traced-fetch";
+import { collaborationKeys } from "@/lib/workflows/query-keys";
 import {
-  workflowDefinitionKeys,
-  collaborationKeys,
-} from "@/lib/workflows/query-keys";
+  workflowDefinitionScopeApi,
+  type WorkflowDefinitionScope,
+} from "@/lib/workflows/definition-scope";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import { workflowDefinitionMutationResponseSchema } from "@/lib/workflow-definitions/schemas";
@@ -19,18 +20,23 @@ import type {
   WorkflowDefinitionRecord,
   WorkflowRuntimeEditRequest,
 } from "@/lib/workflows/schemas";
-export function useCreateWorkflowDefinitionMutation(projectName: string) {
+interface WorkflowDefinitionDraftInput {
+  name: string;
+  description?: string | null;
+  definition: WorkflowDefinitionRecord["definition"];
+  layout: WorkflowDefinitionRecord["layout"];
+}
+
+export function useScopedCreateWorkflowDefinitionMutation(
+  scope: WorkflowDefinitionScope,
+) {
   const queryClient = useQueryClient();
+  const api = workflowDefinitionScopeApi(scope);
 
   return useMutation({
-    mutationFn: (draft: {
-      name: string;
-      description?: string | null;
-      definition: WorkflowDefinitionRecord["definition"];
-      layout: WorkflowDefinitionRecord["layout"];
-    }) =>
+    mutationFn: (draft: WorkflowDefinitionDraftInput) =>
       mutationFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/workflows`,
+        api.collectionUrl,
         "create-workflow-definition",
         {
           method: "POST",
@@ -40,31 +46,32 @@ export function useCreateWorkflowDefinitionMutation(projectName: string) {
         workflowDefinitionMutationResponseSchema,
       ),
     onSuccess: (data) => {
+      void queryClient.invalidateQueries({ queryKey: api.listKey });
       void queryClient.invalidateQueries({
-        queryKey: workflowDefinitionKeys.list(projectName),
-      });
-      void queryClient.invalidateQueries({
-        queryKey: workflowDefinitionKeys.detail(projectName, data.item.id),
+        queryKey: api.detailKey(data.item.id),
       });
     },
   });
 }
 
-export function useUpdateWorkflowDefinitionMutation(
-  projectName: string,
+export function useCreateWorkflowDefinitionMutation(projectName: string) {
+  return useScopedCreateWorkflowDefinitionMutation({
+    kind: "project",
+    projectName,
+  });
+}
+
+export function useScopedUpdateWorkflowDefinitionMutation(
+  scope: WorkflowDefinitionScope,
   workflowId: string,
 ) {
   const queryClient = useQueryClient();
+  const api = workflowDefinitionScopeApi(scope);
 
   return useMutation({
-    mutationFn: (draft: {
-      name: string;
-      description?: string | null;
-      definition: WorkflowDefinitionRecord["definition"];
-      layout: WorkflowDefinitionRecord["layout"];
-    }) =>
+    mutationFn: (draft: WorkflowDefinitionDraftInput) =>
       mutationFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/workflows/${encodeURIComponent(workflowId)}`,
+        api.itemUrl(workflowId),
         "update-workflow-definition",
         {
           method: "PUT",
@@ -74,31 +81,45 @@ export function useUpdateWorkflowDefinitionMutation(
         workflowDefinitionMutationResponseSchema,
       ),
     onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: api.listKey });
       void queryClient.invalidateQueries({
-        queryKey: workflowDefinitionKeys.list(projectName),
-      });
-      void queryClient.invalidateQueries({
-        queryKey: workflowDefinitionKeys.detail(projectName, workflowId),
+        queryKey: api.detailKey(workflowId),
       });
     },
   });
 }
 
-export function useDeleteWorkflowDefinitionMutation(projectName: string) {
+export function useUpdateWorkflowDefinitionMutation(
+  projectName: string,
+  workflowId: string,
+) {
+  return useScopedUpdateWorkflowDefinitionMutation(
+    { kind: "project", projectName },
+    workflowId,
+  );
+}
+
+export function useScopedDeleteWorkflowDefinitionMutation(
+  scope: WorkflowDefinitionScope,
+) {
   const queryClient = useQueryClient();
+  const api = workflowDefinitionScopeApi(scope);
 
   return useMutation({
     mutationFn: (workflowId: string) =>
-      mutationFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/workflows/${encodeURIComponent(workflowId)}`,
-        "delete-workflow-definition",
-        { method: "DELETE" },
-      ),
+      mutationFetch(api.itemUrl(workflowId), "delete-workflow-definition", {
+        method: "DELETE",
+      }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: workflowDefinitionKeys.list(projectName),
-      });
+      void queryClient.invalidateQueries({ queryKey: api.listKey });
     },
+  });
+}
+
+export function useDeleteWorkflowDefinitionMutation(projectName: string) {
+  return useScopedDeleteWorkflowDefinitionMutation({
+    kind: "project",
+    projectName,
   });
 }
 

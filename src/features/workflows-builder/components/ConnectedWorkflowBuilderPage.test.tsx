@@ -68,7 +68,7 @@ const fullConfig: { config: GlobalConfig; raw: Record<string, unknown> } = {
 };
 
 vi.mock("@/lib/workflows/queries", () => ({
-  useWorkflowDefinitionsQuery: () => ({
+  useScopedWorkflowDefinitionsQuery: () => ({
     data: [
       {
         id: record.id,
@@ -81,7 +81,7 @@ vi.mock("@/lib/workflows/queries", () => ({
     ],
     isPending: false,
   }),
-  useWorkflowDefinitionQuery: () => ({
+  useScopedWorkflowDefinitionQuery: () => ({
     data: {
       item: record,
       resolved: resolveWorkflowDefinition(fullConfig.config, record.definition),
@@ -99,15 +99,15 @@ vi.mock("@/lib/config/queries", () => ({
 }));
 
 vi.mock("@/lib/workflows/mutations", () => ({
-  useCreateWorkflowDefinitionMutation: () => ({
+  useScopedCreateWorkflowDefinitionMutation: () => ({
     mutateAsync: vi.fn(),
     isPending: false,
   }),
-  useUpdateWorkflowDefinitionMutation: () => ({
+  useScopedUpdateWorkflowDefinitionMutation: () => ({
     mutateAsync: vi.fn(),
     isPending: false,
   }),
-  useDeleteWorkflowDefinitionMutation: () => ({
+  useScopedDeleteWorkflowDefinitionMutation: () => ({
     mutateAsync: vi.fn(),
     isPending: false,
   }),
@@ -148,7 +148,7 @@ function renderPage() {
   return render(
     <QueryClientProvider client={qc}>
       <ConnectedWorkflowBuilderPage
-        projectName="test-project"
+        scope={{ kind: "project", projectName: "test-project" }}
         defaultImplementerConfig={{
           backend: "claude",
           model: "opus",
