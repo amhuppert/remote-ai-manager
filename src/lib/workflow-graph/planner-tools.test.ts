@@ -5,6 +5,7 @@ import type {
   WorkflowDefinitionRecord,
 } from "@/lib/workflows/schemas";
 import { registerPlannerTools, type PlannerToolDeps } from "./planner-tools";
+import type { WorkflowScope } from "./storage";
 import { makeTestCharter } from "@/lib/shared/testing/charter-fixture";
 import { computeCharterHash } from "./charter/render";
 import { validateAuthoredDefinition } from "./validation";
@@ -70,7 +71,7 @@ function createMockDeps(
     readConfig: vi.fn(async () => MOCK_CONFIG),
     listWorkflows: vi.fn(async () => []),
     getWorkflow: vi.fn(async () => null),
-    createWorkflow: vi.fn(async (_projectPath, draft) => ({
+    createWorkflow: vi.fn(async (_scope, draft) => ({
       id: "wf-test-1",
       name: draft.name,
       description: draft.description,
@@ -81,7 +82,7 @@ function createMockDeps(
       createdAt: "2026-03-30T00:00:00.000Z",
       updatedAt: "2026-03-30T00:00:00.000Z",
     })),
-    updateWorkflow: vi.fn(async (_projectPath, _workflowId, draft) => ({
+    updateWorkflow: vi.fn(async (_scope, _workflowId, draft) => ({
       id: "wf-test-1",
       name: draft.name,
       description: draft.description,
@@ -143,8 +144,14 @@ type CreatedDraft = {
 
 function captureCreatedDraft(deps: PlannerToolDeps): CreatedDraft {
   const [, draft] = (deps.createWorkflow as ReturnType<typeof vi.fn>).mock
-    .calls[0] as [string, CreatedDraft];
+    .calls[0] as [WorkflowScope, CreatedDraft];
   return draft;
+}
+
+function captureCreatedScope(deps: PlannerToolDeps): WorkflowScope {
+  const [scope] = (deps.createWorkflow as ReturnType<typeof vi.fn>).mock
+    .calls[0] as [WorkflowScope, CreatedDraft];
+  return scope;
 }
 
 describe("graph workflow planner tools", () => {
@@ -164,6 +171,85 @@ describe("graph workflow planner tools", () => {
     expect(getCapturedTools().has("get_graph_workflow")).toBe(true);
     expect(getCapturedTools().has("delete_graph_workflow")).toBe(true);
     expect(getCapturedTools().has("get_graph_workflow_status")).toBe(true);
+  });
+
+  describe("tier routing (global template authoring)", () => {
+    it("create_graph_workflow: omitting tier saves to this project's scope", async () => {
+      const deps = createMockDeps();
+      registerTools(deps);
+
+      const result = (await getHandler("create_graph_workflow")(
+        MINIMAL_INPUT,
+      )) as { content: Array<{ text: string }>; isError?: boolean };
+
+      expect(result.isError).toBeUndefined();
+      expect(captureCreatedScope(deps)).toEqual({
+        kind: "project",
+        projectPath: "/test",
+      });
+      expect(result.content[0]?.text).toContain("project tier");
+    });
+
+    it("create_graph_workflow: tier 'global' routes the draft to the global scope", async () => {
+      const deps = createMockDeps();
+      registerTools(deps);
+
+      const result = (await getHandler("create_graph_workflow")({
+        ...MINIMAL_INPUT,
+        tier: "global",
+      })) as { content: Array<{ text: string }>; isError?: boolean };
+
+      expect(result.isError).toBeUndefined();
+      expect(captureCreatedScope(deps)).toEqual({ kind: "global" });
+      // The success message tells the agent the global template's destination.
+      expect(result.content[0]?.text).toContain("global");
+    });
+
+    it("replace_graph_workflow: tier 'global' reads AND writes the global scope", async () => {
+      const deps = createMockDeps();
+      registerTools(deps);
+
+      const result = (await getHandler("replace_graph_workflow")({
+        workflowId: "wf-test-1",
+        tier: "global",
+        ...MINIMAL_INPUT,
+      })) as { content: Array<{ text: string }>; isError?: boolean };
+
+      expect(result.isError).toBeUndefined();
+
+      const [getScope] = (deps.getWorkflow as ReturnType<typeof vi.fn>).mock
+        .calls[0] as [WorkflowScope, string];
+      const [updateScope] = (deps.updateWorkflow as ReturnType<typeof vi.fn>)
+        .mock.calls[0] as [WorkflowScope, string, CreatedDraft];
+
+      expect(getScope).toEqual({ kind: "global" });
+      expect(updateScope).toEqual({ kind: "global" });
+    });
+
+    it("replace_graph_workflow: omitting tier reads and writes this project's scope", async () => {
+      const deps = createMockDeps();
+      registerTools(deps);
+
+      await getHandler("replace_graph_workflow")({
+        workflowId: "wf-test-1",
+        ...MINIMAL_INPUT,
+      });
+
+      const [updateScope] = (deps.updateWorkflow as ReturnType<typeof vi.fn>)
+        .mock.calls[0] as [WorkflowScope, string, CreatedDraft];
+      expect(updateScope).toEqual({ kind: "project", projectPath: "/test" });
+    });
+
+    it("get_graph_workflow: reads from this project's scope (no tier param)", async () => {
+      const deps = createMockDeps();
+      registerTools(deps);
+
+      await getHandler("get_graph_workflow")({ workflowId: "wf-1" });
+
+      const [getScope] = (deps.getWorkflow as ReturnType<typeof vi.fn>).mock
+        .calls[0] as [WorkflowScope, string];
+      expect(getScope).toEqual({ kind: "project", projectPath: "/test" });
+    });
   });
 
   it("create_graph_workflow: minimal context (id+title+AC) succeeds with no implementer/validator blocks stored", async () => {
@@ -368,7 +454,7 @@ describe("graph workflow planner tools", () => {
     expect(result.isError).toBeUndefined();
 
     const [, , draft] = (deps.updateWorkflow as ReturnType<typeof vi.fn>).mock
-      .calls[0] as [string, string, CreatedDraft];
+      .calls[0] as [WorkflowScope, string, CreatedDraft];
     expect(draft.definition.parameters).toEqual(MIXED_PARAMETERS);
   });
 
@@ -402,7 +488,7 @@ describe("graph workflow planner tools", () => {
     });
 
     const [, draft] = (deps.createWorkflow as ReturnType<typeof vi.fn>).mock
-      .calls[0] as [string, { definition: WorkflowSemanticDefinition }];
+      .calls[0] as [WorkflowScope, { definition: WorkflowSemanticDefinition }];
     const validation = validateAuthoredDefinition(draft.definition);
 
     expect(validation.ok).toBe(false);
@@ -559,11 +645,11 @@ describe("graph workflow planner tools", () => {
     expect(result.content[0]?.text).toContain("replaced");
 
     expect(deps.updateWorkflow).toHaveBeenCalledOnce();
-    const [projectPath, workflowId, draft] = (
+    const [scope, workflowId, draft] = (
       deps.updateWorkflow as ReturnType<typeof vi.fn>
-    ).mock.calls[0] as [string, string, CreatedDraft];
+    ).mock.calls[0] as [WorkflowScope, string, CreatedDraft];
 
-    expect(projectPath).toBe("/test");
+    expect(scope).toEqual({ kind: "project", projectPath: "/test" });
     expect(workflowId).toBe("wf-test-1");
     expect(draft.definition.workflowConfig).toEqual(workflowConfig);
     expect(draft.definition.executionContexts[0]?.mutability).toEqual({

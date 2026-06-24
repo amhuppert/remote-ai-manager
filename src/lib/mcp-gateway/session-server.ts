@@ -113,16 +113,15 @@ const defaultSessionMcpServerDeps: SessionMcpServerDeps = {
     const eventPublisher = createGraphWorkflowExecutionEventPublisher();
     registerPlannerTools(server, context, {
       readConfig,
-      // The planner tools edit the current project's workflow library, so each
-      // storage call is bound to that project's scope.
+      // list/delete operate on this project's library. create/replace/get take a
+      // scope the handler derives from the tool's `tier` arg, so they can target
+      // either this project's library or the cross-project global template tier.
       listWorkflows: (projectPath) =>
         storage.list({ kind: "project", projectPath }),
-      getWorkflow: (projectPath, workflowId) =>
-        storage.get({ kind: "project", projectPath }, workflowId),
-      createWorkflow: (projectPath, draft) =>
-        storage.create({ kind: "project", projectPath }, draft),
-      updateWorkflow: (projectPath, workflowId, draft) =>
-        storage.update({ kind: "project", projectPath }, workflowId, draft),
+      getWorkflow: (scope, workflowId) => storage.get(scope, workflowId),
+      createWorkflow: (scope, draft) => storage.create(scope, draft),
+      updateWorkflow: (scope, workflowId, draft) =>
+        storage.update(scope, workflowId, draft),
       deleteWorkflow: (projectPath, workflowId) =>
         storage.delete({ kind: "project", projectPath }, workflowId),
       async getActiveExecution(projectPath, sessionName) {

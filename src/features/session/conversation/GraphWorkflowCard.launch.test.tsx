@@ -4,15 +4,17 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import GraphWorkflowCard from "@/features/session/conversation/GraphWorkflowCard";
+import type { ParameterDeclaration } from "@/lib/workflows/schemas";
 import type {
-  ParameterDeclaration,
-  WorkflowDefinitionRecord,
-} from "@/lib/workflows/schemas";
+  TemplateLibraryItem,
+  TemplateTier,
+} from "@/lib/workflow-graph/template-library-service";
 
 // The connected launcher is driven entirely through the HTTP boundary
-// (definition list, per-definition detail, start mutation). Stubbing
-// `global.fetch` exercises the real query/mutation wiring and the real
-// form-vs-one-click decision without mocking any internal module.
+// (cross-tier template list + start mutation). Stubbing `global.fetch`
+// exercises the real query/mutation wiring and the real form-vs-one-click
+// decision without mocking any internal module. Each cross-tier list item
+// already carries its parameters, so there is no per-definition detail fetch.
 
 function makeClient(): QueryClient {
   return new QueryClient({
@@ -43,65 +45,35 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function definitionRecord(
+function templateItem(
   id: string,
   name: string,
   parameters: ParameterDeclaration[],
-): WorkflowDefinitionRecord {
+  tier: TemplateTier,
+): TemplateLibraryItem {
   return {
+    tier,
     id,
     name,
     description: null,
-    schemaVersion: 1,
     revision: 1,
-    definition: {
-      schemaVersion: 1,
-      workflowConfig: {},
-      charter: {
-        mission: "Ship the feature",
-        sourcesOfTruth: [
-          {
-            rank: 1,
-            id: "src-1",
-            label: "Spec",
-            type: "spec",
-            locator: ".kiro/specs/x",
-            description: "The spec",
-            accessPolicy: "worktree-relative",
-          },
-        ],
-      },
-      parameters,
-      prerequisites: [],
-      executionContexts: [],
-      tasks: [],
-      edges: [],
-    },
-    layout: {
-      workflowId: id,
-      contextPositions: {},
-      viewport: { x: 0, y: 0, zoom: 1 },
-    },
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
+    parameters,
+    prerequisites: [],
   };
 }
 
-const LIST_URL = "/api/projects/proj-1/workflows";
+const LIST_URL = "/api/projects/proj-1/workflow-templates";
 const START_URL = "/api/projects/proj-1/sessions/sess-1/graph-workflow";
-function detailUrl(id: string): string {
-  return `/api/projects/proj-1/workflows/${id}`;
-}
 
 interface RouteConfig {
-  zeroInput: WorkflowDefinitionRecord;
-  parameterized: WorkflowDefinitionRecord;
+  zeroInput: TemplateLibraryItem;
+  parameterized: TemplateLibraryItem;
   startResponse?: () => Response;
 }
 
-// Routes fetch by URL/method, returning the GET shapes the queries expect
-// (`{ item, resolved }` for detail). The start handler is configurable so a
-// test can simulate a 400 input rejection.
+// Routes fetch by URL/method, returning the cross-tier list shape the launcher
+// query expects (`{ items }`). The start handler is configurable so a test can
+// simulate a 400 input rejection.
 function installRouter(config: RouteConfig): {
   fetchSpy: ReturnType<typeof vi.fn<typeof fetch>>;
   startBodies: unknown[];
@@ -119,29 +91,7 @@ function installRouter(config: RouteConfig): {
     }
 
     if (url === LIST_URL) {
-      return jsonResponse({
-        items: [config.zeroInput, config.parameterized].map((d) => ({
-          id: d.id,
-          name: d.name,
-          description: d.description,
-          revision: d.revision,
-          createdAt: d.createdAt,
-          updatedAt: d.updatedAt,
-        })),
-      });
-    }
-
-    const resolved = {
-      schemaVersion: 1,
-      executionContexts: [],
-      tasks: [],
-      edges: [],
-    };
-    if (url === detailUrl(config.zeroInput.id)) {
-      return jsonResponse({ item: config.zeroInput, resolved });
-    }
-    if (url === detailUrl(config.parameterized.id)) {
-      return jsonResponse({ item: config.parameterized, resolved });
+      return jsonResponse({ items: [config.zeroInput, config.parameterized] });
     }
 
     throw new Error(`Unexpected fetch: ${method} ${url}`);
@@ -166,20 +116,28 @@ describe("GraphWorkflowCard launcher integration", () => {
     vi.unstubAllGlobals();
   });
 
-  it("keeps one-click launch for a zero-input definition and sends no parameters", async () => {
+  it("keeps one-click launch for a zero-input project template and sends only the tier", async () => {
     const user = userEvent.setup();
     const { startBodies } = installRouter({
-      zeroInput: definitionRecord("def-zero", "Zero Input", []),
-      parameterized: definitionRecord("def-params", "Parameterized", PARAMS),
+      zeroInput: templateItem("def-zero", "Zero Input", [], "project"),
+      parameterized: templateItem(
+        "def-params",
+        "Parameterized",
+        PARAMS,
+        "global",
+      ),
     });
 
     renderCard();
 
-    await screen.findByRole("option", { name: "Zero Input" });
-    await user.selectOptions(screen.getByRole("combobox"), "def-zero");
+    // Open the dropdown, then pick the option (labelled by its tier badge + name).
+    await user.click(
+      await screen.findByRole("button", { name: /select a workflow/i }),
+    );
+    await user.click(
+      await screen.findByRole("option", { name: /Zero Input/i }),
+    );
 
-    // Selecting the definition loads its detail; wait for the parameter check
-    // to settle before clicking.
     await waitFor(() => {
       expect(
         screen.getByRole("button", { name: /run workflow/i }),
@@ -189,27 +147,34 @@ describe("GraphWorkflowCard launcher integration", () => {
     await user.click(screen.getByRole("button", { name: /run workflow/i }));
 
     await waitFor(() => expect(startBodies).toHaveLength(1));
-    expect(startBodies[0]).toEqual({ definitionId: "def-zero" });
+    expect(startBodies[0]).toEqual({
+      definitionId: "def-zero",
+      tier: "project",
+    });
     // No launch form modal for a zero-input definition.
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("opens the launch form for a parameterized definition and starts with the collected values", async () => {
+  it("opens the launch form for a parameterized global template and starts with the collected values + tier", async () => {
     const user = userEvent.setup();
     const { startBodies } = installRouter({
-      zeroInput: definitionRecord("def-zero", "Zero Input", []),
-      parameterized: definitionRecord("def-params", "Parameterized", PARAMS),
+      zeroInput: templateItem("def-zero", "Zero Input", [], "project"),
+      parameterized: templateItem(
+        "def-params",
+        "Parameterized",
+        PARAMS,
+        "global",
+      ),
     });
 
     renderCard();
 
-    await screen.findByRole("option", { name: "Parameterized" });
-    await user.selectOptions(screen.getByRole("combobox"), "def-params");
-
-    // Wait until the selected definition's parameters have loaded.
-    await waitFor(() => {
-      expect(screen.getByRole("combobox")).toHaveValue("def-params");
-    });
+    await user.click(
+      await screen.findByRole("button", { name: /select a workflow/i }),
+    );
+    await user.click(
+      await screen.findByRole("option", { name: /Parameterized/i }),
+    );
 
     await user.click(screen.getByRole("button", { name: /run workflow/i }));
 
@@ -223,6 +188,7 @@ describe("GraphWorkflowCard launcher integration", () => {
     await waitFor(() => expect(startBodies).toHaveLength(1));
     expect(startBodies[0]).toEqual({
       definitionId: "def-params",
+      tier: "global",
       parameters: { feature: "Search box" },
     });
   });
@@ -230,8 +196,13 @@ describe("GraphWorkflowCard launcher integration", () => {
   it("surfaces a 400 input rejection inside the launch form", async () => {
     const user = userEvent.setup();
     installRouter({
-      zeroInput: definitionRecord("def-zero", "Zero Input", []),
-      parameterized: definitionRecord("def-params", "Parameterized", PARAMS),
+      zeroInput: templateItem("def-zero", "Zero Input", [], "project"),
+      parameterized: templateItem(
+        "def-params",
+        "Parameterized",
+        PARAMS,
+        "global",
+      ),
       startResponse: () =>
         jsonResponse(
           { error: 'Parameter "feature" is required but was not supplied' },
@@ -241,12 +212,12 @@ describe("GraphWorkflowCard launcher integration", () => {
 
     renderCard();
 
-    await screen.findByRole("option", { name: "Parameterized" });
-    await user.selectOptions(screen.getByRole("combobox"), "def-params");
-    await waitFor(() => {
-      expect(screen.getByRole("combobox")).toHaveValue("def-params");
-    });
-
+    await user.click(
+      await screen.findByRole("button", { name: /select a workflow/i }),
+    );
+    await user.click(
+      await screen.findByRole("option", { name: /Parameterized/i }),
+    );
     await user.click(screen.getByRole("button", { name: /run workflow/i }));
     const dialog = await screen.findByRole("dialog");
 

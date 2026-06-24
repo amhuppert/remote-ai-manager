@@ -7,6 +7,7 @@ const meta = {
   component: GraphWorkflowLauncher,
   args: {
     projectName: "my-project",
+    sessionName: "my-session",
     onRun: fn(),
   },
   decorators: [
@@ -24,9 +25,25 @@ type Story = StoryObj<typeof meta>;
 export const WithDefinitions: Story = {
   args: {
     definitions: [
-      { id: "def-1", name: "Feature Implementation", revision: 3 },
-      { id: "def-2", name: "Bug Fix Pipeline", revision: 1 },
-      { id: "def-3", name: "Refactoring Workflow", revision: 7 },
+      {
+        id: "def-1",
+        name: "Implement Kiro Tasks",
+        revision: 1,
+        tier: "global",
+      },
+      {
+        id: "def-2",
+        name: "Feature Implementation",
+        revision: 3,
+        tier: "project",
+      },
+      { id: "def-3", name: "Bug Fix Pipeline", revision: 1, tier: "project" },
+      {
+        id: "def-4",
+        name: "Refactoring Workflow",
+        revision: 7,
+        tier: "global",
+      },
     ],
   },
 };
@@ -46,14 +63,28 @@ export const Loading: Story = {
 
 export const Starting: Story = {
   args: {
-    definitions: [{ id: "def-1", name: "Feature Implementation", revision: 3 }],
+    definitions: [
+      {
+        id: "def-1",
+        name: "Implement Kiro Tasks",
+        revision: 1,
+        tier: "global",
+      },
+    ],
     starting: true,
   },
 };
 
 export const WithError: Story = {
   args: {
-    definitions: [{ id: "def-1", name: "Feature Implementation", revision: 3 }],
+    definitions: [
+      {
+        id: "def-1",
+        name: "Feature Implementation",
+        revision: 3,
+        tier: "project",
+      },
+    ],
     error: "Session already has an active graph workflow execution",
   },
 };

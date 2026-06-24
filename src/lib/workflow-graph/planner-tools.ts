@@ -24,13 +24,18 @@ import {
 } from "@/lib/workflows/schemas";
 import { workflowCharterSchema } from "@/lib/workflows/charter-schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
+import { createLogger } from "../logging";
 import { computeCharterHash } from "./charter/render";
 import { getExecutionLogger } from "./execution-logger";
 import { generateWorkflowLayout } from "./layout";
 import type {
   WorkflowDefinitionDraft,
   WorkflowDefinitionSummary,
+  WorkflowScope,
 } from "./storage";
+import { scopeForTier } from "./template-library-service";
+
+const logger = createLogger("graph-workflow-planner-tools");
 
 const executionContextInputSchema = z.object({
   id: z
@@ -135,12 +140,20 @@ const edgeInputSchema = z.object({
     .describe("The id of the downstream context that depends on the source."),
 });
 
+const workflowTierSchema = z
+  .enum(["project", "global"])
+  .default("project")
+  .describe(
+    "Which library tier to save to: 'project' (this project's library, the default) or 'global' (the cross-project template library, reusable from any project). Mirrors start_graph_workflow's tier. Defaults to project.",
+  );
+
 const createWorkflowSchema = z.object({
   name: z
     .string()
     .trim()
     .min(1)
     .describe("Human-readable workflow name (e.g. 'Add OAuth2 Support')."),
+  tier: workflowTierSchema,
   description: z
     .string()
     .trim()
@@ -187,8 +200,9 @@ const replaceWorkflowSchema = z.object({
     .trim()
     .min(1)
     .describe(
-      "The ID of the workflow to replace (from list_graph_workflows or create_graph_workflow).",
+      "The ID of the workflow to replace (from list_graph_workflows, list_templates, or create_graph_workflow).",
     ),
+  tier: workflowTierSchema,
   name: z.string().trim().min(1).describe("Human-readable workflow name."),
   description: z
     .string()
@@ -346,15 +360,15 @@ export interface PlannerToolDeps {
   readConfig(): Promise<GlobalConfig>;
   listWorkflows(projectPath: string): Promise<WorkflowDefinitionSummary[]>;
   getWorkflow(
-    projectPath: string,
+    scope: WorkflowScope,
     workflowId: string,
   ): Promise<WorkflowDefinitionRecord | null>;
   createWorkflow(
-    projectPath: string,
+    scope: WorkflowScope,
     draft: WorkflowDefinitionDraft,
   ): Promise<WorkflowDefinitionRecord>;
   updateWorkflow(
-    projectPath: string,
+    scope: WorkflowScope,
     workflowId: string,
     draft: WorkflowDefinitionDraft,
   ): Promise<WorkflowDefinitionRecord>;
@@ -378,13 +392,13 @@ export interface PlannerToolContext {
   sessionName: string;
 }
 
-const CREATE_DESCRIPTION = `Create a graph workflow definition for this project. Before calling this tool, use the graph-workflow-planning skill. That skill is the source of truth for decomposing execution contexts, writing acceptance criteria, aligning implementers and validators, choosing dependency edges, deciding whether script validation is safe, and keeping default implementer/validator settings unless told otherwise.
+const CREATE_DESCRIPTION = `Create a graph workflow definition. Before calling this tool, use the graph-workflow-planning skill. That skill is the source of truth for decomposing execution contexts, writing acceptance criteria, aligning implementers and validators, choosing dependency edges, deciding whether script validation is safe, and keeping default implementer/validator settings unless told otherwise.
 
-The user will review and edit the workflow in the visual builder before starting execution.`;
+By default the definition is saved to this project's library. Set tier: "global" to author a reusable cross-project template into the global library instead (parameterize it with {{inputs.<name>}} so it is not bound to one project). The user will review and edit the workflow in the visual builder before starting execution.`;
 
 const REPLACE_DESCRIPTION = `Replace the entire definition of an existing workflow. Use this when revising a plan after user feedback; submit the complete updated graph, not a partial diff. The previous definition is fully overwritten.
 
-Before calling this tool, use the graph-workflow-planning skill and submit the full updated graph that follows that skill's planning rules.`;
+Pass the same tier the definition lives in: "project" (default) for this project's library, or "global" to edit a global template (use the id and tier from list_templates). Before calling this tool, use the graph-workflow-planning skill and submit the full updated graph that follows that skill's planning rules.`;
 
 const LIST_WORKFLOWS_DESCRIPTION =
   "List all saved workflow definitions for this project. Returns each workflow's ID, name, description, and timestamps.";
@@ -412,17 +426,30 @@ function createCreateWorkflowHandler(
       );
     }
 
+    const { tier } = parsed.data;
     try {
       const definition = inflateToSemanticDefinition(parsed.data);
       const layout = generateWorkflowLayout(definition);
-      const record = await deps.createWorkflow(context.projectPath, {
-        name: parsed.data.name,
-        description: parsed.data.description ?? null,
-        definition,
-        layout,
+      const record = await deps.createWorkflow(
+        scopeForTier(tier, context.projectPath),
+        {
+          name: parsed.data.name,
+          description: parsed.data.description ?? null,
+          definition,
+          layout,
+        },
+      );
+      logger.info("graph-workflow.create_workflow", {
+        tier,
+        workflowId: record.id,
+        sessionName: context.sessionName,
       });
+      const reachability =
+        tier === "global"
+          ? 'It is now in the global template library; the user can review and edit it on the Templates page, and it can be launched from any project with start_graph_workflow (tier: "global").'
+          : "The user can review and edit it in the visual workflow builder before starting execution.";
       return textResult(
-        `Workflow "${record.name}" created (id: ${record.id}). The user can review and edit it in the visual workflow builder before starting execution.`,
+        `Workflow "${record.name}" created (id: ${record.id}) in the ${tier} tier. ${reachability}`,
       );
     } catch (error) {
       return errorResult(
@@ -449,11 +476,10 @@ function createReplaceWorkflowHandler(
       );
     }
 
+    const { tier } = parsed.data;
+    const scope = scopeForTier(tier, context.projectPath);
     try {
-      const existing = await deps.getWorkflow(
-        context.projectPath,
-        parsed.data.workflowId,
-      );
+      const existing = await deps.getWorkflow(scope, parsed.data.workflowId);
       const previousHash = existing
         ? computeCharterHash(existing.definition.charter)
         : null;
@@ -461,16 +487,18 @@ function createReplaceWorkflowHandler(
 
       const definition = inflateToSemanticDefinition(parsed.data);
       const layout = generateWorkflowLayout(definition);
-      const record = await deps.updateWorkflow(
-        context.projectPath,
-        parsed.data.workflowId,
-        {
-          name: parsed.data.name,
-          description: parsed.data.description ?? null,
-          definition,
-          layout,
-        },
-      );
+      const record = await deps.updateWorkflow(scope, parsed.data.workflowId, {
+        name: parsed.data.name,
+        description: parsed.data.description ?? null,
+        definition,
+        layout,
+      });
+      logger.info("graph-workflow.replace_workflow", {
+        tier,
+        workflowId: record.id,
+        revision: record.revision,
+        sessionName: context.sessionName,
+      });
 
       if (nextHash !== previousHash) {
         const activeExecution = await deps.getActiveExecution(
@@ -542,7 +570,7 @@ function createGetWorkflowHandler(
 
     try {
       const record = await deps.getWorkflow(
-        context.projectPath,
+        scopeForTier("project", context.projectPath),
         parsed.data.workflowId,
       );
       if (!record) {

@@ -55,6 +55,7 @@ Sessions run in git worktrees under `.worktrees/`. **All file operations and git
 - Use the worktree path provided in `session.worktreePath` for every command — never substitute the repository root.
 - Do not run `git stash`, `git checkout`, `git reset`, or any state-altering git command on the main worktree from a session context.
 - If you need to compare behavior against the main branch (e.g., verifying a build error is pre-existing), use `git diff`, `git log`, or `git show` to inspect main **without modifying its working tree**.
+- The shared CC config dir (the OS config dir — `config.json`, `workflows/<tier>/` templates, `command-center.db`) is **not** part of any worktree; writes there affect the live instance and every other session. Treat them as live-affecting: proceed when the user explicitly directs it (e.g. "create a global template"), otherwise confirm first.
 - If a task genuinely requires operating outside the session worktree, stop and ask the user for explicit permission first.
 
 ## Steering Configuration
@@ -69,7 +70,7 @@ Additional steering (read on demand, not auto-loaded):
 
 - `.kiro/steering/logs.md` — Logging architecture, transcript format, SSE events, debug log schema
 - `.kiro/steering/notifications.md` — Notifications & background jobs architecture
-- `.kiro/steering/workflows.md` — XState workflow orchestration patterns and conventions
+- `.kiro/steering/workflows.md` — XState workflow orchestration patterns; graph-workflow config cascade + the template subsystem (tiers, config-dir storage, `{{inputs.X}}` substitution, prerequisites, mutability/`add_task` loops)
 - `.kiro/steering/project-configuration.md` — `CommandCenter.json` per-project config (init scripts, pre-merge validation, dev servers)
 
 ## Browser Automation & Diagnostics

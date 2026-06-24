@@ -96,12 +96,10 @@ function setupAcceptance() {
     readConfig: async () => MOCK_CONFIG,
     listWorkflows: (projectPath) =>
       storage.list({ kind: "project", projectPath }),
-    getWorkflow: (projectPath, workflowId) =>
-      storage.get({ kind: "project", projectPath }, workflowId),
-    createWorkflow: (projectPath, draft) =>
-      storage.create({ kind: "project", projectPath }, draft),
-    updateWorkflow: (projectPath, workflowId, draft) =>
-      storage.update({ kind: "project", projectPath }, workflowId, draft),
+    getWorkflow: (scope, workflowId) => storage.get(scope, workflowId),
+    createWorkflow: (scope, draft) => storage.create(scope, draft),
+    updateWorkflow: (scope, workflowId, draft) =>
+      storage.update(scope, workflowId, draft),
     deleteWorkflow: (projectPath, workflowId) =>
       storage.delete({ kind: "project", projectPath }, workflowId),
     getActiveExecution: async () => null,
