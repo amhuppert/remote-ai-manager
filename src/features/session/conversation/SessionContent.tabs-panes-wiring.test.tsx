@@ -270,7 +270,7 @@ describe("SessionContent tabs/panes wiring", () => {
       expect(openTabs.activate).toHaveBeenCalledWith("conv-b");
     });
 
-    it("clicking a pane's open-full control calls activate AND onLayoutChange('default') (4.7)", () => {
+    it("clicking a pane's open-full control calls activate AND onLayoutChange('conversation') (4.7)", () => {
       const openTabs = makeOpenTabs({ activeId: "conv-a" });
       const onLayoutChange = vi.fn();
       renderWithQuery(
@@ -285,7 +285,7 @@ describe("SessionContent tabs/panes wiring", () => {
       );
 
       expect(openTabs.activate).toHaveBeenCalledWith("conv-b");
-      expect(onLayoutChange).toHaveBeenCalledWith("default");
+      expect(onLayoutChange).toHaveBeenCalledWith("conversation");
     });
 
     it("clicking a pane's close control calls openTabs.closeTab and NOT activate (4.8)", () => {

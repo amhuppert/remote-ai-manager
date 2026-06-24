@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from "vitest";
+import { fireEvent } from "@testing-library/react";
 import { renderWithQuery } from "@/test/component-mocks";
 import SessionContent from "@/features/session/conversation/SessionContent";
 import type { ComponentProps } from "react";
@@ -30,7 +31,22 @@ vi.mock("@/features/session/tabs/AddConversationMenu", () => ({
   default: () => <div data-testid="stub-add-menu" />,
 }));
 vi.mock("@/features/session/panes/PanesGrid", () => ({
-  default: () => <div data-testid="stub-panes-grid" />,
+  default: ({
+    onOpenFull,
+    onExit,
+  }: {
+    onOpenFull: (id: string) => void;
+    onExit: () => void;
+  }) => (
+    <div data-testid="stub-panes-grid">
+      <button
+        type="button"
+        data-testid="stub-pane-open-full"
+        onClick={() => onOpenFull("conv-1")}
+      />
+      <button type="button" data-testid="stub-panes-exit" onClick={onExit} />
+    </div>
+  ),
 }));
 
 function makeSession(overrides: Partial<SessionState> = {}): SessionState {
@@ -380,6 +396,21 @@ describe("SessionContent", () => {
       expect(
         container.querySelector('[data-testid="stub-tab-strip"]'),
       ).toBeNull();
+    });
+
+    it("maximizing a pane activates it and drops to the conversation-only layout (not the diff-split layout)", () => {
+      const onLayoutChange = vi.fn();
+      const openTabs = makeOpenTabs();
+      const { getByTestId } = renderWithQuery(
+        <SessionContent
+          {...makeProps({ layout: "panes", openTabs, onLayoutChange })}
+        />,
+      );
+
+      fireEvent.click(getByTestId("stub-pane-open-full"));
+
+      expect(openTabs.activate).toHaveBeenCalledWith("conv-1");
+      expect(onLayoutChange).toHaveBeenCalledWith("conversation");
     });
 
     it("still renders the shared pinned composer in the panes layout (4.9 / 5.1)", () => {

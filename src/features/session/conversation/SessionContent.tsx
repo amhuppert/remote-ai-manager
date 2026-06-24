@@ -198,11 +198,11 @@ export default function SessionContent({
               onActivate={openTabs.activate}
               onClose={openTabs.closeTab}
               onAdd={openTabs.addTab}
-              // Open-full activates the conversation AND drops back to the
-              // single-conversation layout so it fills the view.
+              // Open-full activates the conversation AND drops to the
+              // conversation-only layout so it fills the view.
               onOpenFull={(id) => {
                 openTabs.activate(id);
-                onLayoutChange("default");
+                onLayoutChange("conversation");
               }}
               onExit={() => onLayoutChange("default")}
             />
