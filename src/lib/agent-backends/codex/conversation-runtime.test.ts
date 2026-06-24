@@ -331,7 +331,7 @@ describe("CodexConversationRuntime", () => {
       translatePortableMcpToCodex: vi
         .fn()
         .mockReturnValue({ mcpServers: {}, droppedFields: [] }),
-      listNativeCodexMcpServerNames: vi.fn().mockResolvedValue([]),
+      listNativeCodexMcpServers: vi.fn().mockResolvedValue([]),
       now: vi.fn().mockReturnValue(1000),
     };
   });
@@ -1354,9 +1354,26 @@ describe("CodexConversationRuntime", () => {
         },
         droppedFields: [],
       });
-      deps.listNativeCodexMcpServerNames = vi
-        .fn()
-        .mockResolvedValue(["playwright", "cc-session-tools", "next-devtools"]);
+      deps.listNativeCodexMcpServers = vi.fn().mockResolvedValue([
+        {
+          name: "playwright",
+          configEntry: {
+            command: "npx",
+            args: ["-y", "@playwright/mcp@latest"],
+          },
+        },
+        {
+          name: "cc-session-tools",
+          configEntry: { url: "http://localhost/mcp" },
+        },
+        {
+          name: "next-devtools",
+          configEntry: {
+            command: "npx",
+            args: ["-y", "next-devtools-mcp@latest"],
+          },
+        },
+      ]);
 
       setupThread(minimalSuccessEvents());
       const runtime = new CodexConversationRuntime(
@@ -1384,7 +1401,7 @@ describe("CodexConversationRuntime", () => {
 
       await runtime.sendTurn(makeTurnInput());
 
-      expect(deps.listNativeCodexMcpServerNames).toHaveBeenCalledWith({
+      expect(deps.listNativeCodexMcpServers).toHaveBeenCalledWith({
         cwd: "/test/worktree",
         env: expect.any(Object),
       });
@@ -1394,8 +1411,16 @@ describe("CodexConversationRuntime", () => {
         mcp_servers: {
           "cc-session-tools": { url: "http://localhost/mcp" },
           "next-devtools-project": { command: "npx", args: ["next"] },
-          playwright: { enabled: false },
-          "next-devtools": { enabled: false },
+          playwright: {
+            command: "npx",
+            args: ["-y", "@playwright/mcp@latest"],
+            enabled: false,
+          },
+          "next-devtools": {
+            command: "npx",
+            args: ["-y", "next-devtools-mcp@latest"],
+            enabled: false,
+          },
         },
       });
     });

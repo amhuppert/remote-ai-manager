@@ -53,18 +53,18 @@ it("registers the codex task runner in the registry on module load", () => {
 
 describe("CodexTaskRunner", () => {
   let runner: CodexTaskRunner;
-  let listNativeCodexMcpServerNames: ReturnType<typeof vi.fn>;
+  let listNativeCodexMcpServers: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    listNativeCodexMcpServerNames = vi.fn().mockResolvedValue([]);
+    listNativeCodexMcpServers = vi.fn().mockResolvedValue([]);
     runner = new CodexTaskRunner({
       createCodex: (options) =>
         new Codex(options) as unknown as ReturnType<
           CodexTaskRunnerDeps["createCodex"]
         >,
       buildChildEnv: () => ({}) as NodeJS.ProcessEnv,
-      listNativeCodexMcpServerNames,
+      listNativeCodexMcpServers,
     });
 
     startThreadMock.mockReturnValue({
@@ -149,10 +149,22 @@ describe("CodexTaskRunner", () => {
   });
 
   it("passes enabled=false entries for native Codex MCP servers not managed by Command Center", async () => {
-    listNativeCodexMcpServerNames.mockResolvedValue([
-      "playwright",
-      "test-server",
-      "next-devtools",
+    listNativeCodexMcpServers.mockResolvedValue([
+      {
+        name: "playwright",
+        configEntry: { command: "npx", args: ["-y", "@playwright/mcp@latest"] },
+      },
+      {
+        name: "test-server",
+        configEntry: { command: "node", args: ["server.js"] },
+      },
+      {
+        name: "next-devtools",
+        configEntry: {
+          command: "npx",
+          args: ["-y", "next-devtools-mcp@latest"],
+        },
+      },
     ]);
 
     await runner.run(
@@ -172,7 +184,7 @@ describe("CodexTaskRunner", () => {
       }),
     );
 
-    expect(listNativeCodexMcpServerNames).toHaveBeenCalledWith({
+    expect(listNativeCodexMcpServers).toHaveBeenCalledWith({
       cwd: "/test/workspace",
       env: { CLAUDECODE: "" },
     });
@@ -184,8 +196,16 @@ describe("CodexTaskRunner", () => {
           command: "node",
           args: ["server.js"],
         },
-        playwright: { enabled: false },
-        "next-devtools": { enabled: false },
+        playwright: {
+          command: "npx",
+          args: ["-y", "@playwright/mcp@latest"],
+          enabled: false,
+        },
+        "next-devtools": {
+          command: "npx",
+          args: ["-y", "next-devtools-mcp@latest"],
+          enabled: false,
+        },
       },
     });
   });

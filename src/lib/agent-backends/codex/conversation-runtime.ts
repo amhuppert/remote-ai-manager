@@ -46,7 +46,8 @@ import { toStringEnv } from "./shared";
 import { translatePortableMcpToCodex } from "./mcp-translation";
 import {
   buildCodexMcpServersConfig,
-  listNativeCodexMcpServerNames,
+  listNativeCodexMcpServers,
+  type NativeCodexMcpServer,
 } from "./native-mcp-suppression";
 
 const logger = createLogger("codex:conversation-runtime");
@@ -75,10 +76,10 @@ export interface CodexConversationRuntimeDeps {
   translatePortableMcpToCodex(
     config: PortableMcpConfig,
   ): PortableMcpToCodexResult;
-  listNativeCodexMcpServerNames(input: {
+  listNativeCodexMcpServers(input: {
     cwd: string;
     env: Record<string, string>;
-  }): Promise<string[]>;
+  }): Promise<NativeCodexMcpServer[]>;
   now(): number;
 }
 
@@ -87,7 +88,7 @@ const defaultDeps: CodexConversationRuntimeDeps = {
   buildChildEnv,
   toStringEnv,
   translatePortableMcpToCodex,
-  listNativeCodexMcpServerNames,
+  listNativeCodexMcpServers,
   now: () => Date.now(),
 };
 
@@ -418,10 +419,10 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
       const { mcpServers } = this.deps.translatePortableMcpToCodex(
         this.stagedPortableMcp,
       );
-      const nativeServerNames = await this.listNativeMcpServerNames(env);
+      const nativeServers = await this.listNativeMcpServers(env);
       configMerged.mcp_servers = buildCodexMcpServersConfig({
         managedMcpServers: mcpServers,
-        nativeServerNames,
+        nativeServers,
       });
     }
 
@@ -436,19 +437,19 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
     return options;
   }
 
-  private async listNativeMcpServerNames(
+  private async listNativeMcpServers(
     env: Record<string, string>,
-  ): Promise<string[]> {
+  ): Promise<NativeCodexMcpServer[]> {
     try {
-      const names = await this.deps.listNativeCodexMcpServerNames({
+      const servers = await this.deps.listNativeCodexMcpServers({
         cwd: this.worktreePath,
         env,
       });
       logger.info("codex-runtime.mcp_native_servers_listed", {
         conversationId: this.conversationId,
-        nativeServerCount: names.length,
+        nativeServerCount: servers.length,
       });
-      return names;
+      return servers;
     } catch (err) {
       logger.warn("codex-runtime.mcp_native_server_list_failed", {
         conversationId: this.conversationId,
