@@ -14,6 +14,7 @@
   "overrides": {
     "BackendToggle": { "cardMode": "single", "primaryStory": "Default" },
     "ConfirmDialog": { "cardMode": "single", "primaryStory": "Default", "skip": ["components-confirmdialog--closed"] },
+    "CardContextMenu": { "cardMode": "single", "primaryStory": "Open" },
     "ModelSelector": { "cardMode": "single", "primaryStory": "Default" },
     "ReasoningLevelSelector": { "cardMode": "single", "primaryStory": "Default" },
     "ModalShell": { "cardMode": "single", "primaryStory": "Default" },
@@ -23,6 +24,9 @@
     "ContextFillIndicator": { "cardMode": "column" },
     "IconButton": { "cardMode": "column" },
     "SectionHeader": { "cardMode": "column" },
-    "Tabs": { "cardMode": "column" }
+    "Tabs": { "cardMode": "column" },
+    "DropdownMenu": { "cardMode": "single", "primaryStory": "StaticOpen" },
+    "Select": { "cardMode": "single", "primaryStory": "StaticOpen" },
+    "ContextMenu": { "cardMode": "single", "primaryStory": "Default" }
   }
 }

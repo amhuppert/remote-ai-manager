@@ -38,6 +38,28 @@ Component variants are props, not classes — e.g. `<Button variant="primary">` 
 tier-discriminated: `<Badge status="running">`, `<Badge tier="type" kind="bug">`,
 `<Badge tier="count">3</Badge>`. IDs and code use `font-mono`.
 
+## Interactive primitives are Radix-backed — use them, don't hand-roll
+
+Menus, selects, and right-click menus are built on **Radix UI** (the WAI-ARIA APG
+patterns), so correct keyboard navigation, focus management, type-ahead, ARIA roles,
+collision-aware positioning, and outside-click dismissal come for free. **Compose these
+primitives instead of building a custom dropdown** — every menu in CC routes through them:
+
+- **`DropdownMenu`** — a button that opens a menu of actions (APG Menu Button).
+- **`ContextMenu`** — the same menu opened by right-click.
+- **`Select`** — pick one value from a list (APG Listbox / select-only combobox).
+
+They share the composable-parts shape of `Tabs`/`ModalShell`: a `Root` + `Trigger` +
+portalled `Content` + `Item`/`CheckboxItem`/`RadioItem`/`Label`/`Separator`/`Sub*` parts
+(`Select` uses `SelectValue`/`SelectItem`, with an optional `description` per row). Triggers
+compose `Button`/`IconButton` via `asChild` (e.g. an icon kebab: `<DropdownMenuTrigger asChild>
+<IconButton aria-label="More actions">…</IconButton></DropdownMenuTrigger>`). A destructive row
+takes `danger`; `DropdownMenuShortcut` right-aligns a hotkey hint. The menus are **non-modal**
+and self-portalling — no provider, no manual positioning. Parts own their appearance via props
++ Radix `data-*` state, **not `className`**; the only style escape hatch is the layout-only
+`layoutClassName` prop (margin / width / placement). Each component's `.prompt.md` has
+copy-paste examples.
+
 ## Where the truth lives
 
 - The shipped stylesheet and its tokens: read `styles.css` (and its `@import` closure) before styling.

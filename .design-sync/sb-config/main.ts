@@ -11,11 +11,14 @@ import base from "../../.storybook/main";
 const UI = [
   "Badge",
   "Button",
+  "ContextMenu",
+  "DropdownMenu",
   "EmptyState",
   "FormField",
   "IconButton",
   "ModalShell",
   "SectionHeader",
+  "Select",
   "StatusDot",
   "Tabs",
 ];

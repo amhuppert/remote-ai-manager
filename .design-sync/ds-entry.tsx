@@ -23,6 +23,11 @@ export * from "../src/components/ui/ModalShell";
 export * from "../src/components/ui/SectionHeader";
 export * from "../src/components/ui/StatusDot";
 export * from "../src/components/ui/Tabs";
+// Radix-backed overlay primitives (each module exports its Root wrapper named
+// after the story title — DropdownMenu/Select/ContextMenu — plus its sub-parts).
+export * from "../src/components/ui/DropdownMenu";
+export * from "../src/components/ui/Select";
+export * from "../src/components/ui/ContextMenu";
 
 // Generic chrome
 export * from "../src/components/ContextFillIndicator";

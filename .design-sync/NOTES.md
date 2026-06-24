@@ -15,11 +15,23 @@ Repo-specific gotchas for `/design-sync`. Read before any re-sync.
   - `cfg.extraEntries` path needs a leading `./` (`./.design-sync/ds-entry.tsx`) or
     it's treated as a bare node_modules specifier.
   - `--node-modules` is the repo root `node_modules`.
-- **Scope is curated, not "all stories".** ~124 stories exist; only 22 are synced.
-  `.design-sync/sb-config/main.ts` narrows the `stories` glob to exactly those 22 so
+- **Scope is curated, not "all stories".** ~125 stories exist; only 25 are synced.
+  `.design-sync/sb-config/main.ts` narrows the `stories` glob to exactly those 25 so
   the converter discovers only them. It inherits framework/addons/viteFinal from the
   real `.storybook/main.ts`. `.design-sync/sb-config/preview.tsx` re-uses the real
   preview's parameters but REPLACES the decorators (see TooltipProvider below).
+- **Radix-backed overlay primitives (added 2026-06-24).** `DropdownMenu`, `Select`,
+  `ContextMenu` (`src/components/ui/`, `radix-ui` package) are in scope. The barrel
+  `export *`s all three (their Root wrapper is named after the story title, so pairing
+  is automatic). They portal to `document.body`; in the grid card the open menu escapes,
+  so all three are `cardMode: "single"` — `DropdownMenu`/`Select` use `primaryStory:
+  "StaticOpen"` (the only story that renders the surface open), `ContextMenu` uses
+  `"Default"` because Radix ContextMenu has **no controllable `open`** (it opens only on
+  right-click) so its card can only show the dashed right-click target — the menu surface
+  itself is identical to `DropdownMenu` (shared `menu-recipe.ts`), already showcased there.
+  The same commit migrated `CardContextMenu` → `DropdownMenu` (now also `cardMode:
+  "single"`, `primaryStory: "Open"`) and `ModelSelector`/`ReasoningLevelSelector` →
+  `Select` (see Re-sync risks).
 - **`@/lib/logging` is server-only** (async_hooks/fs/crypto). `useOverlayScope`
   (ModelSelector, ReasoningLevelSelector, CardContextMenu, ConfirmDialog) imports it.
   `.design-sync/tsconfig.bundle.json` aliases `@/lib/logging` → `.storybook/logging-stub.mjs`
@@ -55,11 +67,15 @@ Repo-specific gotchas for `/design-sync`. Read before any re-sync.
   - **`--font-*` var defs** live in `.design-sync/fonts/brand-vars.css`, imported by the
     scoped preview so they compile into the reference CSS and get scraped into
     `_ds_bundle.css` (`tokensGlob` does NOT work for a repo file — it needs a `tokensPkg`).
-  - **Reference parity:** the reference loads the same fonts via a Google Fonts `@import`
-    injected into `.design-sync/sb-reference/iframe.html` (re-inject after any reference
-    rebuild — it's regenerated). My env has network; the DS itself ships local woff2.
+  - **Reference parity (method changed 2026-06-24):** the reference now loads the SAME
+    local woff2 the DS bundle ships — `cp fonts/brand-faces.css → sb-reference/ds-brand-faces.css`
+    + `cp fonts/*.woff2 → sb-reference/` + a `<link rel="stylesheet" href="./ds-brand-faces.css">`
+    in `iframe.html` (brand-faces.css urls are `./<Family>-<weight>.woff2`, which resolve
+    from sb-reference/). This replaces the old Google Fonts `@import` — identical bytes on
+    both panels, no network dependency (the old method risked a silent system-font fallback
+    if egress was blocked, which compare can't catch). Re-apply after any reference rebuild.
   - To regenerate the woff2: re-run the download (see git history / the brand-faces.css
-    header). brand-faces.css urls are `./<Family>-<weight>.woff2`.
+    header).
 
 ## CRITICAL: complete CSS — the storybook scrape is incomplete
 
@@ -81,7 +97,7 @@ Repo-specific gotchas for `/design-sync`. Read before any re-sync.
   every reference (`sb-reference`) build, inject the complete CSS into `iframe.html`:
   `cp .design-sync/full-styles.css .design-sync/sb-reference/ds-full-styles.css` then add
   `<link rel="stylesheet" href="./ds-full-styles.css">` before `</head>` (alongside the
-  font `@import`). Without this the reference renders e.g. white primary buttons and every
+  font `<link>` — see Fonts). Without this the reference renders e.g. white primary buttons and every
   utility-heavy component grades as a false mismatch. **This injection is wiped by a
   reference rebuild — re-apply it on every re-sync that rebuilds the reference.**
 
@@ -96,8 +112,10 @@ Repo-specific gotchas for `/design-sync`. Read before any re-sync.
 
 ## cfg.overrides (cardMode) — genuine overlays/wide
 
-- single (overlay/portal): BackendToggle, ConfirmDialog, ModelSelector, ReasoningLevelSelector.
-- column (wider than a grid cell): ContextFillIndicator, IconButton, SectionHeader, Tabs.
+- single (overlay/portal): BackendToggle, ConfirmDialog, ModelSelector, ReasoningLevelSelector,
+  ModalShell, MergeToast, CardContextMenu (primaryStory Open), DropdownMenu + Select
+  (primaryStory StaticOpen), ContextMenu (primaryStory Default — can't open statically).
+- column (wider than a grid cell): TddToggle, Button, ContextFillIndicator, IconButton, SectionHeader, Tabs.
 
 ## Target project
 
@@ -132,8 +150,9 @@ Repo-specific gotchas for `/design-sync`. Read before any re-sync.
 
 ## Known warnings (triaged — not new on re-sync)
 
-- `[TOKENS_MISSING] --text-muted, --bg-secondary, --border-accent` — referenced in the
-  scraped CSS but NOT used by any of the 22 components. Harmless.
+- `[TOKENS_MISSING]` (6 as of 2026-06-24: `--accent-cyan, --bg-inset, --text-muted,
+  --bg-secondary, --border-accent, --danger`) — referenced in the scraped/preserved global
+  CSS but NOT used by any in-scope component. Warn (`!`), not an error. Harmless.
 - `[CSS_ASSETS] %23n` — one relative `url(#n)` (an SVG filter fragment ref) in the scraped
   CSS; resolves at render, not an asset 404. Harmless.
 
@@ -141,10 +160,26 @@ Repo-specific gotchas for `/design-sync`. Read before any re-sync.
 
 - **Two manual reference patches** are wiped by any `sb-reference` rebuild and MUST be re-applied
   (the driver does NOT do them): (1) `cp .design-sync/full-styles.css .design-sync/sb-reference/ds-full-styles.css`
-  + inject `<link rel="stylesheet" href="./ds-full-styles.css">` into `iframe.html`; (2) inject the
-  Google Fonts `@import` `<style>` into `iframe.html`. Without (1) the reference renders utility-heavy
-  components wrong (false mismatches); without (2) the reference renders system fonts. See the
-  "CRITICAL: complete CSS" section.
+  + inject `<link rel="stylesheet" href="./ds-full-styles.css">` into `iframe.html`; (2) `cp
+  .design-sync/fonts/brand-faces.css → sb-reference/ds-brand-faces.css` + `cp .design-sync/fonts/*.woff2
+  → sb-reference/` + inject `<link rel="stylesheet" href="./ds-brand-faces.css">` into `iframe.html`
+  (this REPLACED the old Google Fonts `@import` — see Fonts). Without (1) the reference renders
+  utility-heavy components wrong (false mismatches); without (2) the reference renders system fonts.
+  Both `<link>`s go before `</head>`. See the "CRITICAL: complete CSS" + "Fonts" sections.
+- **Chromium revision drift.** `.ds-sync`'s pinned Playwright (1.61.0 on 2026-06-24) wants
+  `chromium_headless_shell-1228`; validate fails `[RENDER_SKIPPED]` if it isn't installed. Fix:
+  `(cd .ds-sync && npx playwright install chromium)`. A newer staged-script copy may bump the
+  Playwright/chromium revision again — re-install on `[RENDER_SKIPPED]`.
+- **ModelSelector / ReasoningLevelSelector are verified-by-upload, not re-graded.** The
+  2026-06-24 commit rewrote their internals onto the `Select` primitive, but their STORY files
+  didn't change, so the diff carries their grades forward (sources-unchanged rule). Their
+  closed-trigger appearance is preserved because `Select`'s `triggerClass` was written to match
+  the legacy trigger — confirmed via the `reference_drift` canary this sync. If a future change
+  alters their trigger appearance (not just the story), spot-check them:
+  `compare.mjs --components ModelSelector,ReasoningLevelSelector --spot-check-components ModelSelector,ReasoningLevelSelector`.
+- **`radix-ui` is a real bundle dependency now** (DropdownMenu/Select/ContextMenu). It adds
+  ~0.3 MB to `_ds_bundle.js` (1.1 → 1.4 MB) — still well under the 5 MB cap. If a future primitive
+  pulls in a heavy Radix module, watch `[FILE_OVER_5MB]`.
 - **`buildCmd` must run before `package-build` on every re-sync** to regenerate `full-styles.css`
   (cfg.cssEntry). The driver does not auto-run it. Stale `full-styles.css` → wrong/old CSS shipped.
 - **Brand fonts** are downloaded woff2 (committed in `.design-sync/fonts/`). If RootLayout's next/font
