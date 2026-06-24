@@ -974,7 +974,14 @@ function waitForTurnCompletion(actor: ConversationActorRef): Promise<void> {
     // If the machine hasn't started acquiring resources yet, we need to wait
     // for the SUBMIT_PROMPT to take effect first
     const initialValue = snap.value;
-    let sawTransition = false;
+    // Seed from the initial snapshot: when waiting begins the actor is already
+    // mid-turn (acquiringResources — SUBMIT_PROMPT was accepted synchronously),
+    // so the active turn has effectively already been observed. Without this, a
+    // turn that fails during resource acquisition collapses
+    // acquiringResources→finalizingTurn→idle in a single macrostep, the
+    // subscriber sees only the settled `idle` snapshot, `sawTransition` never
+    // flips, and the wait hangs forever.
+    let sawTransition = !isSettled(initialValue);
 
     const sub = actor.subscribe((snapshot) => {
       // Track that a state transition occurred (machine left idle/debug)

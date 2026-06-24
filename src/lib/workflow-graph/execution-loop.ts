@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { getErrorMessage } from "@/lib/shared/errors";
+import { getConfiguredQueryConcurrency as defaultGetMaxConcurrentQueries } from "@/lib/shared/query-semaphore";
 import { captureTraceContext, createLogger, runAsTrace } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import { toHaltReason, type DirtyPath } from "./errors";
@@ -79,6 +80,7 @@ export interface GraphWorkflowExecutionLoopWorkflowManager {
     projectPath: string;
     sessionName: string;
     sessionLaneEnabled?: boolean;
+    capacityRemaining?: number;
   }): Promise<ScheduleEligibleContextsResult>;
   send(
     projectPath: string,
@@ -150,6 +152,15 @@ export interface GraphWorkflowExecutionLoopDeps {
   runCircuitBreakerGate?: (
     input: RunCircuitBreakerGateInput,
   ) => CircuitBreakerGateResult;
+  /**
+   * Resolve the current SDK query-concurrency limit. The loop bounds each
+   * parallel scheduling pass to `limit - inFlight.size` so a single execution
+   * never schedules more concurrent contexts than the global query semaphore
+   * can admit (which would otherwise leave the surplus queued until they hit
+   * the semaphore's acquisition timeout). Defaults to the semaphore's
+   * configured limit.
+   */
+  getMaxConcurrentQueries?: () => Promise<number>;
   createJobId?: () => string;
   /**
    * Read tracked dirty paths from the session worktree. Used by the pre-batch
@@ -333,6 +344,8 @@ export function createGraphWorkflowExecutionLoop(
 ) {
   const runCircuitBreakerGate =
     deps.runCircuitBreakerGate ?? defaultRunCircuitBreakerGate;
+  const getMaxConcurrentQueries =
+    deps.getMaxConcurrentQueries ?? defaultGetMaxConcurrentQueries;
   const createJobId = deps.createJobId ?? (() => randomUUID());
   const approvalGateService =
     deps.approvalGateService ??
@@ -366,6 +379,7 @@ export function createGraphWorkflowExecutionLoop(
     let execution = input.execution;
     const retryableRecoveryAttempts = new Map<string, number>();
     const inFlight = new Map<string, Promise<void>>();
+    const maxConcurrency = await getMaxConcurrentQueries();
     const execLogger = getExecutionLogger(execution.id);
 
     execLogger?.lifecycle("loop.started", {
@@ -1788,11 +1802,23 @@ export function createGraphWorkflowExecutionLoop(
           }
         }
 
+        // Bound the parallel batch to the SDK query-concurrency limit minus
+        // what is already running. The loop reschedules every iteration as
+        // in-flight contexts settle, so this caps each execution to a sliding
+        // window of `maxConcurrency` concurrent contexts and the surplus never
+        // queues on the global semaphore until it times out.
+        const capacityRemaining = Math.max(0, maxConcurrency - inFlight.size);
+        execLogger?.lifecycle("loop.schedule_capacity", {
+          maxConcurrency,
+          inFlight: inFlight.size,
+          capacityRemaining,
+        });
         const scheduleResult =
           await deps.workflowManager.scheduleEligibleContexts({
             projectPath: input.projectPath,
             sessionName: input.sessionName,
             sessionLaneEnabled: input.sessionLaneEnabled,
+            capacityRemaining,
           });
         execution = scheduleResult.execution;
 

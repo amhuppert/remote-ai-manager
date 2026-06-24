@@ -137,6 +137,23 @@ function createRelease(label: string): () => void {
   };
 }
 
+/**
+ * Resolve the SDK query-concurrency limit from config — the same value the
+ * semaphore enforces. Never throws: returns DEFAULT_MAX_CONCURRENT on a config
+ * read failure so callers can use it to size work without guarding. This is the
+ * single source of truth for the configured limit shared with consumers (e.g.
+ * the graph-workflow execution loop, which bounds each parallel scheduling pass
+ * to it so the workflow never over-subscribes this semaphore).
+ */
+export async function getConfiguredQueryConcurrency(): Promise<number> {
+  try {
+    const config = await readConfig();
+    return config.maxConcurrentQueries ?? DEFAULT_MAX_CONCURRENT;
+  } catch {
+    return DEFAULT_MAX_CONCURRENT;
+  }
+}
+
 /** Read the configured limit from config (lazy, best-effort). */
 async function refreshLimit(): Promise<void> {
   try {

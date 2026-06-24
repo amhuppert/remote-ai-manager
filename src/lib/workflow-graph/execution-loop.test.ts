@@ -196,6 +196,7 @@ interface BuildHarnessInput {
   isConversationBusy?: GraphWorkflowExecutionLoopDeps["isConversationBusy"];
   acquireConversationLock?: GraphWorkflowExecutionLoopDeps["acquireConversationLock"];
   eventPublisher?: GraphWorkflowExecutionLoopDeps["eventPublisher"];
+  getMaxConcurrentQueries?: GraphWorkflowExecutionLoopDeps["getMaxConcurrentQueries"];
 }
 
 function buildHarness(input: BuildHarnessInput): LoopHarness {
@@ -392,6 +393,7 @@ function buildHarness(input: BuildHarnessInput): LoopHarness {
     isConversationBusy: input.isConversationBusy,
     acquireConversationLock: input.acquireConversationLock,
     eventPublisher: input.eventPublisher,
+    getMaxConcurrentQueries: input.getMaxConcurrentQueries ?? (async () => 999),
   };
 
   return {
@@ -489,6 +491,47 @@ describe("execution loop", () => {
     expect(harness.sendSpy).toHaveBeenCalledWith("/repo", "session-1", {
       type: "complete",
     });
+  });
+
+  it("bounds each scheduling pass to the query-concurrency limit", async () => {
+    // Regression for the workflow stall: the loop must cap the parallel batch
+    // at `maxConcurrency - inFlight.size` so it never schedules more concurrent
+    // contexts than the global query semaphore can admit. On the first pass the
+    // in-flight set is empty, so the full limit is available.
+    const definition = createSingleContextDefinition(5);
+    const initial = createRunningExecution(definition);
+    const harness = buildHarness({
+      initialExecution: initial,
+      getMaxConcurrentQueries: async () => 3,
+      iterationOrchestrator: {
+        async runIteration(): Promise<GraphWorkflowIterationResult> {
+          const next = structuredClone(harness.getCurrent());
+          next.contextStates["ctx-1"]!.iterationCount = 1;
+          next.contextStates["ctx-1"]!.status = "completed";
+          next.contextStates["ctx-1"]!.completedTaskCount = 1;
+          next.taskStates["task-1"]!.status = "completed";
+          next.activeContextIds = [];
+          harness.setCurrent(next);
+          return {
+            conversationId: "conv-1",
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        },
+      },
+    });
+
+    const loop = createGraphWorkflowExecutionLoop(harness.deps);
+    await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(
+      harness.scheduleEligibleContextsSpy.mock.calls[0]?.[0]?.capacityRemaining,
+    ).toBe(3);
   });
 
   it("halts instead of completing when a context is still incomplete and nothing is schedulable", async () => {

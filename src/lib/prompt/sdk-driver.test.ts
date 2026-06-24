@@ -253,6 +253,52 @@ describe("ASK_USER_QUESTION_INSTRUCTIONS", () => {
   });
 });
 
+describe("waitForTurnCompletion — failure during resource acquisition", () => {
+  it("resolves (does not hang) and surfaces the error when the turn collapses acquiringResources→idle in a single notification", async () => {
+    const timeoutMessage =
+      "Query semaphore timeout after 300000ms waiting for slot (label: prompt:test-session)";
+    // The actor is already mid-turn (acquiringResources) when waiting begins —
+    // SUBMIT_PROMPT was accepted synchronously. A failure during resource
+    // acquisition then collapses acquiringResources→finalizingTurn→idle in a
+    // single macrostep, so the subscriber observes only the settled `idle`
+    // snapshot (no intermediate non-settled notification).
+    mockActor.getSnapshot.mockReturnValue({
+      value: "acquiringResources",
+      status: "active" as const,
+      context: { lastError: timeoutMessage },
+    });
+    mockActor.subscribe.mockImplementation(
+      (callback: (snapshot: unknown) => void) => {
+        queueMicrotask(() => {
+          callback({
+            value: "idle",
+            status: "active",
+            context: { lastError: timeoutMessage },
+          });
+        });
+        return { unsubscribe: vi.fn() };
+      },
+    );
+
+    deps = createTestDeps();
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    const result = await withTimeout(
+      executePromptStream(
+        "/projects/repo",
+        makeSession(),
+        "Hello",
+        vi.fn(),
+        "conv-123",
+      ),
+      1000,
+    );
+
+    expect(result.error).toContain("Query semaphore timeout");
+  });
+});
+
 describe("executePromptStream (facade)", () => {
   it("returns conversationId for existing conversation", async () => {
     deps = createTestDeps();

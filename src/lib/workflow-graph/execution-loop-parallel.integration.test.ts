@@ -499,6 +499,120 @@ describe("execution loop — parallel integration", () => {
     }
   });
 
+  it("scenario 1b: never runs more than maxConcurrentQueries contexts at once across a wide parallel batch", async () => {
+    // Regression for the workflow stall: four sibling contexts are all eligible
+    // at once, but with a query-concurrency limit of 2 the loop must run them as
+    // a sliding window of at most 2 — never dispatching all four (which would
+    // over-subscribe the global query semaphore and leave the surplus queued
+    // until they time out). All four must still complete.
+    _resetActiveLoopsForTesting();
+
+    const contextIds = ["ctx-a", "ctx-b", "ctx-c", "ctx-d"];
+    const definition = createParallelDefinition(contextIds);
+    const initial = createInitialExecution(definition);
+    const repository = createRepository(initial);
+    const parallelWorktrees = createParallelWorktreesStub();
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+      parallelWorktrees,
+      async getSession() {
+        return createSession();
+      },
+    });
+
+    // All gates open immediately: the only thing bounding how many contexts run
+    // concurrently is the loop's capacity bound, not the gates.
+    const completionGates = new Map<string, Deferred<void>>(
+      contextIds.map(
+        (id) => [id, deferred<void>()] as [string, Deferred<void>],
+      ),
+    );
+    for (const gate of completionGates.values()) gate.resolve();
+
+    let current = 0;
+    let maxConcurrent = 0;
+    const ranContexts = new Set<string>();
+    const iterationOrchestrator = {
+      async runIteration(input: {
+        contextId: string;
+      }): Promise<GraphWorkflowIterationResult> {
+        current += 1;
+        maxConcurrent = Math.max(maxConcurrent, current);
+        ranContexts.add(input.contextId);
+        try {
+          await completionGates.get(input.contextId)!.promise;
+          const next = await manager.mutateActive("/repo", "session-1", (e) => {
+            const updated = structuredClone(e);
+            const cs = updated.contextStates[input.contextId];
+            if (cs) {
+              cs.iterationCount = 1;
+              cs.status = "completed";
+              cs.completedTaskCount = 1;
+            }
+            const ts = updated.taskStates[`task-${input.contextId}`];
+            if (ts) {
+              ts.status = "completed";
+              ts.completedAt = "2026-03-27T12:01:00.000Z";
+            }
+            return updated;
+          });
+          return {
+            conversationId: `conv-${input.contextId}`,
+            execution: next,
+            shouldContinueInContext: false,
+          };
+        } finally {
+          current -= 1;
+        }
+      },
+    };
+
+    const mergeRunner: GraphMergeRunner = {
+      async run() {
+        return buildSuccessMergeOutput();
+      },
+    };
+
+    const loop = createGraphWorkflowExecutionLoop({
+      workflowManager: manager,
+      iterationOrchestrator,
+      parallelWorktrees,
+      mergeMutex: createPerSessionMergeMutex(),
+      sessionGitLock: createSessionGitLock({
+        acquireSessionLock: () => () => {},
+      }),
+      mergeRunner,
+      joinRunner: createNoopJoinRunner(),
+      soloContextCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      laneCommitter: {
+        commit: async () => ({ status: "skipped" }),
+      },
+      executionTargetResolver: createExecutionTargetResolver(),
+      async getSession() {
+        return createSession();
+      },
+      getMaxConcurrentQueries: async () => 2,
+    });
+
+    const result = await loop.run({
+      projectPath: "/repo",
+      projectName: "test",
+      sessionName: "session-1",
+      execution: initial,
+    });
+
+    expect(result.status).toBe("completed");
+    expect([...ranContexts].sort()).toEqual(contextIds);
+    expect(maxConcurrent).toBeLessThanOrEqual(2);
+    expect(maxConcurrent).toBeGreaterThanOrEqual(2);
+  });
+
   it("scenario 2: two siblings finish B→A, both merges succeed", async () => {
     _resetActiveLoopsForTesting();
 
