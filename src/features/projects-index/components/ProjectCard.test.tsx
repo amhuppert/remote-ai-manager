@@ -14,7 +14,7 @@ const defaultProps = {
   finished: false,
   pinned: false,
   menuOpen: false,
-  onMenuToggle: vi.fn(),
+  onMenuOpenChange: vi.fn(),
   onArchive: vi.fn(),
   onPin: vi.fn(),
   onDelete: vi.fn(),

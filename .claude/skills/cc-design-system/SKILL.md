@@ -114,7 +114,7 @@ These are non-negotiable. Breaking any of them creates regressions.
 - **Never use rainbow (`.cc-rainbow-*`) for anything other than max-class reasoning effort.** It signals "exceeds the scale" precisely because it doesn't belong to any agent or status.
 - **Never use `--text-secondary` or `--text-tertiary` as the rest state of interactive text.** On hover, promote to `--text-primary`.
 - **Never use `--violet` for anything other than Codex agent identity.** It is brand-load-bearing.
-- **Never use `outline: none` without a replacement focus ring.** Cyan border + cyan glow on inputs; always visible.
+- **Never use `outline: none` without a replacement focus ring.** Keyboard focus is always visible — use the canonical cyan focus outline (see "Do"). Never leave the browser default (blue) outline on a control; it clashes with the control's own border.
 - **Never skip elevation levels on hover.** Bg moves up exactly one step.
 - **Never invent half-step radii** (no `5px`, `7px`, etc.). Use `--radius-sm/md/lg` or `9999px` for pills.
 - **Never paraphrase domain terms.** *Session, conversation, worktree, branch, prompt, diff, fork, finalize* — exact meanings.
@@ -129,6 +129,7 @@ These are non-negotiable. Breaking any of them creates regressions.
 - **Use spacing utilities** (`p-*`/`m-*`/`gap-*`, backed by `--spacing-*`) in migrated/new UI; `var(--space-*)` remains only inside preserved CSS. Never literal pixel values for margin/padding.
 - **Use the `Badge` primitive** (`ui/Badge.tsx`) for badges — it emits the utilities for the tier (status/type/count/subtle) + value. The legacy `.cc-badge*` recipe was deleted.
 - **Make icon-only buttons accessible** — `aria-label` + `data-tooltip` on every one.
+- **Keyboard focus is a cyan outline.** The canonical `:focus-visible` indicator for interactive controls (buttons, icon buttons, menu/dropdown triggers, tabs) is a **2px solid `--cyan` outline at `outline-offset: 2px`** — the `Button`/`IconButton` primitives emit it (`focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2`). Two exceptions keep their established treatments: **inputs/textareas** show a cyan **border + glow** focused appearance (`focus:border-cyan` + `0 0 0 3px var(--cyan-glow)`), and **menu/listbox items** use the `data-highlighted` background (roving focus), not an outline.
 - **Make actions imperative; state declarative.** Buttons say `Merge`, `Archive`. Status says `Running`, `Awaiting input`.
 
 ---

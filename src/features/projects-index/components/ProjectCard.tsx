@@ -12,7 +12,7 @@ interface ProjectCardProps {
   archived: boolean;
   pinned: boolean;
   menuOpen: boolean;
-  onMenuToggle: () => void;
+  onMenuOpenChange: (open: boolean) => void;
   onArchive: (projectPath: string) => void;
   onPin: (projectPath: string) => void;
   onDelete: (project: DiscoveredProject) => void;
@@ -88,7 +88,7 @@ export default function ProjectCard({
   archived,
   pinned,
   menuOpen,
-  onMenuToggle,
+  onMenuOpenChange,
   onArchive,
   onPin,
   onDelete,
@@ -157,7 +157,7 @@ export default function ProjectCard({
           <CardContextMenu
             items={menuItems}
             open={menuOpen}
-            onToggle={onMenuToggle}
+            onOpenChange={onMenuOpenChange}
           />
         </div>
       </div>

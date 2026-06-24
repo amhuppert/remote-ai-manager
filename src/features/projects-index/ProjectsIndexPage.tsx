@@ -211,17 +211,6 @@ export default function ProjectsIndexPage(): React.JSX.Element {
 
   const cancelDelete = useCallback(() => setDeleteTarget(null), []);
 
-  const handleMenuToggle = useCallback(
-    (projectPath: string) => {
-      if (openMenuId === projectPath) {
-        closeProjectMenu();
-      } else {
-        openProjectMenu(projectPath);
-      }
-    },
-    [openMenuId, openProjectMenu, closeProjectMenu],
-  );
-
   const showPinnedSection = visiblePinnedProjects.length > 0;
   const isLoading =
     projectsQuery.isPending || prefsQuery.isPending || configQuery.isPending;
@@ -331,7 +320,11 @@ export default function ProjectsIndexPage(): React.JSX.Element {
                         archived={archivedSet.has(project.path)}
                         pinned={true}
                         menuOpen={openMenuId === project.path}
-                        onMenuToggle={() => handleMenuToggle(project.path)}
+                        onMenuOpenChange={(open) =>
+                          open
+                            ? openProjectMenu(project.path)
+                            : closeProjectMenu()
+                        }
                         onArchive={handleArchive}
                         onPin={handlePin}
                         onDelete={handleDelete}
@@ -354,7 +347,9 @@ export default function ProjectsIndexPage(): React.JSX.Element {
                     archived={archivedSet.has(project.path)}
                     pinned={false}
                     menuOpen={openMenuId === project.path}
-                    onMenuToggle={() => handleMenuToggle(project.path)}
+                    onMenuOpenChange={(open) =>
+                      open ? openProjectMenu(project.path) : closeProjectMenu()
+                    }
                     onArchive={handleArchive}
                     onPin={handlePin}
                     onDelete={handleDelete}

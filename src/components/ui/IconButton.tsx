@@ -12,7 +12,7 @@ export type IconButtonTone = "default" | "danger";
 // same-property utilities is sort-order dependent, which we must not rely on
 // without tailwind-merge).
 const base =
-  "inline-flex items-center cursor-pointer transition-all duration-150 ease-[ease]";
+  "inline-flex items-center cursor-pointer transition-all duration-150 ease-[ease] focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2";
 
 // `square` — `.btn-icon-only` (globals.css): a square icon-only control with an
 // optional 44px touch target. `tone=danger` recolours only the hover state.

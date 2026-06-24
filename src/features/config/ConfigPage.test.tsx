@@ -1,7 +1,27 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { renderWithQuery } from "@/test/component-mocks";
+
+/** Open the given subsection's ModelSelector and pick the option whose label
+ * starts with `labelPrefix` (Radix renders options only while the listbox is
+ * open; they portal to document.body and carry `data-testid`). */
+async function pickModel(
+  user: ReturnType<typeof userEvent.setup>,
+  subsection: HTMLElement,
+  labelPrefix: string,
+): Promise<void> {
+  const trigger = subsection.querySelector(
+    '[data-testid="model-selector-trigger"]',
+  ) as HTMLElement;
+  await user.click(trigger);
+  const option = screen
+    .getAllByTestId("model-selector-option")
+    .find((o) => (o.textContent ?? "").startsWith(labelPrefix));
+  expect(option, `no model option "${labelPrefix}"`).toBeTruthy();
+  await user.click(option!);
+}
 import type { GlobalConfig } from "@/lib/config/schemas";
 import type { RawGlobalConfig, WorkflowDefaults } from "@/lib/config/schemas";
 import ConfigPage, { SEEDED_WORKFLOW_DEFAULTS } from "./ConfigPage";
@@ -260,7 +280,8 @@ describe("ConfigPage — Workflow Defaults", () => {
     expect(texts).not.toContain("use");
   });
 
-  it("marks the Implementer sub-section [MODIFIED] after editing the model", () => {
+  it("marks the Implementer sub-section [MODIFIED] after editing the model", async () => {
+    const user = userEvent.setup();
     const { container } = renderWithQuery(<ConfigPage />);
     expandWorkflowDefaults();
 
@@ -269,44 +290,22 @@ describe("ConfigPage — Workflow Defaults", () => {
     ) as HTMLElement;
     expect(implementer.textContent).toContain("DEFAULT");
 
-    // Open the ModelSelector dropdown (portal-rendered into document.body).
-    // Edit implementer.model from "opus" → "sonnet" via ModelSelector.
-    // Options are rendered in portals attached to document.body; click every
-    // "Sonnet" option so the implementer's ModelSelector onChange fires.
-    const sonnetOptions = document.querySelectorAll(
-      '[data-testid="model-selector-option"]',
-    );
-    let clicked = 0;
-    for (const btn of Array.from(sonnetOptions)) {
-      if ((btn.textContent ?? "").startsWith("Sonnet")) {
-        fireEvent.click(btn);
-        clicked++;
-      }
-    }
-    expect(clicked).toBeGreaterThan(0);
+    // Edit implementer.model from "opus" → "sonnet" via the ModelSelector.
+    await pickModel(user, implementer, "Sonnet");
 
     expect(implementer.textContent).toContain("MODIFIED");
   });
 
-  it("switching the implementer model to Haiku does not crash and disables effort editing", () => {
+  it("switching the implementer model to Haiku does not crash and disables effort editing", async () => {
+    const user = userEvent.setup();
     const { container } = renderWithQuery(<ConfigPage />);
     expandWorkflowDefaults();
 
     const implementer = container.querySelector(
       '[data-subsection="implementer"]',
     ) as HTMLElement;
-    const modelTrigger = implementer.querySelector(
-      '[data-testid="model-selector-trigger"]',
-    ) as HTMLElement;
 
-    fireEvent.click(modelTrigger);
-    const haikuOption = Array.from(
-      document.querySelectorAll(
-        '[data-testid="model-selector-dropdown"][data-open="true"] [data-testid="model-selector-option"]',
-      ),
-    ).find((button) => (button.textContent ?? "").startsWith("Haiku"));
-    expect(haikuOption).toBeTruthy();
-    fireEvent.click(haikuOption as HTMLElement);
+    await pickModel(user, implementer, "Haiku");
 
     expect(
       implementer.querySelector('[data-testid="model-selector-label"]')
@@ -323,7 +322,8 @@ describe("ConfigPage — Workflow Defaults", () => {
     ).toBe("Unavailable");
   });
 
-  it("save writes only the changed blocks (unchanged workflow-defaults blocks not written)", () => {
+  it("save writes only the changed blocks (unchanged workflow-defaults blocks not written)", async () => {
+    const user = userEvent.setup();
     const { container } = renderWithQuery(<ConfigPage />);
     expandWorkflowDefaults();
 
@@ -331,14 +331,7 @@ describe("ConfigPage — Workflow Defaults", () => {
       '[data-subsection="implementer"]',
     ) as HTMLElement;
 
-    const sonnetOptions = document.querySelectorAll(
-      '[data-testid="model-selector-option"]',
-    );
-    for (const btn of Array.from(sonnetOptions)) {
-      if ((btn.textContent ?? "").startsWith("Sonnet")) {
-        fireEvent.click(btn);
-      }
-    }
+    await pickModel(user, implementer, "Sonnet");
 
     expect(implementer.textContent).toContain("MODIFIED");
 

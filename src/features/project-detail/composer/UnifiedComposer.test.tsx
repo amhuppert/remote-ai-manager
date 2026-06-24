@@ -195,8 +195,10 @@ describe("UnifiedComposer model settings", () => {
       expect(document.querySelector(".prompt-input-area")).not.toBeNull(),
     );
     expect(screen.getByTitle(/Model: Sonnet/)).toBeInTheDocument();
+    // The effort trigger is now a Radix Select (role="combobox"), named by its
+    // aria-label; the model trigger is matched above by its descriptive title.
     expect(
-      screen.getByRole("button", { name: /Effort: Medium/i }),
+      screen.getByRole("combobox", { name: /Effort: Medium/i }),
     ).toBeInTheDocument();
   });
 });

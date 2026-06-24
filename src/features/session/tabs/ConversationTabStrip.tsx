@@ -1,11 +1,14 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
 import { useGenericRenameConversationMutation } from "@/lib/conversations/mutations";
-import ConversationSidebarRowContextMenu, {
-  type ContextMenuItem,
-} from "@/features/session/sidebar/ConversationSidebarRowContextMenu";
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+} from "@/components/ui/ContextMenu";
 import ConversationTab from "./ConversationTab";
 
 export interface ConversationTabStripProps {
@@ -44,11 +47,6 @@ export default function ConversationTabStrip({
   onAddClick,
 }: ConversationTabStripProps): React.JSX.Element {
   const renameMutation = useGenericRenameConversationMutation();
-  const [ctxMenu, setCtxMenu] = useState<{
-    id: string;
-    x: number;
-    y: number;
-  } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
 
@@ -75,40 +73,34 @@ export default function ConversationTabStrip({
     setEditingId(null);
   }, [workingSet, editingId, editValue, renameMutation]);
 
-  const menuItems = useMemo<ContextMenuItem[]>(() => {
-    if (ctxMenu === null) return [];
-    const conversation = workingSet.find((c) => c.id === ctxMenu.id);
-    if (conversation === undefined) return [];
-    return [
-      {
-        kind: "item",
-        label: "Rename…",
-        onSelect: () => startRename(conversation),
-      },
-    ];
-  }, [ctxMenu, workingSet, startRename]);
-
   return (
     <div className={stripClass} role="tablist">
       {workingSet.map((conversation, index) => (
-        <ConversationTab
-          key={conversation.id}
-          id={conversation.id}
-          title={tabTitle(conversation)}
-          status={conversation.status}
-          active={conversation.id === activeId}
-          hotkeyHint={index < 9 ? `⌘${index + 1}` : undefined}
-          onActivate={onActivate}
-          onClose={onClose}
-          onContextMenu={(point) =>
-            setCtxMenu({ id: conversation.id, x: point.x, y: point.y })
-          }
-          isEditing={editingId === conversation.id}
-          editValue={editValue}
-          onEditChange={setEditValue}
-          onEditCommit={commitRename}
-          onEditCancel={cancelRename}
-        />
+        // `contents` on the trigger keeps the tab as the flex item; Radix anchors
+        // the menu at the cursor, so the trigger needs no box of its own.
+        <ContextMenu key={conversation.id}>
+          <ContextMenuTrigger className="contents">
+            <ConversationTab
+              id={conversation.id}
+              title={tabTitle(conversation)}
+              status={conversation.status}
+              active={conversation.id === activeId}
+              hotkeyHint={index < 9 ? `⌘${index + 1}` : undefined}
+              onActivate={onActivate}
+              onClose={onClose}
+              isEditing={editingId === conversation.id}
+              editValue={editValue}
+              onEditChange={setEditValue}
+              onEditCommit={commitRename}
+              onEditCancel={cancelRename}
+            />
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuItem onSelect={() => startRename(conversation)}>
+              Rename…
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
       ))}
       <button
         type="button"
@@ -124,14 +116,6 @@ export default function ConversationTabStrip({
       >
         +
       </button>
-      {ctxMenu !== null && (
-        <ConversationSidebarRowContextMenu
-          x={ctxMenu.x}
-          y={ctxMenu.y}
-          items={menuItems}
-          onClose={() => setCtxMenu(null)}
-        />
-      )}
     </div>
   );
 }

@@ -55,6 +55,8 @@ describe("Button", () => {
     "transition-all",
     "duration-150",
     "ease-[ease]",
+    "focus-visible:[outline:2px_solid_var(--color-cyan)]",
+    "focus-visible:outline-offset-2",
   ];
 
   it("renders the neutral default variant + md size parity set", () => {
@@ -494,6 +496,8 @@ describe("IconButton", () => {
     "transition-all",
     "duration-150",
     "ease-[ease]",
+    "focus-visible:[outline:2px_solid_var(--color-cyan)]",
+    "focus-visible:outline-offset-2",
   ];
 
   it("square md is the default variant/size (.btn-icon-only parity)", () => {

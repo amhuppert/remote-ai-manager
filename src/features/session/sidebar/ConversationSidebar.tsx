@@ -49,13 +49,18 @@ import {
 } from "@/features/session/hooks/use-sidebar-persistent-filters";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { isEditableTarget } from "@/lib/shared/dom";
-import { useLongPress } from "@/hooks/use-long-press";
 import ConversationSidebarHeader from "@/features/session/sidebar/ConversationSidebarHeader";
 import ConversationSidebarFilters from "@/features/session/sidebar/ConversationSidebarFilters";
 import ConversationSidebarRow from "@/features/session/sidebar/ConversationSidebarRow";
-import ConversationSidebarRowContextMenu, {
-  type ContextMenuItem,
-} from "@/features/session/sidebar/ConversationSidebarRowContextMenu";
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+} from "@/components/ui/ContextMenu";
+import {
+  ConversationRowMenuItems,
+  type ConversationRowMenuItem,
+} from "@/features/session/sidebar/conversation-row-menu";
 import PeekPopover, {
   type PeekApprovalGate,
 } from "@/features/session/sidebar/PeekPopover";
@@ -122,7 +127,6 @@ interface SidebarRowItemProps {
   isActive: boolean;
   activeConversationId: string;
   closed: boolean;
-  onOpenMenu: (point: { x: number; y: number }) => void;
   onNavigate: () => void;
   onPeek?: (anchorEl: HTMLElement, conversationId: string) => void;
   onAcknowledge?: () => void;
@@ -135,17 +139,14 @@ function SidebarRowItem({
   isActive,
   activeConversationId,
   closed,
-  onOpenMenu,
   onNavigate,
   onPeek,
   onAcknowledge,
 }: SidebarRowItemProps): React.JSX.Element {
-  const { handlers, didLongPressRef } = useLongPress({
-    onLongPress: onOpenMenu,
-  });
-
+  // Right-click and touch long-press are handled by the row's ContextMenu
+  // trigger (renderRow), so no manual long-press wiring lives here.
   return (
-    <div className="relative mx-[8px] my-[1px]" {...handlers}>
+    <div className="relative mx-[8px] my-[1px]">
       <ConversationSidebarRow
         href={href}
         conversation={conversation}
@@ -154,12 +155,8 @@ function SidebarRowItem({
         isLastInSession={row.isLastInSession}
         currentConversationId={activeConversationId}
         isClosed={closed}
-        onClick={() => {
-          if (didLongPressRef.current) return;
-          onNavigate();
-        }}
+        onClick={onNavigate}
         onPeek={onPeek}
-        onOpenMenu={onOpenMenu}
         onAcknowledge={onAcknowledge}
       />
     </div>
@@ -309,12 +306,6 @@ function ConversationSidebar({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const editInputRef = useRef<HTMLInputElement>(null);
-  const [ctxMenu, setCtxMenu] = useState<{
-    row: ActiveSidebarConversation & { archived?: boolean };
-    actionScope: ActiveRowActionScope;
-    x: number;
-    y: number;
-  } | null>(null);
   const [pendingArchiveSession, setPendingArchiveSession] = useState<{
     projectName: string;
     sessionName: string;
@@ -330,7 +321,6 @@ function ConversationSidebar({
 
   const openPeek = useCallback(
     (anchorEl: HTMLElement, conversationId: string) => {
-      setCtxMenu(null);
       setPeek({ anchorEl, conversationId });
     },
     [],
@@ -595,6 +585,192 @@ function ConversationSidebar({
     (section) => section.items.length > 0,
   );
 
+  // Builds the right-click menu items for a given row (used by each row's
+  // ContextMenu in renderRow). Defined before renderRow so it can be a stable
+  // dependency.
+  const buildRowItems = useCallback(
+    (
+      row: ActiveSidebarConversation & { archived?: boolean },
+      actionScope: ActiveRowActionScope,
+    ): ConversationRowMenuItem[] => {
+      const archived = row.archived === true;
+      const descriptor = describeActiveRow(row);
+      const href = descriptor.href;
+      const projectHref = `/projects/${encodeURIComponent(row.projectName)}`;
+      const items: ConversationRowMenuItem[] = [
+        {
+          kind: "item",
+          label: "Open conversation",
+          hotkey: "Enter",
+          onSelect: () => {
+            if (row.scope === "session") {
+              openSessionScopedConversation(
+                {
+                  conversationId: row.id,
+                  projectName: row.projectName,
+                  sessionName: row.sessionName,
+                },
+                href,
+              );
+            } else {
+              router.push(href);
+            }
+            if (onMobileClose) onMobileClose();
+          },
+        },
+        ...(row.scope === "session" && onOpenInTab
+          ? [
+              {
+                kind: "item" as const,
+                label: "Open in New Tab",
+                onSelect: () => {
+                  onOpenInTab({
+                    conversationId: row.id,
+                    projectName: row.projectName,
+                    sessionName: row.sessionName,
+                  });
+                  if (onMobileClose) onMobileClose();
+                },
+              },
+            ]
+          : []),
+        ...(row.scope === "session" && onOpenInPane
+          ? [
+              {
+                kind: "item" as const,
+                label: "Open in New Pane",
+                onSelect: () => {
+                  onOpenInPane({
+                    conversationId: row.id,
+                    projectName: row.projectName,
+                    sessionName: row.sessionName,
+                  });
+                  if (onMobileClose) onMobileClose();
+                },
+              },
+            ]
+          : []),
+        { kind: "divider" },
+        {
+          kind: "item",
+          label: "Open project page",
+          onSelect: () => {
+            router.push(projectHref);
+            if (onMobileClose) onMobileClose();
+          },
+        },
+        ...(row.scope === "session"
+          ? [
+              {
+                kind: "item" as const,
+                label:
+                  activeListFilter === "session" &&
+                  sessionScope.projectName === row.projectName &&
+                  sessionScope.sessionName === row.sessionName
+                    ? `Filtered to ${row.sessionName}`
+                    : `Filter sidebar to session: ${row.sessionName}`,
+                disabled:
+                  activeListFilter === "session" &&
+                  sessionScope.projectName === row.projectName &&
+                  sessionScope.sessionName === row.sessionName,
+                onSelect: () => {
+                  setSidebarSessionFilter({
+                    projectName: row.projectName,
+                    sessionName: row.sessionName,
+                  });
+                  setActiveListFilter("session");
+                },
+              },
+              {
+                kind: "item" as const,
+                label: "Copy branch name",
+                disabled: row.branchName === null,
+                onSelect: () => {
+                  if (row.branchName === null) return;
+                  void navigator.clipboard.writeText(row.branchName);
+                },
+              },
+            ]
+          : []),
+        {
+          kind: "item",
+          label: "Copy worktree path",
+          onSelect: () => {
+            void navigator.clipboard.writeText(row.worktreePath);
+          },
+        },
+        ...(row.scope === "session"
+          ? [
+              {
+                kind: "item" as const,
+                label: "Copy context",
+                hotkey: "⌘⇧C",
+                onSelect: () => {
+                  void handleCopyContext(row);
+                },
+              },
+            ]
+          : []),
+        { kind: "divider" },
+        {
+          kind: "item",
+          label: "Rename…",
+          onSelect: () => {
+            handleRenameStart(
+              row.id,
+              row.name ?? row.summary ?? "",
+              actionScope,
+            );
+          },
+        },
+        // While an approval gate is pending the row must stay visible and
+        // actionable in Needs Input, so the archive affordance is withheld.
+        ...(row.pendingApproval === null
+          ? [
+              {
+                kind: "item" as const,
+                label: archived
+                  ? "Unarchive conversation"
+                  : "Archive conversation",
+                onSelect: () => {
+                  handleArchive(row.id, !archived, actionScope);
+                },
+              },
+            ]
+          : []),
+        ...(row.scope === "session"
+          ? [
+              {
+                kind: "item" as const,
+                label: "Archive session",
+                onSelect: () => {
+                  setPendingArchiveSession({
+                    projectName: row.projectName,
+                    sessionName: row.sessionName,
+                  });
+                },
+              },
+            ]
+          : []),
+      ];
+      return items;
+    },
+    [
+      activeListFilter,
+      handleArchive,
+      handleCopyContext,
+      handleRenameStart,
+      onMobileClose,
+      onOpenInTab,
+      onOpenInPane,
+      openSessionScopedConversation,
+      router,
+      setActiveListFilter,
+      setSidebarSessionFilter,
+      sessionScope,
+    ],
+  );
+
   const renderRow = useCallback(
     <T extends ActiveSidebarConversation & Partial<{ archived: boolean }>>(
       row: AnnotatedSidebarConversation<T>,
@@ -636,59 +812,62 @@ function ConversationSidebar({
       }
 
       return (
-        <SidebarRowItem
-          key={row.id}
-          row={row}
-          conversation={row}
-          href={href}
-          isActive={isActive}
-          activeConversationId={activeConversationId}
-          closed={closed}
-          onNavigate={() => {
-            if (row.scope === "session") {
-              openSessionScopedConversation(
-                {
-                  conversationId: row.id,
-                  projectName: row.projectName,
-                  sessionName: row.sessionName,
-                },
-                href,
-              );
-            } else {
-              router.push(href);
-            }
-            if (onMobileClose) onMobileClose();
-          }}
-          onPeek={descriptor.supportsSessionPeek ? openPeek : undefined}
-          onOpenMenu={(point) => {
-            setCtxMenu({
-              row,
-              actionScope: descriptor.actionScope,
-              x: point.x,
-              y: point.y,
-            });
-          }}
-          onAcknowledge={
-            row.scope === "session"
-              ? () => {
-                  markReadMutation.mutate({
-                    projectName: row.projectName,
-                    sessionName: row.sessionName,
-                    conversationId: row.id,
-                  });
+        // `contents` keeps the row as the flex item; Radix anchors the menu at
+        // the cursor, so the trigger needs no box of its own.
+        <ContextMenu key={row.id}>
+          <ContextMenuTrigger className="contents">
+            <SidebarRowItem
+              row={row}
+              conversation={row}
+              href={href}
+              isActive={isActive}
+              activeConversationId={activeConversationId}
+              closed={closed}
+              onNavigate={() => {
+                if (row.scope === "session") {
+                  openSessionScopedConversation(
+                    {
+                      conversationId: row.id,
+                      projectName: row.projectName,
+                      sessionName: row.sessionName,
+                    },
+                    href,
+                  );
+                } else {
+                  router.push(href);
                 }
-              : () => {
-                  markProjectReadMutation.mutate({
-                    projectName: row.projectName,
-                    conversationId: row.id,
-                  });
-                }
-          }
-        />
+                if (onMobileClose) onMobileClose();
+              }}
+              onPeek={descriptor.supportsSessionPeek ? openPeek : undefined}
+              onAcknowledge={
+                row.scope === "session"
+                  ? () => {
+                      markReadMutation.mutate({
+                        projectName: row.projectName,
+                        sessionName: row.sessionName,
+                        conversationId: row.id,
+                      });
+                    }
+                  : () => {
+                      markProjectReadMutation.mutate({
+                        projectName: row.projectName,
+                        conversationId: row.id,
+                      });
+                    }
+              }
+            />
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <ConversationRowMenuItems
+              items={buildRowItems(row, descriptor.actionScope)}
+            />
+          </ContextMenuContent>
+        </ContextMenu>
       );
     },
     [
       activeConversationId,
+      buildRowItems,
       editValue,
       editingId,
       handleRenameSubmit,
@@ -769,182 +948,6 @@ function ConversationSidebar({
     },
     [renderRow],
   );
-
-  const ctxMenuItems: ContextMenuItem[] = useMemo(() => {
-    if (ctxMenu === null) return [];
-    const { row, actionScope } = ctxMenu;
-    const archived = row.archived === true;
-    const descriptor = describeActiveRow(row);
-    const href = descriptor.href;
-    const projectHref = `/projects/${encodeURIComponent(row.projectName)}`;
-    const items: ContextMenuItem[] = [
-      {
-        kind: "item",
-        label: "Open conversation",
-        hotkey: "Enter",
-        onSelect: () => {
-          if (row.scope === "session") {
-            openSessionScopedConversation(
-              {
-                conversationId: row.id,
-                projectName: row.projectName,
-                sessionName: row.sessionName,
-              },
-              href,
-            );
-          } else {
-            router.push(href);
-          }
-          if (onMobileClose) onMobileClose();
-        },
-      },
-      ...(row.scope === "session" && onOpenInTab
-        ? [
-            {
-              kind: "item" as const,
-              label: "Open in New Tab",
-              onSelect: () => {
-                onOpenInTab({
-                  conversationId: row.id,
-                  projectName: row.projectName,
-                  sessionName: row.sessionName,
-                });
-                if (onMobileClose) onMobileClose();
-              },
-            },
-          ]
-        : []),
-      ...(row.scope === "session" && onOpenInPane
-        ? [
-            {
-              kind: "item" as const,
-              label: "Open in New Pane",
-              onSelect: () => {
-                onOpenInPane({
-                  conversationId: row.id,
-                  projectName: row.projectName,
-                  sessionName: row.sessionName,
-                });
-                if (onMobileClose) onMobileClose();
-              },
-            },
-          ]
-        : []),
-      { kind: "divider" },
-      {
-        kind: "item",
-        label: "Open project page",
-        onSelect: () => {
-          router.push(projectHref);
-          if (onMobileClose) onMobileClose();
-        },
-      },
-      ...(row.scope === "session"
-        ? [
-            {
-              kind: "item" as const,
-              label:
-                activeListFilter === "session" &&
-                sessionScope.projectName === row.projectName &&
-                sessionScope.sessionName === row.sessionName
-                  ? `Filtered to ${row.sessionName}`
-                  : `Filter sidebar to session: ${row.sessionName}`,
-              disabled:
-                activeListFilter === "session" &&
-                sessionScope.projectName === row.projectName &&
-                sessionScope.sessionName === row.sessionName,
-              onSelect: () => {
-                setSidebarSessionFilter({
-                  projectName: row.projectName,
-                  sessionName: row.sessionName,
-                });
-                setActiveListFilter("session");
-              },
-            },
-            {
-              kind: "item" as const,
-              label: "Copy branch name",
-              disabled: row.branchName === null,
-              onSelect: () => {
-                if (row.branchName === null) return;
-                void navigator.clipboard.writeText(row.branchName);
-              },
-            },
-          ]
-        : []),
-      {
-        kind: "item",
-        label: "Copy worktree path",
-        onSelect: () => {
-          void navigator.clipboard.writeText(row.worktreePath);
-        },
-      },
-      ...(row.scope === "session"
-        ? [
-            {
-              kind: "item" as const,
-              label: "Copy context",
-              hotkey: "\u2318\u21E7C",
-              onSelect: () => {
-                void handleCopyContext(row);
-              },
-            },
-          ]
-        : []),
-      { kind: "divider" },
-      {
-        kind: "item",
-        label: "Rename\u2026",
-        onSelect: () => {
-          handleRenameStart(row.id, row.name ?? row.summary ?? "", actionScope);
-        },
-      },
-      // While an approval gate is pending the row must stay visible and
-      // actionable in Needs Input, so the archive affordance is withheld.
-      ...(row.pendingApproval === null
-        ? [
-            {
-              kind: "item" as const,
-              label: archived
-                ? "Unarchive conversation"
-                : "Archive conversation",
-              onSelect: () => {
-                handleArchive(row.id, !archived, actionScope);
-              },
-            },
-          ]
-        : []),
-      ...(row.scope === "session"
-        ? [
-            {
-              kind: "item" as const,
-              label: "Archive session",
-              onSelect: () => {
-                setPendingArchiveSession({
-                  projectName: row.projectName,
-                  sessionName: row.sessionName,
-                });
-              },
-            },
-          ]
-        : []),
-    ];
-    return items;
-  }, [
-    ctxMenu,
-    activeListFilter,
-    handleArchive,
-    handleCopyContext,
-    handleRenameStart,
-    onMobileClose,
-    onOpenInTab,
-    onOpenInPane,
-    openSessionScopedConversation,
-    router,
-    setActiveListFilter,
-    setSidebarSessionFilter,
-    sessionScope,
-  ]);
 
   return (
     <>
@@ -1131,14 +1134,6 @@ function ConversationSidebar({
           </>
         )}
       </div>
-      {ctxMenu !== null && (
-        <ConversationSidebarRowContextMenu
-          x={ctxMenu.x}
-          y={ctxMenu.y}
-          items={ctxMenuItems}
-          onClose={() => setCtxMenu(null)}
-        />
-      )}
       {peek !== null && peekConversation !== null && (
         <PeekPopover
           anchorEl={peek.anchorEl}

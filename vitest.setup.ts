@@ -53,3 +53,17 @@ if (typeof globalThis.IntersectionObserver === "undefined") {
     }
   } as unknown as typeof IntersectionObserver;
 }
+
+// Radix UI primitives (DropdownMenu / Select / …) call these DOM methods when a
+// menu/listbox opens; jsdom implements none of them. No-op shims let the
+// primitives — and any component or integration test that renders them — mount
+// and open under jsdom. Assigned unconditionally (jsdom otherwise leaves them
+// undefined or throwing).
+if (typeof Element !== "undefined") {
+  Element.prototype.scrollIntoView = function () {};
+  Element.prototype.hasPointerCapture = function () {
+    return false;
+  };
+  Element.prototype.setPointerCapture = function () {};
+  Element.prototype.releasePointerCapture = function () {};
+}

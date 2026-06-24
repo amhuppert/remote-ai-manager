@@ -6,7 +6,7 @@ const meta = {
   title: "Components/CardContextMenu",
   component: CardContextMenu,
   args: {
-    onToggle: fn(),
+    onOpenChange: fn(),
   },
   decorators: [
     (Story) => (

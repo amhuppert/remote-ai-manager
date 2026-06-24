@@ -41,7 +41,7 @@ const touchClass = "max-768:min-h-[44px] max-768:px-[16px]";
 // (the cascade between same-property utilities is sort-order dependent, which we
 // must not rely on without tailwind-merge).
 const base =
-  "inline-flex items-center gap-sm rounded-md border border-solid font-mono transition-all duration-150 ease-[ease]";
+  "inline-flex items-center gap-sm rounded-md border border-solid font-mono transition-all duration-150 ease-[ease] focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:outline-offset-2";
 
 const variantClass: Record<ButtonVariant, string> = {
   default:

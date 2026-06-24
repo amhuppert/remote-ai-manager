@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { render, screen, cleanup } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import ModelSelector, { getModelsForBackend } from "./ModelSelector";
+
+afterEach(cleanup);
 
 describe("getModelsForBackend", () => {
   it("includes the Fable model for the claude backend", () => {
@@ -17,62 +20,47 @@ describe("getModelsForBackend", () => {
 });
 
 describe("ModelSelector", () => {
-  const defaultProps = { value: "sonnet" as const, onChange: vi.fn() };
-
-  it("opens dropdown on trigger click", () => {
-    render(<ModelSelector {...defaultProps} />);
-    const trigger = screen.getByTitle(/model/i);
-    fireEvent.click(trigger);
-    // The dropdown div should get the "open" class
-    const dropdown = document.querySelector(
-      '[data-testid="model-selector-dropdown"][data-open="true"]',
+  it("shows the selected model label + descriptive title in the trigger", () => {
+    render(<ModelSelector value="sonnet" onChange={vi.fn()} />);
+    expect(screen.getByTestId("model-selector-label").textContent).toBe(
+      "Sonnet",
     );
-    expect(dropdown).toBeTruthy();
+    expect(
+      screen.getByTestId("model-selector-trigger").getAttribute("title"),
+    ).toContain("Sonnet");
   });
 
-  it("renders dropdown via portal outside the model-selector container", () => {
-    render(<ModelSelector {...defaultProps} />);
-    const trigger = screen.getByTitle(/model/i);
-    fireEvent.click(trigger);
+  it("opens the listbox and reports the chosen model via onChange", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<ModelSelector value="sonnet" onChange={onChange} />);
 
-    const container = document.querySelector('[data-testid="model-selector"]');
-    const dropdown = document.querySelector(
-      '[data-testid="model-selector-dropdown"][data-open="true"]',
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    const haiku = screen
+      .getAllByTestId("model-selector-option")
+      .find((o) => o.textContent?.startsWith("Haiku"));
+    expect(haiku).toBeTruthy();
+    await user.click(haiku!);
+
+    expect(onChange).toHaveBeenCalledWith("haiku");
+  });
+
+  it("offers backend-specific options (codex has no Fable)", async () => {
+    const user = userEvent.setup();
+    render(
+      <ModelSelector value="gpt-5.4" backend="codex" onChange={vi.fn()} />,
     );
-    expect(dropdown).toBeTruthy();
-    // The dropdown must NOT be a child of .model-selector (rendered via portal)
-    expect(container!.contains(dropdown)).toBe(false);
+
+    await user.click(screen.getByTestId("model-selector-trigger"));
+    const labels = screen
+      .getAllByTestId("model-selector-option")
+      .map((o) => o.textContent ?? "");
+    expect(labels.some((l) => l.startsWith("GPT-5.5"))).toBe(true);
+    expect(labels.some((l) => l.startsWith("Fable"))).toBe(false);
   });
 
-  it("positions dropdown portal near the trigger button", () => {
-    render(<ModelSelector {...defaultProps} />);
-    const trigger = screen.getByTitle(/model/i);
-    fireEvent.click(trigger);
-
-    const dropdown = document.querySelector(
-      '[data-testid="model-selector-dropdown"][data-open="true"]',
-    ) as HTMLElement;
-    expect(dropdown).toBeTruthy();
-    // Portal dropdown should have inline position styles
-    expect(dropdown.style.position).toBe("fixed");
-  });
-
-  it("closes portal dropdown on outside click", () => {
-    render(<ModelSelector {...defaultProps} />);
-    const trigger = screen.getByTitle(/model/i);
-    fireEvent.click(trigger);
-    expect(
-      document.querySelector(
-        '[data-testid="model-selector-dropdown"][data-open="true"]',
-      ),
-    ).toBeTruthy();
-
-    // Click outside
-    fireEvent.mouseDown(document.body);
-    expect(
-      document.querySelector(
-        '[data-testid="model-selector-dropdown"][data-open="true"]',
-      ),
-    ).toBeFalsy();
+  it("disables the trigger when disabled", () => {
+    render(<ModelSelector value="sonnet" disabled onChange={vi.fn()} />);
+    expect(screen.getByTestId("model-selector-trigger")).toBeDisabled();
   });
 });

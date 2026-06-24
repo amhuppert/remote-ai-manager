@@ -1,108 +1,85 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { render, screen, cleanup } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import CardContextMenu from "./CardContextMenu";
 
-describe("CardContextMenu", () => {
-  const baseItems = [
-    { label: "Archive Project", onAction: vi.fn() },
-    { label: "Delete Project", danger: true, onAction: vi.fn() },
-  ];
+// Radix focuses items / captures the pointer on open; jsdom implements neither.
+Element.prototype.scrollIntoView = () => {};
+Element.prototype.hasPointerCapture = () => false;
+Element.prototype.setPointerCapture = () => {};
+Element.prototype.releasePointerCapture = () => {};
 
-  it("renders trigger button", () => {
+afterEach(cleanup);
+
+const baseItems = [
+  { label: "Archive Project", onAction: vi.fn() },
+  { label: "Delete Project", danger: true, onAction: vi.fn() },
+];
+
+describe("CardContextMenu", () => {
+  it("renders the trigger button", () => {
     render(
-      <CardContextMenu items={baseItems} open={false} onToggle={vi.fn()} />,
+      <CardContextMenu items={baseItems} open={false} onOpenChange={vi.fn()} />,
     );
     expect(
       screen.getByRole("button", { name: "Project actions" }),
     ).toBeInTheDocument();
   });
 
-  it("opens menu on trigger click", () => {
-    const onToggle = vi.fn();
+  it("requests open when the trigger is activated", async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
     render(
-      <CardContextMenu items={baseItems} open={false} onToggle={onToggle} />,
+      <CardContextMenu
+        items={baseItems}
+        open={false}
+        onOpenChange={onOpenChange}
+      />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Project actions" }));
-    expect(onToggle).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Project actions" }));
+    expect(onOpenChange).toHaveBeenCalledWith(true);
   });
 
-  it("shows dropdown with items when open", () => {
-    render(
-      <CardContextMenu items={baseItems} open={true} onToggle={vi.fn()} />,
-    );
+  it("renders items as menuitems when open; danger maps to red", () => {
+    render(<CardContextMenu items={baseItems} open onOpenChange={vi.fn()} />);
     expect(
-      screen.getByRole("button", { name: "Archive Project" }),
+      screen.getByRole("menuitem", { name: "Archive Project" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Delete Project" }),
-    ).toBeInTheDocument();
+      screen.getByRole("menuitem", { name: "Delete Project" }).className,
+    ).toContain("text-red");
   });
 
-  it("calls onAction when item clicked", () => {
+  it("calls onAction when an item is selected", async () => {
+    const user = userEvent.setup();
     const actionFn = vi.fn();
-    const items = [{ label: "Test Action", onAction: actionFn }];
-    render(<CardContextMenu items={items} open={true} onToggle={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Test Action" }));
+    render(
+      <CardContextMenu
+        items={[{ label: "Test Action", onAction: actionFn }]}
+        open
+        onOpenChange={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Test Action" }));
     expect(actionFn).toHaveBeenCalledTimes(1);
   });
 
-  it("stops propagation on trigger click", () => {
-    const onToggle = vi.fn();
+  it("does not propagate the trigger click to the click-through card", async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    const ancestorClick = vi.fn();
     render(
-      <div
-        onClick={() => {
-          throw new Error("Should not propagate");
-        }}
-      >
-        <CardContextMenu items={baseItems} open={false} onToggle={onToggle} />
+      <div onClick={ancestorClick}>
+        <CardContextMenu
+          items={baseItems}
+          open={false}
+          onOpenChange={onOpenChange}
+        />
       </div>,
     );
-    // Should not throw — propagation is stopped
-    fireEvent.click(screen.getByRole("button", { name: "Project actions" }));
-    expect(onToggle).toHaveBeenCalled();
-  });
-
-  it("stops propagation on item click", () => {
-    const actionFn = vi.fn();
-    const items = [{ label: "Action", onAction: actionFn }];
-    render(
-      <div
-        onClick={() => {
-          throw new Error("Should not propagate");
-        }}
-      >
-        <CardContextMenu items={items} open={true} onToggle={vi.fn()} />
-      </div>,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Action" }));
-    expect(actionFn).toHaveBeenCalled();
-  });
-
-  it("closes on Escape key", () => {
-    const onToggle = vi.fn();
-    render(
-      <CardContextMenu items={baseItems} open={true} onToggle={onToggle} />,
-    );
-    fireEvent.keyDown(document, { key: "Escape" });
-    expect(onToggle).toHaveBeenCalledTimes(1);
-  });
-
-  it("closes on click outside", () => {
-    const onToggle = vi.fn();
-    render(
-      <CardContextMenu items={baseItems} open={true} onToggle={onToggle} />,
-    );
-    fireEvent.mouseDown(document);
-    expect(onToggle).toHaveBeenCalledTimes(1);
-  });
-
-  it("closes on touch outside (mobile)", () => {
-    const onToggle = vi.fn();
-    render(
-      <CardContextMenu items={baseItems} open={true} onToggle={onToggle} />,
-    );
-    fireEvent.touchStart(document);
-    expect(onToggle).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Project actions" }));
+    expect(onOpenChange).toHaveBeenCalled();
+    expect(ancestorClick).not.toHaveBeenCalled();
   });
 });

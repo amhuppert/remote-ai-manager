@@ -15,7 +15,7 @@ const meta = {
   component: ProjectCard,
   args: {
     menuOpen: false,
-    onMenuToggle: fn(),
+    onMenuOpenChange: fn(),
     onArchive: fn(),
     onPin: fn(),
     onDelete: fn(),
