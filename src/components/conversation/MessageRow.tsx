@@ -4,6 +4,7 @@ import { memo } from "react";
 import { cn } from "@/lib/ui/cn";
 import MessageContent from "@/components/MessageContent";
 import MessageActions from "@/components/MessageActions";
+import { EffortLabel } from "@/components/conversation/EffortLabel";
 import DebugActionCard from "@/features/session/debug/DebugActionCard";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type {
@@ -118,17 +119,7 @@ const MessageRow = memo(function MessageRow({
             {msg.model && msg.effort && (
               <span className="mx-[5px] text-text-tertiary">&middot;</span>
             )}
-            {msg.effort && (
-              <span
-                className={
-                  msg.effort === "max" || msg.effort === "xhigh"
-                    ? "cc-rainbow-text"
-                    : "text-text-secondary"
-                }
-              >
-                {msg.effort}
-              </span>
-            )}
+            {msg.effort && <EffortLabel effort={msg.effort} />}
           </span>
         )}
       </div>

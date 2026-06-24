@@ -15,11 +15,23 @@ Repo-specific gotchas for `/design-sync`. Read before any re-sync.
   - `cfg.extraEntries` path needs a leading `./` (`./.design-sync/ds-entry.tsx`) or
     it's treated as a bare node_modules specifier.
   - `--node-modules` is the repo root `node_modules`.
-- **Scope is curated, not "all stories".** ~125 stories exist; only 25 are synced.
-  `.design-sync/sb-config/main.ts` narrows the `stories` glob to exactly those 25 so
-  the converter discovers only them. It inherits framework/addons/viteFinal from the
-  real `.storybook/main.ts`. `.design-sync/sb-config/preview.tsx` re-uses the real
-  preview's parameters but REPLACES the decorators (see TooltipProvider below).
+- **Scope is curated, not "all stories".** ~127 stories exist; only 26 are synced.
+  `.design-sync/sb-config/main.ts` narrows the `stories` glob to exactly those 26 (UI +
+  TOP + a CONVERSATION array for `src/components/conversation/`) so the converter discovers
+  only them. It inherits framework/addons/viteFinal from the real `.storybook/main.ts`.
+  `.design-sync/sb-config/preview.tsx` re-uses the real preview's parameters but REPLACES
+  the decorators (see TooltipProvider below).
+- **Rainbow effort treatment (added 2026-06-24).** The top reasoning tiers (Max/XHigh) get
+  an animated rainbow signal in two synced surfaces: (1) `ReasoningLevelSelector`'s trigger
+  (rainbow gradient border + text) — its card is `primaryStory: "ClaudeOpusXHigh"` to show
+  it; (2) `EffortLabel` (`src/components/conversation/EffortLabel.tsx`, extracted from
+  MessageRow's effort span, named export, `cardMode: "column"`), the conversation-panel
+  plaintext label (`cc-rainbow-text` for Max/XHigh, plain `text-text-secondary` otherwise).
+  `EffortLabel.stories.tsx`'s `Metadata` story mirrors MessageRow's `role · model · effort`
+  markup (inlined class strings) so the label shows in context — that markup can drift if
+  MessageRow's metadata classes change. The rainbow's longhand-background requirement
+  (`background-image`/`-clip`/`-size` longhands, never the `background` shorthand) is in the
+  component source comments; verified rendering correctly in the bundle this sync.
 - **Radix-backed overlay primitives (added 2026-06-24).** `DropdownMenu`, `Select`,
   `ContextMenu` (`src/components/ui/`, `radix-ui` package) are in scope. The barrel
   `export *`s all three (their Root wrapper is named after the story title, so pairing
@@ -112,10 +124,12 @@ Repo-specific gotchas for `/design-sync`. Read before any re-sync.
 
 ## cfg.overrides (cardMode) — genuine overlays/wide
 
-- single (overlay/portal): BackendToggle, ConfirmDialog, ModelSelector, ReasoningLevelSelector,
-  ModalShell, MergeToast, CardContextMenu (primaryStory Open), DropdownMenu + Select
-  (primaryStory StaticOpen), ContextMenu (primaryStory Default — can't open statically).
-- column (wider than a grid cell): TddToggle, Button, ContextFillIndicator, IconButton, SectionHeader, Tabs.
+- single (overlay/portal): BackendToggle, ConfirmDialog, ModelSelector, ModalShell, MergeToast,
+  CardContextMenu (primaryStory Open), DropdownMenu + Select (primaryStory StaticOpen),
+  ContextMenu (primaryStory Default — can't open statically), ReasoningLevelSelector
+  (primaryStory ClaudeOpusXHigh — shows the rainbow trigger, not an overlay reason).
+- column (wider / multi-state in one card): TddToggle, Button, ContextFillIndicator, IconButton,
+  SectionHeader, Tabs, EffortLabel (Metadata demo + Tiers row).
 
 ## Target project
 

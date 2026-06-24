@@ -29,6 +29,9 @@ export * from "../src/components/ui/DropdownMenu";
 export * from "../src/components/ui/Select";
 export * from "../src/components/ui/ContextMenu";
 
+// Conversation-panel pieces
+export { EffortLabel } from "../src/components/conversation/EffortLabel";
+
 // Generic chrome
 export * from "../src/components/ContextFillIndicator";
 export { default as CollapsibleText } from "../src/components/CollapsibleText";

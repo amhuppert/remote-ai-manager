@@ -60,6 +60,19 @@ and self-portalling — no provider, no manual positioning. Parts own their appe
 `layoutClassName` prop (margin / width / placement). Each component's `.prompt.md` has
 copy-paste examples.
 
+## The "exceeds the scale" rainbow signal
+
+The two top reasoning-effort tiers — **Max** and **XHigh** — render with an animated
+rainbow gradient as a deliberate "beyond the normal scale" signal, in two places:
+
+- **`ReasoningLevelSelector`**'s trigger takes a rainbow gradient border + gradient text
+  when Max/XHigh is selected; every lower tier uses the plain surface trigger.
+- In the conversation panel, a message's effort label renders as rainbow gradient text
+  via **`EffortLabel`** (`<EffortLabel effort="max" />`) — the shared `cc-rainbow-text`
+  treatment. Lower tiers (and effort-less models) render as plain secondary text.
+
+Reserve the rainbow strictly for Max/XHigh — it's a meaningful signal, not decoration.
+
 ## Where the truth lives
 
 - The shipped stylesheet and its tokens: read `styles.css` (and its `@import` closure) before styling.

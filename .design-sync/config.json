@@ -16,7 +16,7 @@
     "ConfirmDialog": { "cardMode": "single", "primaryStory": "Default", "skip": ["components-confirmdialog--closed"] },
     "CardContextMenu": { "cardMode": "single", "primaryStory": "Open" },
     "ModelSelector": { "cardMode": "single", "primaryStory": "Default" },
-    "ReasoningLevelSelector": { "cardMode": "single", "primaryStory": "Default" },
+    "ReasoningLevelSelector": { "cardMode": "single", "primaryStory": "ClaudeOpusXHigh" },
     "ModalShell": { "cardMode": "single", "primaryStory": "Default" },
     "MergeToast": { "cardMode": "single", "primaryStory": "Success" },
     "TddToggle": { "cardMode": "column" },
@@ -27,6 +27,7 @@
     "Tabs": { "cardMode": "column" },
     "DropdownMenu": { "cardMode": "single", "primaryStory": "StaticOpen" },
     "Select": { "cardMode": "single", "primaryStory": "StaticOpen" },
-    "ContextMenu": { "cardMode": "single", "primaryStory": "Default" }
+    "ContextMenu": { "cardMode": "single", "primaryStory": "Default" },
+    "EffortLabel": { "cardMode": "column" }
   }
 }

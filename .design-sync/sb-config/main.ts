@@ -39,11 +39,17 @@ const TOP = [
   "BranchSelector",
 ];
 
+// Conversation-panel components (under src/components/conversation/).
+const CONVERSATION = ["EffortLabel"];
+
 const config: StorybookConfig = {
   ...base,
   stories: [
     ...UI.map((n) => `../../src/components/ui/${n}.stories.tsx`),
     ...TOP.map((n) => `../../src/components/${n}.stories.tsx`),
+    ...CONVERSATION.map(
+      (n) => `../../src/components/conversation/${n}.stories.tsx`,
+    ),
   ],
   staticDirs: ["../../public"],
 };
