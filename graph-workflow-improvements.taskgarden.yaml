@@ -1,7 +1,7 @@
 version: 1
 plan_id: graph-workflow-improvements
 title: Graph Workflow Improvements
-last_updated: 2026-06-13
+last_updated: 2026-06-24
 summary: >
   Implement the finalized Graph Workflow improvement proposal: alignment as
   engine invariants (charter, contracts, typed deliverables), a stronger
@@ -14,6 +14,10 @@ summary: >
 references:
   - label: Graph Workflow Improvement Proposal
     href: graph-workflow-improvement-report.md
+  - label: Spec — workflow-parameterization
+    href: .kiro/specs/workflow-parameterization/
+  - label: Spec — global-workflow-templates
+    href: .kiro/specs/global-workflow-templates/
 
 lanes:
   - id: alignment
@@ -44,6 +48,11 @@ lanes:
   - id: crosscutting
     label: Cross-cutting
     description: Budgets, tiered validation, retrospectives, UI legibility.
+  - id: reuse
+    label: Reusability & Templates
+    description:
+      Parameterized definitions and a cross-project template library so a
+      workflow is authored once and launched many times.
 
 work_items:
   # ── Part 1 — Alignment ────────────────────────────────────────────────
@@ -620,3 +629,71 @@ work_items:
       value: 5
       unit: points
     notes: Report §6.4. Becomes load-bearing the moment any Part-4 dynamism ships.
+
+  # ── Part 7 — Reusability & Templates ──────────────────────────────────
+  - id: workflow-parameterization
+    title: Workflow parameterization (typed launch inputs + seed-time substitution)
+    summary: >
+      A definition declares typed launch inputs; at start the engine validates
+      supplied values, deterministically substitutes {{inputs.x}} into content
+      fields and every agent-rendered charter text field before the config
+      resolver runs, re-validates the concrete graph through the existing
+      accept-time path, and runs the engine unchanged. Static workflows keep
+      working as zero-input templates.
+    lane: reuse
+    status: done
+    priority: p1
+    depends_on: [charter]
+    tags: [reuse, deterministic, planner, agent-tool, ui]
+    estimate:
+      value: 8
+      unit: points
+    deliverables:
+      - Typed parameter-declaration block on the semantic definition (name, type
+        string|text|enum, label, required, default, enum options)
+      - Deterministic seed-time {{inputs.x}} substitution (content fields + all
+        agent-rendered charter text), run before the config resolver
+      - Accept-time {{…}} reference lint + start-time value validation +
+        substituted-graph re-validation through the existing accept path
+      - Bound-input snapshot persisted on the execution (round-trip durable)
+      - Start API { definitionId, parameters }; generated launch form +
+        parameter-declaration editor in the builder
+      - start_graph_workflow MCP tool + planner/create-tool param declaration
+    notes: >
+      Spec .kiro/specs/workflow-parameterization. Additive — reuses the existing
+      engine/scheduler/validators/charter/audit; text substitution only in v1
+      (no typed config bindings), gates stay author-fixed. Live-verified GO
+      2026-06-22; merged to main (2fd6a801). General primitive, no Kiro
+      special-casing.
+
+  - id: global-workflow-templates
+    title: Global cross-project template library + prerequisite pre-flight
+    summary: >
+      A global/cross-project template tier alongside per-project definitions:
+      global templates are listed and launched from any project, parameterized
+      via workflow-parameterization. A deterministic start-time pre-flight
+      validates a template's declared prerequisites in the target project and
+      halts with a precise diagnostic — before any tokens are spent.
+    lane: reuse
+    status: done
+    priority: p1
+    depends_on: [workflow-parameterization]
+    tags: [reuse, deterministic, ui, agent-tool]
+    estimate:
+      value: 5
+      unit: points
+    deliverables:
+      - Global/cross-project template storage tier alongside project-level
+        definitions (reserved key; extends storage, not a fork)
+      - Cross-tier template library listing/browse + global-tier authoring/CRUD,
+        launchable into the current session's project
+      - Declarative prerequisite block (path | skill kinds) + deterministic
+        start-time pre-flight probe with precise halt diagnostics (409
+        prerequisites_unmet, itemized, before any tokens)
+      - list_templates MCP tool
+    notes: >
+      Spec .kiro/specs/global-workflow-templates. Layers on
+      workflow-parameterization; reuses the substitution/validation path
+      unchanged and mirrors the dev-server pre-flight patterns. No promote/fork
+      transfer flows in v1. Live-verified GO 2026-06-22; merged to main
+      (9e2e06c9, 471c7ff1). General primitive, no Kiro special-casing.
