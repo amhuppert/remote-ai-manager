@@ -969,7 +969,7 @@ function ConversationSidebar({
           "convo-sidebar flex flex-col overflow-hidden rounded-none border-y-0 border-r border-l-0 border-solid bg-bg-base transition-[width,min-width,border-right-color] duration-200 ease-[ease]",
           effectiveCollapsed
             ? "w-0 min-w-0 border-r-transparent"
-            : "w-[616px] min-w-[616px] border-border-default",
+            : "w-[var(--convo-sidebar-w)] min-w-[var(--convo-sidebar-w)] border-border-default",
           "max-768:fixed max-768:top-[var(--topbar-height)] max-768:bottom-[56px] max-768:left-0 max-768:z-[90] max-768:rounded-none max-768:border-border-default max-768:bg-bg-surface max-768:transition-transform max-768:duration-[250ms] max-768:ease-[ease]",
           effectiveCollapsed
             ? "max-768:w-[280px] max-768:min-w-[280px]"

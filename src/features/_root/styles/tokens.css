@@ -116,6 +116,14 @@
   /* ---- Topbar ---- */
   --topbar-height: 48px;
 
+  /* ---- Active-conversations panel (left rail on /conversations + project page) ----
+     Width scales with the viewport: a floor so the list stays usable on small
+     laptops, ~20vw in the middle, capped at the historical fixed 616px so it
+     never grows past today's panel. Read by the .main grid track (shell.css)
+     and the ConversationSidebar component; the project cockpit clips it to its
+     own narrower rail track. */
+  --convo-sidebar-w: clamp(340px, 20vw, 616px);
+
   /* ---- Translucent effect colors ----
      Extracted from migrated component box-shadow / drop-shadow / translucent-border
      literals so utilities reference tokens, not raw color values (Tailwind

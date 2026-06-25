@@ -77,7 +77,7 @@ const MOBILE_PANES: { id: MobilePane; label: string }[] = [
 // the panes read the cockpit's data-* state.
 const COCKPIT_CLASS =
   "group grid flex-1 min-h-0 h-full items-stretch " +
-  "[--plc-rail-w:308px] [grid-template-columns:var(--plc-rail-w)_minmax(0,1fr)] " +
+  "[--plc-rail-w:clamp(260px,20vw,308px)] [grid-template-columns:var(--plc-rail-w)_minmax(0,1fr)] " +
   "[grid-template-rows:auto_minmax(0,1fr)] [grid-template-areas:'view_view'_'rail_conversation'] " +
   "data-[rail-collapsed=true]:[--plc-rail-w:48px] " +
   "data-[workspace-view=sessions]:[grid-template-columns:minmax(0,1fr)] " +
