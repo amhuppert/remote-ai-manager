@@ -70,6 +70,17 @@ function footButtons(block: HTMLElement): HTMLButtonElement[] {
   ) as HTMLButtonElement[];
 }
 
+// Inherited blocks render collapsed and the Radix-backed disclosure unmounts the
+// closed body (footer included). Expand before reading footer buttons; a no-op if
+// already open.
+function expandBlock(block: HTMLElement): HTMLElement {
+  const head = block.querySelector<HTMLElement>(
+    "button[aria-expanded='false']",
+  );
+  if (head) fireEvent.click(head);
+  return block;
+}
+
 describe("WorkflowInspectorPanel — persistent tab strip", () => {
   it("renders two tabs with Workflow active and Context disabled when no selection", () => {
     resetStore();
@@ -84,7 +95,7 @@ describe("WorkflowInspectorPanel — persistent tab strip", () => {
       HTMLButtonElement,
     ];
     expect(workflowTab.textContent).toBe("Workflow");
-    expect(workflowTab.getAttribute("data-active")).toBe("true");
+    expect(workflowTab.getAttribute("aria-selected")).toBe("true");
     expect(contextTab.textContent).toBe("Context");
     expect(contextTab.disabled).toBe(true);
     expect(contextTab.getAttribute("title")).toBe(
@@ -109,7 +120,7 @@ describe("WorkflowInspectorPanel — persistent tab strip", () => {
     const { container, rerender } = render(
       <WorkflowInspectorPanel {...defaultProps} />,
     );
-    expect(getTabs(container)[0]!.getAttribute("data-active")).toBe("true");
+    expect(getTabs(container)[0]!.getAttribute("aria-selected")).toBe("true");
 
     act(() => {
       _useGraphWorkflowBuilderStore.setState({
@@ -119,8 +130,8 @@ describe("WorkflowInspectorPanel — persistent tab strip", () => {
     rerender(<WorkflowInspectorPanel {...defaultProps} />);
 
     const [workflowTab, contextTab] = getTabs(container);
-    expect(contextTab!.getAttribute("data-active")).toBe("true");
-    expect(workflowTab!.getAttribute("data-active")).toBe("false");
+    expect(contextTab!.getAttribute("aria-selected")).toBe("true");
+    expect(workflowTab!.getAttribute("aria-selected")).toBe("false");
   });
 
   it("clicking Workflow tab does not clear selection", () => {
@@ -129,11 +140,29 @@ describe("WorkflowInspectorPanel — persistent tab strip", () => {
     const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
 
     const workflowTab = getTabs(container)[0]!;
-    fireEvent.click(workflowTab);
-    expect(workflowTab.getAttribute("data-active")).toBe("true");
+    // Radix Tabs.Trigger activates on mousedown/focus (APG automatic
+    // activation), not on a bare synthetic click event.
+    fireEvent.mouseDown(workflowTab);
+    expect(workflowTab.getAttribute("aria-selected")).toBe("true");
     expect(_useGraphWorkflowBuilderStore.getState().selectedContextId).toBe(
       "context-plan",
     );
+  });
+});
+
+describe("WorkflowInspectorPanel — Radix tabpanel wiring", () => {
+  it("wires the active tab to a role=tabpanel via aria-controls", () => {
+    resetStore();
+    setupStore({ selectedContextId: null });
+    const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
+
+    const workflowTab = getTabs(container)[0]!;
+    expect(workflowTab.getAttribute("aria-selected")).toBe("true");
+    const controls = workflowTab.getAttribute("aria-controls");
+    expect(controls).toBeTruthy();
+    const panel = document.getElementById(controls!);
+    expect(panel).not.toBeNull();
+    expect(panel!.getAttribute("role")).toBe("tabpanel");
   });
 });
 
@@ -171,7 +200,9 @@ describe("WorkflowInspectorPanel — workflow tab body", () => {
     setupStore({ selectedContextId: null });
     const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
 
-    const implementer = findBlockByLabel(container, "Implementer")!;
+    const implementer = expandBlock(
+      findBlockByLabel(container, "Implementer")!,
+    );
     fireEvent.click(
       footButtons(implementer).find((b) => b.textContent === "Override")!,
     );
@@ -198,7 +229,7 @@ describe("WorkflowInspectorPanel — workflow tab body", () => {
     setupStore({ selectedContextId: null });
     const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
 
-    const collab = findBlockByLabel(container, "Collaboration")!;
+    const collab = expandBlock(findBlockByLabel(container, "Collaboration")!);
     expect(collab.getAttribute("data-source")).toBe("global");
     fireEvent.click(
       footButtons(collab).find((b) => b.textContent === "Override")!,
@@ -437,7 +468,7 @@ describe("WorkflowInspectorPanel — context tab body", () => {
     });
     const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
 
-    const block = findBlockByLabel(container, "Iteration policy")!;
+    const block = expandBlock(findBlockByLabel(container, "Iteration policy")!);
     fireEvent.click(
       footButtons(block).find((b) => b.textContent === "Override")!,
     );
@@ -514,7 +545,9 @@ describe("WorkflowInspectorPanel — validator three-state footer", () => {
     });
     const { container } = render(<WorkflowInspectorPanel {...defaultProps} />);
 
-    const block = findBlockByLabel(container, "Context validator")!;
+    const block = expandBlock(
+      findBlockByLabel(container, "Context validator")!,
+    );
     const buttons = footButtons(block);
     const override = buttons.find((b) => b.textContent === "Override")!;
     const disable = buttons.find(

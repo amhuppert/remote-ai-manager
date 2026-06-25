@@ -1,13 +1,12 @@
 "use client";
 
-import {
-  createContext,
-  useContext,
-  useId,
-  useState,
-  type ReactNode,
-} from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 import { cn } from "@/lib/ui/cn";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/Collapsible";
 import type { CollaborationAgent } from "@/lib/workflows/collaboration/types";
 
 // Agent identity accent: a 3px left border over the card's 1px box.
@@ -67,10 +66,16 @@ export default function CollabCollapsibleCard({
   header,
   children,
 }: CollabCollapsibleCardProps): React.JSX.Element {
-  const [open, setOpen] = useState<boolean>(defaultOpen);
   const orchestration = useContext(CollabCardOrchestrationContext);
+  // A card mounted while an orchestration force is already active (e.g. "expand
+  // all" was pressed before this card rendered) honours that force; otherwise it
+  // falls back to its own defaultOpen. Subsequent forces arrive via tick bumps.
+  const [open, setOpen] = useState<boolean>(
+    orchestration.forceState !== null
+      ? orchestration.forceState === "open"
+      : defaultOpen,
+  );
   const [prevTick, setPrevTick] = useState<number>(orchestration.tick);
-  const bodyId = useId();
 
   if (orchestration.tick !== prevTick) {
     setPrevTick(orchestration.tick);
@@ -91,33 +96,28 @@ export default function CollabCollapsibleCard({
       data-open={open ? "true" : "false"}
       aria-label={ariaLabel}
     >
-      <button
-        type="button"
-        className="flex w-full cursor-pointer items-center gap-sm border-0 bg-transparent px-md py-sm text-left text-inherit [font:inherit] hover:[background:color-mix(in_srgb,var(--cyan)_4%,transparent)] focus-visible:[outline:2px_solid_var(--cyan)] focus-visible:outline-offset-[-2px] max-768:min-h-[var(--touch-target-min)]"
-        aria-expanded={open}
-        aria-controls={bodyId}
-        onClick={() => setOpen((prev) => !prev)}
+      <Collapsible
+        open={open}
+        onOpenChange={setOpen}
+        layoutClassName="flex min-w-0 flex-col"
       >
-        <span className="inline-flex min-w-0 flex-1 flex-wrap items-center gap-sm">
-          {header}
-        </span>
-        <span
-          className="flex-none font-mono text-[0.85rem] text-text-tertiary"
-          aria-hidden="true"
-        >
-          {open ? "▾" : "▸"}
-        </span>
-      </button>
-      <div
-        id={bodyId}
-        className={cn(
-          open ? "flex flex-col" : "hidden",
-          "gap-md border-x-0 border-t border-b-0 border-solid border-border-subtle p-md",
-        )}
-        hidden={!open}
-      >
-        {children}
-      </div>
+        <CollapsibleTrigger hideChevron>
+          <span className="inline-flex min-w-0 flex-1 flex-wrap items-center gap-sm">
+            {header}
+          </span>
+          <span
+            className="flex-none font-mono text-[0.85rem] text-text-tertiary"
+            aria-hidden="true"
+          >
+            {open ? "▾" : "▸"}
+          </span>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="flex flex-col gap-md border-x-0 border-t border-b-0 border-solid border-border-subtle p-md">
+            {children}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
     </section>
   );
 }

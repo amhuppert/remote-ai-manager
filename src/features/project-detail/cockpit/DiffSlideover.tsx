@@ -71,6 +71,15 @@ export default function DiffSlideover({
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
+  // Migration deferred (overlay-consumer dispositions): this is a full-height,
+  // right-edge slide-over rendered via preserved `cockpit.css`
+  // (`.plc-diff-overlay`/`.plc-diff-slideover`), not a centred modal card. The
+  // shipped `ui/Dialog` primitive's `DialogContent` only models the standard
+  // centred padded card, so adopting it would change the slide-over appearance
+  // (parity criterion). A clean migration needs an edge-anchored/unstyled content
+  // variant on the Dialog primitive — out of this consumer-migration context's
+  // scope. The manual Escape/scrim-click handling is retained meanwhile.
+
   if (!open) return null;
 
   return (

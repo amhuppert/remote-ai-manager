@@ -92,7 +92,19 @@ describe("ConversationAgentCapabilitiesConfig", () => {
       within(drawer).getByTestId("capability-initial-mcp"),
     ).toHaveTextContent("conversation");
 
-    fireEvent.click(within(drawer).getAllByRole("tab", { name: "Skills" })[0]!);
+    // Radix Tabs wiring: the MCP trigger is the selected tab and the visible
+    // panel is its linked role=tabpanel.
+    const mcpTab = within(drawer).getByRole("tab", { name: "MCP Servers" });
+    expect(mcpTab).toHaveAttribute("aria-selected", "true");
+    expect(within(drawer).getByRole("tabpanel")).toHaveAttribute(
+      "aria-labelledby",
+      mcpTab.id,
+    );
+
+    // Radix Tabs activate on mousedown/focus, not a bare synthetic click.
+    fireEvent.mouseDown(
+      within(drawer).getAllByRole("tab", { name: "Skills" })[0]!,
+    );
     expect(
       within(drawer).getByTestId("capability-panel-claude-skills"),
     ).toBeInTheDocument();
@@ -113,24 +125,26 @@ describe("ConversationAgentCapabilitiesConfig", () => {
       within(drawer).getByTestId("capability-search-claude-plugins"),
     ).toHaveTextContent("git-guardrails");
 
-    fireEvent.click(within(drawer).getByRole("tab", { name: "Agents" }));
+    fireEvent.mouseDown(within(drawer).getByRole("tab", { name: "Agents" }));
     expect(
       within(drawer).getByTestId("capability-panel-claude-agents"),
     ).toBeInTheDocument();
 
-    fireEvent.click(
+    fireEvent.mouseDown(
       within(drawer).getAllByRole("tab", { name: "Plugins" })[0]!,
     );
     expect(
       within(drawer).getByTestId("capability-panel-claude-plugins"),
     ).toBeInTheDocument();
 
-    fireEvent.click(within(drawer).getAllByRole("tab", { name: "Skills" })[1]!);
+    fireEvent.mouseDown(
+      within(drawer).getAllByRole("tab", { name: "Skills" })[1]!,
+    );
     expect(
       within(drawer).getByTestId("capability-panel-codex-skills"),
     ).toBeInTheDocument();
 
-    fireEvent.click(
+    fireEvent.mouseDown(
       within(drawer).getAllByRole("tab", { name: "Plugins" })[1]!,
     );
     expect(

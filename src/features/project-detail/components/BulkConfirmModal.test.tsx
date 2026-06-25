@@ -18,6 +18,22 @@ describe("BulkConfirmModal", () => {
     expect(container.firstChild).toBeNull();
   });
 
+  it("exposes an alertdialog labelled by its title", () => {
+    render(
+      <BulkConfirmModal
+        open
+        kind="archive"
+        count={4}
+        isPending={false}
+        onConfirm={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("alertdialog", { name: "Archive sessions?" }),
+    ).toBeInTheDocument();
+  });
+
   it("renders archive copy with cyan primary button", () => {
     render(
       <BulkConfirmModal
@@ -151,7 +167,7 @@ describe("BulkConfirmModal", () => {
         onClose={onClose}
       />,
     );
-    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.keyDown(screen.getByRole("alertdialog"), { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -183,7 +199,7 @@ describe("BulkConfirmModal", () => {
         onClose={onClose}
       />,
     );
-    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.keyDown(screen.getByRole("alertdialog"), { key: "Escape" });
     expect(onConfirm).not.toHaveBeenCalled();
     expect(onClose).toHaveBeenCalledTimes(1);
   });

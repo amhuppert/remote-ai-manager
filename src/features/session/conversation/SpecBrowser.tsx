@@ -3,6 +3,12 @@
 import { useState, useCallback } from "react";
 import { cn } from "@/lib/ui/cn";
 import { Tabs, Tab, TabCount } from "@/components/ui/Tabs";
+import {
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
+} from "@/components/ui/Accordion";
 import MarkdownViewer from "@/components/MarkdownViewer";
 import { useKiroDocTreeQuery, useKiroDocFileQuery } from "@/lib/kiro/queries";
 
@@ -220,57 +226,73 @@ export function SpecBrowserView({
       )}
 
       <div className="flex-1 overflow-y-auto py-xs">
-        {effectiveSegment === "steering"
-          ? sortSpecFiles(tree.steering).map((file) => (
-              <button
-                key={file}
-                className={cn(SPEC_ITEM_BASE, "pl-[12px]")}
-                onClick={() => onSelectFile("steering", file)}
-                type="button"
-              >
-                {formatFileName(file)}
-              </button>
-            ))
-          : sortedFeatures.map((featureKey) => {
-              const isExpanded = expandedFeature === featureKey;
-              const files = sortSpecFiles(tree.specs[featureKey] ?? []);
-              return (
-                <div key={featureKey}>
-                  <button
-                    className="group/spec-group flex w-full cursor-pointer items-center gap-[6px] border-0 bg-transparent px-[12px] py-[7px] text-left font-mono text-[0.72rem] font-medium text-text-secondary transition-all duration-150 ease-[ease] hover:bg-bg-hover hover:text-text-primary data-[expanded=true]:text-text-primary max-768:min-h-[44px] max-768:py-[10px]"
-                    data-expanded={isExpanded}
-                    onClick={() =>
-                      onExpandFeature(isExpanded ? null : featureKey)
-                    }
-                    type="button"
-                  >
-                    <span className="w-[16px] shrink-0 text-[0.72rem] text-text-tertiary">
-                      {isExpanded ? "\u25BE" : "\u25B8"}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate">
-                      {formatFeatureName(featureKey)}
-                    </span>
-                    <span className="shrink-0 rounded-[100px] bg-bg-raised px-[6px] py-[1px] text-[0.7rem] font-medium text-text-tertiary group-data-[expanded=true]/spec-group:bg-cyan-glow group-data-[expanded=true]/spec-group:text-cyan-dim">
-                      {files.length}
-                    </span>
-                  </button>
-                  {isExpanded && (
-                    <div className="pt-[2px] pb-[6px]">
-                      {files.map((file) => (
+        {effectiveSegment === "steering" ? (
+          sortSpecFiles(tree.steering).map((file) => (
+            <button
+              key={file}
+              className={cn(SPEC_ITEM_BASE, "pl-[12px]")}
+              onClick={() => onSelectFile("steering", file)}
+              type="button"
+            >
+              {formatFileName(file)}
+            </button>
+          ))
+        ) : (
+          <Accordion
+            type="single"
+            collapsible
+            asChild
+            value={expandedFeature ?? ""}
+            onValueChange={(value) =>
+              onExpandFeature(value === "" ? null : value)
+            }
+          >
+            <div className="flex flex-col">
+              {sortedFeatures.map((featureKey) => {
+                const files = sortSpecFiles(tree.specs[featureKey] ?? []);
+                return (
+                  <AccordionItem key={featureKey} value={featureKey} asChild>
+                    <div>
+                      <AccordionTrigger asChild>
                         <button
-                          key={file}
-                          className={cn(SPEC_ITEM_BASE, "pl-[30px]")}
-                          onClick={() => onSelectFile(featureKey, file)}
+                          className="group/spec-group flex w-full cursor-pointer items-center gap-[6px] border-0 bg-transparent px-[12px] py-[7px] text-left font-mono text-[0.72rem] font-medium text-text-secondary transition-all duration-150 ease-[ease] outline-none hover:bg-bg-hover hover:text-text-primary focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:[outline-offset:-2px] data-[state=open]:text-text-primary max-768:min-h-[44px] max-768:py-[10px]"
                           type="button"
                         >
-                          {formatFileName(file)}
+                          <span className="w-[16px] shrink-0 text-[0.72rem] text-text-tertiary transition-transform duration-150 group-data-[state=open]/spec-group:rotate-90">
+                            {"\u25B8"}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate">
+                            {formatFeatureName(featureKey)}
+                          </span>
+                          <span className="shrink-0 rounded-[100px] bg-bg-raised px-[6px] py-[1px] text-[0.7rem] font-medium text-text-tertiary group-data-[state=open]/spec-group:bg-cyan-glow group-data-[state=open]/spec-group:text-cyan-dim">
+                            {files.length}
+                          </span>
                         </button>
-                      ))}
+                      </AccordionTrigger>
+                      {/* asChild content is a generic <div>, NOT the file
+                              list itself: Radix sets role="region" on it, which
+                              would override a list role and orphan list items. */}
+                      <AccordionContent asChild>
+                        <div className="pt-[2px] pb-[6px]">
+                          {files.map((file) => (
+                            <button
+                              key={file}
+                              className={cn(SPEC_ITEM_BASE, "pl-[30px]")}
+                              onClick={() => onSelectFile(featureKey, file)}
+                              type="button"
+                            >
+                              {formatFileName(file)}
+                            </button>
+                          ))}
+                        </div>
+                      </AccordionContent>
                     </div>
-                  )}
-                </div>
-              );
-            })}
+                  </AccordionItem>
+                );
+              })}
+            </div>
+          </Accordion>
+        )}
       </div>
     </div>
   );

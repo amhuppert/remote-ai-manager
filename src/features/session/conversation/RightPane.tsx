@@ -1,7 +1,12 @@
 "use client";
 
 import type { SessionDiff } from "@/lib/git/schemas";
-import { Tabs, Tab } from "@/components/ui/Tabs";
+import {
+  TabsRoot,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+} from "@/components/ui/Tabs";
 import { EmptyState, EmptyStateTitle } from "@/components/ui/EmptyState";
 import DiffPanel from "@/features/session/git/DiffPanel";
 import SpecBrowser from "@/features/session/conversation/SpecBrowser";
@@ -46,75 +51,75 @@ export default function RightPane({
   const commits = commitsQuery.data ?? [];
 
   return (
+    // `.right-pane`/`.sidebar-diff-panel`/`.right-pane-body` survive as preserved
+    // structural hooks (conversation.css / session.css position the DiffPanel +
+    // markdown viewer from outside via these descendant selectors), so they stay
+    // on plain wrapper divs. TabsRoot nests inside as the APG common ancestor of
+    // the tablist + every tabpanel, reproducing the column fill via layoutClassName.
     <div className="right-pane sidebar-diff-panel">
-      {/* Tab bar — always visible */}
-      <div className="shrink-0 rounded-t-lg border border-b-0 border-solid border-border-subtle bg-bg-surface px-md py-sm max-768:hidden">
-        <Tabs>
-          <Tab
-            active={rightPaneTab === "diff"}
-            onClick={() => switchRightPaneTab("diff")}
-            type="button"
-          >
-            Diff
-          </Tab>
-          <Tab
-            active={rightPaneTab === "docs"}
-            onClick={() => switchRightPaneTab("docs")}
-            type="button"
-          >
-            Docs
-          </Tab>
-          <Tab
-            active={rightPaneTab === "specs"}
-            onClick={() => switchRightPaneTab("specs")}
-            type="button"
-          >
-            Specs
-          </Tab>
-        </Tabs>
-      </div>
+      <TabsRoot
+        value={rightPaneTab}
+        onValueChange={(v) =>
+          switchRightPaneTab(v as Parameters<typeof switchRightPaneTab>[0])
+        }
+        layoutClassName="flex min-h-0 flex-1 flex-col"
+      >
+        {/* Tab bar — always visible */}
+        <div className="shrink-0 rounded-t-lg border border-b-0 border-solid border-border-subtle bg-bg-surface px-md py-sm max-768:hidden">
+          <TabsList>
+            <TabsTrigger value="diff">Diff</TabsTrigger>
+            <TabsTrigger value="docs">Docs</TabsTrigger>
+            <TabsTrigger value="specs">Specs</TabsTrigger>
+          </TabsList>
+        </div>
 
-      {/* Panel body — all panels mounted, inactive hidden via display:none */}
-      <div className="right-pane-body flex min-h-0 flex-1 flex-col">
-        <div style={{ display: rightPaneTab === "diff" ? "contents" : "none" }}>
-          {isLoading ? (
-            <div className="sidebar-diff-panel">
-              <EmptyState layoutClassName="grow">
-                <EmptyStateTitle>Loading diff…</EmptyStateTitle>
-              </EmptyState>
-            </div>
-          ) : (
-            <DiffPanel
-              diff={diff}
-              commits={commits}
-              projectName={projectName}
-              sessionName={sessionName}
-              targetBranch={targetBranch}
-              hotkeysEnabled={rightPaneTab === "diff"}
-            />
-          )}
+        {/* Panel body — every tabpanel is force-mounted (forceMount) so its
+            internal state survives tab switches; Radix toggles the `hidden`
+            attribute on the inactive panels, the active one fills the column. */}
+        <div className="right-pane-body flex min-h-0 flex-1 flex-col">
+          {/* Diff originally used `display:contents` (boxless, content-sized): its
+              `.sidebar-diff-panel` was a non-growing flex child of `.right-pane-body`.
+              A transparent `flex flex-col min-h-0` panel (NO `flex-1`) wrapping the
+              same `.sidebar-diff-panel` reproduces that geometry — unlike docs/specs,
+              which were `flex:1` grow boxes. */}
+          <TabsContent
+            value="diff"
+            forceMount
+            layoutClassName="min-h-0 data-[state=active]:flex data-[state=active]:flex-col data-[state=inactive]:hidden"
+          >
+            {isLoading ? (
+              <div className="sidebar-diff-panel">
+                <EmptyState layoutClassName="grow">
+                  <EmptyStateTitle>Loading diff…</EmptyStateTitle>
+                </EmptyState>
+              </div>
+            ) : (
+              <DiffPanel
+                diff={diff}
+                commits={commits}
+                projectName={projectName}
+                sessionName={sessionName}
+                targetBranch={targetBranch}
+                hotkeysEnabled={rightPaneTab === "diff"}
+              />
+            )}
+          </TabsContent>
+          <TabsContent
+            value="docs"
+            forceMount
+            layoutClassName="min-h-0 flex-1 data-[state=active]:flex data-[state=active]:flex-col data-[state=inactive]:hidden"
+          >
+            <DocsPanel projectName={projectName} sessionName={sessionName} />
+          </TabsContent>
+          <TabsContent
+            value="specs"
+            forceMount
+            layoutClassName="min-h-0 flex-1 data-[state=active]:flex data-[state=active]:flex-col data-[state=inactive]:hidden"
+          >
+            <SpecBrowser projectName={projectName} sessionName={sessionName} />
+          </TabsContent>
         </div>
-        <div
-          style={{
-            display: rightPaneTab === "docs" ? "flex" : "none",
-            flexDirection: "column",
-            flex: 1,
-            minHeight: 0,
-          }}
-        >
-          <DocsPanel projectName={projectName} sessionName={sessionName} />
-        </div>
-        <div
-          style={{
-            display: rightPaneTab === "specs" ? "flex" : "none",
-            flexDirection: "column",
-            flex: 1,
-            minHeight: 0,
-          }}
-        >
-          <SpecBrowser projectName={projectName} sessionName={sessionName} />
-        </div>
-      </div>
+      </TabsRoot>
     </div>
   );
 }

@@ -18,6 +18,7 @@ describe("CollabResolutionDecisionCard", () => {
     const { container } = render(
       <CollabResolutionDecisionCard
         {...BASE_PROPS}
+        defaultOpen
         round={1}
         nextAction="continue_negotiation"
         trajectory={[3]}
@@ -34,6 +35,7 @@ describe("CollabResolutionDecisionCard", () => {
     const { container } = render(
       <CollabResolutionDecisionCard
         {...BASE_PROPS}
+        defaultOpen
         round={2}
         nextAction="ask_user"
         trajectory={[3, 1]}

@@ -13,65 +13,110 @@ describe("ConfirmDialog", () => {
   };
 
   // =========================================================================
-  // 6.1 – ConfirmDialog (Req 7.1–7.4)
+  // Radix AlertDialog-backed confirm/acknowledge prompt (migration contract §2).
+  // Radix owns role=alertdialog, focus trap + return, Escape dismissal, and the
+  // inert background; the deliberate behaviour change vs. the legacy hand-rolled
+  // dialog is that there is no Enter→confirm shortcut and focus lands on the safe
+  // Cancel action (verified live, not in jsdom). Outside-click does NOT dismiss
+  // an alert dialog.
   // =========================================================================
 
-  it("renders title, message, and buttons when open=true (Req 7.1)", () => {
+  it("exposes an alertdialog labelled by its title when open", () => {
     render(<ConfirmDialog {...defaultProps} />);
-    expect(screen.getByText("Delete Item")).toBeInTheDocument();
+    expect(
+      screen.getByRole("alertdialog", { name: "Delete Item" }),
+    ).toBeInTheDocument();
     expect(
       screen.getByText("Are you sure you want to delete this?"),
     ).toBeInTheDocument();
-    expect(screen.getByText("Confirm")).toBeInTheDocument();
-    expect(screen.getByText("Cancel")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Confirm" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
   });
 
-  it("renders nothing when open=false (Req 7.1)", () => {
+  it("renders nothing when open=false", () => {
     const { container } = render(
       <ConfirmDialog {...defaultProps} open={false} />,
     );
     expect(container.innerHTML).toBe("");
+    expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 
-  it("calls onConfirm when confirm button clicked (Req 7.2)", () => {
+  it("calls onConfirm when confirm button clicked", () => {
     const onConfirm = vi.fn();
-    render(<ConfirmDialog {...defaultProps} onConfirm={onConfirm} />);
-    fireEvent.click(screen.getByText("Confirm"));
+    const onCancel = vi.fn();
+    render(
+      <ConfirmDialog
+        {...defaultProps}
+        onConfirm={onConfirm}
+        onCancel={onCancel}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     expect(onConfirm).toHaveBeenCalledTimes(1);
-  });
-
-  it("calls onCancel when cancel button clicked (Req 7.3)", () => {
-    const onCancel = vi.fn();
-    render(<ConfirmDialog {...defaultProps} onCancel={onCancel} />);
-    fireEvent.click(screen.getByText("Cancel"));
-    expect(onCancel).toHaveBeenCalledTimes(1);
-  });
-
-  it("calls onCancel when Escape key pressed (Req 7.3)", () => {
-    const onCancel = vi.fn();
-    render(<ConfirmDialog {...defaultProps} onCancel={onCancel} />);
-    fireEvent.keyDown(document, { key: "Escape" });
-    expect(onCancel).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not call onCancel when overlay backdrop clicked", () => {
-    const onCancel = vi.fn();
-    render(<ConfirmDialog {...defaultProps} onCancel={onCancel} />);
-    const overlay = screen.getByTestId("modal-overlay");
-    fireEvent.click(overlay);
     expect(onCancel).not.toHaveBeenCalled();
   });
 
-  it("applies danger styling when danger=true (Req 7.4)", () => {
+  it("calls onCancel (not onConfirm) when cancel button clicked", () => {
+    const onConfirm = vi.fn();
+    const onCancel = vi.fn();
+    render(
+      <ConfirmDialog
+        {...defaultProps}
+        onConfirm={onConfirm}
+        onCancel={onCancel}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("calls onCancel when Escape key pressed", () => {
+    const onConfirm = vi.fn();
+    const onCancel = vi.fn();
+    render(
+      <ConfirmDialog
+        {...defaultProps}
+        onConfirm={onConfirm}
+        onCancel={onCancel}
+      />,
+    );
+    fireEvent.keyDown(screen.getByRole("alertdialog"), { key: "Escape" });
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("does not dismiss on an outside pointer press (alert dialog semantics)", () => {
+    const onCancel = vi.fn();
+    render(
+      <div>
+        <ConfirmDialog {...defaultProps} onCancel={onCancel} />
+        <button type="button">outside</button>
+      </div>,
+    );
+    // Radix makes the background inert/aria-hidden while the alert dialog is
+    // open, so the outside control is queried with `hidden`. An alert dialog
+    // ignores outside-pointer dismissal, so neither callback fires.
+    const outside = screen.getByRole("button", {
+      name: "outside",
+      hidden: true,
+    });
+    fireEvent.pointerDown(outside);
+    fireEvent.click(outside);
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+  });
+
+  it("applies danger styling when danger=true", () => {
     render(<ConfirmDialog {...defaultProps} danger />);
-    const confirmBtn = screen.getByText("Confirm");
+    const confirmBtn = screen.getByRole("button", { name: "Confirm" });
     expect(confirmBtn.className).toContain("text-red");
     expect(confirmBtn.className).toContain("border-[var(--cc-red-border)]");
   });
 
-  it("applies primary styling when danger=false (Req 7.4)", () => {
+  it("applies primary styling when danger=false", () => {
     render(<ConfirmDialog {...defaultProps} danger={false} />);
-    const confirmBtn = screen.getByText("Confirm");
+    const confirmBtn = screen.getByRole("button", { name: "Confirm" });
     expect(confirmBtn.className).toContain("bg-cyan");
     expect(confirmBtn.className).toContain("text-text-inverse");
   });
@@ -84,41 +129,33 @@ describe("ConfirmDialog", () => {
         cancelLabel="No, keep"
       />,
     );
-    expect(screen.getByText("Yes, delete")).toBeInTheDocument();
-    expect(screen.getByText("No, keep")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Yes, delete" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "No, keep" }),
+    ).toBeInTheDocument();
   });
 
   it("hides the cancel button when hideCancel=true (acknowledge-only)", () => {
     render(
       <ConfirmDialog {...defaultProps} hideCancel confirmLabel="Got it" />,
     );
-    expect(screen.getByText("Got it")).toBeInTheDocument();
-    expect(screen.queryByText("Cancel")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Got it" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
   });
 
-  it("focuses the confirm button when opened", () => {
-    render(<ConfirmDialog {...defaultProps} confirmLabel="Send anyway" />);
-    expect(document.activeElement).toBe(screen.getByText("Send anyway"));
-  });
-
-  it("calls onConfirm when Enter key is pressed", () => {
+  it("acknowledge-only still confirms on the single action", () => {
     const onConfirm = vi.fn();
-    render(<ConfirmDialog {...defaultProps} onConfirm={onConfirm} />);
-    fireEvent.keyDown(screen.getByText("Confirm"), { key: "Enter" });
+    render(
+      <ConfirmDialog
+        {...defaultProps}
+        hideCancel
+        confirmLabel="Got it"
+        onConfirm={onConfirm}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Got it" }));
     expect(onConfirm).toHaveBeenCalledTimes(1);
-  });
-
-  it("prevents Enter from reaching handlers outside the modal", () => {
-    const onConfirm = vi.fn();
-    const outerHandler = vi.fn();
-    document.addEventListener("keydown", outerHandler);
-    try {
-      render(<ConfirmDialog {...defaultProps} onConfirm={onConfirm} />);
-      fireEvent.keyDown(screen.getByText("Confirm"), { key: "Enter" });
-      expect(onConfirm).toHaveBeenCalledTimes(1);
-      expect(outerHandler).not.toHaveBeenCalled();
-    } finally {
-      document.removeEventListener("keydown", outerHandler);
-    }
   });
 });

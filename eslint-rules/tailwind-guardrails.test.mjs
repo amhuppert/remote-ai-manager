@@ -200,6 +200,19 @@ describe("tailwind-guardrails", () => {
           code: `const x = <Tab layoutClassName="min-w-0 overflow-hidden text-ellipsis" />;`,
         },
         { code: `const x = <Tab layoutClassName="truncate" />;` },
+        // min-h is the flexbox min-height:0 sizing fix — the height counterpart of
+        // the already-allowed min-w, used to let a nested Tabs flex child shrink so
+        // its panel can scroll. Pure geometry, not appearance.
+        {
+          code: `const x = <TabsContent layoutClassName="flex min-h-0 flex-1 flex-col" />;`,
+        },
+        // State-variant display toggling: a force-mounted TabsContent drives its
+        // own visibility off Radix data-state (Preflight is off, so the bare
+        // `hidden` attribute loses to an author display utility). The bracketed
+        // `data-[state=…]:` variant must strip to its allowed core (flex/hidden).
+        {
+          code: `const x = <TabsContent layoutClassName="data-[state=active]:flex data-[state=active]:flex-col data-[state=inactive]:hidden" />;`,
+        },
       ],
       invalid: [
         {
@@ -226,6 +239,13 @@ describe("tailwind-guardrails", () => {
         },
         {
           code: `const x = <Button layoutClassName="shadow-lg ml-auto" />;`,
+          errors: [{ messageId: "appearance" }],
+        },
+        // Stripping bracketed `data-[…]:` variants must not create a false
+        // negative: an appearance utility behind a state variant still fails on
+        // its core (bg-red-500), only the variant prefix is removed.
+        {
+          code: `const x = <TabsContent layoutClassName="data-[state=active]:bg-red-500" />;`,
           errors: [{ messageId: "appearance" }],
         },
       ],

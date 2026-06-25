@@ -1138,7 +1138,7 @@ describe("ExecutionInspectorPanel — Reset Context", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /reset context/i }));
 
-    expect(screen.getByTestId("modal-overlay")).toBeInTheDocument();
+    expect(screen.getByText("Reset context?")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /^reset$/i }));
 
@@ -1164,7 +1164,7 @@ describe("ExecutionInspectorPanel — Reset Context", () => {
     fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
 
     expect(onResetContext).not.toHaveBeenCalled();
-    expect(screen.queryByTestId("modal-overlay")).not.toBeInTheDocument();
+    expect(screen.queryByText("Reset context?")).not.toBeInTheDocument();
   });
 
   it("hides history entries flagged as preReset in the detail history tab", () => {

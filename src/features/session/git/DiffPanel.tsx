@@ -2,7 +2,13 @@
 
 import { useState, useRef, useCallback } from "react";
 import { cn } from "@/lib/ui/cn";
-import { Tabs, Tab, TabCount } from "@/components/ui/Tabs";
+import {
+  TabsRoot,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+  TabsTriggerCount,
+} from "@/components/ui/Tabs";
 import { EmptyStateTitle, EmptyStateDesc } from "@/components/ui/EmptyState";
 import type { SessionDiff, CommitLogEntry } from "@/lib/git/schemas";
 import CommitHistory from "@/features/session/git/CommitHistory";
@@ -159,38 +165,33 @@ export default function DiffPanel({
         </span>
       </div>
 
-      {/* Tab bar */}
-      <div className="shrink-0 border-x-0 border-t-0 border-b border-solid border-border-subtle bg-[var(--cc-bg-surface-a30)] px-md py-sm">
-        <Tabs>
-          <Tab
-            active={activeTab === "uncommitted"}
-            onClick={() => setActiveTab("uncommitted")}
-            type="button"
-          >
-            Uncommitted
-            {diff.files.length > 0 && (
-              <TabCount active={activeTab === "uncommitted"}>
-                {diff.files.length}
-              </TabCount>
-            )}
-          </Tab>
-          <Tab
-            active={activeTab === "commits"}
-            onClick={() => setActiveTab("commits")}
-            type="button"
-          >
-            Commits
-            {commits.length > 0 && (
-              <TabCount active={activeTab === "commits"}>
-                {commits.length}
-              </TabCount>
-            )}
-          </Tab>
-        </Tabs>
-      </div>
+      <TabsRoot
+        value={activeTab}
+        onValueChange={(v) => setActiveTab(v as DiffTab)}
+        layoutClassName="flex min-h-0 flex-1 flex-col"
+      >
+        {/* Tab bar */}
+        <div className="shrink-0 border-x-0 border-t-0 border-b border-solid border-border-subtle bg-[var(--cc-bg-surface-a30)] px-md py-sm">
+          <TabsList>
+            <TabsTrigger value="uncommitted">
+              Uncommitted
+              {diff.files.length > 0 && (
+                <TabsTriggerCount>{diff.files.length}</TabsTriggerCount>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="commits">
+              Commits
+              {commits.length > 0 && (
+                <TabsTriggerCount>{commits.length}</TabsTriggerCount>
+              )}
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
-      {activeTab === "uncommitted" ? (
-        <>
+        <TabsContent
+          value="uncommitted"
+          layoutClassName="flex min-h-0 flex-1 flex-col"
+        >
           <div className="flex shrink-0 items-center gap-sm border-x-0 border-t-0 border-b border-solid border-border-subtle bg-bg-raised px-md py-sm max-768:flex-nowrap max-768:px-sm max-768:py-xs">
             <div className={TOOLBAR_GROUP_CLASS}>
               <button
@@ -380,16 +381,21 @@ export default function DiffPanel({
               })
             )}
           </div>
-        </>
-      ) : (
-        <div className="flex-1 overflow-auto p-0 font-mono text-[0.75rem] leading-[1.7]">
-          <CommitHistory
-            commits={commits}
-            projectName={projectName}
-            sessionName={sessionName}
-          />
-        </div>
-      )}
+        </TabsContent>
+
+        <TabsContent
+          value="commits"
+          layoutClassName="flex min-h-0 flex-1 flex-col"
+        >
+          <div className="flex-1 overflow-auto p-0 font-mono text-[0.75rem] leading-[1.7]">
+            <CommitHistory
+              commits={commits}
+              projectName={projectName}
+              sessionName={sessionName}
+            />
+          </div>
+        </TabsContent>
+      </TabsRoot>
     </div>
   );
 }

@@ -1,46 +1,24 @@
 /* ============================================================
-   Keyboard Shortcuts Modal — preserved residual (floor 2)
+   Keyboard Shortcuts Modal — preserved residual (floor 1)
    ============================================================
-   The modal chrome and content migrated to the ModalShell primitive +
-   utilities (HotkeyHelpModal.tsx). Two selectors are preserved here, both
-   targeted by `id` (the ModalShell card carries `id="hotkey-help-modal"` via
-   its passthrough props) so no migrated element carries a legacy class:
-
-   1. The scroll/size container — `max-height` + `overflow-y` are NOT in the
-      layoutClassName allowlist and ModalShell omits `className`, so the modal's
-      scroll behaviour cannot be expressed as utilities.
-   2. The mobile (≤768px) bottom-sheet transform — the shared `.modal` /
-      `.modal-overlay` become a bottom-anchored sheet on mobile (globals.css),
-      but ModalShell does NOT own that responsive behaviour. This is the modal's
-      mobile portal positioning; reattach it for parity via the overlay + card
-      ids. (A future ModalShell that bakes in the mobile sheet would let this
-      block retire — flag for the shared-modal chain.)
+   The modal chrome and content migrated to the Radix-backed `Dialog` primitive
+   + utilities (HotkeyHelpModal.tsx). The mobile (≤768px) bottom-sheet is now
+   owned by the primitive via `<DialogContent mobileSheet>`, so only the
+   scroll/size cap is preserved here, targeted by `id` (the card carries
+   `id="hotkey-help-modal"` via its passthrough props) so no migrated element
+   carries a legacy class: `max-height` + `overflow-y` are NOT in the
+   layoutClassName allowlist and DialogContent omits `className`, so the modal's
+   scroll behaviour cannot be expressed as utilities.
 
    NOTE on width: the legacy `.hotkey-help-modal { max-width: 520px }` was a DEAD
    rule — `.modal { max-width: 480px }` (same specificity, defined later in
    globals.css) always overrode it, so the modal has always rendered at 480px.
-   ModalShell's `max-w-[480px]` reproduces that exactly; we intentionally do NOT
-   re-assert 520px here (an id selector would beat `.modal` and widen the modal —
-   a visual regression).
+   DialogContent's default `max-w-[480px]` reproduces that exactly; we
+   intentionally do NOT re-assert 520px here (an id selector would beat `.modal`
+   and widen the modal — a visual regression).
    ============================================================ */
 
 #hotkey-help-modal {
   max-height: 80vh;
   overflow-y: auto;
-}
-
-/* Mobile bottom-sheet — reproduces the shared `.modal` mobile transform that
-   ModalShell does not own (see note 2 above). */
-@media (max-width: 768px) {
-  #hotkey-help-overlay {
-    align-items: flex-end;
-  }
-
-  #hotkey-help-modal {
-    max-width: 100%;
-    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-    padding: var(--space-lg) var(--space-md);
-    padding-bottom: calc(var(--space-lg) + env(safe-area-inset-bottom, 0));
-    animation: slideUpSheet 0.25s ease;
-  }
 }

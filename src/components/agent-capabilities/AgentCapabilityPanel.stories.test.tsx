@@ -57,7 +57,7 @@ describe("AgentCapabilityPanel stories", () => {
     await UnavailableCodexPlugins.run();
     const row = screen.getByTestId("capability-row-codex-plugin-a");
     expect(
-      within(row).getByRole("button", { name: "Enable Codex Plugin A" }),
+      within(row).getByRole("switch", { name: "Enable Codex Plugin A" }),
     ).toBeDisabled();
     expect(
       screen.getByText("Codex plugin support is pending verification."),
@@ -89,7 +89,7 @@ describe("AgentCapabilityPanel stories", () => {
       "capability-row-long-unbroken-capability-identifier-with-diagnostics",
     );
     fireEvent.click(
-      within(row).getByRole("button", { name: /Disable Long Identifier/ }),
+      within(row).getByRole("switch", { name: /Disable Long Identifier/ }),
     );
     fireEvent.click(
       within(row).getByRole("button", { name: /Reset Long Identifier/ }),

@@ -105,6 +105,12 @@ const PARAMS: ParameterDeclaration[] = [
   { type: "string", name: "feature", label: "Feature name", required: true },
 ];
 
+// jsdom lacks the layout/pointer APIs Radix Select drives the listbox with;
+// stub them so the workflow selector (now a Radix Select) opens under userEvent.
+Element.prototype.scrollIntoView = () => {};
+Element.prototype.hasPointerCapture = () => false;
+Element.prototype.releasePointerCapture = () => {};
+
 describe("GraphWorkflowCard launcher integration", () => {
   beforeEach(() => {
     vi.stubGlobal("crypto", {
@@ -132,7 +138,7 @@ describe("GraphWorkflowCard launcher integration", () => {
 
     // Open the dropdown, then pick the option (labelled by its tier badge + name).
     await user.click(
-      await screen.findByRole("button", { name: /select a workflow/i }),
+      await screen.findByRole("combobox", { name: /select a workflow/i }),
     );
     await user.click(
       await screen.findByRole("option", { name: /Zero Input/i }),
@@ -170,7 +176,7 @@ describe("GraphWorkflowCard launcher integration", () => {
     renderCard();
 
     await user.click(
-      await screen.findByRole("button", { name: /select a workflow/i }),
+      await screen.findByRole("combobox", { name: /select a workflow/i }),
     );
     await user.click(
       await screen.findByRole("option", { name: /Parameterized/i }),
@@ -213,7 +219,7 @@ describe("GraphWorkflowCard launcher integration", () => {
     renderCard();
 
     await user.click(
-      await screen.findByRole("button", { name: /select a workflow/i }),
+      await screen.findByRole("combobox", { name: /select a workflow/i }),
     );
     await user.click(
       await screen.findByRole("option", { name: /Parameterized/i }),

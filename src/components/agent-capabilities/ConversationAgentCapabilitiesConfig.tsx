@@ -117,6 +117,15 @@ function AgentCapabilitiesModal({
 }): React.JSX.Element | null {
   useOverlayScope(open, { onEscape: onClose });
 
+  // Migration deferred (overlay-consumer dispositions): this is a full-height,
+  // right-side slide-in drawer (blurred backdrop + edge-anchored `<aside>` with a
+  // bespoke left border + shadow), not a centred modal card. The shipped
+  // `ui/Dialog` primitive's `DialogContent` only models the standard centred
+  // padded card, so adopting it would change the drawer appearance (parity
+  // criterion). Escape is already delegated to the shared `useOverlayScope`; a
+  // clean migration needs an edge-anchored/unstyled content variant on the Dialog
+  // primitive — out of this consumer-migration context's scope.
+
   if (!open || typeof document === "undefined") return null;
 
   const overlay = (

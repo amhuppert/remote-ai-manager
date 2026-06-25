@@ -123,10 +123,8 @@ describe("SessionsPanel filter popover (shared token state)", () => {
   it("a popover toggle and the chips reflect the same token state", () => {
     renderPanel(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "Filter" }));
-    const menu = screen.getByRole("menu");
-    fireEvent.click(
-      within(menu).getByRole("menuitemcheckbox", { name: "idle" }),
-    );
+    const panel = screen.getByRole("dialog");
+    fireEvent.click(within(panel).getByRole("button", { name: "idle" }));
     expect(screen.getByText("is:idle")).toBeInTheDocument();
   });
 });
@@ -192,7 +190,9 @@ describe("SessionsPanel bulk actions", () => {
     fireEvent.click(within(ribbon).getByRole("button", { name: "Archive 2" }));
 
     // Confirmation modal opens; the request only fires after confirming.
-    const overlay = screen.getByTestId("bulk-confirm-overlay");
+    const overlay = screen.getByRole("alertdialog", {
+      name: "Archive sessions?",
+    });
     expect(within(overlay).getByText("Archive sessions?")).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
 

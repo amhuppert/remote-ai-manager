@@ -348,6 +348,13 @@ export function DevServerPanel({
 
   useOverlayScope(open);
 
+  // Migration deferred (overlay-consumer dispositions): this is an anchored
+  // drawer with a mobile backdrop + bottom-sheet variant and a bespoke status
+  // trigger, custom-positioned from the trigger rect. Its custom fixed
+  // positioning, backdrop, and slide animations are not modelled by the shipped
+  // `Popover` primitive's padded canonical floating surface, so the manual
+  // Escape/positioning is retained.
+
   if (!open) return null;
 
   const hasStoppable = servers.some(

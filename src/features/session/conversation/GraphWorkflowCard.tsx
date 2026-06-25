@@ -1,15 +1,7 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
-import { createPortal } from "react-dom";
+import { useState } from "react";
 import Link from "next/link";
-import { useOverlayScope } from "@/hooks/useOverlayScope";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowStatus,
@@ -24,9 +16,14 @@ import { ApiCallError } from "@/lib/api/errors";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { ModalShell } from "@/components/ui/ModalShell";
+import { Dialog, DialogContent } from "@/components/ui/Dialog";
+import {
+  Select,
+  SelectTrigger,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/Select";
 import WorkflowLaunchForm from "@/components/WorkflowLaunchForm";
-import { cn } from "@/lib/ui/cn";
 
 interface GraphWorkflowCardProps {
   projectName: string;
@@ -195,7 +192,9 @@ function tierBadge(tier: TemplateTier): React.JSX.Element {
 const secondaryActionClass =
   "inline-flex items-center gap-xs rounded-md border border-solid border-border-default bg-transparent px-sm py-[6px] font-mono text-[0.72rem] text-text-secondary no-underline transition-all duration-150 ease-[ease] hover:border-border-strong hover:bg-bg-hover hover:text-text-primary!";
 
-function ChevronDown({ open }: { open: boolean }): React.JSX.Element {
+// Rotates via the Radix Select trigger's `data-state=open` on the enclosing
+// `group` button (the trigger is a `SelectTrigger asChild`).
+function ChevronDown(): React.JSX.Element {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -205,10 +204,7 @@ function ChevronDown({ open }: { open: boolean }): React.JSX.Element {
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden
-      className={cn(
-        "size-[14px] shrink-0 text-text-tertiary transition-transform duration-150 ease-[ease]",
-        open && "rotate-180",
-      )}
+      className="size-[14px] shrink-0 text-text-tertiary transition-transform duration-150 ease-[ease] group-data-[state=open]:rotate-180"
     >
       <path d="m6 9 6 6 6-6" />
     </svg>
@@ -251,65 +247,14 @@ export function GraphWorkflowLauncher({
   onSelectionChange?: (definitionId: string | null) => void;
 }): React.JSX.Element {
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [open, setOpen] = useState(false);
-  const triggerWrapRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const listboxRef = useRef<HTMLDivElement>(null);
-  const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({});
 
   const templatesHref = `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(sessionName)}/templates`;
   const workflowsHref = `/projects/${encodeURIComponent(projectName)}/workflows`;
   const selected = definitions.find((d) => d.id === selectedId) ?? null;
 
-  // The popover is portaled to <body> so a later sibling card in the conversation
-  // feed can't paint over it (z-index only competes within a stacking context);
-  // position it under the trigger from the trigger's viewport rect.
-  const updatePosition = useCallback(() => {
-    const trigger = triggerRef.current;
-    if (!trigger) return;
-    const rect = trigger.getBoundingClientRect();
-    setMenuStyle({ top: rect.bottom + 4, left: rect.left, width: rect.width });
-  }, []);
-
-  useLayoutEffect(() => {
-    if (open) updatePosition();
-  }, [open, updatePosition]);
-
-  // Keep the portaled popover pinned to the trigger as the feed scrolls/resizes.
-  useEffect(() => {
-    if (!open) return;
-    const reposition = (): void => updatePosition();
-    window.addEventListener("scroll", reposition, { capture: true });
-    window.addEventListener("resize", reposition);
-    return () => {
-      window.removeEventListener("scroll", reposition, { capture: true });
-      window.removeEventListener("resize", reposition);
-    };
-  }, [open, updatePosition]);
-
-  // Escape-to-close + background-hotkey suppression while the menu is open.
-  useOverlayScope(open, { onEscape: () => setOpen(false) });
-
-  // Click-outside dismissal \u2014 the popover is portaled out of the trigger's
-  // container, so dismiss only when the click is outside BOTH the trigger and
-  // the popover (capture phase so a child stopping propagation still dismisses).
-  useEffect(() => {
-    if (!open) return;
-    const onMouseDown = (event: MouseEvent): void => {
-      const target = event.target as Node;
-      if (triggerWrapRef.current?.contains(target)) return;
-      if (listboxRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    document.addEventListener("mousedown", onMouseDown, { capture: true });
-    return () =>
-      document.removeEventListener("mousedown", onMouseDown, { capture: true });
-  }, [open]);
-
   function selectDefinition(definitionId: string): void {
     setSelectedId(definitionId);
     onSelectionChange?.(definitionId);
-    setOpen(false);
   }
 
   if (loading) {
@@ -338,72 +283,50 @@ export function GraphWorkflowLauncher({
 
   return (
     <LauncherShell>
-      {/* Collapsed dropdown \u2014 a long template list scrolls inside the popover
-          rather than growing the card; the popover is portaled to <body>. */}
-      <div ref={triggerWrapRef}>
-        <button
-          ref={triggerRef}
-          type="button"
-          aria-haspopup="listbox"
-          aria-expanded={open}
-          onClick={() => setOpen((v) => !v)}
-          className="flex w-full items-center gap-sm rounded-md border border-solid border-border-default bg-bg-base px-sm py-[8px] text-left font-mono text-[0.8rem] transition-[border-color,box-shadow] duration-150 ease-[ease] outline-none hover:border-border-strong focus-visible:border-cyan focus-visible:shadow-[0_0_0_1px_var(--color-cyan-glow)]"
-        >
-          {selected ? (
-            <>
-              {tierBadge(selected.tier)}
-              <span className="min-w-0 flex-1 truncate text-text-primary">
-                {selected.name}
-              </span>
-              <span className="shrink-0 text-[0.7rem] text-text-tertiary">
-                rev {selected.revision}
-              </span>
-            </>
-          ) : (
-            <span className="min-w-0 flex-1 truncate text-text-tertiary">
-              Select a workflow{"\u2026"}
-            </span>
-          )}
-          <ChevronDown open={open} />
-        </button>
-      </div>
-
-      {open &&
-        typeof document !== "undefined" &&
-        createPortal(
-          <div
-            ref={listboxRef}
-            role="listbox"
-            style={menuStyle}
-            className="fixed z-popover max-h-[244px] overflow-y-auto rounded-md border border-solid border-border-default bg-bg-elevated p-[4px] shadow-menu"
+      {/* Collapsed dropdown over the Radix-backed `Select` primitive (single-value
+          listbox value-picker). Radix owns the listbox roving focus + arrow/Home/
+          End/type-ahead keyboard nav, collision-aware portalled positioning,
+          outside-click/Escape dismissal, and `useOverlayScope` registration \u2014
+          replacing the hand-rolled portal/position/outside-click machinery. The
+          trigger keeps its rich selected display (tier badge + name + revision)
+          via `SelectTrigger asChild`. */}
+      <Select value={selectedId ?? ""} onValueChange={selectDefinition}>
+        <SelectTrigger asChild aria-label="Select a workflow">
+          <button
+            type="button"
+            className="group flex w-full items-center gap-sm rounded-md border border-solid border-border-default bg-bg-base px-sm py-[8px] text-left font-mono text-[0.8rem] transition-[border-color,box-shadow] duration-150 ease-[ease] outline-none hover:border-border-strong focus-visible:border-cyan focus-visible:shadow-[0_0_0_1px_var(--color-cyan-glow)]"
           >
-            {definitions.map((d) => {
-              const isSelected = d.id === selectedId;
-              return (
-                <button
-                  key={`${d.tier}:${d.id}`}
-                  type="button"
-                  role="option"
-                  aria-selected={isSelected}
-                  onClick={() => selectDefinition(d.id)}
-                  className={cn(
-                    "flex w-full cursor-pointer items-center gap-sm rounded-sm border-0 bg-transparent px-sm py-[8px] text-left font-mono text-[0.78rem] transition-colors duration-150 ease-[ease] hover:bg-bg-hover",
-                    isSelected
-                      ? "bg-bg-raised text-text-primary"
-                      : "text-text-secondary hover:text-text-primary",
-                  )}
-                >
-                  {tierBadge(d.tier)}
-                  <span className="min-w-0 flex-1 truncate">{d.name}</span>
-                  <span className="shrink-0 text-[0.7rem] text-text-tertiary">
-                    rev {d.revision}
-                  </span>
-                </button>
-              );
-            })}
-          </div>,
-          document.body,
-        )}
+            {selected ? (
+              <>
+                {tierBadge(selected.tier)}
+                <span className="min-w-0 flex-1 truncate text-text-primary">
+                  {selected.name}
+                </span>
+                <span className="shrink-0 text-[0.7rem] text-text-tertiary">
+                  rev {selected.revision}
+                </span>
+              </>
+            ) : (
+              <span className="min-w-0 flex-1 truncate text-text-tertiary">
+                Select a workflow{"\u2026"}
+              </span>
+            )}
+            <ChevronDown />
+          </button>
+        </SelectTrigger>
+        <SelectContent>
+          {definitions.map((d) => (
+            <SelectItem
+              key={`${d.tier}:${d.id}`}
+              value={d.id}
+              description={`rev ${d.revision}`}
+            >
+              {tierBadge(d.tier)}
+              <span className="min-w-0 flex-1 truncate">{d.name}</span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
 
       <div className="flex flex-wrap items-center gap-sm">
         <Link href={workflowsHref} className={secondaryActionClass}>
@@ -540,30 +463,38 @@ function ConnectedLauncherCard({
         }
         onRun={handleRun}
       />
-      {launchItem !== null && (
-        <ModalShell
-          role="dialog"
-          aria-modal="true"
-          aria-label="Launch workflow"
-          overlayProps={{
-            onClick: () => {
-              if (!startMutation.isPending) setLaunchItem(null);
-            },
-          }}
-          onClick={(event) => event.stopPropagation()}
-        >
-          <WorkflowLaunchForm
-            parameters={launchItem.parameters}
-            isLaunching={startMutation.isPending}
-            engineError={engineError}
-            onLaunch={(values) => startWorkflow(launchItem, values)}
-            onCancel={() => {
-              setLaunchItem(null);
-              setEngineError(null);
+      <Dialog
+        open={launchItem !== null}
+        onOpenChange={(next) => {
+          if (!next && !startMutation.isPending) {
+            setLaunchItem(null);
+            setEngineError(null);
+          }
+        }}
+      >
+        {launchItem !== null && (
+          <DialogContent
+            aria-label="Launch workflow"
+            onInteractOutside={(event) => {
+              if (startMutation.isPending) event.preventDefault();
             }}
-          />
-        </ModalShell>
-      )}
+            onEscapeKeyDown={(event) => {
+              if (startMutation.isPending) event.preventDefault();
+            }}
+          >
+            <WorkflowLaunchForm
+              parameters={launchItem.parameters}
+              isLaunching={startMutation.isPending}
+              engineError={engineError}
+              onLaunch={(values) => startWorkflow(launchItem, values)}
+              onCancel={() => {
+                setLaunchItem(null);
+                setEngineError(null);
+              }}
+            />
+          </DialogContent>
+        )}
+      </Dialog>
       <ConfirmDialog
         open={uncommittedMessage !== null}
         title="Commit changes before starting"

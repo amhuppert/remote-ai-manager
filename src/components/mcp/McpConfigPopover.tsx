@@ -68,6 +68,14 @@ export default function McpConfigPopover({
 
   useOverlayScope(open);
 
+  // Migration deferred (overlay-consumer dispositions): this panel is
+  // externally anchored (its trigger is owned by `McpConfigButton` and passed in
+  // via `anchorRef`) and custom-positioned with `getBoundingClientRect`
+  // (bottom/right-anchored), with a bespoke `p-0` flex-column scrollable card —
+  // a full-bleed header + ≤640px full-screen variant the shipped `Popover`
+  // primitive's `PopoverContent` (padded canonical floating surface, trigger as a
+  // child) does not model. The manual outside-click/Escape/positioning stays.
+
   const summary = summarise(servers);
   const pendingCount = pendingServerIds?.length ?? 0;
 

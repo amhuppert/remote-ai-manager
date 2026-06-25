@@ -44,11 +44,10 @@ describe("DiffPanel stories", () => {
   it("CommitsOnly defaults to commits tab when no uncommitted changes", async () => {
     await CommitsOnly.run();
     // With no uncommitted files, the component defaults to the commits tab.
-    // The Tabs primitive carries active state via the data-active attribute
-    // (the className always contains the static data-[active=...] utilities, so
-    // a className substring check would be a false positive).
+    // The Radix Tabs trigger carries active state via aria-selected (Radix uses
+    // aria-selected + data-state, not data-active).
     const commitsTab = screen.getByText("Commits");
-    expect(commitsTab).toHaveAttribute("data-active", "true");
+    expect(commitsTab).toHaveAttribute("aria-selected", "true");
     // The uncommitted empty state should not be in the DOM
     expect(screen.queryByText("No changes")).toBeNull();
   });

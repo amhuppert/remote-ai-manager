@@ -11,7 +11,19 @@ import {
 import { useSessionQuery } from "@/lib/sessions/queries";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { cn } from "@/lib/ui/cn";
-import { Tabs, Tab, TabCount } from "@/components/ui/Tabs";
+import {
+  TabsRoot,
+  TabsList,
+  TabsTrigger,
+  TabsTriggerCount,
+  TabsContent,
+} from "@/components/ui/Tabs";
+import {
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
+} from "@/components/ui/Accordion";
 import {
   EmptyState,
   EmptyStateTitle,
@@ -68,13 +80,11 @@ const diffContent =
 function CommitEntry({
   commit,
   isExpanded,
-  onToggle,
   projectName,
   sessionName,
 }: {
   commit: CommitLogEntry;
   isExpanded: boolean;
-  onToggle: () => void;
   projectName: string;
   sessionName: string;
 }) {
@@ -85,91 +95,102 @@ function CommitEntry({
   );
 
   return (
-    <div
-      className={cn(
-        // base entry + bottom divider
-        "relative border-b border-border-subtle last:border-b-0",
-        // ::before — continuous timeline rail
-        "before:absolute before:top-0 before:bottom-0 before:left-[18px] before:z-base before:w-px before:bg-border-default before:content-['']",
-        "first:before:top-1/2 last:before:bottom-1/2",
-        // ::after — timeline node dot
-        "after:absolute after:top-1/2 after:left-[14px] after:z-raised after:h-[9px] after:w-[9px] after:-translate-y-1/2 after:rounded-full after:border-2 after:border-border-strong after:bg-bg-surface after:transition-[all] after:duration-200 after:ease-[ease] after:content-['']",
-        // :has(.commit-header.expanded) variants, driven by the isExpanded prop
-        isExpanded &&
-          "before:top-0 after:top-[20px] after:translate-y-0 after:border-cyan-dim after:bg-cyan-glow after:shadow-[0_0_6px_var(--cyan-glow-strong)] first:before:top-[20px]",
-      )}
-    >
+    <AccordionItem value={commit.fullHash} asChild>
       <div
         className={cn(
-          "group/hdr relative z-raised grid cursor-pointer grid-cols-[auto_1fr] grid-rows-[auto_auto] items-center gap-x-[8px] gap-y-[2px] pt-[10px] pr-md pb-[10px] pl-[32px] transition-[background] duration-150 ease-[ease] select-none hover:bg-bg-hover active:bg-[var(--cc-bg-hover-a80)]",
-          isExpanded && "border-b border-border-subtle bg-[var(--cc-cyan-a04)]",
+          // base entry + bottom divider
+          "relative border-b border-border-subtle last:border-b-0",
+          // ::before — continuous timeline rail
+          "before:absolute before:top-0 before:bottom-0 before:left-[18px] before:z-base before:w-px before:bg-border-default before:content-['']",
+          "first:before:top-1/2 last:before:bottom-1/2",
+          // ::after — timeline node dot
+          "after:absolute after:top-1/2 after:left-[14px] after:z-raised after:h-[9px] after:w-[9px] after:-translate-y-1/2 after:rounded-full after:border-2 after:border-border-strong after:bg-bg-surface after:transition-[all] after:duration-200 after:ease-[ease] after:content-['']",
+          // expanded-state rail, driven by the isExpanded prop (kept in sync with
+          // the accordion's open value)
+          isExpanded &&
+            "before:top-0 after:top-[20px] after:translate-y-0 after:border-cyan-dim after:bg-cyan-glow after:shadow-[0_0_6px_var(--cyan-glow-strong)] first:before:top-[20px]",
         )}
-        onClick={onToggle}
       >
-        <span
-          className={cn(
-            "col-start-1 row-start-1 w-fit rounded-[3px] border border-[var(--cc-cyan-a12)] bg-[var(--cc-cyan-a07)] px-[6px] py-px font-mono text-[0.7rem] font-semibold tracking-[0.03em] text-cyan-dim transition-[all] duration-200 ease-[ease]",
-            isExpanded
-              ? "border-cyan-glow-strong bg-cyan-glow text-cyan shadow-[0_0_8px_var(--cc-cyan-a10)]"
-              : "group-hover/hdr:border-[var(--cc-cyan-a25)] group-hover/hdr:bg-cyan-glow group-hover/hdr:text-cyan",
-          )}
-        >
-          {commit.hash}
-        </span>
-        <span className="col-start-2 row-start-1 overflow-hidden font-body text-[0.78rem] leading-[1.3] font-medium text-ellipsis whitespace-nowrap text-text-primary">
-          {commit.message}
-        </span>
-        <span className="col-[1/3] row-start-2 flex items-center gap-sm pt-px font-mono text-[0.7rem] text-text-tertiary">
-          <span className="flex items-center gap-[3px] after:ml-[4px] after:opacity-40 after:content-['\00b7']">
-            {commit.filesChanged} file
-            {commit.filesChanged !== 1 ? "s" : ""}
-          </span>
-          <span className="opacity-70">{formatRelativeTime(commit.date)}</span>
-        </span>
-      </div>
+        <AccordionTrigger asChild>
+          <button
+            type="button"
+            // The old clickable `<div>` inherited the page font (15px / 1.5
+            // line-height); a bare `<button>` instead picks up the UA default
+            // (Preflight is off), which shrinks the auto-sized grid rows and
+            // shifts the metadata baseline. Pin the div's exact font context.
+            className={cn(
+              "group/hdr relative z-raised grid w-full cursor-pointer grid-cols-[auto_1fr] grid-rows-[auto_auto] items-center gap-x-[8px] gap-y-[2px] border-0 bg-transparent pt-[10px] pr-md pb-[10px] pl-[32px] text-left text-[15px] leading-[1.5] transition-[background] duration-150 ease-[ease] outline-none select-none hover:bg-bg-hover focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:[outline-offset:-2px] active:bg-[var(--cc-bg-hover-a80)]",
+              "data-[state=open]:border-b data-[state=open]:border-border-subtle data-[state=open]:bg-[var(--cc-cyan-a04)]",
+            )}
+          >
+            <span
+              className={cn(
+                "col-start-1 row-start-1 w-fit rounded-[3px] border border-[var(--cc-cyan-a12)] bg-[var(--cc-cyan-a07)] px-[6px] py-px font-mono text-[0.7rem] font-semibold tracking-[0.03em] text-cyan-dim transition-[all] duration-200 ease-[ease]",
+                isExpanded
+                  ? "border-cyan-glow-strong bg-cyan-glow text-cyan shadow-[0_0_8px_var(--cc-cyan-a10)]"
+                  : "group-hover/hdr:border-[var(--cc-cyan-a25)] group-hover/hdr:bg-cyan-glow group-hover/hdr:text-cyan",
+              )}
+            >
+              {commit.hash}
+            </span>
+            <span className="col-start-2 row-start-1 overflow-hidden font-body text-[0.78rem] leading-[1.3] font-medium text-ellipsis whitespace-nowrap text-text-primary">
+              {commit.message}
+            </span>
+            <span className="col-[1/3] row-start-2 flex items-center gap-sm pt-px font-mono text-[0.7rem] text-text-tertiary">
+              <span className="flex items-center gap-[3px] after:ml-[4px] after:opacity-40 after:content-['\00b7']">
+                {commit.filesChanged} file
+                {commit.filesChanged !== 1 ? "s" : ""}
+              </span>
+              <span className="opacity-70">
+                {formatRelativeTime(commit.date)}
+              </span>
+            </span>
+          </button>
+        </AccordionTrigger>
 
-      {isExpanded && (
-        <div className="relative ml-[32px] border-l border-border-subtle bg-[var(--cc-bg-void-a30)] font-mono text-[0.75rem] leading-[1.7]">
-          {diffQuery.isPending ? (
-            <div className={commitDiffLoading}>Loading diff...</div>
-          ) : diffQuery.data ? (
-            diffQuery.data.files.map((file) => (
-              <div
-                key={file.filePath}
-                className={cn(diffFileSection, "last:border-b-0")}
-              >
-                <div className={diffFileHeaderBase}>
-                  <span className={diffFileName}>{file.filePath}</span>
-                  <span className={diffFileStat}>
-                    <span className="text-green">+{file.additions}</span>{" "}
-                    <span className="text-red">-{file.deletions}</span>
-                  </span>
+        <AccordionContent asChild>
+          <div className="relative ml-[32px] border-l border-border-subtle bg-[var(--cc-bg-void-a30)] font-mono text-[0.75rem] leading-[1.7]">
+            {diffQuery.isPending ? (
+              <div className={commitDiffLoading}>Loading diff...</div>
+            ) : diffQuery.data ? (
+              diffQuery.data.files.map((file) => (
+                <div
+                  key={file.filePath}
+                  className={cn(diffFileSection, "last:border-b-0")}
+                >
+                  <div className={diffFileHeaderBase}>
+                    <span className={diffFileName}>{file.filePath}</span>
+                    <span className={diffFileStat}>
+                      <span className="text-green">+{file.additions}</span>{" "}
+                      <span className="text-red">-{file.deletions}</span>
+                    </span>
+                  </div>
+                  <div className={diffFileLinesBase}>
+                    {file.hunks.map((hunk, hunkIdx) => (
+                      <div key={hunkIdx}>
+                        {hunk.lines.map((line, lineIdx) => (
+                          <div
+                            key={lineIdx}
+                            className={cn(
+                              diffLineBase,
+                              diffLineByType[line.type],
+                            )}
+                          >
+                            {line.content}
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <div className={diffFileLinesBase}>
-                  {file.hunks.map((hunk, hunkIdx) => (
-                    <div key={hunkIdx}>
-                      {hunk.lines.map((line, lineIdx) => (
-                        <div
-                          key={lineIdx}
-                          className={cn(
-                            diffLineBase,
-                            diffLineByType[line.type],
-                          )}
-                        >
-                          {line.content}
-                        </div>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))
-          ) : (
-            <div className={commitDiffLoading}>Failed to load diff.</div>
-          )}
-        </div>
-      )}
-    </div>
+              ))
+            ) : (
+              <div className={commitDiffLoading}>Failed to load diff.</div>
+            )}
+          </div>
+        </AccordionContent>
+      </div>
+    </AccordionItem>
   );
 }
 
@@ -632,70 +653,77 @@ export default function SessionDiffViewer({
               </Button>
             </div>
 
-            {/* Tab bar */}
-            <div className="shrink-0 border-b border-border-subtle bg-[var(--cc-bg-surface-a30)] px-md py-sm">
-              <Tabs>
-                <Tab
-                  active={activeTab === "uncommitted"}
-                  onClick={() => setActiveTab("uncommitted")}
-                  type="button"
-                >
-                  Uncommitted
-                  {diff.files.length > 0 && (
-                    <TabCount active={activeTab === "uncommitted"}>
-                      {diff.files.length}
-                    </TabCount>
-                  )}
-                </Tab>
-                <Tab
-                  active={activeTab === "commits"}
-                  onClick={() => setActiveTab("commits")}
-                  type="button"
-                >
-                  Commits
-                  {commits.length > 0 && (
-                    <TabCount active={activeTab === "commits"}>
-                      {commits.length}
-                    </TabCount>
-                  )}
-                </Tab>
-              </Tabs>
-            </div>
-
-            {activeTab === "uncommitted" ? (
-              <UncommittedDiff
-                diff={diff}
-                hotkeysEnabled={activeTab === "uncommitted"}
-              />
-            ) : (
-              <div className={diffContent}>
-                {commits.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center px-xl py-xl text-center">
-                    <EmptyStateTitle>No commits</EmptyStateTitle>
-                    <EmptyStateDesc>
-                      Commit changes to see them listed here.
-                    </EmptyStateDesc>
-                  </div>
-                ) : (
-                  <div className="px-0 py-sm">
-                    {commits.map((commit) => (
-                      <CommitEntry
-                        key={commit.fullHash}
-                        commit={commit}
-                        isExpanded={expandedHash === commit.fullHash}
-                        onToggle={() =>
-                          setExpandedHash((prev) =>
-                            prev === commit.fullHash ? null : commit.fullHash,
-                          )
-                        }
-                        projectName={projectName}
-                        sessionName={sessionName}
-                      />
-                    ))}
-                  </div>
-                )}
+            <TabsRoot
+              value={activeTab}
+              onValueChange={(v) => setActiveTab(v as DiffTab)}
+              layoutClassName="flex min-h-0 flex-1 flex-col"
+            >
+              {/* Tab bar */}
+              <div className="shrink-0 border-b border-border-subtle bg-[var(--cc-bg-surface-a30)] px-md py-sm">
+                <TabsList>
+                  <TabsTrigger value="uncommitted">
+                    Uncommitted
+                    {diff.files.length > 0 && (
+                      <TabsTriggerCount>{diff.files.length}</TabsTriggerCount>
+                    )}
+                  </TabsTrigger>
+                  <TabsTrigger value="commits">
+                    Commits
+                    {commits.length > 0 && (
+                      <TabsTriggerCount>{commits.length}</TabsTriggerCount>
+                    )}
+                  </TabsTrigger>
+                </TabsList>
               </div>
-            )}
+
+              <TabsContent
+                value="uncommitted"
+                layoutClassName="flex min-h-0 flex-1 flex-col"
+              >
+                <UncommittedDiff
+                  diff={diff}
+                  hotkeysEnabled={activeTab === "uncommitted"}
+                />
+              </TabsContent>
+
+              <TabsContent
+                value="commits"
+                layoutClassName="flex min-h-0 flex-1 flex-col"
+              >
+                <div className={diffContent}>
+                  {commits.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center px-xl py-xl text-center">
+                      <EmptyStateTitle>No commits</EmptyStateTitle>
+                      <EmptyStateDesc>
+                        Commit changes to see them listed here.
+                      </EmptyStateDesc>
+                    </div>
+                  ) : (
+                    <Accordion
+                      type="single"
+                      collapsible
+                      value={expandedHash ?? ""}
+                      onValueChange={(value) =>
+                        setExpandedHash(value === "" ? null : value)
+                      }
+                      asChild
+                    >
+                      <div className="px-0 py-sm">
+                        {commits.map((commit) => (
+                          <CommitEntry
+                            key={commit.fullHash}
+                            commit={commit}
+                            isExpanded={expandedHash === commit.fullHash}
+                            projectName={projectName}
+                            sessionName={sessionName}
+                          />
+                        ))}
+                      </div>
+                    </Accordion>
+                  )}
+                </div>
+              </TabsContent>
+            </TabsRoot>
           </div>
         </div>
       </main>

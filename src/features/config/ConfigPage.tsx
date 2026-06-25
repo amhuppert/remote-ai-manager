@@ -7,6 +7,12 @@ import {
   EmptyStateDesc,
   EmptyStateTitle,
 } from "@/components/ui/EmptyState";
+import {
+  TabsContent,
+  TabsList,
+  TabsRoot,
+  TabsTrigger,
+} from "@/components/ui/Tabs";
 import { cn } from "@/lib/ui/cn";
 import { useFullConfigQuery } from "@/lib/config/queries";
 import { useUpdateConfigMutation } from "@/lib/config/mutations";
@@ -106,83 +112,112 @@ export default function ConfigPage(): React.JSX.Element {
     <div className="app" data-page="config">
       <Topbar breadcrumbs={[{ label: "config" }]} page="projects" />
       <main className={MAIN_CLASS}>
-        <div
-          className="grid h-full min-h-0 grid-cols-[248px_minmax(0,1fr)] bg-bg-base max-900:grid-cols-[1fr]"
-          data-active-section={activeSection}
+        <TabsRoot
+          orientation="vertical"
+          value={activeSection}
+          onValueChange={(value) => setActiveSection(value as ConfigNavSection)}
+          layoutClassName="[display:contents]"
         >
-          <aside className="overflow-y-auto border-y-0 border-r border-l-0 border-solid border-border-subtle bg-bg-void px-lg py-xl max-900:border-r-0 max-900:border-b max-900:p-md">
-            <nav
-              className="flex flex-col gap-[2px] max-900:flex-row max-900:overflow-x-auto"
-              aria-label="Settings"
-            >
-              {CONFIG_NAV.map((item) => {
-                const isActive = activeSection === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={isActive}
-                    className={cn(
-                      NAV_ITEM_BASE,
-                      isActive
-                        ? "bg-bg-raised text-cyan shadow-[inset_2px_0_0_var(--cyan)]"
-                        : "bg-transparent text-text-secondary hover:bg-bg-base hover:text-text-primary",
-                    )}
-                    onClick={() => setActiveSection(item.id)}
-                  >
-                    <span className="min-w-0 flex-1 overflow-hidden text-ellipsis">
-                      {item.label}
-                    </span>
-                    {item.id === "capabilities" ? (
-                      <span className="ml-auto rounded-full bg-cyan-glow px-[6px] py-px text-[0.7rem] tracking-[0.05em] text-cyan">
-                        cascading
-                      </span>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </nav>
-          </aside>
-          <div className="relative flex min-h-0 min-w-0 flex-col overflow-hidden bg-bg-base">
-            <div
-              className={cn(
-                "min-h-0 flex-auto",
-                contentIsCapabilities
-                  ? "grid overflow-hidden"
-                  : "overflow-y-auto p-2xl",
-              )}
-            >
-              {activeSection === "general" && (
-                <GeneralSection controller={controller} />
-              )}
-              {activeSection === "defaults" && (
-                <DefaultsSection controller={controller} />
-              )}
-              {activeSection === "capabilities" && <CapabilitiesSection />}
-              {activeSection === "backends" && (
-                <BackendsSection controller={controller} />
-              )}
-              {activeSection === "workflow" && (
-                <WorkflowSection controller={controller} />
-              )}
-              {activeSection === "limits" && (
-                <LimitsSection controller={controller} />
-              )}
-              {activeSection === "notifications" && (
-                <NotificationsSection controller={controller} />
-              )}
+          <div
+            className="grid h-full min-h-0 grid-cols-[248px_minmax(0,1fr)] bg-bg-base max-900:grid-cols-[1fr]"
+            data-active-section={activeSection}
+          >
+            <aside className="overflow-y-auto border-y-0 border-r border-l-0 border-solid border-border-subtle bg-bg-void px-lg py-xl max-900:border-r-0 max-900:border-b max-900:p-md">
+              <TabsList asChild aria-label="Settings">
+                <nav className="flex flex-col gap-[2px] max-900:flex-row max-900:overflow-x-auto">
+                  {CONFIG_NAV.map((item) => (
+                    <TabsTrigger asChild key={item.id} value={item.id}>
+                      <button
+                        type="button"
+                        className={cn(
+                          NAV_ITEM_BASE,
+                          "bg-transparent text-text-secondary hover:bg-bg-base hover:text-text-primary",
+                          "data-[state=active]:bg-bg-raised data-[state=active]:text-cyan data-[state=active]:shadow-[inset_2px_0_0_var(--cyan)] data-[state=active]:hover:bg-bg-raised data-[state=active]:hover:text-cyan",
+                          "outline-none focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:[outline-offset:-2px]",
+                        )}
+                      >
+                        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis">
+                          {item.label}
+                        </span>
+                        {item.id === "capabilities" ? (
+                          <span className="ml-auto rounded-full bg-cyan-glow px-[6px] py-px text-[0.7rem] tracking-[0.05em] text-cyan">
+                            cascading
+                          </span>
+                        ) : null}
+                      </button>
+                    </TabsTrigger>
+                  ))}
+                </nav>
+              </TabsList>
+            </aside>
+            <div className="relative flex min-h-0 min-w-0 flex-col overflow-hidden bg-bg-base">
+              <TabsContent
+                value="general"
+                layoutClassName="min-h-0 flex-auto overflow-y-auto"
+              >
+                <div className="p-2xl">
+                  <GeneralSection controller={controller} />
+                </div>
+              </TabsContent>
+              <TabsContent
+                value="defaults"
+                layoutClassName="min-h-0 flex-auto overflow-y-auto"
+              >
+                <div className="p-2xl">
+                  <DefaultsSection controller={controller} />
+                </div>
+              </TabsContent>
+              <TabsContent
+                value="capabilities"
+                layoutClassName="min-h-0 flex-auto overflow-hidden"
+              >
+                <div className="grid h-full min-h-0">
+                  <CapabilitiesSection />
+                </div>
+              </TabsContent>
+              <TabsContent
+                value="backends"
+                layoutClassName="min-h-0 flex-auto overflow-y-auto"
+              >
+                <div className="p-2xl">
+                  <BackendsSection controller={controller} />
+                </div>
+              </TabsContent>
+              <TabsContent
+                value="workflow"
+                layoutClassName="min-h-0 flex-auto overflow-y-auto"
+              >
+                <div className="p-2xl">
+                  <WorkflowSection controller={controller} />
+                </div>
+              </TabsContent>
+              <TabsContent
+                value="limits"
+                layoutClassName="min-h-0 flex-auto overflow-y-auto"
+              >
+                <div className="p-2xl">
+                  <LimitsSection controller={controller} />
+                </div>
+              </TabsContent>
+              <TabsContent
+                value="notifications"
+                layoutClassName="min-h-0 flex-auto overflow-y-auto"
+              >
+                <div className="p-2xl">
+                  <NotificationsSection controller={controller} />
+                </div>
+              </TabsContent>
+              {!contentIsCapabilities ? (
+                <ConfigSaveBar
+                  dirtyCount={dirtyCount}
+                  saving={mutation.isPending}
+                  onRevert={revert}
+                  onSave={handleSave}
+                />
+              ) : null}
             </div>
-            {!contentIsCapabilities ? (
-              <ConfigSaveBar
-                dirtyCount={dirtyCount}
-                saving={mutation.isPending}
-                onRevert={revert}
-                onSave={handleSave}
-              />
-            ) : null}
           </div>
-        </div>
+        </TabsRoot>
       </main>
     </div>
   );

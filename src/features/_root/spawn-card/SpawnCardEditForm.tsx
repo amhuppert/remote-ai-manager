@@ -1,4 +1,11 @@
 import { spawnAgentSchema, spawnModeSchema } from "@/lib/chat-spawning/schemas";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/Select";
 import type { EditableField, EditableSession } from "./useSpawnCard";
 
 // Small uppercase mono caption above each field.
@@ -51,36 +58,48 @@ export default function SpawnCardEditForm({
           onChange={(e) => onChange(index, "target", e.target.value)}
         />
       </label>
-      <label className="flex flex-col gap-2xs">
+      <div className="flex flex-col gap-2xs">
         <span className={META_LABEL_CLASS}>Agent</span>
-        <select
-          className={INPUT_CLASS}
-          aria-label={`Session ${index + 1} agent`}
+        <Select
           value={session.agent}
-          onChange={(e) => onChange(index, "agent", e.target.value)}
+          onValueChange={(value) => onChange(index, "agent", value)}
         >
-          {spawnAgentSchema.options.map((agent) => (
-            <option key={agent} value={agent}>
-              {agent}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="flex flex-col gap-2xs">
+          <SelectTrigger
+            aria-label={`Session ${index + 1} agent`}
+            layoutClassName="w-full"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {spawnAgentSchema.options.map((agent) => (
+              <SelectItem key={agent} value={agent}>
+                {agent}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="flex flex-col gap-2xs">
         <span className={META_LABEL_CLASS}>Mode</span>
-        <select
-          className={INPUT_CLASS}
-          aria-label={`Session ${index + 1} mode`}
+        <Select
           value={session.mode}
-          onChange={(e) => onChange(index, "mode", e.target.value)}
+          onValueChange={(value) => onChange(index, "mode", value)}
         >
-          {spawnModeSchema.options.map((mode) => (
-            <option key={mode} value={mode}>
-              {mode}
-            </option>
-          ))}
-        </select>
-      </label>
+          <SelectTrigger
+            aria-label={`Session ${index + 1} mode`}
+            layoutClassName="w-full"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {spawnModeSchema.options.map((mode) => (
+              <SelectItem key={mode} value={mode}>
+                {mode}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
       <label className="col-span-2 flex flex-col gap-2xs">
         <span className={META_LABEL_CLASS}>Initial prompt</span>
         <textarea

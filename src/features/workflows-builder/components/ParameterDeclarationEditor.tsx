@@ -1,9 +1,17 @@
 "use client";
 
 import { Button } from "@/components/ui/Button";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { FormError, FormHint } from "@/components/ui/FormField";
 import { IconButton } from "@/components/ui/IconButton";
 import { SectionLabel } from "@/components/ui/SectionHeader";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/Select";
 import type { ParameterDeclaration } from "@/lib/workflows/schemas";
 import { cn } from "@/lib/ui/cn";
 
@@ -46,7 +54,7 @@ function emptyDeclaration(): ParameterDeclaration {
 // Build the next declaration when the author switches `type`, preserving the
 // common fields and resetting type-specific ones. Constructs the correct variant
 // object per `nextType` so the discriminated union stays sound without casts.
-function changeType(
+export function changeType(
   current: ParameterDeclaration,
   nextType: ParameterType,
 ): ParameterDeclaration {
@@ -164,24 +172,30 @@ export default function ParameterDeclarationEditor({
                 <label className={FIELD_LABEL} htmlFor={`${fieldId}-type`}>
                   Type
                 </label>
-                <select
-                  id={`${fieldId}-type`}
-                  className={FIELD_INPUT}
+                <Select
                   value={param.type}
-                  onChange={(event) => {
+                  onValueChange={(value) => {
                     const nextType = PARAMETER_TYPES.find(
-                      (t) => t.value === event.target.value,
+                      (t) => t.value === value,
                     )?.value;
                     if (nextType === undefined) return;
                     updateAt(index, changeType(param, nextType));
                   }}
                 >
-                  {PARAMETER_TYPES.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger
+                    id={`${fieldId}-type`}
+                    layoutClassName="w-full"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PARAMETER_TYPES.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 
@@ -200,16 +214,18 @@ export default function ParameterDeclarationEditor({
               />
             </div>
 
-            <label className="flex items-center gap-sm text-[0.75rem] text-text-secondary">
-              <input
-                type="checkbox"
+            <div className="flex items-center gap-sm text-[0.75rem] text-text-secondary">
+              <Checkbox
+                id={`${fieldId}-required`}
                 checked={param.required}
-                onChange={(event) =>
-                  updateAt(index, { ...param, required: event.target.checked })
+                onCheckedChange={(next) =>
+                  updateAt(index, { ...param, required: next === true })
                 }
               />
-              Required
-            </label>
+              <label htmlFor={`${fieldId}-required`} className="cursor-pointer">
+                Required
+              </label>
+            </div>
 
             {param.type === "enum" ? (
               <EnumOptionsEditor

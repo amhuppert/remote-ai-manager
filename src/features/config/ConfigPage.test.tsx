@@ -124,7 +124,9 @@ beforeEach(() => {
 });
 
 function selectSettingsTab(name: RegExp | string) {
-  fireEvent.click(screen.getByRole("tab", { name }));
+  // Radix Tabs activate on pointer-down (automatic activation), not on a bare
+  // synthetic click event.
+  fireEvent.mouseDown(screen.getByRole("tab", { name }));
 }
 
 function expandWorkflowDefaults() {
@@ -136,7 +138,7 @@ describe("ConfigPage — Workflow Defaults", () => {
     renderWithQuery(<ConfigPage />);
 
     expect(
-      screen.getByRole("navigation", { name: "Settings" }),
+      screen.getByRole("tablist", { name: "Settings" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /General/i })).toHaveAttribute(
       "aria-selected",
@@ -167,6 +169,51 @@ describe("ConfigPage — Workflow Defaults", () => {
       screen.queryByRole("heading", { name: /General settings/i }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("System Configuration")).not.toBeInTheDocument();
+  });
+
+  it("exposes the settings nav as a vertical Radix tablist", () => {
+    renderWithQuery(<ConfigPage />);
+
+    // Radix promotes the <nav> to role=tablist; aria-label is preserved.
+    const tablist = screen.getByRole("tablist", { name: "Settings" });
+    expect(tablist).toHaveAttribute("data-orientation", "vertical");
+    expect(tablist.tagName).toBe("NAV");
+  });
+
+  it("wires the active section to a role=tabpanel", () => {
+    renderWithQuery(<ConfigPage />);
+
+    const generalTab = screen.getByRole("tab", { name: /General/i });
+    const panel = screen.getByRole("tabpanel");
+    expect(panel).toHaveAttribute(
+      "aria-labelledby",
+      generalTab.getAttribute("id"),
+    );
+    expect(
+      screen.getByRole("heading", { name: /General settings/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("moves selection + DOM focus with ArrowDown and swaps the tabpanel", async () => {
+    const user = userEvent.setup();
+    renderWithQuery(<ConfigPage />);
+
+    const generalTab = screen.getByRole("tab", { name: /General/i });
+    generalTab.focus();
+    expect(generalTab).toHaveFocus();
+
+    await user.keyboard("{ArrowDown}");
+
+    const defaultsTab = screen.getByRole("tab", { name: /Agent defaults/i });
+    expect(defaultsTab).toHaveFocus();
+    expect(defaultsTab).toHaveAttribute("aria-selected", "true");
+    expect(generalTab).toHaveAttribute("aria-selected", "false");
+
+    const panel = screen.getByRole("tabpanel");
+    expect(panel).toHaveAttribute(
+      "aria-labelledby",
+      defaultsTab.getAttribute("id"),
+    );
   });
 
   it("renders config section headers as static chrome instead of expandable controls", () => {

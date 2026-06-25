@@ -12,7 +12,6 @@ import {
   SectionCount,
   SectionActions,
 } from "./SectionHeader";
-import { ModalShell, ModalTitle, ModalActions } from "./ModalShell";
 import { IconButton } from "./IconButton";
 import {
   EmptyState,
@@ -424,67 +423,6 @@ describe("SectionHeader and parts", () => {
       "gap-xs",
       "ml-auto",
     ]);
-  });
-});
-
-describe("ModalShell and parts", () => {
-  it("overlay + default card parity sets; consumer a11y attrs reach the card", () => {
-    const overlay = root(
-      <ModalShell aria-label="Example dialog" role="dialog">
-        body
-      </ModalShell>,
-    );
-    expectAll(overlay, [
-      "fixed",
-      "inset-0",
-      "z-dropdown",
-      "flex",
-      "items-center",
-      "justify-center",
-      "bg-[var(--cc-overlay-scrim)]",
-      "backdrop-blur-[8px]",
-      "animate-[fadeIn_0.15s_ease]",
-    ]);
-
-    const card = overlay.firstElementChild as HTMLElement;
-    // The shell is presentational (parity with legacy `.modal`, which has no
-    // role); a11y semantics are the consumer's and reach the card via rest.
-    expect(card.getAttribute("role")).toBe("dialog");
-    expect(card.getAttribute("aria-label")).toBe("Example dialog");
-    expectAll(card, [
-      "w-full",
-      "bg-bg-surface",
-      "border",
-      "border-border-default",
-      "rounded-lg",
-      "p-xl",
-      "max-w-[480px]",
-      "animate-[slideUp_0.2s_ease]",
-    ]);
-    expect(card.textContent).toBe("body");
-  });
-
-  it("confirm size narrows the card; overlayProps land on the overlay; layoutClassName on the card", () => {
-    const overlay = root(
-      <ModalShell
-        size="confirm"
-        overlayProps={{ "aria-hidden": true }}
-        layoutClassName="max-w-[520px]"
-      >
-        x
-      </ModalShell>,
-    );
-    expect(overlay.getAttribute("aria-hidden")).toBe("true");
-    const card = overlay.firstElementChild as HTMLElement;
-    expectAll(card, ["max-w-[400px]"]);
-    expect(card.className.trim().endsWith("max-w-[520px]")).toBe(true);
-  });
-
-  it("ModalTitle is an h2 with display font; ModalActions right-aligns", () => {
-    const title = root(<ModalTitle>Delete session?</ModalTitle>);
-    expect(title.tagName).toBe("H2");
-    expectAll(title, ["font-display", "font-bold", "text-[1.2rem]", "mb-lg"]);
-    expectAll(root(<ModalActions />), ["flex", "justify-end", "gap-sm"]);
   });
 });
 

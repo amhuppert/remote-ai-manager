@@ -1,7 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
 import { Button } from "@/components/ui/Button";
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from "@/components/ui/Popover";
 import type { SessionListItem } from "@/lib/sessions/schemas";
 import type { FilterToken } from "../components/filter-tokens";
 
@@ -10,13 +15,6 @@ export interface SessionsFilterPopoverProps {
   onTokensChange: (next: FilterToken[]) => void;
   sessions: SessionListItem[];
 }
-
-// The popover menu shadow uses the design-system popovers/menus black drop
-// shadow, exposed as the `shadow-menu` token utility (theme.css → --shadow-menu).
-const MENU_CLASS =
-  "absolute right-0 top-[calc(100%+var(--space-xs))] z-sticky min-w-[220px] p-sm " +
-  "bg-bg-elevated border border-solid border-border-default rounded-md " +
-  "shadow-menu flex flex-col gap-sm";
 
 const GROUP_LABEL_CLASS =
   "font-mono text-[0.66rem] font-semibold tracking-[0.08em] uppercase text-text-tertiary";
@@ -46,18 +44,21 @@ function isActive(
 }
 
 /**
- * Status / target / include-archived toggles for the sessions panel, bound to
- * the shared filter-token state. Toggling a value mutates the same `tokens`
- * array the composer's filter mode writes, so both surfaces stay in sync.
+ * Status / target / include-archived toggles for the sessions panel over the
+ * Radix-backed `Popover` primitive. Radix owns the open/close, outside-click and
+ * Escape dismissal, focus management, and `useOverlayScope` registration —
+ * replacing the previous bespoke `open` state + `mousedown` outside-click
+ * listener. The options are multi-select `aria-pressed` toggle buttons (toggling
+ * one mutates the shared `tokens` array the composer's filter mode writes, so
+ * both surfaces stay in sync); a toggle does not close the panel. Radix's
+ * `PopoverContent` is `role="dialog"` but supplies no accessible name, so an
+ * explicit `aria-label` names the panel.
  */
 export default function SessionsFilterPopover({
   tokens,
   onTokensChange,
   sessions,
 }: SessionsFilterPopoverProps): React.JSX.Element {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement | null>(null);
-
   const statuses = useMemo(
     () => [...new Set(sessions.map((s) => s.derivedStatus))].sort(),
     [sessions],
@@ -67,32 +68,19 @@ export default function SessionsFilterPopover({
     [sessions],
   );
 
-  useEffect(() => {
-    if (!open) return;
-    const onDocClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
-  }, [open]);
-
   return (
-    <div className="relative" ref={ref}>
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        touch
-        aria-haspopup="true"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button type="button" variant="ghost" size="sm" touch>
+          Filter
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        layoutClassName="w-[220px]"
+        aria-label="Session filters"
       >
-        Filter
-      </Button>
-      {open && (
-        <div className={MENU_CLASS} role="menu">
+        <div className="flex flex-col gap-sm">
           <div>
             <div className={GROUP_LABEL_CLASS}>Status</div>
             <div className="flex flex-wrap gap-xs">
@@ -100,8 +88,7 @@ export default function SessionsFilterPopover({
                 <button
                   key={status}
                   type="button"
-                  role="menuitemcheckbox"
-                  aria-checked={isActive(tokens, "status", status)}
+                  aria-pressed={isActive(tokens, "status", status)}
                   data-on={isActive(tokens, "status", status)}
                   className={OPT_CLASS}
                   onClick={() =>
@@ -127,8 +114,7 @@ export default function SessionsFilterPopover({
                 <button
                   key={target}
                   type="button"
-                  role="menuitemcheckbox"
-                  aria-checked={isActive(tokens, "target", target)}
+                  aria-pressed={isActive(tokens, "target", target)}
                   data-on={isActive(tokens, "target", target)}
                   className={OPT_CLASS}
                   onClick={() =>
@@ -152,8 +138,7 @@ export default function SessionsFilterPopover({
             <div className="flex flex-wrap gap-xs">
               <button
                 type="button"
-                role="menuitemcheckbox"
-                aria-checked={isActive(tokens, "archived", "include")}
+                aria-pressed={isActive(tokens, "archived", "include")}
                 data-on={isActive(tokens, "archived", "include")}
                 className={OPT_CLASS}
                 onClick={() =>
@@ -171,7 +156,7 @@ export default function SessionsFilterPopover({
             </div>
           </div>
         </div>
-      )}
-    </div>
+      </PopoverContent>
+    </Popover>
   );
 }

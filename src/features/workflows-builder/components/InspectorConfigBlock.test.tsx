@@ -14,12 +14,12 @@ function getHead(container: HTMLElement): HTMLElement {
   return head as HTMLElement;
 }
 
-function getBody(container: HTMLElement): HTMLElement {
-  const body = container.querySelector<HTMLElement>(
-    "[id^='wb-inspector-block__body--']",
-  );
-  expect(body).not.toBeNull();
-  return body as HTMLElement;
+// The Radix-backed disclosure unmounts the closed region, so the body resolves
+// only while open. Find it via the trigger's aria-controls (absent → collapsed).
+function getBody(container: HTMLElement): HTMLElement | null {
+  const head = getHead(container);
+  const controls = head.getAttribute("aria-controls");
+  return controls ? container.ownerDocument.getElementById(controls) : null;
 }
 
 describe("InspectorConfigBlock", () => {
@@ -66,28 +66,28 @@ describe("InspectorConfigBlock", () => {
       const { container } = render(
         <InspectorConfigBlock {...baseProps} source="global" />,
       );
-      expect(getBody(container).hasAttribute("hidden")).toBe(true);
+      expect(getBody(container)).toBeNull();
     });
 
     it("is collapsed by default when source is workflow", () => {
       const { container } = render(
         <InspectorConfigBlock {...baseProps} source="workflow" />,
       );
-      expect(getBody(container).hasAttribute("hidden")).toBe(true);
+      expect(getBody(container)).toBeNull();
     });
 
     it("is expanded by default when source is context-override", () => {
       const { container } = render(
         <InspectorConfigBlock {...baseProps} source="context-override" />,
       );
-      expect(getBody(container).hasAttribute("hidden")).toBe(false);
+      expect(getBody(container)).not.toBeNull();
     });
 
     it("is expanded by default when source is disabled", () => {
       const { container } = render(
         <InspectorConfigBlock {...baseProps} source="disabled" />,
       );
-      expect(getBody(container).hasAttribute("hidden")).toBe(false);
+      expect(getBody(container)).not.toBeNull();
     });
 
     it("toggles open/closed when the header is clicked", () => {
@@ -95,10 +95,43 @@ describe("InspectorConfigBlock", () => {
         <InspectorConfigBlock {...baseProps} source="global" />,
       );
       const head = getHead(container);
-      const body = getBody(container);
-      expect(body.hasAttribute("hidden")).toBe(true);
+      expect(getBody(container)).toBeNull();
       fireEvent.click(head);
-      expect(body.hasAttribute("hidden")).toBe(false);
+      expect(getBody(container)).not.toBeNull();
+    });
+  });
+
+  describe("Radix Collapsible disclosure wiring", () => {
+    it("keeps the body out of the DOM while collapsed", () => {
+      render(
+        <InspectorConfigBlock {...baseProps} source="global">
+          <span data-testid="cfg-body">body</span>
+        </InspectorConfigBlock>,
+      );
+      // A Radix-backed disclosure unmounts the closed region (not merely hidden).
+      expect(screen.queryByTestId("cfg-body")).toBeNull();
+    });
+
+    it("mounts the body when expanded by default (context-override)", () => {
+      render(
+        <InspectorConfigBlock {...baseProps} source="context-override">
+          <span data-testid="cfg-body">body</span>
+        </InspectorConfigBlock>,
+      );
+      expect(screen.getByTestId("cfg-body")).toBeInTheDocument();
+    });
+
+    it("wires aria-expanded + aria-controls from the header to the region", () => {
+      const { container } = render(
+        <InspectorConfigBlock {...baseProps} source="context-override">
+          <span data-testid="cfg-body">body</span>
+        </InspectorConfigBlock>,
+      );
+      const head = getHead(container);
+      expect(head.getAttribute("aria-expanded")).toBe("true");
+      const controls = head.getAttribute("aria-controls");
+      expect(controls).toBeTruthy();
+      expect(document.getElementById(controls!)).not.toBeNull();
     });
   });
 

@@ -9,6 +9,13 @@ import {
   FormInput,
   FormLabel,
 } from "@/components/ui/FormField";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/Select";
 import { cn } from "@/lib/ui/cn";
 
 export interface WorkflowLaunchFormProps {
@@ -29,9 +36,6 @@ export interface WorkflowLaunchFormProps {
 // same token-backed utilities as the input primitive (no new global CSS).
 const textareaClassName =
   "w-full min-h-[88px] resize-y px-[12px] py-[9px] bg-bg-base border border-solid border-border-default rounded-md text-text-primary font-mono text-[0.82rem] outline-0 transition-[border-color,box-shadow] duration-150 ease-[ease] placeholder:text-text-tertiary hover:border-border-strong focus:border-cyan focus:shadow-[0_0_0_3px_var(--cyan-glow)]";
-
-const selectClassName =
-  "w-full cursor-pointer px-[12px] py-[9px] bg-bg-base border border-solid border-border-default rounded-md text-text-primary font-mono text-[0.82rem] outline-0 transition-[border-color,box-shadow] duration-150 ease-[ease] hover:border-border-strong focus:border-cyan focus:shadow-[0_0_0_3px_var(--cyan-glow)]";
 
 // The initial value an affordance shows: the declared default when present, else
 // empty. Enum without a default falls back to the first option so the select has
@@ -155,20 +159,23 @@ function ParameterField({
         />
       )}
       {parameter.type === "enum" && (
-        <select
-          id={fieldId}
-          className={selectClassName}
-          value={value}
-          aria-invalid={invalid}
-          aria-describedby={describedBy}
-          onChange={(e) => onChange(e.target.value)}
-        >
-          {parameter.options.map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
+        <Select value={value} onValueChange={onChange}>
+          <SelectTrigger
+            id={fieldId}
+            aria-invalid={invalid}
+            aria-describedby={describedBy}
+            layoutClassName="w-full"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {parameter.options.map((option) => (
+              <SelectItem key={option} value={option}>
+                {option}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       )}
       {invalid && error !== null && <FormError id={errorId}>{error}</FormError>}
     </FormGroup>

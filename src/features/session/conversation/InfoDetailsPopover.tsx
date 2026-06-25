@@ -94,6 +94,14 @@ export default function InfoDetailsPopover({
     },
   });
 
+  // Migration deferred (overlay-consumer dispositions): this is a dual-mode
+  // panel — hover-to-peek (open on hover with open/close delays, no focus grab)
+  // plus click-to-pin — which diverges from the Radix `Popover` primitive's
+  // click/focus-managed model (same class of exception as the documented
+  // `PeekPopover` in migration-contract §3). Adopting it would drop the
+  // hover-peek affordance, so the bespoke open/pinned state + outside-click
+  // listener are retained.
+
   const handleEnter = useCallback(() => {
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
     hoverTimer.current = setTimeout(() => setOpen(true), HOVER_OPEN_DELAY_MS);

@@ -101,10 +101,11 @@ describe("CreateSessionModal", () => {
     expect(screen.getByText("Create Session")).toBeInTheDocument();
   });
 
-  it("returns null when open=false", () => {
+  it("renders no dialog when open=false", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} open={false} />);
     expect(screen.queryByText("New Session")).toBeNull();
-    expect(document.getElementById("modal-overlay")).toBeNull();
+    // Radix portals the content only while open, so no dialog is in the DOM.
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("auto-focuses name input in fast mode", () => {
@@ -210,16 +211,19 @@ describe("CreateSessionModal", () => {
   });
 
   it("calls onClose on Escape key press", () => {
+    // Radix's DismissableLayer owns Escape now → onOpenChange(false) → onClose.
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
-    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     expect(defaultProps.onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("does not call onClose when overlay background clicked", () => {
+  it("does not call onClose when an outside interaction occurs", () => {
+    // Radix closes on outside pointer-down by default; this form opts out via
+    // onInteractOutside preventDefault, so a background interaction must NOT close.
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
-    const overlay = document.getElementById("modal-overlay");
-    expect(overlay).not.toBeNull();
-    fireEvent.click(overlay!);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    fireEvent.pointerDown(document.body);
+    fireEvent.click(document.body);
     expect(defaultProps.onClose).not.toHaveBeenCalled();
   });
 

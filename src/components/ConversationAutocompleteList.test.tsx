@@ -79,6 +79,35 @@ describe("ConversationAutocompleteList", () => {
     expect(rows[1]?.getAttribute("data-active")).toBe("true");
   });
 
+  it("gives every option a stable unique id for aria-activedescendant wiring", () => {
+    const items = [
+      makeItem({ id: "a", displayLabel: "first" }),
+      makeItem({ id: "b", displayLabel: "second" }),
+    ];
+    const { container } = render(
+      <ConversationAutocompleteList
+        items={items}
+        selectedIndex={0}
+        onHover={NO_OP}
+        onSelect={NO_OP}
+        totalCount={2}
+        loading={false}
+        error={null}
+        includeArchived={false}
+        onToggleArchived={NO_OP}
+      />,
+    );
+
+    const ids = Array.from(container.querySelectorAll('[role="option"]')).map(
+      (o) => o.getAttribute("id"),
+    );
+    expect(ids).toHaveLength(items.length);
+    expect(ids.every((id) => typeof id === "string" && id.length > 0)).toBe(
+      true,
+    );
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
   it("invokes onSelect when a row is clicked", () => {
     const items = [makeItem({ id: "a" })];
     const onSelect = vi.fn();

@@ -54,6 +54,17 @@ export default function McpServersModal({
 
   useOverlayScope(open);
 
+  // Migration deferred (primitive-migration contract §1 / overlay-consumer
+  // dispositions): the shipped `ui/Dialog` primitive's `DialogContent` bakes the
+  // standard padded, centred card recipe (`p-xl`, max-w 480, motion). This modal
+  // is a borderless `p-0 flex flex-col overflow-hidden` scrollable card with a
+  // full-bleed sticky bordered header + a ≤640px full-screen variant — a box
+  // model `DialogContent` does not model, so adopting it would change the
+  // appearance and fail the parity criterion. Migrating cleanly requires a future
+  // unstyled-content escape hatch on the Dialog primitive (out of this
+  // consumer-migration context's scope); the Radix focus-trap/scroll-lock win is
+  // worth that follow-up. Until then the bespoke keydown/outside-click stays.
+
   if (!open || typeof document === "undefined") return null;
 
   const total = servers.length;
@@ -69,11 +80,11 @@ export default function McpServersModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      {/* Self-contained modal card: reproduces the shared `.modal` desktop
+      {/* Self-contained modal card: reproduces the standard CC modal-card
           appearance plus this modal's 720px / padding-0 / flex-column box model
-          and the ≤768px bottom-sheet / ≤640px full-screen behaviour as
-          utilities, so it carries no legacy class. ModalShell is not used: it
-          reproduces only the desktop `.modal` recipe and not the mobile sheet. */}
+          and the ≤768px bottom-sheet / ≤640px full-screen behaviour as utilities.
+          The fixed `DialogContent` recipe cannot host this box model (see above),
+          so the card is hand-rolled until the unstyled-content escape hatch lands. */}
       <div
         className="flex max-h-[min(800px,calc(100vh-4rem))] w-[min(720px,calc(100vw-2rem))] max-w-[480px] animate-[slideUp_0.2s_ease] flex-col overflow-hidden rounded-[var(--radius-lg)] border border-solid border-border-default bg-bg-surface max-640:h-screen max-640:max-h-screen max-640:w-screen max-640:rounded-none max-768:max-w-full max-768:animate-[slideUpSheet_0.25s_ease] max-768:rounded-b-none"
         role="dialog"

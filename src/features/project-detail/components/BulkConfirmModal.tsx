@@ -1,8 +1,15 @@
 "use client";
 
-import { useEffect } from "react";
-import { Button } from "@/components/ui/Button";
-import { useOverlayScope } from "@/hooks/useOverlayScope";
+import { useRef } from "react";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogActions,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from "@/components/ui/AlertDialog";
 
 export type BulkConfirmKind = "archive" | "unarchive" | "delete";
 
@@ -48,6 +55,16 @@ function buildCopy(kind: BulkConfirmKind, count: number): Copy {
   };
 }
 
+/**
+ * Controlled bulk archive/unarchive/delete confirm over the Radix-backed
+ * `AlertDialog` primitive. Radix owns role=alertdialog, focus trap + return,
+ * Escape dismissal, the inert background, and `useOverlayScope` registration —
+ * replacing the previous hand-rolled capture-phase Escape listener. The confirm
+ * Action and the Cancel/Escape paths both close via `onOpenChange(false)`, so a
+ * ref flag keeps `onConfirm` and `onClose` single-fire. While `isPending` the
+ * parent keeps `open` true, so Radix's close request after confirm is declined
+ * and the dialog stays visible showing the disabled, in-flight state.
+ */
 export default function BulkConfirmModal({
   open,
   kind,
@@ -55,58 +72,39 @@ export default function BulkConfirmModal({
   isPending,
   onConfirm,
   onClose,
-}: BulkConfirmModalProps): React.JSX.Element | null {
-  useEffect(() => {
-    if (!open) return;
-    const handleKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") {
-        onClose();
-      }
-    };
-    document.addEventListener("keydown", handleKeyDown, true);
-    return () => document.removeEventListener("keydown", handleKeyDown, true);
-  }, [open, onClose]);
-
-  useOverlayScope(open);
-
-  if (!open) return null;
-
+}: BulkConfirmModalProps): React.JSX.Element {
+  const confirmedRef = useRef(false);
   const copy = buildCopy(kind, count);
 
   return (
-    <div
-      className="fixed inset-0 z-dropdown flex animate-[fadeIn_0.15s_ease] items-center justify-center bg-[var(--cc-overlay-scrim)] backdrop-blur-[8px] max-768:items-end"
-      data-testid="bulk-confirm-overlay"
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        if (next) return;
+        if (confirmedRef.current) {
+          confirmedRef.current = false;
+          onConfirm();
+        } else {
+          onClose();
+        }
+      }}
     >
-      <div className="w-full max-w-[400px] animate-[slideUp_0.2s_ease] rounded-lg border border-solid border-border-default bg-bg-surface p-xl max-768:max-w-full max-768:animate-[slideUpSheet_0.25s_ease] max-768:rounded-b-none max-768:px-md max-768:py-lg max-768:pb-[calc(var(--space-lg)+env(safe-area-inset-bottom,0))]">
-        <h2 className="mb-lg font-display text-[1.2rem] font-bold">
-          {copy.title}
-        </h2>
-        <p className="mb-lg font-mono text-[0.82rem] leading-[1.55] text-text-secondary">
-          {copy.body}
-        </p>
-        <div className="flex justify-end gap-sm">
-          <Button
-            variant="default"
-            size="sm"
-            touch
-            onClick={onClose}
+      <AlertDialogContent>
+        <AlertDialogTitle>{copy.title}</AlertDialogTitle>
+        <AlertDialogDescription>{copy.body}</AlertDialogDescription>
+        <AlertDialogActions>
+          <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            danger={copy.danger}
             disabled={isPending}
-          >
-            Cancel
-          </Button>
-          <Button
-            autoFocus
-            variant={copy.danger ? "danger" : "primary"}
-            size="sm"
-            touch
-            onClick={onConfirm}
-            disabled={isPending}
+            onClick={() => {
+              confirmedRef.current = true;
+            }}
           >
             {copy.primary}
-          </Button>
-        </div>
-      </div>
-    </div>
+          </AlertDialogAction>
+        </AlertDialogActions>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

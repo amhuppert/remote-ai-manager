@@ -7,7 +7,6 @@ import { conversationsPageHref } from "@/lib/conversations/hrefs";
 import { useSessionsQuery } from "@/lib/sessions/queries";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
-import { useOverlayScope } from "@/hooks/useOverlayScope";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
 import { FileAutocomplete } from "@/components/FileAutocomplete";
 import BranchSelector from "@/components/BranchSelector";
@@ -17,7 +16,12 @@ import { useFileAutocomplete } from "@/hooks/use-file-autocomplete";
 import { useBranchFromParent } from "@/stores/sessions.store";
 import TddToggle from "@/components/TddToggle";
 import { Button } from "@/components/ui/Button";
-import { ModalTitle, ModalActions } from "@/components/ui/ModalShell";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogActions,
+} from "@/components/ui/Dialog";
 import {
   FormGroup,
   FormLabel,
@@ -67,7 +71,7 @@ export default function CreateSessionModal({
   projectName,
   open,
   onClose,
-}: CreateSessionModalProps): React.JSX.Element | null {
+}: CreateSessionModalProps): React.JSX.Element {
   const router = useRouter();
   const branchFromParent = useBranchFromParent();
   const [mode, setMode] = useState<SessionCreationMode>("fast");
@@ -83,6 +87,7 @@ export default function CreateSessionModal({
   const nameInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
   const objectiveRef = useRef(objective);
   const instructionsRef = useRef(instructions);
   const fireAndForgetRef = useRef(false);
@@ -193,8 +198,6 @@ export default function CreateSessionModal({
     },
   );
 
-  useOverlayScope(open);
-
   // Reset state when modal opens (state-during-render pattern)
   const [prevOpen, setPrevOpen] = useState(false);
   if (open !== prevOpen) {
@@ -212,29 +215,23 @@ export default function CreateSessionModal({
     }
   }
 
-  // Focus the appropriate input when modal opens or mode changes
+  // Focus the name input (fast) or the objective/instructions textarea
+  // (focus/optimistic). Initial focus is driven synchronously from the Dialog's
+  // `onOpenAutoFocus`; this effect re-focuses when the mode changes while open.
+  const focusActiveField = useCallback(() => {
+    if (mode === "fast") {
+      nameInputRef.current?.focus();
+    } else {
+      textareaRef.current?.focus();
+    }
+  }, [mode]);
+
   useEffect(() => {
     if (open) {
-      const timer = setTimeout(() => {
-        if (mode === "fast") {
-          nameInputRef.current?.focus();
-        } else {
-          textareaRef.current?.focus();
-        }
-      }, 100);
+      const timer = setTimeout(focusActiveField, 100);
       return () => clearTimeout(timer);
     }
-  }, [open, mode]);
-
-  // Close on Escape
-  useEffect(() => {
-    if (!open) return;
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    document.addEventListener("keydown", handleKey);
-    return () => document.removeEventListener("keydown", handleKey);
-  }, [open, onClose]);
+  }, [open, focusActiveField]);
 
   const hasImages = pendingImages.length > 0;
   const canSubmit =
@@ -313,8 +310,6 @@ export default function CreateSessionModal({
     }
   });
 
-  if (!open) return null;
-
   const textareaValue = mode === "optimistic" ? instructions : objective;
   const setTextareaValue =
     mode === "optimistic" ? setInstructions : setObjective;
@@ -333,19 +328,44 @@ export default function CreateSessionModal({
       : "Agent will research the codebase and clarify the objective first";
 
   return (
-    // ESCAPE HATCH (charter): the modal shell stays on the legacy `.modal-overlay` /
-    // `.modal` recipes rather than `<ModalShell>`. ModalShell is desktop-only — the
-    // mobile bottom-sheet (overlay `align-items: flex-end` + the card's square bottom
-    // corners, lg/md padding, and `slideUpSheet` entry; globals.css @media ≤768px)
-    // cannot be re-homed: ModalShell exposes no overlay className, and `layoutClassName`
-    // is layout-only (radius/padding/animation are appearance the primitive owns).
-    // Modifying ModalShell is outside this slice's ownership. Swapping regresses the
-    // mobile sheet to a centered card, so the shell is left on its leaf class; the
-    // title, actions, form fields, and buttons inside stay migrated. Integration: keep
-    // `.modal-overlay`/`.modal` until a ModalShell mobile-sheet variant lands.
-    <div className="modal-overlay" id="modal-overlay">
-      <div className="modal">
-        <ModalTitle>New Session</ModalTitle>
+    // Radix `Dialog` (WAI-ARIA Dialog Modal) owns the focus trap, Escape
+    // dismissal, the inert background, and `useOverlayScope` registration.
+    // `mobileSheet` reproduces the legacy `.modal` ≤768px bottom-sheet.
+    // `onOpenAutoFocus`/`onCloseAutoFocus` take over initial focus (the active
+    // field) and focus-return (see below), and `onInteractOutside` is suppressed
+    // so an outside click never dismisses this session-creation form (parity with
+    // the legacy non-dismissing overlay). The in-form `FileAutocomplete` renders
+    // inline, inside the trap.
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+    >
+      <DialogContent
+        mobileSheet
+        onOpenAutoFocus={(event) => {
+          // Move focus into the active field synchronously instead of Radix's
+          // default first-tabbable. Capture the element to restore on close
+          // here: this modal opens from the sessions store (not a Radix
+          // `DialogTrigger`), so Radix's own focus-return target has already
+          // blurred to <body> by the time its FocusScope mounts.
+          event.preventDefault();
+          const active = document.activeElement;
+          restoreFocusRef.current =
+            active instanceof HTMLElement ? active : null;
+          focusActiveField();
+        }}
+        onCloseAutoFocus={(event) => {
+          const target = restoreFocusRef.current;
+          if (target?.isConnected) {
+            event.preventDefault();
+            target.focus();
+          }
+        }}
+        onInteractOutside={(event) => event.preventDefault()}
+      >
+        <DialogTitle>New Session</DialogTitle>
         <FormGroup>
           <div className="mt-sm flex gap-[2px] rounded-md border border-solid border-border-subtle bg-bg-surface p-[3px]">
             <button
@@ -579,7 +599,7 @@ export default function CreateSessionModal({
             disabled={createMutation.isPending}
           />
         </FormGroup>
-        <ModalActions>
+        <DialogActions>
           <Button
             size="sm"
             touch
@@ -597,8 +617,8 @@ export default function CreateSessionModal({
           >
             {createMutation.isPending ? "Creating..." : "Create Session"}
           </Button>
-        </ModalActions>
-      </div>
-    </div>
+        </DialogActions>
+      </DialogContent>
+    </Dialog>
   );
 }

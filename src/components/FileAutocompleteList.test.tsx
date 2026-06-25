@@ -66,6 +66,25 @@ describe("FileAutocompleteList", () => {
     expect(onSelect).toHaveBeenCalledWith(items[1]);
   });
 
+  it("gives every option a stable unique id for aria-activedescendant wiring", () => {
+    const { container } = render(
+      <FileAutocompleteList
+        items={items}
+        selectedIndex={0}
+        onHover={() => {}}
+        onSelect={() => {}}
+      />,
+    );
+    const ids = Array.from(container.querySelectorAll('[role="option"]')).map(
+      (o) => o.getAttribute("id"),
+    );
+    expect(ids).toHaveLength(items.length);
+    expect(ids.every((id) => typeof id === "string" && id.length > 0)).toBe(
+      true,
+    );
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
   it("renders empty label when items is empty", () => {
     render(
       <FileAutocompleteList

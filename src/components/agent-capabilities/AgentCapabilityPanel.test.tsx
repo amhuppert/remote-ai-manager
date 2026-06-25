@@ -168,12 +168,13 @@ describe("AgentCapabilityPanel", () => {
     expect(
       screen.getByRole("button", { name: /Conversation/i }),
     ).toHaveAttribute("aria-pressed", "true");
-    expect(
-      screen.getByRole("button", { name: "Show all" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Show all" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
     expect(screen.getByText("All")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Show overridden" }),
+      screen.getByRole("radio", { name: "Show overridden" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Overridden")).toBeInTheDocument();
   });
@@ -233,8 +234,8 @@ describe("AgentCapabilityPanel", () => {
       }),
     ).toHaveTextContent("Off via plugin · planning-pack");
     expect(
-      within(planner).getByRole("button", { name: "Disable Planner" }),
-    ).toHaveAttribute("aria-pressed", "true");
+      within(planner).getByRole("switch", { name: "Disable Planner" }),
+    ).toHaveAttribute("aria-checked", "true");
     expect(
       within(planner).getByText("Disabled by planning-pack."),
     ).toBeInTheDocument();
@@ -447,7 +448,7 @@ describe("AgentCapabilityPanel", () => {
 
     const reviewer = screen.getByTestId("capability-row-reviewer");
     fireEvent.click(
-      within(reviewer).getByRole("button", { name: "Enable Reviewer" }),
+      within(reviewer).getByRole("switch", { name: "Enable Reviewer" }),
     );
     fireEvent.click(
       within(reviewer).getByRole("button", { name: "Reset Reviewer" }),
@@ -489,7 +490,7 @@ describe("AgentCapabilityPanel", () => {
 
     const legacy = screen.getByTestId("capability-row-legacy");
     expect(within(legacy).getByText("Stale")).toBeInTheDocument();
-    const disableButton = within(legacy).getByRole("button", {
+    const disableButton = within(legacy).getByRole("switch", {
       name: "Disable legacy",
     });
     expect(disableButton).not.toBeDisabled();
@@ -596,10 +597,10 @@ describe("AgentCapabilityPanel", () => {
       within(row).getByText("Runtime emission is not verified."),
     ).toBeInTheDocument();
     expect(
-      within(row).getByRole("button", { name: "Enable Codex Plugin A" }),
+      within(row).getByRole("switch", { name: "Enable Codex Plugin A" }),
     ).toBeDisabled();
     fireEvent.click(
-      within(row).getByRole("button", { name: "Enable Codex Plugin A" }),
+      within(row).getByRole("switch", { name: "Enable Codex Plugin A" }),
     );
     expect(onToggleItem).not.toHaveBeenCalled();
   });

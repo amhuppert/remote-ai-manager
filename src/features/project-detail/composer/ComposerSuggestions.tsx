@@ -46,6 +46,7 @@ export default function ComposerSuggestions({
               </div>
             )}
             <div
+              id={`composer-suggestion-option-${index}`}
               role="option"
               aria-selected={index === activeIndex}
               data-active={index === activeIndex}

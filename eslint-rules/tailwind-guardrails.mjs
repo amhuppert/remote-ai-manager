@@ -61,6 +61,7 @@ const LAYOUT_ALLOWED = [
   "w",
   "min-w",
   "max-w",
+  "min-h",
   "basis",
   "grow",
   "shrink",
@@ -68,11 +69,23 @@ const LAYOUT_ALLOWED = [
   "overflow",
 ];
 
-/** Strip leading (bracket-free) variant prefixes and a negative sign → base token core. */
+/** A single leading variant prefix segment ending in `:`. Covers the simple form
+ *  (`hover:` / `max-768:` / `sm:`), the bracketed-condition form
+ *  (`data-[state=open]:` / `aria-[expanded]:` / `supports-[…]:` / `group-data-[…]:`),
+ *  and the arbitrary-variant form (`[&>svg]:`). The trailing `:` after a `]` is
+ *  what distinguishes a bracketed VARIANT from an arbitrary-VALUE utility like
+ *  `[display:contents]` (whose colon sits inside the brackets, with no `]:`), so
+ *  the latter is never mistaken for a prefix. */
+const VARIANT_PREFIX = /^(?:[a-zA-Z0-9_-]+(?:-\[[^\]]*\])?|\[[^\]]*\]):/;
+
+/** Strip leading variant prefixes (incl. bracketed `data-[…]:` conditions) and a
+ *  negative sign → base token core. */
 function stripVariants(token) {
-  // remove `hover:` / `max-768:` / `sm:` style prefixes (no brackets)
-  const noVariants = token.replace(/^(?:[a-zA-Z0-9_-]+:)+/, "");
-  return noVariants.replace(/^-/, "");
+  let core = token;
+  while (VARIANT_PREFIX.test(core)) {
+    core = core.replace(VARIANT_PREFIX, "");
+  }
+  return core.replace(/^-/, "");
 }
 
 /** True iff a layoutClassName token is an allowed external-geometry utility. */
@@ -88,6 +101,13 @@ function isLayoutUtility(token) {
   // responsive grid/flow at a breakpoint) is a layout-flow concern, not appearance
   // (the §2 appearance list is color/bg/border/radius/shadow/opacity/padding).
   if (core === "hidden") return true;
+  // `display:contents` makes a wrapper layout-transparent: its box is removed and
+  // its children participate directly in the grandparent's flex/grid flow. This is
+  // a pure layout-flow concern (no box, no appearance) — used when a primitive that
+  // must wrap children only for React context (e.g. Tabs.Root) should not introduce
+  // a layout box of its own. The arbitrary form starts with `[` so the prefix list
+  // below cannot match it.
+  if (core === "[display:contents]") return true;
   // Overflow-clipping text truncation (`truncate` = overflow-hidden + ellipsis +
   // nowrap; or the `text-ellipsis`/`text-clip` overflow modes) is how a parent
   // constrains a flex/grid child's content to its allotted box — a flow/clipping
@@ -338,7 +358,7 @@ const noAppearanceInLayoutClassName = {
     },
     messages: {
       appearance:
-        "layoutClassName accepts external-geometry utilities only (margin, grid/flex placement incl. [grid-area:…], order, self-align, width/basis/flex sizing, overflow clipping + text truncation, responsive display `hidden`). '{{cls}}' is not on the layout allowlist — the primitive owns appearance (docs/tailwind-conventions.md §2).",
+        "layoutClassName accepts external-geometry utilities only (margin, grid/flex placement incl. [grid-area:…], order, self-align, width/height/basis/flex sizing, overflow clipping + text truncation, responsive/state display `hidden`/`flex`). '{{cls}}' is not on the layout allowlist — the primitive owns appearance (docs/tailwind-conventions.md §2).",
     },
     schema: [],
   },

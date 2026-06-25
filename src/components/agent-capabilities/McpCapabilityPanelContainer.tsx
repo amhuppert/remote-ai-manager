@@ -14,6 +14,11 @@ import { adaptServerViewsForLevel } from "@/components/mcp/view-adapter";
 import { useMcpActions } from "@/components/mcp/use-mcp-actions";
 import type { McpServerView, McpToolView } from "@/components/mcp/types";
 import { Button } from "@/components/ui/Button";
+import {
+  SegmentedControl,
+  SegmentedControlItem,
+} from "@/components/ui/SegmentedControl";
+import { Switch } from "@/components/ui/Switch";
 import { cn } from "@/lib/ui/cn";
 
 import type { AgentCapabilityLayerOption } from "./AgentCapabilityPanel";
@@ -150,25 +155,25 @@ export function McpCapabilityPanelContainer({
             className="min-h-[34px] w-full rounded-md border-0 bg-transparent px-[8px] py-[6px] font-mono text-[0.76rem] tracking-normal text-text-primary normal-case outline-0 placeholder:text-text-tertiary"
           />
         </label>
-        <div className="flex flex-wrap items-center gap-[2px] rounded-md border border-solid border-border-subtle bg-bg-base p-[2px]">
+        <SegmentedControl
+          aria-label="Filter MCP servers"
+          value={filter}
+          onValueChange={(next) => {
+            const match = MCP_FILTERS.find((item) => item.key === next);
+            if (match) setFilter(match.key);
+          }}
+          layoutClassName="flex-wrap"
+        >
           {MCP_FILTERS.map((item) => (
-            <button
+            <SegmentedControlItem
               key={item.key}
-              type="button"
-              className={cn(
-                "inline-flex min-h-[24px] cursor-pointer items-center gap-[6px] rounded-sm border-0 bg-transparent px-[9px] py-[4px] font-mono text-[0.7rem] font-medium transition-all duration-150 hover:text-text-primary",
-                filter === item.key
-                  ? "bg-bg-raised text-cyan"
-                  : "text-text-secondary",
-              )}
+              value={item.key}
               aria-label={item.ariaLabel}
-              aria-pressed={filter === item.key}
-              onClick={() => setFilter(item.key)}
             >
               {item.label}
-            </button>
+            </SegmentedControlItem>
           ))}
-        </div>
+        </SegmentedControl>
         <div className="ml-auto font-mono text-[0.7rem] whitespace-nowrap text-text-tertiary">
           {scopeLabel(mcpScope)}
         </div>
@@ -314,27 +319,13 @@ function McpCapabilityRow({
             Reset
           </Button>
         ) : null}
-        <button
-          type="button"
-          className={cn(
-            SWITCH_BASE,
-            "h-[18px] w-[34px]",
-            server.enabled ? SWITCH_ON : SWITCH_OFF,
-          )}
-          aria-pressed={server.enabled}
+        <Switch
+          size="md"
+          tone="cyan"
+          checked={server.enabled}
           aria-label={`${server.enabled ? "Disable" : "Enable"} ${server.name}`}
-          onClick={() => onToggle(!server.enabled)}
-        >
-          <span
-            className={cn(
-              SWITCH_KNOB,
-              "h-[14px] w-[14px]",
-              server.enabled
-                ? "translate-x-[16px] bg-text-inverse"
-                : "bg-text-tertiary",
-            )}
-          />
-        </button>
+          onCheckedChange={(next) => onToggle(next)}
+        />
       </div>
 
       {expanded ? (

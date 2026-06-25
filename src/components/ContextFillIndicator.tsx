@@ -1,3 +1,5 @@
+import { Progress } from "@/components/ui/Progress";
+
 type FillLevel = "normal" | "warning" | "danger";
 
 interface ContextFillIndicatorProps {
@@ -23,17 +25,16 @@ const labelClass =
   "text-text-tertiary font-semibold uppercase tracking-[0.06em] text-[0.7rem] shrink-0 " +
   "max-768:[.mobile-context-fill_&]:hidden";
 
-const trackClass =
-  "w-[60px] h-[4px] bg-bg-base rounded-[2px] overflow-hidden shrink-0 " +
-  "max-768:[.mobile-context-fill_&]:flex-1 max-768:[.mobile-context-fill_&]:w-auto";
+// Outer track geometry — appearance (height, fill, glow) is the Progress recipe.
+// The responsive `.mobile-context-fill` overrides live on this wrapper (feature
+// code), so the primitive only receives plain `w-full` for its layoutClassName.
+const trackWrapClass =
+  "w-[60px] shrink-0 max-768:[.mobile-context-fill_&]:flex-1 max-768:[.mobile-context-fill_&]:w-auto";
 
-const fillBase =
-  "h-full rounded-[2px] [transition:width_0.4s_ease,background_0.3s_ease,box-shadow_0.3s_ease]";
-
-const fillLevel: Record<FillLevel, string> = {
-  normal: "bg-cyan [box-shadow:0_0_6px_var(--cyan-glow-strong)]",
-  warning: "bg-amber [box-shadow:0_0_6px_var(--amber-glow)]",
-  danger: "bg-red [box-shadow:0_0_6px_var(--red-glow)]",
+const fillTone: Record<FillLevel, "accent" | "warning" | "danger"> = {
+  normal: "accent",
+  warning: "warning",
+  danger: "danger",
 };
 
 const pctBase =
@@ -54,10 +55,12 @@ export function ContextFillIndicator({
   return (
     <div className={rootClass}>
       <span className={labelClass}>Context</span>
-      <div className={trackClass}>
-        <div
-          className={`${fillBase} ${fillLevel[level]}`}
-          style={{ width: `${clamped}%` }}
+      <div className={trackWrapClass}>
+        <Progress
+          value={clamped}
+          tone={fillTone[level]}
+          layoutClassName="w-full"
+          aria-label={`Context window ${clamped}% full`}
         />
       </div>
       <span className={`${pctBase} ${pctLevel[level]}`}>{clamped}%</span>

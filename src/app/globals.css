@@ -441,45 +441,6 @@
 }
 
 /* ============================================================
-   Modals
-   ============================================================ */
-
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 200;
-  background: rgba(6, 9, 15, 0.8);
-  backdrop-filter: blur(8px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  animation: fadeIn 0.15s ease;
-}
-
-.modal {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-lg);
-  padding: var(--space-xl);
-  width: 100%;
-  max-width: 480px;
-  animation: slideUp 0.2s ease;
-}
-
-.modal-title {
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 1.2rem;
-  margin-bottom: var(--space-lg);
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-sm);
-}
-
-/* ============================================================
    Toast slide animations
    ============================================================ */
 
@@ -1142,20 +1103,6 @@
 
   .btn-danger.btn-sm {
     min-height: 44px;
-  }
-
-  /* ---- Modal bottom-sheet on mobile ---- */
-
-  .modal-overlay {
-    align-items: flex-end;
-  }
-
-  .modal {
-    max-width: 100%;
-    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-    padding: var(--space-lg) var(--space-md);
-    padding-bottom: calc(var(--space-lg) + env(safe-area-inset-bottom, 0));
-    animation: slideUpSheet 0.25s ease;
   }
 
   /* ---- Bottom bar: horizontal scroll for tabs when many ---- */

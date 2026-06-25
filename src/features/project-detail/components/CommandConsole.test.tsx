@@ -228,4 +228,97 @@ describe("CommandConsole", () => {
     fireEvent.keyDown(document.body, { key: "Escape" });
     expect(props.onBlur).not.toHaveBeenCalled();
   });
+
+  describe("combobox / listbox ARIA", () => {
+    const twoSuggestions: Suggestion[] = [
+      {
+        kind: "action",
+        id: "new",
+        label: "/new — Create new session",
+        grp: "Actions",
+      },
+      {
+        kind: "filter",
+        cat: "status",
+        key: "is",
+        value: "running",
+        label: "is:running · 0",
+        grp: "Filter",
+      },
+    ];
+
+    it("exposes the open suggestion list as a listbox of options", () => {
+      render(
+        <CommandConsole {...defaults()} suggestions={twoSuggestions} focused />,
+      );
+      expect(screen.getByRole("listbox")).toBeInTheDocument();
+      expect(screen.getAllByRole("option")).toHaveLength(2);
+    });
+
+    it("keeps grouped headings as labelled groups, not options", () => {
+      render(
+        <CommandConsole {...defaults()} suggestions={twoSuggestions} focused />,
+      );
+      // Grouped headings survive and name their groups (APG: listbox children
+      // are option/group only — the heading is the group's accessible name).
+      expect(
+        screen.getByRole("group", { name: "Actions" }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("group", { name: "Filter" })).toBeInTheDocument();
+    });
+
+    it("marks the active option aria-selected and wires aria-activedescendant", () => {
+      render(
+        <CommandConsole {...defaults()} suggestions={twoSuggestions} focused />,
+      );
+      const options = screen.getAllByRole("option");
+      expect(options[0]).toHaveAttribute("aria-selected", "true");
+      expect(options[1]).toHaveAttribute("aria-selected", "false");
+
+      const activeId = options[0]?.getAttribute("id");
+      expect(activeId).toBeTruthy();
+      expect(screen.getByRole("combobox")).toHaveAttribute(
+        "aria-activedescendant",
+        activeId,
+      );
+    });
+
+    it("moves aria-selected and aria-activedescendant with ArrowDown", () => {
+      render(
+        <CommandConsole {...defaults()} suggestions={twoSuggestions} focused />,
+      );
+      fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
+      const options = screen.getAllByRole("option");
+      expect(options[1]).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("combobox")).toHaveAttribute(
+        "aria-activedescendant",
+        options[1]?.getAttribute("id") ?? "",
+      );
+    });
+
+    it("clears aria-activedescendant when the list is closed", () => {
+      render(
+        <CommandConsole
+          {...defaults()}
+          suggestions={twoSuggestions}
+          focused={false}
+        />,
+      );
+      expect(screen.getByRole("combobox")).not.toHaveAttribute(
+        "aria-activedescendant",
+      );
+    });
+
+    it("still applies the active suggestion on Enter and on click", () => {
+      const props = defaults();
+      render(
+        <CommandConsole {...props} suggestions={twoSuggestions} focused />,
+      );
+      fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
+      expect(props.onApply).toHaveBeenCalledWith(twoSuggestions[0]);
+
+      fireEvent.click(screen.getByText("/new — Create new session"));
+      expect(props.onApply).toHaveBeenCalledWith(twoSuggestions[0]);
+    });
+  });
 });

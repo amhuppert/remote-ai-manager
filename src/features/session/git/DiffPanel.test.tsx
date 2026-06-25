@@ -54,9 +54,10 @@ const sampleDiff: SessionDiff = {
 describe("DiffPanel", () => {
   it("renders empty state when no diff files (Req 5.6)", () => {
     render(<DiffPanel diff={emptyDiff} />);
-    // With no diff files, DiffPanel defaults to "Commits" tab
-    // Click the "Uncommitted" tab to see the empty diff state
-    fireEvent.click(screen.getByText("Uncommitted"));
+    // With no diff files, DiffPanel defaults to "Commits" tab.
+    // Activate the "Uncommitted" tab to see the empty diff state. Radix
+    // Tabs.Trigger activates on mousedown/focus, not on a bare synthetic click.
+    fireEvent.mouseDown(screen.getByText("Uncommitted"));
     expect(screen.getByText("No changes")).toBeInTheDocument();
     expect(
       screen.getByText("This session has no uncommitted changes."),

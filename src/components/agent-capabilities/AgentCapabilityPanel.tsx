@@ -12,6 +12,11 @@ import type {
 } from "@/lib/agent-capabilities/schemas";
 import type { AgentCapabilityScope } from "@/hooks/use-agent-capabilities";
 import { Button } from "@/components/ui/Button";
+import {
+  SegmentedControl,
+  SegmentedControlItem,
+} from "@/components/ui/SegmentedControl";
+import { Switch } from "@/components/ui/Switch";
 import { cn } from "@/lib/ui/cn";
 
 export interface AgentCapabilityLayerOption {
@@ -72,14 +77,6 @@ const SR_ONLY =
 
 // Shared by every detail span (including the chips) so long content wraps inside the row.
 const DETAILS_SPAN = "min-w-0 [overflow-wrap:anywhere]";
-
-// Toggle switch shared by the row controls; size and knob are set per use.
-const SWITCH_BASE =
-  "relative flex-none cursor-pointer rounded-full border border-solid transition-all duration-150";
-const SWITCH_ON = "border-cyan bg-cyan shadow-[0_0_12px_var(--cyan-glow)]";
-const SWITCH_OFF = "border-border-default bg-bg-base";
-const SWITCH_KNOB =
-  "absolute left-px top-px rounded-full transition-[transform,background] duration-150";
 
 // Base styling shared by the inheritance, status, and plugin chips.
 const CHIP_BASE =
@@ -200,25 +197,25 @@ export function AgentCapabilityPanel({
             className="min-h-[34px] w-full rounded-md border-0 bg-transparent px-[8px] py-[6px] font-mono text-[0.76rem] tracking-normal text-text-primary normal-case outline-0 placeholder:text-text-tertiary"
           />
         </label>
-        <div className="flex flex-wrap items-center gap-[2px] rounded-md border border-solid border-border-subtle bg-bg-base p-[2px]">
+        <SegmentedControl
+          aria-label={`Filter ${title}`}
+          value={activeFilter}
+          onValueChange={(next) => {
+            const match = FILTERS.find((filter) => filter.key === next);
+            if (match) setActiveFilter(match.key);
+          }}
+          layoutClassName="flex-wrap"
+        >
           {FILTERS.map((filter) => (
-            <button
+            <SegmentedControlItem
               key={filter.key}
-              type="button"
-              className={cn(
-                "inline-flex min-h-[24px] cursor-pointer items-center gap-[6px] rounded-sm border-0 bg-transparent px-[9px] py-[4px] font-mono text-[0.7rem] font-medium transition-all duration-150 hover:text-text-primary",
-                activeFilter === filter.key
-                  ? "bg-bg-raised text-cyan"
-                  : "text-text-secondary",
-              )}
+              value={filter.key}
               aria-label={filter.ariaLabel}
-              aria-pressed={activeFilter === filter.key}
-              onClick={() => setActiveFilter(filter.key)}
             >
               {filter.label}
-            </button>
+            </SegmentedControlItem>
           ))}
-        </div>
+        </SegmentedControl>
         <div className="ml-auto font-mono text-[0.7rem] whitespace-nowrap text-text-tertiary">
           {selectedOption?.label ?? levelLabel(selectedScope.level)}
         </div>
@@ -468,28 +465,14 @@ function CapabilityRow({
 
       {onToggleItem || onResetItem ? (
         <div className="flex flex-wrap items-center justify-end gap-sm">
-          <button
-            type="button"
-            className={cn(
-              SWITCH_BASE,
-              "h-[18px] w-[34px] disabled:cursor-not-allowed disabled:opacity-45",
-              switchEnabled ? SWITCH_ON : SWITCH_OFF,
-            )}
-            aria-pressed={switchEnabled}
-            aria-label={`${switchEnabled ? "Disable" : "Enable"} ${row.displayName}`}
+          <Switch
+            size="md"
+            tone="cyan"
+            checked={switchEnabled}
             disabled={controlsDisabled || !onToggleItem}
-            onClick={() => onToggleItem?.(row.itemId, !switchEnabled)}
-          >
-            <span
-              className={cn(
-                SWITCH_KNOB,
-                "h-[14px] w-[14px]",
-                switchEnabled
-                  ? "translate-x-[16px] bg-text-inverse"
-                  : "bg-text-tertiary",
-              )}
-            />
-          </button>
+            aria-label={`${switchEnabled ? "Disable" : "Enable"} ${row.displayName}`}
+            onCheckedChange={(next) => onToggleItem?.(row.itemId, next)}
+          />
           {explicitHere ? (
             // Retained on the `.btn` leaf recipe: this control needs a
             // disabled-state fade (`disabled:opacity-45`), which the Button

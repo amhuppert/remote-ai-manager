@@ -1,25 +1,13 @@
 "use client";
 
+import { useState, useCallback, useImperativeHandle, forwardRef } from "react";
 import {
-  useState,
-  useEffect,
-  useRef,
-  useCallback,
-  useImperativeHandle,
-  forwardRef,
-} from "react";
-import { cn } from "@/lib/ui/cn";
-import {
-  autocompleteEmptyClass,
-  autocompleteErrorClass,
-  autocompleteFooterClass,
-  autocompleteFooterKbdClass,
+  AutocompleteListbox,
+  AutocompleteNavFooter,
+  AutocompleteOption,
   autocompleteHeaderClass,
   autocompleteHeaderCountClass,
-  autocompleteItemClass,
-  autocompleteListClass,
-  autocompletePopupClass,
-} from "./CommandAutocompleteList";
+} from "./ui/Autocomplete";
 import {
   fileCharClass,
   fileExtBadgeClass,
@@ -84,7 +72,6 @@ export const FileAutocomplete = forwardRef<
   ref,
 ) {
   const [activeIndex, setActiveIndex] = useState(0);
-  const listRef = useRef<HTMLDivElement>(null);
 
   // Reset active index when items change (state-during-render pattern)
   const resetKey = items.length;
@@ -93,15 +80,6 @@ export const FileAutocomplete = forwardRef<
     setPrevResetKey(resetKey);
     setActiveIndex(0);
   }
-
-  // Scroll active item into view
-  useEffect(() => {
-    if (!visible) return;
-    const list = listRef.current;
-    if (!list) return;
-    const activeEl = list.children[activeIndex] as HTMLElement | undefined;
-    activeEl?.scrollIntoView({ block: "nearest" });
-  }, [activeIndex, visible]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent): boolean => {
@@ -150,55 +128,39 @@ export const FileAutocomplete = forwardRef<
     : `${displayCount} ${displayCount === 1 ? "file" : "files"}`;
 
   return (
-    <div className={cn(autocompletePopupClass, "max-h-[340px]")}>
-      <div className={autocompleteHeaderClass}>
-        <span>{sourceLabel ? `Files — ${sourceLabel}` : "Files"}</span>
-        <span className={autocompleteHeaderCountClass}>
-          {countLabel}
-          {truncated ? " (truncated)" : ""}
-        </span>
-      </div>
-
-      <div className={autocompleteListClass} ref={listRef}>
-        {loading && (
-          <div className={autocompleteEmptyClass}>Scanning files...</div>
-        )}
-
-        {error && <div className={autocompleteErrorClass}>{error}</div>}
-
-        {!loading && !error && items.length === 0 && (
-          <div className={autocompleteEmptyClass}>No matching files</div>
-        )}
-
-        {!loading &&
-          !error &&
-          items.map((scored, i) => (
-            <div
-              key={scored.item.path}
-              data-active={i === activeIndex}
-              className={autocompleteItemClass}
-              onMouseEnter={() => setActiveIndex(i)}
-              onClick={() => onSelect(scored.item.path)}
-            >
-              <FilePath path={scored.item.path} indices={scored.indices} />
-              <FileExtBadge path={scored.item.path} />
-            </div>
-          ))}
-      </div>
-
-      <div className={autocompleteFooterClass}>
-        <span>
-          <kbd className={autocompleteFooterKbdClass}>↑</kbd>{" "}
-          <kbd className={autocompleteFooterKbdClass}>↓</kbd> navigate
-        </span>
-        <span>
-          <kbd className={autocompleteFooterKbdClass}>Enter</kbd> select
-        </span>
-        <span>
-          <kbd className={autocompleteFooterKbdClass}>Esc</kbd> close
-        </span>
-      </div>
-    </div>
+    <AutocompleteListbox
+      label={sourceLabel ? `Files — ${sourceLabel}` : "Files"}
+      activeIndex={activeIndex}
+      maxHeightClassName="max-h-[340px]"
+      loading={loading}
+      loadingLabel="Scanning files..."
+      error={error}
+      isEmpty={items.length === 0}
+      empty="No matching files"
+      header={
+        <div className={autocompleteHeaderClass}>
+          <span>{sourceLabel ? `Files — ${sourceLabel}` : "Files"}</span>
+          <span className={autocompleteHeaderCountClass}>
+            {countLabel}
+            {truncated ? " (truncated)" : ""}
+          </span>
+        </div>
+      }
+      footer={<AutocompleteNavFooter />}
+    >
+      {items.map((scored, i) => (
+        <AutocompleteOption
+          key={scored.item.path}
+          id={`file-autocomplete-option-${i}`}
+          active={i === activeIndex}
+          onHover={() => setActiveIndex(i)}
+          onSelect={() => onSelect(scored.item.path)}
+        >
+          <FilePath path={scored.item.path} indices={scored.indices} />
+          <FileExtBadge path={scored.item.path} />
+        </AutocompleteOption>
+      ))}
+    </AutocompleteListbox>
   );
 });
 

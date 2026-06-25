@@ -1,8 +1,15 @@
 "use client";
 
-import { useEffect } from "react";
-import { Button } from "@/components/ui/Button";
-import { useOverlayScope } from "@/hooks/useOverlayScope";
+import { useRef } from "react";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogActions,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from "@/components/ui/AlertDialog";
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -17,6 +24,20 @@ interface ConfirmDialogProps {
   onCancel: () => void;
 }
 
+/**
+ * Controlled confirm / acknowledge prompt over the Radix-backed `AlertDialog`
+ * primitive (WAI-ARIA Alert Dialog). Radix owns role=alertdialog, the focus
+ * trap + return, Escape dismissal, the inert background, and `useOverlayScope`
+ * registration — replacing the previous hand-rolled capture-phase keydown
+ * listener. Per migration-contract §2 this drops the legacy Enter→confirm
+ * shortcut and the autofocus-on-confirm: Radix lands focus on the safe Cancel
+ * action, and an alert dialog ignores outside-pointer dismissal.
+ *
+ * The dialog is fully controlled by the parent's `open` prop. Radix routes
+ * every dismissal (Cancel, Escape) through `onOpenChange(false)`; the confirm
+ * Action also closes, so a ref flag distinguishes a confirm from a cancel and
+ * keeps each callback single-fire.
+ */
 export default function ConfirmDialog({
   open,
   title,
@@ -27,55 +48,37 @@ export default function ConfirmDialog({
   hideCancel = false,
   onConfirm,
   onCancel,
-}: ConfirmDialogProps): React.JSX.Element | null {
-  useEffect(() => {
-    if (!open) return;
-    const handleKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === "Escape") {
-        onCancel();
-        return;
-      }
-      if (e.key === "Enter") {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-        onConfirm();
-      }
-    };
-    document.addEventListener("keydown", handleKeyDown, true);
-    return () => document.removeEventListener("keydown", handleKeyDown, true);
-  }, [open, onConfirm, onCancel]);
-
-  useOverlayScope(open);
-
-  if (!open) return null;
+}: ConfirmDialogProps): React.JSX.Element {
+  const confirmedRef = useRef(false);
 
   return (
-    <div
-      className="fixed inset-0 z-dropdown flex animate-[fadeIn_0.15s_ease] items-center justify-center bg-[var(--cc-overlay-scrim)] backdrop-blur-[8px] max-768:items-end"
-      data-testid="modal-overlay"
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        if (next) return;
+        if (confirmedRef.current) {
+          confirmedRef.current = false;
+          onConfirm();
+        } else {
+          onCancel();
+        }
+      }}
     >
-      <div className="w-full max-w-[400px] animate-[slideUp_0.2s_ease] rounded-lg border border-solid border-border-default bg-bg-surface p-xl max-768:max-w-full max-768:animate-[slideUpSheet_0.25s_ease] max-768:rounded-b-none max-768:px-md max-768:py-lg max-768:pb-[calc(var(--space-lg)+env(safe-area-inset-bottom,0))]">
-        <h2 className="mb-lg font-display text-[1.2rem] font-bold">{title}</h2>
-        <p className="mb-lg font-mono text-[0.82rem] leading-[1.55] text-text-secondary">
-          {message}
-        </p>
-        <div className="flex justify-end gap-sm">
-          {!hideCancel && (
-            <Button variant="default" size="sm" onClick={onCancel}>
-              {cancelLabel}
-            </Button>
-          )}
-          <Button
-            autoFocus
-            variant={danger ? "danger" : "primary"}
-            size="sm"
-            onClick={onConfirm}
+      <AlertDialogContent>
+        <AlertDialogTitle>{title}</AlertDialogTitle>
+        <AlertDialogDescription>{message}</AlertDialogDescription>
+        <AlertDialogActions>
+          {!hideCancel && <AlertDialogCancel>{cancelLabel}</AlertDialogCancel>}
+          <AlertDialogAction
+            danger={danger}
+            onClick={() => {
+              confirmedRef.current = true;
+            }}
           >
             {confirmLabel}
-          </Button>
-        </div>
-      </div>
-    </div>
+          </AlertDialogAction>
+        </AlertDialogActions>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

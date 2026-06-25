@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ParameterDeclaration } from "@/lib/workflows/schemas";
-import ParameterDeclarationEditor from "./ParameterDeclarationEditor";
+import ParameterDeclarationEditor, {
+  changeType,
+} from "./ParameterDeclarationEditor";
 
 function lastCall<T>(mock: ReturnType<typeof vi.fn>): T {
   const calls = mock.mock.calls;
@@ -130,10 +132,11 @@ describe("ParameterDeclarationEditor", () => {
   });
 
   describe("type switching (R8.1)", () => {
-    it("switching to enum gives an empty options list and keeps common fields", async () => {
-      const user = userEvent.setup();
-      const onChange = vi.fn();
-      const base: ParameterDeclaration[] = [
+    // The type→declaration transition is a pure function; test it directly. The
+    // picker itself is the Radix Select primitive, whose pointer-driven selection
+    // is unreliable under jsdom (covered by live Storybook verification instead).
+    it("switching to enum gives an empty options list and keeps common fields", () => {
+      const next = changeType(
         {
           type: "string",
           name: "feature",
@@ -141,14 +144,9 @@ describe("ParameterDeclarationEditor", () => {
           required: true,
           default: "kept",
         },
-      ];
-      render(
-        <ParameterDeclarationEditor parameters={base} onChange={onChange} />,
+        "enum",
       );
-      const row = getRow("feature");
-      await user.selectOptions(within(row).getByLabelText(/type/i), "enum");
-      const next = lastCall<ParameterDeclaration[]>(onChange);
-      expect(next[0]).toEqual({
+      expect(next).toEqual({
         type: "enum",
         name: "feature",
         label: "Feature",
@@ -158,10 +156,8 @@ describe("ParameterDeclarationEditor", () => {
       });
     });
 
-    it("switching away from enum drops options", async () => {
-      const user = userEvent.setup();
-      const onChange = vi.fn();
-      const base: ParameterDeclaration[] = [
+    it("switching away from enum drops options", () => {
+      const next = changeType(
         {
           type: "enum",
           name: "mode",
@@ -169,20 +165,36 @@ describe("ParameterDeclarationEditor", () => {
           required: false,
           options: ["a", "b"],
         },
-      ];
-      render(
-        <ParameterDeclarationEditor parameters={base} onChange={onChange} />,
+        "text",
       );
-      const row = getRow("mode");
-      await user.selectOptions(within(row).getByLabelText(/type/i), "text");
-      const next = lastCall<ParameterDeclaration[]>(onChange);
-      expect(next[0]).toEqual({
+      expect(next).toEqual({
         type: "text",
         name: "mode",
         label: "Mode",
         required: false,
       });
-      expect(next[0]).not.toHaveProperty("options");
+      expect(next).not.toHaveProperty("options");
+    });
+
+    it("renders the type control as a Select showing the current type", () => {
+      render(
+        <ParameterDeclarationEditor
+          parameters={[
+            {
+              type: "enum",
+              name: "mode",
+              label: "Mode",
+              required: false,
+              options: [],
+            },
+          ]}
+          onChange={vi.fn()}
+        />,
+      );
+      const row = getRow("mode");
+      const typeControl = within(row).getByLabelText(/type/i);
+      expect(typeControl.getAttribute("role")).toBe("combobox");
+      expect(typeControl.textContent).toContain("Enum");
     });
   });
 

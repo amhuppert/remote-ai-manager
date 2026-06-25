@@ -37,6 +37,15 @@ const hintKbd =
   "font-mono text-[0.7rem] font-semibold py-[2px] px-[6px] rounded-[4px] bg-bg-base border border-solid border-border-subtle text-text-tertiary";
 const hintWord = "text-text-tertiary font-mono text-[0.66rem]";
 
+const suggestListId = "command-console-suggestions";
+
+/** Stable per-row id so the combobox input can target it via aria-activedescendant. */
+const suggestionOptionId = (idx: number) => `command-console-option-${idx}`;
+
+/** Stable per-group label id so each role=group can name itself via aria-labelledby. */
+const suggestionGroupLabelId = (grp: string) =>
+  `command-console-group-${grp.toLowerCase().replace(/\s+/g, "-")}`;
+
 export default function CommandConsole({
   tokens,
   draft,
@@ -127,7 +136,11 @@ export default function CommandConsole({
       ? "Filter sessions, or type / for actions…"
       : "+ filter or /action";
 
-  const suggestListId = "command-console-suggestions";
+  const listOpen = focused && suggestions.length > 0;
+  const activeOptionId =
+    listOpen && suggestions[activeIdx] !== undefined
+      ? suggestionOptionId(activeIdx)
+      : undefined;
 
   return (
     <div
@@ -169,7 +182,8 @@ export default function CommandConsole({
             role="combobox"
             aria-autocomplete="list"
             aria-controls={suggestListId}
-            aria-expanded={focused && suggestions.length > 0}
+            aria-expanded={listOpen}
+            aria-activedescendant={activeOptionId}
             value={draft}
             onChange={(e) => onDraftChange(e.target.value)}
             onFocus={onFocus}
@@ -193,10 +207,12 @@ export default function CommandConsole({
           )}
         </div>
 
-        {focused && suggestions.length > 0 && (
+        {listOpen && (
           <div
             className="absolute top-[calc(100%+8px)] right-0 left-0 z-header animate-[kebab-in_0.12s_ease] rounded-md border border-solid border-border-default bg-bg-elevated p-[6px] shadow-[var(--cc-shadow-popover)]"
             id={suggestListId}
+            role="listbox"
+            aria-label="Command and filter suggestions"
           >
             <SuggestionGroups
               suggestions={suggestions}
@@ -219,7 +235,7 @@ interface SuggestionGroupsProps {
 }
 
 const suggestItemBase =
-  "flex items-center gap-[10px] w-full py-[7px] px-[10px] border-0 rounded-sm text-text-primary font-mono text-[0.76rem] text-left [&_svg]:text-text-tertiary";
+  "flex items-center gap-[10px] w-full py-[7px] px-[10px] border-0 rounded-sm text-text-primary font-mono text-[0.76rem] text-left cursor-pointer [&_svg]:text-text-tertiary";
 const kindColor = {
   action: "text-violet",
   filter: "text-cyan",
@@ -244,14 +260,26 @@ function SuggestionGroups({
   return (
     <>
       {Array.from(groups.entries()).map(([grp, items]) => (
-        <div key={grp}>
-          <div className="block px-[10px] pt-[6px] pb-[4px] font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase">
+        <div
+          key={grp}
+          role="group"
+          aria-labelledby={suggestionGroupLabelId(grp)}
+        >
+          <div
+            id={suggestionGroupLabelId(grp)}
+            className="block px-[10px] pt-[6px] pb-[4px] font-mono text-[0.7rem] font-semibold tracking-[0.08em] text-text-tertiary uppercase"
+          >
             {grp}
           </div>
           {items.map(({ suggestion, idx }) => (
-            <button
+            // role=option on a div (not a button): DOM focus stays on the
+            // combobox input (managed focus), so options must not be tab-focusable.
+            <div
               key={idx}
-              type="button"
+              id={suggestionOptionId(idx)}
+              role="option"
+              aria-selected={idx === activeIdx}
+              data-active={idx === activeIdx}
               className={cn(
                 suggestItemBase,
                 idx === activeIdx
@@ -274,7 +302,7 @@ function SuggestionGroups({
               >
                 {suggestion.kind}
               </span>
-            </button>
+            </div>
           ))}
         </div>
       ))}
