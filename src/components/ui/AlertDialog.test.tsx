@@ -83,6 +83,12 @@ describe("AlertDialog", () => {
     );
   });
 
+  it("marks the scrim so the global ambient-animation freeze can detect it", () => {
+    render(<Confirm open />);
+    const overlay = document.querySelector('[class*="cc-overlay-scrim"]');
+    expect(overlay?.hasAttribute("data-cc-modal-scrim")).toBe(true);
+  });
+
   it("renders a primary confirm action by default with the canonical focus ring", () => {
     render(<Confirm open />);
     const action = screen.getByRole("button", { name: "Confirm" });

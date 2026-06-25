@@ -261,6 +261,22 @@
     0 0 3px var(--cyan);
 }
 
+/* Freeze the page's ambient animations while a full-viewport modal scrim is open.
+   A modal scrim (`[data-cc-modal-scrim]`, the `overlayScrim` recipe) lays a
+   full-screen `backdrop-filter: blur()` over the page; the browser must
+   re-rasterize that blur whenever anything painted behind it changes. The page's
+   perpetual `pulse-dot` status animations (one per active session, plus the
+   topbar/header dots) would otherwise invalidate the blurred backdrop on every
+   frame, forcing a full-screen re-blur ~60×/s that pegs the GPU compositor
+   (macOS WindowServer) and lags the entire machine — not just the tab. Pausing
+   `.app` (the page shell; portaled modals live outside it, so their own entrance
+   and in-modal animations keep running) lets the blur texture be cached once. */
+body:has([data-cc-modal-scrim]) .app *,
+body:has([data-cc-modal-scrim]) .app *::before,
+body:has([data-cc-modal-scrim]) .app *::after {
+  animation-play-state: paused !important;
+}
+
 /* ============================================================
    Buttons
    ============================================================ */

@@ -75,6 +75,11 @@ export default function McpServersModal({
 
   const overlay = (
     <div
+      // Marks this full-viewport blur scrim so the global ambient-animation
+      // freeze (globals.css) pauses the page's perpetual status-dot animations
+      // while it is mounted — otherwise the backdrop blur re-rasterizes every
+      // frame behind them and saturates the compositor.
+      data-cc-modal-scrim=""
       className="fixed inset-0 z-dropdown flex animate-[fadeIn_0.15s_ease] items-center justify-center bg-[var(--cc-overlay-scrim)] backdrop-blur-[8px] max-768:items-end"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();

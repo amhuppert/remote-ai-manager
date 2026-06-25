@@ -134,7 +134,14 @@ export function AlertDialogContent({
 
   return (
     <RadixAlertDialog.Portal>
-      <RadixAlertDialog.Overlay className={overlayScrim} />
+      {/* `data-cc-modal-scrim` lets the global ambient-animation freeze rule
+          (globals.css) pause the page's perpetual status-dot animations while
+          this full-viewport `backdrop-filter` blur is mounted — otherwise the
+          blur re-rasterizes every frame behind them and saturates the compositor. */}
+      <RadixAlertDialog.Overlay
+        className={overlayScrim}
+        data-cc-modal-scrim=""
+      />
       <div
         className={cn(overlayCentering, mobileSheet && overlayCenteringSheet)}
       >

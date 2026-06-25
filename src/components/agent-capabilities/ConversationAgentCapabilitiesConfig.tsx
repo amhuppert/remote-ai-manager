@@ -133,6 +133,7 @@ function AgentCapabilitiesModal({
       <div
         className="fixed inset-0 z-dropdown bg-[var(--cc-bg-void-a60)] [backdrop-filter:blur(4px)_saturate(120%)]"
         data-testid="agent-capabilities-drawer-overlay"
+        data-cc-modal-scrim=""
         onClick={onClose}
       />
       <aside

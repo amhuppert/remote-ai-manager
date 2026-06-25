@@ -82,6 +82,12 @@ describe("Dialog", () => {
     );
   });
 
+  it("marks the scrim so the global ambient-animation freeze can detect it", () => {
+    render(<Modal open />);
+    const overlay = document.querySelector('[class*="cc-overlay-scrim"]');
+    expect(overlay?.hasAttribute("data-cc-modal-scrim")).toBe(true);
+  });
+
   it("narrows the card to 400px in the confirm size", () => {
     render(<Modal open size="confirm" />);
     const card = screen.getByRole("dialog");
