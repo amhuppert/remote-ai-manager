@@ -53,7 +53,7 @@ const KNOB_BASE = cn(
   "pointer-events-none absolute rounded-full bg-text-tertiary",
   "[transition:transform_0.15s_cubic-bezier(0.4,0,0.2,1),background_0.15s_ease]",
   "motion-reduce:transition-none",
-  "data-[state=checked]:bg-text-inverse",
+  "data-[state=checked]:bg-white",
 );
 
 const KNOB_SIZE: Record<SwitchSize, string> = {

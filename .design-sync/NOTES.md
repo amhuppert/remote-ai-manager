@@ -248,3 +248,14 @@ Repo-specific gotchas for `/design-sync`. Read before any re-sync.
 - **guidelines/** currently includes CC dev docs (logging, project-configuration, composable-workflow-primitives,
   ai-validation-output) via the default `guidelinesGlob` — only `tailwind-conventions.md` is design-relevant.
   Consider setting `cfg.guidelinesGlob` to a design-only path on a future sync.
+- **ConfirmDialog canary sb-error is EXPECTED — do NOT "fix" by skipping its stories.** When a driver
+  canary pick lands on ConfirmDialog, its `Default`/`Danger`/`Custom Labels` stories all capture as
+  `sb-error "no storybook root content"`: the open modal portals to `document.body`, so the bare
+  storybook reference's `#storybook-root` is empty (the owned preview that makes it visible is the DS
+  side only). This trips `capture.ok=false` → driver `ok:false` even though nothing regressed — the
+  shipped card renders fine (validate's render-check passes 37/37) and the carried `match` grades were
+  judged from the DS preview side. Skipping these stories would break the `cardMode:single`
+  `primaryStory:Default` card; leave them un-skipped. Confirm via validate's 37/37 render-check + the
+  DS-side raw shot, not the compare sb-error. (Only `components-confirmdialog--closed` is legitimately
+  skipped.) Same portal-gating applies to any future overlay whose canary pick has no statically-open
+  reference render.
