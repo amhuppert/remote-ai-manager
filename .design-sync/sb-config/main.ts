@@ -2,25 +2,36 @@ import type { StorybookConfig } from "@storybook/nextjs-vite";
 import base from "../../.storybook/main";
 
 // Scoped Storybook config for /design-sync. The repo's real .storybook covers
-// all ~124 stories; this narrows the `stories` glob to ONLY the 22 in-scope
+// all the app's stories; this narrows the `stories` glob to ONLY the in-scope
 // design-system components so the converter discovers exactly those (the
 // storybook shape derives the component list from the reference build's index).
 // Everything else — framework, addons, viteFinal (Tailwind plugin + @/lib/logging
 // stub alias) — is inherited verbatim from the real config.
 
 const UI = [
+  "Accordion",
+  "AlertDialog",
+  "Autocomplete",
   "Badge",
   "Button",
+  "Checkbox",
+  "Collapsible",
   "ContextMenu",
+  "Dialog",
   "DropdownMenu",
   "EmptyState",
   "FormField",
   "IconButton",
-  "ModalShell",
+  "Popover",
+  "Progress",
+  "RadioGroup",
   "SectionHeader",
+  "SegmentedControl",
   "Select",
   "StatusDot",
+  "Switch",
   "Tabs",
+  "Tooltip",
 ];
 
 const TOP = [

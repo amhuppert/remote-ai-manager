@@ -15,10 +15,23 @@ Repo-specific gotchas for `/design-sync`. Read before any re-sync.
   - `cfg.extraEntries` path needs a leading `./` (`./.design-sync/ds-entry.tsx`) or
     it's treated as a bare node_modules specifier.
   - `--node-modules` is the repo root `node_modules`.
-- **Scope is curated, not "all stories".** ~127 stories exist; only 26 are synced.
-  `.design-sync/sb-config/main.ts` narrows the `stories` glob to exactly those 26 (UI +
-  TOP + a CONVERSATION array for `src/components/conversation/`) so the converter discovers
-  only them. It inherits framework/addons/viteFinal from the real `.storybook/main.ts`.
+- **Scope is curated, not "all stories".** The app has many more stories; only 37 are synced
+  (as of 2026-06-25 — was 26). `.design-sync/sb-config/main.ts` narrows the `stories` glob to
+  exactly those 37 (23 UI + 13 TOP + a CONVERSATION array for `src/components/conversation/`)
+  so the converter discovers only them. It inherits framework/addons/viteFinal from the real
+  `.storybook/main.ts`.
+- **2026-06-25 — Radix `ui/` primitive wave added (12), `ModalShell` removed.** The commit
+  "Add Radix UI primitive migration workflow" landed a batch of new `src/components/ui/`
+  primitives and **deleted `ModalShell`** (replaced by `Dialog`/`AlertDialog`). Added to
+  scope: `Dialog`, `AlertDialog`, `Popover`, `Tooltip` (portalled overlays → `cardMode:
+  single`, `primaryStory: StaticOpen` — each story file's `StaticOpen`/`defaultOpen` is the
+  only statically-open one); `Accordion`, `Collapsible`, `Autocomplete` (`[GRID_OVERFLOW]
+  wide` → `cardMode: column`); `Checkbox`, `RadioGroup`, `SegmentedControl`, `Switch`,
+  `Progress` (fit a grid cell — no override). `ModalShell` removed from the barrel, sb-config
+  `UI` list, `cfg.overrides`, and its owned preview (`previews/ModalShell.tsx`) deleted; the
+  diff carried the 6 `components/ui/ModalShell/*` + `_preview/ModalShell.*` delete paths
+  (5 existed remotely; the single-mode card had no `_preview/ModalShell.css`). All 12 + the
+  re-graded `Tabs` graded `match`.
   `.design-sync/sb-config/preview.tsx` re-uses the real preview's parameters but REPLACES
   the decorators (see TooltipProvider below).
 - **Rainbow effort treatment (added 2026-06-24).** The top reasoning tiers (Max/XHigh) get
@@ -53,6 +66,14 @@ Repo-specific gotchas for `/design-sync`. Read before any re-sync.
   no single `FormField` export. Story is `title:"UI/FormField"`, `component:FormInput`.
   The barrel aliases `FormInput as FormField` so the card keeps the name + documents
   FormInput props; sub-components stay available for the composed stories.
+- **Autocomplete** is the same title↔export pattern: story `title:"UI/Autocomplete"`,
+  `component:AutocompleteListbox` (no `Autocomplete` export). The barrel `export *`s the module
+  (sub-parts: AutocompleteOption/MatchText/NavFooter) **and** aliases
+  `AutocompleteListbox as Autocomplete` so the title pairs and the card keeps the name.
+- **Tooltip** supplies its own `<TooltipProvider delayDuration={0}>` via a **meta-level
+  decorator** in `Tooltip.stories.tsx` (composeStories applies it), so it renders correctly
+  even though the scoped preview drops the *global* TooltipProvider decorator (see Decorators).
+  Don't re-add the global one to fix Tooltip — it would re-break all 36 others.
 
 ## Bundle size — mermaid stub (REQUIRED)
 
@@ -124,12 +145,21 @@ Repo-specific gotchas for `/design-sync`. Read before any re-sync.
 
 ## cfg.overrides (cardMode) — genuine overlays/wide
 
-- single (overlay/portal): BackendToggle, ConfirmDialog, ModelSelector, ModalShell, MergeToast,
+- single (overlay/portal): BackendToggle, ConfirmDialog, ModelSelector, MergeToast,
   CardContextMenu (primaryStory Open), DropdownMenu + Select (primaryStory StaticOpen),
   ContextMenu (primaryStory Default — can't open statically), ReasoningLevelSelector
-  (primaryStory ClaudeOpusXHigh — shows the rainbow trigger, not an overlay reason).
+  (primaryStory ClaudeOpusXHigh — shows the rainbow trigger, not an overlay reason),
+  Dialog + AlertDialog + Popover + Tooltip (primaryStory StaticOpen — Radix portals; the
+  StaticOpen/`defaultOpen` story is the one that renders the surface open statically).
 - column (wider / multi-state in one card): TddToggle, Button, ContextFillIndicator, IconButton,
-  SectionHeader, Tabs, EffortLabel (Metadata demo + Tiers row).
+  SectionHeader, Tabs, EffortLabel (Metadata demo + Tiers row), Accordion + Autocomplete +
+  Collapsible (`[GRID_OVERFLOW] wide` — full-width disclosure/listbox stories crop in a grid cell).
+- skip: Progress skips `ui-progress--default` / `ui-progress--custom-max` /
+  `ui-progress--indeterminate` — a lone thin bar (no surrounding text, `layout: centered`)
+  renders as `sb-error` "no storybook root content" in the oracle. The `Tones` + `Thresholds`
+  stories (bars inside labelled Rows) render fine and fully showcase the bar across tones/values,
+  so the 3 bare-bar stories are redundant as well as ungradeable. If a future Progress story is
+  renamed, update the skip ids.
 
 ## Target project
 
@@ -142,15 +172,21 @@ Repo-specific gotchas for `/design-sync`. Read before any re-sync.
 
 ## Owned previews (overlay transform-wrapper pattern)
 
-- `.design-sync/previews/{MergeToast,ModalShell,ConfirmDialog}.tsx` are owned. Each is a
+- `.design-sync/previews/{MergeToast,ConfirmDialog}.tsx` are owned. Each is a
   `position:fixed` overlay (toast/modal); the single-mode card's containment box has ~0
   height so the fixed element resolves against the viewport and clips. The owned preview
   wraps each story in `{position:relative;transform:translateZ(0);width:100%;minHeight:N}`
   (transform makes the wrapper the containing block for position:fixed). minHeight by size:
   toast ~140, modal ~360. Re-derive from `compose()` if a story set changes.
+  (`ModalShell.tsx` was here until 2026-06-25 — deleted with the component.)
 - NOT every overlay needs it: CardContextMenu's portal menu lands contained without a wrapper.
   ModelSelector/ReasoningLevelSelector/BranchSelector dropdowns render correctly (closed pill
-  or contained list) on the complete CSS — no wrapper needed.
+  or contained list) on the complete CSS — no wrapper needed. The 2026-06-25 Radix overlays
+  (`Dialog`/`AlertDialog`/`Popover`/`Tooltip`) **also need no owned wrapper** — their
+  `StaticOpen`/`defaultOpen` story renders correctly in the single-mode card (Radix's baked-in
+  portal + the single-mode containment box are enough; the centered overlay clips on the
+  storybook *reference* canvas, but the DS preview renders it full and grading judges the
+  component, not the oracle's framing).
 - **ConfirmDialog "Closed" story** (`components-confirmdialog--closed`, open:false) renders
   nothing on both sides → compare flags `sb-error`. It's skipped via
   `cfg.overrides.ConfirmDialog.skip` so it doesn't churn ConfirmDialog's grade on full recapture.
@@ -161,6 +197,10 @@ Repo-specific gotchas for `/design-sync`. Read before any re-sync.
   ReasoningLevelSelector (13) exceed it. The captured 6 graded match; the tails were captured
   + graded with `--max-stories 9/13`. A capped match is verified-by-upload in full, so future
   syncs need no special handling unless a tail story gains a distinct variant.
+- 2026-06-25 additions over the cap: Accordion (7 stories), Collapsible (7), Switch (8). The
+  first 6 of each graded `match`; the tails (Accordion `FlatGroupList`; Collapsible
+  `HeaderWithSiblingControl`; Switch `Labelled`/`Controlled`) are verified-by-upload — raise
+  `--max-stories` only if one gains a distinct variant worth grading.
 
 ## Known warnings (triaged — not new on re-sync)
 

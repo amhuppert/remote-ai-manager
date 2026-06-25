@@ -40,25 +40,45 @@ tier-discriminated: `<Badge status="running">`, `<Badge tier="type" kind="bug">`
 
 ## Interactive primitives are Radix-backed — use them, don't hand-roll
 
-Menus, selects, and right-click menus are built on **Radix UI** (the WAI-ARIA APG
-patterns), so correct keyboard navigation, focus management, type-ahead, ARIA roles,
-collision-aware positioning, and outside-click dismissal come for free. **Compose these
-primitives instead of building a custom dropdown** — every menu in CC routes through them:
+Menus, dialogs, selects, disclosures, and form controls are built on **Radix UI** (the
+WAI-ARIA APG patterns), so correct keyboard navigation, focus management, type-ahead, ARIA
+roles, collision-aware positioning, and outside-click dismissal come for free. **Compose
+these primitives instead of building custom ones.** They share one shape — a `Root` +
+`Trigger`/parts + (for overlays) a self-portalled `Content` — and own their appearance via
+props + Radix `data-*` state, **not `className`**; the only style escape hatch is the
+layout-only `layoutClassName` prop (margin / width / placement). Triggers compose
+`Button`/`IconButton` via `asChild`. Each component's `.prompt.md` has copy-paste examples.
 
-- **`DropdownMenu`** — a button that opens a menu of actions (APG Menu Button).
-- **`ContextMenu`** — the same menu opened by right-click.
-- **`Select`** — pick one value from a list (APG Listbox / select-only combobox).
+**Menus & selects** — `DropdownMenu` (a button that opens an actions menu, APG Menu Button),
+`ContextMenu` (the same, opened by right-click), `Select` (pick one value, APG Listbox —
+`SelectValue`/`SelectItem`, optional per-row `description`). Menu parts:
+`Item`/`CheckboxItem`/`RadioItem`/`Label`/`Separator`/`Sub*`; a destructive row takes
+`danger`; `DropdownMenuShortcut` right-aligns a hotkey hint. Non-modal, self-portalling.
 
-They share the composable-parts shape of `Tabs`/`ModalShell`: a `Root` + `Trigger` +
-portalled `Content` + `Item`/`CheckboxItem`/`RadioItem`/`Label`/`Separator`/`Sub*` parts
-(`Select` uses `SelectValue`/`SelectItem`, with an optional `description` per row). Triggers
-compose `Button`/`IconButton` via `asChild` (e.g. an icon kebab: `<DropdownMenuTrigger asChild>
-<IconButton aria-label="More actions">…</IconButton></DropdownMenuTrigger>`). A destructive row
-takes `danger`; `DropdownMenuShortcut` right-aligns a hotkey hint. The menus are **non-modal**
-and self-portalling — no provider, no manual positioning. Parts own their appearance via props
-+ Radix `data-*` state, **not `className`**; the only style escape hatch is the layout-only
-`layoutClassName` prop (margin / width / placement). Each component's `.prompt.md` has
-copy-paste examples.
+**Dialogs & overlays** — portalled, with the scrim/positioning baked in (no manual portal):
+
+- **`Dialog`** — a modal task surface. `DialogTrigger` + `DialogContent` (with `DialogTitle`,
+  `DialogDescription`, `DialogActions`) + `DialogClose`.
+- **`AlertDialog`** — a confirm/destructive modal (use instead of `window.confirm`).
+  `AlertDialogAction` (add `danger` for destructive) / `AlertDialogCancel`.
+- **`Popover`** — a floating panel anchored to a trigger: `PopoverTrigger` + `PopoverContent`.
+- **`Tooltip`** — a hover/focus hint. Mount one **`TooltipProvider`** at the app root, then
+  `Tooltip` + `TooltipTrigger asChild` + `TooltipContent`.
+
+**Disclosure** — **`Accordion`** (`type="single"|"multiple"`;
+`AccordionItem`/`AccordionTrigger`/`AccordionContent`) and **`Collapsible`** (one show/hide
+region; `CollapsibleTrigger`/`CollapsibleContent`).
+
+**Form controls** — value via `checked`/`value` + `onCheckedChange`/`onValueChange`:
+**`Checkbox`** (+ `CheckboxField` for label & description), **`RadioGroup`**
+(`RadioGroupItem`/`RadioGroupOption`), **`Switch`** (on/off; `tone="green"` for a positive
+on-state), **`SegmentedControl`** (`SegmentedControlItem` — a compact inline single-choice
+toggle). **`Progress`** is a determinate/indeterminate bar with
+`tone="accent"|"warning"|"danger"` (the context-fill meter's threshold language).
+
+**`Autocomplete`** — the listbox surface (`AutocompleteListbox` + `AutocompleteOption` /
+`AutocompleteMatchText` / `AutocompleteNavFooter`) behind CC's command / file / conversation
+pickers.
 
 ## The "exceeds the scale" rainbow signal
 

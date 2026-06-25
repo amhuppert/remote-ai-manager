@@ -19,7 +19,6 @@ export * from "../src/components/ui/FormField";
 // available (above) for the composed examples.
 export { FormInput as FormField } from "../src/components/ui/FormField";
 export * from "../src/components/ui/IconButton";
-export * from "../src/components/ui/ModalShell";
 export * from "../src/components/ui/SectionHeader";
 export * from "../src/components/ui/StatusDot";
 export * from "../src/components/ui/Tabs";
@@ -28,6 +27,28 @@ export * from "../src/components/ui/Tabs";
 export * from "../src/components/ui/DropdownMenu";
 export * from "../src/components/ui/Select";
 export * from "../src/components/ui/ContextMenu";
+// Radix-backed dialog/overlay primitives (each exports its Root named after the
+// story title — Dialog/AlertDialog/Popover/Tooltip — plus sub-parts).
+export * from "../src/components/ui/Dialog";
+export * from "../src/components/ui/AlertDialog";
+export * from "../src/components/ui/Popover";
+export * from "../src/components/ui/Tooltip";
+// Radix-backed disclosure primitives.
+export * from "../src/components/ui/Accordion";
+export * from "../src/components/ui/Collapsible";
+// Radix-backed choice/toggle primitives.
+export * from "../src/components/ui/Checkbox";
+export * from "../src/components/ui/RadioGroup";
+export * from "../src/components/ui/SegmentedControl";
+export * from "../src/components/ui/Switch";
+// Progress bar.
+export * from "../src/components/ui/Progress";
+// Autocomplete listbox: the story is titled "UI/Autocomplete" with
+// `component: AutocompleteListbox` (no `Autocomplete` export). Alias it so the
+// card pairs to the title and keeps the recognizable name; the sub-parts remain
+// available (above) for the composed stories.
+export * from "../src/components/ui/Autocomplete";
+export { AutocompleteListbox as Autocomplete } from "../src/components/ui/Autocomplete";
 
 // Conversation-panel pieces
 export { EffortLabel } from "../src/components/conversation/EffortLabel";
