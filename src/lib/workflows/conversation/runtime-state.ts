@@ -113,6 +113,16 @@ export function getRegisteredConversationKeys(): string[] {
 }
 
 /**
+ * Whether a conversation currently has a pending AskUserQuestion resolver
+ * installed (a turn is blocked waiting for a human answer). Read by the
+ * session-tools supervisor's pending-question guard so proactive recovery
+ * never orphans a validly pending question.
+ */
+export function hasActiveQuestionResolver(key: string): boolean {
+  return getRegistry().get(key)?.activeQuestionResolver !== undefined;
+}
+
+/**
  * Reject the active question resolver for a conversation, if one is installed.
  * Returns true when a pending resolver was rejected and cleared.
  */

@@ -7,6 +7,7 @@ import {
   hasConversationRuntime,
   getRegisteredConversationKeys,
   rejectActiveQuestionResolver,
+  hasActiveQuestionResolver,
   _resetForTesting,
   type ConversationRuntimeState,
 } from "./runtime-state";
@@ -135,6 +136,29 @@ describe("conversation runtime-state", () => {
 
     it("returns false for unknown key", () => {
       expect(rejectActiveQuestionResolver("nope", "abort")).toBe(false);
+    });
+  });
+
+  describe("hasActiveQuestionResolver", () => {
+    it("returns true while a resolver is installed and false after it is cleared", () => {
+      const key = conversationRuntimeKey("/repo", "sess-1", "conv-1");
+      registerConversationRuntime(key, {
+        abortController: new AbortController(),
+        activeQuestionResolver: { resolve: () => {}, reject: () => {} },
+      });
+      expect(hasActiveQuestionResolver(key)).toBe(true);
+
+      getConversationRuntime(key)!.activeQuestionResolver = undefined;
+      expect(hasActiveQuestionResolver(key)).toBe(false);
+    });
+
+    it("returns false when the conversation has no resolver or is unknown", () => {
+      const key = conversationRuntimeKey("/repo", "sess-1", "conv-1");
+      registerConversationRuntime(key, {
+        abortController: new AbortController(),
+      });
+      expect(hasActiveQuestionResolver(key)).toBe(false);
+      expect(hasActiveQuestionResolver("missing")).toBe(false);
     });
   });
 

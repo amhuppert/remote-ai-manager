@@ -68,7 +68,11 @@ import {
   TDD_INSTRUCTIONS,
   ASK_USER_QUESTION_INSTRUCTIONS,
 } from "@/lib/prompt/sdk-driver";
-import { isUndeliveredQuerySessionError } from "@/lib/agent-backends/claude/query-session-errors";
+import {
+  isUndeliveredQuerySessionError,
+  tagQuerySessionError,
+  QUERY_SESSION_ERROR_CODES,
+} from "@/lib/agent-backends/claude/query-session-errors";
 import { buildSyntheticForkSeed } from "@/lib/sessions/synthetic-fork-seed";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import {
@@ -1898,6 +1902,52 @@ export async function executePromptForMachine(
       });
     }
 
+    // Close + unregister the current runtime and build a fresh, resume-
+    // preserving one (createManagedBackendRuntime threads `persistedRef`).
+    // Shared by the pre-turn readiness gate and the dispatch retry loop.
+    const recreateRuntimeForTurn =
+      async (): Promise<ConversationBackendRuntime> => {
+        backendRuntime?.close();
+        deps.unregisterBackendRuntime(input.conversationId);
+        backendRuntime = await createManagedBackendRuntime();
+        return backendRuntime;
+      };
+
+    // Pre-turn readiness (the primary fix). For a reused Claude runtime this
+    // forces a fresh cc-session-tools rebind BEFORE the prompt is delivered —
+    // the disconnect window is safe because no tool call is in flight. On an
+    // unrecoverable binding, recreate the runtime (resume-preserving) and retry
+    // once; a second failure fails the prompt BEFORE `streamInput` rather than
+    // delivering it into a runtime whose session-tools transport is broken.
+    // Non-Claude backends omit `prepareForTurnStart`, so they are unaffected.
+    const ready = (await backendRuntime!.prepareForTurnStart?.()) ?? {
+      status: "ready" as const,
+    };
+    if (ready.status === "recreate-runtime") {
+      logger.warn("prompt.runtime_recreated_after_session_tools_failure", {
+        sessionName: input.sessionName,
+        conversationId: input.conversationId,
+        reason: ready.reason,
+      });
+      await recreateRuntimeForTurn();
+      const retry = (await backendRuntime!.prepareForTurnStart?.()) ?? {
+        status: "ready" as const,
+      };
+      if (retry.status === "recreate-runtime") {
+        logger.error("prompt.session_tools_unrecoverable", {
+          sessionName: input.sessionName,
+          conversationId: input.conversationId,
+          reason: retry.reason,
+        });
+        throw tagQuerySessionError(
+          new Error(
+            `Prompt not delivered: cc-session-tools unrecoverable (${retry.reason})`,
+          ),
+          QUERY_SESSION_ERROR_CODES.promptNotDelivered,
+        );
+      }
+    }
+
     // Route the turn through the shared AgentCall primitive. The wrapped
     // runtime captures the underlying `ConversationBackendTurnResult` (the
     // existing actor downstream still needs `numTurns`, `contentBlocks`, and
@@ -1907,12 +1957,7 @@ export async function executePromptForMachine(
     const turnDispatch = await dispatchTurnViaAgentCall({
       executeAgentCall: deps.executeAgentCall,
       getRuntime: () => backendRuntime!,
-      replaceRuntime: async () => {
-        backendRuntime?.close();
-        deps.unregisterBackendRuntime(input.conversationId);
-        backendRuntime = await createManagedBackendRuntime();
-        return backendRuntime;
-      },
+      replaceRuntime: recreateRuntimeForTurn,
       signal: abortController.signal,
       conversationId: input.conversationId,
       sessionName: input.sessionName,

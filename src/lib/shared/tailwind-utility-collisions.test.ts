@@ -113,6 +113,13 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}components${path.sep}conversation${path.sep}ConversationPanel.tsx`,
   `${path.sep}components${path.sep}conversation${path.sep}MessageRow.tsx`,
   `${path.sep}components${path.sep}conversation${path.sep}TypingIndicator.tsx`,
+  // EffortLabel (the message-metadata effort cell, shown inside MessageRow) is
+  // utility-first by design — `cn()` + design-system tokens + the preserved
+  // `cc-rainbow-text` treatment. Both the component and its story are exempt;
+  // the component also uses the `text-text-secondary` token, which the story
+  // merely reports first (it sorts before the .tsx).
+  `${path.sep}components${path.sep}conversation${path.sep}EffortLabel.tsx`,
+  `${path.sep}components${path.sep}conversation${path.sep}EffortLabel.stories.tsx`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}collab${path.sep}`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}ConversationList.tsx`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}ConversationMentionChip.tsx`,

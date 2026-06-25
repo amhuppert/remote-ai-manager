@@ -22,6 +22,11 @@ import {
   QUERY_SESSION_ERROR_CODES,
   tagQuerySessionError,
 } from "./query-session-errors";
+import {
+  conversationRuntimeKey,
+  registerConversationRuntime,
+  cleanupConversationRuntime,
+} from "@/lib/workflows/conversation/runtime-state";
 
 function createFakeMcpServer(): {
   instance: McpServer;
@@ -1488,7 +1493,7 @@ describe("ClaudeConversationRuntime — session-tools instance replacement", () 
   });
 });
 
-describe("ClaudeConversationRuntime — reactive stream-closed recovery", () => {
+describe("ClaudeConversationRuntime — session-tools supervisor (pre-turn + reactive)", () => {
   function depsWithSequence(...instances: McpServer[]): {
     deps: ClaudeFactoryDeps;
     createSpy: ReturnType<typeof vi.fn>;
@@ -1676,7 +1681,7 @@ describe("ClaudeConversationRuntime — reactive stream-closed recovery", () => 
     runtime.close();
   });
 
-  it("attempts at most one recovery per debounce window", async () => {
+  it("kills the runtime on a second cc-session-tools close in the same turn (2-strike, not generic N=3)", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
     installNameDiffSetMcpServers(mock);
@@ -1692,22 +1697,143 @@ describe("ClaudeConversationRuntime — reactive stream-closed recovery", () => 
 
     const { runtime, turnPromise } = await startTurnedRuntime(
       deps,
-      "conv-recovery-debounce",
+      "conv-recovery-2strike",
     );
 
+    // First close: one rebind (init create + one recovery create).
     pushMcpToolUse(mock, "t1", "mcp__cc-session-tools__AskUserQuestion");
     pushStreamClosedResult(mock, "t1");
     await new Promise((r) => setTimeout(r, 20));
+    expect(createSpy).toHaveBeenCalledTimes(2);
+
+    // Second close this turn: the supervisor escalates to a kill rather than a
+    // third create — the runtime is force-terminated and the turn ends in error.
     pushMcpToolUse(mock, "t2", "mcp__cc-session-tools__AskUserQuestion");
     pushStreamClosedResult(mock, "t2");
     await new Promise((r) => setTimeout(r, 20));
 
-    // One create for init + exactly one for the first recovery; the second
-    // stream-closed lands inside the debounce window and is skipped.
+    const result = await turnPromise;
     expect(createSpy).toHaveBeenCalledTimes(2);
+    expect(result.error).not.toBeNull();
+    expect(runtime.status).toBe("dead");
 
-    finishTurn(mock);
-    await turnPromise;
+    runtime.close();
+  });
+
+  it("forces a cc-session-tools rebind before a reused turn but not on the first turn (primary fix)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    const { connected } = installNameDiffSetMcpServers(mock);
+
+    const first = createFakeMcpServer();
+    const second = createFakeMcpServer();
+    const { deps, createSpy } = depsWithSequence(
+      first.instance,
+      second.instance,
+    );
+
+    const runtime = await claudeConversationBackendFactory.createRuntime(
+      {
+        conversationId: "conv-preturn",
+        projectPath: "/project",
+        projectName: "proj",
+        sessionName: "sess",
+        worktreePath: "/project/.worktrees/sess",
+        persistedRef: null,
+        sessionInstructions: [],
+        tooling: {},
+      },
+      deps,
+    );
+    expect(createSpy).toHaveBeenCalledTimes(1); // initial bind only
+
+    // First turn: the initial bind is fresh — no rebind.
+    const firstReady = await runtime.prepareForTurnStart!();
+    expect(firstReady).toEqual({ status: "ready" });
+    expect(createSpy).toHaveBeenCalledTimes(1);
+
+    // Reused turn: forced two-phase rebind before the prompt is delivered.
+    const reusedReady = await runtime.prepareForTurnStart!();
+    expect(reusedReady).toEqual({ status: "ready" });
+    expect(createSpy).toHaveBeenCalledTimes(2);
+    expect(connected.get("cc-session-tools")).toBe(second.instance);
+
+    runtime.close();
+  });
+
+  it("returns recreate-runtime when the reused-turn rebind cannot reconnect", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    // Default setMcpServers mock never reports the server in `added`, so the
+    // two-phase rebind's re-add verification fails.
+
+    const first = createFakeMcpServer();
+    const second = createFakeMcpServer();
+    const { deps } = depsWithSequence(first.instance, second.instance);
+
+    const runtime = await claudeConversationBackendFactory.createRuntime(
+      {
+        conversationId: "conv-preturn-fail",
+        projectPath: "/project",
+        projectName: "proj",
+        sessionName: "sess",
+        worktreePath: "/project/.worktrees/sess",
+        persistedRef: null,
+        sessionInstructions: [],
+        tooling: {},
+      },
+      deps,
+    );
+
+    await runtime.prepareForTurnStart!(); // consume the first-turn skip
+    const result = await runtime.prepareForTurnStart!();
+
+    expect(result.status).toBe("recreate-runtime");
+    runtime.close();
+  });
+
+  it("does not rebind on a reused turn while a question is validly pending", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+    installNameDiffSetMcpServers(mock);
+
+    const first = createFakeMcpServer();
+    const second = createFakeMcpServer();
+    const { deps, createSpy } = depsWithSequence(
+      first.instance,
+      second.instance,
+    );
+
+    const conversationId = "conv-question-pending";
+    const runtime = await claudeConversationBackendFactory.createRuntime(
+      {
+        conversationId,
+        projectPath: "/project",
+        projectName: "proj",
+        sessionName: "sess",
+        worktreePath: "/project/.worktrees/sess",
+        persistedRef: null,
+        sessionInstructions: [],
+        tooling: {},
+      },
+      deps,
+    );
+
+    await runtime.prepareForTurnStart!(); // consume the first-turn skip
+
+    // Install a pending question resolver under the same key the AskUserQuestion
+    // tool keys its runtime-state on.
+    const key = conversationRuntimeKey("/project", "sess", conversationId);
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+      activeQuestionResolver: { resolve: () => {}, reject: () => {} },
+    });
+
+    const ready = await runtime.prepareForTurnStart!();
+    expect(ready).toEqual({ status: "ready" });
+    expect(createSpy).toHaveBeenCalledTimes(1); // guard suppressed the rebind
+
+    cleanupConversationRuntime(key);
     runtime.close();
   });
 });

@@ -6,6 +6,7 @@ build/
 bun.lock
 package-lock.json
 *.md
+.design-sync/
 .worktrees/
 storybook-static/
 

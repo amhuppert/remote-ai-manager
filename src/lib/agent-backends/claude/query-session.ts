@@ -91,7 +91,10 @@ export interface BackgroundWaitOutcome {
 
 type TurnEmit = (event: string, data: unknown) => void;
 type SetMcpServersResult = Awaited<ReturnType<Query["setMcpServers"]>>;
-type McpMutationSource = "runtime" | "recovery";
+export type McpMutationSource =
+  | "runtime"
+  | "replace_sdk_server_drop"
+  | "replace_sdk_server_add";
 
 /**
  * Details of a tool_result the SDK synthesized because its connection to an
@@ -102,6 +105,16 @@ export interface SdkMcpStreamClosedInfo {
   serverName: string;
   toolName: string;
   consecutiveCount: number;
+}
+
+export function shouldAlertMissingSupervisedServerMutation(input: {
+  source: McpMutationSource;
+  supervisedMcpServerName: string | undefined;
+  serverKeys: readonly string[];
+}): boolean {
+  if (input.supervisedMcpServerName === undefined) return false;
+  if (input.serverKeys.includes(input.supervisedMcpServerName)) return false;
+  return input.source !== "replace_sdk_server_drop";
 }
 
 export interface QuerySession {
@@ -192,6 +205,17 @@ export interface QuerySession {
    */
   notifyTurnStarting(): void;
 
+  /**
+   * Force-terminate the subprocess because in-process MCP recovery for a
+   * supervised server (`cc-session-tools`) is unrecoverable this turn. Kills
+   * the live turn with a tagged `SDK_PIPE_BROKEN` error and closes the
+   * subprocess, so the actor's get-or-create path builds a fresh (resumed)
+   * runtime on the next prompt. This is the session-tools supervisor's own
+   * kill decision and supersedes the generic consecutive-stream-closed
+   * threshold (which never fires for the supervised server). No-op if dead.
+   */
+  forceTerminate(reason: string): void;
+
   /** Terminate the subprocess and clean up all resources */
   close(): void;
 }
@@ -253,6 +277,17 @@ export interface QuerySessionOptions {
    * session is killed. Must not throw; errors are swallowed and logged.
    */
   onSdkMcpStreamClosed?: (info: SdkMcpStreamClosedInfo) => void;
+  /**
+   * Name of the in-process MCP server whose recovery is owned by an external
+   * supervisor (`cc-session-tools`). A "Stream closed" tool_result for this
+   * server is routed to `onSdkMcpStreamClosed` but EXCLUDED from the generic
+   * consecutive-stream-closed pipe-broken threshold — the supervisor owns the
+   * rebind and the kill decision, so the generic N=3 escalation must never
+   * race it (the original incident). Stream-closed results for any other
+   * server still feed the generic threshold (the backstop for non-supervised
+   * servers, § honest external recovery).
+   */
+  supervisedMcpServerName?: string;
 }
 
 // ============================================================
@@ -308,8 +343,10 @@ interface BackgroundWaiter {
 export function createQuerySession(options: QuerySessionOptions): QuerySession {
   const DEFAULT_IDLE_TTL_MS = 5 * 60 * 1000; // 5 minutes
   const DEFAULT_MCP_KEEPALIVE_MS = 30_000; // 30 seconds
-  const MCP_PIPE_BROKEN_THRESHOLD = 3;
   const TOOL_RESULT_STREAM_CLOSED_THRESHOLD = 3;
+  // Hard ceiling on any mcpServerStatus() probe. A hung probe must not block
+  // the caller or (via keepaliveInFlight) permanently suppress future ticks.
+  const MCP_STATUS_TIMEOUT_MS = 2_000;
   const idleTtlMs = options.idleTtlMs ?? DEFAULT_IDLE_TTL_MS;
   const mcpKeepaliveMs =
     options.mcpKeepaliveIntervalMs ?? DEFAULT_MCP_KEEPALIVE_MS;
@@ -325,13 +362,11 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   let awaitingSubsequentPromptDelivery = false;
   let activeMcpServers: Record<string, unknown> = options.mcpServers;
   let mcpMutationQueue: Promise<unknown> = Promise.resolve();
-  // Re-entrancy guards on the MCP health/recovery codepaths. Without these, a
-  // stalled mcpServerStatus or setMcpServers call lets the keepalive interval
-  // queue dozens of concurrent ticks/reconnects, which all reject in a
-  // thundering herd when the underlying SDK pipe finally breaks.
+  // Re-entrancy guard on the keepalive status probe. Without it, a slow probe
+  // lets the keepalive interval queue concurrent ticks. The probe is bounded
+  // (MCP_STATUS_TIMEOUT_MS) so the flag always clears — a hung probe can no
+  // longer permanently suppress future ticks.
   let keepaliveInFlight = false;
-  let recoveryInFlight = false;
-  let recoveryFailureCount = 0;
   let consecutiveStreamClosedCount = 0;
   let backgroundTaskState = emptyBackgroundTaskState();
   const backgroundWaiters = new Set<BackgroundWaiter>();
@@ -413,6 +448,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     setMcpServers,
     replaceSdkServer,
     notifyTurnStarting,
+    forceTerminate,
     close,
   };
 
@@ -435,6 +471,43 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
 
   function mcpServerCount(mcpServers: Record<string, unknown>): number {
     return Object.keys(mcpServers).length;
+  }
+
+  /**
+   * Phase 0 instrumentation: record every live MCP mutation so the root-cause
+   * of in-process transport breakage can be settled empirically. Unexpected
+   * payloads that drop the supervised server name (`cc-session-tools`) would
+   * DISCONNECT the in-process server (the SDK diffs sdk servers by name), so
+   * they are flagged at error level for correlation with stream-closed events.
+   * The intentional drop phase of `replaceSdkServer` is telemetry only.
+   */
+  function logMcpMutation(
+    source: McpMutationSource,
+    serverKeys: string[],
+  ): void {
+    const supervised = options.supervisedMcpServerName;
+    const includesCcSessionTools =
+      supervised !== undefined && serverKeys.includes(supervised);
+    logger.info("query-session.mcp_mutation", {
+      conversationId: options.conversationId,
+      source,
+      serverKeys,
+      includesCcSessionTools,
+    });
+    if (
+      shouldAlertMissingSupervisedServerMutation({
+        source,
+        supervisedMcpServerName: supervised,
+        serverKeys,
+      })
+    ) {
+      logger.error("query-session.mcp_mutation_missing_supervised_server", {
+        conversationId: options.conversationId,
+        source,
+        serverKeys,
+        supervisedMcpServerName: supervised,
+      });
+    }
   }
 
   function hasActiveMcpServers(): boolean {
@@ -485,25 +558,24 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         throw new Error("QuerySession closed");
       }
 
-      const serverCount = mcpServerCount(mcpServers);
+      const serverKeys = Object.keys(mcpServers);
+      const serverCount = serverKeys.length;
+      logMcpMutation(source, serverKeys);
       try {
         const result = await q.setMcpServers(
           mcpServers as Record<string, never>,
         );
         activeMcpServers = mcpServers;
-        recoveryFailureCount = 0;
         syncMcpKeepaliveTimer();
 
-        if (source !== "recovery") {
-          logger.info("query-session.mcp_servers_updated", {
-            conversationId: options.conversationId,
-            source,
-            serverCount,
-            added: result.added,
-            removed: result.removed,
-            errors: result.errors,
-          });
-        }
+        logger.info("query-session.mcp_servers_updated", {
+          conversationId: options.conversationId,
+          source,
+          serverCount,
+          added: result.added,
+          removed: result.removed,
+          errors: result.errors,
+        });
         if (Object.keys(result.errors).length > 0) {
           logger.error("query-session.mcp_servers_connect_errors", {
             conversationId: options.conversationId,
@@ -514,14 +586,12 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
 
         return result;
       } catch (err) {
-        if (source !== "recovery") {
-          logger.error("query-session.mcp_servers_update_failed", {
-            conversationId: options.conversationId,
-            source,
-            serverCount,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
+        logger.error("query-session.mcp_servers_update_failed", {
+          conversationId: options.conversationId,
+          source,
+          serverCount,
+          error: err instanceof Error ? err.message : String(err),
+        });
         throw err;
       }
     });
@@ -545,12 +615,14 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
 
       const withoutServer = { ...baseServers };
       delete withoutServer[serverName];
+      logMcpMutation("replace_sdk_server_drop", Object.keys(withoutServer));
       await q.setMcpServers(withoutServer as Record<string, never>);
 
       const merged = {
         ...withoutServer,
         [serverName]: { type: "sdk", name: serverName, instance },
       };
+      logMcpMutation("replace_sdk_server_add", Object.keys(merged));
       const result = await q.setMcpServers(merged as Record<string, never>);
 
       const connectError = result.errors[serverName];
@@ -576,7 +648,6 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       }
 
       activeMcpServers = merged;
-      recoveryFailureCount = 0;
       syncMcpKeepaliveTimer();
 
       logger.info("query-session.sdk_server_replaced", {
@@ -884,9 +955,12 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         throw createPromptNotDeliveredError();
       }
 
-      // Pre-turn MCP health check — verify connections are alive before
-      // delivering the prompt so the SDK doesn't hit "Stream closed" errors
-      await ensureMcpHealthy("pre_turn");
+      // Pre-turn MCP health probe. The supervised in-process server's real
+      // pre-turn guarantee is the actor-level forced rebind; this is a bounded
+      // backstop that fails fast (throws → undelivered → actor recreates a
+      // resumed runtime) rather than delivering the prompt into a runtime whose
+      // supervised transport is definitively failed. It never recovers in-query.
+      await assertPreTurnMcpHealthy();
 
       const userMessage = buildUserMessage(prompt);
       await q.streamInput(wrapAsIterable(userMessage));
@@ -942,7 +1016,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   }
 
   function escalatePipeBroken(
-    reason: "mcp_pipe_broken" | "tool_result_pipe_broken",
+    reason: "tool_result_pipe_broken",
     count: number,
   ): void {
     if (status === "dead") return;
@@ -966,8 +1040,27 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     }
   }
 
+  function forceTerminate(reason: string): void {
+    if (status === "dead") return;
+    logger.error("query-session.force_terminate", {
+      conversationId: options.conversationId,
+      reason,
+    });
+    markDead("force_terminate");
+    const taggedError = tagQuerySessionError(
+      new Error(`Session force-terminated: ${reason}`),
+      QUERY_SESSION_ERROR_CODES.sdkPipeBroken,
+    );
+    rejectPendingTurn(taggedError);
+    try {
+      q.close();
+    } catch {
+      // best-effort
+    }
+  }
+
   // ------------------------------------------------------------------
-  // MCP health & recovery
+  // MCP health — bounded, telemetry-grade probe (no in-query recovery)
   // ------------------------------------------------------------------
 
   function findFailedServers(
@@ -976,82 +1069,117 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     return statuses.filter((s) => s.status === "failed").map((s) => s.name);
   }
 
-  async function mcpKeepaliveTick(): Promise<void> {
-    try {
-      const statuses = await q.mcpServerStatus();
-      if (status !== "alive") return;
-      const failed = findFailedServers(statuses);
-      if (failed.length > 0) {
-        logger.warn("query-session.mcp_keepalive_failed", {
-          conversationId: options.conversationId,
-          failedServers: failed,
-        });
-        await attemptMcpRecovery("keepalive");
-      }
-    } catch {
-      if (status !== "alive") return;
-      logger.warn("query-session.mcp_keepalive_failed", {
-        conversationId: options.conversationId,
-      });
-      await attemptMcpRecovery("keepalive");
-    }
-  }
+  type StatusProbe =
+    | { kind: "ok"; statuses: Awaited<ReturnType<typeof q.mcpServerStatus>> }
+    | { kind: "timeout" }
+    | { kind: "error"; error: string };
 
-  async function ensureMcpHealthy(trigger: string): Promise<void> {
-    if (!hasActiveMcpServers()) return;
+  /**
+   * Race `mcpServerStatus()` against a hard timeout so a hung probe always
+   * settles. This is the fix for the `keepaliveInFlight`-never-resets bug — the
+   * caller's `.finally` flag reset can only run if the probe completes.
+   * `mcpServerStatus()` is treated as a weak/telemetry signal, never recovery-
+   * grade: a `failed` entry is reported, never silently reconnected.
+   */
+  async function statusWithTimeout(timeoutMs: number): Promise<StatusProbe> {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const TIMEOUT = Symbol("status_timeout");
     try {
-      const statuses = await q.mcpServerStatus();
-      if (status !== "alive") return;
-      const failed = findFailedServers(statuses);
-      if (failed.length > 0) {
-        logger.warn("query-session.mcp_unhealthy", {
-          conversationId: options.conversationId,
-          trigger,
-          failedServers: failed,
-        });
-        await attemptMcpRecovery(trigger);
-      }
-    } catch {
-      if (status !== "alive") return;
-      logger.warn("query-session.mcp_unhealthy", {
-        conversationId: options.conversationId,
-        trigger,
-      });
-      await attemptMcpRecovery(trigger);
-    }
-  }
-
-  async function attemptMcpRecovery(trigger: string): Promise<void> {
-    if (recoveryInFlight) return;
-    if (!hasActiveMcpServers()) return;
-    recoveryInFlight = true;
-    try {
-      await enqueueMcpMutation(async () => {
-        if (status !== "alive") return;
-        if (!hasActiveMcpServers()) return;
-        await q.setMcpServers(activeMcpServers as Record<string, never>);
-      });
-      if (status !== "alive") return;
-      recoveryFailureCount = 0;
-      syncMcpKeepaliveTimer();
-      logger.info("query-session.mcp_reconnected", {
-        conversationId: options.conversationId,
-        trigger,
-      });
-    } catch {
-      if (status !== "alive") return;
-      recoveryFailureCount += 1;
-      logger.error("query-session.mcp_reconnect_failed", {
-        conversationId: options.conversationId,
-        trigger,
-        consecutiveFailures: recoveryFailureCount,
-      });
-      if (recoveryFailureCount >= MCP_PIPE_BROKEN_THRESHOLD) {
-        escalatePipeBroken("mcp_pipe_broken", recoveryFailureCount);
-      }
+      const statuses = await Promise.race([
+        q.mcpServerStatus(),
+        new Promise<typeof TIMEOUT>((resolve) => {
+          timer = setTimeout(() => resolve(TIMEOUT), timeoutMs);
+        }),
+      ]);
+      if (statuses === TIMEOUT) return { kind: "timeout" };
+      return { kind: "ok", statuses };
+    } catch (err) {
+      return {
+        kind: "error",
+        error: err instanceof Error ? err.message : String(err),
+      };
     } finally {
-      recoveryInFlight = false;
+      if (timer) clearTimeout(timer);
     }
+  }
+
+  /**
+   * Between-turn keepalive: the ping itself counts as transport activity (it
+   * prevents the SDK's idle timeout from closing the stream during long turns)
+   * and records health telemetry. v1 takes NO recovery action on a bare status
+   * failure — recovery for the supervised in-process server is owned by the
+   * external supervisor (pre-turn forced rebind + reactive state machine).
+   */
+  async function mcpKeepaliveTick(): Promise<void> {
+    const probe = await statusWithTimeout(MCP_STATUS_TIMEOUT_MS);
+    if (status !== "alive") return;
+    if (probe.kind === "timeout") {
+      logger.warn("query-session.mcp_status_timeout", {
+        conversationId: options.conversationId,
+        trigger: "keepalive",
+        timeoutMs: MCP_STATUS_TIMEOUT_MS,
+      });
+      return;
+    }
+    if (probe.kind === "error") {
+      logger.warn("query-session.mcp_keepalive_status_error", {
+        conversationId: options.conversationId,
+        error: probe.error,
+      });
+      return;
+    }
+    const failed = findFailedServers(probe.statuses);
+    if (failed.length > 0) {
+      logger.warn("query-session.mcp_keepalive_unhealthy", {
+        conversationId: options.conversationId,
+        failedServers: failed,
+      });
+    }
+  }
+
+  /**
+   * Pre-turn MCP health backstop. Bounded and weak: a timeout/probe-error never
+   * blocks delivery (the actor-level forced rebind is the real guarantee). Only
+   * a DEFINITIVE failed status for the supervised server fails fast — throw so
+   * `sendSubsequentPrompt` kills the session (tagged undelivered) and the actor
+   * recreates a resumed runtime, rather than delivering into a broken transport.
+   * Other failed servers are telemetry only; their backstop is the generic
+   * mid-turn stream-closed threshold (§ honest external recovery).
+   */
+  async function assertPreTurnMcpHealthy(): Promise<void> {
+    if (!hasActiveMcpServers()) return;
+    const probe = await statusWithTimeout(MCP_STATUS_TIMEOUT_MS);
+    if (status !== "alive") return;
+    if (probe.kind === "timeout") {
+      logger.warn("query-session.mcp_status_timeout", {
+        conversationId: options.conversationId,
+        trigger: "pre_turn",
+        timeoutMs: MCP_STATUS_TIMEOUT_MS,
+      });
+      return;
+    }
+    if (probe.kind === "error") {
+      logger.warn("query-session.mcp_pre_turn_status_error", {
+        conversationId: options.conversationId,
+        error: probe.error,
+      });
+      return;
+    }
+    const failed = findFailedServers(probe.statuses);
+    if (failed.length === 0) return;
+
+    const supervised = options.supervisedMcpServerName;
+    const supervisedFailed =
+      supervised !== undefined && failed.includes(supervised);
+    logger.warn("query-session.mcp_pre_turn_unhealthy", {
+      conversationId: options.conversationId,
+      failedServers: failed,
+      supervisedFailed,
+    });
+    if (!supervisedFailed) return;
+    throw new Error(
+      `Pre-turn MCP health check failed: supervised server "${supervised}" reported failed`,
+    );
   }
 
   // ------------------------------------------------------------------
@@ -1205,10 +1333,37 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
               );
               turn.contentBlocks.push(resultBlock);
               if (isStreamClosedToolResult(resultBlock)) {
-                consecutiveStreamClosedCount += 1;
                 const toolName = turn.toolNamesById.get(
                   resultBlock.tool_use_id,
                 );
+                const serverName = toolName
+                  ? parseMcpServerName(toolName)
+                  : null;
+                const isSupervised =
+                  serverName !== null &&
+                  serverName === options.supervisedMcpServerName;
+
+                if (isSupervised) {
+                  // The supervised in-process server owns its own recovery and
+                  // kill decision via the external supervisor, so it is
+                  // EXCLUDED from the generic consecutive-stream-closed
+                  // threshold. Feeding it into that counter would let the
+                  // generic N=3 kill race the supervisor's rebind — the
+                  // original incident. Leave consecutiveStreamClosedCount
+                  // untouched (neither bump nor reset): it tracks only
+                  // non-supervised servers.
+                  logger.warn("query-session.stream_closed_tool_result", {
+                    conversationId: options.conversationId,
+                    toolUseId: resultBlock.tool_use_id,
+                    toolName,
+                    supervised: true,
+                    contentPreview: previewLogContent(resultBlock.content),
+                  });
+                  notifySdkMcpStreamClosed(toolName, 0);
+                  continue;
+                }
+
+                consecutiveStreamClosedCount += 1;
                 logger.warn("query-session.stream_closed_tool_result", {
                   conversationId: options.conversationId,
                   toolUseId: resultBlock.tool_use_id,

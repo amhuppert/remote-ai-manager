@@ -1200,6 +1200,114 @@ describe("executePromptForMachine", () => {
     expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
   });
 
+  describe("pre-turn readiness gate", () => {
+    it("recreates the runtime (resume-preserving) before streamInput when readiness asks for it, then delivers", async () => {
+      const reusedPrepare = vi
+        .fn()
+        .mockResolvedValue({
+          status: "recreate-runtime",
+          reason: "rebind_failed",
+        });
+      const reusedSendTurn = vi.fn();
+      const reused = createMockBackendRuntime({
+        modelId: "opus",
+        prepareForTurnStart: reusedPrepare,
+        sendTurn: reusedSendTurn,
+      });
+
+      const freshSendTurn = vi.fn().mockResolvedValue(defaultTurnResult);
+      const freshPrepare = vi.fn().mockResolvedValue({ status: "ready" });
+      const fresh = createMockBackendRuntime({
+        modelId: "opus",
+        prepareForTurnStart: freshPrepare,
+        sendTurn: freshSendTurn,
+      });
+      mockFactory.createRuntime.mockResolvedValue(fresh);
+
+      const input = makeExecutePromptInput({
+        backendRef: { backend: "claude", sessionId: "sdk-session-resume" },
+      });
+      const key = conversationRuntimeKey(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+      );
+      registerConversationRuntime(key, {
+        abortController: new AbortController(),
+        backendRuntime: reused,
+      });
+
+      const result = await executePromptForMachine(input);
+
+      // Reused runtime failed readiness → recreated once, retried → ready.
+      expect(reusedPrepare).toHaveBeenCalledTimes(1);
+      expect(reused.close).toHaveBeenCalledTimes(1);
+      expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
+      expect(freshPrepare).toHaveBeenCalledTimes(1);
+      // The original runtime never delivered; the fresh one did.
+      expect(reusedSendTurn).not.toHaveBeenCalled();
+      expect(freshSendTurn).toHaveBeenCalledTimes(1);
+      expect(result.error).toBeNull();
+
+      // Resume continuity: the recreated runtime resumes the same session.
+      expect(mockFactory.createRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          persistedRef: { backend: "claude", sessionId: "sdk-session-resume" },
+        }),
+      );
+    });
+
+    it("fails the prompt before streamInput when readiness fails twice (no delivery)", async () => {
+      const reusedPrepare = vi
+        .fn()
+        .mockResolvedValue({
+          status: "recreate-runtime",
+          reason: "rebind_failed",
+        });
+      const reusedSendTurn = vi.fn();
+      const reused = createMockBackendRuntime({
+        modelId: "opus",
+        prepareForTurnStart: reusedPrepare,
+        sendTurn: reusedSendTurn,
+      });
+
+      const freshPrepare = vi
+        .fn()
+        .mockResolvedValue({
+          status: "recreate-runtime",
+          reason: "still_broken",
+        });
+      const freshSendTurn = vi.fn();
+      const fresh = createMockBackendRuntime({
+        modelId: "opus",
+        prepareForTurnStart: freshPrepare,
+        sendTurn: freshSendTurn,
+      });
+      mockFactory.createRuntime.mockResolvedValue(fresh);
+
+      const input = makeExecutePromptInput();
+      const key = conversationRuntimeKey(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+      );
+      registerConversationRuntime(key, {
+        abortController: new AbortController(),
+        backendRuntime: reused,
+      });
+
+      const result = await executePromptForMachine(input);
+
+      expect(reusedPrepare).toHaveBeenCalledTimes(1);
+      expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
+      expect(freshPrepare).toHaveBeenCalledTimes(1);
+      // Neither runtime ever delivered a turn.
+      expect(reusedSendTurn).not.toHaveBeenCalled();
+      expect(freshSendTurn).not.toHaveBeenCalled();
+      expect(result.error).toContain("cc-session-tools unrecoverable");
+    });
+  });
+
   it("sends BACKEND_INIT event to machine via onEvent callback", async () => {
     const sendToMachine = vi.fn();
     const input = makeExecutePromptInput();

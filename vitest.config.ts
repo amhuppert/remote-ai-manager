@@ -56,7 +56,12 @@ export default defineConfig({
   test: {
     reporters: getReporters(),
     globals: true,
-    exclude: ["**/node_modules/**", "**/.worktrees/**", "**/dist/**"],
+    exclude: [
+      "**/node_modules/**",
+      "**/.design-sync/**",
+      "**/.worktrees/**",
+      "**/dist/**",
+    ],
 
     pool: "forks",
     poolOptions: {
