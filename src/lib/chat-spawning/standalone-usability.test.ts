@@ -48,7 +48,6 @@ describe("chat-spawning usable without the cockpit UI", () => {
       sessions: [
         {
           name: "alpha",
-          branch: "feat/alpha",
           agent: "claude",
           mode: "fast",
           initialPrompt: "go",

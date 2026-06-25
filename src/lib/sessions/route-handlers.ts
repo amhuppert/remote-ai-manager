@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/projects/resolver";
+import { readConfig } from "@/lib/config/loader";
+import { readRepoConfig } from "@/lib/projects/repo-config";
+import { resolveBranchPrefix } from "@/lib/config/cascade";
 import {
   getProjectSessionListItems,
   getSession,
@@ -49,6 +52,31 @@ export const listSessions = withTracing(
       (s) => !isReservedSessionName(s.sessionName),
     );
     return NextResponse.json({ sessions: visible });
+  },
+);
+
+/**
+ * GET /api/projects/[name]/branch-prefix — the effective branch prefix CC will
+ * apply when creating a session in this project (per-repo override → global →
+ * `"csm"`). Lets client surfaces preview the real `<prefix>/<slug>` branch.
+ */
+export const getBranchPrefix = withTracing(
+  async (_request, { params }: RouteContext) => {
+    const name = (await params)["name"] ?? "";
+    const projectPath = await resolveProjectPath(name);
+    if (!projectPath) {
+      return NextResponse.json(
+        { error: "Project not found" } satisfies ApiError,
+        { status: 404 },
+      );
+    }
+
+    const [globalConfig, repoConfig] = await Promise.all([
+      readConfig(),
+      readRepoConfig(projectPath),
+    ]);
+    const branchPrefix = resolveBranchPrefix(globalConfig, repoConfig);
+    return NextResponse.json({ branchPrefix });
   },
 );
 

@@ -55,9 +55,7 @@ function makeDeps(overrides: Partial<SpawnRouteDeps> = {}): SpawnRouteDeps {
 }
 
 const VALID_BODY = {
-  sessions: [
-    { name: "alpha", branch: "feat/alpha", agent: "claude", mode: "fast" },
-  ],
+  sessions: [{ name: "alpha", agent: "claude", mode: "fast" }],
 };
 
 describe("createSpawnRouteHandlers POST", () => {
@@ -157,13 +155,8 @@ describe("createSpawnRouteHandlers POST", () => {
     const res = await POST(
       jsonRequest({
         sessions: [
-          {
-            name: "alpha",
-            branch: "feat/alpha",
-            agent: "claude",
-            mode: "fast",
-          },
-          { name: "beta", branch: "feat/beta", agent: "claude", mode: "fast" },
+          { name: "alpha", agent: "claude", mode: "fast" },
+          { name: "beta", agent: "claude", mode: "fast" },
         ],
       }),
       ctx({ name: "repo", conversationId: "plc-1" }),

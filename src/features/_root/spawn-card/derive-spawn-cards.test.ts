@@ -31,7 +31,7 @@ const VALID_PROPOSAL = [
   "Here's my plan:",
   "",
   "```spawn-proposal",
-  '{"sessions":[{"name":"auth","branch":"feat/auth","agent":"claude","mode":"fast"}]}',
+  '{"sessions":[{"name":"auth","agent":"claude","mode":"fast"}]}',
   "```",
   "",
   "Let me know.",

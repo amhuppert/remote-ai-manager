@@ -12,7 +12,7 @@ const VALID_PROPOSAL = [
   "Here's my plan:",
   "",
   "```spawn-proposal",
-  '{"sessions":[{"name":"auth","branch":"feat/auth","agent":"claude","mode":"fast"}]}',
+  '{"sessions":[{"name":"auth","agent":"claude","mode":"fast"}]}',
   "```",
 ].join("\n");
 
@@ -68,8 +68,10 @@ describe("useConversationSpawnCards", () => {
     });
     expect(screen.getByTestId("card-count")).toHaveTextContent("1");
     expect(screen.getByText("Proposed sessions")).toBeInTheDocument();
-    expect(screen.getByText("auth")).toBeInTheDocument();
-    expect(screen.getByText("feat/auth")).toBeInTheDocument();
+    // The proposed name renders; the branch is auto-derived from it (shown with
+    // the "auto" chip), so "auth" appears as both the name and the branch slug.
+    expect(screen.getAllByText("auth").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("auto")).toBeInTheDocument();
   });
 
   it("renders the non-actionable invalid state for a malformed proposal", () => {

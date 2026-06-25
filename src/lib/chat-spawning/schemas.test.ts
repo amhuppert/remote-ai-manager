@@ -12,7 +12,6 @@ describe("proposedSessionSchema", () => {
   it("parses a conforming session and defaults target to 'main'", () => {
     const result = proposedSessionSchema.safeParse({
       name: "Add login",
-      branch: "feat/login",
       agent: "claude",
       mode: "fast",
     });
@@ -23,10 +22,21 @@ describe("proposedSessionSchema", () => {
     }
   });
 
+  it("does not carry a branch — CC derives it from the name", () => {
+    const result = proposedSessionSchema.safeParse({
+      name: "Add login",
+      agent: "claude",
+      mode: "fast",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect("branch" in result.data).toBe(false);
+    }
+  });
+
   it("keeps an explicit target and optional initialPrompt", () => {
     const result = proposedSessionSchema.safeParse({
       name: "Add login",
-      branch: "feat/login",
       target: "develop",
       agent: "dual",
       mode: "focus",
@@ -42,7 +52,6 @@ describe("proposedSessionSchema", () => {
   it("rejects an out-of-range agent", () => {
     const result = proposedSessionSchema.safeParse({
       name: "x",
-      branch: "x",
       agent: "gpt",
       mode: "fast",
     });
@@ -52,7 +61,6 @@ describe("proposedSessionSchema", () => {
   it("rejects an out-of-range mode", () => {
     const result = proposedSessionSchema.safeParse({
       name: "x",
-      branch: "x",
       agent: "claude",
       mode: "turbo",
     });
@@ -62,7 +70,6 @@ describe("proposedSessionSchema", () => {
   it("rejects an empty initialPrompt after trim", () => {
     const result = proposedSessionSchema.safeParse({
       name: "x",
-      branch: "x",
       agent: "claude",
       mode: "fast",
       initialPrompt: "   ",
@@ -80,8 +87,8 @@ describe("spawnProposalSchema", () => {
   it("parses a multi-session proposal", () => {
     const result = spawnProposalSchema.safeParse({
       sessions: [
-        { name: "a", branch: "feat/a", agent: "claude", mode: "fast" },
-        { name: "b", branch: "feat/b", agent: "codex", mode: "optimistic" },
+        { name: "a", agent: "claude", mode: "fast" },
+        { name: "b", agent: "codex", mode: "optimistic" },
       ],
     });
     expect(result.success).toBe(true);
@@ -93,7 +100,6 @@ describe("spawnProposalSchema", () => {
   it("rejects more than 20 proposed sessions", () => {
     const sessions = Array.from({ length: 21 }, (_, i) => ({
       name: `s${i}`,
-      branch: `feat/s${i}`,
       agent: "claude" as const,
       mode: "fast" as const,
     }));

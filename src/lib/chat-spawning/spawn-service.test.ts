@@ -44,7 +44,6 @@ function makeSession(name: string): SessionState {
 function proposed(overrides: Partial<ProposedSession>): ProposedSession {
   return {
     name: "alpha",
-    branch: "feat/alpha",
     target: "main",
     agent: "claude",
     mode: "fast",
@@ -269,22 +268,22 @@ describe("createSpawnSessionCreator (New-Session parity mapping)", () => {
     };
   }
 
-  it("honors the proposed name, branch, target, and mode (fast)", async () => {
+  it("honors the proposed name, target, and mode (fast) and omits an explicit branch", async () => {
     const deps = makeCreatorDeps();
     const createSession = createSpawnSessionCreator(deps);
     await createSession({
       projectPath: "/repo",
       proposed: proposed({
         name: "alpha",
-        branch: "feat/custom-branch",
         mode: "fast",
         target: "develop",
       }),
       baseBranch: COMMITTED_HEAD,
     });
+    // No `branch`: createSpawnedSession derives it from the name, exactly as the
+    // New Session dialog does.
     expect(deps.createSpawnedSession).toHaveBeenCalledWith("/repo", {
       name: "alpha",
-      branch: "feat/custom-branch",
       targetBranch: "develop",
       mode: "fast",
       baseBranch: COMMITTED_HEAD,
@@ -292,14 +291,13 @@ describe("createSpawnSessionCreator (New-Session parity mapping)", () => {
     });
   });
 
-  it("seeds the focus objective from the initial prompt (or name) and honors the branch", async () => {
+  it("seeds the focus objective from the initial prompt (or name) without an explicit branch", async () => {
     const deps = makeCreatorDeps();
     const createSession = createSpawnSessionCreator(deps);
     await createSession({
       projectPath: "/repo",
       proposed: proposed({
         name: "alpha",
-        branch: "feat/focus",
         mode: "focus",
         initialPrompt: "the objective",
       }),
@@ -307,7 +305,6 @@ describe("createSpawnSessionCreator (New-Session parity mapping)", () => {
     });
     expect(deps.createSpawnedSession).toHaveBeenCalledWith("/repo", {
       name: "alpha",
-      branch: "feat/focus",
       targetBranch: "main",
       mode: "focus",
       baseBranch: COMMITTED_HEAD,
@@ -322,7 +319,6 @@ describe("createSpawnSessionCreator (New-Session parity mapping)", () => {
       projectPath: "/repo",
       proposed: proposed({
         name: "alpha",
-        branch: "feat/opt",
         mode: "optimistic",
         initialPrompt: "do the work",
       }),
@@ -330,7 +326,6 @@ describe("createSpawnSessionCreator (New-Session parity mapping)", () => {
     });
     expect(deps.createSpawnedSession).toHaveBeenCalledWith("/repo", {
       name: "alpha",
-      branch: "feat/opt",
       targetBranch: "main",
       mode: "optimistic",
       baseBranch: COMMITTED_HEAD,

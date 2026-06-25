@@ -4,7 +4,8 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useCreateSessionMutation } from "@/lib/sessions/mutations";
 import { conversationsPageHref } from "@/lib/conversations/hrefs";
-import { useSessionsQuery } from "@/lib/sessions/queries";
+import { useSessionsQuery, useBranchPrefixQuery } from "@/lib/sessions/queries";
+import { sanitizeBranchName } from "@/lib/sessions/branch-name";
 import { useVoiceRecorder } from "@/hooks/useVoiceRecorder";
 import { useAppHotkey } from "@/hooks/useAppHotkey";
 import { VoiceRecordButton } from "@/components/VoiceRecordButton";
@@ -52,15 +53,6 @@ const FORM_INPUT_CLASS =
 const modeButtonClass =
   "flex flex-1 cursor-pointer items-center justify-center gap-xs rounded-sm border-none bg-transparent px-sm py-xs font-mono text-[0.75rem] transition-all duration-150 ease-[ease] data-[active=false]:text-text-tertiary data-[active=false]:hover:bg-bg-hover data-[active=false]:hover:text-text-secondary data-[active=true]:bg-cyan data-[active=true]:text-text-inverse";
 
-/** Derive a git-safe branch suffix from an arbitrary session name */
-function sanitizeBranchName(sessionName: string): string {
-  return sessionName
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-}
-
 interface CreateSessionModalProps {
   projectName: string;
   open: boolean;
@@ -103,6 +95,9 @@ export default function CreateSessionModal({
 
   // Sessions query for BranchSelector
   const sessionsQuery = useSessionsQuery(projectName);
+  // Effective branch prefix so the preview shows the real `<prefix>/<slug>`
+  // CC will create — never a hardcoded prefix.
+  const branchPrefixQuery = useBranchPrefixQuery(projectName);
   const branchOptions = useMemo(() => {
     if (!sessionsQuery.data) return [];
     return sessionsQuery.data
@@ -435,7 +430,13 @@ export default function CreateSessionModal({
               <FormHint>
                 {sessionName.trim() && sanitizeBranchName(sessionName) ? (
                   <>
-                    Branch: <code>csm/{sanitizeBranchName(sessionName)}</code>
+                    Branch:{" "}
+                    <code>
+                      {branchPrefixQuery.data
+                        ? `${branchPrefixQuery.data}/`
+                        : ""}
+                      {sanitizeBranchName(sessionName)}
+                    </code>
                     {selectedParentBranch && (
                       <>
                         {" "}

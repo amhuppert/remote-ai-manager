@@ -92,6 +92,7 @@ vi.mock("@/lib/mcp/queries", () => ({
 }));
 vi.mock("@/lib/sessions/queries", () => ({
   useSessionsQuery: () => mockSessionsData,
+  useBranchPrefixQuery: () => ({ data: undefined }),
 }));
 
 vi.mock("@/stores/unified-panel.store", () => ({

@@ -8,9 +8,7 @@ import {
 describe("validateProposal", () => {
   it("returns valid with the parsed proposal for a conforming candidate", () => {
     const result = validateProposal({
-      sessions: [
-        { name: "a", branch: "feat/a", agent: "claude", mode: "fast" },
-      ],
+      sessions: [{ name: "a", agent: "claude", mode: "fast" }],
     });
     expect(result.kind).toBe("valid");
     if (result.kind === "valid") {
@@ -33,7 +31,7 @@ describe("validateProposal", () => {
 
   it("returns invalid for a bad agent", () => {
     const result = validateProposal({
-      sessions: [{ name: "a", branch: "feat/a", agent: "nope", mode: "fast" }],
+      sessions: [{ name: "a", agent: "nope", mode: "fast" }],
     });
     expect(result.kind).toBe("invalid");
     if (result.kind === "invalid") {
@@ -43,7 +41,7 @@ describe("validateProposal", () => {
 
   it("returns invalid for a bad mode", () => {
     const result = validateProposal({
-      sessions: [{ name: "a", branch: "feat/a", agent: "claude", mode: "x" }],
+      sessions: [{ name: "a", agent: "claude", mode: "x" }],
     });
     expect(result.kind).toBe("invalid");
   });
@@ -72,9 +70,7 @@ describe("extractProposal", () => {
       "Here is my plan.",
       "```" + SPAWN_PROPOSAL_FENCE,
       JSON.stringify({
-        sessions: [
-          { name: "a", branch: "feat/a", agent: "claude", mode: "fast" },
-        ],
+        sessions: [{ name: "a", agent: "claude", mode: "fast" }],
       }),
       "```",
       "Let me know.",

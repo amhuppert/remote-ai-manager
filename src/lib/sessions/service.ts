@@ -7,11 +7,11 @@ import { promisify } from "node:util";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { SDKAssistantMessage } from "@anthropic-ai/claude-agent-sdk";
 import {
-  sanitizeBranchName,
   generateRandomSuffix,
   ensureUniqueName,
   validateSessionName,
 } from "./repo";
+import { sanitizeBranchName } from "./branch-name";
 import { buildChildEnv } from "../shared/child-env";
 import { defaultGitClient, type GitClient } from "../git/client";
 import { fastRemoveWorktree as defaultFastRemoveWorktree } from "../git/worktree-fast-remove";
@@ -46,11 +46,8 @@ const logger = createLogger("sessions");
 
 const execFileAsync = promisify(execFile);
 
-export {
-  sanitizeBranchName,
-  generateRandomSuffix,
-  validateSessionName,
-} from "./repo";
+export { sanitizeBranchName } from "./branch-name";
+export { generateRandomSuffix, validateSessionName } from "./repo";
 
 /**
  * Reserved project-level session name used by the workflow planner. The
@@ -576,9 +573,10 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
 
   /**
    * Provision a chat-spawned session deterministically with an explicit name,
-   * branch, target, and creation mode — reusing `provisionSession` (worktree +
-   * init + focus.md for focus mode) and the same name validations as the New
-   * Session flow. It deliberately does NOT fire any auto-run workflow (even for
+   * target, and creation mode — reusing `provisionSession` (worktree + init +
+   * focus.md for focus mode), the same name validations, and the same
+   * name-derived branch (slug + prefix + uniqueness suffix) as the New Session
+   * flow. It deliberately does NOT fire any auto-run workflow (even for
    * optimistic mode): the shared readiness-gated first-turn dispatcher delivers
    * the first turn for every mode, and autonomous orchestration beyond the first
    * turn (merging/workflow launches) is out of scope for spawned sessions.
@@ -587,7 +585,6 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     projectPath: string,
     input: {
       name: string;
-      branch: string;
       targetBranch: string;
       mode: SessionCreationMode;
       baseBranch: string;
@@ -613,7 +610,6 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       tddEnabled: input.tddEnabled,
       baseBranch: input.baseBranch,
       targetBranch: input.targetBranch,
-      branchName: input.branch,
     });
   }
 

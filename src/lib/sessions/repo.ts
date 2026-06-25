@@ -1,14 +1,6 @@
 import crypto from "node:crypto";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
-
-/** Sanitize a session name into a valid git branch suffix */
-export function sanitizeBranchName(sessionName: string): string {
-  return sessionName
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-}
+import { sanitizeBranchName } from "./branch-name";
 
 /** Generate a 6-character random hex suffix for branch/worktree uniqueness */
 export function generateRandomSuffix(): string {

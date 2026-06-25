@@ -18,13 +18,15 @@ export const spawnModeSchema = z.enum(["fast", "focus", "optimistic"]);
 export type SpawnMode = z.infer<typeof spawnModeSchema>;
 
 /**
- * One proposed session inside a spawn proposal. `target` defaults to `"main"`
- * (the merge target) when the agent omits it; `initialPrompt` is the optional
- * first user turn, dropped when empty after trim.
+ * One proposed session inside a spawn proposal. The agent proposes only the
+ * `name`; Command Center derives the branch from it server-side (same slug +
+ * prefix + uniqueness suffix as the New Session dialog), so a proposal never
+ * carries a branch. `target` defaults to `"main"` (the merge target) when the
+ * agent omits it; `initialPrompt` is the optional first user turn, dropped when
+ * empty after trim.
  */
 export const proposedSessionSchema = z.object({
   name: z.string().trim().min(1).max(200),
-  branch: z.string().trim().min(1).max(200),
   target: z.string().trim().min(1).max(200).default("main"),
   agent: spawnAgentSchema,
   mode: spawnModeSchema,

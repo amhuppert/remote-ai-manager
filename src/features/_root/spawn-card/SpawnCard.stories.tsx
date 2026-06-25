@@ -1,78 +1,91 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import SpawnCard from "./SpawnCard";
+import SpawnCard, { ValidSpawnCard } from "./SpawnCard";
 import { validateProposal } from "@/lib/chat-spawning/proposal-validator";
+import type { SpawnProposal } from "@/lib/chat-spawning/schemas";
 
-const meta: Meta<typeof SpawnCard> = {
+const meta: Meta<typeof ValidSpawnCard> = {
   title: "Spawn Card/SpawnCard",
-  component: SpawnCard,
+  component: ValidSpawnCard,
 };
 export default meta;
 
-type Story = StoryObj<typeof SpawnCard>;
+type Story = StoryObj<typeof ValidSpawnCard>;
 
-const single = validateProposal({
+function asProposal(candidate: unknown): SpawnProposal {
+  const validation = validateProposal(candidate);
+  if (validation.kind !== "valid") throw new Error("expected a valid proposal");
+  return validation.proposal;
+}
+
+const single = asProposal({
   sessions: [
     {
-      name: "Add login form",
-      branch: "feat/login",
+      name: "readme-polish",
       agent: "claude",
       mode: "fast",
-      initialPrompt: "Implement the login form with email + password.",
+      initialPrompt:
+        "Review README.md for clarity and fix any typos or outdated setup instructions.",
     },
   ],
 });
 
-const multi = validateProposal({
+const multi = asProposal({
   sessions: [
     {
-      name: "Auth API",
-      branch: "feat/auth-api",
+      name: "dep-audit",
       agent: "claude",
       mode: "focus",
+      initialPrompt:
+        "Audit dependencies for known vulnerabilities, flag anything unmaintained or out of date, and suggest a safe upgrade path for each one.",
     },
     {
-      name: "Auth UI",
-      branch: "feat/auth-ui",
+      name: "auth-ui",
       target: "develop",
       agent: "codex",
       mode: "fast",
     },
     {
-      name: "Race the migration",
-      branch: "feat/migration",
+      name: "race-the-migration",
       agent: "dual",
-      mode: "fast",
+      mode: "optimistic",
       initialPrompt: "Write the DB migration both ways and race them.",
     },
   ],
 });
 
-const invalid = validateProposal({
-  sessions: [{ name: "broken", branch: "feat/x", agent: "gpt", mode: "fast" }],
-});
+const TARGET_OPTIONS = ["main", "develop", "feat/structured-json"];
 
-/** Single proposed session — one row with name, branch → target, agent. */
+/** Single proposed session — switch, name, auto-named branch, agent + mode. */
 export const SingleSession: Story = {
   args: {
-    validation: single,
+    proposal: single,
     projectName: "command-center",
     conversationId: "plc-1",
+    spawnedStatuses: undefined,
+    branchPrefix: "csm",
+    targetOptions: TARGET_OPTIONS,
   },
 };
 
 /** Multi-session batch — the Create control reads "Create 3 sessions". */
 export const MultiSession: Story = {
   args: {
-    validation: multi,
+    proposal: multi,
     projectName: "command-center",
     conversationId: "plc-1",
+    spawnedStatuses: undefined,
+    branchPrefix: "csm",
+    targetOptions: TARGET_OPTIONS,
   },
 };
 
 /** Invalid proposal — a non-actionable error state with no Create. */
-export const Invalid: Story = {
+export const Invalid: StoryObj<typeof SpawnCard> = {
+  render: (args) => <SpawnCard {...args} />,
   args: {
-    validation: invalid,
+    validation: validateProposal({
+      sessions: [{ name: "broken", agent: "gpt", mode: "fast" }],
+    }),
     projectName: "command-center",
     conversationId: "plc-1",
   },

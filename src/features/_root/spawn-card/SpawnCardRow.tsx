@@ -1,43 +1,225 @@
-import type { ProposedSession } from "@/lib/chat-spawning/schemas";
-import { Badge } from "@/components/ui/Badge";
+import { cn } from "@/lib/ui/cn";
+import { Switch } from "@/components/ui/Switch";
+import {
+  SegmentedControl,
+  SegmentedControlItem,
+} from "@/components/ui/SegmentedControl";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/Select";
+import { sanitizeBranchName } from "@/lib/sessions/branch-name";
+import { spawnAgentSchema, spawnModeSchema } from "@/lib/chat-spawning/schemas";
+import {
+  summarizePrompt,
+  type EditableField,
+  type EditableSession,
+} from "./useSpawnCard";
 
-function agentLabel(agent: ProposedSession["agent"]): string {
-  if (agent === "claude") return "Claude";
-  if (agent === "codex") return "Codex";
-  return "Claude + Codex";
+const AGENT_LABEL: Record<EditableSession["agent"], string> = {
+  claude: "Claude",
+  codex: "Codex",
+  dual: "Dual",
+};
+const MODE_LABEL: Record<EditableSession["mode"], string> = {
+  fast: "Fast",
+  focus: "Focus",
+  optimistic: "Optimistic",
+};
+
+// Small uppercase mono caption above each control.
+const META_LABEL_CLASS =
+  "font-mono text-[0.6rem] font-semibold uppercase tracking-[0.08em] text-text-tertiary";
+
+// Inline editor surface shared by the name input and the prompt textarea:
+// inset base bg, strong border, cyan focus ring — matching the New Session form.
+const EDITOR_BASE =
+  "rounded-md border border-solid border-border-strong bg-bg-base text-text-primary outline-0 " +
+  "transition-[border-color,box-shadow] duration-150 ease-[ease] " +
+  "focus:border-cyan focus:shadow-[0_0_0_3px_var(--color-cyan-glow)]";
+
+const NAME_INPUT_CLASS = cn(
+  EDITOR_BASE,
+  "w-[200px] max-w-full px-[9px] py-[4px] font-mono text-[15px] leading-[1.4] font-semibold",
+);
+
+const PROMPT_TEXTAREA_CLASS = cn(
+  EDITOR_BASE,
+  "min-h-[56px] w-full resize-y px-[11px] py-[9px] font-body text-[0.78rem] leading-[1.55]",
+);
+
+// The "auto" affordance: this branch is name-derived, not user-authored.
+const AUTO_CHIP_CLASS =
+  "rounded-sm border border-solid border-cyan-glow-strong bg-cyan-glow px-[5px] py-px font-mono text-[0.55rem] font-semibold uppercase tracking-[0.08em] text-cyan-dim";
+
+const WONT_CREATE_CHIP_CLASS =
+  "ml-auto rounded-sm border border-solid border-border-default bg-bg-base px-[6px] py-[2px] font-mono text-[0.6rem] font-semibold uppercase tracking-[0.08em] text-text-tertiary";
+
+export interface SpawnCardRowProps {
+  index: number;
+  session: EditableSession;
+  /** When true, name/target/prompt become inputs; agent/mode are always editable. */
+  editing: boolean;
+  /** Effective project branch prefix; the preview is `<prefix>/<slug>` (or just `<slug>` until resolved). */
+  branchPrefix: string | undefined;
+  /** Merge-target choices (project branches + main). */
+  targetOptions: string[];
+  /** Whether a long initial prompt is expanded in read mode. */
+  expanded: boolean;
+  onFieldChange: (index: number, field: EditableField, value: string) => void;
+  onIncludedChange: (index: number, included: boolean) => void;
+  onToggleExpanded: (index: number) => void;
 }
 
-// Uppercase, letter-spaced mode chip. The Badge primitive owns no
-// text-transform/letter-spacing, so styling it as a Badge plus those utilities
-// would put two styling systems on one element; it stays a single-owner utility
-// chip instead.
-const MODE_CHIP_CLASS =
-  "ml-xs inline-flex items-center justify-center font-mono text-[0.7rem] font-semibold px-[8px] py-[2px] rounded-full whitespace-nowrap leading-[1.3] bg-bg-raised text-text-secondary uppercase tracking-[0.04em]";
-
 /**
- * One proposed-session row: name, `branch → target`, agent badge, and mode.
- * Read-only — edits happen through SpawnCardEditForm.
+ * One proposed-session row. A green include switch gates creation; the name,
+ * merge target, and initial prompt are read-only until the card enters edit
+ * mode, while agent and mode are always-editable segmented controls. The branch
+ * is never editable — it is previewed as `<prefix>/<slug>` derived from the name
+ * (CC derives the real branch server-side), flagged with an "auto" chip.
  */
 export default function SpawnCardRow({
-  proposed,
-}: {
-  proposed: ProposedSession;
-}): React.JSX.Element {
-  const agentBadgeBackend = proposed.agent === "codex" ? "codex" : "claude";
+  index,
+  session,
+  editing,
+  branchPrefix,
+  targetOptions,
+  expanded,
+  onFieldChange,
+  onIncludedChange,
+  onToggleExpanded,
+}: SpawnCardRowProps): React.JSX.Element {
+  const slug = sanitizeBranchName(session.name) || "…";
+  const branchPreview = branchPrefix ? `${branchPrefix}/${slug}` : slug;
+  const prompt = summarizePrompt(session.initialPrompt, expanded);
+
   return (
-    <div className="flex items-center gap-md rounded-md border border-solid border-border-dim bg-bg-base px-md py-sm">
-      <span className="font-medium text-text-primary">{proposed.name}</span>
-      <span className="inline-flex items-center gap-xs text-[0.75rem] text-text-secondary">
-        <span>{proposed.branch}</span>
-        <span className="text-text-tertiary" aria-hidden>
-          →
-        </span>
-        <span>{proposed.target}</span>
-      </span>
-      <Badge backend={agentBadgeBackend} layoutClassName="ml-auto">
-        {agentLabel(proposed.agent)}
-      </Badge>
-      <span className={MODE_CHIP_CLASS}>{proposed.mode}</span>
+    <div
+      className="flex flex-col gap-sm rounded-md border border-l-[3px] border-solid border-border-default border-l-cyan bg-bg-raised px-md py-sm"
+      role="group"
+      aria-label={`Proposed session ${session.name}`}
+    >
+      <div className="flex min-h-[34px] items-center gap-sm">
+        <Switch
+          tone="green"
+          checked={session.included}
+          onCheckedChange={(checked) => onIncludedChange(index, checked)}
+          aria-label={`Create session ${session.name}`}
+        />
+        {editing ? (
+          <input
+            className={NAME_INPUT_CLASS}
+            aria-label={`Session ${index + 1} name`}
+            value={session.name}
+            onChange={(e) => onFieldChange(index, "name", e.target.value)}
+          />
+        ) : (
+          <span className="font-mono text-[15px] leading-[1.4] font-semibold text-text-primary">
+            {session.name}
+          </span>
+        )}
+        {!session.included && (
+          <span className={WONT_CREATE_CHIP_CLASS}>won&apos;t create</span>
+        )}
+      </div>
+
+      <div className="flex min-h-[32px] flex-wrap items-center gap-sm font-mono text-[0.72rem] text-text-tertiary">
+        <span aria-hidden>⎇</span>
+        <span className="text-text-secondary">{branchPreview}</span>
+        <span className={AUTO_CHIP_CLASS}>auto</span>
+        <span>merges into</span>
+        {editing ? (
+          <span className="inline-block w-[200px] max-w-full">
+            <Select
+              value={session.target}
+              onValueChange={(value) => onFieldChange(index, "target", value)}
+            >
+              <SelectTrigger
+                aria-label={`Session ${index + 1} target`}
+                layoutClassName="w-full"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {targetOptions.map((option) => (
+                  <SelectItem key={option} value={option}>
+                    {option}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </span>
+        ) : (
+          <span className="text-text-secondary">{session.target}</span>
+        )}
+      </div>
+
+      <div className="flex flex-wrap gap-xl">
+        <div className="flex flex-col gap-2xs">
+          <span className={META_LABEL_CLASS}>Agent</span>
+          <SegmentedControl
+            aria-label={`Session ${index + 1} agent`}
+            value={session.agent}
+            onValueChange={(value) => onFieldChange(index, "agent", value)}
+          >
+            {spawnAgentSchema.options.map((agent) => (
+              <SegmentedControlItem key={agent} value={agent}>
+                {AGENT_LABEL[agent]}
+              </SegmentedControlItem>
+            ))}
+          </SegmentedControl>
+        </div>
+        <div className="flex flex-col gap-2xs">
+          <span className={META_LABEL_CLASS}>Mode</span>
+          <SegmentedControl
+            aria-label={`Session ${index + 1} mode`}
+            value={session.mode}
+            onValueChange={(value) => onFieldChange(index, "mode", value)}
+          >
+            {spawnModeSchema.options.map((mode) => (
+              <SegmentedControlItem key={mode} value={mode}>
+                {MODE_LABEL[mode]}
+              </SegmentedControlItem>
+            ))}
+          </SegmentedControl>
+        </div>
+      </div>
+
+      {editing ? (
+        <textarea
+          className={PROMPT_TEXTAREA_CLASS}
+          aria-label={`Session ${index + 1} initial prompt`}
+          value={session.initialPrompt}
+          onChange={(e) =>
+            onFieldChange(index, "initialPrompt", e.target.value)
+          }
+          rows={2}
+        />
+      ) : (
+        <div className="min-h-[56px] rounded-md border border-solid border-border-dim bg-bg-base px-[11px] py-[9px] font-body text-[0.78rem] leading-[1.55] text-text-secondary">
+          {session.initialPrompt ? (
+            <>
+              {prompt.display}
+              {prompt.long && (
+                <button
+                  type="button"
+                  onClick={() => onToggleExpanded(index)}
+                  className="ml-xs cursor-pointer border-0 bg-transparent p-0 font-mono text-[0.7rem] text-cyan-dim hover:text-cyan"
+                >
+                  {expanded ? "Show less" : "Show more"}
+                </button>
+              )}
+            </>
+          ) : (
+            <span className="text-text-tertiary">
+              No initial prompt — the session starts idle.
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

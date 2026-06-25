@@ -184,11 +184,13 @@ export interface SpawnSessionCreatorDeps {
 /**
  * Build the `createSession` dep that maps a `ProposedSession` to
  * `createSpawnedSession` (which reuses `provisionSession`). It honors the
- * reviewed name, branch, target, and creation mode exactly, branches from the
- * committed-HEAD `baseBranch`, and never fires an auto-run workflow — the shared
- * dispatcher delivers the first turn for every mode. For focus/optimistic the
- * objective seeds focus.md / the stored objective from the initial prompt (or
- * the name); fast carries no objective.
+ * reviewed name, target, and creation mode exactly, branches from the
+ * committed-HEAD `baseBranch`, and lets `createSpawnedSession` derive the branch
+ * from the name (slug + prefix + uniqueness suffix) exactly as the New Session
+ * dialog does. It never fires an auto-run workflow — the shared dispatcher
+ * delivers the first turn for every mode. For focus/optimistic the objective
+ * seeds focus.md / the stored objective from the initial prompt (or the name);
+ * fast carries no objective.
  */
 export function createSpawnSessionCreator(
   deps: SpawnSessionCreatorDeps,
@@ -200,7 +202,6 @@ export function createSpawnSessionCreator(
         : (proposed.initialPrompt ?? proposed.name);
     return deps.createSpawnedSession(projectPath, {
       name: proposed.name,
-      branch: proposed.branch,
       targetBranch: proposed.target,
       mode: proposed.mode,
       baseBranch,

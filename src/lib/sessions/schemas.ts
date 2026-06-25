@@ -166,6 +166,18 @@ export const sessionsResponseSchema = z.object({
   sessions: z.array(sessionListItemSchema),
 });
 
+/**
+ * The git branch prefix Command Center will actually apply when creating a
+ * session in this project — the per-repo override, else the global default,
+ * else `"csm"` (see `resolveBranchPrefix`). Surfaced so client surfaces (the New
+ * Session dialog, the spawn card) can preview the real `<prefix>/<slug>` branch
+ * instead of hardcoding a prefix.
+ */
+export const branchPrefixResponseSchema = z.object({
+  branchPrefix: z.string(),
+});
+export type BranchPrefixResponse = z.infer<typeof branchPrefixResponseSchema>;
+
 export const finalizeInitResponseSchema = z.object({
   conversationId: z.string(),
   name: z.string(),

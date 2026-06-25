@@ -1,14 +1,15 @@
 "use client";
 
+import { useMemo } from "react";
 import { cn } from "@/lib/ui/cn";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { StatusDot, type StatusDotTone } from "@/components/ui/StatusDot";
+import { useSessionsQuery, useBranchPrefixQuery } from "@/lib/sessions/queries";
 import type { ProposalValidation } from "@/lib/chat-spawning/proposal-validator";
 import type { SpawnProposal } from "@/lib/chat-spawning/schemas";
 import type { DerivedSessionStatus } from "@/lib/sessions/schemas";
 import SpawnCardRow from "./SpawnCardRow";
-import SpawnCardEditForm from "./SpawnCardEditForm";
 import { useSpawnCard } from "./useSpawnCard";
 
 export interface SpawnedSessionStatus {
@@ -34,12 +35,13 @@ const CARD_BASE =
 const CARD_HEADER = "flex items-center gap-sm";
 const CARD_TITLE =
   "font-mono text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-text-secondary";
+const CARD_SUBTITLE = "m-0 font-body text-[0.72rem] text-text-tertiary";
 const LIST_RESET = "list-none m-0 p-0 flex flex-col gap-xs";
 // Below the mobile spine the action buttons grow to a 44px touch target: the row
 // supplies the height from its own flex box (min-height + stretch), since a
 // primitive's box height is not reattachable through layoutClassName.
 const CARD_ACTIONS =
-  "flex items-center justify-end gap-sm max-768:items-stretch max-768:min-h-[44px]";
+  "flex items-center gap-sm max-768:flex-wrap max-768:items-stretch max-768:min-h-[44px]";
 
 function statusDotTone(status: DerivedSessionStatus): StatusDotTone {
   if (status === "running") return "cyan";
@@ -47,12 +49,24 @@ function statusDotTone(status: DerivedSessionStatus): StatusDotTone {
   return "green";
 }
 
+/** Merge target choices: `main`, every existing project branch, and any target the proposal already names. */
+function deriveTargetOptions(
+  sessionBranches: string[],
+  proposalTargets: string[],
+): string[] {
+  const options = new Set<string>(["main"]);
+  for (const branch of sessionBranches) options.add(branch);
+  for (const target of proposalTargets) options.add(target);
+  return Array.from(options);
+}
+
 /**
  * Inline spawn card rendered into the cockpit transcript mount. Renders a
- * validated proposal as reviewable rows with Edit + Create (multi-session
- * batch), a non-actionable invalid state, and — after creation — a passive
- * status read of the linked sessions. The card never offers controls that drive
- * a spawned session beyond its auto-dispatched first turn.
+ * validated proposal as reviewable rows with a per-session include toggle, an
+ * always-editable agent/mode, an Edit pass for name/target/prompt, and Create
+ * (multi-session batch); a non-actionable invalid state; and — after creation —
+ * a passive status read of the linked sessions. The card never offers controls
+ * that drive a spawned session beyond its auto-dispatched first turn.
  */
 export default function SpawnCard(props: SpawnCardProps): React.JSX.Element {
   if (props.validation.kind === "invalid") {
@@ -76,7 +90,7 @@ export default function SpawnCard(props: SpawnCardProps): React.JSX.Element {
   }
 
   return (
-    <ValidSpawnCard
+    <ConnectedSpawnCard
       proposal={props.validation.proposal}
       projectName={props.projectName}
       conversationId={props.conversationId}
@@ -85,7 +99,14 @@ export default function SpawnCard(props: SpawnCardProps): React.JSX.Element {
   );
 }
 
-function ValidSpawnCard({
+/**
+ * Fetching wrapper: resolves the project's effective branch prefix and merge
+ * target options from server state, then hands them to the presentational card.
+ * Both degrade gracefully — an unresolved prefix shows the bare slug; missing
+ * sessions just narrow the target list to `main` plus the proposal's own
+ * targets — so the card is always actionable.
+ */
+function ConnectedSpawnCard({
   proposal,
   projectName,
   conversationId,
@@ -96,9 +117,54 @@ function ValidSpawnCard({
   conversationId: string;
   spawnedStatuses: SpawnedSessionStatus[] | undefined;
 }): React.JSX.Element {
+  const sessionsQuery = useSessionsQuery(projectName);
+  const branchPrefixQuery = useBranchPrefixQuery(projectName);
+
+  const targetOptions = useMemo(
+    () =>
+      deriveTargetOptions(
+        (sessionsQuery.data ?? []).map((s) => s.branchName),
+        proposal.sessions.map((s) => s.target),
+      ),
+    [sessionsQuery.data, proposal.sessions],
+  );
+
+  return (
+    <ValidSpawnCard
+      proposal={proposal}
+      projectName={projectName}
+      conversationId={conversationId}
+      spawnedStatuses={spawnedStatuses}
+      branchPrefix={branchPrefixQuery.data}
+      targetOptions={targetOptions}
+    />
+  );
+}
+
+/**
+ * Presentational valid-proposal card. Takes the resolved `branchPrefix` and
+ * `targetOptions` as props (no data fetching) so it renders deterministically in
+ * Storybook and unit tests.
+ */
+export function ValidSpawnCard({
+  proposal,
+  projectName,
+  conversationId,
+  spawnedStatuses,
+  branchPrefix,
+  targetOptions,
+}: {
+  proposal: SpawnProposal;
+  projectName: string;
+  conversationId: string;
+  spawnedStatuses: SpawnedSessionStatus[] | undefined;
+  branchPrefix: string | undefined;
+  targetOptions: string[];
+}): React.JSX.Element {
   const card = useSpawnCard({ projectName, conversationId, proposal });
   const count = proposal.sessions.length;
-  const createLabel = count > 1 ? `Create ${count} sessions` : "Create";
+  const n = card.includedCount;
+  const createLabel = `Create ${n} session${n === 1 ? "" : "s"}`;
   const created = card.result?.created ?? [];
   const failed = card.result?.failed ?? [];
   const submitted = card.result !== undefined;
@@ -108,46 +174,52 @@ function ValidSpawnCard({
       className={cn(CARD_BASE, "border-l-cyan")}
       aria-label="Spawn proposal"
     >
-      <header className={CARD_HEADER}>
-        <span className={CARD_TITLE}>Proposed sessions</span>
-        <Badge tier="count">{count}</Badge>
-      </header>
+      <div className="flex flex-col gap-2xs">
+        <header className={CARD_HEADER}>
+          <span className={CARD_TITLE}>Proposed sessions</span>
+          <Badge tier="count">{count}</Badge>
+        </header>
+        <p className={CARD_SUBTITLE}>
+          Toggle which to create · each branch is auto-named from its session
+          name.
+        </p>
+      </div>
 
       <div className="flex flex-col gap-sm">
-        {card.editing
-          ? card.draft.map((session, i) => (
-              <SpawnCardEditForm
-                key={i}
-                index={i}
-                session={session}
-                onChange={card.updateField}
-              />
-            ))
-          : proposal.sessions.map((proposed, i) => (
-              <SpawnCardRow key={i} proposed={proposed} />
-            ))}
+        {card.draft.map((session, i) => (
+          <SpawnCardRow
+            key={i}
+            index={i}
+            session={session}
+            editing={card.editing}
+            branchPrefix={branchPrefix}
+            targetOptions={targetOptions}
+            expanded={!!card.expanded[i]}
+            onFieldChange={card.updateField}
+            onIncludedChange={card.setIncluded}
+            onToggleExpanded={card.toggleExpanded}
+          />
+        ))}
       </div>
 
       {!submitted && (
         <div className={CARD_ACTIONS}>
-          {card.editing ? (
-            <Button variant="ghost" size="sm" onClick={card.cancelEditing}>
-              Done editing
+          <span className="font-mono text-[0.7rem] text-text-tertiary">
+            {n} of {count} selected
+          </span>
+          <div className="ml-auto flex items-center gap-sm">
+            <Button variant="ghost" size="sm" onClick={card.toggleEditing}>
+              {card.editing ? "Done" : "Edit"}
             </Button>
-          ) : (
-            <Button variant="ghost" size="sm" onClick={card.startEditing}>
-              Edit
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={card.submit}
+              disabled={card.isPending || n === 0}
+            >
+              {card.isPending ? "Creating…" : createLabel}
             </Button>
-          )}
-          <Button
-            variant="primary"
-            size="sm"
-            layoutClassName="ml-xs"
-            onClick={card.submit}
-            disabled={card.isPending}
-          >
-            {card.isPending ? "Creating…" : createLabel}
-          </Button>
+          </div>
         </div>
       )}
 
@@ -169,6 +241,9 @@ function ValidSpawnCard({
                       aria-hidden
                     />
                     <span className="text-text-primary">{c.name}</span>
+                    <span className="font-mono text-[0.7rem] text-text-tertiary">
+                      ⎇ {c.branchName}
+                    </span>
                     <span className="ml-auto text-[0.7rem] tracking-[0.04em] text-text-tertiary uppercase">
                       {live ? live.derivedStatus : "created"}
                     </span>

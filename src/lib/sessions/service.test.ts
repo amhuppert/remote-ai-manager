@@ -2371,27 +2371,36 @@ describe("ensurePlannerSession", () => {
 });
 
 // ===========================================================================
-// createSpawnedSession (chat-spawning creation path) — honors the explicit
-// branch, reuses provisionSession, validates the name, and never auto-runs.
+// createSpawnedSession (chat-spawning creation path) — derives the branch from
+// the name (slug + prefix + uniqueness suffix) exactly like the New Session
+// dialog, reuses provisionSession, validates the name, and never auto-runs.
 // ===========================================================================
 describe("createSpawnedSession", () => {
-  it("creates the branch from the explicit branch name verbatim (no prefix derivation)", async () => {
+  it("derives the branch from the name (prefix + slug + suffix), not an agent-supplied branch", async () => {
     mockGitSuccess(); // git worktree add
     const session = await service.createSpawnedSession("/projects/repo", {
       name: "Login form",
-      branch: "feat/login",
       targetBranch: "main",
       mode: "fast",
       baseBranch: "HEADSHA",
       objective: null,
     });
 
-    expect(session.branchName).toBe("feat/login");
+    // Empty global config + null repo config → the default "csm" prefix; the
+    // slug comes from the name and the 6-hex suffix guarantees uniqueness.
+    expect(session.branchName).toMatch(/^csm\/login-form-[0-9a-f]{6}$/);
     expect(session.sessionName).toBe("Login form");
     expect(session.creationMode).toBe("fast");
-    // git worktree add -b <explicit branch> <worktree> <committed-HEAD base>
+    // git worktree add -b <derived branch> <worktree> <committed-HEAD base>
     expect(gitMock).toHaveBeenCalledWith(
-      ["worktree", "add", "-b", "feat/login", session.worktreePath, "HEADSHA"],
+      [
+        "worktree",
+        "add",
+        "-b",
+        session.branchName,
+        session.worktreePath,
+        "HEADSHA",
+      ],
       "/projects/repo",
     );
   });
@@ -2400,7 +2409,6 @@ describe("createSpawnedSession", () => {
     mockGitSuccess();
     await service.createSpawnedSession("/projects/repo", {
       name: "Auto task",
-      branch: "feat/auto",
       targetBranch: "main",
       mode: "optimistic",
       baseBranch: "HEADSHA",
@@ -2413,7 +2421,6 @@ describe("createSpawnedSession", () => {
     await expect(
       service.createSpawnedSession("/projects/repo", {
         name: "",
-        branch: "feat/x",
         targetBranch: "main",
         mode: "fast",
         baseBranch: "HEADSHA",
@@ -2428,7 +2435,6 @@ describe("createSpawnedSession", () => {
     await expect(
       service.createSpawnedSession("/projects/repo", {
         name: "dup",
-        branch: "feat/dup",
         targetBranch: "main",
         mode: "fast",
         baseBranch: "HEADSHA",
@@ -2440,12 +2446,11 @@ describe("createSpawnedSession", () => {
 
   it("propagates a worktree-add failure (e.g. duplicate/invalid branch) so the batch can record it", async () => {
     mockGitFailure(
-      new Error("fatal: a branch named 'feat/login' already exists"),
+      new Error("fatal: a branch named 'csm/login-form' already exists"),
     );
     await expect(
       service.createSpawnedSession("/projects/repo", {
         name: "Login form",
-        branch: "feat/login",
         targetBranch: "main",
         mode: "fast",
         baseBranch: "HEADSHA",
