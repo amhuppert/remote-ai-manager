@@ -66,6 +66,28 @@ describe("SegmentedControl", () => {
     expect(item.className).not.toContain("data-[state=checked]:bg-cyan ");
   });
 
+  it("carries the violet selected-tint on a violet-tone segment (Codex identity)", () => {
+    render(
+      <SegmentedControl aria-label="Agent" value="codex">
+        <SegmentedControlItem value="claude">Claude</SegmentedControlItem>
+        <SegmentedControlItem value="codex" tone="violet">
+          Codex
+        </SegmentedControlItem>
+      </SegmentedControl>,
+    );
+    const claude = screen.getByRole("radio", { name: "Claude" });
+    const codex = screen.getByRole("radio", { name: "Codex" });
+    // The default segment keeps the cyan tint; the violet segment switches both
+    // the active fill and the focus outline to the Codex violet.
+    expect(claude.className).toContain("data-[state=checked]:bg-cyan-glow");
+    expect(codex.className).toContain("data-[state=checked]:bg-violet-glow");
+    expect(codex.className).toContain("data-[state=checked]:text-violet");
+    expect(codex.className).not.toContain("data-[state=checked]:bg-cyan-glow");
+    expect(codex.className).toContain(
+      "focus-visible:[outline:2px_solid_var(--color-violet)]",
+    );
+  });
+
   it("reflects the active value with aria-checked", () => {
     render(<Seg value="session" />);
     expect(

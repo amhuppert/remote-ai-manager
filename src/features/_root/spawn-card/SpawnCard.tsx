@@ -49,7 +49,18 @@ function statusDotTone(status: DerivedSessionStatus): StatusDotTone {
   return "green";
 }
 
-/** Merge target choices: `main`, every existing project branch, and any target the proposal already names. */
+/**
+ * Branch names eligible as merge targets: every *non-archived* session's branch.
+ * Archived sessions are excluded — their branches are no longer live merge
+ * destinations, so they must not appear in the "merges into" dropdown.
+ */
+export function eligibleTargetBranches(
+  sessions: { branchName: string; archived: boolean }[],
+): string[] {
+  return sessions.filter((s) => !s.archived).map((s) => s.branchName);
+}
+
+/** Merge target choices: `main`, every eligible project branch, and any target the proposal already names. */
 function deriveTargetOptions(
   sessionBranches: string[],
   proposalTargets: string[],
@@ -123,7 +134,7 @@ function ConnectedSpawnCard({
   const targetOptions = useMemo(
     () =>
       deriveTargetOptions(
-        (sessionsQuery.data ?? []).map((s) => s.branchName),
+        eligibleTargetBranches(sessionsQuery.data ?? []),
         proposal.sessions.map((s) => s.target),
       ),
     [sessionsQuery.data, proposal.sessions],

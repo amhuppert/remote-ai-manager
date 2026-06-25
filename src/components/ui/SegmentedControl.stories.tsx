@@ -52,6 +52,26 @@ export const ThreeSegments: Story = {
   },
 };
 
+/** Per-segment tone: the Codex segment carries the violet backend identity when active. */
+export const CodexTone: Story = {
+  render: () => {
+    const [value, setValue] = useState("codex");
+    return (
+      <SegmentedControl
+        aria-label="Agent"
+        value={value}
+        onValueChange={setValue}
+      >
+        <SegmentedControlItem value="claude">Claude</SegmentedControlItem>
+        <SegmentedControlItem value="codex" tone="violet">
+          Codex
+        </SegmentedControlItem>
+        <SegmentedControlItem value="dual">Dual</SegmentedControlItem>
+      </SegmentedControl>
+    );
+  },
+};
+
 /** A disabled segment alongside selectable ones. */
 export const WithDisabledSegment: Story = {
   render: () => {

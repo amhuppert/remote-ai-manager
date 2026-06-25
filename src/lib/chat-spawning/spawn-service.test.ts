@@ -130,6 +130,31 @@ describe("createChatSpawnService.createFromProposal", () => {
     expect(call.baseBranch).toBe(COMMITTED_HEAD);
   });
 
+  it("forwards the proposed model + reasoning effort to the dispatcher", async () => {
+    const deps = makeDeps();
+    const service = createChatSpawnService(deps);
+    await service.createFromProposal({
+      projectPath: "/repo",
+      projectName: "repo",
+      conversationId: "plc-1",
+      proposal: {
+        sessions: [
+          proposed({
+            name: "alpha",
+            agent: "codex",
+            model: "gpt-5.4",
+            reasoningEffort: "high",
+            initialPrompt: "go",
+          }),
+        ],
+      },
+    });
+    const call = (deps.dispatchFirstTurn as ReturnType<typeof vi.fn>).mock
+      .calls[0]![0];
+    expect(call.model).toBe("gpt-5.4");
+    expect(call.reasoningEffort).toBe("high");
+  });
+
   it("routes a dual proposal's first turn through the dispatcher", async () => {
     const deps = makeDeps();
     const service = createChatSpawnService(deps);

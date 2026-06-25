@@ -76,6 +76,44 @@ describe("proposedSessionSchema", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it("keeps an optional model and reasoningEffort when provided", () => {
+    const result = proposedSessionSchema.safeParse({
+      name: "x",
+      agent: "codex",
+      mode: "fast",
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.model).toBe("gpt-5.4");
+      expect(result.data.reasoningEffort).toBe("high");
+    }
+  });
+
+  it("leaves model and reasoningEffort undefined when omitted", () => {
+    const result = proposedSessionSchema.safeParse({
+      name: "x",
+      agent: "claude",
+      mode: "fast",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.model).toBeUndefined();
+      expect(result.data.reasoningEffort).toBeUndefined();
+    }
+  });
+
+  it("rejects a reasoningEffort outside the effort-level union", () => {
+    const result = proposedSessionSchema.safeParse({
+      name: "x",
+      agent: "claude",
+      mode: "fast",
+      reasoningEffort: "turbo",
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe("spawnProposalSchema", () => {

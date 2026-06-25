@@ -2,13 +2,20 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { useSpawnSessions } from "@/lib/chat-spawning/mutations";
-import type {
-  ProposedSession,
-  SpawnAgent,
-  SpawnMode,
-  SpawnProposal,
-  SpawnResult,
+import {
+  spawnAgentSchema,
+  type ProposedSession,
+  type SpawnAgent,
+  type SpawnMode,
+  type SpawnProposal,
+  type SpawnResult,
 } from "@/lib/chat-spawning/schemas";
+import {
+  getEffortLevelsForBackend,
+  type EffortLevel,
+} from "@/lib/agent-backends/schemas";
+import { getModelsForBackend } from "@/components/ModelSelector";
+import type { AgentBackendId } from "@/lib/shared/schemas";
 
 /**
  * A proposed session in editable form. The branch is intentionally absent — CC
@@ -24,6 +31,14 @@ export interface EditableSession {
   agent: SpawnAgent;
   mode: SpawnMode;
   initialPrompt: string;
+  /**
+   * Backend model + reasoning effort for the spawned session's first turn.
+   * Always held (defaulted from the agent's backend) so the controls bind
+   * cleanly, but only submitted for a single-backend agent — the `dual` race
+   * omits both and runs each participant at its backend default (toSpawnProposal).
+   */
+  model: string;
+  reasoningEffort: EffortLevel;
   included: boolean;
 }
 
@@ -33,28 +48,106 @@ export type EditableField =
   | "target"
   | "agent"
   | "mode"
-  | "initialPrompt";
+  | "initialPrompt"
+  | "model"
+  | "reasoningEffort";
+
+/**
+ * The concrete backend a single-backend agent runs on; `null` for the `dual`
+ * race — two backends, so there is no single valid model/effort set. The card
+ * hides the model + reasoning controls (and omits both on submit) when null.
+ */
+export function backendForAgent(agent: SpawnAgent): AgentBackendId | null {
+  if (agent === "claude") return "claude";
+  if (agent === "codex") return "codex";
+  return null;
+}
+
+/** The established default model for a backend (the second option: opus / gpt-5.4). */
+function defaultModelForBackend(backend: AgentBackendId): string {
+  const options = getModelsForBackend(backend);
+  return (options[1] ?? options[0]!).id;
+}
+
+/** A sensible default effort for a backend+model: prefer "high", else the highest supported. */
+function defaultEffortForModel(
+  backend: AgentBackendId,
+  model: string,
+): EffortLevel {
+  const levels = getEffortLevelsForBackend(backend, model);
+  if (levels.includes("high")) return "high";
+  return levels[levels.length - 1] ?? "high";
+}
+
+/** Backend-default model + effort for an agent (dual borrows the claude defaults — held but never submitted). */
+function modelEffortDefaults(agent: SpawnAgent): {
+  model: string;
+  reasoningEffort: EffortLevel;
+} {
+  const backend = backendForAgent(agent) ?? "claude";
+  const model = defaultModelForBackend(backend);
+  return { model, reasoningEffort: defaultEffortForModel(backend, model) };
+}
 
 /** Project a validated proposal into editable rows (pure). All included by default. */
 export function toEditableSessions(proposal: SpawnProposal): EditableSession[] {
-  return proposal.sessions.map((s) => ({
-    name: s.name,
-    target: s.target,
-    agent: s.agent,
-    mode: s.mode,
-    initialPrompt: s.initialPrompt ?? "",
-    included: true,
-  }));
+  return proposal.sessions.map((s) => {
+    const defaults = modelEffortDefaults(s.agent);
+    return {
+      name: s.name,
+      target: s.target,
+      agent: s.agent,
+      mode: s.mode,
+      initialPrompt: s.initialPrompt ?? "",
+      model: s.model ?? defaults.model,
+      reasoningEffort: s.reasoningEffort ?? defaults.reasoningEffort,
+      included: true,
+    };
+  });
 }
 
-/** Apply a single-field edit at an index, returning a new list (pure). */
+/** Reset model + effort to the new agent's backend defaults (storage kept as-is for dual). */
+function applyAgentChange(s: EditableSession, value: string): EditableSession {
+  const parsed = spawnAgentSchema.safeParse(value);
+  const agent = parsed.success ? parsed.data : s.agent;
+  const backend = backendForAgent(agent);
+  if (backend === null) return { ...s, agent };
+  const model = defaultModelForBackend(backend);
+  return {
+    ...s,
+    agent,
+    model,
+    reasoningEffort: defaultEffortForModel(backend, model),
+  };
+}
+
+/** Adopt a new model, clamping the effort to the levels that model supports. */
+function applyModelChange(s: EditableSession, model: string): EditableSession {
+  const backend = backendForAgent(s.agent) ?? "claude";
+  const levels = getEffortLevelsForBackend(backend, model);
+  const reasoningEffort = levels.includes(s.reasoningEffort)
+    ? s.reasoningEffort
+    : (levels[levels.length - 1] ?? s.reasoningEffort);
+  return { ...s, model, reasoningEffort };
+}
+
+/**
+ * Apply a single-field edit at an index, returning a new list (pure). An agent
+ * change resets model + effort to the new backend's defaults; a model change
+ * clamps the effort to that model's supported levels.
+ */
 export function updateEditableSession(
   sessions: EditableSession[],
   index: number,
   field: EditableField,
   value: string,
 ): EditableSession[] {
-  return sessions.map((s, i) => (i === index ? { ...s, [field]: value } : s));
+  return sessions.map((s, i) => {
+    if (i !== index) return s;
+    if (field === "agent") return applyAgentChange(s, value);
+    if (field === "model") return applyModelChange(s, value);
+    return { ...s, [field]: value };
+  });
 }
 
 /** Toggle whether the session at `index` will be created (pure). */
@@ -70,7 +163,9 @@ export function setSessionIncluded(
  * Map edited rows back to a submit-ready proposal (pure). Only included
  * sessions are emitted. Trims text; an empty `initialPrompt` becomes absent (the
  * optional schema field); an empty `target` falls back to "main" (the schema
- * default). No branch is emitted — the server derives it from the name.
+ * default). No branch is emitted — the server derives it from the name. Model is
+ * emitted only for a single-backend agent (the `dual` race omits it); effort is
+ * emitted only when the selected model actually supports reasoning levels.
  */
 export function toSpawnProposal(sessions: EditableSession[]): SpawnProposal {
   return {
@@ -78,12 +173,20 @@ export function toSpawnProposal(sessions: EditableSession[]): SpawnProposal {
       .filter((s) => s.included)
       .map((s): ProposedSession => {
         const initialPrompt = s.initialPrompt.trim();
+        const backend = backendForAgent(s.agent);
+        const emitsEffort =
+          backend !== null &&
+          getEffortLevelsForBackend(backend, s.model).includes(
+            s.reasoningEffort,
+          );
         return {
           name: s.name.trim(),
           target: s.target.trim() || "main",
           agent: s.agent,
           mode: s.mode,
           ...(initialPrompt.length > 0 ? { initialPrompt } : {}),
+          ...(backend !== null ? { model: s.model } : {}),
+          ...(emitsEffort ? { reasoningEffort: s.reasoningEffort } : {}),
         };
       }),
   };

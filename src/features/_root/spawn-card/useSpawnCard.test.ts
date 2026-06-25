@@ -34,6 +34,8 @@ function editable(overrides: Partial<EditableSession> = {}): EditableSession {
     agent: "claude",
     mode: "fast",
     initialPrompt: "",
+    model: "opus",
+    reasoningEffort: "high",
     included: true,
     ...overrides,
   };
@@ -56,6 +58,33 @@ describe("toEditableSessions", () => {
     const rows = toEditableSessions(proposal);
     expect("branch" in rows[0]!).toBe(false);
   });
+
+  it("defaults model + effort from each row's agent backend", () => {
+    const rows = toEditableSessions(proposal);
+    // claude → opus / high
+    expect(rows[0]!.model).toBe("opus");
+    expect(rows[0]!.reasoningEffort).toBe("high");
+    // codex → gpt-5.4 / high
+    expect(rows[1]!.model).toBe("gpt-5.4");
+    expect(rows[1]!.reasoningEffort).toBe("high");
+  });
+
+  it("honors a model + effort already present on the proposal", () => {
+    const rows = toEditableSessions({
+      sessions: [
+        {
+          name: "a",
+          target: "main",
+          agent: "codex",
+          mode: "fast",
+          model: "gpt-5.4-mini",
+          reasoningEffort: "low",
+        },
+      ],
+    });
+    expect(rows[0]!.model).toBe("gpt-5.4-mini");
+    expect(rows[0]!.reasoningEffort).toBe("low");
+  });
 });
 
 describe("updateEditableSession", () => {
@@ -65,6 +94,32 @@ describe("updateEditableSession", () => {
     expect(next[0]!.name).toBe("renamed");
     expect(rows[0]!.name).toBe("alpha"); // original untouched
     expect(next[1]).toEqual(rows[1]); // other rows unchanged
+  });
+
+  it("resets model + effort to the new backend's defaults on an agent change", () => {
+    const rows = [editable({ agent: "claude", model: "opus" })];
+    const next = updateEditableSession(rows, 0, "agent", "codex");
+    expect(next[0]!.agent).toBe("codex");
+    expect(next[0]!.model).toBe("gpt-5.4"); // codex default, not stale opus
+    expect(next[0]!.reasoningEffort).toBe("high");
+  });
+
+  it("clamps the effort to the new model's supported levels on a model change", () => {
+    // sonnet supports only [low, medium, high]; xhigh must clamp down to high.
+    const rows = [
+      editable({ agent: "claude", model: "opus", reasoningEffort: "xhigh" }),
+    ];
+    const next = updateEditableSession(rows, 0, "model", "sonnet");
+    expect(next[0]!.model).toBe("sonnet");
+    expect(next[0]!.reasoningEffort).toBe("high");
+  });
+
+  it("keeps a still-supported effort across a model change", () => {
+    const rows = [
+      editable({ agent: "claude", model: "opus", reasoningEffort: "medium" }),
+    ];
+    const next = updateEditableSession(rows, 0, "model", "sonnet");
+    expect(next[0]!.reasoningEffort).toBe("medium");
   });
 });
 
@@ -115,6 +170,32 @@ describe("toSpawnProposal", () => {
     const result = toSpawnProposal(rows);
     expect(result.sessions[0]!.name).toBe("spaced");
     expect(result.sessions[0]!.initialPrompt).toBe("go");
+  });
+
+  it("emits model + reasoningEffort for a single-backend agent", () => {
+    const rows = [
+      editable({ agent: "codex", model: "gpt-5.4", reasoningEffort: "medium" }),
+    ];
+    const result = toSpawnProposal(rows);
+    expect(result.sessions[0]!.model).toBe("gpt-5.4");
+    expect(result.sessions[0]!.reasoningEffort).toBe("medium");
+  });
+
+  it("omits model + reasoningEffort for a dual agent (both run defaults)", () => {
+    const rows = [editable({ agent: "dual" })];
+    const result = toSpawnProposal(rows);
+    expect(result.sessions[0]!.model).toBeUndefined();
+    expect(result.sessions[0]!.reasoningEffort).toBeUndefined();
+  });
+
+  it("emits model but omits reasoningEffort when the model supports no effort levels", () => {
+    // haiku supports no reasoning levels — the model still ships, the effort does not.
+    const rows = [
+      editable({ agent: "claude", model: "haiku", reasoningEffort: "high" }),
+    ];
+    const result = toSpawnProposal(rows);
+    expect(result.sessions[0]!.model).toBe("haiku");
+    expect(result.sessions[0]!.reasoningEffort).toBeUndefined();
   });
 });
 

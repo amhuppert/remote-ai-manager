@@ -111,6 +111,8 @@ export function createChatSpawnService(deps: ChatSpawnDeps): {
             session,
             initialPrompt: proposed.initialPrompt,
             agent: proposed.agent,
+            model: proposed.model,
+            reasoningEffort: proposed.reasoningEffort,
           });
           initialPromptDispatched = result.dispatched;
         }

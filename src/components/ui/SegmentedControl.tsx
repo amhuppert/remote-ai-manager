@@ -23,14 +23,28 @@ import { cn } from "@/lib/ui/cn";
 const rootClass =
   "inline-flex items-center gap-[2px] rounded-sm border border-solid border-border-default bg-bg-surface p-[2px]";
 
-const itemClass = cn(
+// Per-segment selected-state accent. `cyan` is the default; `violet` carries the
+// established Codex backend identity (--violet) so a Codex segment reads as Codex
+// when active — same glow-tint treatment, never a full fill.
+export type SegmentedControlTone = "cyan" | "violet";
+
+const itemBaseClass = cn(
   "inline-flex h-[22px] min-w-0 cursor-pointer items-center justify-center gap-[5px] rounded-[3px] border-0 bg-transparent px-[10px] font-mono text-[0.7rem] font-semibold tracking-[0.06em] whitespace-nowrap text-text-secondary uppercase transition-[background-color,color] duration-150 ease-[ease] outline-none",
   "data-[state=unchecked]:hover:bg-bg-hover data-[state=unchecked]:hover:text-text-primary",
-  "data-[state=checked]:bg-cyan-glow data-[state=checked]:text-cyan",
-  "focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:[outline-offset:2px]",
   "data-[disabled]:cursor-not-allowed data-[disabled]:opacity-40",
   "max-768:min-h-[var(--touch-target-min)]",
 );
+
+const itemToneClass: Record<SegmentedControlTone, string> = {
+  cyan: cn(
+    "data-[state=checked]:bg-cyan-glow data-[state=checked]:text-cyan",
+    "focus-visible:[outline:2px_solid_var(--color-cyan)] focus-visible:[outline-offset:2px]",
+  ),
+  violet: cn(
+    "data-[state=checked]:bg-violet-glow data-[state=checked]:text-violet",
+    "focus-visible:[outline:2px_solid_var(--color-violet)] focus-visible:[outline-offset:2px]",
+  ),
+};
 
 type SegmentedControlProps = Omit<
   React.ComponentProps<typeof RadixRadioGroup.Root>,
@@ -58,18 +72,21 @@ type SegmentedControlItemProps = Omit<
   React.ComponentProps<typeof RadixRadioGroup.Item>,
   "className" | "style"
 > & {
+  /** Selected-state accent for this segment. Defaults to `cyan`. */
+  tone?: SegmentedControlTone;
   /** External-geometry utilities only; appended after appearance. */
   layoutClassName?: string;
 };
 
 export function SegmentedControlItem({
+  tone = "cyan",
   layoutClassName,
   ...rest
 }: SegmentedControlItemProps): React.JSX.Element {
   return (
     <RadixRadioGroup.Item
       {...rest}
-      className={cn(itemClass, layoutClassName)}
+      className={cn(itemBaseClass, itemToneClass[tone], layoutClassName)}
     />
   );
 }

@@ -11,9 +11,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/Select";
+import ModelSelector from "@/components/ModelSelector";
+import ReasoningLevelSelector from "@/components/ReasoningLevelSelector";
 import { sanitizeBranchName } from "@/lib/sessions/branch-name";
 import { spawnAgentSchema, spawnModeSchema } from "@/lib/chat-spawning/schemas";
+import { getEffortLevelsForBackend } from "@/lib/agent-backends/schemas";
 import {
+  backendForAgent,
   summarizePrompt,
   type EditableField,
   type EditableSession,
@@ -95,6 +99,9 @@ export default function SpawnCardRow({
   const slug = sanitizeBranchName(session.name) || "…";
   const branchPreview = branchPrefix ? `${branchPrefix}/${slug}` : slug;
   const prompt = summarizePrompt(session.initialPrompt, expanded);
+  // The concrete backend a single-backend agent runs on; null for the dual race,
+  // which has no single model/effort and so hides those controls.
+  const backend = backendForAgent(session.agent);
 
   return (
     <div
@@ -166,7 +173,11 @@ export default function SpawnCardRow({
             onValueChange={(value) => onFieldChange(index, "agent", value)}
           >
             {spawnAgentSchema.options.map((agent) => (
-              <SegmentedControlItem key={agent} value={agent}>
+              <SegmentedControlItem
+                key={agent}
+                value={agent}
+                tone={agent === "codex" ? "violet" : "cyan"}
+              >
                 {AGENT_LABEL[agent]}
               </SegmentedControlItem>
             ))}
@@ -187,6 +198,34 @@ export default function SpawnCardRow({
           </SegmentedControl>
         </div>
       </div>
+
+      {/* Model + reasoning effort apply to a single concrete backend; the dual
+          race has no single model/effort, so these are hidden for it. */}
+      {backend !== null && (
+        <div className="flex flex-wrap items-end gap-xl">
+          <div className="flex flex-col gap-2xs">
+            <span className={META_LABEL_CLASS}>Model</span>
+            <ModelSelector
+              backend={backend}
+              value={session.model}
+              onChange={(model) => onFieldChange(index, "model", model)}
+            />
+          </div>
+          <div className="flex flex-col gap-2xs">
+            <span className={META_LABEL_CLASS}>Reasoning</span>
+            <ReasoningLevelSelector
+              value={session.reasoningEffort}
+              availableLevels={getEffortLevelsForBackend(
+                backend,
+                session.model,
+              )}
+              onChange={(level) =>
+                onFieldChange(index, "reasoningEffort", level)
+              }
+            />
+          </div>
+        </div>
+      )}
 
       {editing ? (
         <textarea

@@ -17,6 +17,13 @@ export interface DispatchFirstTurnInput {
   /** The first user turn to send; `null` ⇒ the session stays idle (no-op). */
   initialPrompt: string | null;
   agent: SpawnAgent;
+  /**
+   * Backend model + reasoning effort for this first turn. Set only for a
+   * single-backend agent (`claude` / `codex`); the `dual` race ignores both and
+   * runs each participant at its backend default. Absent ⇒ backend default.
+   */
+  model?: string;
+  reasoningEffort?: string;
 }
 
 export interface FirstTurnDispatcherDeps {
@@ -96,16 +103,20 @@ export function createFirstTurnDispatcher(deps: FirstTurnDispatcherDeps): {
         });
       } else {
         // `agent` is narrowed to "claude" | "codex" here — both are valid
-        // AgentBackendId values, so the first turn runs on the chosen backend.
+        // AgentBackendId values, so the first turn runs on the chosen backend
+        // with the proposed model + reasoning effort (absent ⇒ backend default).
         await deps.executePromptStream(
           projectPath,
           session,
           initialPrompt,
           noopEmit,
           conversationId,
+          input.model,
           undefined,
-          undefined,
-          { backend: agent },
+          {
+            backend: agent,
+            ...(input.reasoningEffort ? { effort: input.reasoningEffort } : {}),
+          },
         );
       }
       logger.info("prompt.first-turn-dispatch.dispatched", {

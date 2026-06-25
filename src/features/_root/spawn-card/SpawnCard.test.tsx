@@ -8,7 +8,7 @@ import {
   fireEvent,
   waitFor,
 } from "@testing-library/react";
-import SpawnCard, { ValidSpawnCard } from "./SpawnCard";
+import SpawnCard, { ValidSpawnCard, eligibleTargetBranches } from "./SpawnCard";
 import { validateProposal } from "@/lib/chat-spawning/proposal-validator";
 import type { SpawnProposal, SpawnResult } from "@/lib/chat-spawning/schemas";
 
@@ -44,6 +44,10 @@ const multi = asProposal({
   ],
 });
 
+const dual = asProposal({
+  sessions: [{ name: "race", agent: "dual", mode: "fast" }],
+});
+
 function renderValid(
   proposal: SpawnProposal,
   overrides: Partial<React.ComponentProps<typeof ValidSpawnCard>> = {},
@@ -66,6 +70,24 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("eligibleTargetBranches", () => {
+  it("includes non-archived session branches and excludes archived ones", () => {
+    const branches = eligibleTargetBranches([
+      { branchName: "csm/live", archived: false },
+      { branchName: "csm/old", archived: true },
+      { branchName: "csm/also-live", archived: false },
+    ]);
+    expect(branches).toEqual(["csm/live", "csm/also-live"]);
+  });
+
+  it("returns an empty list when every session is archived", () => {
+    const branches = eligibleTargetBranches([
+      { branchName: "csm/old", archived: true },
+    ]);
+    expect(branches).toEqual([]);
+  });
+});
+
 describe("SpawnCard", () => {
   it("renders a row with name, the name-derived <prefix>/<slug> branch preview, and target", () => {
     renderValid(single);
@@ -84,6 +106,26 @@ describe("SpawnCard", () => {
     expect(
       screen.getByRole("radiogroup", { name: "Session 1 mode" }),
     ).toBeTruthy();
+  });
+
+  it("tints the Codex agent segment violet (Codex backend identity)", () => {
+    renderValid(single);
+    const codex = screen.getByRole("radio", { name: "Codex" });
+    expect(codex.className).toContain("data-[state=checked]:bg-violet-glow");
+    const claude = screen.getByRole("radio", { name: "Claude" });
+    expect(claude.className).toContain("data-[state=checked]:bg-cyan-glow");
+  });
+
+  it("shows model + reasoning controls for a single-backend agent", () => {
+    renderValid(single);
+    expect(screen.getByTestId("model-selector-trigger")).toBeTruthy();
+    expect(screen.getByTestId("effort-selector-trigger")).toBeTruthy();
+  });
+
+  it("hides model + reasoning controls for a dual agent (both run defaults)", () => {
+    renderValid(dual);
+    expect(screen.queryByTestId("model-selector-trigger")).toBeNull();
+    expect(screen.queryByTestId("effort-selector-trigger")).toBeNull();
   });
 
   it("labels Create with the included count (single)", () => {
