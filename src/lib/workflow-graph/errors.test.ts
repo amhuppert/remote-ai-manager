@@ -78,7 +78,7 @@ describe("errors module", () => {
       const err = new AgentTurnFailedError("turn failed", {
         contextId: "ctx-2",
         engine: "codex",
-        cause: "abort",
+        cause: "timeout",
         originalMessage: "turn failed",
       });
       const reason = toHaltReason(err, { cause: "unknown" });
@@ -86,7 +86,7 @@ describe("errors module", () => {
         type: "agent_turn_failed",
         contextId: "ctx-2",
         engine: "codex",
-        cause: "abort",
+        cause: "timeout",
         message: "turn failed",
       });
     });

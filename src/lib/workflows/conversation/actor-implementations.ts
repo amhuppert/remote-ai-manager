@@ -1658,6 +1658,7 @@ export async function executePromptForMachine(
   deps.registerAbortController(input.conversationId, abortController);
 
   const timeoutMs = resolveBackendTimeoutMs(input.agentBackend, config);
+  let timeoutFired = false;
   logger.debug("prompt.timeout.resolved", {
     sessionName: input.sessionName,
     backend: input.agentBackend,
@@ -1666,6 +1667,7 @@ export async function executePromptForMachine(
   });
   if (timeoutMs > 0) {
     runtimeState.timeoutHandle = setTimeout(() => {
+      timeoutFired = true;
       logger.warn("prompt.timeout", {
         sessionName: input.sessionName,
         timeoutMs,
@@ -1981,9 +1983,16 @@ export async function executePromptForMachine(
     await drainClaudeCapabilityWhenIdle();
   } catch (err) {
     if (abortController.signal.aborted) {
-      logger.info("prompt.aborted", { sessionName: input.sessionName });
+      const abortReason = timeoutFired ? "timeout" : undefined;
+      logger.info("prompt.aborted", {
+        sessionName: input.sessionName,
+        ...(abortReason !== undefined ? { abortReason } : {}),
+        ...(timeoutFired ? { timeoutMs } : {}),
+      });
       runtimeState.streamEmit?.("aborted", {
-        message: "Prompt execution was cancelled",
+        message: timeoutFired
+          ? `Prompt execution timed out after ${timeoutMs}ms`
+          : "Prompt execution was cancelled",
       });
       return {
         backendRef: null,
@@ -1997,6 +2006,8 @@ export async function executePromptForMachine(
         cachedInputTokens: null,
         contentBlocks,
         aborted: true,
+        ...(abortReason !== undefined ? { abortReason } : {}),
+        ...(timeoutFired ? { timeoutMs } : {}),
         error: null,
       };
     }
@@ -2158,6 +2169,9 @@ export async function executePromptForMachine(
     contentBlocks: turnResult?.contentBlocks ?? contentBlocks,
     structuredOutput: effectiveStructuredOutput,
     aborted: turnResult?.aborted ?? false,
+    ...(turnResult?.aborted && timeoutFired
+      ? { abortReason: "timeout" as const, timeoutMs }
+      : {}),
     error: effectiveError,
     ...(turnResult?.backgroundWait !== undefined
       ? { backgroundWait: turnResult.backgroundWait }

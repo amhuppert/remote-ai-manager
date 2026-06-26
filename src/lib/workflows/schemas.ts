@@ -666,7 +666,7 @@ export const graphWorkflowHaltReasonSchema = z.discriminatedUnion("type", [
     type: z.literal("agent_turn_failed"),
     contextId: z.string().trim().min(1),
     engine: z.enum(["claude", "codex"]),
-    cause: z.enum(["sdk_error", "abort", "unknown"]),
+    cause: z.enum(["sdk_error", "abort", "timeout", "unknown"]),
     message: z.string(),
   }),
   z.object({

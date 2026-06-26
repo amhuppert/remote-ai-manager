@@ -285,6 +285,8 @@ export interface PromptActorResult {
    */
   transcript?: AgentTranscriptEntry[];
   aborted: boolean;
+  abortReason?: "timeout" | "user" | "shutdown";
+  timeoutMs?: number;
   error: string | null;
   /**
    * Summary of the bounded background-task wait this turn performed. Present

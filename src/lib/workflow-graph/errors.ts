@@ -9,14 +9,14 @@ export type DirtyPath = {
 type AgentTurnFailedInit = {
   contextId: string;
   engine: "claude" | "codex";
-  cause: "sdk_error" | "abort" | "unknown";
+  cause: "sdk_error" | "abort" | "timeout" | "unknown";
   originalMessage: string;
 };
 
 export class AgentTurnFailedError extends Error {
   readonly contextId: string;
   readonly engine: "claude" | "codex";
-  readonly cause: "sdk_error" | "abort" | "unknown";
+  readonly cause: "sdk_error" | "abort" | "timeout" | "unknown";
   readonly originalMessage: string;
 
   constructor(message: string, init: AgentTurnFailedInit) {

@@ -459,6 +459,8 @@ export interface PromptStreamResult {
   contextWindowMax: number | null;
   structuredOutput?: unknown;
   aborted?: boolean;
+  abortReason?: "timeout" | "user" | "shutdown";
+  timeoutMs?: number;
   error?: string | null;
   /**
    * Summary of the bounded background-task wait the turn performed. Present
@@ -928,6 +930,8 @@ function readContextFromSnapshot(
     | {
         structuredOutput?: unknown;
         aborted?: boolean;
+        abortReason?: "timeout" | "user" | "shutdown";
+        timeoutMs?: number;
         error?: string | null;
         backgroundWait?: BackgroundWaitSummary;
       }
@@ -939,6 +943,12 @@ function readContextFromSnapshot(
     contextWindowMax: totals?.contextWindowMax ?? null,
     structuredOutput: lastResult?.structuredOutput,
     aborted: lastResult?.aborted ?? false,
+    ...(lastResult?.abortReason !== undefined
+      ? { abortReason: lastResult.abortReason }
+      : {}),
+    ...(lastResult?.timeoutMs !== undefined
+      ? { timeoutMs: lastResult.timeoutMs }
+      : {}),
     error: lastResult?.error ?? lastError,
     ...(lastResult?.backgroundWait !== undefined
       ? { backgroundWait: lastResult.backgroundWait }

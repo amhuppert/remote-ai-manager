@@ -157,17 +157,28 @@ export function createGraphWorkflowImplementerRunner(
     }
 
     if (result.aborted) {
+      const timedOut = result.abortReason === "timeout";
+      const message =
+        timedOut && result.timeoutMs !== undefined
+          ? `Prompt execution timed out after ${result.timeoutMs}ms`
+          : "Prompt execution was aborted";
       logger.warn("graph-workflow.implementer.turn_aborted", {
         sessionName: input.session.sessionName,
         conversationId: input.conversationId,
         contextId: input.contextId,
         backend: input.backend,
+        ...(result.abortReason !== undefined
+          ? { abortReason: result.abortReason }
+          : {}),
+        ...(result.timeoutMs !== undefined
+          ? { timeoutMs: result.timeoutMs }
+          : {}),
       });
-      throw new AgentTurnFailedError("Prompt execution was aborted", {
+      throw new AgentTurnFailedError(message, {
         contextId: input.contextId,
         engine: toAgentTurnEngine(input.backend),
-        cause: "abort",
-        originalMessage: "Prompt execution was aborted",
+        cause: timedOut ? "timeout" : "abort",
+        originalMessage: message,
       });
     }
 

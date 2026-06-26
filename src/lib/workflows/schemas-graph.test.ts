@@ -1504,6 +1504,21 @@ describe("graphWorkflowExecutionEventSchema preReset marker", () => {
 });
 
 describe("graphWorkflowHaltReasonSchema", () => {
+  it("accepts an agent_turn_failed timeout halt reason", () => {
+    const result = graphWorkflowHaltReasonSchema.safeParse({
+      type: "agent_turn_failed",
+      contextId: "ctx-1",
+      engine: "claude",
+      cause: "timeout",
+      message: "Prompt execution timed out after 10800000ms",
+    });
+    expect(result.success).toBe(true);
+    if (result.success && result.data.type === "agent_turn_failed") {
+      expect(result.data.cause).toBe("timeout");
+      expect(result.data.message).toContain("10800000ms");
+    }
+  });
+
   it("accepts a validator_infra_error halt reason", () => {
     const result = graphWorkflowHaltReasonSchema.safeParse({
       type: "validator_infra_error",

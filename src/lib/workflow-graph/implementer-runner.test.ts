@@ -419,4 +419,40 @@ describe("graph workflow implementer runner", () => {
 
     expect(getConversation).not.toHaveBeenCalled();
   });
+
+  it("throws a timeout-specific error when prompt execution times out", async () => {
+    const executePromptStream = vi.fn(async () => ({
+      conversationId: "conversation-1",
+      contextTokens: null,
+      contextWindowMax: null,
+      aborted: true,
+      abortReason: "timeout" as const,
+      timeoutMs: 10_800_000,
+    }));
+    const getConversation = vi.fn(async () => makeConversation());
+
+    const runner = createGraphWorkflowImplementerRunner({
+      executePromptStream,
+      getConversation,
+    });
+
+    await expect(
+      runner.runIteration({
+        projectPath: "/repo",
+        session: makeSession(),
+        prompt: "Implement feature",
+        conversationId: "conversation-1",
+        contextId: "context-plan",
+        backend: "claude",
+        model: "opus",
+        reasoningEffort: "high",
+        toolServer: { servers: [] },
+      }),
+    ).rejects.toMatchObject({
+      cause: "timeout",
+      originalMessage: "Prompt execution timed out after 10800000ms",
+    });
+
+    expect(getConversation).not.toHaveBeenCalled();
+  });
 });

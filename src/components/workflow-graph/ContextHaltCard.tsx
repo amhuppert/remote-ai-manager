@@ -47,6 +47,14 @@ export function formatGraphWorkflowHaltReason(
           "Commit, stash, or discard those changes in the session worktree, then resume.",
       };
     case "agent_turn_failed":
+      if (reason.cause === "timeout") {
+        return {
+          headline: `Agent turn timed out in ${reason.contextId} (${reason.engine})`,
+          detail: <pre className={haltPreClass}>{reason.message}</pre>,
+          action:
+            "Resume to continue from completed tasks, or reduce the next turn's scope.",
+        };
+      }
       return {
         headline: `Agent turn failed in ${reason.contextId} (${reason.engine})`,
         detail: <pre className={haltPreClass}>{reason.message}</pre>,

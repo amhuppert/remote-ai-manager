@@ -1202,12 +1202,10 @@ describe("executePromptForMachine", () => {
 
   describe("pre-turn readiness gate", () => {
     it("recreates the runtime (resume-preserving) before streamInput when readiness asks for it, then delivers", async () => {
-      const reusedPrepare = vi
-        .fn()
-        .mockResolvedValue({
-          status: "recreate-runtime",
-          reason: "rebind_failed",
-        });
+      const reusedPrepare = vi.fn().mockResolvedValue({
+        status: "recreate-runtime",
+        reason: "rebind_failed",
+      });
       const reusedSendTurn = vi.fn();
       const reused = createMockBackendRuntime({
         modelId: "opus",
@@ -1258,12 +1256,10 @@ describe("executePromptForMachine", () => {
     });
 
     it("fails the prompt before streamInput when readiness fails twice (no delivery)", async () => {
-      const reusedPrepare = vi
-        .fn()
-        .mockResolvedValue({
-          status: "recreate-runtime",
-          reason: "rebind_failed",
-        });
+      const reusedPrepare = vi.fn().mockResolvedValue({
+        status: "recreate-runtime",
+        reason: "rebind_failed",
+      });
       const reusedSendTurn = vi.fn();
       const reused = createMockBackendRuntime({
         modelId: "opus",
@@ -1271,12 +1267,10 @@ describe("executePromptForMachine", () => {
         sendTurn: reusedSendTurn,
       });
 
-      const freshPrepare = vi
-        .fn()
-        .mockResolvedValue({
-          status: "recreate-runtime",
-          reason: "still_broken",
-        });
+      const freshPrepare = vi.fn().mockResolvedValue({
+        status: "recreate-runtime",
+        reason: "still_broken",
+      });
       const freshSendTurn = vi.fn();
       const fresh = createMockBackendRuntime({
         modelId: "opus",
@@ -1631,6 +1625,54 @@ describe("executePromptForMachine", () => {
     const result = await executePromptForMachine(input);
 
     expect(result.aborted).toBe(true);
+  });
+
+  it("marks timeout-driven aborts with timeout metadata", async () => {
+    vi.useFakeTimers();
+    mockDeps = createMockDeps({
+      readConfig: vi.fn(async () => ({
+        claudeTimeoutMs: 25,
+        defaultModel: "opus",
+        maxTurns: 50,
+        idleQuerySessionTtlMs: 300_000,
+        defaultEffort: undefined,
+      })),
+    });
+    setActorDeps(mockDeps);
+    mockSendTurn.mockImplementation(
+      async (turnInput: ConversationBackendTurnInput) =>
+        new Promise<ConversationBackendTurnResult>((_, reject) => {
+          turnInput.signal.addEventListener(
+            "abort",
+            () => reject(new Error("closed while running")),
+            { once: true },
+          );
+        }),
+    );
+
+    try {
+      const input = makeExecutePromptInput();
+      const key = conversationRuntimeKey(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+      );
+      registerConversationRuntime(key, {
+        abortController: new AbortController(),
+      });
+
+      const resultPromise = executePromptForMachine(input);
+
+      await vi.advanceTimersByTimeAsync(25);
+      const result = await resultPromise;
+
+      expect(result.aborted).toBe(true);
+      expect(result.abortReason).toBe("timeout");
+      expect(result.timeoutMs).toBe(25);
+      expect(result.error).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("uses a fresh abort controller when a previous turn left the runtime controller aborted", async () => {
