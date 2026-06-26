@@ -1,9 +1,0 @@
-# Pre-merge validation failure
-timestamp: 2026-04-28T11:29:22.051Z
-execution: 340f2e62-9d8d-43e5-b488-73f9406dee61
-context: section-7-backend-capability-hardening
-session: Collaboration mode
-branch: cc/collaboration-mode-aca894
-
-src/lib/workflows/primitives/section-7-2-migrated-workflow-parity.test.ts(77,3): error TS6196: 'GraphWorkflowSSEEvent' is declared but never used.
-src/lib/workflows/primitives/section-7-4-safety-observability.test.ts(40,1): error TS6133: 'executeAgentCall' is declared but its value is never read.

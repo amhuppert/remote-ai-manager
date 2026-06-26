@@ -14,7 +14,7 @@ summary: >
 estimate_unit: points
 references:
   - label: Graph Workflow Improvement Proposal
-    href: graph-workflow-improvement-report.md
+    href: docs/reports/graph-workflow-improvement-report.md
   - label: Spec — workflow-parameterization
     href: .kiro/specs/workflow-parameterization/requirements.md
   - label: Spec — global-workflow-templates

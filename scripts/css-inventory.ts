@@ -63,9 +63,7 @@ interface OwnerSpec {
  * Curated owner catalog. The 29 owners enumerated in tasks.md 1.1:
  * globals.css (1) + _root/styles partials (16) + workflow-graph (1) +
  * feature-local stylesheets (11), plus theme.css — the `@theme` token surface
- * added by the Tailwind integration (a new foundation owner). Prototype CSS
- * under `command-center-multi-tasking-ui-improvements/` is a design reference,
- * not part of the app pipeline, and is intentionally out of scope (see report).
+ * added by the Tailwind integration (a new foundation owner).
  */
 const OWNERS: readonly OwnerSpec[] = [
   // ---- Foundation ----
@@ -392,10 +390,7 @@ function renderMarkdown(reports: OwnerReport[]): string {
   lines.push("");
   lines.push(
     `**Owners:** ${reports.length} CSS files under \`src/\` · ` +
-      `**approx. declaration blocks:** ${totalBlocks}. ` +
-      "The 3 prototype stylesheets under " +
-      "`command-center-multi-tasking-ui-improvements/` are a design reference, " +
-      "not part of the app CSS pipeline, and are intentionally excluded.",
+      `**approx. declaration blocks:** ${totalBlocks}.`,
   );
   lines.push("");
 

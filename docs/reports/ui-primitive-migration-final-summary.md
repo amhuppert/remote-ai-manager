@@ -137,9 +137,8 @@ bottom-sheet is full-width and docked to the viewport bottom at 390×844; **axe
 returns 0 violations** on the dialog. Real app (`/projects/plc-test-lab`): the
 dialog exposes the accessible name "New Session" via `aria-labelledby`, Escape
 closes it, and focus returns to the "New session" trigger button. Before/after
-parity screenshots at 1440×900 and 390×844 are byte-faithful (desktop centred card
-and mobile bottom-sheet unchanged) under
-[`docs/reports/visual/`](./visual/) (`createsessionmodal-{before,after}-*.png`).
+parity was verified at 1440×900 and 390×844; the screenshot artifacts were removed
+during repository artifact cleanup.
 
 No parallel modal primitive remains.
 

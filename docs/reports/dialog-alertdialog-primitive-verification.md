@@ -30,7 +30,7 @@ verified-free port (6044) served this worktree's stories. Driven with Playwright
 - **Escape closes and returns focus to the trigger** (`:focus-visible` true on the
   returned trigger).
 - **axe: 0 violations** with the dialog open.
-- Screenshot: `docs/reports/visual/dialog-alertdialog/dialog-default-open.png`.
+- Screenshot evidence was removed during repository artifact cleanup.
 
 ### Note on `aria-modal`
 
@@ -59,8 +59,7 @@ wrapper does not override it. If a future consumer specifically needs the
   canonical cyan focus ring.
 - **Escape closes and returns focus to the trigger** (`:focus-visible` true).
 - **axe: 0 violations** with the dialog open.
-- Screenshot:
-  `docs/reports/visual/dialog-alertdialog/alertdialog-destructive-open.png`.
+- Screenshot evidence was removed during repository artifact cleanup.
 
 ### Open-focus fallback for no-enabled-Cancel states (verified)
 
