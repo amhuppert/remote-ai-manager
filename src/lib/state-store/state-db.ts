@@ -140,7 +140,7 @@ const SCHEMA_DDL = `
     finished                           INTEGER NOT NULL DEFAULT 0,
     source                             TEXT NOT NULL DEFAULT 'cc',
     objective                          TEXT,
-    creation_mode                      TEXT NOT NULL DEFAULT 'fast',
+    creation_mode                      TEXT NOT NULL DEFAULT 'normal',
     tdd_enabled                        INTEGER NOT NULL DEFAULT 1,
     target_branch                      TEXT NOT NULL DEFAULT 'main',
     parent_session_name                TEXT,
@@ -329,6 +329,66 @@ const SCHEMA_DDL = `
 
   CREATE INDEX IF NOT EXISTS idx_graph_workflow_executions_status
     ON graph_workflow_executions(project_path, session_name, status);
+
+  CREATE TABLE IF NOT EXISTS session_alignment_versions (
+    id                     TEXT PRIMARY KEY,
+    project_path           TEXT NOT NULL,
+    session_name           TEXT NOT NULL,
+    version                INTEGER,
+    content                TEXT NOT NULL DEFAULT '',
+    content_hash           TEXT NOT NULL DEFAULT '',
+    status                 TEXT NOT NULL,
+    source                 TEXT NOT NULL,
+    author_conversation_id TEXT,
+    auto_activate          INTEGER NOT NULL DEFAULT 0,
+    linked_decision_ids    TEXT NOT NULL DEFAULT '[]',
+    approver               TEXT,
+    created_at             TEXT NOT NULL,
+    activated_at           TEXT,
+    FOREIGN KEY (project_path, session_name)
+      REFERENCES sessions(project_path, session_name) ON DELETE CASCADE,
+    UNIQUE (project_path, session_name, version)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_session_alignment_versions_status
+    ON session_alignment_versions(project_path, session_name, status);
+
+  CREATE TABLE IF NOT EXISTS session_alignment_decisions (
+    id                     TEXT PRIMARY KEY,
+    project_path           TEXT NOT NULL,
+    session_name           TEXT NOT NULL,
+    statement              TEXT NOT NULL,
+    rationale              TEXT,
+    origin_conversation_id TEXT NOT NULL,
+    origin_message_id      TEXT,
+    produced_version       INTEGER,
+    approved_at            TEXT NOT NULL,
+    approver               TEXT,
+    created_at             TEXT NOT NULL,
+    FOREIGN KEY (project_path, session_name)
+      REFERENCES sessions(project_path, session_name) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_session_alignment_decisions_approved_at
+    ON session_alignment_decisions(project_path, session_name, approved_at);
+
+  CREATE TABLE IF NOT EXISTS session_alignment_decision_proposals (
+    id                     TEXT PRIMARY KEY,
+    project_path           TEXT NOT NULL,
+    session_name           TEXT NOT NULL,
+    conversation_id        TEXT NOT NULL,
+    batch_id               TEXT NOT NULL,
+    statement              TEXT NOT NULL,
+    rationale              TEXT,
+    context                TEXT,
+    origin_message_id      TEXT,
+    created_at             TEXT NOT NULL,
+    FOREIGN KEY (project_path, session_name)
+      REFERENCES sessions(project_path, session_name) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_session_alignment_decision_proposals_batch
+    ON session_alignment_decision_proposals(project_path, session_name, batch_id);
 `;
 
 class SchemaVersionConflictError extends Error {
@@ -408,15 +468,56 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{
     type: "TEXT",
   },
   { table: "conversations", column: "pending_queue", type: "TEXT" },
+  {
+    table: "conversations",
+    column: "last_seen_alignment_version",
+    type: "INTEGER",
+  },
 ];
+
+function columnExists(db: Db, table: string, column: string): boolean {
+  const cols = db.pragma(`table_info(${table})`) as { name: string }[];
+  return cols.some((c) => c.name === column);
+}
+
+function isDuplicateColumnError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    err.message.toLowerCase().includes("duplicate column name")
+  );
+}
+
+/**
+ * Add `column` to `table`, tolerating a concurrent winner. The existence check
+ * and the `ALTER` are not atomic across connections: when several processes open
+ * the same DB file at once (e.g. `next build`'s parallel page-data workers) and
+ * a newly-introduced additive column is still missing, they each decide to add
+ * it and then race the `ALTER`. SQLite reports the losers' attempts as
+ * "duplicate column name". That race outcome is benign, so swallow it — but only
+ * once the column is confirmed present, so a genuine failure (or a duplicate
+ * error that somehow left the column absent) still propagates.
+ */
+export function addColumnToleratingRace(
+  db: Db,
+  table: string,
+  column: string,
+  type: string,
+): void {
+  try {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  } catch (err) {
+    if (isDuplicateColumnError(err) && columnExists(db, table, column)) {
+      logger.debug("state-store.additive_column_race", { table, column });
+      return;
+    }
+    throw err;
+  }
+}
 
 function ensureAdditiveColumns(db: Db): void {
   for (const { table, column, type } of ADDITIVE_COLUMNS) {
-    const cols = db.pragma(`table_info(${table})`) as { name: string }[];
-    const exists = cols.some((c) => c.name === column);
-    if (!exists) {
-      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
-    }
+    if (columnExists(db, table, column)) continue;
+    addColumnToleratingRace(db, table, column, type);
   }
 }
 

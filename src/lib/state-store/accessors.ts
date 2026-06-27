@@ -186,7 +186,6 @@ export function createAccessors(core: StateStoreCore) {
           source: row.source as SessionListItem["source"],
           creationMode: row.creation_mode as SessionListItem["creationMode"],
           tddEnabled: row.tdd_enabled === 1,
-          objective: row.objective,
           derivedStatus,
           promptCount,
           derivedLastActivityAt,

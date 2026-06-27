@@ -30,7 +30,10 @@ import {
   FormError,
 } from "@/components/ui/FormField";
 import type { ImagePayload } from "@/lib/images/schemas";
-import type { SessionCreationMode } from "@/lib/sessions/schemas";
+import type {
+  SessionCreationMode,
+  CreateSessionRequest,
+} from "@/lib/sessions/schemas";
 
 // The `formInputBase` appearance the `FormInput` primitive owns, applied inline:
 // the two `.form-input` consumers here are a ref'd `<input>` (autofocus) and a
@@ -46,7 +49,7 @@ const FORM_INPUT_CLASS =
   "focus:border-cyan focus:shadow-[0_0_0_3px_var(--color-cyan-glow)]";
 
 /**
- * Session-creation mode toggle button (Fast / Focus / Optimistic). Selection is
+ * Session-creation mode toggle button (Normal / Optimistic). Selection is
  * `data-active`; active beats hover via mutually-exclusive `data-[active=…]`
  * gating so the cascade does not depend on utility emission order.
  */
@@ -66,13 +69,12 @@ export default function CreateSessionModal({
 }: CreateSessionModalProps): React.JSX.Element {
   const router = useRouter();
   const branchFromParent = useBranchFromParent();
-  const [mode, setMode] = useState<SessionCreationMode>("fast");
+  const [mode, setMode] = useState<SessionCreationMode>("normal");
   const [tddEnabled, setTddEnabled] = useState(true);
   const [parentSessionName, setParentSessionName] = useState<string | null>(
     null,
   );
   const [sessionName, setSessionName] = useState("");
-  const [objective, setObjective] = useState("");
   const [instructions, setInstructions] = useState("");
   const [cursorPosition, setCursorPosition] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -80,13 +82,9 @@ export default function CreateSessionModal({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
-  const objectiveRef = useRef(objective);
   const instructionsRef = useRef(instructions);
   const fireAndForgetRef = useRef(false);
   const autoSubmitPendingRef = useRef(false);
-  useEffect(() => {
-    objectiveRef.current = objective;
-  });
   useEffect(() => {
     instructionsRef.current = instructions;
   });
@@ -117,27 +115,20 @@ export default function CreateSessionModal({
     return parent?.branchName ?? null;
   }, [parentSessionName, sessionsQuery.data]);
 
-  // File autocomplete for focus/optimistic textarea
-  const currentTextareaValue = mode === "optimistic" ? instructions : objective;
-  const setCurrentTextareaValue =
-    mode === "optimistic" ? setInstructions : setObjective;
+  // File autocomplete for the optimistic-mode instructions textarea.
   const fileAutocomplete = useFileAutocomplete({
     projectName,
-    text: currentTextareaValue,
+    text: instructions,
     cursorPosition,
-    disabled: mode === "fast" || createMutation.isPending,
-    onTextChange: setCurrentTextareaValue,
+    disabled: mode === "normal" || createMutation.isPending,
+    onTextChange: setInstructions,
   });
 
   const { pendingImages, addImage, removeImage, clearImages, isAtLimit } =
     useImageAttachments();
 
-  // Voice context returns the relevant text based on mode
-  const getVoiceContext = useCallback(
-    () =>
-      mode === "optimistic" ? instructionsRef.current : objectiveRef.current,
-    [mode],
-  );
+  // Voice context is the optimistic-mode instructions text.
+  const getVoiceContext = useCallback(() => instructionsRef.current, []);
 
   const {
     isRecording,
@@ -149,19 +140,11 @@ export default function CreateSessionModal({
     projectName,
     getContext: getVoiceContext,
     onResult: (text) => {
-      if (mode === "optimistic") {
-        const newInstructions = instructionsRef.current
-          ? instructionsRef.current + "\n" + text
-          : text;
-        setInstructions(newInstructions);
-        instructionsRef.current = newInstructions;
-      } else {
-        const newObjective = objectiveRef.current
-          ? objectiveRef.current + "\n" + text
-          : text;
-        setObjective(newObjective);
-        objectiveRef.current = newObjective;
-      }
+      const newInstructions = instructionsRef.current
+        ? instructionsRef.current + "\n" + text
+        : text;
+      setInstructions(newInstructions);
+      instructionsRef.current = newInstructions;
 
       if (fireAndForgetRef.current) {
         fireAndForgetRef.current = false;
@@ -175,10 +158,10 @@ export default function CreateSessionModal({
     },
   });
 
-  // Voice mode is available for focus and optimistic modes
-  const voiceEnabled = mode === "focus" || mode === "optimistic";
+  // Voice mode is available for optimistic mode.
+  const voiceEnabled = mode === "optimistic";
 
-  // Alt+V hotkey to toggle voice recording while modal is open (focus/optimistic mode)
+  // Alt+V hotkey to toggle voice recording while modal is open (optimistic mode)
   useAppHotkey(
     "voiceToggle",
     () => {
@@ -199,9 +182,8 @@ export default function CreateSessionModal({
     setPrevOpen(open);
     if (open) {
       setSessionName("");
-      setObjective("");
       setInstructions("");
-      setMode("fast");
+      setMode("normal");
       setParentSessionName(branchFromParent);
       setError(null);
       clearImages();
@@ -210,11 +192,11 @@ export default function CreateSessionModal({
     }
   }
 
-  // Focus the name input (fast) or the objective/instructions textarea
-  // (focus/optimistic). Initial focus is driven synchronously from the Dialog's
-  // `onOpenAutoFocus`; this effect re-focuses when the mode changes while open.
+  // Focus the name input (normal) or the instructions textarea (optimistic).
+  // Initial focus is driven synchronously from the Dialog's `onOpenAutoFocus`;
+  // this effect re-focuses when the mode changes while open.
   const focusActiveField = useCallback(() => {
-    if (mode === "fast") {
+    if (mode === "normal") {
       nameInputRef.current?.focus();
     } else {
       textareaRef.current?.focus();
@@ -232,11 +214,9 @@ export default function CreateSessionModal({
   const canSubmit =
     !createMutation.isPending &&
     !isRecording &&
-    (mode === "fast"
+    (mode === "normal"
       ? sessionName.trim().length > 0
-      : mode === "optimistic"
-        ? instructions.trim().length > 0 || hasImages
-        : objective.trim().length > 0);
+      : instructions.trim().length > 0 || hasImages);
 
   const handleSubmit = () => {
     if (!canSubmit) return;
@@ -250,28 +230,21 @@ export default function CreateSessionModal({
         }))
       : [];
 
-    const params =
-      mode === "fast"
-        ? ({
-            mode: "fast",
+    const params: CreateSessionRequest =
+      mode === "normal"
+        ? {
+            mode: "normal",
             sessionName: sessionName.trim(),
             tddEnabled,
             parentSessionName: parentSessionName ?? undefined,
-          } as const)
-        : mode === "optimistic"
-          ? ({
-              mode: "optimistic",
-              instructions: instructions.trim(),
-              images: imagePayloads.length > 0 ? imagePayloads : undefined,
-              tddEnabled,
-              parentSessionName: parentSessionName ?? undefined,
-            } as const)
-          : ({
-              mode: "focus",
-              objective: objective.trim(),
-              tddEnabled,
-              parentSessionName: parentSessionName ?? undefined,
-            } as const);
+          }
+        : {
+            mode: "optimistic",
+            instructions: instructions.trim(),
+            images: imagePayloads.length > 0 ? imagePayloads : undefined,
+            tddEnabled,
+            parentSessionName: parentSessionName ?? undefined,
+          };
 
     createMutation.mutate(params, {
       onSuccess: (session) => {
@@ -282,10 +255,7 @@ export default function CreateSessionModal({
 
         const conversationId = session.conversations[0]?.id;
         const url = conversationId
-          ? conversationsPageHref({
-              conversationId,
-              autoFocus: mode === "focus",
-            })
+          ? conversationsPageHref({ conversationId })
           : `/projects/${encodeURIComponent(projectName)}/${encodeURIComponent(session.sessionName)}`;
 
         router.push(url);
@@ -305,22 +275,8 @@ export default function CreateSessionModal({
     }
   });
 
-  const textareaValue = mode === "optimistic" ? instructions : objective;
-  const setTextareaValue =
-    mode === "optimistic" ? setInstructions : setObjective;
-  const textareaLabel =
-    mode === "optimistic"
-      ? "What should Claude do?"
-      : "What do you want to work on?";
-  const textareaPlaceholder =
-    mode === "optimistic"
-      ? "e.g. Fix the typo in the login page header"
-      : "e.g. Add user authentication with JWT tokens";
   const mergeTargetLabel = selectedParentBranch ?? "main";
-  const textareaHint =
-    mode === "optimistic"
-      ? `Claude will complete this task and merge the result into ${mergeTargetLabel}`
-      : "Agent will research the codebase and clarify the objective first";
+  const textareaHint = `Claude will complete this task and merge the result into ${mergeTargetLabel}`;
 
   return (
     // Radix `Dialog` (WAI-ARIA Dialog Modal) owns the focus trap, Escape
@@ -366,20 +322,11 @@ export default function CreateSessionModal({
             <button
               type="button"
               className={modeButtonClass}
-              data-active={mode === "fast"}
-              onClick={() => setMode("fast")}
+              data-active={mode === "normal"}
+              onClick={() => setMode("normal")}
               disabled={createMutation.isPending}
             >
-              Fast
-            </button>
-            <button
-              type="button"
-              className={modeButtonClass}
-              data-active={mode === "focus"}
-              onClick={() => setMode("focus")}
-              disabled={createMutation.isPending}
-            >
-              Focus
+              Normal
             </button>
             <button
               type="button"
@@ -404,7 +351,7 @@ export default function CreateSessionModal({
             </>
           )}
 
-          {mode === "fast" ? (
+          {mode === "normal" ? (
             <>
               <FormLabel htmlFor="session-name-input" layoutClassName="mt-sm">
                 Session name
@@ -452,10 +399,10 @@ export default function CreateSessionModal({
           ) : (
             <>
               <FormLabel
-                htmlFor="session-objective-input"
+                htmlFor="session-instructions-input"
                 layoutClassName="mt-sm"
               >
-                {textareaLabel}
+                What should Claude do?
               </FormLabel>
               <div style={{ position: "relative" }}>
                 <FileAutocomplete
@@ -472,13 +419,13 @@ export default function CreateSessionModal({
                 />
                 <textarea
                   ref={textareaRef}
-                  id="session-objective-input"
+                  id="session-instructions-input"
                   className={FORM_INPUT_CLASS}
                   rows={6}
-                  placeholder={textareaPlaceholder}
-                  value={textareaValue}
+                  placeholder="e.g. Fix the typo in the login page header"
+                  value={instructions}
                   onChange={(e) => {
-                    setTextareaValue(e.target.value);
+                    setInstructions(e.target.value);
                     setCursorPosition(e.target.selectionStart);
                     setError(null);
                   }}
@@ -487,25 +434,21 @@ export default function CreateSessionModal({
                       (e.target as HTMLTextAreaElement).selectionStart,
                     );
                   }}
-                  onPaste={
-                    mode === "optimistic"
-                      ? (e) => {
-                          const items = e.clipboardData.items;
-                          for (const item of items) {
-                            if (item.type.startsWith("image/")) {
-                              e.preventDefault();
-                              const file = item.getAsFile();
-                              if (file) {
-                                void addImage(file).then((result) => {
-                                  if (result.error) setError(result.error);
-                                });
-                              }
-                              return;
-                            }
-                          }
+                  onPaste={(e) => {
+                    const items = e.clipboardData.items;
+                    for (const item of items) {
+                      if (item.type.startsWith("image/")) {
+                        e.preventDefault();
+                        const file = item.getAsFile();
+                        if (file) {
+                          void addImage(file).then((result) => {
+                            if (result.error) setError(result.error);
+                          });
                         }
-                      : undefined
-                  }
+                        return;
+                      }
+                    }
+                  }}
                   onKeyDown={(e) => {
                     if (
                       fileAutocomplete.autocompleteRef.current?.handleKeyDown(e)
@@ -523,31 +466,27 @@ export default function CreateSessionModal({
                     }
                   }}
                 />
-                {mode === "optimistic" && (
-                  <>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/jpeg,image/png,image/gif,image/webp"
-                      multiple
-                      style={{ display: "none" }}
-                      onChange={(e) => {
-                        const files = e.target.files;
-                        if (!files) return;
-                        for (const file of files) {
-                          void addImage(file).then((result) => {
-                            if (result.error) setError(result.error);
-                          });
-                        }
-                        e.target.value = "";
-                      }}
-                    />
-                    <ImageAttachmentPreview
-                      images={pendingImages}
-                      onRemove={removeImage}
-                    />
-                  </>
-                )}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/gif,image/webp"
+                  multiple
+                  style={{ display: "none" }}
+                  onChange={(e) => {
+                    const files = e.target.files;
+                    if (!files) return;
+                    for (const file of files) {
+                      void addImage(file).then((result) => {
+                        if (result.error) setError(result.error);
+                      });
+                    }
+                    e.target.value = "";
+                  }}
+                />
+                <ImageAttachmentPreview
+                  images={pendingImages}
+                  onRemove={removeImage}
+                />
                 <div
                   style={{
                     position: "absolute",
@@ -558,28 +497,26 @@ export default function CreateSessionModal({
                     gap: "0.25rem",
                   }}
                 >
-                  {mode === "optimistic" && (
-                    <button
-                      className="attachment-btn"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={isAtLimit || createMutation.isPending}
-                      title="Attach image"
-                      type="button"
+                  <button
+                    className="attachment-btn"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isAtLimit || createMutation.isPending}
+                    title="Attach image"
+                    type="button"
+                  >
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
                     >
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-                      </svg>
-                    </button>
-                  )}
+                      <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                    </svg>
+                  </button>
                   <VoiceRecordButton
                     isRecording={isRecording}
                     isProcessing={isProcessing}

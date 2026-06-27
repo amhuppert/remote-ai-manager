@@ -8,58 +8,6 @@ import {
   PLANNER_SESSION_NAME,
   type SessionDeps,
 } from "./service";
-import type {
-  ArtifactRegistry,
-  ArtifactRecord,
-  ArtifactWriteRequest,
-  ArtifactWriteOptionalRequest,
-  ArtifactRegisterRequest,
-  ArtifactWriteOutcome,
-} from "../workflows/primitives/artifact-registry";
-
-interface CapturedRegistryCall {
-  type: "write" | "writeOptional" | "register";
-  request:
-    | ArtifactWriteRequest
-    | ArtifactWriteOptionalRequest
-    | ArtifactRegisterRequest;
-}
-
-function makeRecordingArtifactRegistry(): {
-  registry: ArtifactRegistry;
-  calls: CapturedRegistryCall[];
-} {
-  const calls: CapturedRegistryCall[] = [];
-  const fakeRecord = (
-    kind: ArtifactWriteRequest["kind"],
-    relativePath: string,
-  ): ArtifactRecord => ({
-    artifactId: `art-${calls.length}`,
-    kind,
-    relativePath,
-    audience: "user_facing",
-    source: { createdAt: "2026-04-28T00:00:00.000Z" },
-  });
-  const registry: ArtifactRegistry = {
-    write: async (request) => {
-      calls.push({ type: "write", request });
-      return fakeRecord(request.kind, request.relativePath);
-    },
-    writeOptional: async (request): Promise<ArtifactWriteOutcome> => {
-      calls.push({ type: "writeOptional", request });
-      return {
-        status: "registered",
-        record: fakeRecord(request.kind, request.relativePath),
-      };
-    },
-    register: async (request) => {
-      calls.push({ type: "register", request });
-      return fakeRecord(request.kind, request.relativePath);
-    },
-  };
-  return { registry, calls };
-}
-
 // ---------------------------------------------------------------------------
 // Test dep factory – replaces all vi.mock() calls
 // ---------------------------------------------------------------------------
@@ -77,17 +25,6 @@ function createTestDeps() {
     .fn()
     .mockResolvedValue({ status: "moved", trashPath: "/trash/x" });
   const sweepLaneWorktreesMock = vi.fn().mockResolvedValue([]);
-
-  const recording = makeRecordingArtifactRegistry();
-  const factoryArgs: Array<{ projectPath: string; sessionName: string }> = [];
-  const createSessionArtifactRegistryMock = vi
-    .fn()
-    .mockImplementation(
-      (input: { projectPath: string; sessionName: string }) => {
-        factoryArgs.push(input);
-        return recording.registry;
-      },
-    );
 
   const deps: SessionDeps = {
     existsSync: existsSyncMock as unknown as SessionDeps["existsSync"],
@@ -118,7 +55,6 @@ function createTestDeps() {
       .fn()
       .mockReturnValue({}) as unknown as SessionDeps["buildChildEnv"],
     query: queryMock as unknown as SessionDeps["query"],
-    createSessionArtifactRegistry: createSessionArtifactRegistryMock,
     deleteNotificationsForSession: vi.fn().mockReturnValue(0),
     deleteJobRecordsForSession: vi.fn().mockReturnValue(0),
     deleteNotificationsForProject: vi.fn().mockReturnValue(0),
@@ -136,8 +72,6 @@ function createTestDeps() {
     fastRemoveWorktreeMock,
     sweepLaneWorktreesMock,
     queryMock,
-    artifactRegistryCalls: recording.calls,
-    artifactRegistryFactoryArgs: factoryArgs,
   };
 }
 
@@ -173,8 +107,7 @@ function stateWithSession(
             finished: false,
             conversations: [],
             source: "cc",
-            objective: null,
-            creationMode: "fast" as const,
+            creationMode: "normal" as const,
             tddEnabled: true,
             ...overrides,
           },
@@ -232,11 +165,6 @@ let execFileAsyncMock: Mock;
 let fastRemoveWorktreeMock: Mock;
 let sweepLaneWorktreesMock: Mock;
 let queryMock: Mock;
-let artifactRegistryCalls: CapturedRegistryCall[];
-let artifactRegistryFactoryArgs: Array<{
-  projectPath: string;
-  sessionName: string;
-}>;
 let service: ReturnType<typeof createSessionService>;
 
 /** Make gitMock resolve with { stdout, stderr } */
@@ -278,8 +206,6 @@ beforeEach(() => {
   fastRemoveWorktreeMock = testSetup.fastRemoveWorktreeMock;
   sweepLaneWorktreesMock = testSetup.sweepLaneWorktreesMock;
   queryMock = testSetup.queryMock;
-  artifactRegistryCalls = testSetup.artifactRegistryCalls;
-  artifactRegistryFactoryArgs = testSetup.artifactRegistryFactoryArgs;
   service = createSessionService(deps);
 });
 
@@ -505,13 +431,12 @@ describe("generateSessionName", () => {
 // 1.4 – Session creation with worktree and state persistence
 // ===========================================================================
 
-describe("createSessionFocus", () => {
-  it("creates a session with correct properties", async () => {
-    queryMock.mockReturnValue(mockQueryResponse("My Feature"));
+describe("createSessionNormal", () => {
+  it("creates a session with user-provided name", async () => {
     mockGitSuccess(); // git worktree add
-    const session = await service.createSessionFocus(
+    const session = await service.createSessionNormal(
       "/projects/repo",
-      "Implement my feature",
+      "My Feature",
     );
 
     expect(session.sessionName).toBe("My Feature");
@@ -519,26 +444,48 @@ describe("createSessionFocus", () => {
       /^\/projects\/repo\/\.worktrees\/my-feature-[a-f0-9]{6}$/,
     );
     expect(session.branchName).toMatch(/^csm\/my-feature-[a-f0-9]{6}$/);
-    expect(session.objective).toBe("Implement my feature");
+    expect(session.creationMode).toBe("normal");
     expect(session.conversations).toHaveLength(1);
     expect(session.conversations[0]).toMatchObject({
       status: "new",
       source: "cc",
       promptCount: 0,
       name: "My Feature 1",
+      role: null,
     });
     expect(session.conversations[0]!.id).toBeTruthy();
     expect(session.archived).toBe(false);
     expect(session.source).toBe("cc");
   });
 
+  it("does not persist any session-wide objective", async () => {
+    mockGitSuccess(); // git worktree add
+    await service.createSessionNormal("/projects/repo", "No Objective");
+
+    const savedState = writeStateMock.mock.calls[0]![0];
+    const persisted =
+      savedState.projects["/projects/repo"].sessions["No Objective"];
+    expect("objective" in persisted).toBe(false);
+  });
+
+  it("does not call Claude for name generation", async () => {
+    mockGitSuccess(); // git worktree add
+    await service.createSessionNormal("/projects/repo", "Direct Name");
+
+    // Only one gitMock call (git worktree add), no claude call
+    expect(gitMock).toHaveBeenCalledTimes(1);
+    expect(gitMock).toHaveBeenCalledWith(
+      expect.arrayContaining(["worktree", "add"]),
+      "/projects/repo",
+    );
+  });
+
   it("sets ISO 8601 timestamps for createdAt and lastActivityAt", async () => {
-    queryMock.mockReturnValue(mockQueryResponse("Timestamp Test"));
     mockGitSuccess();
     const before = new Date().toISOString();
-    const session = await service.createSessionFocus(
+    const session = await service.createSessionNormal(
       "/projects/repo",
-      "Test timestamps",
+      "Timestamp Test",
     );
     const after = new Date().toISOString();
 
@@ -554,11 +501,10 @@ describe("createSessionFocus", () => {
   });
 
   it("calls git worktree add with correct arguments", async () => {
-    queryMock.mockReturnValue(mockQueryResponse("Build Feature"));
     mockGitSuccess();
-    const session = await service.createSessionFocus(
+    const session = await service.createSessionNormal(
       "/projects/repo",
-      "Build feature",
+      "Build Feature",
     );
 
     expect(gitMock).toHaveBeenCalledWith(
@@ -574,97 +520,79 @@ describe("createSessionFocus", () => {
     );
   });
 
-  it("writes memory-bank/focus.md with objective via the artifact registry", async () => {
-    queryMock.mockReturnValue(mockQueryResponse("Auth Feature"));
-    mockGitSuccess();
-    const session = await service.createSessionFocus(
-      "/projects/repo",
-      "Add user authentication",
-    );
-
-    expect(artifactRegistryCalls).toHaveLength(1);
-    const call = artifactRegistryCalls[0]!;
-    expect(call.type).toBe("write");
-    const req = call.request as ArtifactWriteRequest;
-    expect(req.kind).toBe("focus_memory");
-    expect(req.worktreePath).toBe(session.worktreePath);
-    expect(req.relativePath).toBe("memory-bank/focus.md");
-    expect(req.contents).toBe(
-      "# Session Focus\n\n## Objective\n\nAdd user authentication\n\n> This focus document will be enriched after objective analysis.\n",
-    );
-    expect(req.required).toBe(true);
-  });
-
   it("persists session to state via writeState", async () => {
-    queryMock.mockReturnValue(mockQueryResponse("Persist Test"));
     mockGitSuccess();
-    await service.createSessionFocus(
-      "/projects/repo",
-      "Persist test objective",
-    );
+    await service.createSessionNormal("/projects/repo", "Persist Test");
 
     expect(writeStateMock).toHaveBeenCalledTimes(1);
     const savedState = writeStateMock.mock.calls[0]![0];
     const project = savedState.projects["/projects/repo"];
     expect(project).toBeDefined();
     expect(project.sessions["Persist Test"]).toBeDefined();
-    expect(project.sessions["Persist Test"].objective).toBe(
-      "Persist test objective",
-    );
+    expect(project.sessions["Persist Test"].creationMode).toBe("normal");
     expect(project.sessions["Persist Test"].conversations).toHaveLength(1);
   });
 
   it("auto-creates project entry when project not yet in state", async () => {
     readStateMock.mockResolvedValue(emptyState());
-    queryMock.mockReturnValue(mockQueryResponse("First Session"));
     mockGitSuccess();
-    await service.createSessionFocus("/new/project", "First session objective");
+    await service.createSessionNormal("/new/project", "First Session");
 
     const savedState = writeStateMock.mock.calls[0]![0];
     expect(savedState.projects["/new/project"]).toBeDefined();
     expect(savedState.projects["/new/project"].rootPath).toBe("/new/project");
   });
 
-  // =========================================================================
-  // Session uniqueness via ensureUniqueName
-  // =========================================================================
+  it("throws for empty session name", async () => {
+    await expect(
+      service.createSessionNormal("/projects/repo", ""),
+    ).rejects.toThrow("Session name cannot be empty");
+  });
 
-  it("appends a numeric suffix when the generated name collides", async () => {
+  it("accepts session names with special characters", async () => {
+    mockGitSuccess();
+    const session = await service.createSessionNormal(
+      "/projects/repo",
+      "test, with special chars!",
+    );
+
+    expect(session.sessionName).toBe("test, with special chars!");
+    expect(session.branchName).toMatch(
+      /^csm\/test-with-special-chars-[a-f0-9]{6}$/,
+    );
+    expect(session.worktreePath).toMatch(
+      /^\/projects\/repo\/\.worktrees\/test-with-special-chars-[a-f0-9]{6}$/,
+    );
+  });
+
+  it("throws for duplicate session name in same project", async () => {
     readStateMock.mockResolvedValue(
       stateWithSession("/projects/repo", "Existing"),
     );
-    queryMock.mockReturnValue(mockQueryResponse("Existing"));
-    mockGitSuccess();
-
-    const session = await service.createSessionFocus(
-      "/projects/repo",
-      "Another feature",
-    );
-
-    expect(session.sessionName).toBe("Existing-2");
+    await expect(
+      service.createSessionNormal("/projects/repo", "Existing"),
+    ).rejects.toThrow('Session "Existing" already exists in this project');
   });
 
-  it("allows same generated name in different projects", async () => {
+  it("allows same name in different projects", async () => {
     readStateMock.mockResolvedValue(
       stateWithSession("/projects/repo-a", "Shared Name"),
     );
-    queryMock.mockReturnValue(mockQueryResponse("Shared Name"));
     mockGitSuccess();
-    const session = await service.createSessionFocus(
+    const session = await service.createSessionNormal(
       "/projects/repo-b",
-      "Shared name objective",
+      "Shared Name",
     );
     expect(session.sessionName).toBe("Shared Name");
   });
 
   it("throws error when worktree directory already exists", async () => {
-    queryMock.mockReturnValue(mockQueryResponse("Conflict"));
     existsSyncMock.mockImplementation((p: string) => {
       if (String(p).includes(".worktrees/")) return true;
       return false;
     });
     await expect(
-      service.createSessionFocus("/projects/repo", "Conflict objective"),
+      service.createSessionNormal("/projects/repo", "Conflict"),
     ).rejects.toThrow("Worktree directory already exists:");
   });
 
@@ -673,7 +601,6 @@ describe("createSessionFocus", () => {
   // =========================================================================
 
   it("executes init script with correct environment when configured", async () => {
-    queryMock.mockReturnValue(mockQueryResponse("With Init"));
     mockGitSuccess(); // git worktree add
 
     (deps.readRepoConfig as Mock).mockResolvedValue({
@@ -685,9 +612,9 @@ describe("createSessionFocus", () => {
       return false;
     });
 
-    const session = await service.createSessionFocus(
+    const session = await service.createSessionNormal(
       "/projects/repo",
-      "With init objective",
+      "With Init",
     );
 
     // execFileAsyncMock should be called for the init script
@@ -728,8 +655,7 @@ describe("createSessionFocus", () => {
     );
 
     await service.provisionSession("/projects/repo", "child-session", {
-      mode: "fast",
-      objective: null,
+      mode: "normal",
       baseBranch: "csm/parent-session",
       targetBranch: "csm/parent-session",
       parentSessionName: "Parent Session",
@@ -746,7 +672,6 @@ describe("createSessionFocus", () => {
   });
 
   it("throws 'Init script not found' when script path doesn't exist", async () => {
-    queryMock.mockReturnValue(mockQueryResponse("Missing Script"));
     mockGitSuccess(); // git worktree add
 
     (deps.readRepoConfig as Mock).mockResolvedValue({
@@ -764,14 +689,13 @@ describe("createSessionFocus", () => {
     });
 
     await expect(
-      service.createSessionFocus("/projects/repo", "Missing script objective"),
+      service.createSessionNormal("/projects/repo", "Missing Script"),
     ).rejects.toThrow("Init script not found:");
   });
 
   it("rolls back worktree and branch on init script failure", async () => {
     const scriptError = new Error("script failed");
 
-    queryMock.mockReturnValue(mockQueryResponse("Fail Session"));
     mockGitSequence([
       { stdout: "" }, // git worktree add
       { stdout: "" }, // rollback: worktree remove
@@ -796,7 +720,7 @@ describe("createSessionFocus", () => {
     execFileAsyncMock.mockRejectedValue(scriptError);
 
     await expect(
-      service.createSessionFocus("/projects/repo", "Fail session objective"),
+      service.createSessionNormal("/projects/repo", "Fail Session"),
     ).rejects.toThrow("script failed");
 
     // Verify rollback: git worktree remove --force was called via gitMock
@@ -815,7 +739,6 @@ describe("createSessionFocus", () => {
     const scriptError = new Error("script failed");
     const removeError = new Error("worktree remove failed");
 
-    queryMock.mockReturnValue(mockQueryResponse("Rm Fallback"));
     mockGitSequence([
       { stdout: "" }, // git worktree add
       { error: removeError }, // git worktree remove fails
@@ -840,7 +763,7 @@ describe("createSessionFocus", () => {
     execFileAsyncMock.mockRejectedValue(scriptError);
 
     await expect(
-      service.createSessionFocus("/projects/repo", "RM fallback objective"),
+      service.createSessionNormal("/projects/repo", "Rm Fallback"),
     ).rejects.toThrow("script failed");
 
     expect(deps.rm).toHaveBeenCalledWith(
@@ -850,11 +773,10 @@ describe("createSessionFocus", () => {
   });
 
   it("rolls back state when creation fails after early persist", async () => {
-    queryMock.mockReturnValue(mockQueryResponse("Should Not Persist"));
     mockGitFailure(new Error("git worktree add failed"));
 
     await expect(
-      service.createSessionFocus("/projects/repo", "Should not persist"),
+      service.createSessionNormal("/projects/repo", "Should Not Persist"),
     ).rejects.toThrow("git worktree add failed");
 
     // State is persisted first (createSession) then rolled back (rollbackSession)
@@ -870,97 +792,13 @@ describe("createSessionFocus", () => {
 });
 
 // ===========================================================================
-// 1.5 – Fast session creation (user-provided name)
-// ===========================================================================
-
-describe("createSessionFast", () => {
-  it("creates a session with user-provided name", async () => {
-    mockGitSuccess(); // git worktree add
-    const session = await service.createSessionFast(
-      "/projects/repo",
-      "My Feature",
-    );
-
-    expect(session.sessionName).toBe("My Feature");
-    expect(session.worktreePath).toMatch(
-      /^\/projects\/repo\/\.worktrees\/my-feature-[a-f0-9]{6}$/,
-    );
-    expect(session.branchName).toMatch(/^csm\/my-feature-[a-f0-9]{6}$/);
-    expect(session.objective).toBeNull();
-    expect(session.creationMode).toBe("fast");
-    expect(session.conversations).toHaveLength(1);
-  });
-
-  it("does not call Claude for name generation", async () => {
-    mockGitSuccess(); // git worktree add
-    await service.createSessionFast("/projects/repo", "Direct Name");
-
-    // Only one gitMock call (git worktree add), no claude call
-    expect(gitMock).toHaveBeenCalledTimes(1);
-    expect(gitMock).toHaveBeenCalledWith(
-      expect.arrayContaining(["worktree", "add"]),
-      "/projects/repo",
-    );
-  });
-
-  it("does not write focus.md (only focus mode writes it)", async () => {
-    mockGitSuccess(); // git worktree add
-    await service.createSessionFast("/projects/repo", "Quick Fix");
-
-    expect(artifactRegistryCalls).toHaveLength(0);
-  });
-
-  it("throws for empty session name", async () => {
-    await expect(
-      service.createSessionFast("/projects/repo", ""),
-    ).rejects.toThrow("Session name cannot be empty");
-  });
-
-  it("accepts session names with special characters", async () => {
-    mockGitSuccess();
-    const session = await service.createSessionFast(
-      "/projects/repo",
-      "test, with special chars!",
-    );
-
-    expect(session.sessionName).toBe("test, with special chars!");
-    expect(session.branchName).toMatch(
-      /^csm\/test-with-special-chars-[a-f0-9]{6}$/,
-    );
-    expect(session.worktreePath).toMatch(
-      /^\/projects\/repo\/\.worktrees\/test-with-special-chars-[a-f0-9]{6}$/,
-    );
-  });
-
-  it("throws for duplicate session name in same project", async () => {
-    readStateMock.mockResolvedValue(
-      stateWithSession("/projects/repo", "Existing"),
-    );
-    await expect(
-      service.createSessionFast("/projects/repo", "Existing"),
-    ).rejects.toThrow('Session "Existing" already exists in this project');
-  });
-
-  it("persists session to state", async () => {
-    mockGitSuccess(); // git worktree add
-    await service.createSessionFast("/projects/repo", "Persist Test");
-
-    expect(writeStateMock).toHaveBeenCalledTimes(1);
-    const savedState = writeStateMock.mock.calls[0]![0];
-    const project = savedState.projects["/projects/repo"];
-    expect(project.sessions["Persist Test"]).toBeDefined();
-    expect(project.sessions["Persist Test"].creationMode).toBe("fast");
-  });
-});
-
-// ===========================================================================
 // 1.5b – Random suffix in branch/worktree paths
 // ===========================================================================
 
 describe("provisionSession — random suffix", () => {
   it("branchName includes a 6-char hex suffix", async () => {
     mockGitSuccess();
-    const session = await service.createSessionFast(
+    const session = await service.createSessionNormal(
       "/projects/repo",
       "My Feature",
     );
@@ -969,7 +807,7 @@ describe("provisionSession — random suffix", () => {
 
   it("worktreePath includes the same suffix", async () => {
     mockGitSuccess();
-    const session = await service.createSessionFast(
+    const session = await service.createSessionNormal(
       "/projects/repo",
       "My Feature",
     );
@@ -980,7 +818,7 @@ describe("provisionSession — random suffix", () => {
 
   it("sessionName does NOT include the suffix", async () => {
     mockGitSuccess();
-    const session = await service.createSessionFast(
+    const session = await service.createSessionNormal(
       "/projects/repo",
       "My Feature",
     );
@@ -989,7 +827,7 @@ describe("provisionSession — random suffix", () => {
 
   it("git worktree add uses the suffixed branch and path", async () => {
     mockGitSuccess();
-    const session = await service.createSessionFast(
+    const session = await service.createSessionNormal(
       "/projects/repo",
       "My Feature",
     );
@@ -1017,7 +855,7 @@ describe("provisionSession — configurable branch prefix", () => {
     mockGitSuccess();
     (deps.readConfig as Mock).mockResolvedValue({ branchPrefix: "dev" });
 
-    const session = await service.createSessionFast(
+    const session = await service.createSessionNormal(
       "/projects/repo",
       "My Feature",
     );
@@ -1032,7 +870,7 @@ describe("provisionSession — configurable branch prefix", () => {
       branchPrefix: "feature",
     });
 
-    const session = await service.createSessionFast(
+    const session = await service.createSessionNormal(
       "/projects/repo",
       "My Feature",
     );
@@ -1044,7 +882,7 @@ describe("provisionSession — configurable branch prefix", () => {
     (deps.readConfig as Mock).mockResolvedValue({});
     (deps.readRepoConfig as Mock).mockResolvedValue(null);
 
-    const session = await service.createSessionFast(
+    const session = await service.createSessionNormal(
       "/projects/repo",
       "My Feature",
     );
@@ -1302,8 +1140,7 @@ describe("deleteProject", () => {
         finished: false,
         conversations: [],
         source: "cc",
-        objective: null,
-        creationMode: "fast" as const,
+        creationMode: "normal" as const,
         tddEnabled: true,
         ...overrides,
       };
@@ -1415,66 +1252,18 @@ describe("deleteProject", () => {
 // 1.7 – Optimistic mode provisioning (Task 1.2)
 // ===========================================================================
 
-describe("provisionSession — optimistic mode gets fast-mode treatment", () => {
-  it("does not write focus.md for optimistic sessions", async () => {
-    mockGitSuccess();
-    await service.provisionSession("/projects/repo", "opt-task", {
-      mode: "optimistic",
-      objective: "Fix the bug in login",
-    });
-
-    expect(artifactRegistryCalls).toHaveLength(0);
-  });
-
-  it("sets conversation role to null for optimistic sessions (no initialization)", async () => {
+describe("provisionSession — optimistic mode", () => {
+  it("sets conversation role to null for optimistic sessions", async () => {
     mockGitSuccess();
     const session = await service.provisionSession(
       "/projects/repo",
       "opt-null-role",
       {
         mode: "optimistic",
-        objective: "Add a feature",
       },
     );
 
     expect(session.conversations[0]!.role).toBeNull();
-  });
-
-  it("still writes focus-mode content for focus sessions (via the artifact registry)", async () => {
-    mockGitSuccess();
-    const session = await service.provisionSession(
-      "/projects/repo",
-      "focus-check",
-      {
-        mode: "focus",
-        objective: "Research the auth system",
-      },
-    );
-
-    expect(artifactRegistryCalls).toHaveLength(1);
-    const call = artifactRegistryCalls[0]!;
-    expect(call.type).toBe("write");
-    const req = call.request as ArtifactWriteRequest;
-    expect(req.kind).toBe("focus_memory");
-    expect(req.worktreePath).toBe(session.worktreePath);
-    expect(req.relativePath).toBe("memory-bank/focus.md");
-    expect(req.contents).toBe(
-      "# Session Focus\n\n## Objective\n\nResearch the auth system\n\n> This focus document will be enriched after objective analysis.\n",
-    );
-  });
-
-  it("still sets conversation role to initialization for focus sessions", async () => {
-    mockGitSuccess();
-    const session = await service.provisionSession(
-      "/projects/repo",
-      "focus-role",
-      {
-        mode: "focus",
-        objective: "Research something",
-      },
-    );
-
-    expect(session.conversations[0]!.role).toBe("initialization");
   });
 
   it("records creationMode as optimistic in session state", async () => {
@@ -1484,7 +1273,6 @@ describe("provisionSession — optimistic mode gets fast-mode treatment", () => 
       "opt-mode",
       {
         mode: "optimistic",
-        objective: "Do the thing",
       },
     );
 
@@ -1510,7 +1298,7 @@ describe("createSessionOptimistic", () => {
     expect(queryMock).toHaveBeenCalled();
   });
 
-  it("provisions session with optimistic mode and instructions as objective", async () => {
+  it("stores no session-wide objective and seeds the kickoff prompt with the instructions", async () => {
     queryMock.mockReturnValue(mockQueryResponse("Auth Fix"));
     mockGitSuccess();
 
@@ -1520,9 +1308,20 @@ describe("createSessionOptimistic", () => {
     );
 
     expect(session.creationMode).toBe("optimistic");
-    expect(session.objective).toBe("Fix authentication flow");
+    // The instructions no longer become a session-wide objective field.
+    expect("objective" in session).toBe(false);
+    const savedState = writeStateMock.mock.calls[0]![0];
+    const persisted =
+      savedState.projects["/projects/repo"].sessions["Auth Fix"];
+    expect("objective" in persisted).toBe(false);
     expect(session.conversations).toHaveLength(1);
     expect(session.conversations[0]!.role).toBeNull();
+
+    // The instructions flow to the conversation kickoff prompt path: the
+    // optimistic orchestrator receives them as the first-turn prompt text.
+    expect(deps.executeOptimisticWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({ instructions: "Fix authentication flow" }),
+    );
   });
 
   it("ensures generated name is unique within project", async () => {
@@ -1596,8 +1395,7 @@ describe("provisionSession — child session branching", () => {
       "/projects/repo",
       "child-session",
       {
-        mode: "fast",
-        objective: null,
+        mode: "normal",
         baseBranch: "csm/parent-branch-abc123",
       },
     );
@@ -1621,8 +1419,7 @@ describe("provisionSession — child session branching", () => {
       "/projects/repo",
       "regular-session",
       {
-        mode: "fast",
-        objective: null,
+        mode: "normal",
       },
     );
 
@@ -1645,8 +1442,7 @@ describe("provisionSession — child session branching", () => {
       "/projects/repo",
       "child-target",
       {
-        mode: "fast",
-        objective: null,
+        mode: "normal",
         targetBranch: "csm/parent-branch-abc123",
       },
     );
@@ -1660,8 +1456,7 @@ describe("provisionSession — child session branching", () => {
       "/projects/repo",
       "child-parent",
       {
-        mode: "fast",
-        objective: null,
+        mode: "normal",
         parentSessionName: "Parent Session",
       },
     );
@@ -1675,8 +1470,7 @@ describe("provisionSession — child session branching", () => {
       "/projects/repo",
       "default-session",
       {
-        mode: "fast",
-        objective: null,
+        mode: "normal",
       },
     );
 
@@ -1687,8 +1481,7 @@ describe("provisionSession — child session branching", () => {
   it("persists targetBranch and parentSessionName in state", async () => {
     mockGitSuccess();
     await service.provisionSession("/projects/repo", "persisted-child", {
-      mode: "fast",
-      objective: null,
+      mode: "normal",
       targetBranch: "csm/parent-abc",
       parentSessionName: "Parent",
     });
@@ -1706,36 +1499,12 @@ describe("provisionSession — child session branching", () => {
 // Task 3.1 – Threading branching opts through creation modes
 // ===========================================================================
 
-describe("createSessionFast — branching opts", () => {
+describe("createSessionNormal — branching opts", () => {
   it("threads baseBranch, targetBranch, parentSessionName to provisionSession", async () => {
     mockGitSuccess();
-    const session = await service.createSessionFast(
+    const session = await service.createSessionNormal(
       "/projects/repo",
-      "Child Fast",
-      undefined,
-      {
-        baseBranch: "csm/parent-abc",
-        targetBranch: "csm/parent-abc",
-        parentSessionName: "Parent",
-      },
-    );
-
-    expect(gitMock).toHaveBeenCalledWith(
-      expect.arrayContaining(["csm/parent-abc"]),
-      "/projects/repo",
-    );
-    expect(session.targetBranch).toBe("csm/parent-abc");
-    expect(session.parentSessionName).toBe("Parent");
-  });
-});
-
-describe("createSessionFocus — branching opts", () => {
-  it("threads baseBranch, targetBranch, parentSessionName to provisionSession", async () => {
-    queryMock.mockReturnValue(mockQueryResponse("Child Focus"));
-    mockGitSuccess();
-    const session = await service.createSessionFocus(
-      "/projects/repo",
-      "Build child feature",
+      "Child Normal",
       undefined,
       {
         baseBranch: "csm/parent-abc",
@@ -1802,8 +1571,7 @@ describe("retargetOrphanedChildren", () => {
         finished: false,
         conversations: [],
         source: "cc",
-        objective: null,
-        creationMode: "fast",
+        creationMode: "normal",
         tddEnabled: true,
         targetBranch: "main",
         parentSessionName: null,
@@ -1820,8 +1588,7 @@ describe("retargetOrphanedChildren", () => {
         finished: false,
         conversations: [],
         source: "cc",
-        objective: null,
-        creationMode: "fast",
+        creationMode: "normal",
         tddEnabled: true,
         targetBranch: child.targetBranch,
         parentSessionName: child.parentSessionName,
@@ -1943,8 +1710,7 @@ describe("deleteSession — orphan retargeting", () => {
               finished: false,
               conversations: [],
               source: "cc",
-              objective: null,
-              creationMode: "fast",
+              creationMode: "normal",
               tddEnabled: true,
               targetBranch: "main",
               parentSessionName: null,
@@ -1959,8 +1725,7 @@ describe("deleteSession — orphan retargeting", () => {
               finished: false,
               conversations: [],
               source: "cc",
-              objective: null,
-              creationMode: "fast",
+              creationMode: "normal",
               tddEnabled: true,
               targetBranch: "csm/parent",
               parentSessionName: "Parent",
@@ -2027,8 +1792,7 @@ describe("bulkDeleteSessions", () => {
               finished: false,
               conversations: [],
               source: "cc",
-              objective: null,
-              creationMode: "fast",
+              creationMode: "normal",
               tddEnabled: true,
               targetBranch: "main",
               parentSessionName: null,
@@ -2043,8 +1807,7 @@ describe("bulkDeleteSessions", () => {
               finished: false,
               conversations: [],
               source: "cc",
-              objective: null,
-              creationMode: "fast",
+              creationMode: "normal",
               tddEnabled: true,
               targetBranch: "main",
               parentSessionName: null,
@@ -2059,8 +1822,7 @@ describe("bulkDeleteSessions", () => {
               finished: false,
               conversations: [],
               source: "cc",
-              objective: null,
-              creationMode: "fast",
+              creationMode: "normal",
               tddEnabled: true,
               targetBranch: "main",
               parentSessionName: null,
@@ -2075,8 +1837,7 @@ describe("bulkDeleteSessions", () => {
               finished: false,
               conversations: [],
               source: "cc",
-              objective: null,
-              creationMode: "fast",
+              creationMode: "normal",
               tddEnabled: true,
               targetBranch: "csm/A",
               parentSessionName: "A",
@@ -2195,105 +1956,6 @@ describe("bulkDeleteSessions", () => {
 });
 
 // ===========================================================================
-// Task 6.1 — Focus-mode init routes through the ArtifactRegistry primitive
-// ===========================================================================
-
-describe("provisionSession — focus.md routes through ArtifactRegistry primitive", () => {
-  it("focus mode writes focus.md via registry.write with kind=focus_memory and canonical relativePath", async () => {
-    mockGitSuccess();
-    const session = await service.provisionSession(
-      "/projects/repo",
-      "primitive-focus",
-      {
-        mode: "focus",
-        objective: "Research the auth system",
-      },
-    );
-
-    // Factory was called with project + session identity (so production wiring
-    // resolves the right reference-document target).
-    expect(artifactRegistryFactoryArgs).toEqual([
-      { projectPath: "/projects/repo", sessionName: "primitive-focus" },
-    ]);
-
-    // Exactly one write call for the focus.md placeholder.
-    expect(artifactRegistryCalls).toHaveLength(1);
-    const call = artifactRegistryCalls[0]!;
-    expect(call.type).toBe("write");
-
-    const req = call.request as ArtifactWriteRequest;
-    expect(req.kind).toBe("focus_memory");
-    expect(req.worktreePath).toBe(session.worktreePath);
-    expect(req.relativePath).toBe("memory-bank/focus.md");
-    expect(req.contents).toBe(
-      "# Session Focus\n\n## Objective\n\nResearch the auth system\n\n> This focus document will be enriched after objective analysis.\n",
-    );
-    expect(req.required).toBe(true);
-    expect(req.audience).toBe("user_facing");
-    expect(req.description?.length ?? 0).toBeGreaterThan(0);
-    expect(req.source.workflowId).toBeTruthy();
-  });
-
-  it("focus-mode session creation only invokes the registry (no direct fs calls for focus.md)", async () => {
-    mockGitSuccess();
-    await service.provisionSession("/projects/repo", "primitive-focus-no-fs", {
-      mode: "focus",
-      objective: "Investigate caching",
-    });
-
-    expect(artifactRegistryCalls).toHaveLength(1);
-    expect(artifactRegistryCalls[0]!.type).toBe("write");
-    expect(
-      (artifactRegistryCalls[0]!.request as ArtifactWriteRequest).kind,
-    ).toBe("focus_memory");
-  });
-
-  it("does not call the registry for fast-mode session creation", async () => {
-    mockGitSuccess();
-    await service.provisionSession("/projects/repo", "fast-no-registry", {
-      mode: "fast",
-      objective: null,
-    });
-
-    expect(artifactRegistryCalls).toHaveLength(0);
-  });
-
-  it("does not call the registry for optimistic-mode session creation", async () => {
-    mockGitSuccess();
-    await service.provisionSession("/projects/repo", "opt-no-registry", {
-      mode: "optimistic",
-      objective: "Fix the login flow",
-    });
-
-    expect(artifactRegistryCalls).toHaveLength(0);
-  });
-
-  it("registry write failure halts focus-mode session creation and rolls back state", async () => {
-    mockGitSuccess();
-    // Override the registry to throw on write.
-    (deps.createSessionArtifactRegistry as Mock).mockImplementation(() => ({
-      write: vi.fn().mockRejectedValue(new Error("disk full")),
-      writeOptional: vi.fn(),
-      register: vi.fn(),
-    }));
-
-    await expect(
-      service.provisionSession("/projects/repo", "halt-on-fail", {
-        mode: "focus",
-        objective: "x",
-      }),
-    ).rejects.toThrow("disk full");
-
-    // Cleanup ran: state rollback was attempted (session removed from state).
-    const mutateStateMock = deps.mutateState as ReturnType<typeof vi.fn>;
-    const rollbackLabels = mutateStateMock.mock.calls
-      .map((call) => call[0])
-      .filter((label) => label === "rollbackSession");
-    expect(rollbackLabels.length).toBeGreaterThan(0);
-  });
-});
-
-// ===========================================================================
 // Reserved planner session — lazily created per project
 // ===========================================================================
 
@@ -2381,16 +2043,15 @@ describe("createSpawnedSession", () => {
     const session = await service.createSpawnedSession("/projects/repo", {
       name: "Login form",
       targetBranch: "main",
-      mode: "fast",
+      mode: "normal",
       baseBranch: "HEADSHA",
-      objective: null,
     });
 
     // Empty global config + null repo config → the default "csm" prefix; the
     // slug comes from the name and the 6-hex suffix guarantees uniqueness.
     expect(session.branchName).toMatch(/^csm\/login-form-[0-9a-f]{6}$/);
     expect(session.sessionName).toBe("Login form");
-    expect(session.creationMode).toBe("fast");
+    expect(session.creationMode).toBe("normal");
     // git worktree add -b <derived branch> <worktree> <committed-HEAD base>
     expect(gitMock).toHaveBeenCalledWith(
       [
@@ -2412,7 +2073,6 @@ describe("createSpawnedSession", () => {
       targetBranch: "main",
       mode: "optimistic",
       baseBranch: "HEADSHA",
-      objective: "do the work",
     });
     expect(deps.executeOptimisticWorkflow).not.toHaveBeenCalled();
   });
@@ -2422,9 +2082,8 @@ describe("createSpawnedSession", () => {
       service.createSpawnedSession("/projects/repo", {
         name: "",
         targetBranch: "main",
-        mode: "fast",
+        mode: "normal",
         baseBranch: "HEADSHA",
-        objective: null,
       }),
     ).rejects.toThrow("Session name cannot be empty");
     expect(gitMock).not.toHaveBeenCalled();
@@ -2436,9 +2095,8 @@ describe("createSpawnedSession", () => {
       service.createSpawnedSession("/projects/repo", {
         name: "dup",
         targetBranch: "main",
-        mode: "fast",
+        mode: "normal",
         baseBranch: "HEADSHA",
-        objective: null,
       }),
     ).rejects.toThrow('Session "dup" already exists');
     expect(gitMock).not.toHaveBeenCalled();
@@ -2452,9 +2110,8 @@ describe("createSpawnedSession", () => {
       service.createSpawnedSession("/projects/repo", {
         name: "Login form",
         targetBranch: "main",
-        mode: "fast",
+        mode: "normal",
         baseBranch: "HEADSHA",
-        objective: null,
       }),
     ).rejects.toThrow("already exists");
   });

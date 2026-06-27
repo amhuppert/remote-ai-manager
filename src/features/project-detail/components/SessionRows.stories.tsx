@@ -19,8 +19,7 @@ function makeSession(
     archived: false,
     finished: false,
     source: "cc",
-    objective: null,
-    creationMode: "fast",
+    creationMode: "normal",
     tddEnabled: true,
     targetBranch: "main",
     parentSessionName: null,
@@ -42,7 +41,7 @@ const sampleSessions: SessionListItem[] = [
   makeSession({
     sessionName: "add-dashboard",
     branchName: "csm/add-dashboard",
-    creationMode: "focus",
+    creationMode: "normal",
     lastActivityAt: hourAgo,
   }),
   makeSession({

@@ -50,6 +50,7 @@ function makeConversation(
     backendRef: null,
     unread: false,
     pendingQueue: [],
+    lastSeenAlignmentVersion: null,
     ...overrides,
   };
 }

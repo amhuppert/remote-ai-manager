@@ -48,6 +48,7 @@ import type {
   AgentCapabilitiesDiscoveryUpdatedEvent,
 } from "@/lib/agent-capabilities/schemas";
 import type { SpawnResultEvent } from "@/lib/chat-spawning/schemas";
+import type { SessionAlignmentUpdatedEvent } from "@/lib/session-alignment/schemas";
 
 // ============================================================
 // Scoped Status SSE Event (StatusBus → SSE bridge)
@@ -128,4 +129,5 @@ export type SSEEvent =
   | AgentCapabilitiesUpdatedEvent
   | AgentCapabilitiesDiscoveryUpdatedEvent
   | ScopedStatusEvent
-  | SpawnResultEvent;
+  | SpawnResultEvent
+  | SessionAlignmentUpdatedEvent;

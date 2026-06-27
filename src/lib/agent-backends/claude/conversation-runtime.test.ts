@@ -159,6 +159,41 @@ describe("ClaudeConversationRuntime — SDK options", () => {
   });
 });
 
+describe("ClaudeConversationRuntime — alignment version metadata", () => {
+  it("reports the alignment version baked in at creation", async () => {
+    queryMock.mockReturnValue(createControllableMockQuery().query);
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-av",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+      alignmentVersion: 4,
+    });
+    expect(runtime.alignmentVersion).toBe(4);
+    runtime.close();
+  });
+
+  it("defaults the alignment version to null when none is provided", async () => {
+    queryMock.mockReturnValue(createControllableMockQuery().query);
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-av-none",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+    expect(runtime.alignmentVersion).toBeNull();
+    runtime.close();
+  });
+});
+
 describe("ClaudeConversationRuntime — external turn events", () => {
   it("emits external_turn_started, provider_events, and external_turn_completed for a virtual turn", async () => {
     const mock = createControllableMockQuery();

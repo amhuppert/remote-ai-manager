@@ -1,0 +1,3 @@
+export { getAlignmentState as GET } from "@/lib/session-alignment/route-handlers";
+
+export const dynamic = "force-dynamic";

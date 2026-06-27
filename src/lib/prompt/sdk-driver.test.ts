@@ -99,6 +99,7 @@ function makeConversation(
     agentBackend: "claude",
     backendRef: null,
     unread: false,
+    lastSeenAlignmentVersion: null,
     pendingQueue: [],
     ...overrides,
   };
@@ -115,8 +116,7 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     finished: false,
     conversations: [],
     source: "cc" as const,
-    objective: null,
-    creationMode: "fast" as const,
+    creationMode: "normal" as const,
     tddEnabled: true,
     targetBranch: "main",
     parentSessionName: null,
@@ -1381,6 +1381,11 @@ describe("conversation command interception", () => {
         value: { jobId: "job-merge-1" },
       })),
       appendNotice: vi.fn(async () => {}),
+      beginAlignmentDraft: vi.fn(async () => ({
+        authoringPrompt: "draft the charter",
+        draftId: "draft-1",
+      })),
+      enqueueAuthoringTurn: vi.fn(async () => {}),
       ...overrides,
     };
   }

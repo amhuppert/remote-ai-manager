@@ -1,6 +1,5 @@
 export {
-  createSessionFast,
-  createSessionFocus,
+  createSessionNormal,
   createSessionOptimistic,
   retargetOrphanedChildren,
   deleteSession,

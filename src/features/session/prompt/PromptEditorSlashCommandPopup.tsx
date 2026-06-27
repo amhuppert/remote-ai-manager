@@ -52,6 +52,14 @@ const BUILT_IN_CLAUDE_COMMANDS: readonly CommandItem[] = [
     type: "command",
     source: "built-in",
   },
+  {
+    name: "/align",
+    description:
+      "Draft or update the session's shared Alignment charter from the conversation.",
+    argumentHint: "[guidance]",
+    type: "command",
+    source: "built-in",
+  },
 ];
 
 export interface SlashCommandPopupHandle {

@@ -874,7 +874,7 @@ describe("createStateStore — focused read DI guard", () => {
         branchName: "csm/alpha",
         createdAt: "2026-01-01T00:00:00Z",
         lastActivityAt: "2026-01-01T00:00:00Z",
-        objective: "before",
+        targetBranch: "before",
         workflowLanes: bigLanes,
       }),
     );
@@ -904,17 +904,22 @@ describe("createStateStore — focused read DI guard", () => {
     });
 
     runRecords.length = 0;
-    await store.mutateSession("/proj-a", "alpha", "set-objective", (session) => {
-      session.objective = "after";
-    });
+    await store.mutateSession(
+      "/proj-a",
+      "alpha",
+      "set-target-branch",
+      (session) => {
+        session.targetBranch = "after";
+      },
+    );
 
     const updateRecord = runRecords.find((r) =>
       /UPDATE sessions SET/.test(r.sql),
     );
     expect(updateRecord, "a focused UPDATE must have run").toBeDefined();
     const updateSql = updateRecord!.sql;
-    expect(updateSql).toMatch(/\bobjective\b/);
-    // The mutator only changed `objective`; a config toggle must not bump
+    expect(updateSql).toMatch(/\btarget_branch\b/);
+    // The mutator only changed `targetBranch`; a config toggle must not bump
     // session activity, so last_activity_at is absent from the UPDATE.
     expect(updateSql).not.toMatch(/last_activity_at/);
     expect(updateSql).not.toMatch(/graph_workflow_execution/);
@@ -932,7 +937,7 @@ describe("createStateStore — focused read DI guard", () => {
     expect(afterBytes).toBe(beforeBytes);
 
     const reloaded = await store.getSession("/proj-a", "alpha");
-    expect(reloaded?.objective).toBe("after");
+    expect(reloaded?.targetBranch).toBe("after");
     expect(reloaded?.workflowLanes).toEqual(bigLanes);
     expect(spyAggregate.readAll).not.toHaveBeenCalled();
     expect(spyAggregate.diffAndCommit).not.toHaveBeenCalled();
@@ -1077,7 +1082,9 @@ describe("createStateStore — focused read DI guard", () => {
     const store = createStateStore({ db, writeQueue: createWriteQueue() });
 
     await store.mutateSession("/proj-a", "alpha", "finalize", (session) => {
-      const init = session.conversations.find((c) => c.role === "initialization")!;
+      const init = session.conversations.find(
+        (c) => c.role === "initialization",
+      )!;
       init.archived = true;
       session.conversations.push(
         conversationStateSchema.parse({
@@ -1148,7 +1155,10 @@ describe("createStateStore — focused read DI guard", () => {
     const deleteRecord = runRecords.find((r) =>
       /DELETE FROM reference_documents/.test(r.sql),
     );
-    expect(deleteRecord, "a reference-document DELETE must have run").toBeDefined();
+    expect(
+      deleteRecord,
+      "a reference-document DELETE must have run",
+    ).toBeDefined();
 
     expect(createReferenceDocumentsRepo(db).findById("doc-1")).toBeNull();
     const reloaded = await store.getSession("/proj-a", "alpha");
@@ -1182,14 +1192,14 @@ describe("createStateStore — focused read DI guard", () => {
         // Suspend across an await to prove the Immer draft survives (createDraft/
         // finishDraft, not produce, which would revoke the proxy mid-await).
         await Promise.resolve();
-        session.objective = "async-set";
+        session.targetBranch = "async-set";
         return "ok" as const;
       },
     );
 
     expect(result).toBe("ok");
     const reloaded = await store.getSession("/proj-a", "alpha");
-    expect(reloaded?.objective).toBe("async-set");
+    expect(reloaded?.targetBranch).toBe("async-set");
   });
 
   it("mutateSession rolls back every write when the mutator throws mid-way", async () => {
@@ -1206,7 +1216,7 @@ describe("createStateStore — focused read DI guard", () => {
         branchName: "csm/alpha",
         createdAt: "2026-01-01T00:00:00Z",
         lastActivityAt: "2026-01-01T00:00:00Z",
-        objective: "original",
+        targetBranch: "original",
       }),
     );
     conversations.upsert(
@@ -1227,7 +1237,7 @@ describe("createStateStore — focused read DI guard", () => {
 
     await expect(
       store.mutateSession("/proj-a", "alpha", "throwing", (session) => {
-        session.objective = "should-not-persist";
+        session.targetBranch = "should-not-persist";
         const conv = session.conversations.find((c) => c.id === "conv-1")!;
         conv.name = "should-not-persist";
         throw new Error("boom");
@@ -1235,7 +1245,7 @@ describe("createStateStore — focused read DI guard", () => {
     ).rejects.toThrow("boom");
 
     const reloaded = await store.getSession("/proj-a", "alpha");
-    expect(reloaded?.objective).toBe("original");
+    expect(reloaded?.targetBranch).toBe("original");
     expect(reloaded?.conversations.find((c) => c.id === "conv-1")?.name).toBe(
       "original-name",
     );

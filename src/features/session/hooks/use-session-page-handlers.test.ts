@@ -77,7 +77,6 @@ describe("useSessionPageHandlers", () => {
     expect(typeof result.current.handleAnswerSubmit).toBe("function");
     expect(typeof result.current.handleDelete).toBe("function");
     expect(typeof result.current.handleFork).toBe("function");
-    expect(typeof result.current.handleConfirmFocus).toBe("function");
     expect(typeof result.current.toggleRecording).toBe("function");
     expect(typeof result.current.buildContext).toBe("function");
     expect(result.current.pendingConcurrentSubmission).toBeNull();

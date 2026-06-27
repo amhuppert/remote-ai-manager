@@ -34,18 +34,18 @@ function asProposal(candidate: unknown): SpawnProposal {
 }
 
 const single = asProposal({
-  sessions: [{ name: "alpha", agent: "claude", mode: "fast" }],
+  sessions: [{ name: "alpha", agent: "claude", mode: "normal" }],
 });
 
 const multi = asProposal({
   sessions: [
-    { name: "alpha", agent: "claude", mode: "fast" },
-    { name: "beta", agent: "codex", mode: "focus" },
+    { name: "alpha", agent: "claude", mode: "normal" },
+    { name: "beta", agent: "codex", mode: "optimistic" },
   ],
 });
 
 const dual = asProposal({
-  sessions: [{ name: "race", agent: "dual", mode: "fast" }],
+  sessions: [{ name: "race", agent: "dual", mode: "normal" }],
 });
 
 function renderValid(

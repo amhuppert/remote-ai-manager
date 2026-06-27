@@ -44,11 +44,11 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
         agentBackend: "claude" as const,
         backendRef: null,
         unread: false,
+        lastSeenAlignmentVersion: null,
         pendingQueue: [],
       },
     ],
     source: "cc",
-    objective: "Fix the login bug",
     creationMode: "optimistic",
     tddEnabled: true,
     targetBranch: "main",
@@ -102,13 +102,12 @@ describe("executeOptimisticWorkflow", () => {
       deps.executePromptStream as ReturnType<typeof vi.fn>
     ).mock.calls[0]!;
     expect(projectPath).toBe("/projects/repo");
-    expect(promptText).toBe("Fix the login bug");
     expect(conversationId).toBe("conv-1");
-    // Verify session has autonomous directive in objective
-    expect(session.objective).toContain(
-      "Complete the following task autonomously",
-    );
-    expect(session.objective).toContain("Fix the login bug");
+    // The autonomous directive now rides on the prompt, not a session objective
+    expect(promptText).toContain("Complete the following task autonomously");
+    expect(promptText).toContain("Fix the login bug");
+    // The session is passed through plain (no objective field)
+    expect(session.sessionName).toBe("fix-login-bug");
     // emit should be a function (no-op)
     expect(typeof emit).toBe("function");
   });
@@ -127,11 +126,11 @@ describe("executeOptimisticWorkflow", () => {
   it("does not mutate the original session object", async () => {
     const deps = createTestDeps();
     const session = makeSession();
-    const originalObjective = session.objective;
+    const snapshot = structuredClone(session);
 
     await executeOptimisticWorkflow({ ...baseParams, session }, deps);
 
-    expect(session.objective).toBe(originalObjective);
+    expect(session).toEqual(snapshot);
   });
 
   it("dispatches merge job with autoResolve on successful prompt", async () => {
@@ -210,17 +209,16 @@ describe("executeOptimisticWorkflow", () => {
     expect(deps.dispatchMergeJob).not.toHaveBeenCalled();
   });
 
-  it("prepends autonomous directive to session objective", async () => {
+  it("prepends autonomous directive to the kickoff prompt", async () => {
     const deps = createTestDeps();
     await executeOptimisticWorkflow(baseParams, deps);
 
-    const sessionArg = (deps.executePromptStream as ReturnType<typeof vi.fn>)
-      .mock.calls[0]![1];
-    expect(sessionArg.objective).toMatch(
-      /^Complete the following task autonomously/,
-    );
-    expect(sessionArg.objective).toContain("Do not ask the user any questions");
-    expect(sessionArg.objective).toContain("Begin work immediately");
+    const promptArg = (deps.executePromptStream as ReturnType<typeof vi.fn>)
+      .mock.calls[0]![2];
+    expect(promptArg).toMatch(/^Complete the following task autonomously/);
+    expect(promptArg).toContain("Do not ask the user any questions");
+    expect(promptArg).toContain("Begin work immediately");
+    expect(promptArg).toContain("Fix the login bug");
   });
 
   it("uses no-op emitter that does not throw", async () => {

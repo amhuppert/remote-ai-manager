@@ -62,6 +62,7 @@ function params(
 ): ConversationsPageParams {
   return {
     conversationId: overrides.conversationId ?? null,
+    messageId: overrides.messageId ?? null,
     sessionFilter: overrides.sessionFilter ?? null,
     autoFocus: overrides.autoFocus ?? false,
   };

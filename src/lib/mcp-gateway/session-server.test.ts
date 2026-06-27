@@ -34,6 +34,7 @@ function createDeps(overrides: Record<string, unknown> = {}) {
     getSession: vi.fn(async () => ({
       sessionName: "test session",
       worktreePath: "/projects/test/.worktrees/test-session",
+      creationMode: "normal" as const,
       conversations: [{ id: "conv-1" }],
     })),
     readConfig: vi.fn(async () => makeConfig()),
@@ -44,6 +45,7 @@ function createDeps(overrides: Record<string, unknown> = {}) {
     registerNotificationTool: vi.fn(),
     registerCodexTool: vi.fn(),
     registerAskUserQuestionTool: vi.fn(),
+    registerSessionAlignmentTools: vi.fn(),
     registerDevServerTools: vi.fn(),
     ...overrides,
   };
@@ -189,6 +191,7 @@ describe("mcp-gateway/session-server", () => {
       getSession: vi.fn(async () => ({
         sessionName: "test session",
         worktreePath: "/projects/test/.worktrees/test-session",
+        creationMode: "normal" as const,
         conversations: [{ id: "other-conv" }],
       })),
     });
@@ -221,6 +224,71 @@ describe("mcp-gateway/session-server", () => {
       projectPath: "/projects/test",
       sessionName: "test session",
       conversationId: "conv-1",
+    });
+  });
+
+  describe("alignment tools gated to normal sessions", () => {
+    it("registers alignment tools for a normal session", async () => {
+      const { createSessionMcpServer } = await import("./session-server");
+      const deps = createDeps();
+
+      await createSessionMcpServer(
+        {
+          name: "my-project",
+          session: "test session",
+          conversationId: "conv-1",
+        },
+        deps,
+      );
+
+      expect(deps.registerSessionAlignmentTools).toHaveBeenCalledOnce();
+      const call = (
+        deps.registerSessionAlignmentTools as ReturnType<typeof vi.fn>
+      ).mock.calls[0]!;
+      expect(call[1]).toMatchObject({
+        projectPath: "/projects/test",
+        sessionName: "test session",
+        conversationId: "conv-1",
+      });
+    });
+
+    it("does not register alignment tools for an optimistic session", async () => {
+      const { createSessionMcpServer } = await import("./session-server");
+      const deps = createDeps({
+        getSession: vi.fn(async () => ({
+          sessionName: "test session",
+          worktreePath: "/projects/test/.worktrees/test-session",
+          creationMode: "optimistic" as const,
+          conversations: [{ id: "conv-1" }],
+        })),
+      });
+
+      await createSessionMcpServer(
+        {
+          name: "my-project",
+          session: "test session",
+          conversationId: "conv-1",
+        },
+        deps,
+      );
+
+      expect(deps.registerSessionAlignmentTools).not.toHaveBeenCalled();
+    });
+
+    it("does not register alignment tools for the project sentinel", async () => {
+      const { createSessionMcpServer } = await import("./session-server");
+      const deps = createDeps();
+
+      await createSessionMcpServer(
+        {
+          name: "my-project",
+          session: "__project__",
+          conversationId: "conv-1",
+        },
+        deps,
+      );
+
+      expect(deps.registerSessionAlignmentTools).not.toHaveBeenCalled();
     });
   });
 

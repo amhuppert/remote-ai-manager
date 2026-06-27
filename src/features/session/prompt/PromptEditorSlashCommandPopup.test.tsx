@@ -186,9 +186,9 @@ describe("PromptEditorSlashCommandPopup", () => {
         new KeyboardEvent("keydown", { key: "Enter" }),
       );
     });
-    // First sorted item is /collab; ArrowDown moves to next
+    // First sorted item is /align; ArrowDown moves off it before Enter selects.
     expect(onSelect).toHaveBeenCalledTimes(1);
-    expect(onSelect.mock.calls[0]?.[0]?.name).not.toBe("/collab");
+    expect(onSelect.mock.calls[0]?.[0]?.name).not.toBe("/align");
   });
 
   it("calls onShowPlaceholder when selecting an item with argumentHint", async () => {

@@ -80,6 +80,7 @@ function makeRecordingClaudeFactory(
         modelId: input.modelId,
         reasoningEffort: input.reasoningEffort,
         outputFormat: input.outputFormat,
+        alignmentVersion: input.alignmentVersion ?? null,
         applyPortableMcpConfig: async () => ({
           disposition: "applied_now",
           droppedServerIds: [],
@@ -142,6 +143,7 @@ describe("createCollaborationProductionCallAgent", () => {
           modelId: undefined,
           reasoningEffort: undefined,
           outputFormat: undefined,
+          alignmentVersion: null,
           applyPortableMcpConfig: async () => ({
             disposition: "applied_now",
             droppedServerIds: [],
@@ -231,6 +233,7 @@ describe("createCollaborationProductionCallAgent", () => {
           modelId: undefined,
           reasoningEffort: undefined,
           outputFormat: undefined,
+          alignmentVersion: null,
           applyPortableMcpConfig: async () => ({
             disposition: "applied_now",
             droppedServerIds: [],
@@ -331,6 +334,7 @@ describe("createCollaborationProductionCallAgent", () => {
           modelId: undefined,
           reasoningEffort: undefined,
           outputFormat: input.outputFormat,
+          alignmentVersion: input.alignmentVersion ?? null,
           applyPortableMcpConfig: async () => ({
             disposition: "applied_now",
             droppedServerIds: [],
@@ -579,6 +583,7 @@ describe("createCollaborationProductionCallAgent", () => {
           modelId: undefined,
           reasoningEffort: undefined,
           outputFormat: undefined,
+          alignmentVersion: null,
           applyPortableMcpConfig: async () => ({
             disposition: "applied_now",
             droppedServerIds: [],

@@ -151,10 +151,7 @@ export default function WorkflowConversationViewer({
         handleRangeChanged={nav.handleRangeChanged}
         handleAtBottomStateChange={nav.handleAtBottomStateChange}
         handleAtTopStateChange={nav.handleAtTopStateChange}
-        showFocusConfirmation={false}
-        focusConfirmLoading={false}
-        handleConfirmFocus={noop}
-        isReadOnly={true}
+        alignmentGateSlot={null}
         promptInputSlot={null}
       />
     </div>

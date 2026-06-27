@@ -40,7 +40,6 @@ export interface UseSessionPageViewPropsArgs {
   isBusy: boolean;
   isWorkflowManagedConversation: boolean;
   approvalGate: ConversationWorkspaceViewProps["promptInputSlotProps"]["approvalGate"];
-  isInitConversation: boolean;
   targetBranch: string;
 
   // Page-level open-tabs working set (present only on /conversations); flows
@@ -76,10 +75,6 @@ export interface UseSessionPageViewPropsArgs {
   worktreePath: string | undefined;
   handleDebugPrompt: PanelContainerProps["handleDebugPrompt"];
   handleFork: PanelContainerProps["handleFork"];
-
-  // focus init
-  focusConfirmLoading: boolean;
-  handleConfirmFocus: () => void;
 
   // collab / prompt
   hasActiveCollab: boolean;
@@ -137,14 +132,11 @@ export function useSessionPageViewProps(
     messages: args.messages,
     isBusy: args.isBusy,
     isReadOnly: args.isReadOnly,
-    isInitConversation: args.isInitConversation,
     hasActiveCollab: args.hasActiveCollab,
     worktreePath: args.worktreePath,
     selectedBackend: args.selectedBackend,
     contextPercent: args.contextPercent,
     messagesPending: args.messagesPending,
-    focusConfirmLoading: args.focusConfirmLoading,
-    handleConfirmFocus: args.handleConfirmFocus,
     handleDebugPrompt: args.handleDebugPrompt,
     handleFork: args.handleFork,
     canStop: args.canStop,

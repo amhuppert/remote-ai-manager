@@ -25,6 +25,7 @@ function makeMockRuntime(
     modelId: undefined,
     reasoningEffort: undefined,
     outputFormat: undefined,
+    alignmentVersion: null,
     sendTurn: vi.fn(),
     close: vi.fn(),
     ...overrides,

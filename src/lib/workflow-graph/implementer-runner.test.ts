@@ -15,8 +15,7 @@ function makeSession(overrides: Partial<SessionState> = {}): SessionState {
     finished: false,
     conversations: [],
     source: "cc",
-    objective: null,
-    creationMode: "fast",
+    creationMode: "normal",
     tddEnabled: true,
     targetBranch: "main",
     parentSessionName: null,
@@ -58,6 +57,7 @@ function makeConversation(
     backendRef: null,
     unread: false,
     pendingQueue: [],
+    lastSeenAlignmentVersion: null,
     ...overrides,
   };
 }

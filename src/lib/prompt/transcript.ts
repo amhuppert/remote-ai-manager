@@ -36,6 +36,8 @@ import { conversationEventScopeFields } from "@/lib/conversations/project-conver
 
 /** A single entry in our JSONL transcript file */
 export interface TranscriptEntry {
+  /** Stable visible-message id used by cross-surface audit links. */
+  id?: string;
   /** ISO 8601 timestamp */
   timestamp: string;
   /** SDK message type */
@@ -233,6 +235,7 @@ export async function appendTranscriptEntry(
       ),
       seq,
       message: {
+        ...(entry.id !== undefined ? { id: entry.id } : {}),
         role: entry.role,
         content: entry.content,
         timestamp: entry.timestamp ?? null,
@@ -725,6 +728,7 @@ async function readConversationMessagesWithSeqImpl(
         const commandBlock = parseCommandContent(block.text);
         if (commandBlock) {
           messages.push({
+            ...(entry.id !== undefined ? { id: entry.id } : {}),
             role: "user",
             content: [commandBlock],
             timestamp: entry.timestamp ?? null,
@@ -744,6 +748,7 @@ async function readConversationMessagesWithSeqImpl(
       prev.seq = lineIndex;
     } else {
       messages.push({
+        ...(entry.id !== undefined ? { id: entry.id } : {}),
         role: entry.role,
         content: entry.content,
         timestamp: entry.timestamp ?? null,

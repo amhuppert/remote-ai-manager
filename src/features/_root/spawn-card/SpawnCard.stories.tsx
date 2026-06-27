@@ -22,7 +22,7 @@ const single = asProposal({
     {
       name: "readme-polish",
       agent: "claude",
-      mode: "fast",
+      mode: "normal",
       initialPrompt:
         "Review README.md for clarity and fix any typos or outdated setup instructions.",
     },
@@ -34,7 +34,7 @@ const multi = asProposal({
     {
       name: "dep-audit",
       agent: "claude",
-      mode: "focus",
+      mode: "normal",
       initialPrompt:
         "Audit dependencies for known vulnerabilities, flag anything unmaintained or out of date, and suggest a safe upgrade path for each one.",
     },
@@ -42,7 +42,7 @@ const multi = asProposal({
       name: "auth-ui",
       target: "develop",
       agent: "codex",
-      mode: "fast",
+      mode: "normal",
     },
     {
       name: "race-the-migration",
@@ -84,7 +84,7 @@ export const Invalid: StoryObj<typeof SpawnCard> = {
   render: (args) => <SpawnCard {...args} />,
   args: {
     validation: validateProposal({
-      sessions: [{ name: "broken", agent: "gpt", mode: "fast" }],
+      sessions: [{ name: "broken", agent: "gpt", mode: "normal" }],
     }),
     projectName: "command-center",
     conversationId: "plc-1",

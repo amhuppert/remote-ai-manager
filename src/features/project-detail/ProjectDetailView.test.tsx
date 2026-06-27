@@ -168,8 +168,7 @@ const makeSessions = (count: number): SessionListItem[] =>
     archived: false,
     finished: false,
     source: "cc" as const,
-    objective: null,
-    creationMode: "fast" as const,
+    creationMode: "normal" as const,
     tddEnabled: true,
     targetBranch: "main",
     parentSessionName: null,
@@ -212,6 +211,7 @@ const makeProjectConversation = (
   machineSnapshot: null,
   agentBackend: "claude",
   backendRef: null,
+  lastSeenAlignmentVersion: null,
   ...overrides,
 });
 

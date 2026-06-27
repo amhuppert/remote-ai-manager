@@ -107,6 +107,7 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
   readonly outputFormat:
     | { type: "json_schema"; schema: Record<string, unknown> }
     | undefined;
+  readonly alignmentVersion: number | null;
 
   private _status: "alive" | "dead" = "alive";
   private querySession: QuerySession;
@@ -128,6 +129,7 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
       modelId?: string;
       reasoningEffort?: string;
       outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
+      alignmentVersion?: number | null;
       onPortableMcpApplied?: (config: PortableMcpConfig | null) => void;
       /**
        * Mid-session capability apply hook. Production wires this to
@@ -161,6 +163,7 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
     this.modelId = opts.modelId;
     this.reasoningEffort = opts.reasoningEffort;
     this.outputFormat = opts.outputFormat;
+    this.alignmentVersion = opts.alignmentVersion ?? null;
     this.onPortableMcpApplied = opts.onPortableMcpApplied ?? (() => {});
     this.onCapabilityConfigApplied =
       opts.onCapabilityConfigApplied ?? (async () => {});
@@ -940,6 +943,7 @@ const claudeConversationBackendFactory = {
       modelId: input.modelId,
       reasoningEffort: input.reasoningEffort,
       outputFormat: input.outputFormat,
+      alignmentVersion: input.alignmentVersion ?? null,
       onPortableMcpApplied: (config) => {
         currentPortableConfig = config;
       },

@@ -39,13 +39,14 @@ export interface ConversationWorkspaceProps {
   conversationId: string;
   defaultModel: string;
   defaultEffort?: EffortLevel;
+  /** Part of the /conversations URL vocabulary (`autoFocus=true`); accepted here but not consumed. */
   autoFocus?: boolean;
   /**
    * When provided, conversation switches originating inside the workspace
-   * (fork open, focus-initialization finalize) are routed through this
-   * callback instead of `router.push`, so a host like /conversations can
-   * switch in place with the history API (§1.2). When absent, behavior is
-   * the per-conversation route's `router.push`.
+   * (e.g. opening a fork) are routed through this callback instead of
+   * `router.push`, so a host like /conversations can switch in place with the
+   * history API (§1.2). When absent, behavior is the per-conversation route's
+   * `router.push`.
    */
   onOpenConversation?: (target: { conversationId: string }) => void;
   /**
@@ -74,7 +75,6 @@ export default function ConversationWorkspace({
   conversationId,
   defaultModel,
   defaultEffort = "high",
-  autoFocus,
   onOpenConversation,
   openTabs,
 }: ConversationWorkspaceProps): React.JSX.Element {
@@ -123,7 +123,6 @@ export default function ConversationWorkspace({
     sessionStatus === "running" ||
     sessionStatus === "waiting_for_input" ||
     !!store.pendingQuestions;
-  const isInitConversation = activeConversation?.role === "initialization";
   const contextPercent = computeContextFillPercent(
     activeConversation?.contextTokens ?? null,
     activeConversation?.contextWindowMax ?? null,
@@ -242,13 +241,6 @@ export default function ConversationWorkspace({
     pendingQuestionId: store.pendingQuestionId,
     showQuestions: store.showQuestions,
     clearQuestions: store.clearQuestions,
-    autoFocus,
-    sendPrompt,
-    messagesLength: rawMessages.length,
-    selectedModel,
-    selectedEffort,
-    effortSupported,
-    selectedBackend,
   });
 
   const conversationRunning =
@@ -299,8 +291,6 @@ export default function ConversationWorkspace({
     handleConcurrentConfirm,
     cancelConcurrentSubmission,
     pendingConcurrentSubmission,
-    focusConfirmLoading,
-    handleConfirmFocus,
     handleAnswerSubmit,
     handleDelete,
     handleFork,
@@ -370,7 +360,6 @@ export default function ConversationWorkspace({
         isBusy,
         isWorkflowManagedConversation,
         approvalGate,
-        isInitConversation,
         targetBranch,
         openTabs,
         store,
@@ -395,8 +384,6 @@ export default function ConversationWorkspace({
         worktreePath: session.worktreePath,
         handleDebugPrompt,
         handleFork,
-        focusConfirmLoading,
-        handleConfirmFocus,
         hasActiveCollab,
         hasCollabChip,
         effectiveCollabConfig,

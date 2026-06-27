@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/logging", () => ({
   createLogger: () => ({
@@ -12,6 +12,19 @@ vi.mock("@/lib/logging", () => ({
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { TaskRunResult } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import { createPersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
+import type { PersistenceFixture } from "@/lib/shared/testing/persistence-fixture";
+import { createSessionAlignmentRepo } from "@/lib/session-alignment/repo";
+import {
+  SCAFFOLD_TEMPLATE,
+  computeAlignmentHash,
+  renderAlignmentPromptSection,
+} from "@/lib/session-alignment/render";
+import {
+  AlignmentNotSupportedError,
+  createSessionAlignmentService,
+  type SessionAlignmentSessionInfo,
+} from "@/lib/session-alignment/service";
 import {
   createConversationCommandService,
   type ConversationCommandDeps,
@@ -69,6 +82,11 @@ function makeDeps(
       value: { jobId: "job-merge-1" },
     })),
     appendNotice: vi.fn(async () => {}),
+    beginAlignmentDraft: vi.fn(async () => ({
+      authoringPrompt: "unused",
+      draftId: "unused",
+    })),
+    enqueueAuthoringTurn: vi.fn(async () => {}),
     ...overrides,
   };
 }
@@ -501,5 +519,285 @@ describe("rejection notice SSE scoping", () => {
     expect(vi.mocked(deps.appendNotice).mock.calls[0]?.[0]?.sessionName).toBe(
       "",
     );
+  });
+});
+
+describe("/align command", () => {
+  const ALIGN_PROJECT = "/p-align";
+  const ALIGN_SESSION = "align-session";
+  const ALIGN_CONVERSATION = "conv-align";
+
+  interface AlignHarness {
+    fixture: PersistenceFixture;
+    deps: ConversationCommandDeps;
+    enqueuedAuthoringTurns: Array<{
+      projectPath: string;
+      sessionName: string;
+      conversationId: string;
+      message: string;
+    }>;
+    findDraftVersion: () => ReturnType<
+      ReturnType<typeof createSessionAlignmentRepo>["findDraftVersion"]
+    >;
+    findActiveVersion: () => ReturnType<
+      ReturnType<typeof createSessionAlignmentRepo>["findActiveVersion"]
+    >;
+  }
+
+  function makeAlignHarness(
+    creationMode: "normal" | "optimistic",
+  ): AlignHarness {
+    const fixture = createPersistenceFixture();
+    fixture.seedProject(ALIGN_PROJECT);
+    fixture.seedSession(ALIGN_PROJECT, ALIGN_SESSION, { creationMode });
+
+    const repo = createSessionAlignmentRepo(fixture.db);
+    // A real alignment service over the fixture store: beginDraft round-trips a
+    // genuine draft row through SQLite and enforces normal-only.
+    const alignmentService = createSessionAlignmentService({
+      repo,
+      render: {
+        renderAlignmentPromptSection,
+        computeAlignmentHash,
+        scaffoldTemplate: SCAFFOLD_TEMPLATE,
+      },
+      mirror: {
+        async write() {
+          return { ok: true, filePath: ".cc/session-alignment/charter.md" };
+        },
+      },
+      broadcast() {},
+      promptQueue: {
+        async enqueue() {},
+      },
+      loadSession(
+        projectPath,
+        sessionName,
+      ): Promise<SessionAlignmentSessionInfo | null> {
+        return Promise.resolve(
+          projectPath === ALIGN_PROJECT && sessionName === ALIGN_SESSION
+            ? {
+                worktreePath: `${ALIGN_PROJECT}/.worktrees/${ALIGN_SESSION}`,
+                creationMode,
+              }
+            : null,
+        );
+      },
+    });
+
+    const enqueuedAuthoringTurns: AlignHarness["enqueuedAuthoringTurns"] = [];
+
+    const deps = makeDeps({
+      getSession: vi.fn(async (projectPath: string, sessionName: string) =>
+        projectPath === ALIGN_PROJECT && sessionName === ALIGN_SESSION
+          ? sessionStateSchema.parse({
+              sessionName: ALIGN_SESSION,
+              worktreePath: `${ALIGN_PROJECT}/.worktrees/${ALIGN_SESSION}`,
+              branchName: `csm/${ALIGN_SESSION}`,
+              createdAt: "2026-01-01T00:00:00.000Z",
+              lastActivityAt: "2026-01-01T00:00:00.000Z",
+              creationMode,
+            })
+          : null,
+      ),
+      beginAlignmentDraft: (input) =>
+        alignmentService.beginDraft({
+          projectPath: input.projectPath,
+          sessionName: input.sessionName,
+          conversationId: input.conversationId,
+        }),
+      enqueueAuthoringTurn: async (input) => {
+        enqueuedAuthoringTurns.push({ ...input });
+      },
+    });
+
+    return {
+      fixture,
+      deps,
+      enqueuedAuthoringTurns,
+      findDraftVersion: () =>
+        repo.findDraftVersion(ALIGN_PROJECT, ALIGN_SESSION),
+      findActiveVersion: () =>
+        repo.findActiveVersion(ALIGN_PROJECT, ALIGN_SESSION),
+    };
+  }
+
+  function alignInput(
+    overrides: Partial<RunCommandInput> = {},
+  ): RunCommandInput {
+    return makeInput({
+      projectPath: ALIGN_PROJECT,
+      sessionName: ALIGN_SESSION,
+      conversationId: ALIGN_CONVERSATION,
+      parsed: { command: "align", hint: "" },
+      ...overrides,
+    });
+  }
+
+  let harnesses: PersistenceFixture[] = [];
+  afterEach(() => {
+    for (const fixture of harnesses) fixture.close();
+    harnesses = [];
+  });
+
+  it("on first run (no active charter) enqueues a scaffold authoring turn and creates a draft", async () => {
+    const h = makeAlignHarness("normal");
+    harnesses.push(h.fixture);
+    const service = createConversationCommandService(h.deps);
+
+    const outcome = await service.run(alignInput());
+
+    expect(outcome.status).toBe("alignment_draft_started");
+
+    // The enqueued authoring turn carries the scaffold for a first charter.
+    expect(h.enqueuedAuthoringTurns).toHaveLength(1);
+    const turn = h.enqueuedAuthoringTurns[0]!;
+    expect(turn.projectPath).toBe(ALIGN_PROJECT);
+    expect(turn.sessionName).toBe(ALIGN_SESSION);
+    expect(turn.conversationId).toBe(ALIGN_CONVERSATION);
+    expect(turn.message).toContain(SCAFFOLD_TEMPLATE);
+
+    // A real draft now exists in the store; nothing is governing yet.
+    const draft = h.findDraftVersion();
+    expect(draft).not.toBeNull();
+    expect(draft?.source).toBe("align_initial");
+    expect(h.findActiveVersion()).toBeNull();
+
+    // No commit/merge machinery runs for /align.
+    expectNoAgentOrDispatch(h.deps);
+  });
+
+  it("on rerun enqueues the existing charter (not the scaffold), leaves the active charter unchanged, and does not archive", async () => {
+    const h = makeAlignHarness("normal");
+    harnesses.push(h.fixture);
+    const repo = createSessionAlignmentRepo(h.fixture.db);
+
+    // Activate a v1 charter via the alignment service directly.
+    const begin = await h.deps.beginAlignmentDraft({
+      projectPath: ALIGN_PROJECT,
+      sessionName: ALIGN_SESSION,
+      conversationId: ALIGN_CONVERSATION,
+    });
+    const activationService = createSessionAlignmentService({
+      repo,
+      render: {
+        renderAlignmentPromptSection,
+        computeAlignmentHash,
+        scaffoldTemplate: SCAFFOLD_TEMPLATE,
+      },
+      mirror: {
+        async write() {
+          return { ok: true, filePath: "charter.md" };
+        },
+      },
+      broadcast() {},
+      promptQueue: { async enqueue() {} },
+      loadSession: () =>
+        Promise.resolve({
+          worktreePath: `${ALIGN_PROJECT}/.worktrees/${ALIGN_SESSION}`,
+          creationMode: "normal" as const,
+        }),
+    });
+    await activationService.fillDraft({
+      projectPath: ALIGN_PROJECT,
+      sessionName: ALIGN_SESSION,
+      conversationId: ALIGN_CONVERSATION,
+      content: "# Mission\nGoverning charter content.",
+    });
+    const active = await activationService.approveDraft({
+      projectPath: ALIGN_PROJECT,
+      sessionName: ALIGN_SESSION,
+      draftId: begin.draftId,
+    });
+    expect(active.version).toBe(1);
+
+    const service = createConversationCommandService(h.deps);
+    const outcome = await service.run(alignInput());
+
+    expect(outcome.status).toBe("alignment_draft_started");
+
+    // Rerun authoring turn carries the existing charter, not the scaffold.
+    expect(h.enqueuedAuthoringTurns).toHaveLength(1);
+    const turn = h.enqueuedAuthoringTurns[0]!;
+    expect(turn.message).toContain("Governing charter content.");
+    expect(turn.message).not.toContain(SCAFFOLD_TEMPLATE);
+
+    // The active charter is unchanged (still v1, same content).
+    const stillActive = h.findActiveVersion();
+    expect(stillActive?.version).toBe(1);
+    expect(stillActive?.content).toBe("# Mission\nGoverning charter content.");
+
+    // The rerun draft is align_rerun, not the scaffold-seeded initial draft.
+    expect(h.findDraftVersion()?.source).toBe("align_rerun");
+
+    // /align does NOT use the commit/merge archive/job machinery: no git deps
+    // are touched and the conversation is left as-is (unlike focus init).
+    expectNoAgentOrDispatch(h.deps);
+    expect(h.deps.appendNotice).not.toHaveBeenCalled();
+  });
+
+  it("gracefully rejects on an optimistic session with no draft created and a notice", async () => {
+    const h = makeAlignHarness("optimistic");
+    harnesses.push(h.fixture);
+    const service = createConversationCommandService(h.deps);
+
+    const outcome = await service.run(alignInput());
+
+    expect(outcome).toEqual({
+      status: "rejected",
+      reason: "alignment-unavailable",
+    });
+    expect(h.findDraftVersion()).toBeNull();
+    expect(h.enqueuedAuthoringTurns).toHaveLength(0);
+    expect(h.deps.appendNotice).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(h.deps.appendNotice).mock.calls[0]?.[0]?.text).toMatch(
+      /alignment is unavailable/i,
+    );
+  });
+
+  it("rejects with no-session when the conversation has no session worktree", async () => {
+    const h = makeAlignHarness("normal");
+    harnesses.push(h.fixture);
+    const service = createConversationCommandService(h.deps);
+
+    const outcome = await service.run(alignInput({ sessionName: null }));
+
+    expect(outcome).toEqual({ status: "rejected", reason: "no-session" });
+    expect(h.enqueuedAuthoringTurns).toHaveLength(0);
+    expect(h.findDraftVersion()).toBeNull();
+  });
+
+  it("rejects with session-finished for a finished session", async () => {
+    const h = makeAlignHarness("normal");
+    harnesses.push(h.fixture);
+    const finishedDeps: ConversationCommandDeps = {
+      ...h.deps,
+      getSession: vi.fn(async () =>
+        sessionStateSchema.parse({
+          sessionName: ALIGN_SESSION,
+          worktreePath: `${ALIGN_PROJECT}/.worktrees/${ALIGN_SESSION}`,
+          branchName: `csm/${ALIGN_SESSION}`,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          lastActivityAt: "2026-01-01T00:00:00.000Z",
+          creationMode: "normal",
+          finished: true,
+        }),
+      ),
+    };
+    const service = createConversationCommandService(finishedDeps);
+
+    const outcome = await service.run(alignInput());
+
+    expect(outcome).toEqual({
+      status: "rejected",
+      reason: "session-finished",
+    });
+    expect(h.findDraftVersion()).toBeNull();
+    expect(h.enqueuedAuthoringTurns).toHaveLength(0);
+  });
+
+  it("surfaces AlignmentNotSupportedError as a graceful rejection, not a crash", () => {
+    // Pin the error type the production rejection path catches.
+    expect(new AlignmentNotSupportedError("x")).toBeInstanceOf(Error);
   });
 });

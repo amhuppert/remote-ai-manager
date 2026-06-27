@@ -48,6 +48,7 @@ function makeProjectConversation(id: string): ConversationState {
     backendRef: null,
     unread: false,
     pendingQueue: [],
+    lastSeenAlignmentVersion: null,
   };
 }
 

@@ -5,7 +5,7 @@ import {
   sessionStateSchema,
 } from "./schemas";
 
-describe("sessionCreationModeSchema — optimistic variant", () => {
+describe("sessionCreationModeSchema — consolidated modes", () => {
   it('should accept "optimistic" as a valid creation mode', () => {
     const result = sessionCreationModeSchema.safeParse("optimistic");
     expect(result.success).toBe(true);
@@ -14,14 +14,22 @@ describe("sessionCreationModeSchema — optimistic variant", () => {
     }
   });
 
-  it('should still accept "fast" as a valid creation mode', () => {
-    const result = sessionCreationModeSchema.safeParse("fast");
+  it('should accept "normal" as a valid creation mode', () => {
+    const result = sessionCreationModeSchema.safeParse("normal");
     expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toBe("normal");
+    }
   });
 
-  it('should still accept "focus" as a valid creation mode', () => {
+  it('should reject "fast" (renamed to "normal")', () => {
+    const result = sessionCreationModeSchema.safeParse("fast");
+    expect(result.success).toBe(false);
+  });
+
+  it('should reject "focus" (removed creation mode)', () => {
     const result = sessionCreationModeSchema.safeParse("focus");
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
   });
 
   it("should reject invalid creation modes", () => {
@@ -79,20 +87,28 @@ describe("createSessionRequestSchema — optimistic variant", () => {
     expect(result.success).toBe(false);
   });
 
-  it("should still accept valid fast mode requests", () => {
+  it("should accept valid normal mode requests", () => {
     const result = createSessionRequestSchema.safeParse({
-      mode: "fast",
+      mode: "normal",
       sessionName: "my-session",
     });
     expect(result.success).toBe(true);
   });
 
-  it("should still accept valid focus mode requests", () => {
+  it('should reject the removed "fast" mode request', () => {
+    const result = createSessionRequestSchema.safeParse({
+      mode: "fast",
+      sessionName: "my-session",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('should reject the removed "focus" mode request', () => {
     const result = createSessionRequestSchema.safeParse({
       mode: "focus",
       objective: "Implement the auth system",
     });
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
   });
 });
 
@@ -118,15 +134,15 @@ describe("sessionStateSchema — optimistic creationMode", () => {
     }
   });
 
-  it('should default creationMode to "fast" when not specified', () => {
+  it('should default creationMode to "normal" when not specified', () => {
     const result = sessionStateSchema.safeParse(baseSession);
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.creationMode).toBe("fast");
+      expect(result.data.creationMode).toBe("normal");
     }
   });
 
-  it("should accept sessions with existing fast/focus modes", () => {
+  it('should reject sessions with the removed "fast"/"focus" modes', () => {
     const fastResult = sessionStateSchema.safeParse({
       ...baseSession,
       creationMode: "fast",
@@ -135,7 +151,18 @@ describe("sessionStateSchema — optimistic creationMode", () => {
       ...baseSession,
       creationMode: "focus",
     });
-    expect(fastResult.success).toBe(true);
-    expect(focusResult.success).toBe(true);
+    expect(fastResult.success).toBe(false);
+    expect(focusResult.success).toBe(false);
+  });
+
+  it("should not expose an objective field on the parsed session state", () => {
+    const result = sessionStateSchema.safeParse({
+      ...baseSession,
+      creationMode: "normal",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect("objective" in result.data).toBe(false);
+    }
   });
 });

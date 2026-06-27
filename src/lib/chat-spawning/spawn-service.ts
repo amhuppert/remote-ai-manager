@@ -190,24 +190,19 @@ export interface SpawnSessionCreatorDeps {
  * committed-HEAD `baseBranch`, and lets `createSpawnedSession` derive the branch
  * from the name (slug + prefix + uniqueness suffix) exactly as the New Session
  * dialog does. It never fires an auto-run workflow — the shared dispatcher
- * delivers the first turn for every mode. For focus/optimistic the objective
- * seeds focus.md / the stored objective from the initial prompt (or the name);
- * fast carries no objective.
+ * delivers the first turn for every mode. Both creation modes (`normal`,
+ * `optimistic`) carry no session-wide objective; an optimistic session's
+ * instructions flow to its kickoff prompt via the first-turn dispatcher.
  */
 export function createSpawnSessionCreator(
   deps: SpawnSessionCreatorDeps,
 ): ChatSpawnDeps["createSession"] {
   return async ({ projectPath, proposed, baseBranch }) => {
-    const objective =
-      proposed.mode === "fast"
-        ? null
-        : (proposed.initialPrompt ?? proposed.name);
     return deps.createSpawnedSession(projectPath, {
       name: proposed.name,
       targetBranch: proposed.target,
       mode: proposed.mode,
       baseBranch,
-      objective,
     });
   };
 }

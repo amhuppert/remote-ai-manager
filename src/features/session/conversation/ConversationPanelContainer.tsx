@@ -3,6 +3,7 @@
 import { useCallback } from "react";
 import ConversationPanel from "@/components/conversation/ConversationPanel";
 import TypingIndicator from "@/components/conversation/TypingIndicator";
+import AlignmentGate from "@/features/session/conversation/AlignmentGate";
 import { useOpenMobileSidebar } from "@/stores/session-detail.store";
 import { useSessionPageConversation } from "@/features/session/hooks/use-session-page-conversation";
 import { useConversationPanelProps } from "@/features/session/hooks/use-conversation-panel-props";
@@ -30,15 +31,11 @@ export interface ConversationPanelContainerProps {
 
   isBusy: boolean;
   isReadOnly: boolean;
-  isInitConversation: boolean;
   hasActiveCollab: boolean;
   worktreePath: string | undefined;
   selectedBackend: AgentBackendId;
   contextPercent: number | null;
   messagesPending: boolean;
-
-  focusConfirmLoading: boolean;
-  handleConfirmFocus: () => void;
 
   handleDebugPrompt: (text: string) => Promise<void>;
   handleFork: (messageIndex: number) => Promise<void>;
@@ -60,14 +57,11 @@ export default function ConversationPanelContainer({
   messages,
   isBusy,
   isReadOnly,
-  isInitConversation,
   hasActiveCollab,
   worktreePath,
   selectedBackend,
   contextPercent,
   messagesPending,
-  focusConfirmLoading,
-  handleConfirmFocus,
   handleDebugPrompt,
   handleFork,
   store,
@@ -136,14 +130,13 @@ export default function ConversationPanelContainer({
     handleRangeChanged: conversation.nav.handleRangeChanged,
     handleAtBottomStateChange: conversation.nav.handleAtBottomStateChange,
     handleAtTopStateChange: conversation.nav.handleAtTopStateChange,
-    showFocusConfirmation:
-      isInitConversation &&
-      !store.pendingQuestions &&
-      (!isBusy || focusConfirmLoading) &&
-      (activeConversation?.promptCount ?? 0) > 0,
-    focusConfirmLoading,
-    handleConfirmFocus,
-    isReadOnly,
+    alignmentGateSlot: (
+      <AlignmentGate
+        projectName={projectName}
+        sessionName={sessionName}
+        disabled={isReadOnly}
+      />
+    ),
     canStop,
     onStop,
   });

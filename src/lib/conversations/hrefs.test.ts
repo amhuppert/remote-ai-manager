@@ -33,6 +33,13 @@ describe("conversationsPageHref", () => {
     );
   });
 
+  it("includes the message id only with a conversation id", () => {
+    expect(
+      conversationsPageHref({ conversationId: "abc", messageId: "m&1" }),
+    ).toBe("/conversations?c=abc&m=m%261");
+    expect(conversationsPageHref({ messageId: "m1" })).toBe("/conversations");
+  });
+
   it("appends autoFocus=true only when set", () => {
     expect(
       conversationsPageHref({ conversationId: "abc", autoFocus: true }),
@@ -46,11 +53,12 @@ describe("conversationsPageHref", () => {
     expect(
       conversationsPageHref({
         conversationId: "abc",
+        messageId: "m1",
         projectName: "p",
         sessionName: "s",
         autoFocus: true,
       }),
-    ).toBe("/conversations?c=abc&project=p&session=s&autoFocus=true");
+    ).toBe("/conversations?c=abc&m=m1&project=p&session=s&autoFocus=true");
   });
 
   it("omits the filter pair when only one of project/session is provided", () => {
@@ -63,6 +71,7 @@ describe("parseConversationsPageParams", () => {
   it("parses an empty params set", () => {
     expect(parseConversationsPageParams(new URLSearchParams())).toEqual({
       conversationId: null,
+      messageId: null,
       sessionFilter: null,
       autoFocus: false,
     });
@@ -73,6 +82,29 @@ describe("parseConversationsPageParams", () => {
       parseConversationsPageParams(new URLSearchParams("c=abc123")),
     ).toEqual({
       conversationId: "abc123",
+      messageId: null,
+      sessionFilter: null,
+      autoFocus: false,
+    });
+  });
+
+  it("parses the message id", () => {
+    expect(
+      parseConversationsPageParams(new URLSearchParams("c=abc123&m=msg-1")),
+    ).toEqual({
+      conversationId: "abc123",
+      messageId: "msg-1",
+      sessionFilter: null,
+      autoFocus: false,
+    });
+  });
+
+  it("ignores a lone message id", () => {
+    expect(
+      parseConversationsPageParams(new URLSearchParams("m=msg-1")),
+    ).toEqual({
+      conversationId: null,
+      messageId: null,
       sessionFilter: null,
       autoFocus: false,
     });
@@ -85,6 +117,7 @@ describe("parseConversationsPageParams", () => {
       ),
     ).toEqual({
       conversationId: null,
+      messageId: null,
       sessionFilter: { projectName: "my-app", sessionName: "fix-bug" },
       autoFocus: false,
     });
@@ -93,10 +126,20 @@ describe("parseConversationsPageParams", () => {
   it("ignores a lone project or session param", () => {
     expect(
       parseConversationsPageParams(new URLSearchParams("project=my-app")),
-    ).toEqual({ conversationId: null, sessionFilter: null, autoFocus: false });
+    ).toEqual({
+      conversationId: null,
+      messageId: null,
+      sessionFilter: null,
+      autoFocus: false,
+    });
     expect(
       parseConversationsPageParams(new URLSearchParams("session=fix-bug")),
-    ).toEqual({ conversationId: null, sessionFilter: null, autoFocus: false });
+    ).toEqual({
+      conversationId: null,
+      messageId: null,
+      sessionFilter: null,
+      autoFocus: false,
+    });
   });
 
   it("parses autoFocus only for the literal true", () => {
@@ -121,6 +164,7 @@ describe("parseConversationsPageParams", () => {
       { projectName: "my app", sessionName: "feat/a b" },
       {
         conversationId: "a&b=c",
+        messageId: "m&1",
         projectName: "p name",
         sessionName: "s/name",
         autoFocus: true,
@@ -132,6 +176,7 @@ describe("parseConversationsPageParams", () => {
       const query = href.includes("?") ? href.slice(href.indexOf("?") + 1) : "";
       const parsed = parseConversationsPageParams(new URLSearchParams(query));
       expect(parsed.conversationId).toBe(opts.conversationId ?? null);
+      expect(parsed.messageId).toBe(opts.messageId ?? null);
       expect(parsed.autoFocus).toBe(opts.autoFocus ?? false);
       if (opts.projectName !== undefined && opts.sessionName !== undefined) {
         expect(parsed.sessionFilter).toEqual({

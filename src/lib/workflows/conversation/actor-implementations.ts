@@ -39,6 +39,8 @@ import type {
 } from "@/lib/conversations/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
+import type { AlignmentInjection } from "@/lib/session-alignment/render";
+import { ALIGN_SUGGESTION_INSTRUCTIONS } from "@/lib/session-alignment/render";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { assembleUserContentBlocks } from "./assemble-user-blocks";
 import { buildUserTranscriptBlocks } from "./build-user-transcript-blocks";
@@ -255,6 +257,20 @@ export interface ActorImplementationDeps {
     projectPath: string,
     sessionName: string,
   ): Promise<SessionState | null>;
+  // Active-charter governing injection for the per-turn prompt seam (R7).
+  // Returns null when the session has no active charter. Gated by the actor to
+  // attended normal sessions only (R12.1) before being called.
+  getActiveAlignmentInjection(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<AlignmentInjection | null>;
+  // Cheap active-version-number accessor for the per-turn recreate gate (R7.3).
+  // Read only when reusing a live runtime; null when the session has no active
+  // charter. Gated by the actor to attended normal sessions before being called.
+  getActiveAlignmentVersion(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<number | null>;
 
   // Reference documents — production routes through the shared
   // ArtifactRegistry primitive (`register()` on `focus_memory`). Tests can
@@ -461,6 +477,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     defaultDepsMod,
     capabilitiesDepsMod,
     messageQueueMod,
+    alignmentServiceFactoryMod,
   ] = await Promise.all([
     import("@/lib/prompt/single-flight"),
     import("@/lib/shared/query-semaphore"),
@@ -483,7 +500,13 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     import("@/lib/mcp/default-deps"),
     import("@/lib/agent-capabilities/default-deps"),
     import("@/lib/conversations/message-queue-service"),
+    import("@/lib/session-alignment/service-factory"),
   ]);
+
+  // The alignment service holds a repo bound to the live DB; construct it once
+  // here (loadProductionDeps runs lazily) rather than per turn.
+  const alignmentService =
+    alignmentServiceFactoryMod.createSessionAlignmentServiceForProduction();
 
   const composePortableMcpForConversation =
     composeForConversationMod.createComposePortableMcpForConversation({
@@ -543,6 +566,10 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     getDebugLogUrl: debugLogMod.getDebugLogUrl,
     mutateConversation: stateMod.mutateConversation,
     getSessionState: stateMod.getSession,
+    getActiveAlignmentInjection: (projectPath: string, sessionName: string) =>
+      alignmentService.getActiveInjection(projectPath, sessionName),
+    getActiveAlignmentVersion: (projectPath: string, sessionName: string) =>
+      alignmentService.getActiveVersion(projectPath, sessionName),
     createReferenceDocument: stateMod.createReferenceDocument,
     getReferenceDocuments: stateMod.getReferenceDocuments,
     readConversationMessages: transcriptMod.readConversationMessages,
@@ -587,7 +614,10 @@ export function _resetActorDepsForTesting(): void {
 
 /**
  * Determine whether an existing backend runtime should be closed and recreated
- * because the model, effort level, or outputFormat changed.
+ * because the model, effort level, outputFormat, or baked-in alignment charter
+ * version changed. An alignment-version mismatch is the seam that guarantees a
+ * charter change propagates to an already-running runtime (R7.3): the new
+ * version is baked into the rebuilt session instructions on recreation.
  */
 export function shouldRecreateRuntime(
   runtime:
@@ -596,6 +626,7 @@ export function shouldRecreateRuntime(
         modelId: unknown;
         reasoningEffort: unknown;
         outputFormat?: { type: "json_schema"; schema: Record<string, unknown> };
+        alignmentVersion?: number | null;
       }
     | undefined,
   effectiveModel: string | undefined,
@@ -604,12 +635,17 @@ export function shouldRecreateRuntime(
     type: "json_schema";
     schema: Record<string, unknown>;
   },
+  desiredAlignmentVersion: number | null = null,
 ): boolean {
   if (!runtime || runtime.status !== "alive") return false;
   const modelChanged = runtime.modelId !== effectiveModel;
   const effortChanged = runtime.reasoningEffort !== effectiveEffort;
   const outputFormatChanged = runtime.outputFormat !== desiredOutputFormat;
-  return modelChanged || effortChanged || outputFormatChanged;
+  const alignmentChanged =
+    (runtime.alignmentVersion ?? null) !== desiredAlignmentVersion;
+  return (
+    modelChanged || effortChanged || outputFormatChanged || alignmentChanged
+  );
 }
 
 /**
@@ -1269,12 +1305,17 @@ export async function executePromptForMachine(
         ? [{ type: "text" as const, text: input.promptText }]
         : [];
 
+  const currentTurnMessageId =
+    input.queuedDelivery?.messageIds[0] ?? input.streamId ?? null;
+  runtimeState.currentTurnMessageId = currentTurnMessageId ?? undefined;
+
   // Build the user prompt transcript entry once. For normal turns it is
   // appended immediately. For queued (auto-drained) turns the durable queue —
   // not the JSONL transcript — owns this content until the backend confirms
   // acceptance, so the append is deferred to the `input_accepted` event and the
   // claimed queue rows are only marked delivered after that append succeeds.
   const buildUserTranscriptEntry = (): TranscriptEntry => ({
+    ...(currentTurnMessageId ? { id: currentTurnMessageId } : {}),
     timestamp: new Date().toISOString(),
     type: "user",
     role: "user",
@@ -1417,7 +1458,35 @@ export async function executePromptForMachine(
     }
   }
 
-  // Close existing runtime if model, effort, or outputFormat changed
+  // Tracks whether THIS turn governs under an active charter (R12.1/R12.2:
+  // attended normal sessions only). Set on the recreate gate's reuse path and on
+  // the new-runtime path so the post-turn seen-version record (R8.4) never fires
+  // for project/optimistic/autonomous turns. Both paths also read getSessionState
+  // — a focused cached accessor, so the small duplicate read is acceptable.
+  let alignmentEligibleThisTurn = false;
+
+  // Read the active alignment version cheaply for the recreate gate, but only
+  // when a runtime exists to reuse: a new runtime bakes in the current version
+  // directly, so no comparison read is needed on that path (R7.3).
+  let desiredAlignmentVersion: number | null = null;
+  if (backendRuntime) {
+    const gateSession = await deps.getSessionState(
+      input.projectPath,
+      input.sessionName,
+    );
+    alignmentEligibleThisTurn =
+      gateSession?.creationMode === "normal" &&
+      !isProjectConversation &&
+      input.autonomous !== true;
+    desiredAlignmentVersion = alignmentEligibleThisTurn
+      ? await deps.getActiveAlignmentVersion(
+          input.projectPath,
+          input.sessionName,
+        )
+      : null;
+  }
+
+  // Close existing runtime if model, effort, outputFormat, or alignment version changed
   if (
     backendRuntime &&
     shouldRecreateRuntime(
@@ -1425,6 +1494,7 @@ export async function executePromptForMachine(
       effectiveModel,
       effectiveEffort,
       input.outputFormat,
+      desiredAlignmentVersion,
     )
   ) {
     const reason =
@@ -1433,7 +1503,9 @@ export async function executePromptForMachine(
         : effectiveEffort != null &&
             backendRuntime.reasoningEffort !== effectiveEffort
           ? "effort_changed"
-          : "output_format_changed";
+          : input.outputFormat !== backendRuntime.outputFormat
+            ? "output_format_changed"
+            : "alignment_changed";
     logger.info("prompt.runtime_recreate", {
       sessionName: input.sessionName,
       reason,
@@ -1484,6 +1556,32 @@ export async function executePromptForMachine(
           ].join("\n")
         : null;
 
+    // Alignment governs only attended normal sessions (R12.1/R12.2): not project
+    // conversations, not optimistic sessions, not autonomous turns. Mirror the
+    // result to the outer flag so the post-turn seen-version record (R8.4) holds
+    // for a freshly-created runtime too.
+    const alignmentEligible =
+      sessionState?.creationMode === "normal" &&
+      !isProjectConversation &&
+      input.autonomous !== true;
+    alignmentEligibleThisTurn = alignmentEligible;
+    let activeAlignmentVersion: number | null = null;
+    let alignmentInstruction: string | null = null;
+    if (alignmentEligible) {
+      const injection = await deps.getActiveAlignmentInjection(
+        input.projectPath,
+        input.sessionName,
+      );
+      if (injection) {
+        // Governing section (inline charter or bounded digest), R7.1/R7.2/R7.4.
+        activeAlignmentVersion = injection.version;
+        alignmentInstruction = injection.text;
+      } else {
+        // No active charter: nudge the agent to suggest `/align` (R2.5).
+        alignmentInstruction = ALIGN_SUGGESTION_INSTRUCTIONS;
+      }
+    }
+
     // Build session instructions (baked into the runtime once). Project
     // conversations run in the main worktree, so they use a CC context that
     // omits the per-session dev-server promise.
@@ -1496,9 +1594,7 @@ export async function executePromptForMachine(
       // Spawn-proposal convention is a project-conversation-only capability:
       // session agents cannot propose sibling sessions from a conversation.
       isProjectConversation ? PROJECT_SPAWN_INSTRUCTIONS : null,
-      sessionState?.objective
-        ? `<objective>${sessionState.objective}</objective>`
-        : null,
+      alignmentInstruction,
       sessionState?.tddEnabled ? TDD_INSTRUCTIONS : null,
       deps.getCodexToolPromptHint(config.codex?.enabled === true),
       referenceDocsPrompt,
@@ -1611,6 +1707,7 @@ export async function executePromptForMachine(
       modelId: effectiveModel,
       reasoningEffort: effectiveEffort,
       outputFormat: input.outputFormat,
+      alignmentVersion: activeAlignmentVersion,
       sessionInstructions,
       tooling: {
         portableMcp,
@@ -2040,6 +2137,7 @@ export async function executePromptForMachine(
       runtimeState.timeoutHandle = undefined;
     }
     runtimeState.currentTurnAutonomous = undefined;
+    runtimeState.currentTurnMessageId = undefined;
     deps.unregisterAbortController(input.conversationId);
 
     // Queued delivery that never reached backend acceptance (turn completed,
@@ -2151,6 +2249,22 @@ export async function executePromptForMachine(
         },
       ],
     });
+  }
+
+  // R8.4: record which charter version this conversation's turn ran with, for
+  // stale detection. The runtime carries the version actually baked in. Only
+  // attended normal-session turns are alignment-eligible, so project/optimistic/
+  // autonomous turns leave the seen-version untouched.
+  if (alignmentEligibleThisTurn && turnResult && backendRuntime) {
+    await deps.mutateConversation(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+      "prompt.recordSeenAlignmentVersion",
+      (c) => {
+        c.lastSeenAlignmentVersion = backendRuntime!.alignmentVersion;
+      },
+    );
   }
 
   // Build result. structuredOutput and error come from the shared gate when

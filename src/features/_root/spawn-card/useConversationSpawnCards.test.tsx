@@ -12,7 +12,7 @@ const VALID_PROPOSAL = [
   "Here's my plan:",
   "",
   "```spawn-proposal",
-  '{"sessions":[{"name":"auth","agent":"claude","mode":"fast"}]}',
+  '{"sessions":[{"name":"auth","agent":"claude","mode":"normal"}]}',
   "```",
 ].join("\n");
 

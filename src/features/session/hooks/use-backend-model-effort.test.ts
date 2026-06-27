@@ -30,6 +30,7 @@ function makeConversation(
     pendingPromptText: null,
     unread: false,
     pendingQueue: [],
+    lastSeenAlignmentVersion: null,
     forkedFrom: null,
     role: null,
     activeTurnSource: null,

@@ -40,6 +40,7 @@ function makeConversation(
     machineSnapshot: null,
     agentBackend: "claude",
     backendRef: null,
+    lastSeenAlignmentVersion: null,
     ...overrides,
   };
 }
@@ -56,9 +57,8 @@ const sessions: SessionListItem[] = [
     archived: false,
     finished: false,
     source: "cc",
-    creationMode: "fast",
+    creationMode: "normal",
     tddEnabled: true,
-    objective: null,
     derivedStatus: "running",
     promptCount: 3,
     derivedLastActivityAt: "2026-01-01T00:00:00Z",

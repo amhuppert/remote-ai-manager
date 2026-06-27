@@ -106,7 +106,6 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}components${path.sep}BackendToggle.tsx`,
   `${path.sep}components${path.sep}ConversationNav.tsx`,
   `${path.sep}components${path.sep}CopyMessageButton.tsx`,
-  `${path.sep}components${path.sep}FocusConfirmationBar.tsx`,
   `${path.sep}components${path.sep}ImageAttachmentPreview.tsx`,
   `${path.sep}components${path.sep}MessageActions.tsx`,
   `${path.sep}components${path.sep}VoiceRecordButton.tsx`,

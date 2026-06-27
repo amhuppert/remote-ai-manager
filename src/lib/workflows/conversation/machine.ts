@@ -477,6 +477,7 @@ export const conversationMachine = setup({
                 role: context.role,
                 promptText: activeTurn.promptText,
                 images: activeTurn.images,
+                streamId: activeTurn.streamId,
                 modelId: activeTurn.modelId,
                 effort: activeTurn.effort,
                 autonomous: activeTurn.autonomous,

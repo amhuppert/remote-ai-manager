@@ -70,6 +70,7 @@ function makeConversation(
     pendingQuestions: null,
     pendingPromptText: null,
     unread: false,
+    lastSeenAlignmentVersion: null,
     pendingQueue: [],
     forkedFrom: null,
     role: null,

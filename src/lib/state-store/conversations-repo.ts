@@ -134,6 +134,7 @@ const conversationsTableRowSchema = z.object({
   agent_capabilities_runtime: z.string().nullable(),
   unread: z.union([z.literal(0), z.literal(1)]),
   pending_queue: z.string().nullable(),
+  last_seen_alignment_version: z.number().int().nullable(),
 });
 type ConversationsTableRow = z.infer<typeof conversationsTableRowSchema>;
 
@@ -170,6 +171,7 @@ interface SqlBindRow {
   agent_capabilities_runtime: string | null;
   unread: number;
   pending_queue: string | null;
+  last_seen_alignment_version: number | null;
 }
 
 /**
@@ -189,6 +191,7 @@ function conversationToSqlBind(
     session_name: sessionName,
     ...encodeSharedConversationColumns(conversation),
     pending_queue: jsonOrNull(conversation.pendingQueue),
+    last_seen_alignment_version: conversation.lastSeenAlignmentVersion,
   };
 }
 
@@ -247,6 +250,7 @@ function rowToDomain(rawRow: unknown): {
     id: row.id,
     ...decodeSharedConversationColumns(row.id, row),
     pendingQueue: pendingQueue.value ?? [],
+    lastSeenAlignmentVersion: row.last_seen_alignment_version,
   };
 
   const result = conversationStateSchema.safeParse(candidate);
@@ -315,6 +319,7 @@ const CONVERSATION_COLUMN_KEYS: ReadonlyArray<keyof ConversationsTableRow> = [
   "agent_capabilities_runtime",
   "unread",
   "pending_queue",
+  "last_seen_alignment_version",
 ];
 
 function rawRowsEqual(
@@ -389,7 +394,7 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        pending_questions, pending_prompt_text, forked_from, role, context_tokens, context_window_max,
        debug_mode, machine_snapshot, agent_backend, backend_ref,
        mcp_overrides, mcp_runtime, agent_capability_overrides, agent_capabilities_runtime,
-       unread, pending_queue
+       unread, pending_queue, last_seen_alignment_version
      ) VALUES (
        @id, @project_path, @session_name, @name, @transcript_path, @status,
        @prompt_count, @created_at, @last_activity_at, @source, @summary, @archived,
@@ -397,7 +402,7 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        @pending_questions, @pending_prompt_text, @forked_from, @role, @context_tokens, @context_window_max,
        @debug_mode, @machine_snapshot, @agent_backend, @backend_ref,
        @mcp_overrides, @mcp_runtime, @agent_capability_overrides, @agent_capabilities_runtime,
-       @unread, @pending_queue
+       @unread, @pending_queue, @last_seen_alignment_version
      )
      ON CONFLICT(id) DO UPDATE SET
        project_path               = excluded.project_path,
@@ -430,7 +435,8 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
        agent_capability_overrides = excluded.agent_capability_overrides,
        agent_capabilities_runtime = excluded.agent_capabilities_runtime,
        unread                     = excluded.unread,
-       pending_queue              = excluded.pending_queue`,
+       pending_queue              = excluded.pending_queue,
+       last_seen_alignment_version = excluded.last_seen_alignment_version`,
   );
   const deleteStmt = db.prepare(`DELETE FROM conversations WHERE id = ?`);
   const setPendingPromptTextStmt = db.prepare(
@@ -555,7 +561,9 @@ export function createConversationsRepo(db: Db): ConversationsRepo {
         const cacheKey = `${projectPath}\u0000${sessionName}`;
         const memo = findBySessionCache.get(cacheKey);
         if (memo !== undefined && memo.version === cacheVersion) {
-          return memo.ids.map((id) => findAllCache.get(id)!.parsed.conversation);
+          return memo.ids.map(
+            (id) => findAllCache.get(id)!.parsed.conversation,
+          );
         }
         const rows = findBySessionStmt.all(projectPath, sessionName) as Array<
           Record<string, unknown>

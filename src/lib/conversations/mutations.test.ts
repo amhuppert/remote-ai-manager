@@ -140,6 +140,7 @@ function conversation(
     backendRef: overrides.backendRef ?? null,
     unread: overrides.unread ?? false,
     pendingQueue: overrides.pendingQueue ?? [],
+    lastSeenAlignmentVersion: overrides.lastSeenAlignmentVersion ?? null,
     mcpOverrides: overrides.mcpOverrides,
     mcpRuntime: overrides.mcpRuntime,
   };

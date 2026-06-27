@@ -75,6 +75,37 @@ describe("conversationStateSchema scope field", () => {
   });
 });
 
+describe("conversationStateSchema lastSeenAlignmentVersion field", () => {
+  it("defaults lastSeenAlignmentVersion to null when absent", () => {
+    const parsed = conversationStateSchema.parse(baseConversation);
+    expect(parsed.lastSeenAlignmentVersion).toBe(null);
+  });
+
+  it("preserves an explicit integer lastSeenAlignmentVersion", () => {
+    const parsed = conversationStateSchema.parse({
+      ...baseConversation,
+      lastSeenAlignmentVersion: 3,
+    });
+    expect(parsed.lastSeenAlignmentVersion).toBe(3);
+  });
+
+  it("accepts an explicit null lastSeenAlignmentVersion", () => {
+    const parsed = conversationStateSchema.parse({
+      ...baseConversation,
+      lastSeenAlignmentVersion: null,
+    });
+    expect(parsed.lastSeenAlignmentVersion).toBe(null);
+  });
+
+  it("rejects a non-integer lastSeenAlignmentVersion", () => {
+    const result = conversationStateSchema.safeParse({
+      ...baseConversation,
+      lastSeenAlignmentVersion: 1.5,
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
 describe("sessionStateSchema with embedded conversations", () => {
   it("still parses a legacy session, defaulting nested conversations to scope:session", () => {
     const parsed = sessionStateSchema.parse({

@@ -252,6 +252,7 @@ describe("section 7.1 — structured-output enforcement always flows through the
       modelId: undefined,
       reasoningEffort: undefined,
       outputFormat: undefined,
+      alignmentVersion: null,
       async sendTurn(): Promise<ConversationBackendTurnResult> {
         return {
           backendRef: {
@@ -315,6 +316,7 @@ describe("section 7.1 — structured-output enforcement always flows through the
       modelId: undefined,
       reasoningEffort: undefined,
       outputFormat: undefined,
+      alignmentVersion: null,
       async sendTurn(): Promise<ConversationBackendTurnResult> {
         return {
           backendRef: {
@@ -383,6 +385,7 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
       modelId: undefined,
       reasoningEffort: undefined,
       outputFormat: undefined,
+      alignmentVersion: null,
       async sendTurn(): Promise<ConversationBackendTurnResult> {
         return {
           backendRef: {
@@ -438,6 +441,7 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
       modelId: undefined,
       reasoningEffort: undefined,
       outputFormat: undefined,
+      alignmentVersion: null,
       async sendTurn(): Promise<ConversationBackendTurnResult> {
         return {
           backendRef: {
@@ -682,6 +686,7 @@ describe("section 7.1 — capability view is attached to every dispatched result
       modelId: undefined,
       reasoningEffort: undefined,
       outputFormat: undefined,
+      alignmentVersion: null,
       async sendTurn(): Promise<ConversationBackendTurnResult> {
         return {
           backendRef: {

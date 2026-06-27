@@ -186,7 +186,7 @@ function buildFixture(): ManagerState {
     sessionName: "alpha",
     worktreePath: "/wt/alpha",
     branchName: "csm/alpha",
-    objective: "ship it",
+    targetBranch: "ship-it",
     conversations: [conv1, conv2],
     referenceDocuments: [ref1, ref2],
   });
@@ -317,7 +317,7 @@ describe("state-aggregate.diffAndCommit", () => {
     if (!projA) throw new Error("missing /proj-a");
     const alpha = projA.sessions["alpha"];
     if (!alpha) throw new Error("missing session alpha");
-    alpha.objective = "different objective";
+    alpha.targetBranch = "different-branch";
 
     aggregate.diffAndCommit(snapshot, mutated);
 
@@ -336,7 +336,7 @@ describe("state-aggregate.diffAndCommit", () => {
 
     const reread = aggregate.readAll();
     const rereadAlpha = reread.projects["/proj-a"]?.sessions["alpha"];
-    expect(rereadAlpha?.objective).toBe("different objective");
+    expect(rereadAlpha?.targetBranch).toBe("different-branch");
   });
 
   it("performs a no-op commit when snapshot equals mutated", () => {
@@ -497,10 +497,10 @@ describe("canonicalRow equivalence pinning", () => {
   });
 
   it("session: deep-equal SessionState pairs share canonical strings", () => {
-    const a = makeSession({ objective: "x" });
-    const b = makeSession({ objective: "x" });
+    const a = makeSession({ targetBranch: "x" });
+    const b = makeSession({ targetBranch: "x" });
     expect(canonicalSessionRow("/p", a)).toBe(canonicalSessionRow("/p", b));
-    const diff = makeSession({ objective: "y" });
+    const diff = makeSession({ targetBranch: "y" });
     expect(canonicalSessionRow("/p", a)).not.toBe(
       canonicalSessionRow("/p", diff),
     );

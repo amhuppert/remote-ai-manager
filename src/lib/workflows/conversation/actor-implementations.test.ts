@@ -64,6 +64,10 @@ import type {
 } from "@/lib/agent-backends/task";
 import { QUERY_SESSION_ERROR_CODES } from "@/lib/agent-backends/claude/query-session-errors";
 import { computeEffectiveConfigHash } from "@/lib/mcp/runtime-apply";
+import { ALIGN_SUGGESTION_INSTRUCTIONS } from "@/lib/session-alignment/render";
+import type { AlignmentInjection } from "@/lib/session-alignment/render";
+import { sessionStateSchema } from "@/lib/sessions/schemas";
+import type { SessionState } from "@/lib/sessions/schemas";
 
 // ---------------------------------------------------------------------------
 // Shared mock backend runtime
@@ -144,6 +148,8 @@ function createMockDeps(
     getCodexToolPromptHint: vi.fn(() => ""),
     mutateConversation: vi.fn(async () => {}),
     getSessionState: vi.fn(async () => null),
+    getActiveAlignmentInjection: vi.fn(async () => null),
+    getActiveAlignmentVersion: vi.fn(async () => null),
     createReferenceDocument: vi.fn(async () => ({})),
     getReferenceDocuments: vi.fn(async () => []),
     readConversationMessages: vi.fn(async () => []),
@@ -225,6 +231,7 @@ function makeExecutePromptInput(
     role: null,
     promptText: "Hello, world!",
     images: [],
+    streamId: "stream-1",
     modelId: null,
     effort: null,
     autonomous: false,
@@ -397,6 +404,103 @@ describe("shouldRecreateRuntime", () => {
         "a",
         "low",
         undefined,
+      ),
+    ).toBe(false);
+  });
+
+  it("returns true when the alignment version advanced (3 -> 4)", () => {
+    expect(
+      shouldRecreateRuntime(
+        {
+          status: "alive",
+          modelId: "a",
+          reasoningEffort: "low",
+          alignmentVersion: 3,
+        },
+        "a",
+        "low",
+        undefined,
+        4,
+      ),
+    ).toBe(true);
+  });
+
+  it("returns false when the alignment version is unchanged (3 === 3)", () => {
+    expect(
+      shouldRecreateRuntime(
+        {
+          status: "alive",
+          modelId: "a",
+          reasoningEffort: "low",
+          alignmentVersion: 3,
+        },
+        "a",
+        "low",
+        undefined,
+        3,
+      ),
+    ).toBe(false);
+  });
+
+  it("returns false when both alignment versions are null", () => {
+    expect(
+      shouldRecreateRuntime(
+        {
+          status: "alive",
+          modelId: "a",
+          reasoningEffort: "low",
+          alignmentVersion: null,
+        },
+        "a",
+        "low",
+        undefined,
+        null,
+      ),
+    ).toBe(false);
+  });
+
+  it("returns true when the charter was deactivated (3 -> null)", () => {
+    expect(
+      shouldRecreateRuntime(
+        {
+          status: "alive",
+          modelId: "a",
+          reasoningEffort: "low",
+          alignmentVersion: 3,
+        },
+        "a",
+        "low",
+        undefined,
+        null,
+      ),
+    ).toBe(true);
+  });
+
+  it("returns true when a charter became active (null -> 3)", () => {
+    expect(
+      shouldRecreateRuntime(
+        {
+          status: "alive",
+          modelId: "a",
+          reasoningEffort: "low",
+          alignmentVersion: null,
+        },
+        "a",
+        "low",
+        undefined,
+        3,
+      ),
+    ).toBe(true);
+  });
+
+  it("treats a missing runtime alignmentVersion as null (no recreate when desired is null)", () => {
+    expect(
+      shouldRecreateRuntime(
+        { status: "alive", modelId: "a", reasoningEffort: "low" },
+        "a",
+        "low",
+        undefined,
+        null,
       ),
     ).toBe(false);
   });
@@ -3307,6 +3411,7 @@ describe("executePromptForMachine", () => {
 
       const userCalls = userAppendCalls();
       expect(userCalls).toHaveLength(1);
+      expect((userCalls[0]![1] as { id?: string }).id).toBe("m1");
       expect((userCalls[0]![1] as { content: unknown }).content).toEqual([
         { type: "text", text: "queued follow-up" },
       ]);
@@ -3471,6 +3576,7 @@ describe("executePromptForMachine", () => {
 
       const userCalls = userAppendCalls();
       expect(userCalls).toHaveLength(1);
+      expect((userCalls[0]![1] as { id?: string }).id).toBe(input.streamId);
       expect((userCalls[0]![1] as { content: unknown }).content).toEqual([
         { type: "text", text: "normal prompt" },
       ]);
@@ -3479,6 +3585,484 @@ describe("executePromptForMachine", () => {
       expect(mockDeps.markQueuedFailed).not.toHaveBeenCalled();
     });
   });
+});
+
+// ===========================================================================
+// Integration tests: alignment charter injection into the per-turn seam
+// ===========================================================================
+
+describe("executePromptForMachine alignment injection", () => {
+  let mockDeps: ActorImplementationDeps;
+
+  const turnResult: ConversationBackendTurnResult = {
+    backendRef: { backend: "claude", sessionId: "sdk-session-align" },
+    costUsd: 0.01,
+    durationMs: 100,
+    numTurns: 1,
+    contextTokens: 100,
+    contextWindowMax: 200000,
+    contentBlocks: [{ type: "text", text: "ok" }],
+    aborted: false,
+    error: null,
+  };
+
+  function makeSessionState(
+    overrides: Partial<SessionState> = {},
+  ): SessionState {
+    return sessionStateSchema.parse({
+      sessionName: "test-session",
+      worktreePath: "/projects/repo/.worktrees/test-session",
+      branchName: "csm/test-session",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      lastActivityAt: "2026-01-01T00:00:00.000Z",
+      creationMode: "normal",
+      ...overrides,
+    });
+  }
+
+  /** The `sessionInstructions` array passed to the single createRuntime call. */
+  function capturedSessionInstructions(): string[] {
+    expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
+    const createCall = (
+      mockFactory.createRuntime.mock.calls as unknown[][]
+    )[0]![0] as Record<string, unknown>;
+    return createCall["sessionInstructions"] as string[];
+  }
+
+  /** The `alignmentVersion` passed to the single createRuntime call. */
+  function capturedAlignmentVersion(): number | null {
+    expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
+    const createCall = (
+      mockFactory.createRuntime.mock.calls as unknown[][]
+    )[0]![0] as Record<string, unknown>;
+    return createCall["alignmentVersion"] as number | null;
+  }
+
+  function registerFreshRuntime(input: ExecutePromptInput): void {
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+  }
+
+  beforeEach(() => {
+    _resetForTesting();
+    vi.clearAllMocks();
+    mockSendTurn.mockResolvedValue(turnResult);
+    mockFactory.createRuntime.mockResolvedValue(mockBackendRuntime);
+    mockFactory.validateModelAndEffort.mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    _resetActorDepsForTesting();
+    _resetForTesting();
+  });
+
+  const injection: AlignmentInjection = {
+    version: 3,
+    contentHash: "h",
+    text: "GOVERNING TEXT for the active charter",
+  };
+
+  it("injects the active charter governing section for a normal attended session", async () => {
+    mockDeps = createMockDeps({
+      getSessionState: vi.fn(async () => makeSessionState()),
+      getActiveAlignmentInjection: vi.fn(async () => injection),
+    });
+    setActorDeps(mockDeps);
+
+    const input = makeExecutePromptInput();
+    registerFreshRuntime(input);
+
+    await executePromptForMachine(input);
+
+    const instructions = capturedSessionInstructions();
+    expect(instructions).toContain(injection.text);
+    expect(instructions).not.toContain(ALIGN_SUGGESTION_INSTRUCTIONS);
+    expect(capturedAlignmentVersion()).toBe(3);
+    expect(mockDeps.getActiveAlignmentInjection).toHaveBeenCalledWith(
+      input.projectPath,
+      input.sessionName,
+    );
+  });
+
+  it("injects the /align suggestion when a normal session has no active charter", async () => {
+    mockDeps = createMockDeps({
+      getSessionState: vi.fn(async () => makeSessionState()),
+      getActiveAlignmentInjection: vi.fn(async () => null),
+    });
+    setActorDeps(mockDeps);
+
+    const input = makeExecutePromptInput();
+    registerFreshRuntime(input);
+
+    await executePromptForMachine(input);
+
+    const instructions = capturedSessionInstructions();
+    expect(instructions).toContain(ALIGN_SUGGESTION_INSTRUCTIONS);
+    expect(capturedAlignmentVersion()).toBeNull();
+  });
+
+  it("injects neither the charter nor the suggestion for an optimistic session", async () => {
+    mockDeps = createMockDeps({
+      getSessionState: vi.fn(async () =>
+        makeSessionState({ creationMode: "optimistic" }),
+      ),
+      getActiveAlignmentInjection: vi.fn(async () => injection),
+    });
+    setActorDeps(mockDeps);
+
+    const input = makeExecutePromptInput();
+    registerFreshRuntime(input);
+
+    await executePromptForMachine(input);
+
+    const instructions = capturedSessionInstructions();
+    expect(instructions).not.toContain(injection.text);
+    expect(instructions).not.toContain(ALIGN_SUGGESTION_INSTRUCTIONS);
+    expect(capturedAlignmentVersion()).toBeNull();
+    expect(mockDeps.getActiveAlignmentInjection).not.toHaveBeenCalled();
+  });
+
+  it("injects neither the charter nor the suggestion on an autonomous turn", async () => {
+    mockDeps = createMockDeps({
+      getSessionState: vi.fn(async () => makeSessionState()),
+      getActiveAlignmentInjection: vi.fn(async () => injection),
+    });
+    setActorDeps(mockDeps);
+
+    const input = makeExecutePromptInput({ autonomous: true });
+    registerFreshRuntime(input);
+
+    await executePromptForMachine(input);
+
+    const instructions = capturedSessionInstructions();
+    expect(instructions).not.toContain(injection.text);
+    expect(instructions).not.toContain(ALIGN_SUGGESTION_INSTRUCTIONS);
+    expect(capturedAlignmentVersion()).toBeNull();
+    expect(mockDeps.getActiveAlignmentInjection).not.toHaveBeenCalled();
+  });
+
+  it("injects neither the charter nor the suggestion for a project conversation", async () => {
+    mockDeps = createMockDeps({
+      getSessionState: vi.fn(async () => null),
+      getActiveAlignmentInjection: vi.fn(async () => injection),
+    });
+    setActorDeps(mockDeps);
+
+    const input = makeProjectExecutePromptInput();
+    registerFreshRuntime(input);
+
+    await executePromptForMachine(input);
+
+    const instructions = capturedSessionInstructions();
+    expect(instructions).not.toContain(injection.text);
+    expect(instructions).not.toContain(ALIGN_SUGGESTION_INSTRUCTIONS);
+    expect(capturedAlignmentVersion()).toBeNull();
+    expect(mockDeps.getActiveAlignmentInjection).not.toHaveBeenCalled();
+  });
+
+  it("never injects the removed <objective> tag and leaves reference docs passive", async () => {
+    mockDeps = createMockDeps({
+      getSessionState: vi.fn(async () => makeSessionState()),
+      getActiveAlignmentInjection: vi.fn(async () => injection),
+      getReferenceDocuments: vi.fn(async () => [
+        { filePath: "docs/spec.md", description: "the spec" },
+      ]),
+    });
+    setActorDeps(mockDeps);
+
+    const input = makeExecutePromptInput();
+    registerFreshRuntime(input);
+
+    await executePromptForMachine(input);
+
+    const instructions = capturedSessionInstructions();
+    expect(instructions.some((s) => s.includes("<objective>"))).toBe(false);
+    const referenceBlock = instructions.find((s) =>
+      s.includes("## Reference Documents"),
+    );
+    expect(referenceBlock).toBeDefined();
+    expect(referenceBlock).toContain("Read them when relevant");
+    expect(referenceBlock).not.toContain(injection.text);
+  });
+
+  it("recreates a live runtime and records the new seen-version when the active version advanced", async () => {
+    const recordedMutations: Array<{ label: string; version: number | null }> =
+      [];
+    const mutateConversation = vi.fn(
+      async (
+        _projectPath: string,
+        _sessionName: string,
+        _conversationId: string,
+        label: string,
+        mutate: (c: ConversationState) => void,
+      ) => {
+        const conversationState = {
+          lastSeenAlignmentVersion: null,
+        } as unknown as ConversationState;
+        mutate(conversationState);
+        recordedMutations.push({
+          label,
+          version: conversationState.lastSeenAlignmentVersion,
+        });
+      },
+    );
+
+    // The charter advanced to version 4: the active injection and the cheap
+    // version accessor both report 4, while the live runtime still carries 3.
+    const advancedInjection: AlignmentInjection = { ...injection, version: 4 };
+    mockDeps = createMockDeps({
+      getSessionState: vi.fn(async () => makeSessionState()),
+      getActiveAlignmentInjection: vi.fn(async () => advancedInjection),
+      getActiveAlignmentVersion: vi.fn(async () => 4),
+      mutateConversation,
+    });
+    setActorDeps(mockDeps);
+
+    const staleClose = vi.fn();
+    const staleRuntime = createMockBackendRuntime({
+      modelId: "opus",
+      alignmentVersion: 3,
+      close: staleClose,
+    });
+    const freshRuntime = createMockBackendRuntime({
+      modelId: "opus",
+      alignmentVersion: 4,
+    });
+    (freshRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue(
+      turnResult,
+    );
+    mockFactory.createRuntime.mockResolvedValue(freshRuntime);
+
+    const input = makeExecutePromptInput();
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+      backendRuntime: staleRuntime,
+    });
+
+    await executePromptForMachine(input);
+
+    expect(staleClose).toHaveBeenCalledTimes(1);
+    expect(mockDeps.unregisterBackendRuntime).toHaveBeenCalledWith(
+      input.conversationId,
+    );
+    expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
+    expect(capturedAlignmentVersion()).toBe(4);
+
+    const seenRecording = recordedMutations.find(
+      (m) => m.label === "prompt.recordSeenAlignmentVersion",
+    );
+    expect(seenRecording).toBeDefined();
+    expect(seenRecording?.version).toBe(4);
+  });
+
+  it("reuses a live runtime when the active version is unchanged", async () => {
+    mockDeps = createMockDeps({
+      getSessionState: vi.fn(async () => makeSessionState()),
+      getActiveAlignmentInjection: vi.fn(async () => injection),
+      getActiveAlignmentVersion: vi.fn(async () => 3),
+    });
+    setActorDeps(mockDeps);
+
+    const reusedClose = vi.fn();
+    const reusedRuntime = createMockBackendRuntime({
+      modelId: "opus",
+      alignmentVersion: 3,
+      close: reusedClose,
+    });
+    (reusedRuntime.sendTurn as ReturnType<typeof vi.fn>).mockResolvedValue(
+      turnResult,
+    );
+
+    const input = makeExecutePromptInput();
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+      backendRuntime: reusedRuntime,
+    });
+
+    await executePromptForMachine(input);
+
+    expect(reusedClose).not.toHaveBeenCalled();
+    expect(mockDeps.unregisterBackendRuntime).not.toHaveBeenCalled();
+    expect(mockFactory.createRuntime).not.toHaveBeenCalled();
+    expect(reusedRuntime.sendTurn).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ===========================================================================
+// Integration tests (8.1): guaranteed propagation to already-running runtimes
+// ===========================================================================
+
+describe("executePromptForMachine alignment propagation to live runtimes", () => {
+  const BAKED_VERSION = 1;
+  const ADVANCED_VERSION = 2;
+  const NEW_CHARTER_TEXT =
+    "<session-charter>\nThis governs the session; conflicts resolve via its hierarchy and active decisions.\nMission: deliver guaranteed per-turn propagation.\n</session-charter>";
+
+  function makeNormalSession(): SessionState {
+    return sessionStateSchema.parse({
+      sessionName: "test-session",
+      worktreePath: "/projects/repo/.worktrees/test-session",
+      branchName: "csm/test-session",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      lastActivityAt: "2026-01-01T00:00:00.000Z",
+      creationMode: "normal",
+    });
+  }
+
+  function capturedCreateInput(): Record<string, unknown> {
+    expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
+    return (
+      mockFactory.createRuntime.mock.calls as unknown[][]
+    )[0]![0] as Record<string, unknown>;
+  }
+
+  beforeEach(() => {
+    _resetForTesting();
+    vi.clearAllMocks();
+    mockFactory.validateModelAndEffort.mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    _resetActorDepsForTesting();
+    _resetForTesting();
+  });
+
+  // The load-bearing regression (R7.3): a baked-once injection would reuse the
+  // live runtime and never deliver the advanced charter. Version-gated
+  // recreation must close the stale runtime and rebuild instructions carrying
+  // the new charter — for BOTH backend runtime types — while preserving
+  // conversation continuity (the recreated runtime resumes the same session).
+  for (const backend of ["claude", "codex"] as const) {
+    it(`recreates an already-running ${backend} runtime with the advanced charter and preserves continuity`, async () => {
+      const advancedInjection: AlignmentInjection = {
+        version: ADVANCED_VERSION,
+        contentHash: "hash-v2",
+        text: NEW_CHARTER_TEXT,
+      };
+      const recordedSeen: Array<number | null> = [];
+      const mutateConversation = vi.fn(
+        async (
+          _projectPath: string,
+          _sessionName: string,
+          _conversationId: string,
+          label: string,
+          mutate: (c: ConversationState) => void,
+        ) => {
+          if (label !== "prompt.recordSeenAlignmentVersion") return;
+          const c = {
+            lastSeenAlignmentVersion: null,
+          } as unknown as ConversationState;
+          mutate(c);
+          recordedSeen.push(c.lastSeenAlignmentVersion);
+        },
+      );
+
+      const mockDeps = createMockDeps({
+        getSessionState: vi.fn(async () => makeNormalSession()),
+        getActiveAlignmentVersion: vi.fn(async () => ADVANCED_VERSION),
+        getActiveAlignmentInjection: vi.fn(async () => advancedInjection),
+        mutateConversation,
+      });
+      setActorDeps(mockDeps);
+
+      // The continuity handle for the live session: the recreated runtime must
+      // resume it via persistedRef so conversation history is not lost. The
+      // backend ref is discriminated — Claude resumes by sessionId, Codex by
+      // threadId.
+      const continuityRef =
+        backend === "claude"
+          ? ({ backend: "claude", sessionId: "sdk-claude-live" } as const)
+          : ({ backend: "codex", threadId: "thread-codex-live" } as const);
+
+      // An already-running runtime whose instructions were baked at the PRIOR
+      // charter version — the "baked once" state this regression guards against.
+      const staleClose = vi.fn();
+      const staleRuntime = createMockBackendRuntime({
+        backend,
+        modelId: "opus",
+        alignmentVersion: BAKED_VERSION,
+        close: staleClose,
+      });
+
+      const freshSendTurn = vi.fn().mockResolvedValue({
+        backendRef: continuityRef,
+        costUsd: 0.01,
+        durationMs: 100,
+        numTurns: 1,
+        contextTokens: 100,
+        contextWindowMax: 200000,
+        contentBlocks: [{ type: "text", text: "ok" }],
+        aborted: false,
+        error: null,
+      } satisfies ConversationBackendTurnResult);
+      const freshRuntime = createMockBackendRuntime({
+        backend,
+        modelId: "opus",
+        alignmentVersion: ADVANCED_VERSION,
+        sendTurn: freshSendTurn,
+      });
+      mockFactory.createRuntime.mockResolvedValue(freshRuntime);
+
+      // Pin the model so model/effort/outputFormat all match the live runtime
+      // (config-derived codex model would otherwise resolve to undefined and
+      // trigger a model-change recreation) — isolating the alignment version as
+      // the SOLE recreation trigger this regression exercises.
+      const input = makeExecutePromptInput({
+        agentBackend: backend,
+        backendRef: continuityRef,
+        modelId: "opus",
+      });
+      const key = conversationRuntimeKey(
+        input.projectPath,
+        input.sessionName,
+        input.conversationId,
+      );
+      registerConversationRuntime(key, {
+        abortController: new AbortController(),
+        backendRuntime: staleRuntime,
+      });
+
+      const result = await executePromptForMachine(input);
+
+      // Recreated, not reused.
+      expect(staleClose).toHaveBeenCalledTimes(1);
+      expect(mockDeps.unregisterBackendRuntime).toHaveBeenCalledWith(
+        input.conversationId,
+      );
+      expect(mockFactory.createRuntime).toHaveBeenCalledTimes(1);
+
+      // Rebuilt instructions carry the NEW charter governing section + version.
+      const createInput = capturedCreateInput();
+      expect(createInput["sessionInstructions"] as string[]).toContain(
+        NEW_CHARTER_TEXT,
+      );
+      expect(createInput["alignmentVersion"]).toBe(ADVANCED_VERSION);
+
+      // Continuity: the recreated runtime resumes the same backend session.
+      expect(createInput["persistedRef"]).toEqual(continuityRef);
+      expect(freshSendTurn).toHaveBeenCalledTimes(1);
+      expect(result.backendRef).toEqual(continuityRef);
+
+      // Stale detection: the conversation records the version it actually ran with.
+      expect(recordedSeen).toContain(ADVANCED_VERSION);
+    });
+  }
 });
 
 // ===========================================================================

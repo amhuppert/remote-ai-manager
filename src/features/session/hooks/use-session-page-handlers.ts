@@ -6,7 +6,6 @@ import {
   useForkConversationMutation,
 } from "@/lib/conversations/mutations";
 import { useDeleteSessionMutation } from "@/lib/sessions/mutations";
-import { useFocusInitialization } from "@/features/session/hooks/use-focus-initialization";
 import { usePromptSubmission } from "@/features/session/hooks/use-prompt-submission";
 import { useVoiceWiring } from "@/features/session/hooks/use-voice-wiring";
 import { useSessionHandlers } from "@/features/session/hooks/use-session-handlers";
@@ -54,7 +53,6 @@ export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
     router,
     store,
     local,
-    isBusy,
     messagesLength,
     selectedModel,
     selectedEffort,
@@ -112,19 +110,6 @@ export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
     enqueuePromptErrorToast,
   });
 
-  const { focusConfirmLoading, handleConfirmFocus } = useFocusInitialization({
-    projectName,
-    sessionName,
-    isBusy,
-    messagesLength,
-    selectedModel,
-    selectedEffort,
-    effortSupported,
-    selectedBackend,
-    sendPrompt,
-    onOpenConversation,
-  });
-
   const { handleAnswerSubmit, handleDelete, handleFork, buildContext } =
     useSessionHandlers({
       projectName,
@@ -162,8 +147,6 @@ export function useSessionPageHandlers(args: UseSessionPageHandlersArgs) {
     handleConcurrentConfirm,
     cancelConcurrentSubmission,
     pendingConcurrentSubmission,
-    focusConfirmLoading,
-    handleConfirmFocus,
     handleAnswerSubmit,
     handleDelete,
     handleFork,

@@ -15,7 +15,7 @@ export type SpawnAgent = z.infer<typeof spawnAgentSchema>;
  * sync-guard unit test (schemas.test.ts) asserts these members exactly match
  * `sessionCreationModeSchema.options`, failing CI if either enum drifts.
  */
-export const spawnModeSchema = z.enum(["fast", "focus", "optimistic"]);
+export const spawnModeSchema = z.enum(["normal", "optimistic"]);
 export type SpawnMode = z.infer<typeof spawnModeSchema>;
 
 /**

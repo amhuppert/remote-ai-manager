@@ -62,6 +62,7 @@ function conv(
     machineSnapshot: null,
     agentBackend: "claude",
     backendRef: null,
+    lastSeenAlignmentVersion: null,
     ...overrides,
   };
 }

@@ -405,7 +405,11 @@ export function encodeSharedConversationColumns(
  */
 const CONVERSATION_COLUMN_MAP = [
   ["name", "name", (c: ConversationState) => c.name],
-  ["transcriptPath", "transcript_path", (c: ConversationState) => c.transcriptPath],
+  [
+    "transcriptPath",
+    "transcript_path",
+    (c: ConversationState) => c.transcriptPath,
+  ],
   ["status", "status", (c: ConversationState) => c.status],
   ["promptCount", "prompt_count", (c: ConversationState) => c.promptCount],
   ["createdAt", "created_at", (c: ConversationState) => c.createdAt],
@@ -413,21 +417,69 @@ const CONVERSATION_COLUMN_MAP = [
   ["summary", "summary", (c: ConversationState) => c.summary],
   ["archived", "archived", (c: ConversationState) => (c.archived ? 1 : 0)],
   ["totalCostUsd", "total_cost_usd", (c: ConversationState) => c.totalCostUsd],
-  ["totalDurationMs", "total_duration_ms", (c: ConversationState) => c.totalDurationMs],
+  [
+    "totalDurationMs",
+    "total_duration_ms",
+    (c: ConversationState) => c.totalDurationMs,
+  ],
   ["totalTurns", "total_turns", (c: ConversationState) => c.totalTurns],
-  ["pendingQuestionId", "pending_question_id", (c: ConversationState) => c.pendingQuestionId],
-  ["pendingQuestions", "pending_questions", (c: ConversationState) => jsonOrNull(c.pendingQuestions)],
-  ["pendingPromptText", "pending_prompt_text", (c: ConversationState) => c.pendingPromptText],
-  ["forkedFrom", "forked_from", (c: ConversationState) => jsonOrNull(c.forkedFrom)],
+  [
+    "pendingQuestionId",
+    "pending_question_id",
+    (c: ConversationState) => c.pendingQuestionId,
+  ],
+  [
+    "pendingQuestions",
+    "pending_questions",
+    (c: ConversationState) => jsonOrNull(c.pendingQuestions),
+  ],
+  [
+    "pendingPromptText",
+    "pending_prompt_text",
+    (c: ConversationState) => c.pendingPromptText,
+  ],
+  [
+    "forkedFrom",
+    "forked_from",
+    (c: ConversationState) => jsonOrNull(c.forkedFrom),
+  ],
   ["role", "role", (c: ConversationState) => c.role],
-  ["contextTokens", "context_tokens", (c: ConversationState) => c.contextTokens],
-  ["contextWindowMax", "context_window_max", (c: ConversationState) => c.contextWindowMax],
-  ["debugMode", "debug_mode", (c: ConversationState) => jsonOrNull(c.debugMode)],
-  ["machineSnapshot", "machine_snapshot", (c: ConversationState) => jsonOrNull(c.machineSnapshot)],
+  [
+    "contextTokens",
+    "context_tokens",
+    (c: ConversationState) => c.contextTokens,
+  ],
+  [
+    "contextWindowMax",
+    "context_window_max",
+    (c: ConversationState) => c.contextWindowMax,
+  ],
+  [
+    "debugMode",
+    "debug_mode",
+    (c: ConversationState) => jsonOrNull(c.debugMode),
+  ],
+  [
+    "machineSnapshot",
+    "machine_snapshot",
+    (c: ConversationState) => jsonOrNull(c.machineSnapshot),
+  ],
   ["agentBackend", "agent_backend", (c: ConversationState) => c.agentBackend],
-  ["backendRef", "backend_ref", (c: ConversationState) => jsonOrNull(c.backendRef)],
-  ["mcpOverrides", "mcp_overrides", (c: ConversationState) => jsonOrNull(c.mcpOverrides)],
-  ["mcpRuntime", "mcp_runtime", (c: ConversationState) => jsonOrNull(c.mcpRuntime)],
+  [
+    "backendRef",
+    "backend_ref",
+    (c: ConversationState) => jsonOrNull(c.backendRef),
+  ],
+  [
+    "mcpOverrides",
+    "mcp_overrides",
+    (c: ConversationState) => jsonOrNull(c.mcpOverrides),
+  ],
+  [
+    "mcpRuntime",
+    "mcp_runtime",
+    (c: ConversationState) => jsonOrNull(c.mcpRuntime),
+  ],
   [
     "agentCapabilityOverrides",
     "agent_capability_overrides",
@@ -439,9 +491,22 @@ const CONVERSATION_COLUMN_MAP = [
     (c: ConversationState) => jsonOrNull(c.agentCapabilitiesRuntime),
   ],
   ["unread", "unread", (c: ConversationState) => (c.unread ? 1 : 0)],
-  ["pendingQueue", "pending_queue", (c: ConversationState) => jsonOrNull(c.pendingQueue)],
+  [
+    "pendingQueue",
+    "pending_queue",
+    (c: ConversationState) => jsonOrNull(c.pendingQueue),
+  ],
+  [
+    "lastSeenAlignmentVersion",
+    "last_seen_alignment_version",
+    (c: ConversationState) => c.lastSeenAlignmentVersion,
+  ],
 ] as const satisfies ReadonlyArray<
-  readonly [keyof ConversationState, string, (c: ConversationState) => string | number | null]
+  readonly [
+    keyof ConversationState,
+    string,
+    (c: ConversationState) => string | number | null,
+  ]
 >;
 
 export type ChangedConversationColumns = Record<string, string | number | null>;

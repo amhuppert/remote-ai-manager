@@ -343,6 +343,24 @@ describe("CodexConversationRuntime", () => {
   }
 
   // --------------------------------------------------------
+  // alignment version metadata
+  // --------------------------------------------------------
+
+  describe("alignment version metadata", () => {
+    it("reports the alignment version baked in at creation, defaulting to null", () => {
+      expect(
+        new CodexConversationRuntime(makeCreateInput(), deps).alignmentVersion,
+      ).toBeNull();
+      expect(
+        new CodexConversationRuntime(
+          makeCreateInput({ alignmentVersion: 7 }),
+          deps,
+        ).alignmentVersion,
+      ).toBe(7);
+    });
+  });
+
+  // --------------------------------------------------------
   // sendTurn — first turn
   // --------------------------------------------------------
 

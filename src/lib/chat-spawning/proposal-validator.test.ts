@@ -8,7 +8,7 @@ import {
 describe("validateProposal", () => {
   it("returns valid with the parsed proposal for a conforming candidate", () => {
     const result = validateProposal({
-      sessions: [{ name: "a", agent: "claude", mode: "fast" }],
+      sessions: [{ name: "a", agent: "claude", mode: "normal" }],
     });
     expect(result.kind).toBe("valid");
     if (result.kind === "valid") {
@@ -31,7 +31,7 @@ describe("validateProposal", () => {
 
   it("returns invalid for a bad agent", () => {
     const result = validateProposal({
-      sessions: [{ name: "a", agent: "nope", mode: "fast" }],
+      sessions: [{ name: "a", agent: "nope", mode: "normal" }],
     });
     expect(result.kind).toBe("invalid");
     if (result.kind === "invalid") {
@@ -70,7 +70,7 @@ describe("extractProposal", () => {
       "Here is my plan.",
       "```" + SPAWN_PROPOSAL_FENCE,
       JSON.stringify({
-        sessions: [{ name: "a", agent: "claude", mode: "fast" }],
+        sessions: [{ name: "a", agent: "claude", mode: "normal" }],
       }),
       "```",
       "Let me know.",

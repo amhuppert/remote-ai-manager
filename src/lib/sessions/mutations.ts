@@ -9,12 +9,11 @@ import { mutationFetch } from "@/lib/api/fetcher";
 import {
   sessionStateSchema,
   bulkSessionsResponseSchema,
-  finalizeInitResponseSchema,
   type BulkSessionsRequest,
   type BulkSessionsResponse,
+  type CreateSessionRequest,
   type SessionListItem,
 } from "@/lib/sessions/schemas";
-import type { ImagePayload } from "@/lib/images/schemas";
 import type { ActiveConversationsResponse } from "@/lib/active-conversations/schemas";
 
 interface ArchiveSessionOptimisticSnapshot {
@@ -80,28 +79,7 @@ export function useCreateSessionMutation(projectName: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (
-      params:
-        | {
-            mode: "fast";
-            sessionName: string;
-            tddEnabled?: boolean;
-            parentSessionName?: string;
-          }
-        | {
-            mode: "focus";
-            objective: string;
-            tddEnabled?: boolean;
-            parentSessionName?: string;
-          }
-        | {
-            mode: "optimistic";
-            instructions: string;
-            images?: ImagePayload[];
-            tddEnabled?: boolean;
-            parentSessionName?: string;
-          },
-    ) =>
+    mutationFn: (params: CreateSessionRequest) =>
       mutationFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions`,
         "create-session",
@@ -229,31 +207,6 @@ export function useBulkSessionsMutation(projectName: string) {
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: sessionKeys.list(projectName),
-      });
-    },
-  });
-}
-
-export function useFinalizeInitializationMutation(
-  projectName: string,
-  sessionName: string,
-) {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: () =>
-      mutationFetch(
-        `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/finalize-initialization`,
-        "finalize-initialization",
-        { method: "POST" },
-        finalizeInitResponseSchema,
-      ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: conversationKeys.list(projectName, sessionName),
-      });
-      void queryClient.invalidateQueries({
-        queryKey: sessionKeys.detail(projectName, sessionName),
       });
     },
   });

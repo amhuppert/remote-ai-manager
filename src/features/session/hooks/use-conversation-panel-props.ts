@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, type RefObject } from "react";
+import { useMemo, type ReactNode, type RefObject } from "react";
 import type ConversationPanel from "@/components/conversation/ConversationPanel";
 import type {
   ConversationVirtuosoListProps,
@@ -44,10 +44,7 @@ export interface UseConversationPanelPropsArgs {
   handleRangeChanged: ConversationVirtuosoListProps["onRangeChanged"];
   handleAtBottomStateChange: ConversationVirtuosoListProps["onAtBottomStateChange"];
   handleAtTopStateChange: ConversationVirtuosoListProps["onAtTopStateChange"];
-  showFocusConfirmation: boolean;
-  focusConfirmLoading: boolean;
-  handleConfirmFocus: () => void;
-  isReadOnly: boolean;
+  alignmentGateSlot: ReactNode;
   canStop: boolean;
   onStop: () => void;
   buildMarkdown?: () => string | null;
@@ -87,10 +84,7 @@ export function useConversationPanelProps(
     handleRangeChanged,
     handleAtBottomStateChange,
     handleAtTopStateChange,
-    showFocusConfirmation,
-    focusConfirmLoading,
-    handleConfirmFocus,
-    isReadOnly,
+    alignmentGateSlot,
     canStop,
     onStop,
     buildMarkdown,
@@ -127,10 +121,7 @@ export function useConversationPanelProps(
       handleRangeChanged,
       handleAtBottomStateChange,
       handleAtTopStateChange,
-      showFocusConfirmation,
-      focusConfirmLoading,
-      handleConfirmFocus,
-      isReadOnly,
+      alignmentGateSlot,
       canStop,
       onStop,
       buildMarkdown,
@@ -166,10 +157,7 @@ export function useConversationPanelProps(
       handleRangeChanged,
       handleAtBottomStateChange,
       handleAtTopStateChange,
-      showFocusConfirmation,
-      focusConfirmLoading,
-      handleConfirmFocus,
-      isReadOnly,
+      alignmentGateSlot,
       canStop,
       onStop,
       buildMarkdown,

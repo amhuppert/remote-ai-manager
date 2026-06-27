@@ -9,6 +9,8 @@
 
 export interface ConversationsPageHrefOpts {
   conversationId?: string;
+  /** Stable visible-message id within the selected conversation. */
+  messageId?: string;
   /** Only meaningful together with sessionName; a lone half is omitted. */
   projectName?: string;
   sessionName?: string;
@@ -17,6 +19,7 @@ export interface ConversationsPageHrefOpts {
 
 export interface ConversationsPageParams {
   conversationId: string | null;
+  messageId: string | null;
   sessionFilter: { projectName: string; sessionName: string } | null;
   autoFocus: boolean;
 }
@@ -25,6 +28,9 @@ export function conversationsPageHref(opts: ConversationsPageHrefOpts): string {
   const parts: string[] = [];
   if (opts.conversationId !== undefined) {
     parts.push(`c=${encodeURIComponent(opts.conversationId)}`);
+  }
+  if (opts.conversationId !== undefined && opts.messageId !== undefined) {
+    parts.push(`m=${encodeURIComponent(opts.messageId)}`);
   }
   if (opts.projectName !== undefined && opts.sessionName !== undefined) {
     parts.push(`project=${encodeURIComponent(opts.projectName)}`);
@@ -40,10 +46,12 @@ export function conversationsPageHref(opts: ConversationsPageHrefOpts): string {
 export function parseConversationsPageParams(
   params: URLSearchParams,
 ): ConversationsPageParams {
+  const conversationId = params.get("c");
   const projectName = params.get("project");
   const sessionName = params.get("session");
   return {
-    conversationId: params.get("c"),
+    conversationId,
+    messageId: conversationId === null ? null : params.get("m"),
     sessionFilter:
       projectName !== null && sessionName !== null
         ? { projectName, sessionName }

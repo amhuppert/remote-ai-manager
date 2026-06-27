@@ -638,8 +638,10 @@ describe("conversations-repo updateChangedColumnsWithSessionTouch", () => {
       SESSION_NAME,
       makeFullConversation({ id: "c-full", summary: "v1" }),
     );
-    expect(repo.findAll().find((r) => r.conversation.id === "c-full")
-      ?.conversation.summary).toBe("v1");
+    expect(
+      repo.findAll().find((r) => r.conversation.id === "c-full")?.conversation
+        .summary,
+    ).toBe("v1");
 
     const before = repo.findById("c-full")!;
     const changed = diffChangedConversationColumns(before, {
@@ -654,8 +656,10 @@ describe("conversations-repo updateChangedColumnsWithSessionTouch", () => {
       "2026-06-04T00:00:00Z",
     );
 
-    expect(repo.findAll().find((r) => r.conversation.id === "c-full")
-      ?.conversation.summary).toBe("v2");
+    expect(
+      repo.findAll().find((r) => r.conversation.id === "c-full")?.conversation
+        .summary,
+    ).toBe("v2");
   });
 
   it("round-trips a full fixture's durability after a focused per-column write", () => {
@@ -1104,7 +1108,11 @@ describe("conversations-repo findAll caching", () => {
 
 describe("conversations-repo findBySession caching", () => {
   it("returns identical conversation references for unchanged rows across calls (cache hit)", () => {
-    repo.upsert(PROJECT_PATH, SESSION_NAME, makeFullConversation({ id: "c-a" }));
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeFullConversation({ id: "c-a" }),
+    );
     repo.upsert(
       PROJECT_PATH,
       SESSION_NAME,
@@ -1123,8 +1131,16 @@ describe("conversations-repo findBySession caching", () => {
   });
 
   it("returns a fresh array each call so in-place sort/push by callers is safe", () => {
-    repo.upsert(PROJECT_PATH, SESSION_NAME, makeMinimalConversation({ id: "c-a" }));
-    repo.upsert(PROJECT_PATH, SESSION_NAME, makeMinimalConversation({ id: "c-b" }));
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-a" }),
+    );
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-b" }),
+    );
 
     const first = repo.findBySession(PROJECT_PATH, SESSION_NAME);
     const second = repo.findBySession(PROJECT_PATH, SESSION_NAME);
@@ -1133,9 +1149,9 @@ describe("conversations-repo findBySession caching", () => {
     // result in place, so a shared array would corrupt the cache on first sort.
     expect(second).not.toBe(first);
     first.reverse();
-    expect(repo.findBySession(PROJECT_PATH, SESSION_NAME).map((c) => c.id)).toEqual(
-      ["c-a", "c-b"],
-    );
+    expect(
+      repo.findBySession(PROJECT_PATH, SESSION_NAME).map((c) => c.id),
+    ).toEqual(["c-a", "c-b"]);
   });
 
   it("re-parses only the changed conversation after upsert; siblings keep their reference", () => {
@@ -1172,7 +1188,11 @@ describe("conversations-repo findBySession caching", () => {
 
   it("does not re-parse this session's conversations when another session is written", () => {
     insertParentSession(PROJECT_PATH, "other");
-    repo.upsert(PROJECT_PATH, SESSION_NAME, makeFullConversation({ id: "c-a" }));
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeFullConversation({ id: "c-a" }),
+    );
 
     const first = repo.findBySession(PROJECT_PATH, SESSION_NAME);
 
@@ -1191,23 +1211,31 @@ describe("conversations-repo findBySession caching", () => {
       SESSION_NAME,
       makeMinimalConversation({ id: "c-u", summary: "v1" }),
     );
-    expect(
-      repo.findBySession(PROJECT_PATH, SESSION_NAME)[0]?.summary,
-    ).toBe("v1");
+    expect(repo.findBySession(PROJECT_PATH, SESSION_NAME)[0]?.summary).toBe(
+      "v1",
+    );
 
     repo.upsert(
       PROJECT_PATH,
       SESSION_NAME,
       makeMinimalConversation({ id: "c-u", summary: "v2" }),
     );
-    expect(
-      repo.findBySession(PROJECT_PATH, SESSION_NAME)[0]?.summary,
-    ).toBe("v2");
+    expect(repo.findBySession(PROJECT_PATH, SESSION_NAME)[0]?.summary).toBe(
+      "v2",
+    );
   });
 
   it("reflects a delete (dropped row no longer returned)", () => {
-    repo.upsert(PROJECT_PATH, SESSION_NAME, makeMinimalConversation({ id: "c-keep" }));
-    repo.upsert(PROJECT_PATH, SESSION_NAME, makeMinimalConversation({ id: "c-drop" }));
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-keep" }),
+    );
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-drop" }),
+    );
     expect(
       repo
         .findBySession(PROJECT_PATH, SESSION_NAME)
@@ -1368,6 +1396,7 @@ function buildMaximalConversation(): ConversationState {
         error: "transient delivery error that should round-trip",
       },
     ],
+    lastSeenAlignmentVersion: 7,
   });
 }
 
@@ -1432,5 +1461,52 @@ describe("conversations-repo pendingQueue durability", () => {
 
     const loaded = repo.findByKey(PROJECT_PATH, SESSION_NAME, "c-queue");
     expect(loaded?.pendingQueue.map((e) => e.id)).toEqual(["q1"]);
+  });
+});
+
+describe("conversations-repo lastSeenAlignmentVersion durability", () => {
+  it("round-trips a non-null seen-version through upsert/findByKey", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-seen", lastSeenAlignmentVersion: 3 }),
+    );
+
+    const loaded = repo.findByKey(PROJECT_PATH, SESSION_NAME, "c-seen");
+    expect(loaded?.lastSeenAlignmentVersion).toBe(3);
+  });
+
+  it("preserves the null default for a conversation that has seen no charter", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-unseen" }),
+    );
+
+    const loaded = repo.findByKey(PROJECT_PATH, SESSION_NAME, "c-unseen");
+    expect(loaded?.lastSeenAlignmentVersion).toBeNull();
+  });
+
+  it("advances the seen-version through the focused per-column update path", () => {
+    repo.upsert(
+      PROJECT_PATH,
+      SESSION_NAME,
+      makeMinimalConversation({ id: "c-advance", lastSeenAlignmentVersion: 1 }),
+    );
+    const before = repo.findByKey(PROJECT_PATH, SESSION_NAME, "c-advance")!;
+    const after = { ...before, lastSeenAlignmentVersion: 2 };
+    const changed = diffChangedConversationColumns(before, after);
+    expect(Object.keys(changed)).toEqual(["last_seen_alignment_version"]);
+
+    repo.updateChangedColumnsWithSessionTouch(
+      PROJECT_PATH,
+      SESSION_NAME,
+      "c-advance",
+      changed,
+      "2026-06-04T00:00:00Z",
+    );
+
+    const reloaded = repo.findByKey(PROJECT_PATH, SESSION_NAME, "c-advance");
+    expect(reloaded?.lastSeenAlignmentVersion).toBe(2);
   });
 });

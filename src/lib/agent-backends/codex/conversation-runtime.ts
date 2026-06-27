@@ -106,6 +106,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
   readonly outputFormat:
     | { type: "json_schema"; schema: Record<string, unknown> }
     | undefined;
+  readonly alignmentVersion: number | null;
 
   private _status: "alive" | "dead" = "alive";
   private threadId: string | null;
@@ -134,6 +135,7 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
     this.modelId = input.modelId;
     this.reasoningEffort = input.reasoningEffort;
     this.outputFormat = input.outputFormat;
+    this.alignmentVersion = input.alignmentVersion ?? null;
     this.deps = deps;
 
     logger.info("codex-runtime.created", {

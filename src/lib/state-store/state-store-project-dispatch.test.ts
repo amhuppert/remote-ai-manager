@@ -46,6 +46,7 @@ function makeProjectConversation(
     backendRef: null,
     unread: false,
     pendingQueue: [],
+    lastSeenAlignmentVersion: null,
   };
 }
 

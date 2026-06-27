@@ -1,13 +1,13 @@
 import type { ParsedConversationCommand } from "./schemas";
 
-const COMMANDS = ["commit", "merge"] as const;
+const COMMANDS = ["commit", "merge", "align"] as const;
 
 /**
- * Detect `/commit` or `/merge` as a whole-message conversation command.
- * The command must be the entire trimmed message or followed by whitespace
- * plus optional hint text (mirrors `hasCollabPrefix` semantics). Returns
- * null for non-command text, including near-misses like `/committed` and
- * mid-message occurrences.
+ * Detect `/commit`, `/merge`, or `/align` as a whole-message conversation
+ * command. The command must be the entire trimmed message or followed by
+ * whitespace plus optional hint text (mirrors `hasCollabPrefix` semantics).
+ * Returns null for non-command text, including near-misses like `/committed`
+ * and mid-message occurrences.
  */
 export function parseConversationCommand(
   text: string,

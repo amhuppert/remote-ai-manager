@@ -56,16 +56,14 @@ describe("PROJECT_SPAWN_INSTRUCTIONS", () => {
   });
 
   it("documents the agent and mode options", () => {
-    for (const token of [
-      "claude",
-      "codex",
-      "dual",
-      "fast",
-      "focus",
-      "optimistic",
-    ]) {
+    for (const token of ["claude", "codex", "dual", "normal", "optimistic"]) {
       expect(PROJECT_SPAWN_INSTRUCTIONS).toContain(token);
     }
+  });
+
+  it("does not teach the removed legacy modes (fast, focus)", () => {
+    expect(PROJECT_SPAWN_INSTRUCTIONS).not.toMatch(/"mode":\s*"(fast|focus)"/);
+    expect(PROJECT_SPAWN_INSTRUCTIONS).not.toMatch(/`fast`|`focus`/);
   });
 });
 

@@ -332,10 +332,6 @@ const collaborationStartMutateMock = vi.fn();
 const collaborationStopMutateMock = vi.fn();
 vi.mock("@/lib/sessions/mutations", () => ({
   useDeleteSessionMutation: () => ({ mutate: vi.fn(), isPending: false }),
-  useFinalizeInitializationMutation: () => ({
-    mutate: vi.fn(),
-    isPending: false,
-  }),
   useTddToggleMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useGenericArchiveSessionMutation: () => ({
     mutate: vi.fn(),
@@ -458,11 +454,11 @@ const baseSession: SessionState = {
       backendRef: null,
       unread: false,
       pendingQueue: [],
+      lastSeenAlignmentVersion: null,
     },
   ],
   source: "cc" as const,
-  objective: null,
-  creationMode: "fast" as const,
+  creationMode: "normal" as const,
   tddEnabled: true,
   graphWorkflowExecution: null,
   referenceDocuments: [],

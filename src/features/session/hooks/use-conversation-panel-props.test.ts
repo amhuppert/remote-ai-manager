@@ -47,10 +47,7 @@ describe("useConversationPanelProps", () => {
         handleRangeChanged,
         handleAtBottomStateChange,
         handleAtTopStateChange,
-        showFocusConfirmation: false,
-        focusConfirmLoading: false,
-        handleConfirmFocus: () => {},
-        isReadOnly: false,
+        alignmentGateSlot: null,
         canStop: false,
         onStop: () => {},
       });

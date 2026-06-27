@@ -53,18 +53,17 @@ export const executePrompt = fromPromise<
   // Lazy import to avoid circular dependencies
   const { executePromptStream } = await import("@/lib/prompt/sdk-driver");
 
-  const autonomousSession: SessionState = {
-    ...input.session,
-    objective: `Complete the following task autonomously. Do not ask the user any questions. Begin work immediately.\n\n${input.instructions}`,
-  };
+  // The autonomous directive rides on the kickoff prompt: the optimistic
+  // instructions ARE the prompt.
+  const autonomousPrompt = `Complete the following task autonomously. Do not ask the user any questions. Begin work immediately.\n\n${input.instructions}`;
 
   const noopEmit = () => {};
   const conversationId = input.session.conversations[0]?.id;
 
   const result = await executePromptStream(
     input.projectPath,
-    autonomousSession,
-    input.instructions,
+    input.session,
+    autonomousPrompt,
     noopEmit,
     conversationId,
     undefined,

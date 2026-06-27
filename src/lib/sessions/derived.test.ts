@@ -39,6 +39,7 @@ function makeConversation(
     debugMode: null,
     machineSnapshot: null,
     archived: false,
+    lastSeenAlignmentVersion: null,
     pendingQueue: [],
     ...overrides,
   };

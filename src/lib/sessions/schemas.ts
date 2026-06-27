@@ -26,11 +26,7 @@ export type DerivedSessionStatus = z.infer<typeof derivedSessionStatusSchema>;
 
 export const sessionSourceSchema = z.enum(["cc", "imported"]);
 
-export const sessionCreationModeSchema = z.enum([
-  "fast",
-  "focus",
-  "optimistic",
-]);
+export const sessionCreationModeSchema = z.enum(["normal", "optimistic"]);
 export type SessionCreationMode = z.infer<typeof sessionCreationModeSchema>;
 
 /**
@@ -58,8 +54,7 @@ export const sessionStateSchema = z.object({
   finished: z.boolean().default(false),
   conversations: z.array(conversationStateSchema).default([]),
   source: sessionSourceSchema.default("cc"),
-  objective: z.string().nullable().default(null),
-  creationMode: sessionCreationModeSchema.default("fast"),
+  creationMode: sessionCreationModeSchema.default("normal"),
   tddEnabled: z.boolean().default(true),
   targetBranch: z.string().default("main"),
   parentSessionName: z.string().nullable().default(null),
@@ -101,7 +96,6 @@ export const sessionListItemSchema = z.object({
   source: sessionSourceSchema,
   creationMode: sessionCreationModeSchema,
   tddEnabled: z.boolean(),
-  objective: z.string().nullable(),
   derivedStatus: derivedSessionStatusSchema,
   promptCount: z.number().int().nonnegative(),
   derivedLastActivityAt: z.string(),
@@ -133,14 +127,8 @@ export type BulkSessionsResponse = z.infer<typeof bulkSessionsResponseSchema>;
 
 export const createSessionRequestSchema = z.discriminatedUnion("mode", [
   z.object({
-    mode: z.literal("fast"),
+    mode: z.literal("normal"),
     sessionName: z.string().trim().min(1),
-    tddEnabled: z.boolean().optional(),
-    parentSessionName: z.string().trim().min(1).optional(),
-  }),
-  z.object({
-    mode: z.literal("focus"),
-    objective: z.string().trim().min(1),
     tddEnabled: z.boolean().optional(),
     parentSessionName: z.string().trim().min(1).optional(),
   }),
@@ -177,8 +165,3 @@ export const branchPrefixResponseSchema = z.object({
   branchPrefix: z.string(),
 });
 export type BranchPrefixResponse = z.infer<typeof branchPrefixResponseSchema>;
-
-export const finalizeInitResponseSchema = z.object({
-  conversationId: z.string(),
-  name: z.string(),
-});

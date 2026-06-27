@@ -10,6 +10,9 @@ import type {
   TaskRunResult,
 } from "@/lib/workflows/conversation/execute-workflow-task-run";
 import { appendNotice, type AppendNoticeInput } from "@/lib/prompt/transcript";
+import { AlignmentNotSupportedError } from "@/lib/session-alignment/service";
+import { createSessionAlignmentServiceForProduction } from "@/lib/session-alignment/service-factory";
+import { enqueueConversationMessage } from "@/lib/prompt/enqueue-conversation-message";
 import {
   buildGenerationPrompt,
   defaultMessage,
@@ -70,6 +73,23 @@ export interface ConversationCommandDeps {
   dispatchCommitJob(params: DispatchCommitParams): DispatchResult;
   dispatchMergeJob(params: DispatchMergeParams): DispatchResult;
   appendNotice(input: AppendNoticeInput): Promise<void>;
+  /**
+   * Begin (or redraft) the session's Alignment charter and return the agent
+   * authoring prompt to enqueue. Throws `AlignmentNotSupportedError` when the
+   * session does not support alignment (e.g. optimistic mode).
+   */
+  beginAlignmentDraft(input: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+  }): Promise<{ authoringPrompt: string; draftId: string }>;
+  /** Enqueue the alignment authoring turn into the originating conversation. */
+  enqueueAuthoringTurn(input: {
+    projectPath: string;
+    sessionName: string;
+    conversationId: string;
+    message: string;
+  }): Promise<void>;
 }
 
 export interface RunCommandInput {
@@ -93,10 +113,12 @@ export type RejectionReason =
   | "session-finished"
   | "job-active"
   | "no-changes"
+  | "alignment-unavailable"
   | "dispatch-failed";
 
 export type RunCommandOutcome =
   | { status: "dispatched"; jobId: string; usedFallback: boolean }
+  | { status: "alignment_draft_started"; draftId: string }
   | { status: "rejected"; reason: RejectionReason };
 
 const REJECTION_NOTICES: Record<
@@ -111,6 +133,8 @@ const REJECTION_NOTICES: Record<
     `Cannot run /${command}: a commit, merge, or conflict-resolution job is already running for this session.`,
   "no-changes": (command) =>
     `Cannot run /${command}: the session worktree has no uncommitted changes.`,
+  "alignment-unavailable": () =>
+    "Cannot run /align: alignment is unavailable for this session.",
 };
 
 export function createConversationCommandService(
@@ -248,6 +272,12 @@ export function createConversationCommandService(
   ): Promise<RunCommandOutcome> {
     const { parsed } = input;
 
+    // align is routed by runAlign before this point; this guard narrows the
+    // remaining flow to the git-job commands.
+    if (parsed.command === "align") {
+      throw new Error("align must be routed by runAlign, not the git-job path");
+    }
+
     let target: MergeTarget | null = null;
     if (parsed.command === "merge") {
       try {
@@ -357,7 +387,71 @@ export function createConversationCommandService(
     };
   }
 
+  /**
+   * The `/align` path is separate from the commit/merge git-job machinery: it
+   * begins (or redrafts) the session's Alignment charter and enqueues an agent
+   * authoring turn. It is available at any lifecycle point and does not gate on
+   * job-active or uncommitted changes (R2.2), nor does it archive the
+   * conversation.
+   *
+   * Conflict resolution: tasks.md says `/align` is accepted regardless of
+   * creation mode, but the alignment service enforces normal-only (R12.2). The
+   * command is recognized/routed for any session; the service throws
+   * `AlignmentNotSupportedError` for optimistic/unsupported sessions, which we
+   * surface as a graceful rejection rather than a crash.
+   */
+  async function runAlign(input: RunCommandInput): Promise<RunCommandOutcome> {
+    if (input.sessionName === null) {
+      return reject(input, "no-session");
+    }
+    const session = await deps.getSession(input.projectPath, input.sessionName);
+    if (session === null) {
+      return reject(input, "no-session");
+    }
+    if (session.finished) {
+      return reject(input, "session-finished");
+    }
+
+    let draft: { authoringPrompt: string; draftId: string };
+    try {
+      draft = await deps.beginAlignmentDraft({
+        projectPath: input.projectPath,
+        sessionName: input.sessionName,
+        conversationId: input.conversationId,
+      });
+    } catch (err) {
+      if (err instanceof AlignmentNotSupportedError) {
+        logger.info("align.unavailable", {
+          projectName: input.projectName,
+          sessionName: input.sessionName,
+          conversationId: input.conversationId,
+          reason: err.message,
+        });
+        return reject(input, "alignment-unavailable");
+      }
+      throw err;
+    }
+
+    await deps.enqueueAuthoringTurn({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      conversationId: input.conversationId,
+      message: draft.authoringPrompt,
+    });
+
+    logger.info("align.draft_started", {
+      projectName: input.projectName,
+      sessionName: input.sessionName,
+      conversationId: input.conversationId,
+      draftId: draft.draftId,
+    });
+
+    return { status: "alignment_draft_started", draftId: draft.draftId };
+  }
+
   async function run(input: RunCommandInput): Promise<RunCommandOutcome> {
+    if (input.parsed.command === "align") return runAlign(input);
+
     const eligibility = await checkEligibility(input);
     if (!eligibility.eligible) return eligibility.outcome;
     return executeEligibleCommand(input, eligibility.session);
@@ -369,6 +463,17 @@ export function createConversationCommandService(
 export type ConversationCommandService = ReturnType<
   typeof createConversationCommandService
 >;
+
+// Memoized so importing this module never opens the DB; the alignment service
+// is built lazily on first `/align`.
+let alignmentService: ReturnType<
+  typeof createSessionAlignmentServiceForProduction
+> | null = null;
+
+function getAlignmentService() {
+  alignmentService ??= createSessionAlignmentServiceForProduction();
+  return alignmentService;
+}
 
 const productionDeps: ConversationCommandDeps = {
   getSession(projectPath, sessionName) {
@@ -384,6 +489,10 @@ const productionDeps: ConversationCommandDeps = {
   dispatchCommitJob,
   dispatchMergeJob,
   appendNotice,
+  beginAlignmentDraft(input) {
+    return getAlignmentService().beginDraft(input);
+  },
+  enqueueAuthoringTurn: enqueueConversationMessage,
 };
 
 export const conversationCommandService =

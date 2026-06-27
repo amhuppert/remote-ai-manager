@@ -58,6 +58,7 @@ export type TranscriptMessageOrigin = z.infer<
 >;
 
 export const transcriptMessageSchema = z.object({
+  id: z.string().optional(),
   role: z.enum(["user", "assistant", "notice"]),
   content: z.array(messageContentBlockSchema),
   timestamp: z.string().nullable(),
@@ -68,6 +69,8 @@ export const transcriptMessageSchema = z.object({
 
 /** Parsed transcript message */
 export interface TranscriptMessage {
+  /** Stable visible-message id when the writer can provide one. */
+  id?: string;
   /** Message role. `notice` marks a CC-authored informational entry. */
   role: "user" | "assistant" | "notice";
   /** Message content blocks (text, tool_use, tool_result) */
@@ -219,6 +222,11 @@ export const conversationStateSchema = z.object({
   // `.default([])` migrates conversations stored before this field existed,
   // so no data backfill is required.
   pendingQueue: z.array(pendingQueuedMessageSchema).default([]),
+  // Latest session-alignment charter version a turn in this conversation ran
+  // with. Drives stale detection in the alignment header chip; null until the
+  // conversation has run a turn under an active charter. `.default(null)`
+  // decodes conversations persisted before this field existed.
+  lastSeenAlignmentVersion: z.number().int().nullable().default(null),
 });
 export type ConversationState = z.infer<typeof conversationStateSchema>;
 

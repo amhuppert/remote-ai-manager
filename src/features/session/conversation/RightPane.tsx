@@ -11,6 +11,7 @@ import { EmptyState, EmptyStateTitle } from "@/components/ui/EmptyState";
 import DiffPanel from "@/features/session/git/DiffPanel";
 import SpecBrowser from "@/features/session/conversation/SpecBrowser";
 import DocsPanel from "@/features/session/conversation/DocsPanel";
+import AlignmentPanel from "@/features/session/conversation/AlignmentPanel";
 import { useSessionDiffQuery, useCommitsQuery } from "@/lib/git/queries";
 import {
   useRightPaneTab,
@@ -69,6 +70,7 @@ export default function RightPane({
           <TabsList>
             <TabsTrigger value="diff">Diff</TabsTrigger>
             <TabsTrigger value="docs">Docs</TabsTrigger>
+            <TabsTrigger value="alignment">Alignment</TabsTrigger>
             <TabsTrigger value="specs">Specs</TabsTrigger>
           </TabsList>
         </div>
@@ -110,6 +112,16 @@ export default function RightPane({
             layoutClassName="min-h-0 flex-1 data-[state=active]:flex data-[state=active]:flex-col data-[state=inactive]:hidden"
           >
             <DocsPanel projectName={projectName} sessionName={sessionName} />
+          </TabsContent>
+          <TabsContent
+            value="alignment"
+            forceMount
+            layoutClassName="min-h-0 flex-1 data-[state=active]:flex data-[state=active]:flex-col data-[state=inactive]:hidden"
+          >
+            <AlignmentPanel
+              projectName={projectName}
+              sessionName={sessionName}
+            />
           </TabsContent>
           <TabsContent
             value="specs"

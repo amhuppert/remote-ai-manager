@@ -96,14 +96,14 @@ describe("mutateSession", () => {
     await store.mutateSession(
       "/proj-a",
       "alpha",
-      "set-objective",
+      "set-target-branch",
       (session) => {
-        session.objective = "ship it";
+        session.targetBranch = "ship-it";
       },
     );
 
     const reloaded = await store.getSession("/proj-a", "alpha");
-    expect(reloaded?.objective).toBe("ship it");
+    expect(reloaded?.targetBranch).toBe("ship-it");
   });
 
   it("throws when the session does not exist", async () => {
@@ -118,32 +118,32 @@ describe("mutateSession", () => {
     await store.mutateState("seed", (state) => {
       state.projects["/proj-a"]!.sessions["alpha"] = makeSession({
         sessionName: "alpha",
-        objective: "alpha-objective",
+        targetBranch: "alpha-branch",
       });
       state.projects["/proj-a"]!.sessions["beta"] = makeSession({
         sessionName: "beta",
         worktreePath: "/wt/beta",
         branchName: "csm/beta",
-        objective: "beta-objective",
+        targetBranch: "beta-branch",
       });
     });
 
     await store.mutateSession(
       "/proj-a",
       "alpha",
-      "set-alpha-objective",
+      "set-alpha-target-branch",
       (session) => {
-        session.objective = "alpha-updated";
+        session.targetBranch = "alpha-updated";
       },
     );
 
     const alpha = await store.getSession("/proj-a", "alpha");
-    expect(alpha?.objective).toBe("alpha-updated");
+    expect(alpha?.targetBranch).toBe("alpha-updated");
 
     // The focused path loads only the target session, so a sibling can never be
     // reached or rewritten by the mutator.
     const beta = await store.getSession("/proj-a", "beta");
-    expect(beta?.objective).toBe("beta-objective");
+    expect(beta?.targetBranch).toBe("beta-branch");
     expect(beta?.lastActivityAt).toBe("2026-01-01T00:00:00Z");
   });
 });

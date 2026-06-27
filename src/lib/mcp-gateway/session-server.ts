@@ -10,6 +10,8 @@ import {
 } from "@/lib/state-store";
 import { registerNotificationTool } from "@/lib/notifications/agent-notification-tool";
 import { registerAskUserQuestionTool } from "@/lib/conversations/ask-user-question-tool";
+import { registerSessionAlignmentTools } from "@/lib/session-alignment/tools";
+import { createSessionAlignmentServiceForProduction } from "@/lib/session-alignment/service-factory";
 import {
   defaultCodexToolDeps,
   registerCodexTool,
@@ -44,7 +46,7 @@ export interface SessionMcpServerParams {
 
 interface SessionWithConversations extends Pick<
   SessionState,
-  "sessionName" | "worktreePath"
+  "sessionName" | "worktreePath" | "creationMode"
 > {
   conversations: ReadonlyArray<{ id: string }>;
 }
@@ -90,6 +92,14 @@ export interface SessionMcpServerDeps {
     config: NonNullable<GlobalConfig["codex"]>,
   ): void;
   registerAskUserQuestionTool(
+    server: McpServer,
+    context: {
+      projectPath: string;
+      sessionName: string;
+      conversationId: string;
+    },
+  ): void;
+  registerSessionAlignmentTools(
     server: McpServer,
     context: {
       projectPath: string;
@@ -207,8 +217,28 @@ const defaultSessionMcpServerDeps: SessionMcpServerDeps = {
       mutateConversation,
     });
   },
+  registerSessionAlignmentTools(server, context) {
+    const service = getSessionAlignmentService();
+    registerSessionAlignmentTools(server, context, {
+      getRuntime: getConversationRuntime,
+      beginDraft: service.beginDraft,
+      fillDraft: service.fillDraft,
+      proposeDecisions: service.proposeDecisions,
+    });
+  },
   registerDevServerTools,
 };
+
+// The production alignment service binds a repo over the live DB; build it once
+// on first use rather than at module load so importing this module never opens
+// the database.
+let sessionAlignmentService: ReturnType<
+  typeof createSessionAlignmentServiceForProduction
+> | null = null;
+function getSessionAlignmentService() {
+  sessionAlignmentService ??= createSessionAlignmentServiceForProduction();
+  return sessionAlignmentService;
+}
 
 function isNotificationEnabled(config: GlobalConfig): boolean {
   return (
@@ -306,6 +336,18 @@ export async function createSessionMcpServer(
     sessionName: session.sessionName,
     conversationId: params.conversationId,
   });
+
+  // Alignment is for attended normal sessions only. The project sentinel
+  // early-returns above (no alignment for project conversations); optimistic
+  // sessions are excluded here so the tools never appear on an autonomous
+  // session's surface.
+  if (session.creationMode === "normal") {
+    deps.registerSessionAlignmentTools(server, {
+      projectPath,
+      sessionName: session.sessionName,
+      conversationId: params.conversationId,
+    });
+  }
 
   deps.registerDevServerTools(server, {
     projectPath,

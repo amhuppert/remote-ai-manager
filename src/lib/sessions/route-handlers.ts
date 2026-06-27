@@ -10,12 +10,12 @@ import {
   setSessionTddEnabled,
 } from "@/lib/state-store";
 import {
-  createSessionFast,
-  createSessionFocus,
+  createSessionNormal,
   createSessionOptimistic,
   deleteSession,
   bulkDeleteSessions,
 } from "@/lib/sessions/service";
+import type { ImagePayload } from "@/lib/images/schemas";
 import { isReservedSessionName } from "@/lib/sessions/derived";
 import {
   createSessionRequestSchema,
@@ -24,9 +24,9 @@ import {
   bulkSessionsRequestSchema,
   type CreateSessionRequest,
   type BulkSessionResult,
+  type SessionState,
 } from "@/lib/sessions/schemas";
 import { stopAllForSession } from "@/lib/dev-server/registry";
-import { finalizeInitialization } from "@/lib/conversations/service";
 import { createLogger, withTracing } from "@/lib/logging";
 import type { ApiError } from "@/lib/api/errors";
 const logger = createLogger("sessions-route");
@@ -80,13 +80,56 @@ export const getBranchPrefix = withTracing(
   },
 );
 
-/** POST /api/projects/[name]/sessions — create a new session */
-export const createSession = withTracing(
-  async (request, { params }: RouteContext) => {
+// ---------------------------------------------------------------------------
+// Create-session handler — DI-seamed so the two-mode dispatch is unit-testable
+// without standing up real worktree provisioning.
+// ---------------------------------------------------------------------------
+
+type BranchOpts = {
+  baseBranch?: string;
+  targetBranch?: string;
+  parentSessionName?: string;
+};
+
+export interface CreateSessionRouteDeps {
+  resolveProjectPath(name: string): Promise<string | null>;
+  getSession(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<SessionState | null>;
+  createSessionNormal(
+    projectPath: string,
+    sessionName: string,
+    tddEnabled?: boolean,
+    branchOpts?: BranchOpts,
+  ): Promise<SessionState>;
+  createSessionOptimistic(
+    projectPath: string,
+    instructions: string,
+    images?: ImagePayload[],
+    tddEnabled?: boolean,
+    branchOpts?: BranchOpts,
+  ): Promise<SessionState>;
+}
+
+const defaultCreateSessionDeps: CreateSessionRouteDeps = {
+  resolveProjectPath,
+  getSession,
+  createSessionNormal,
+  createSessionOptimistic,
+};
+
+export function createSessionRouteHandlers(
+  deps: CreateSessionRouteDeps = defaultCreateSessionDeps,
+) {
+  async function POST(
+    request: Request,
+    { params }: RouteContext,
+  ): Promise<Response> {
     const bodyPromise = request.json();
     const resolvedParams = await params;
     const name = resolvedParams["name"] ?? "";
-    const projectPath = await resolveProjectPath(name);
+    const projectPath = await deps.resolveProjectPath(name);
     if (!projectPath) {
       return NextResponse.json(
         { error: "Project not found" } satisfies ApiError,
@@ -94,25 +137,27 @@ export const createSession = withTracing(
       );
     }
 
-    let body: CreateSessionRequest;
-    try {
-      body = createSessionRequestSchema.parse(await bodyPromise);
-    } catch {
+    // External/untrusted body: `safeParse`. The discriminated union only admits
+    // `normal`/`optimistic`, so any other mode (e.g. the removed `focus`/`fast`)
+    // fails here and is rejected with a 400 (R1.7).
+    const parsed = createSessionRequestSchema.safeParse(await bodyPromise);
+    if (!parsed.success) {
       return NextResponse.json(
         {
           error:
-            "Invalid request: fast mode requires sessionName, focus mode requires objective, optimistic mode requires instructions",
+            "Invalid request: unsupported creation mode (expected 'normal' or 'optimistic'); 'normal' requires sessionName, 'optimistic' requires instructions",
         } satisfies ApiError,
         { status: 400 },
       );
     }
+    const body: CreateSessionRequest = parsed.data;
 
     let branchOpts:
       | { baseBranch: string; targetBranch: string; parentSessionName: string }
       | undefined;
 
     if (body.parentSessionName) {
-      const parent = await getSession(projectPath, body.parentSessionName);
+      const parent = await deps.getSession(projectPath, body.parentSessionName);
       if (!parent) {
         return NextResponse.json(
           { error: "Parent session not found" } satisfies ApiError,
@@ -139,29 +184,35 @@ export const createSession = withTracing(
     }
 
     try {
-      let session;
-      if (body.mode === "fast") {
-        session = await createSessionFast(
-          projectPath,
-          body.sessionName,
-          body.tddEnabled,
-          branchOpts,
-        );
-      } else if (body.mode === "optimistic") {
-        session = await createSessionOptimistic(
-          projectPath,
-          body.instructions,
-          body.images,
-          body.tddEnabled,
-          branchOpts,
-        );
-      } else {
-        session = await createSessionFocus(
-          projectPath,
-          body.objective,
-          body.tddEnabled,
-          branchOpts,
-        );
+      let session: SessionState;
+      switch (body.mode) {
+        case "normal":
+          session = await deps.createSessionNormal(
+            projectPath,
+            body.sessionName,
+            body.tddEnabled,
+            branchOpts,
+          );
+          break;
+        case "optimistic":
+          session = await deps.createSessionOptimistic(
+            projectPath,
+            body.instructions,
+            body.images,
+            body.tddEnabled,
+            branchOpts,
+          );
+          break;
+        default: {
+          // Exhaustiveness guard: the union is `normal`/`optimistic` only. Any
+          // future/unsupported mode is rejected with a client error (R1.7).
+          const _exhaustive: never = body;
+          void _exhaustive;
+          return NextResponse.json(
+            { error: "Unsupported creation mode" } satisfies ApiError,
+            { status: 400 },
+          );
+        }
       }
       return NextResponse.json(session, { status: 201 });
     } catch (err) {
@@ -171,8 +222,13 @@ export const createSession = withTracing(
         status: 400,
       });
     }
-  },
-);
+  }
+
+  return { POST };
+}
+
+/** POST /api/projects/[name]/sessions — create a new session */
+export const createSession = withTracing(createSessionRouteHandlers().POST);
 
 /** DELETE /api/projects/[name]/sessions?sessionName=xxx — delete a session */
 export const deleteSessionRoute = withTracing(
@@ -335,7 +391,13 @@ export const setSessionTdd = withTracing(
   },
 );
 
-/** POST /api/projects/[name]/sessions/[session]/finalize-initialization */
+/**
+ * POST /api/projects/[name]/sessions/[session]/finalize-initialization
+ *
+ * Retired with focus mode: the two remaining creation modes (`normal`,
+ * `optimistic`) never produce an `initialization` conversation to finalize, so
+ * this endpoint rejects every request with a client error.
+ */
 export const finalizeSessionInit = withTracing(
   async (_request, { params }: RouteContext) => {
     const resolvedParams = await params;
@@ -359,25 +421,13 @@ export const finalizeSessionInit = withTracing(
       );
     }
 
-    if (session.creationMode !== "focus") {
-      return NextResponse.json(
-        { error: "Session is not a focus session" } satisfies ApiError,
-        { status: 400 },
-      );
-    }
-
-    try {
-      const result = await finalizeInitialization(projectPath, sessionName);
-      return NextResponse.json(result, { status: 200 });
-    } catch (err) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : "Failed to finalize initialization";
-      return NextResponse.json({ error: message } satisfies ApiError, {
-        status: 500,
-      });
-    }
+    return NextResponse.json(
+      {
+        error:
+          "Focus initialization has been retired; sessions no longer require finalization",
+      } satisfies ApiError,
+      { status: 400 },
+    );
   },
 );
 

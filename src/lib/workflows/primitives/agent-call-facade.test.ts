@@ -87,6 +87,7 @@ function makeConversationRuntime(
     modelId: undefined,
     reasoningEffort: undefined,
     outputFormat: undefined,
+    alignmentVersion: null,
     async sendTurn(input) {
       if (opts.capture) opts.capture.value = input;
       return { ...baseResult, ...(opts.result ?? {}) };

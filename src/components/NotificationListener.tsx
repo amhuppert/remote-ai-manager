@@ -17,6 +17,8 @@ import { projectConversationFocusHref } from "@/lib/project-conversations-client
 import { projectKeys } from "@/lib/projects/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import { computeAgentCapabilityInvalidations } from "@/lib/agent-capabilities/sse-invalidation";
+import { computeAlignmentInvalidations } from "@/lib/session-alignment/sse-invalidation";
+import { sessionAlignmentUpdatedEventSchema } from "@/lib/session-alignment/schemas";
 import { computeMcpConfigInvalidations } from "@/lib/mcp/sse-invalidation";
 import { reconnectReconcile } from "@/lib/events/sse-reconnect";
 import { backgroundJobSchema, jobStatusEventSchema } from "@/lib/jobs/schemas";
@@ -973,6 +975,20 @@ export default function NotificationListener(): null {
         );
         if (!parsed.success) return;
         invalidateAgentCapabilityViews(parsed.data);
+      } catch {
+        // best-effort
+      }
+    });
+
+    es.addEventListener("session-alignment-updated", (event) => {
+      try {
+        const parsed = sessionAlignmentUpdatedEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        for (const { queryKey } of computeAlignmentInvalidations(parsed.data)) {
+          void queryClient.invalidateQueries({ queryKey });
+        }
       } catch {
         // best-effort
       }

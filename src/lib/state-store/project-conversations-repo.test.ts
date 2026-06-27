@@ -43,6 +43,7 @@ function makeProjectConversation(
     backendRef: null,
     unread: overrides.unread ?? false,
     pendingQueue: [],
+    lastSeenAlignmentVersion: null,
     spawnedSessionIds: overrides.spawnedSessionIds,
   };
 }

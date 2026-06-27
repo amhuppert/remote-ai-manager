@@ -62,8 +62,7 @@ function makeFullSession(overrides: Partial<SessionState> = {}): SessionState {
     archived: true,
     finished: true,
     source: "imported",
-    objective: "make it fast",
-    creationMode: "focus",
+    creationMode: "optimistic",
     tddEnabled: false,
     targetBranch: "develop",
     parentSessionName: "ancestor",
@@ -97,7 +96,6 @@ describe("sessions-repo round-trip contract", () => {
     if (!out) return;
 
     expect(out.sessionName).toBe(fixture.sessionName);
-    expect(out.objective).toBeNull();
     expect(out.parentSessionName).toBeNull();
     expect(out.graphWorkflowExecution).toBeNull();
     expect(out.workflowEnvelopes).toBeUndefined();
@@ -111,6 +109,48 @@ describe("sessions-repo round-trip contract", () => {
       ...fixture,
       spawnedFrom: null,
     });
+  });
+
+  it("upsert leaves the vestigial objective column NULL and defaults creation_mode to 'normal'", () => {
+    // The `objective` field was removed from the domain; the physical column is
+    // retained (forward/backward-compatible) but the repo binds nothing to it,
+    // so a freshly upserted row must read back NULL. The minimal fixture omits
+    // creationMode, so the schema/floor default must land it on `normal`.
+    repo.upsert(PROJECT_PATH, makeMinimalSession());
+
+    const rawRow = db
+      .prepare(
+        `SELECT objective, creation_mode FROM sessions
+         WHERE project_path = ? AND session_name = ?`,
+      )
+      .get(PROJECT_PATH, "s1") as {
+      objective: string | null;
+      creation_mode: string;
+    };
+
+    expect(rawRow.objective).toBeNull();
+    expect(rawRow.creation_mode).toBe("normal");
+  });
+
+  it("a row inserted with no creation_mode falls back to the floor default 'normal'", () => {
+    // Insert bypassing the repo (only the required columns) so the floor's
+    // `creation_mode TEXT NOT NULL DEFAULT 'normal'` is what supplies the value.
+    db.prepare(
+      `INSERT INTO sessions
+         (project_path, session_name, worktree_path, branch_name,
+          created_at, last_activity_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      PROJECT_PATH,
+      "floor-default",
+      "/wt/floor-default",
+      "csm/floor-default",
+      "2026-01-01T00:00:00Z",
+      "2026-01-01T00:00:00Z",
+    );
+
+    const out = repo.findByKey(PROJECT_PATH, "floor-default");
+    expect(out?.creationMode).toBe("normal");
   });
 
   it("upsert + findByKey round-trips a fully populated fixture (every field set, JSON sub-trees included)", () => {
@@ -260,7 +300,7 @@ describe("sessions-repo cascading-FK invariant", () => {
 
     const mutated = makeMinimalSession({
       sessionName: "with-children",
-      objective: "mutated payload",
+      targetBranch: "release",
       lastActivityAt: "2026-03-01T00:00:00Z",
     });
     repo.upsert(PROJECT_PATH, mutated);
@@ -284,7 +324,7 @@ describe("sessions-repo cascading-FK invariant", () => {
     expect(afterRefs).toBe(2);
 
     const updated = repo.findByKey(PROJECT_PATH, "with-children");
-    expect(updated?.objective).toBe("mutated payload");
+    expect(updated?.targetBranch).toBe("release");
     expect(updated?.lastActivityAt).toBe("2026-03-01T00:00:00Z");
   });
 
@@ -489,7 +529,10 @@ describe("canonicalSessionRow", () => {
   it("differs when any field differs", () => {
     const base = makeMinimalSession();
     expect(canonicalSessionRow(PROJECT_PATH, base)).not.toBe(
-      canonicalSessionRow(PROJECT_PATH, makeMinimalSession({ objective: "a" })),
+      canonicalSessionRow(
+        PROJECT_PATH,
+        makeMinimalSession({ targetBranch: "release" }),
+      ),
     );
     expect(canonicalSessionRow(PROJECT_PATH, base)).not.toBe(
       canonicalSessionRow("/p2", base),
@@ -586,7 +629,7 @@ describe("sessions-repo findAll caching", () => {
   it("returns a new reference for a row after upsert mutates it, reusing unchanged siblings", () => {
     repo.upsert(
       PROJECT_PATH,
-      makeMinimalSession({ sessionName: "s-changed", objective: "before" }),
+      makeMinimalSession({ sessionName: "s-changed", targetBranch: "before" }),
     );
     repo.upsert(PROJECT_PATH, makeMinimalSession({ sessionName: "s-stable" }));
 
@@ -600,7 +643,7 @@ describe("sessions-repo findAll caching", () => {
 
     repo.upsert(
       PROJECT_PATH,
-      makeMinimalSession({ sessionName: "s-changed", objective: "after" }),
+      makeMinimalSession({ sessionName: "s-changed", targetBranch: "after" }),
     );
 
     const second = repo.findAll();
@@ -611,7 +654,7 @@ describe("sessions-repo findAll caching", () => {
       (r) => r.session.sessionName === "s-stable",
     );
     expect(second).not.toBe(first);
-    expect(secondChanged?.session.objective).toBe("after");
+    expect(secondChanged?.session.targetBranch).toBe("after");
     expect(secondChanged?.session).not.toBe(firstChanged!.session);
     // The untouched sibling is served from cache by reference.
     expect(secondStable?.session).toBe(firstStable!.session);
@@ -657,8 +700,7 @@ function buildMaximalSession(): SessionState {
     archived: true,
     finished: true,
     source: "imported",
-    objective: "make the durability contract maximal",
-    creationMode: "focus",
+    creationMode: "optimistic",
     tddEnabled: false,
     targetBranch: "develop",
     parentSessionName: "ancestor-session",
@@ -703,7 +745,6 @@ describe("sessions-repo updateChangedColumns", () => {
     "archived",
     "finished",
     "source",
-    "objective",
     "creation_mode",
     "tdd_enabled",
     "target_branch",
@@ -724,19 +765,19 @@ describe("sessions-repo updateChangedColumns", () => {
   }
 
   it("writes only the changed column and does NOT auto-restamp last_activity_at", () => {
-    repo.upsert(PROJECT_PATH, makeFullSession({ objective: "v1" }));
+    repo.upsert(PROJECT_PATH, makeFullSession({ targetBranch: "v1" }));
     const baselineActivity = readRow("full").last_activity_at;
 
     const base = repo.findByKey(PROJECT_PATH, "full")!;
-    const next = { ...base, objective: "v2" };
+    const next = { ...base, targetBranch: "v2" };
     const changed = diffChangedSessionColumns(base, next);
-    expect(Object.keys(changed)).toEqual(["objective"]);
+    expect(Object.keys(changed)).toEqual(["target_branch"]);
 
     const updated = repo.updateChangedColumns(PROJECT_PATH, "full", changed);
     expect(updated).toBe(true);
 
     const reloaded = repo.findByKey(PROJECT_PATH, "full")!;
-    expect(reloaded.objective).toBe("v2");
+    expect(reloaded.targetBranch).toBe("v2");
     // The config-toggle path must not bump session activity.
     expect(readRow("full").last_activity_at).toBe(baselineActivity);
   });
@@ -746,18 +787,18 @@ describe("sessions-repo updateChangedColumns", () => {
     const newActivity = "2026-04-04T04:04:04Z";
 
     repo.updateChangedColumns(PROJECT_PATH, "full", {
-      objective: "moved",
+      target_branch: "moved",
       last_activity_at: newActivity,
     });
 
     const reloaded = repo.findByKey(PROJECT_PATH, "full")!;
-    expect(reloaded.objective).toBe("moved");
+    expect(reloaded.targetBranch).toBe("moved");
     expect(reloaded.lastActivityAt).toBe(newActivity);
   });
 
   it("returns false when the session row does not exist", () => {
     const updated = repo.updateChangedColumns(PROJECT_PATH, "missing", {
-      objective: "x",
+      target_branch: "x",
     });
     expect(updated).toBe(false);
   });
@@ -780,7 +821,7 @@ describe("sessions-repo updateChangedColumns", () => {
       column: string;
     }> = [
       { apply: (s) => ({ ...s, archived: false }), column: "archived" },
-      { apply: (s) => ({ ...s, objective: "changed" }), column: "objective" },
+      { apply: (s) => ({ ...s, source: "cc" }), column: "source" },
       { apply: (s) => ({ ...s, tddEnabled: true }), column: "tdd_enabled" },
       {
         apply: (s) => ({ ...s, targetBranch: "release" }),
@@ -809,7 +850,11 @@ describe("sessions-repo updateChangedColumns", () => {
 
     // The big blob columns the focused path must never have re-written stay
     // byte-identical to the very first full-upsert baseline.
-    for (const blob of ["workflow_lanes", "workflow_envelopes", "mcp_overrides"]) {
+    for (const blob of [
+      "workflow_lanes",
+      "workflow_envelopes",
+      "mcp_overrides",
+    ]) {
       expect(readRow("full")[blob]).toBe(baseline[blob]);
     }
   });
@@ -836,9 +881,10 @@ describe("sessions-repo updateChangedColumns", () => {
     const viaUpsert = readRow("full");
 
     for (const col of ALL_COLUMNS) {
-      expect(viaColumns[col], `column ${col} must match full-upsert bytes`).toBe(
-        viaUpsert[col],
-      );
+      expect(
+        viaColumns[col],
+        `column ${col} must match full-upsert bytes`,
+      ).toBe(viaUpsert[col]);
     }
   });
 });

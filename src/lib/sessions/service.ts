@@ -37,8 +37,6 @@ import {
   deleteJobRecordsForSession as defaultDeleteJobRecordsForSession,
   deleteJobRecordsForProject as defaultDeleteJobRecordsForProject,
 } from "../jobs/repo";
-import type { ArtifactRegistry } from "../workflows/primitives/artifact-registry";
-import { createSessionArtifactRegistryForProduction } from "../workflows/primitives/default-session-artifact-registry";
 import { createLaneWorktreeSweep } from "./lane-worktree-sweep";
 import { deleteCollaborationArtifacts } from "../workflows/collaboration/artifacts-store";
 
@@ -76,10 +74,6 @@ export interface SessionDeps {
   executeOptimisticWorkflow: typeof executeOptimisticWorkflow;
   buildChildEnv: typeof buildChildEnv;
   query: typeof query;
-  createSessionArtifactRegistry(input: {
-    projectPath: string;
-    sessionName: string;
-  }): ArtifactRegistry;
   deleteNotificationsForSession(
     projectName: string,
     sessionName: string,
@@ -108,7 +102,6 @@ const defaultSessionDeps: SessionDeps = {
   executeOptimisticWorkflow,
   buildChildEnv,
   query,
-  createSessionArtifactRegistry: createSessionArtifactRegistryForProduction,
   deleteNotificationsForSession: defaultDeleteNotificationsForSession,
   deleteJobRecordsForSession: defaultDeleteJobRecordsForSession,
   deleteNotificationsForProject: defaultDeleteNotificationsForProject,
@@ -140,7 +133,6 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     executeOptimisticWorkflow,
     buildChildEnv,
     query,
-    createSessionArtifactRegistry,
     deleteNotificationsForSession,
     deleteJobRecordsForSession,
     deleteNotificationsForProject,
@@ -212,7 +204,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
 
   /**
    * Provision the worktree, run init script, and persist session state.
-   * Shared by fast, focus, and optimistic creation flows.
+   * Shared by every creation flow (normal, optimistic, chat-spawned, planner).
    *
    * When `opts.reservedDirName` is supplied, the worktree directory and branch
    * suffix use that literal name (no random hex suffix) — used to produce a
@@ -223,7 +215,6 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     sessionName: string,
     opts: {
       mode: SessionCreationMode;
-      objective: string | null;
       tddEnabled?: boolean;
       baseBranch?: string;
       targetBranch?: string;
@@ -276,7 +267,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       pendingQuestions: null,
       pendingPromptText: null,
       forkedFrom: null,
-      role: opts.mode === "focus" ? "initialization" : null,
+      role: null,
       activeTurnSource: null,
       contextTokens: null,
       contextWindowMax: null,
@@ -286,6 +277,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       backendRef: null,
       unread: false,
       pendingQueue: [],
+      lastSeenAlignmentVersion: null,
     };
     const session: SessionState = {
       sessionName,
@@ -297,7 +289,6 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       finished: false,
       conversations: [initialConversation],
       source: "cc",
-      objective: opts.objective,
       creationMode: opts.mode,
       tddEnabled: opts.tddEnabled ?? true,
       targetBranch: opts.targetBranch ?? "main",
@@ -322,7 +313,6 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       logger.info("session.create", {
         projectName: projectPath,
         sessionName,
-        objective: opts.objective,
         worktreePath,
         branchName,
         mode: opts.mode,
@@ -336,26 +326,6 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
         worktreePath,
         opts.baseBranch ?? "main",
       ]);
-
-      // Focus mode writes a placeholder focus.md that the agent enriches after research.
-      // Fast and optimistic modes skip this — focus.md is only for the Focus Mode workflow.
-      if (opts.mode === "focus") {
-        const registry = createSessionArtifactRegistry({
-          projectPath,
-          sessionName,
-        });
-        await registry.write({
-          kind: "focus_memory",
-          worktreePath,
-          relativePath: "memory-bank/focus.md",
-          contents: `# Session Focus\n\n## Objective\n\n${opts.objective}\n\n> This focus document will be enriched after objective analysis.\n`,
-          audience: "user_facing",
-          required: true,
-          source: { workflowId: "session-init" },
-          description:
-            "Session focus document — captures the objective and is enriched after objective analysis.",
-        });
-      }
 
       // Run optional init script
       if (repoConfig?.initScriptPath) {
@@ -447,10 +417,10 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
   }
 
   /**
-   * Create a session in fast mode.
+   * Create a session in normal mode.
    * User provides the session name directly; branch is derived from it.
    */
-  async function createSessionFast(
+  async function createSessionNormal(
     projectPath: string,
     sessionName: string,
     tddEnabled?: boolean,
@@ -476,40 +446,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     }
 
     return provisionSession(projectPath, sessionName, {
-      mode: "fast",
-      objective: null,
-      tddEnabled,
-      ...branchOpts,
-    });
-  }
-
-  /**
-   * Create a session in focus mode.
-   * AI generates the session name from the objective via the Agent SDK.
-   */
-  async function createSessionFocus(
-    projectPath: string,
-    objective: string,
-    tddEnabled?: boolean,
-    branchOpts?: {
-      baseBranch?: string;
-      targetBranch?: string;
-      parentSessionName?: string;
-    },
-  ): Promise<SessionState> {
-    const [baseName, state] = await Promise.all([
-      generateSessionName(objective, projectPath),
-      readState(),
-    ]);
-
-    // Ensure uniqueness within project
-    const project = state.projects[projectPath];
-    const existingNames = new Set(Object.keys(project?.sessions ?? {}));
-    const sessionName = ensureUniqueName(baseName, existingNames);
-
-    return provisionSession(projectPath, sessionName, {
-      mode: "focus",
-      objective,
+      mode: "normal",
       tddEnabled,
       ...branchOpts,
     });
@@ -543,7 +480,6 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
 
     const session = await provisionSession(projectPath, sessionName, {
       mode: "optimistic",
-      objective: instructions,
       tddEnabled,
       ...branchOpts,
     });
@@ -573,13 +509,13 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
 
   /**
    * Provision a chat-spawned session deterministically with an explicit name,
-   * target, and creation mode — reusing `provisionSession` (worktree + init +
-   * focus.md for focus mode), the same name validations, and the same
-   * name-derived branch (slug + prefix + uniqueness suffix) as the New Session
-   * flow. It deliberately does NOT fire any auto-run workflow (even for
-   * optimistic mode): the shared readiness-gated first-turn dispatcher delivers
-   * the first turn for every mode, and autonomous orchestration beyond the first
-   * turn (merging/workflow launches) is out of scope for spawned sessions.
+   * target, and creation mode — reusing `provisionSession` (worktree + init),
+   * the same name validations, and the same name-derived branch (slug + prefix
+   * + uniqueness suffix) as the New Session flow. It deliberately does NOT fire
+   * any auto-run workflow (even for optimistic mode): the shared
+   * readiness-gated first-turn dispatcher delivers the first turn for every
+   * mode, and autonomous orchestration beyond the first turn (merging/workflow
+   * launches) is out of scope for spawned sessions.
    */
   async function createSpawnedSession(
     projectPath: string,
@@ -588,7 +524,6 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       targetBranch: string;
       mode: SessionCreationMode;
       baseBranch: string;
-      objective: string | null;
       tddEnabled?: boolean;
     },
   ): Promise<SessionState> {
@@ -606,7 +541,6 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
 
     return provisionSession(projectPath, input.name, {
       mode: input.mode,
-      objective: input.objective,
       tddEnabled: input.tddEnabled,
       baseBranch: input.baseBranch,
       targetBranch: input.targetBranch,
@@ -634,8 +568,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     }
 
     return provisionSession(projectPath, PLANNER_SESSION_NAME, {
-      mode: "fast",
-      objective: null,
+      mode: "normal",
       reservedDirName: PLANNER_SESSION_NAME,
     });
   }
@@ -957,8 +890,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
   return {
     generateSessionName,
     provisionSession,
-    createSessionFast,
-    createSessionFocus,
+    createSessionNormal,
     createSessionOptimistic,
     createSpawnedSession,
     ensurePlannerSession,
@@ -975,8 +907,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
 
 const defaultService = createSessionService();
 
-export const createSessionFast = defaultService.createSessionFast;
-export const createSessionFocus = defaultService.createSessionFocus;
+export const createSessionNormal = defaultService.createSessionNormal;
 export const createSessionOptimistic = defaultService.createSessionOptimistic;
 export const createSpawnedSession = defaultService.createSpawnedSession;
 export const ensurePlannerSession = defaultService.ensurePlannerSession;

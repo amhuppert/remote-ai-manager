@@ -137,6 +137,7 @@ export function createProjectConversationService(
       agentBackend,
       backendRef: null,
       unread: false,
+      lastSeenAlignmentVersion: null,
       pendingQueue: [],
     };
 

@@ -29,7 +29,6 @@ interface SessionListItemRow {
   source: string;
   creation_mode: string;
   tdd_enabled: 0 | 1;
-  objective: string | null;
   has_active_graph_workflow: 0 | 1;
   workflow_envelopes: string | null;
   spawned_from: string | null;
@@ -138,7 +137,6 @@ interface SqlBindRow {
   archived: number;
   finished: number;
   source: string;
-  objective: string | null;
   creation_mode: string;
   tdd_enabled: number;
   target_branch: string;
@@ -170,7 +168,6 @@ function sessionToSqlBind(
     archived: session.archived ? 1 : 0,
     finished: session.finished ? 1 : 0,
     source: session.source,
-    objective: session.objective,
     creation_mode: session.creationMode,
     tdd_enabled: session.tddEnabled ? 1 : 0,
     target_branch: session.targetBranch,
@@ -217,7 +214,6 @@ const SESSION_COLUMN_MAP = [
   ["archived", "archived", (s: SessionState) => (s.archived ? 1 : 0)],
   ["finished", "finished", (s: SessionState) => (s.finished ? 1 : 0)],
   ["source", "source", (s: SessionState) => s.source],
-  ["objective", "objective", (s: SessionState) => s.objective],
   ["creationMode", "creation_mode", (s: SessionState) => s.creationMode],
   ["tddEnabled", "tdd_enabled", (s: SessionState) => (s.tddEnabled ? 1 : 0)],
   ["targetBranch", "target_branch", (s: SessionState) => s.targetBranch],
@@ -252,7 +248,11 @@ const SESSION_COLUMN_MAP = [
     (s: SessionState) => jsonOrNull(s.spawnedFrom ?? null),
   ],
 ] as const satisfies ReadonlyArray<
-  readonly [keyof SessionState, string, (s: SessionState) => string | number | null]
+  readonly [
+    keyof SessionState,
+    string,
+    (s: SessionState) => string | number | null,
+  ]
 >;
 
 export type ChangedSessionColumns = Record<string, string | number | null>;
@@ -527,7 +527,6 @@ function rowToDomain(rawRow: unknown): {
     archived: row.archived === 1,
     finished: row.finished === 1,
     source: sourceResult.data,
-    objective: row.objective,
     creationMode: creationModeResult.data,
     tddEnabled: row.tdd_enabled === 1,
     targetBranch: row.target_branch,
@@ -614,7 +613,7 @@ export function createSessionsRepo(db: Db): SessionsRepo {
     `SELECT
        session_name, worktree_path, branch_name, target_branch,
        parent_session_name, created_at, last_activity_at,
-       archived, finished, source, creation_mode, tdd_enabled, objective,
+       archived, finished, source, creation_mode, tdd_enabled,
        COALESCE((
          SELECT CASE WHEN e.status
                   NOT IN ('completed', 'failed', 'cancelled')
@@ -636,7 +635,7 @@ export function createSessionsRepo(db: Db): SessionsRepo {
     `INSERT INTO sessions (
        project_path, session_name, worktree_path, branch_name,
        created_at, last_activity_at, archived, finished, source,
-       objective, creation_mode, tdd_enabled, target_branch,
+       creation_mode, tdd_enabled, target_branch,
        parent_session_name,
        workflow_envelopes,
        workflow_lanes, mcp_overrides, agent_capability_overrides,
@@ -644,7 +643,7 @@ export function createSessionsRepo(db: Db): SessionsRepo {
      ) VALUES (
        @project_path, @session_name, @worktree_path, @branch_name,
        @created_at, @last_activity_at, @archived, @finished, @source,
-       @objective, @creation_mode, @tdd_enabled, @target_branch,
+       @creation_mode, @tdd_enabled, @target_branch,
        @parent_session_name,
        @workflow_envelopes,
        @workflow_lanes, @mcp_overrides, @agent_capability_overrides,
@@ -658,7 +657,6 @@ export function createSessionsRepo(db: Db): SessionsRepo {
        archived                         = excluded.archived,
        finished                         = excluded.finished,
        source                           = excluded.source,
-       objective                        = excluded.objective,
        creation_mode                    = excluded.creation_mode,
        tdd_enabled                      = excluded.tdd_enabled,
        target_branch                    = excluded.target_branch,
@@ -689,7 +687,7 @@ export function createSessionsRepo(db: Db): SessionsRepo {
 
   // Per-column-set prepared statements for the focused update path, keyed by the
   // sorted, comma-joined changed-column list so repeated mutation shapes (flag
-  // toggles, objective edits, override patches) reuse one prepared statement.
+  // toggles, target-branch edits, override patches) reuse one prepared statement.
   // Bounded by the small number of distinct shapes seen in practice. Writes only
   // the changed columns; `last_activity_at`, when changed, is one of those
   // columns (the caller decides — it is mutator-owned, never auto-restamped on

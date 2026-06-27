@@ -29,8 +29,7 @@ const AGENT_LABEL: Record<EditableSession["agent"], string> = {
   dual: "Dual",
 };
 const MODE_LABEL: Record<EditableSession["mode"], string> = {
-  fast: "Fast",
-  focus: "Focus",
+  normal: "Normal",
   optimistic: "Optimistic",
 };
 

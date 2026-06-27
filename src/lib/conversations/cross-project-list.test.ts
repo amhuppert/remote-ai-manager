@@ -39,6 +39,7 @@ function makeConversation(
     backendRef: overrides.backendRef ?? null,
     unread: overrides.unread ?? false,
     pendingQueue: overrides.pendingQueue ?? [],
+    lastSeenAlignmentVersion: null,
   };
 }
 
@@ -58,8 +59,7 @@ function makeSession(
     finished: false,
     conversations,
     source: "cc",
-    objective: null,
-    creationMode: "fast",
+    creationMode: "normal",
     tddEnabled: true,
     targetBranch: "main",
     parentSessionName: null,

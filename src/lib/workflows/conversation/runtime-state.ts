@@ -52,6 +52,9 @@ export interface ConversationRuntimeState {
   /** When true, the current turn was started in autonomous mode; the
    * AskUserQuestion MCP tool returns a denial result instead of blocking. */
   currentTurnAutonomous?: boolean;
+
+  /** Stable id of the visible user message that produced the current turn. */
+  currentTurnMessageId?: string;
 }
 
 const GLOBAL_KEY = "__cc_conversation_runtime_state" as const;

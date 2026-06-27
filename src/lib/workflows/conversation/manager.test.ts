@@ -672,6 +672,7 @@ describe("conversation manager", () => {
         backendRef: null,
         unread: false,
         pendingQueue: [],
+        lastSeenAlignmentVersion: null,
       };
 
       applySyncDerivedFields(context, conv);

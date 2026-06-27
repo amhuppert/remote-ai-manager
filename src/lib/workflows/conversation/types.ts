@@ -310,6 +310,7 @@ export interface ExecutePromptInput {
   role: ConversationRole;
   promptText: string;
   images: ImagePayload[];
+  streamId: string | null;
   modelId: string | null;
   effort: string | null;
   autonomous: boolean;

@@ -13,7 +13,7 @@ describe("proposedSessionSchema", () => {
     const result = proposedSessionSchema.safeParse({
       name: "Add login",
       agent: "claude",
-      mode: "fast",
+      mode: "normal",
     });
     expect(result.success).toBe(true);
     if (result.success) {
@@ -26,7 +26,7 @@ describe("proposedSessionSchema", () => {
     const result = proposedSessionSchema.safeParse({
       name: "Add login",
       agent: "claude",
-      mode: "fast",
+      mode: "normal",
     });
     expect(result.success).toBe(true);
     if (result.success) {
@@ -39,7 +39,7 @@ describe("proposedSessionSchema", () => {
       name: "Add login",
       target: "develop",
       agent: "dual",
-      mode: "focus",
+      mode: "normal",
       initialPrompt: "Implement the login form",
     });
     expect(result.success).toBe(true);
@@ -53,7 +53,7 @@ describe("proposedSessionSchema", () => {
     const result = proposedSessionSchema.safeParse({
       name: "x",
       agent: "gpt",
-      mode: "fast",
+      mode: "normal",
     });
     expect(result.success).toBe(false);
   });
@@ -67,11 +67,22 @@ describe("proposedSessionSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("rejects the removed legacy modes (fast, focus)", () => {
+    for (const mode of ["fast", "focus"]) {
+      const result = proposedSessionSchema.safeParse({
+        name: "x",
+        agent: "claude",
+        mode,
+      });
+      expect(result.success).toBe(false);
+    }
+  });
+
   it("rejects an empty initialPrompt after trim", () => {
     const result = proposedSessionSchema.safeParse({
       name: "x",
       agent: "claude",
-      mode: "fast",
+      mode: "normal",
       initialPrompt: "   ",
     });
     expect(result.success).toBe(false);
@@ -81,7 +92,7 @@ describe("proposedSessionSchema", () => {
     const result = proposedSessionSchema.safeParse({
       name: "x",
       agent: "codex",
-      mode: "fast",
+      mode: "normal",
       model: "gpt-5.4",
       reasoningEffort: "high",
     });
@@ -96,7 +107,7 @@ describe("proposedSessionSchema", () => {
     const result = proposedSessionSchema.safeParse({
       name: "x",
       agent: "claude",
-      mode: "fast",
+      mode: "normal",
     });
     expect(result.success).toBe(true);
     if (result.success) {
@@ -109,7 +120,7 @@ describe("proposedSessionSchema", () => {
     const result = proposedSessionSchema.safeParse({
       name: "x",
       agent: "claude",
-      mode: "fast",
+      mode: "normal",
       reasoningEffort: "turbo",
     });
     expect(result.success).toBe(false);
@@ -125,7 +136,7 @@ describe("spawnProposalSchema", () => {
   it("parses a multi-session proposal", () => {
     const result = spawnProposalSchema.safeParse({
       sessions: [
-        { name: "a", agent: "claude", mode: "fast" },
+        { name: "a", agent: "claude", mode: "normal" },
         { name: "b", agent: "codex", mode: "optimistic" },
       ],
     });
@@ -139,7 +150,7 @@ describe("spawnProposalSchema", () => {
     const sessions = Array.from({ length: 21 }, (_, i) => ({
       name: `s${i}`,
       agent: "claude" as const,
-      mode: "fast" as const,
+      mode: "normal" as const,
     }));
     const result = spawnProposalSchema.safeParse({ sessions });
     expect(result.success).toBe(false);

@@ -29,8 +29,7 @@ const fakeSession: SessionState = {
   finished: false,
   conversations: [],
   source: "cc",
-  objective: null,
-  creationMode: "fast",
+  creationMode: "normal",
   tddEnabled: true,
   targetBranch: "main",
   parentSessionName: null,
@@ -51,20 +50,21 @@ describe("useSessionHandlers", () => {
     };
     const router = { push: vi.fn(), replace: vi.fn() } as never;
 
-    const { result } = renderHook(() =>
-      useSessionHandlers({
-        projectName: "p",
-        sessionName: "s",
-        conversationId: "c",
-        session: fakeSession,
-        router,
-        answerMutation,
-        deleteMutation,
-        forkMutation,
-        cancelDelete: () => {},
-        clearQuestions,
-        failPrompt,
-      }),
+    const { result } = renderHook(
+      () =>
+        useSessionHandlers({
+          projectName: "p",
+          sessionName: "s",
+          conversationId: "c",
+          session: fakeSession,
+          router,
+          answerMutation,
+          deleteMutation,
+          forkMutation,
+          cancelDelete: () => {},
+          clearQuestions,
+          failPrompt,
+        }),
       { wrapper },
     );
 
@@ -95,21 +95,22 @@ describe("useSessionHandlers", () => {
       mutateAsync: vi.fn(async () => ({ conversationId: "forked-1" })),
     };
 
-    const { result } = renderHook(() =>
-      useSessionHandlers({
-        projectName: "p",
-        sessionName: "s",
-        conversationId: "c",
-        session: fakeSession,
-        router,
-        answerMutation: { mutateAsync: async () => ({ status: "ok" }) },
-        deleteMutation: { mutate: () => {} },
-        forkMutation,
-        cancelDelete: () => {},
-        clearQuestions: () => {},
-        failPrompt: () => {},
-        onOpenConversation,
-      }),
+    const { result } = renderHook(
+      () =>
+        useSessionHandlers({
+          projectName: "p",
+          sessionName: "s",
+          conversationId: "c",
+          session: fakeSession,
+          router,
+          answerMutation: { mutateAsync: async () => ({ status: "ok" }) },
+          deleteMutation: { mutate: () => {} },
+          forkMutation,
+          cancelDelete: () => {},
+          clearQuestions: () => {},
+          failPrompt: () => {},
+          onOpenConversation,
+        }),
       { wrapper },
     );
 
@@ -128,22 +129,23 @@ describe("useSessionHandlers", () => {
     const push = vi.fn();
     const router = { push, replace: vi.fn() } as never;
 
-    const { result } = renderHook(() =>
-      useSessionHandlers({
-        projectName: "p",
-        sessionName: "s",
-        conversationId: "c",
-        session: fakeSession,
-        router,
-        answerMutation: { mutateAsync: async () => ({ status: "ok" }) },
-        deleteMutation: { mutate: () => {} },
-        forkMutation: {
-          mutateAsync: async () => ({ conversationId: "forked-1" }),
-        },
-        cancelDelete: () => {},
-        clearQuestions: () => {},
-        failPrompt: () => {},
-      }),
+    const { result } = renderHook(
+      () =>
+        useSessionHandlers({
+          projectName: "p",
+          sessionName: "s",
+          conversationId: "c",
+          session: fakeSession,
+          router,
+          answerMutation: { mutateAsync: async () => ({ status: "ok" }) },
+          deleteMutation: { mutate: () => {} },
+          forkMutation: {
+            mutateAsync: async () => ({ conversationId: "forked-1" }),
+          },
+          cancelDelete: () => {},
+          clearQuestions: () => {},
+          failPrompt: () => {},
+        }),
       { wrapper },
     );
 
@@ -156,22 +158,23 @@ describe("useSessionHandlers", () => {
 
   it("buildContext returns null when session is undefined", () => {
     const router = { push: vi.fn(), replace: vi.fn() } as never;
-    const { result } = renderHook(() =>
-      useSessionHandlers({
-        projectName: "p",
-        sessionName: "s",
-        conversationId: "c",
-        session: undefined,
-        router,
-        answerMutation: { mutateAsync: async () => ({ status: "ok" }) },
-        deleteMutation: { mutate: () => {} },
-        forkMutation: {
-          mutateAsync: async () => ({ conversationId: "x" }),
-        },
-        cancelDelete: () => {},
-        clearQuestions: () => {},
-        failPrompt: () => {},
-      }),
+    const { result } = renderHook(
+      () =>
+        useSessionHandlers({
+          projectName: "p",
+          sessionName: "s",
+          conversationId: "c",
+          session: undefined,
+          router,
+          answerMutation: { mutateAsync: async () => ({ status: "ok" }) },
+          deleteMutation: { mutate: () => {} },
+          forkMutation: {
+            mutateAsync: async () => ({ conversationId: "x" }),
+          },
+          cancelDelete: () => {},
+          clearQuestions: () => {},
+          failPrompt: () => {},
+        }),
       { wrapper },
     );
     expect(result.current.buildContext()).toBeNull();

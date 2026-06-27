@@ -153,6 +153,7 @@ function makeConvo(
     backendRef: null,
     unread: false,
     pendingQueue: [],
+    lastSeenAlignmentVersion: null,
     ...overrides,
   };
 }
@@ -171,8 +172,7 @@ function makeSessionWith(
     finished: false,
     conversations,
     source: "cc" as const,
-    objective: null,
-    creationMode: "fast" as const,
+    creationMode: "normal" as const,
     tddEnabled: true,
     targetBranch: "main",
     parentSessionName: null,
@@ -201,8 +201,7 @@ async function seedSession(
             finished: false,
             conversations: [],
             source: "cc" as const,
-            objective: null,
-            creationMode: "fast" as const,
+            creationMode: "normal" as const,
             tddEnabled: true,
             targetBranch: "main",
             parentSessionName: null,
@@ -844,9 +843,8 @@ describe("finalizeInitialization", () => {
     const initConvoId = crypto.randomUUID();
     const { state, conversations } = createTestServices();
     await seedSession(state, {
-      creationMode: "focus" as const,
+      creationMode: "normal" as const,
       tddEnabled: true,
-      objective: "Test objective",
       conversations: [
         makeConvo({ id: initConvoId, role: "initialization", promptCount: 1 }),
       ],
@@ -879,9 +877,8 @@ describe("finalizeInitialization", () => {
   it("throws when no initialization conversation exists", async () => {
     const { state, conversations } = createTestServices();
     await seedSession(state, {
-      creationMode: "focus" as const,
+      creationMode: "normal" as const,
       tddEnabled: true,
-      objective: "Test objective",
       conversations: [makeConvo({ role: null })],
     });
 

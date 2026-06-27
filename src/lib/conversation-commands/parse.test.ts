@@ -35,6 +35,22 @@ describe("parseConversationCommand", () => {
     });
   });
 
+  it("parses exact /align with empty hint", () => {
+    expect(parseConversationCommand("/align")).toEqual({
+      command: "align",
+      hint: "",
+    });
+  });
+
+  it("parses /align with trailing guidance, trimmed", () => {
+    expect(
+      parseConversationCommand("/align focus on the API boundaries  "),
+    ).toEqual({
+      command: "align",
+      hint: "focus on the API boundaries",
+    });
+  });
+
   it("tolerates leading whitespace before the command", () => {
     expect(parseConversationCommand("   /commit")).toEqual({
       command: "commit",
@@ -57,6 +73,8 @@ describe("parseConversationCommand", () => {
     expect(parseConversationCommand("/committed")).toBeNull();
     expect(parseConversationCommand("/merged")).toBeNull();
     expect(parseConversationCommand("/commitx now")).toBeNull();
+    expect(parseConversationCommand("/aligning")).toBeNull();
+    expect(parseConversationCommand("/aligned the bars")).toBeNull();
   });
 
   it("returns null for mid-message occurrences", () => {

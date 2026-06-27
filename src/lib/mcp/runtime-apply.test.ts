@@ -66,6 +66,7 @@ function baseConversation(overrides: Record<string, unknown> = {}) {
     agentBackend: "claude" as const,
     backendRef: null,
     unread: false,
+    lastSeenAlignmentVersion: null,
     pendingQueue: [],
     ...overrides,
   };
@@ -87,8 +88,7 @@ function stateWith(convOverrides: Record<string, unknown> = {}): ManagerState {
             finished: false,
             conversations: [baseConversation(convOverrides)],
             source: "cc",
-            objective: null,
-            creationMode: "fast",
+            creationMode: "normal",
             tddEnabled: true,
             targetBranch: "main",
             parentSessionName: null,

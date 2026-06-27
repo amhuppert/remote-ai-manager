@@ -204,7 +204,7 @@ export function createStateStore(deps: StateStoreDeps = {}) {
    * sibling-canonicalization guard is needed. Does NOT auto-restamp
    * `lastActivityAt` — the session timestamp is unchanged unless the mutator
    * sets `session.lastActivityAt` explicitly (config toggles like
-   * archive/tdd/objective must not bump session ordering).
+   * archive/tdd must not bump session ordering).
    */
   async function mutateSession<T = void>(
     projectPath: string,

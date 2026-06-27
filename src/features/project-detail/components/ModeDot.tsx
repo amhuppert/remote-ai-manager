@@ -5,15 +5,13 @@ import { cn } from "@/lib/ui/cn";
 type ModeKey = SessionCreationMode | "merged";
 
 const MODE_LABEL: Record<ModeKey, string> = {
-  fast: "F",
-  focus: "★",
+  normal: "N",
   optimistic: "O",
   merged: "✓",
 };
 
 const MODE_TITLE: Record<ModeKey, string> = {
-  fast: "Fast session (no plan)",
-  focus: "Focus session",
+  normal: "Normal session",
   optimistic: "Optimistic session",
   merged: "Merged to target",
 };
@@ -23,8 +21,7 @@ const dotBase =
 
 // border tone keyed by mode.
 const dotColor: Record<ModeKey, string> = {
-  fast: "text-amber bg-amber-glow border-[var(--cc-amber-a30)]",
-  focus: "text-cyan bg-cyan-glow border-cyan-glow-strong",
+  normal: "text-amber bg-amber-glow border-[var(--cc-amber-a30)]",
   optimistic: "text-green bg-green-glow border-[var(--cc-green-border)]",
   merged: "text-green bg-green-glow border-[var(--cc-green-border)]",
 };

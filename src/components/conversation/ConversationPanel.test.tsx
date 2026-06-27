@@ -41,10 +41,7 @@ function makeProps(
     handleRangeChanged: vi.fn(),
     handleAtBottomStateChange: vi.fn(),
     handleAtTopStateChange: vi.fn(),
-    showFocusConfirmation: false,
-    focusConfirmLoading: false,
-    handleConfirmFocus: vi.fn(),
-    isReadOnly: false,
+    alignmentGateSlot: null,
     canStop: false,
     onStop: vi.fn(),
     promptInputSlot: null,
@@ -124,5 +121,16 @@ describe("ConversationPanel", () => {
       />,
     );
     expect(screen.getByTestId("slot")).toBeInTheDocument();
+  });
+
+  it("renders the alignmentGateSlot in the panel", () => {
+    render(
+      <ConversationPanel
+        {...makeProps({
+          alignmentGateSlot: <div data-testid="gate">approve charter</div>,
+        })}
+      />,
+    );
+    expect(screen.getByTestId("gate")).toBeInTheDocument();
   });
 });

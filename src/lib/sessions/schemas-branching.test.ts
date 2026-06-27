@@ -90,8 +90,7 @@ describe("sessionStateSchema — branching fields", () => {
       finished: false,
       conversations: [],
       source: "cc",
-      objective: null,
-      creationMode: "fast",
+      creationMode: "normal",
       tddEnabled: true,
     };
 
@@ -109,22 +108,10 @@ describe("sessionStateSchema — branching fields", () => {
 // ===========================================================================
 
 describe("createSessionRequestSchema — parentSessionName", () => {
-  it("accepts fast mode request with parentSessionName", () => {
+  it("accepts normal mode request with parentSessionName", () => {
     const result = createSessionRequestSchema.safeParse({
-      mode: "fast",
+      mode: "normal",
       sessionName: "child-session",
-      parentSessionName: "parent-session",
-    });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.parentSessionName).toBe("parent-session");
-    }
-  });
-
-  it("accepts focus mode request with parentSessionName", () => {
-    const result = createSessionRequestSchema.safeParse({
-      mode: "focus",
-      objective: "Implement feature",
       parentSessionName: "parent-session",
     });
     expect(result.success).toBe(true);
@@ -147,7 +134,7 @@ describe("createSessionRequestSchema — parentSessionName", () => {
 
   it("allows omitting parentSessionName (optional)", () => {
     const result = createSessionRequestSchema.safeParse({
-      mode: "fast",
+      mode: "normal",
       sessionName: "standalone-session",
     });
     expect(result.success).toBe(true);
@@ -158,7 +145,7 @@ describe("createSessionRequestSchema — parentSessionName", () => {
 
   it("trims whitespace from parentSessionName", () => {
     const result = createSessionRequestSchema.safeParse({
-      mode: "fast",
+      mode: "normal",
       sessionName: "child",
       parentSessionName: "  parent-session  ",
     });
@@ -170,7 +157,7 @@ describe("createSessionRequestSchema — parentSessionName", () => {
 
   it("rejects empty string parentSessionName", () => {
     const result = createSessionRequestSchema.safeParse({
-      mode: "fast",
+      mode: "normal",
       sessionName: "child",
       parentSessionName: "",
     });
@@ -179,7 +166,7 @@ describe("createSessionRequestSchema — parentSessionName", () => {
 
   it("rejects whitespace-only parentSessionName", () => {
     const result = createSessionRequestSchema.safeParse({
-      mode: "fast",
+      mode: "normal",
       sessionName: "child",
       parentSessionName: "   ",
     });

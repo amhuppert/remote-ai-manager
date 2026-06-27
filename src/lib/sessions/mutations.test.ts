@@ -70,9 +70,8 @@ function sessionListItem(
     archived: overrides.archived ?? false,
     finished: overrides.finished ?? false,
     source: overrides.source ?? "cc",
-    creationMode: overrides.creationMode ?? "fast",
+    creationMode: overrides.creationMode ?? "normal",
     tddEnabled: overrides.tddEnabled ?? true,
-    objective: overrides.objective ?? null,
     derivedStatus: overrides.derivedStatus ?? "idle",
     promptCount: overrides.promptCount ?? 0,
     derivedLastActivityAt:
@@ -257,7 +256,7 @@ describe("useCreateSessionMutation", () => {
     });
 
     await result.current.mutateAsync({
-      mode: "fast",
+      mode: "normal",
       sessionName: "new-session",
     });
 

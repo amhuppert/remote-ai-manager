@@ -78,16 +78,14 @@ export async function executeOptimisticWorkflow(
   });
 
   try {
-    // Prepend autonomous directive to session objective
-    const autonomousSession: SessionState = {
-      ...session,
-      objective: `Complete the following task autonomously. Do not ask the user any questions. Begin work immediately.\n\n${instructions}`,
-    };
+    // The autonomous directive rides on the kickoff prompt: the optimistic
+    // instructions ARE the prompt.
+    const autonomousPrompt = `Complete the following task autonomously. Do not ask the user any questions. Begin work immediately.\n\n${instructions}`;
 
     await deps.executePromptStream(
       projectPath,
-      autonomousSession,
-      instructions,
+      session,
+      autonomousPrompt,
       noopEmit,
       conversationId,
       undefined,

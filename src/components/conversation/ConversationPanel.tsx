@@ -4,7 +4,6 @@ import { useCallback, useState, type ReactNode, type RefObject } from "react";
 import { ContextFillIndicator } from "@/components/ContextFillIndicator";
 import { EmptyStateTitle, EmptyStateDesc } from "@/components/ui/EmptyState";
 import ConversationNav from "@/components/ConversationNav";
-import FocusConfirmationBar from "@/components/FocusConfirmationBar";
 import SyntheticForkBadge from "@/features/session/conversation/SyntheticForkBadge";
 import AgentPill from "@/components/AgentPill";
 import { CopyIcon, CheckIcon, StopIcon } from "@/components/icons";
@@ -53,10 +52,7 @@ export interface ConversationPanelProps {
   handleAtBottomStateChange: ConversationVirtuosoListProps["onAtBottomStateChange"];
   handleAtTopStateChange: ConversationVirtuosoListProps["onAtTopStateChange"];
 
-  showFocusConfirmation: boolean;
-  focusConfirmLoading: boolean;
-  handleConfirmFocus: () => void;
-  isReadOnly: boolean;
+  alignmentGateSlot: ReactNode;
 
   canStop: boolean;
   onStop: () => void;
@@ -96,10 +92,7 @@ export default function ConversationPanel({
   handleRangeChanged,
   handleAtBottomStateChange,
   handleAtTopStateChange,
-  showFocusConfirmation,
-  focusConfirmLoading,
-  handleConfirmFocus,
-  isReadOnly,
+  alignmentGateSlot,
   canStop,
   onStop,
   buildMarkdown,
@@ -253,13 +246,7 @@ export default function ConversationPanel({
           </div>
         </div>
 
-        {showFocusConfirmation && (
-          <FocusConfirmationBar
-            onConfirm={handleConfirmFocus}
-            disabled={isReadOnly}
-            loading={focusConfirmLoading}
-          />
-        )}
+        {alignmentGateSlot}
 
         {promptInputSlot}
       </div>

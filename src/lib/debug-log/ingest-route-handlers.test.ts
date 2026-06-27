@@ -46,6 +46,7 @@ const BASE_CONVERSATION: ConversationState = {
   agentBackend: "claude" as const,
   backendRef: null,
   unread: false,
+  lastSeenAlignmentVersion: null,
   pendingQueue: [],
 };
 
@@ -59,8 +60,7 @@ const BASE_SESSION: SessionState = {
   archived: false,
   finished: false,
   source: "cc",
-  objective: null,
-  creationMode: "fast",
+  creationMode: "normal",
   tddEnabled: false,
   targetBranch: "main",
   parentSessionName: null,

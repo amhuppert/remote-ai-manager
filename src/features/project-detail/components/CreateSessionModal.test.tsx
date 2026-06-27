@@ -83,22 +83,29 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-/** Switch modal to Focus mode by clicking the Focus button */
-function switchToFocusMode() {
-  fireEvent.click(screen.getByText("Focus"));
-}
-
 /** Switch modal to Optimistic mode by clicking the Optimistic button */
 function switchToOptimisticMode() {
   fireEvent.click(screen.getByText("Optimistic"));
 }
 
 describe("CreateSessionModal", () => {
-  it("renders modal with fast mode by default", () => {
+  it("renders modal with normal mode by default", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
     expect(screen.getByText("New Session")).toBeInTheDocument();
     expect(screen.getByText("Session name")).toBeInTheDocument();
     expect(screen.getByText("Create Session")).toBeInTheDocument();
+  });
+
+  it("offers exactly two creation modes: Normal and Optimistic", () => {
+    renderWithQuery(<CreateSessionModal {...defaultProps} />);
+    expect(screen.getByText("Normal")).toBeInTheDocument();
+    expect(screen.getByText("Optimistic")).toBeInTheDocument();
+  });
+
+  it("does not present a Focus creation mode or affordance", () => {
+    renderWithQuery(<CreateSessionModal {...defaultProps} />);
+    expect(screen.queryByText("Focus")).toBeNull();
+    expect(screen.queryByText("Fast")).toBeNull();
   });
 
   it("renders no dialog when open=false", () => {
@@ -108,27 +115,27 @@ describe("CreateSessionModal", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("auto-focuses name input in fast mode", () => {
+  it("auto-focuses name input in normal mode", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
     vi.advanceTimersByTime(150);
     const input = screen.getByPlaceholderText("e.g. Copy To Clipboard");
     expect(document.activeElement).toBe(input);
   });
 
-  it("shows branch hint in fast mode", () => {
+  it("shows branch hint in normal mode", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
     expect(
       screen.getByText("Branch name will be derived from the session name"),
     ).toBeInTheDocument();
   });
 
-  it("disables create button when name is empty in fast mode", () => {
+  it("disables create button when name is empty in normal mode", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
     const createBtn = screen.getByText("Create Session");
     expect(createBtn.hasAttribute("disabled")).toBe(true);
   });
 
-  it("enables create button when name has content in fast mode", () => {
+  it("enables create button when name has content in normal mode", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
     const input = screen.getByPlaceholderText("e.g. Copy To Clipboard");
     fireEvent.change(input, { target: { value: "My Session" } });
@@ -136,78 +143,16 @@ describe("CreateSessionModal", () => {
     expect(createBtn.hasAttribute("disabled")).toBe(false);
   });
 
-  it("submits session name on Enter in fast mode", () => {
+  it("submits a normal-mode session on Enter", () => {
     renderWithQuery(<CreateSessionModal {...defaultProps} />);
     const input = screen.getByPlaceholderText("e.g. Copy To Clipboard");
     fireEvent.change(input, { target: { value: "My Session" } });
     fireEvent.keyDown(input, { key: "Enter" });
 
     expect(mutateMock).toHaveBeenCalledWith(
-      { mode: "fast", sessionName: "My Session", tddEnabled: true },
+      { mode: "normal", sessionName: "My Session", tddEnabled: true },
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
-  });
-
-  it("switches to focus mode and shows objective textarea", () => {
-    renderWithQuery(<CreateSessionModal {...defaultProps} />);
-    switchToFocusMode();
-    expect(
-      screen.getByText("What do you want to work on?"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByPlaceholderText(
-        "e.g. Add user authentication with JWT tokens",
-      ),
-    ).toBeInTheDocument();
-  });
-
-  it("auto-focuses textarea in focus mode", () => {
-    renderWithQuery(<CreateSessionModal {...defaultProps} />);
-    switchToFocusMode();
-    vi.advanceTimersByTime(150);
-    const textarea = screen.getByPlaceholderText(
-      "e.g. Add user authentication with JWT tokens",
-    );
-    expect(document.activeElement).toBe(textarea);
-  });
-
-  it("enables create button when objective has content in focus mode", () => {
-    renderWithQuery(<CreateSessionModal {...defaultProps} />);
-    switchToFocusMode();
-    const textarea = screen.getByPlaceholderText(
-      "e.g. Add user authentication with JWT tokens",
-    );
-    fireEvent.change(textarea, { target: { value: "Add auth" } });
-    const createBtn = screen.getByText("Create Session");
-    expect(createBtn.hasAttribute("disabled")).toBe(false);
-  });
-
-  it("submits objective on Enter key in focus mode", () => {
-    renderWithQuery(<CreateSessionModal {...defaultProps} />);
-    switchToFocusMode();
-    const textarea = screen.getByPlaceholderText(
-      "e.g. Add user authentication with JWT tokens",
-    );
-    fireEvent.change(textarea, {
-      target: { value: "Add user authentication" },
-    });
-    fireEvent.keyDown(textarea, { key: "Enter" });
-
-    expect(mutateMock).toHaveBeenCalledWith(
-      { mode: "focus", objective: "Add user authentication", tddEnabled: true },
-      expect.objectContaining({ onSuccess: expect.any(Function) }),
-    );
-  });
-
-  it("allows multiline with Shift+Enter in focus mode", () => {
-    renderWithQuery(<CreateSessionModal {...defaultProps} />);
-    switchToFocusMode();
-    const textarea = screen.getByPlaceholderText(
-      "e.g. Add user authentication with JWT tokens",
-    );
-    fireEvent.change(textarea, { target: { value: "line 1" } });
-    fireEvent.keyDown(textarea, { key: "Enter", shiftKey: true });
-    expect(mutateMock).not.toHaveBeenCalled();
   });
 
   it("calls onClose on Escape key press", () => {
@@ -225,105 +170,6 @@ describe("CreateSessionModal", () => {
     fireEvent.pointerDown(document.body);
     fireEvent.click(document.body);
     expect(defaultProps.onClose).not.toHaveBeenCalled();
-  });
-
-  describe("stop-and-submit gesture (Enter while recording)", () => {
-    /**
-     * Helper: build a useVoiceRecorder mock whose `isRecording` flips to false
-     * when `toggleRecording` is invoked, mirroring real recorder behavior so
-     * that downstream re-renders see the updated state.
-     */
-    function installRecordingMock(): {
-      capturedOnResult: () => ((text: string) => void) | undefined;
-      toggleRecording: ReturnType<typeof vi.fn>;
-    } {
-      let onResult: ((text: string) => void) | undefined;
-      let recording = true;
-      const toggleRecording = vi.fn(() => {
-        recording = false;
-      });
-      vi.mocked(useVoiceRecorder).mockImplementation(((opts: {
-        onResult: (text: string) => void;
-      }) => {
-        onResult = opts.onResult;
-        return {
-          isRecording: recording,
-          isProcessing: false,
-          elapsedTime: 0,
-          isAvailable: true,
-          toggleRecording,
-          stopRecording: vi.fn(),
-        };
-      }) as typeof useVoiceRecorder);
-      return { capturedOnResult: () => onResult, toggleRecording };
-    }
-
-    afterEach(() => {
-      // Restore the default mock so subsequent tests don't inherit isRecording: true
-      vi.mocked(useVoiceRecorder).mockImplementation(() => ({
-        isRecording: false,
-        isProcessing: false,
-        elapsedTime: 0,
-        isAvailable: false,
-        toggleRecording: vi.fn(),
-        stopRecording: vi.fn(),
-      }));
-    });
-
-    it("auto-creates session when Enter is pressed while recording in focus mode", () => {
-      const { capturedOnResult, toggleRecording } = installRecordingMock();
-
-      renderWithQuery(<CreateSessionModal {...defaultProps} />);
-      switchToFocusMode();
-
-      const textarea = screen.getByPlaceholderText(
-        "e.g. Add user authentication with JWT tokens",
-      );
-      act(() => {
-        fireEvent.keyDown(textarea, { key: "Enter" });
-      });
-
-      expect(toggleRecording).toHaveBeenCalledTimes(1);
-      expect(mutateMock).not.toHaveBeenCalled();
-
-      const onResult = capturedOnResult();
-      expect(onResult).toBeDefined();
-      act(() => {
-        onResult!("Add user authentication");
-      });
-
-      expect(mutateMock).toHaveBeenCalledWith(
-        {
-          mode: "focus",
-          objective: "Add user authentication",
-          tddEnabled: true,
-        },
-        expect.objectContaining({ onSuccess: expect.any(Function) }),
-      );
-    });
-
-    it("Alt+V to stop recording does NOT auto-create the session (only Enter does)", () => {
-      const { capturedOnResult } = installRecordingMock();
-
-      vi.mocked(useAppHotkey).mockClear();
-
-      renderWithQuery(<CreateSessionModal {...defaultProps} />);
-      switchToFocusMode();
-
-      const vtCall = vi
-        .mocked(useAppHotkey)
-        .mock.calls.find(([id]) => id === "voiceToggle");
-      expect(vtCall).toBeDefined();
-      act(() => {
-        vtCall![1]({} as KeyboardEvent);
-      });
-
-      act(() => {
-        capturedOnResult()!("Add user authentication");
-      });
-
-      expect(mutateMock).not.toHaveBeenCalled();
-    });
   });
 
   describe("optimistic mode", () => {
@@ -400,6 +246,17 @@ describe("CreateSessionModal", () => {
       );
     });
 
+    it("allows multiline with Shift+Enter in optimistic mode", () => {
+      renderWithQuery(<CreateSessionModal {...defaultProps} />);
+      switchToOptimisticMode();
+      const textarea = screen.getByPlaceholderText(
+        "e.g. Fix the typo in the login page header",
+      );
+      fireEvent.change(textarea, { target: { value: "line 1" } });
+      fireEvent.keyDown(textarea, { key: "Enter", shiftKey: true });
+      expect(mutateMock).not.toHaveBeenCalled();
+    });
+
     it("closes dialog without navigation after successful optimistic creation", () => {
       renderWithQuery(<CreateSessionModal {...defaultProps} />);
       switchToOptimisticMode();
@@ -422,6 +279,105 @@ describe("CreateSessionModal", () => {
       expect(defaultProps.onClose).toHaveBeenCalled();
     });
 
+    describe("stop-and-submit gesture (Enter while recording)", () => {
+      /**
+       * Helper: build a useVoiceRecorder mock whose `isRecording` flips to false
+       * when `toggleRecording` is invoked, mirroring real recorder behavior so
+       * that downstream re-renders see the updated state.
+       */
+      function installRecordingMock(): {
+        capturedOnResult: () => ((text: string) => void) | undefined;
+        toggleRecording: ReturnType<typeof vi.fn>;
+      } {
+        let onResult: ((text: string) => void) | undefined;
+        let recording = true;
+        const toggleRecording = vi.fn(() => {
+          recording = false;
+        });
+        vi.mocked(useVoiceRecorder).mockImplementation(((opts: {
+          onResult: (text: string) => void;
+        }) => {
+          onResult = opts.onResult;
+          return {
+            isRecording: recording,
+            isProcessing: false,
+            elapsedTime: 0,
+            isAvailable: true,
+            toggleRecording,
+            stopRecording: vi.fn(),
+          };
+        }) as typeof useVoiceRecorder);
+        return { capturedOnResult: () => onResult, toggleRecording };
+      }
+
+      afterEach(() => {
+        // Restore the default mock so subsequent tests don't inherit isRecording: true
+        vi.mocked(useVoiceRecorder).mockImplementation(() => ({
+          isRecording: false,
+          isProcessing: false,
+          elapsedTime: 0,
+          isAvailable: false,
+          toggleRecording: vi.fn(),
+          stopRecording: vi.fn(),
+        }));
+      });
+
+      it("auto-creates session when Enter is pressed while recording in optimistic mode", () => {
+        const { capturedOnResult, toggleRecording } = installRecordingMock();
+
+        renderWithQuery(<CreateSessionModal {...defaultProps} />);
+        switchToOptimisticMode();
+
+        const textarea = screen.getByPlaceholderText(
+          "e.g. Fix the typo in the login page header",
+        );
+        act(() => {
+          fireEvent.keyDown(textarea, { key: "Enter" });
+        });
+
+        expect(toggleRecording).toHaveBeenCalledTimes(1);
+        expect(mutateMock).not.toHaveBeenCalled();
+
+        const onResult = capturedOnResult();
+        expect(onResult).toBeDefined();
+        act(() => {
+          onResult!("Fix the login bug");
+        });
+
+        expect(mutateMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            mode: "optimistic",
+            instructions: "Fix the login bug",
+            tddEnabled: true,
+          }),
+          expect.objectContaining({ onSuccess: expect.any(Function) }),
+        );
+      });
+
+      it("Alt+V to stop recording does NOT auto-create the session (only Enter does)", () => {
+        const { capturedOnResult } = installRecordingMock();
+
+        vi.mocked(useAppHotkey).mockClear();
+
+        renderWithQuery(<CreateSessionModal {...defaultProps} />);
+        switchToOptimisticMode();
+
+        const vtCall = vi
+          .mocked(useAppHotkey)
+          .mock.calls.find(([id]) => id === "voiceToggle");
+        expect(vtCall).toBeDefined();
+        act(() => {
+          vtCall![1]({} as KeyboardEvent);
+        });
+
+        act(() => {
+          capturedOnResult()!("Fix the login bug");
+        });
+
+        expect(mutateMock).not.toHaveBeenCalled();
+      });
+    });
+
     describe("image support", () => {
       it("renders attach image button in optimistic mode", () => {
         renderWithQuery(<CreateSessionModal {...defaultProps} />);
@@ -429,14 +385,8 @@ describe("CreateSessionModal", () => {
         expect(screen.getByTitle("Attach image")).toBeInTheDocument();
       });
 
-      it("does NOT render attach image button in fast mode", () => {
+      it("does NOT render attach image button in normal mode", () => {
         renderWithQuery(<CreateSessionModal {...defaultProps} />);
-        expect(screen.queryByTitle("Attach image")).toBeNull();
-      });
-
-      it("does NOT render attach image button in focus mode", () => {
-        renderWithQuery(<CreateSessionModal {...defaultProps} />);
-        switchToFocusMode();
         expect(screen.queryByTitle("Attach image")).toBeNull();
       });
 

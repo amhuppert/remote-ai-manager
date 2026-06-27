@@ -49,7 +49,7 @@ describe("chat-spawning usable without the cockpit UI", () => {
         {
           name: "alpha",
           agent: "claude",
-          mode: "fast",
+          mode: "normal",
           initialPrompt: "go",
         },
       ],

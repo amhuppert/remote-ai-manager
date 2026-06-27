@@ -3,6 +3,7 @@ import { z } from "zod";
 export const parsedConversationCommandSchema = z.discriminatedUnion("command", [
   z.object({ command: z.literal("commit"), hint: z.string() }),
   z.object({ command: z.literal("merge"), hint: z.string() }),
+  z.object({ command: z.literal("align"), hint: z.string() }),
 ]);
 
 export type ParsedConversationCommand = z.infer<

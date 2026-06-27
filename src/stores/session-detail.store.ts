@@ -11,7 +11,7 @@ import type { LayoutMode } from "@/lib/sessions/schemas";
 // ---------------------------------------------------------------------------
 
 type MobilePanel = "chat" | "diff" | "docs" | "specs" | "info";
-type RightPaneTab = "diff" | "docs" | "specs";
+type RightPaneTab = "diff" | "docs" | "specs" | "alignment";
 
 interface SidebarSessionFilter {
   projectName: string;

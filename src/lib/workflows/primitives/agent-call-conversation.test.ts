@@ -63,6 +63,7 @@ function makeStubRuntime(opts: StubRuntimeOptions = {}): {
     modelId: undefined,
     reasoningEffort: undefined,
     outputFormat: undefined,
+    alignmentVersion: null,
     async sendTurn(input) {
       sendTurnCalls.value += 1;
       captured.value = input;
@@ -309,6 +310,7 @@ describe("dispatchConversationTurn", () => {
       modelId: undefined,
       reasoningEffort: undefined,
       outputFormat: undefined,
+      alignmentVersion: null,
       async sendTurn() {
         throw new Error("network down");
       },

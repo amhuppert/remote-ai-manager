@@ -64,6 +64,7 @@ function projectConversation(id: string): ConversationState {
     agentBackend: "claude",
     backendRef: null,
     unread: false,
+    lastSeenAlignmentVersion: null,
     pendingQueue: [],
   };
 }
@@ -111,12 +112,12 @@ function stateWithAllScopes(): ManagerState {
                 agentBackend: "claude",
                 backendRef: null,
                 unread: false,
+                lastSeenAlignmentVersion: null,
                 pendingQueue: [],
               },
             ],
             source: "cc",
-            objective: null,
-            creationMode: "fast",
+            creationMode: "normal",
             tddEnabled: true,
             targetBranch: "main",
             parentSessionName: null,

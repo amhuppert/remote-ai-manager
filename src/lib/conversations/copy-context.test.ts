@@ -37,6 +37,7 @@ function makeConversation(overrides: Record<string, unknown> = {}) {
     backendRef: null,
     unread: false,
     pendingQueue: [],
+    lastSeenAlignmentVersion: null,
     ...overrides,
   };
 }
@@ -52,8 +53,7 @@ function makeSession(overrides: Record<string, unknown> = {}): SessionState {
     finished: false,
     conversations: [makeConversation()],
     source: "cc",
-    objective: null,
-    creationMode: "fast",
+    creationMode: "normal",
     tddEnabled: true,
     targetBranch: "main",
     parentSessionName: null,
@@ -260,7 +260,7 @@ describe("buildSessionContext", () => {
     expect(result).toContain("<conversation-count>1</conversation-count>");
     expect(result).toContain("<total-prompts>3</total-prompts>");
     expect(result).toContain("<source>cc</source>");
-    expect(result).toContain("<creation-mode>fast</creation-mode>");
+    expect(result).toContain("<creation-mode>normal</creation-mode>");
     expect(result).toContain("<finished>false</finished>");
   });
 
@@ -415,7 +415,7 @@ describe("buildConversationContext", () => {
     expect(result).toContain("<total-turns>5</total-turns>");
     expect(result).toContain("<source>cc</source>");
     expect(result).toContain("<session-source>cc</session-source>");
-    expect(result).toContain("<creation-mode>fast</creation-mode>");
+    expect(result).toContain("<creation-mode>normal</creation-mode>");
   });
 
   it("wraps output in xml code block", () => {

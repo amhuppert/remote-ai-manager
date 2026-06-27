@@ -44,6 +44,7 @@ function makeConvo(
     backendRef: null,
     unread: false,
     pendingQueue: [],
+    lastSeenAlignmentVersion: null,
     ...overrides,
   };
 }
@@ -59,8 +60,7 @@ function makeSession(conversations: ConversationState[]): SessionState {
     finished: false,
     conversations,
     source: "cc",
-    objective: null,
-    creationMode: "fast",
+    creationMode: "normal",
     tddEnabled: true,
     targetBranch: "main",
     parentSessionName: null,

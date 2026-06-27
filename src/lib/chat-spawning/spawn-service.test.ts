@@ -46,7 +46,7 @@ function proposed(overrides: Partial<ProposedSession>): ProposedSession {
     name: "alpha",
     target: "main",
     agent: "claude",
-    mode: "fast",
+    mode: "normal",
     ...overrides,
   };
 }
@@ -293,51 +293,32 @@ describe("createSpawnSessionCreator (New-Session parity mapping)", () => {
     };
   }
 
-  it("honors the proposed name, target, and mode (fast) and omits an explicit branch", async () => {
+  it("honors the proposed name, target, and mode (normal) and omits an explicit branch and any objective", async () => {
     const deps = makeCreatorDeps();
     const createSession = createSpawnSessionCreator(deps);
     await createSession({
       projectPath: "/repo",
       proposed: proposed({
         name: "alpha",
-        mode: "fast",
+        mode: "normal",
         target: "develop",
       }),
       baseBranch: COMMITTED_HEAD,
     });
     // No `branch`: createSpawnedSession derives it from the name, exactly as the
-    // New Session dialog does.
+    // New Session dialog does. No `objective`: the field is gone from the
+    // two-mode contract.
     expect(deps.createSpawnedSession).toHaveBeenCalledWith("/repo", {
       name: "alpha",
       targetBranch: "develop",
-      mode: "fast",
+      mode: "normal",
       baseBranch: COMMITTED_HEAD,
-      objective: null,
     });
+    const input = vi.mocked(deps.createSpawnedSession).mock.calls[0]![1];
+    expect(input).not.toHaveProperty("objective");
   });
 
-  it("seeds the focus objective from the initial prompt (or name) without an explicit branch", async () => {
-    const deps = makeCreatorDeps();
-    const createSession = createSpawnSessionCreator(deps);
-    await createSession({
-      projectPath: "/repo",
-      proposed: proposed({
-        name: "alpha",
-        mode: "focus",
-        initialPrompt: "the objective",
-      }),
-      baseBranch: COMMITTED_HEAD,
-    });
-    expect(deps.createSpawnedSession).toHaveBeenCalledWith("/repo", {
-      name: "alpha",
-      targetBranch: "main",
-      mode: "focus",
-      baseBranch: COMMITTED_HEAD,
-      objective: "the objective",
-    });
-  });
-
-  it("maps optimistic without firing an auto-run (objective seeded from the prompt)", async () => {
+  it("maps optimistic without firing an auto-run and never sets an objective", async () => {
     const deps = makeCreatorDeps();
     const createSession = createSpawnSessionCreator(deps);
     await createSession({
@@ -354,7 +335,8 @@ describe("createSpawnSessionCreator (New-Session parity mapping)", () => {
       targetBranch: "main",
       mode: "optimistic",
       baseBranch: COMMITTED_HEAD,
-      objective: "do the work",
     });
+    const input = vi.mocked(deps.createSpawnedSession).mock.calls[0]![1];
+    expect(input).not.toHaveProperty("objective");
   });
 });

@@ -10,6 +10,9 @@ import LayoutSwitcher from "@/features/session/conversation/LayoutSwitcher";
 import DevServersButton from "@/features/session/conversation/DevServersButton";
 import SessionActionsMenu from "@/features/session/conversation/SessionActionsMenu";
 import InfoDetailsPopover from "@/features/session/conversation/InfoDetailsPopover";
+import AlignmentChip from "@/features/session/conversation/AlignmentChip";
+import { deriveAlignmentChipState } from "@/features/session/conversation/alignment-chip-state";
+import { useAlignmentStateQuery } from "@/lib/session-alignment/queries";
 import CopyableId from "@/components/CopyableId";
 import { deriveSessionPromptCount } from "@/lib/sessions/derived";
 import { shortenWorktreePath } from "@/lib/sessions/worktree-path";
@@ -61,6 +64,10 @@ interface SessionInfoStripProps {
 
   targetBranch: string;
   onDelete: () => void;
+
+  /** Invoked when the alignment chip's add affordance (the `none` state) is
+   *  activated. Connecting this to the `/align` flow is completed in task 7.4. */
+  onActivateAlignment?: () => void;
 }
 
 function SessionInfoStrip({
@@ -92,9 +99,19 @@ function SessionInfoStrip({
   dsIsStoppingUnmanaged = false,
   targetBranch,
   onDelete,
+  onActivateAlignment,
 }: SessionInfoStripProps): React.JSX.Element {
   const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
   const statusKey = statusDotClass.replace("status-dot-", "");
+
+  const { data: alignmentState } = useAlignmentStateQuery(
+    projectName,
+    sessionName,
+  );
+  const alignmentChipState = deriveAlignmentChipState(
+    alignmentState,
+    activeConversation?.lastSeenAlignmentVersion ?? null,
+  );
 
   const copyContext = useCallback((): boolean => {
     const text = buildContext();
@@ -138,6 +155,12 @@ function SessionInfoStrip({
           onChange={onTddChange}
           disabled={tddDisabled}
           compact
+        />
+        <span className="inline-block h-4 w-px shrink-0 bg-border-default" />
+        <AlignmentChip
+          state={alignmentChipState}
+          activeVersion={alignmentState?.active?.version ?? null}
+          onActivate={onActivateAlignment}
         />
         <div className="ml-auto inline-flex shrink-0 items-center gap-sm">
           <DevServersButton
