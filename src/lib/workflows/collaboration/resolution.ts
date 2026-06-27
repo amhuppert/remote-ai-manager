@@ -36,6 +36,7 @@ import {
   trackArtifact,
   type ArtifactTracker,
 } from "./helpers";
+import { validateGeneratedArtifactFiles } from "./artifact-files";
 
 export interface RunProposedChangesStepContext {
   input: AsymmetricCollaborationSliceInput;
@@ -45,6 +46,7 @@ export interface RunProposedChangesStepContext {
   backendForAgent: (agent: CollaborationFlowAgent) => CollaborationAgent;
   agentOneDraft: CollaborationInitialDraftOutput;
   agentTwoDraft: CollaborationInitialDraftOutput;
+  round: number;
 }
 
 export type RunProposedChangesStepOutcome =
@@ -65,12 +67,15 @@ export async function runProposedChangesStep(
     backendForAgent,
     agentOneDraft,
     agentTwoDraft,
+    round,
   } = ctx;
 
   const proposedChangesPrompt = buildAgentOneProposedChangesPrompt({
     userPrompt: input.brief,
     ownDraft: agentOneDraft,
     otherDraft: agentTwoDraft,
+    workflowId: input.workflowId,
+    round,
   });
   const proposedChangesCall = await callPrimitive({
     input,
@@ -108,6 +113,24 @@ export async function runProposedChangesStep(
         tracker,
         flowAgent: "agent_one",
         errorSummary: proposedChanges.error,
+      }),
+    };
+  }
+  const validation = await validateGeneratedArtifactFiles({
+    worktreePath: input.worktreePath,
+    workflowId: input.workflowId,
+    artifact: proposedChanges.value,
+  });
+  if (!validation.success) {
+    return {
+      kind: "failed",
+      result: await failRun({
+        input,
+        deps,
+        now,
+        tracker,
+        flowAgent: "agent_one",
+        errorSummary: `proposed_changes (agent_one) artifact_files: ${validation.error}`,
       }),
     };
   }
@@ -160,6 +183,7 @@ export async function runResolutionDecisionStep(
     proposedChanges,
     latestCounterProposal: counterProposal,
     negotiationRound: round,
+    workflowId: input.workflowId,
   });
   const resolutionCall = await callPrimitive({
     input,
@@ -197,6 +221,24 @@ export async function runResolutionDecisionStep(
         tracker,
         flowAgent: "agent_one",
         errorSummary: resolution.error,
+      }),
+    };
+  }
+  const validation = await validateGeneratedArtifactFiles({
+    worktreePath: input.worktreePath,
+    workflowId: input.workflowId,
+    artifact: resolution.value,
+  });
+  if (!validation.success) {
+    return {
+      kind: "failed",
+      result: await failRun({
+        input,
+        deps,
+        now,
+        tracker,
+        flowAgent: "agent_one",
+        errorSummary: `resolution_decision (agent_one) artifact_files: ${validation.error}`,
       }),
     };
   }

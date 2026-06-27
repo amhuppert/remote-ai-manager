@@ -35,10 +35,10 @@ function fromInitialDraftFixture(
   return {
     agent: backend,
     isPrimary,
-    narrative: fixture.narrative,
-    supporting: fixture.supporting,
+    summary: fixture.summary,
+    artifacts: fixture.artifacts,
     assumptions: fixture.assumptions,
-    keyClaims: fixture.keyClaims,
+    key_claims: fixture.key_claims,
   };
 }
 
@@ -53,9 +53,9 @@ export const CodexSecondaryFromFixture = {
 export const NoOptionalSectionsFromFixture = {
   args: fromInitialDraftFixture(
     makeAgentOneInitialDraft({
-      supporting: [],
+      artifacts: [],
       assumptions: [],
-      keyClaims: [],
+      key_claims: [],
     }),
     "claude",
     true,

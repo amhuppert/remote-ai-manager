@@ -28,6 +28,7 @@ import {
   trackArtifact,
   type ArtifactTracker,
 } from "./helpers";
+import { validateGeneratedArtifactFiles } from "./artifact-files";
 
 export interface RunCrossReviewPhaseContext {
   input: AsymmetricCollaborationSliceInput;
@@ -63,6 +64,8 @@ export async function runCrossReviewPhase(
     userPrompt: input.brief,
     ownDraft: agentTwoDraft,
     otherDraft: agentOneDraft,
+    workflowId: input.workflowId,
+    round: 0,
   });
   const crossReviewCall = await callPrimitive({
     input,
@@ -100,6 +103,24 @@ export async function runCrossReviewPhase(
         tracker,
         flowAgent: "agent_two",
         errorSummary: crossReview.error,
+      }),
+    };
+  }
+  const validation = await validateGeneratedArtifactFiles({
+    worktreePath: input.worktreePath,
+    workflowId: input.workflowId,
+    artifact: crossReview.value,
+  });
+  if (!validation.success) {
+    return {
+      kind: "failed",
+      result: await failRun({
+        input,
+        deps,
+        now,
+        tracker,
+        flowAgent: "agent_two",
+        errorSummary: `cross_review (agent_two) artifact_files: ${validation.error}`,
       }),
     };
   }

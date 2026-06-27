@@ -55,7 +55,7 @@ const TWO_QUESTION_FIXTURE = makeOpenConflicts({
       id: "Q-2",
       question:
         "Are we OK with a brief cache miss spike from the warm-up sweep?",
-      relatedDisagreementIds: ["D-impl-1"],
+      related_disagreement_ids: ["D-impl-1"],
     }),
   ],
 });

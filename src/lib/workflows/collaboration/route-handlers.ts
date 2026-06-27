@@ -238,6 +238,10 @@ export interface CollaborationRouteHandlers {
     request: Request,
     context: ArtifactRouteContext,
   ): Promise<Response>;
+  GET_ARTIFACT_FILE(
+    request: Request,
+    context: WorkflowRouteContext,
+  ): Promise<Response>;
   RESUME(request: Request, context: WorkflowRouteContext): Promise<Response>;
   STOP(request: Request, context: WorkflowRouteContext): Promise<Response>;
 }
@@ -268,6 +272,41 @@ function isSafeArtifactWorkflowId(value: string): boolean {
     !value.includes("\\") &&
     !value.includes("\0")
   );
+}
+
+function validateGeneratedArtifactRelativePath(input: {
+  workflowId: string;
+  relativePath: string;
+}): string | null {
+  const relativePath = input.relativePath;
+  if (relativePath.length === 0) return "Artifact path is required";
+  if (relativePath.length > 512) return "Artifact path is too long";
+  if (relativePath.includes("\0")) return "Artifact path is invalid";
+  if (path.posix.isAbsolute(relativePath)) {
+    return "Artifact path must be relative";
+  }
+  if (relativePath.includes("\\")) {
+    return "Artifact path must use POSIX separators";
+  }
+  if (path.posix.normalize(relativePath) !== relativePath) {
+    return "Artifact path must not contain traversal segments";
+  }
+  if (!relativePath.endsWith(".md")) {
+    return "Artifact path must end with .md";
+  }
+
+  const expectedPrefix = path.posix.join(
+    "memory-bank",
+    "collaboration",
+    input.workflowId,
+  );
+  if (
+    relativePath !== expectedPrefix &&
+    !relativePath.startsWith(`${expectedPrefix}/`)
+  ) {
+    return "Artifact path is outside this collaboration run";
+  }
+  return null;
 }
 
 export function createCollaborationRouteHandlers(
@@ -564,6 +603,75 @@ export function createCollaborationRouteHandlers(
       }
     },
 
+    async GET_ARTIFACT_FILE(request, context) {
+      const workflowResolution = await resolveWorkflowParams(context, deps);
+      if ("error" in workflowResolution) return workflowResolution.error;
+
+      if (!isSafeArtifactWorkflowId(workflowResolution.workflowId)) {
+        return NextResponse.json(
+          {
+            error: "Invalid collaboration workflow ID",
+          } satisfies ApiError,
+          { status: 400 },
+        );
+      }
+
+      const url = new URL(request.url);
+      const relativePath = url.searchParams.get("path") ?? "";
+      const pathError = validateGeneratedArtifactRelativePath({
+        workflowId: workflowResolution.workflowId,
+        relativePath,
+      });
+      if (pathError) {
+        return NextResponse.json({ error: pathError } satisfies ApiError, {
+          status: 400,
+        });
+      }
+
+      const sessionState = await deps.getSession(
+        workflowResolution.projectPath,
+        workflowResolution.sessionName,
+      );
+      if (!sessionState) {
+        return NextResponse.json(
+          { error: "Session not found" } satisfies ApiError,
+          { status: 404 },
+        );
+      }
+
+      const absolutePath = path.join(sessionState.worktreePath, relativePath);
+      try {
+        const content = await deps.readArtifactFile(absolutePath);
+        return new NextResponse(content, {
+          status: 200,
+          headers: {
+            "content-type": "text/markdown; charset=utf-8",
+            "cache-control": "no-store",
+          },
+        });
+      } catch (err) {
+        if (
+          err instanceof Error &&
+          "code" in err &&
+          (err as NodeJS.ErrnoException).code === "ENOENT"
+        ) {
+          return NextResponse.json(
+            { error: "Artifact not found" } satisfies ApiError,
+            { status: 404 },
+          );
+        }
+        logger.error("collaboration.route.artifact_file_read_failed", {
+          workflowId: workflowResolution.workflowId,
+          relativePath,
+          error: getErrorMessage(err),
+        });
+        return NextResponse.json(
+          { error: "Failed to read artifact file" } satisfies ApiError,
+          { status: 500 },
+        );
+      }
+    },
+
     async RESUME(request, context) {
       const workflowResolution = await resolveWorkflowParams(context, deps);
       if ("error" in workflowResolution) return workflowResolution.error;
@@ -694,6 +802,9 @@ export const getCollaborationDetail = withTracing(
 );
 export const getCollaborationArtifact = withTracing(
   defaultCollaborationHandlers.GET_ARTIFACT,
+);
+export const getCollaborationArtifactFile = withTracing(
+  defaultCollaborationHandlers.GET_ARTIFACT_FILE,
 );
 export const resumeCollaboration = withTracing(
   defaultCollaborationHandlers.RESUME,

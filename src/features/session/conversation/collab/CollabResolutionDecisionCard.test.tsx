@@ -5,11 +5,11 @@ import CollabResolutionDecisionCard from "@/features/session/conversation/collab
 
 const BASE_PROPS = {
   agent: "claude" as const,
-  agreementReached: false,
-  acceptedPoints: [],
-  resolvedDisagreements: [],
-  remainingDisagreements: [],
-  userQuestions: [],
+  agreement_reached: false,
+  accepted_points: [],
+  resolved_disagreements: [],
+  remaining_disagreements: [],
+  user_questions: [],
   rationale: "rationale",
 };
 
@@ -20,7 +20,7 @@ describe("CollabResolutionDecisionCard", () => {
         {...BASE_PROPS}
         defaultOpen
         round={1}
-        nextAction="continue_negotiation"
+        next_action="continue_negotiation"
         trajectory={[3]}
       />,
     );
@@ -37,7 +37,7 @@ describe("CollabResolutionDecisionCard", () => {
         {...BASE_PROPS}
         defaultOpen
         round={2}
-        nextAction="ask_user"
+        next_action="ask_user"
         trajectory={[3, 1]}
       />,
     );
@@ -53,7 +53,7 @@ describe("CollabResolutionDecisionCard", () => {
       <CollabResolutionDecisionCard
         {...BASE_PROPS}
         round={3}
-        nextAction="final"
+        next_action="final"
         trajectory={[3, 1, 0]}
       />,
     );
@@ -66,7 +66,7 @@ describe("CollabResolutionDecisionCard", () => {
       <CollabResolutionDecisionCard
         {...BASE_PROPS}
         round={3}
-        nextAction="fail"
+        next_action="fail"
         trajectory={[4, 4, 3]}
       />,
     );

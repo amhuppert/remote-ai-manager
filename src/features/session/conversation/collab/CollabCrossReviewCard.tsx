@@ -4,30 +4,29 @@ import type {
   CollaborationAgent,
   CollaborationArtifactAgreement,
   CollaborationArtifactDisagreement,
+  CollaborationGeneratedArtifact,
   CollaborationReference,
   CollaborationReviseSelfArtifact,
 } from "@/lib/workflows/collaboration/types";
+import CollabArtifactRefs from "@/features/session/conversation/collab/CollabArtifactRefs";
 import CollabClaimsList from "@/features/session/conversation/collab/CollabClaimsList";
 import CollabCollapsibleCard from "@/features/session/conversation/collab/CollabCollapsibleCard";
 import CollabMarkdownText from "@/features/session/conversation/collab/CollabMarkdownText";
 import {
   cardAgent,
   cardEyebrow,
-  cardList,
   cardNarrative,
-  cardSection,
-  cardSectionTitle,
   cardSummary,
 } from "@/features/session/conversation/collab/card-chrome";
 
 export interface CollabCrossReviewCardProps {
   reviewerAgent: CollaborationAgent;
   targetAgent: CollaborationAgent;
-  narrative: string;
-  supporting: string[];
+  summary: string;
+  artifacts: CollaborationGeneratedArtifact[];
   agree: CollaborationArtifactAgreement[];
   disagree: CollaborationArtifactDisagreement[];
-  reviseSelf: CollaborationReviseSelfArtifact[];
+  revise_self: CollaborationReviseSelfArtifact[];
   defaultOpen?: boolean;
   onRefClick?: (ref: CollaborationReference) => void;
 }
@@ -40,18 +39,18 @@ const AGENT_LABEL: Record<CollaborationAgent, string> = {
 export default function CollabCrossReviewCard({
   reviewerAgent,
   targetAgent,
-  narrative,
-  supporting,
+  summary,
+  artifacts,
   agree,
   disagree,
-  reviseSelf,
+  revise_self,
   defaultOpen,
   onRefClick,
 }: CollabCrossReviewCardProps): React.JSX.Element {
-  const summary = [
+  const headerSummary = [
     `${agree.length} agree`,
     `${disagree.length} disagree`,
-    reviseSelf.length > 0 ? `${reviseSelf.length} revise` : null,
+    revise_self.length > 0 ? `${revise_self.length} revise` : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -70,29 +69,20 @@ export default function CollabCrossReviewCard({
           <span className={cardEyebrow}>
             Review of {AGENT_LABEL[targetAgent]}&rsquo;s draft
           </span>
-          <span className={cardSummary}>{summary}</span>
+          <span className={cardSummary}>{headerSummary}</span>
         </>
       }
     >
-      <CollabMarkdownText content={narrative} className={cardNarrative} />
+      <CollabMarkdownText content={summary} className={cardNarrative} />
 
       <CollabClaimsList
         agree={agree}
         disagree={disagree}
-        reviseSelf={reviseSelf}
+        reviseSelf={revise_self}
         onRefClick={onRefClick}
       />
 
-      {supporting.length > 0 ? (
-        <section className={cardSection}>
-          <h4 className={cardSectionTitle}>Evidence ({supporting.length})</h4>
-          <ul className={cardList}>
-            {supporting.map((item, idx) => (
-              <li key={`supporting-${idx}`}>{item}</li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
+      <CollabArtifactRefs artifacts={artifacts} />
     </CollabCollapsibleCard>
   );
 }

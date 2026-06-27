@@ -15,6 +15,7 @@ import { z } from "zod";
 export {
   type CollaborationArtifactAgreement,
   type CollaborationArtifactDisagreement,
+  type CollaborationAgentArtifactPhase,
   collaborationArtifactSchema,
   type CollaborationArtifact,
   collaborationAutonomousResolutionThresholdSchema,
@@ -29,6 +30,9 @@ export {
   collaborationFinalAnswerOutputSchema,
   type CollaborationFinalAnswerOutput,
   type CollaborationFlowAgent,
+  collaborationGeneratedArtifactSchema,
+  type CollaborationGeneratedArtifact,
+  type CollaborationGeneratedArtifactType,
   collaborationInitialDraftOutputSchema,
   type CollaborationInitialDraftOutput,
   collaborationOpenConflictsOutputSchema,
@@ -47,6 +51,38 @@ export {
 const collaborationAgentSchema = z.enum(["claude", "codex"]);
 export type CollaborationAgent = z.infer<typeof collaborationAgentSchema>;
 
+const SHORT_TEXT_DESCRIPTION =
+  "Short plain-text field only. Do not include full prose, markdown tables, code blocks, XML/HTML, or generated file contents. Put substantive content in the generated artifact files.";
+
+const SHORT_STRING_JSON_SCHEMA = {
+  type: "string",
+  minLength: 1,
+  maxLength: 500,
+  description: SHORT_TEXT_DESCRIPTION,
+} as const;
+
+const SHORT_ID_JSON_SCHEMA = {
+  type: "string",
+  minLength: 1,
+  maxLength: 80,
+  description: "Short stable identifier.",
+} as const;
+
+const ARTIFACT_PATH_JSON_SCHEMA = {
+  type: "string",
+  minLength: 1,
+  maxLength: 512,
+  description:
+    "Relative POSIX markdown path under memory-bank/collaboration/<workflowId>/; never include file contents.",
+} as const;
+
+const SUMMARY_JSON_SCHEMA = {
+  type: "string",
+  minLength: 1,
+  maxLength: 500,
+  description: SHORT_TEXT_DESCRIPTION,
+} as const;
+
 const REFERENCE_JSON_SCHEMA = {
   anyOf: [
     {
@@ -54,7 +90,7 @@ const REFERENCE_JSON_SCHEMA = {
       additionalProperties: false,
       required: ["artifact"],
       properties: {
-        artifact: { type: "string", minLength: 1 },
+        artifact: ARTIFACT_PATH_JSON_SCHEMA,
       },
     },
     {
@@ -62,8 +98,13 @@ const REFERENCE_JSON_SCHEMA = {
       additionalProperties: false,
       required: ["artifact", "locator"],
       properties: {
-        artifact: { type: "string", minLength: 1 },
-        locator: { type: "string", minLength: 1 },
+        artifact: ARTIFACT_PATH_JSON_SCHEMA,
+        locator: {
+          type: "string",
+          minLength: 1,
+          maxLength: 120,
+          description: "Short locator within the referenced artifact.",
+        },
       },
     },
   ],
@@ -76,8 +117,8 @@ const AGREEMENT_JSON_SCHEMA = {
       additionalProperties: false,
       required: ["id", "claim"],
       properties: {
-        id: { type: "string", minLength: 1 },
-        claim: { type: "string", minLength: 1 },
+        id: SHORT_ID_JSON_SCHEMA,
+        claim: SHORT_STRING_JSON_SCHEMA,
       },
     },
     {
@@ -85,8 +126,8 @@ const AGREEMENT_JSON_SCHEMA = {
       additionalProperties: false,
       required: ["id", "claim", "ref"],
       properties: {
-        id: { type: "string", minLength: 1 },
-        claim: { type: "string", minLength: 1 },
+        id: SHORT_ID_JSON_SCHEMA,
+        claim: SHORT_STRING_JSON_SCHEMA,
         ref: REFERENCE_JSON_SCHEMA,
       },
     },
@@ -94,11 +135,20 @@ const AGREEMENT_JSON_SCHEMA = {
 } as const;
 
 const DISAGREEMENT_BASE_PROPERTIES = {
-  id: { type: "string", minLength: 1 },
-  category: { type: "string", enum: ["objective", "implementation"] },
-  severity: { type: "string", enum: ["minor", "major", "blocking"] },
-  claim: { type: "string", minLength: 1 },
-  reason: { type: "string", minLength: 1 },
+  id: SHORT_ID_JSON_SCHEMA,
+  category: {
+    type: "string",
+    enum: ["objective", "implementation"],
+    description:
+      "Whether the disagreement is about the user's objective or implementation details.",
+  },
+  severity: {
+    type: "string",
+    enum: ["minor", "major", "blocking"],
+    description: "Severity used by collaboration policy.",
+  },
+  claim: SHORT_STRING_JSON_SCHEMA,
+  reason: SHORT_STRING_JSON_SCHEMA,
 } as const;
 
 const DISAGREEMENT_JSON_SCHEMA = {
@@ -118,11 +168,11 @@ const DISAGREEMENT_JSON_SCHEMA = {
         "severity",
         "claim",
         "reason",
-        "proposedResolution",
+        "proposed_resolution",
       ],
       properties: {
         ...DISAGREEMENT_BASE_PROPERTIES,
-        proposedResolution: { type: "string", minLength: 1 },
+        proposed_resolution: SHORT_STRING_JSON_SCHEMA,
       },
     },
     {
@@ -143,12 +193,12 @@ const DISAGREEMENT_JSON_SCHEMA = {
         "severity",
         "claim",
         "reason",
-        "proposedResolution",
+        "proposed_resolution",
         "ref",
       ],
       properties: {
         ...DISAGREEMENT_BASE_PROPERTIES,
-        proposedResolution: { type: "string", minLength: 1 },
+        proposed_resolution: SHORT_STRING_JSON_SCHEMA,
         ref: REFERENCE_JSON_SCHEMA,
       },
     },
@@ -160,22 +210,23 @@ const REVISE_SELF_JSON_SCHEMA = {
   additionalProperties: false,
   required: ["change", "because"],
   properties: {
-    change: { type: "string", minLength: 1 },
-    because: { type: "string", minLength: 1 },
+    change: SHORT_STRING_JSON_SCHEMA,
+    because: SHORT_STRING_JSON_SCHEMA,
   },
 } as const;
 
 const CHANGE_PROPOSAL_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["id", "change", "rationale", "addressesDisagreementIds"],
+  required: ["id", "change", "rationale", "addresses_disagreement_ids"],
   properties: {
-    id: { type: "string", minLength: 1 },
-    change: { type: "string", minLength: 1 },
-    rationale: { type: "string", minLength: 1 },
-    addressesDisagreementIds: {
+    id: SHORT_ID_JSON_SCHEMA,
+    change: SHORT_STRING_JSON_SCHEMA,
+    rationale: SHORT_STRING_JSON_SCHEMA,
+    addresses_disagreement_ids: {
       type: "array",
-      items: { type: "string", minLength: 1 },
+      maxItems: 20,
+      items: SHORT_ID_JSON_SCHEMA,
     },
   },
 } as const;
@@ -183,13 +234,14 @@ const CHANGE_PROPOSAL_JSON_SCHEMA = {
 const USER_QUESTION_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["id", "question", "relatedDisagreementIds"],
+  required: ["id", "question", "related_disagreement_ids"],
   properties: {
-    id: { type: "string", minLength: 1 },
-    question: { type: "string", minLength: 1 },
-    relatedDisagreementIds: {
+    id: SHORT_ID_JSON_SCHEMA,
+    question: SHORT_STRING_JSON_SCHEMA,
+    related_disagreement_ids: {
       type: "array",
-      items: { type: "string", minLength: 1 },
+      maxItems: 20,
+      items: SHORT_ID_JSON_SCHEMA,
     },
   },
 } as const;
@@ -198,16 +250,16 @@ const RESOLVED_DISAGREEMENT_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: [
-    "disagreementId",
+    "disagreement_id",
     "resolution",
-    "resolvedAutonomously",
+    "resolved_autonomously",
     "rationale",
   ],
   properties: {
-    disagreementId: { type: "string", minLength: 1 },
-    resolution: { type: "string", minLength: 1 },
-    resolvedAutonomously: { type: "boolean" },
-    rationale: { type: "string", minLength: 1 },
+    disagreement_id: SHORT_ID_JSON_SCHEMA,
+    resolution: SHORT_STRING_JSON_SCHEMA,
+    resolved_autonomously: { type: "boolean" },
+    rationale: SHORT_STRING_JSON_SCHEMA,
   },
 } as const;
 
@@ -216,9 +268,69 @@ const FLOW_AGENT_JSON_SCHEMA = {
   enum: ["agent_one", "agent_two"],
 } as const;
 
-const STRING_LIST_JSON_SCHEMA = {
+const SHORT_ID_LIST_JSON_SCHEMA = {
   type: "array",
-  items: { type: "string", minLength: 1 },
+  maxItems: 20,
+  items: SHORT_ID_JSON_SCHEMA,
+} as const;
+
+const AGENT_ARTIFACT_PHASE_JSON_SCHEMA = {
+  type: "string",
+  enum: [
+    "initial_draft",
+    "cross_review",
+    "proposed_changes",
+    "counter_proposal",
+    "resolution_decision",
+    "final_answer",
+  ],
+} as const;
+
+const GENERATED_ARTIFACT_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "id",
+    "artifact_type",
+    "path",
+    "round",
+    "agent",
+    "phase",
+    "summary",
+  ],
+  properties: {
+    id: {
+      ...SHORT_ID_JSON_SCHEMA,
+      pattern: "^[a-z][a-z0-9_]*$",
+    },
+    artifact_type: {
+      type: "string",
+      enum: ["main_response", "audit", "supporting"],
+      description:
+        "Type of generated markdown file. main_response contains the substantive phase response.",
+    },
+    path: ARTIFACT_PATH_JSON_SCHEMA,
+    round: {
+      type: "integer",
+      minimum: 0,
+      description: "Collaboration round that generated this file.",
+    },
+    agent: FLOW_AGENT_JSON_SCHEMA,
+    phase: AGENT_ARTIFACT_PHASE_JSON_SCHEMA,
+    summary: {
+      type: "string",
+      minLength: 1,
+      maxLength: 300,
+      description: SHORT_TEXT_DESCRIPTION,
+    },
+  },
+} as const;
+
+const GENERATED_ARTIFACT_LIST_JSON_SCHEMA = {
+  type: "array",
+  minItems: 1,
+  maxItems: 5,
+  items: GENERATED_ARTIFACT_JSON_SCHEMA,
 } as const;
 
 export const COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA = {
@@ -227,20 +339,28 @@ export const COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA = {
   required: [
     "kind",
     "agent",
-    "narrative",
-    "report",
-    "supporting",
+    "round",
+    "summary",
+    "artifacts",
     "assumptions",
-    "keyClaims",
+    "key_claims",
   ],
   properties: {
     kind: { type: "string", enum: ["initial_draft"] },
     agent: FLOW_AGENT_JSON_SCHEMA,
-    narrative: { type: "string", minLength: 1 },
-    report: { type: "string", minLength: 1 },
-    supporting: STRING_LIST_JSON_SCHEMA,
-    assumptions: STRING_LIST_JSON_SCHEMA,
-    keyClaims: { type: "array", items: AGREEMENT_JSON_SCHEMA },
+    round: { type: "integer", minimum: 0 },
+    summary: SUMMARY_JSON_SCHEMA,
+    artifacts: GENERATED_ARTIFACT_LIST_JSON_SCHEMA,
+    assumptions: {
+      type: "array",
+      maxItems: 10,
+      items: SHORT_STRING_JSON_SCHEMA,
+    },
+    key_claims: {
+      type: "array",
+      maxItems: 20,
+      items: AGREEMENT_JSON_SCHEMA,
+    },
   },
 } as const;
 
@@ -250,24 +370,32 @@ export const COLLABORATION_CROSS_REVIEW_OUTPUT_SCHEMA = {
   required: [
     "kind",
     "agent",
-    "targetAgent",
-    "narrative",
-    "report",
-    "supporting",
+    "target_agent",
+    "round",
+    "summary",
+    "artifacts",
     "agree",
     "disagree",
-    "reviseSelf",
+    "revise_self",
   ],
   properties: {
     kind: { type: "string", enum: ["cross_review"] },
     agent: FLOW_AGENT_JSON_SCHEMA,
-    targetAgent: FLOW_AGENT_JSON_SCHEMA,
-    narrative: { type: "string", minLength: 1 },
-    report: { type: "string", minLength: 1 },
-    supporting: STRING_LIST_JSON_SCHEMA,
-    agree: { type: "array", items: AGREEMENT_JSON_SCHEMA },
-    disagree: { type: "array", items: DISAGREEMENT_JSON_SCHEMA },
-    reviseSelf: { type: "array", items: REVISE_SELF_JSON_SCHEMA },
+    target_agent: FLOW_AGENT_JSON_SCHEMA,
+    round: { type: "integer", minimum: 0 },
+    summary: SUMMARY_JSON_SCHEMA,
+    artifacts: GENERATED_ARTIFACT_LIST_JSON_SCHEMA,
+    agree: { type: "array", maxItems: 20, items: AGREEMENT_JSON_SCHEMA },
+    disagree: {
+      type: "array",
+      maxItems: 20,
+      items: DISAGREEMENT_JSON_SCHEMA,
+    },
+    revise_self: {
+      type: "array",
+      maxItems: 20,
+      items: REVISE_SELF_JSON_SCHEMA,
+    },
   },
 } as const;
 
@@ -277,30 +405,36 @@ export const COLLABORATION_PROPOSED_CHANGES_OUTPUT_SCHEMA = {
   required: [
     "kind",
     "agent",
-    "targetAgent",
-    "narrative",
-    "acceptedFromAgentTwoDraft",
-    "proposedChanges",
-    "remainingDisagreements",
-    "report",
-    "supporting",
+    "target_agent",
+    "round",
+    "summary",
+    "artifacts",
+    "accepted_from_other_agent_draft",
+    "proposed_changes",
+    "remaining_disagreements",
   ],
   properties: {
     kind: { type: "string", enum: ["proposed_changes"] },
     agent: { type: "string", enum: ["agent_one"] },
-    targetAgent: { type: "string", enum: ["agent_two"] },
-    narrative: { type: "string", minLength: 1 },
-    acceptedFromAgentTwoDraft: {
+    target_agent: { type: "string", enum: ["agent_two"] },
+    round: { type: "integer", minimum: 0 },
+    summary: SUMMARY_JSON_SCHEMA,
+    artifacts: GENERATED_ARTIFACT_LIST_JSON_SCHEMA,
+    accepted_from_other_agent_draft: {
       type: "array",
+      maxItems: 20,
       items: AGREEMENT_JSON_SCHEMA,
     },
-    proposedChanges: { type: "array", items: CHANGE_PROPOSAL_JSON_SCHEMA },
-    remainingDisagreements: {
+    proposed_changes: {
       type: "array",
+      maxItems: 20,
+      items: CHANGE_PROPOSAL_JSON_SCHEMA,
+    },
+    remaining_disagreements: {
+      type: "array",
+      maxItems: 20,
       items: DISAGREEMENT_JSON_SCHEMA,
     },
-    report: { type: "string", minLength: 1 },
-    supporting: STRING_LIST_JSON_SCHEMA,
   },
 } as const;
 
@@ -310,26 +444,36 @@ export const COLLABORATION_COUNTER_PROPOSAL_OUTPUT_SCHEMA = {
   required: [
     "kind",
     "agent",
-    "narrative",
-    "acceptedProposedChangeIds",
-    "rejectedProposedChangeIds",
-    "alternativeChanges",
+    "target_agent",
+    "round",
+    "summary",
+    "artifacts",
+    "accepted_change_ids",
+    "rejected_change_ids",
+    "alternative_changes",
     "agree",
     "disagree",
-    "report",
-    "supporting",
   ],
   properties: {
     kind: { type: "string", enum: ["counter_proposal"] },
     agent: { type: "string", enum: ["agent_two"] },
-    narrative: { type: "string", minLength: 1 },
-    acceptedProposedChangeIds: STRING_LIST_JSON_SCHEMA,
-    rejectedProposedChangeIds: STRING_LIST_JSON_SCHEMA,
-    alternativeChanges: { type: "array", items: CHANGE_PROPOSAL_JSON_SCHEMA },
-    agree: { type: "array", items: AGREEMENT_JSON_SCHEMA },
-    disagree: { type: "array", items: DISAGREEMENT_JSON_SCHEMA },
-    report: { type: "string", minLength: 1 },
-    supporting: STRING_LIST_JSON_SCHEMA,
+    target_agent: { type: "string", enum: ["agent_one"] },
+    round: { type: "integer", minimum: 0 },
+    summary: SUMMARY_JSON_SCHEMA,
+    artifacts: GENERATED_ARTIFACT_LIST_JSON_SCHEMA,
+    accepted_change_ids: SHORT_ID_LIST_JSON_SCHEMA,
+    rejected_change_ids: SHORT_ID_LIST_JSON_SCHEMA,
+    alternative_changes: {
+      type: "array",
+      maxItems: 20,
+      items: CHANGE_PROPOSAL_JSON_SCHEMA,
+    },
+    agree: { type: "array", maxItems: 20, items: AGREEMENT_JSON_SCHEMA },
+    disagree: {
+      type: "array",
+      maxItems: 20,
+      items: DISAGREEMENT_JSON_SCHEMA,
+    },
   },
 } as const;
 
@@ -339,45 +483,73 @@ export const COLLABORATION_RESOLUTION_DECISION_OUTPUT_SCHEMA = {
   required: [
     "kind",
     "agent",
-    "agreementReached",
-    "nextAction",
-    "acceptedPoints",
-    "resolvedDisagreements",
-    "remainingDisagreements",
-    "userQuestions",
+    "target_agent",
+    "round",
+    "summary",
+    "artifacts",
+    "agreement_reached",
+    "next_action",
+    "accepted_points",
+    "resolved_disagreements",
+    "remaining_disagreements",
+    "user_questions",
     "rationale",
   ],
   properties: {
     kind: { type: "string", enum: ["resolution_decision"] },
     agent: { type: "string", enum: ["agent_one"] },
-    agreementReached: { type: "boolean" },
-    nextAction: {
+    target_agent: { type: "string", enum: ["agent_two"] },
+    round: { type: "integer", minimum: 0 },
+    summary: SUMMARY_JSON_SCHEMA,
+    artifacts: GENERATED_ARTIFACT_LIST_JSON_SCHEMA,
+    agreement_reached: { type: "boolean" },
+    next_action: {
       type: "string",
       enum: ["final", "continue_negotiation", "ask_user", "fail"],
     },
-    acceptedPoints: { type: "array", items: AGREEMENT_JSON_SCHEMA },
-    resolvedDisagreements: {
+    accepted_points: {
       type: "array",
+      maxItems: 20,
+      items: AGREEMENT_JSON_SCHEMA,
+    },
+    resolved_disagreements: {
+      type: "array",
+      maxItems: 20,
       items: RESOLVED_DISAGREEMENT_JSON_SCHEMA,
     },
-    remainingDisagreements: {
+    remaining_disagreements: {
       type: "array",
+      maxItems: 20,
       items: DISAGREEMENT_JSON_SCHEMA,
     },
-    userQuestions: { type: "array", items: USER_QUESTION_JSON_SCHEMA },
-    rationale: { type: "string", minLength: 1 },
+    user_questions: {
+      type: "array",
+      maxItems: 5,
+      items: USER_QUESTION_JSON_SCHEMA,
+    },
+    rationale: SHORT_STRING_JSON_SCHEMA,
   },
 } as const;
 
 export const COLLABORATION_FINAL_ANSWER_OUTPUT_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["kind", "agent", "answer", "report", "supporting"],
+  required: [
+    "kind",
+    "agent",
+    "round",
+    "summary",
+    "artifacts",
+    "answer_artifact_id",
+    "audit_artifact_id",
+  ],
   properties: {
     kind: { type: "string", enum: ["final_answer"] },
     agent: { type: "string", enum: ["agent_one"] },
-    answer: { type: "string", minLength: 1 },
-    report: { type: "string", minLength: 1 },
-    supporting: STRING_LIST_JSON_SCHEMA,
+    round: { type: "integer", minimum: 0 },
+    summary: SUMMARY_JSON_SCHEMA,
+    artifacts: GENERATED_ARTIFACT_LIST_JSON_SCHEMA,
+    answer_artifact_id: { type: "string", enum: ["answer"] },
+    audit_artifact_id: { type: "string", enum: ["audit"] },
   },
 } as const;

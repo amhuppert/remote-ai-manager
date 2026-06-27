@@ -100,7 +100,7 @@ export const NegotiatingTwoRoundsContinuing = {
       makeAgentOneProposedChanges(),
       makeAgentTwoCounterProposalRound1(),
       makeResolutionDecisionContinue(),
-      makeAgentOneProposedChanges({ narrative: "Round 2 proposal" }),
+      makeAgentOneProposedChanges({ round: 2, summary: "Round 2 proposal" }),
       makeAgentTwoCounterProposalRound2(),
     ],
   },

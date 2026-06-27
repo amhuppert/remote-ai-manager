@@ -82,6 +82,8 @@ export function useCollabRowRenderer({
       <div ref={setCollabRowEl} data-collab-row="true">
         <CollabPassage
           {...collabPassageProps}
+          projectName={projectName}
+          sessionName={sessionName}
           onStop={handleCollabStop}
           hideInlinePhaseStrip={isCollabRunning}
           pinnedTopTarget={collabPinnedTopTarget}

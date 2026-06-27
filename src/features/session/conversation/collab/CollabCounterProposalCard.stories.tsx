@@ -35,21 +35,21 @@ function fromCounterProposalFixture(
   return {
     fromAgent: fromBackend,
     round,
-    narrative: fixture.narrative,
-    acceptedProposedChangeIds: fixture.acceptedProposedChangeIds,
-    rejectedProposedChangeIds: fixture.rejectedProposedChangeIds,
-    alternativeChanges: fixture.alternativeChanges,
+    summary: fixture.summary,
+    artifacts: fixture.artifacts,
+    accepted_change_ids: fixture.accepted_change_ids,
+    rejected_change_ids: fixture.rejected_change_ids,
+    alternative_changes: fixture.alternative_changes,
     agree: fixture.agree,
     disagree: fixture.disagree,
-    supporting: fixture.supporting,
   };
 }
 
 export const Round1CodexFromFixture = {
   args: fromCounterProposalFixture(
     makeAgentTwoCounterProposalRound1({
-      acceptedProposedChangeIds: ["PC-1"],
-      rejectedProposedChangeIds: ["PC-2"],
+      accepted_change_ids: ["PC-1"],
+      rejected_change_ids: ["PC-2"],
     }),
     "codex",
     1,

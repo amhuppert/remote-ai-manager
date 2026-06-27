@@ -247,7 +247,7 @@ describe("envelopeToCollabPassageProps", () => {
       makeAgentOneProposedChanges(),
       makeAgentTwoCounterProposalRound1(),
       makeResolutionDecisionContinue(),
-      makeAgentOneProposedChanges({ narrative: "R2 proposed" }),
+      makeAgentOneProposedChanges({ round: 2, summary: "R2 proposed" }),
       makeAgentTwoCounterProposalRound2(),
       makeResolutionDecisionFinal(),
       makeFinalAnswer(),

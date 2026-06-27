@@ -1,9 +1,9 @@
 /**
  * Phase 1 of the asymmetric Collaboration slice: parallel initial drafts.
  *
- * Agent One and Agent Two each emit an `initial_draft` against the user prompt
- * in parallel. Each call is `read_only`, so the lane scheduler bypasses the
- * per-session write lock and the two requests overlap.
+ * Agent One and Agent Two each emit an `initial_draft` against the user prompt.
+ * Each call writes generated markdown artifacts under the session worktree, so
+ * calls use the write-capable lane path.
  *
  * Both outcomes are processed before deciding to fail: if one peer succeeds
  * and the other fails, the successful artifact is still tracked, registered,
@@ -33,6 +33,7 @@ import {
   trackArtifact,
   type ArtifactTracker,
 } from "./helpers";
+import { validateGeneratedArtifactFiles } from "./artifact-files";
 
 export interface RunInitialDraftsPhaseContext {
   input: AsymmetricCollaborationSliceInput;
@@ -60,15 +61,13 @@ export async function runInitialDraftsPhase(
 
   const agentOneInitialPrompt = buildAgentOneInitialDraftPrompt({
     userPrompt: input.brief,
+    workflowId: input.workflowId,
   });
   const agentTwoInitialPrompt = buildAgentTwoInitialDraftPrompt({
     userPrompt: input.brief,
+    workflowId: input.workflowId,
   });
 
-  // Initial drafts are pure planning calls: each agent emits structured
-  // output (handled post-call by the artifact registry). They must run in
-  // parallel — `read_only` lets the lane scheduler skip the per-session
-  // write lock so both calls overlap.
   const [agentOneDraftCall, agentTwoDraftCall] = await Promise.all([
     callPrimitive({
       input,
@@ -76,7 +75,6 @@ export async function runInitialDraftsPhase(
       flowAgent: "agent_one",
       backend: backendForAgent("agent_one"),
       prompt: agentOneInitialPrompt,
-      writeCapability: "read_only",
     }),
     callPrimitive({
       input,
@@ -84,7 +82,6 @@ export async function runInitialDraftsPhase(
       flowAgent: "agent_two",
       backend: backendForAgent("agent_two"),
       prompt: agentTwoInitialPrompt,
-      writeCapability: "read_only",
     }),
   ]);
 
@@ -112,10 +109,46 @@ export async function runInitialDraftsPhase(
       : null;
 
   if (agentOneDraft && agentOneDraft.success) {
+    const validation = await validateGeneratedArtifactFiles({
+      worktreePath: input.worktreePath,
+      workflowId: input.workflowId,
+      artifact: agentOneDraft.value,
+    });
+    if (!validation.success) {
+      return {
+        kind: "failed",
+        result: await failRun({
+          input,
+          deps,
+          now,
+          tracker,
+          flowAgent: "agent_one",
+          errorSummary: `initial_draft (agent_one) artifact_files: ${validation.error}`,
+        }),
+      };
+    }
     await trackArtifact(tracker, agentOneDraft.value);
     await persistArtifactsSnapshot(input, deps, now, tracker);
   }
   if (agentTwoDraft && agentTwoDraft.success) {
+    const validation = await validateGeneratedArtifactFiles({
+      worktreePath: input.worktreePath,
+      workflowId: input.workflowId,
+      artifact: agentTwoDraft.value,
+    });
+    if (!validation.success) {
+      return {
+        kind: "failed",
+        result: await failRun({
+          input,
+          deps,
+          now,
+          tracker,
+          flowAgent: "agent_two",
+          errorSummary: `initial_draft (agent_two) artifact_files: ${validation.error}`,
+        }),
+      };
+    }
     await trackArtifact(tracker, agentTwoDraft.value);
     await persistArtifactsSnapshot(input, deps, now, tracker);
   }

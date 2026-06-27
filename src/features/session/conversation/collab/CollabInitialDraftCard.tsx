@@ -3,8 +3,10 @@
 import type {
   CollaborationAgent,
   CollaborationArtifactAgreement,
+  CollaborationGeneratedArtifact,
   CollaborationReference,
 } from "@/lib/workflows/collaboration/types";
+import CollabArtifactRefs from "@/features/session/conversation/collab/CollabArtifactRefs";
 import CollabCollapsibleCard from "@/features/session/conversation/collab/CollabCollapsibleCard";
 import CollabMarkdownText from "@/features/session/conversation/collab/CollabMarkdownText";
 import {
@@ -25,10 +27,10 @@ import {
 export interface CollabInitialDraftCardProps {
   agent: CollaborationAgent;
   isPrimary: boolean;
-  narrative: string;
-  supporting: string[];
+  summary: string;
+  artifacts: CollaborationGeneratedArtifact[];
   assumptions: string[];
-  keyClaims: CollaborationArtifactAgreement[];
+  key_claims: CollaborationArtifactAgreement[];
   defaultOpen?: boolean;
   onRefClick?: (ref: CollaborationReference) => void;
 }
@@ -45,15 +47,15 @@ function refLabel(ref: CollaborationReference): string {
 export default function CollabInitialDraftCard({
   agent,
   isPrimary,
-  narrative,
-  supporting,
+  summary,
+  artifacts,
   assumptions,
-  keyClaims,
+  key_claims,
   defaultOpen,
   onRefClick,
 }: CollabInitialDraftCardProps): React.JSX.Element {
-  const summary = [
-    `${keyClaims.length} ${keyClaims.length === 1 ? "claim" : "claims"}`,
+  const headerSummary = [
+    `${key_claims.length} ${key_claims.length === 1 ? "claim" : "claims"}`,
     `${assumptions.length} ${assumptions.length === 1 ? "assumption" : "assumptions"}`,
   ].join(" · ");
 
@@ -70,17 +72,17 @@ export default function CollabInitialDraftCard({
           </span>
           <span className={cardEyebrow}>Initial Draft</span>
           {isPrimary ? <span className={cardPrimaryFlag}>Primary</span> : null}
-          <span className={cardSummary}>{summary}</span>
+          <span className={cardSummary}>{headerSummary}</span>
         </>
       }
     >
-      <CollabMarkdownText content={narrative} className={cardNarrative} />
+      <CollabMarkdownText content={summary} className={cardNarrative} />
 
-      {keyClaims.length > 0 ? (
+      {key_claims.length > 0 ? (
         <section className={cardSection}>
-          <h4 className={cardSectionTitle}>Key claims ({keyClaims.length})</h4>
+          <h4 className={cardSectionTitle}>Key claims ({key_claims.length})</h4>
           <ul className={cardList}>
-            {keyClaims.map((claim) => (
+            {key_claims.map((claim) => (
               <li key={claim.id}>
                 {claim.claim}
                 {claim.ref ? (
@@ -121,16 +123,7 @@ export default function CollabInitialDraftCard({
         </section>
       ) : null}
 
-      {supporting.length > 0 ? (
-        <section className={cardSection}>
-          <h4 className={cardSectionTitle}>Evidence ({supporting.length})</h4>
-          <ul className={cardList}>
-            {supporting.map((item, idx) => (
-              <li key={`supporting-${idx}`}>{item}</li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
+      <CollabArtifactRefs artifacts={artifacts} />
     </CollabCollapsibleCard>
   );
 }

@@ -22,27 +22,27 @@ describe("artifact card swimlane-ready rendering", () => {
         <CollabInitialDraftCard
           agent="claude"
           isPrimary
-          narrative={claudeDraft.narrative}
-          supporting={claudeDraft.supporting}
+          summary={claudeDraft.summary}
+          artifacts={claudeDraft.artifacts}
           assumptions={claudeDraft.assumptions}
-          keyClaims={claudeDraft.keyClaims}
+          key_claims={claudeDraft.key_claims}
         />
         <CollabInitialDraftCard
           agent="codex"
           isPrimary={false}
-          narrative={codexDraft.narrative}
-          supporting={codexDraft.supporting}
+          summary={codexDraft.summary}
+          artifacts={codexDraft.artifacts}
           assumptions={codexDraft.assumptions}
-          keyClaims={codexDraft.keyClaims}
+          key_claims={codexDraft.key_claims}
         />
         <CollabCrossReviewCard
           reviewerAgent="codex"
           targetAgent="claude"
-          narrative={crossReview.narrative}
-          supporting={crossReview.supporting}
+          summary={crossReview.summary}
+          artifacts={crossReview.artifacts}
           agree={crossReview.agree}
           disagree={crossReview.disagree}
-          reviseSelf={crossReview.reviseSelf}
+          revise_self={crossReview.revise_self}
         />
       </div>,
     );
@@ -67,12 +67,12 @@ describe("artifact card swimlane-ready rendering", () => {
       <CollabResolutionDecisionCard
         agent="claude"
         round={3}
-        agreementReached={decision.agreementReached}
-        nextAction={decision.nextAction}
-        acceptedPoints={decision.acceptedPoints}
-        resolvedDisagreements={decision.resolvedDisagreements}
-        remainingDisagreements={decision.remainingDisagreements}
-        userQuestions={decision.userQuestions}
+        agreement_reached={decision.agreement_reached}
+        next_action={decision.next_action}
+        accepted_points={decision.accepted_points}
+        resolved_disagreements={decision.resolved_disagreements}
+        remaining_disagreements={decision.remaining_disagreements}
+        user_questions={decision.user_questions}
         rationale={decision.rationale}
         trajectory={[3, 1, 0]}
       />,

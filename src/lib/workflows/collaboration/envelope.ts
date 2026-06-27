@@ -70,6 +70,11 @@ import {
   trackArtifact,
   type ArtifactTracker,
 } from "./helpers";
+import {
+  findGeneratedArtifactRef,
+  readGeneratedArtifactFile,
+  validateGeneratedArtifactFiles,
+} from "./artifact-files";
 import { runInitialDraftsPhase } from "./initial-draft";
 import { runCrossReviewPhase } from "./cross-review";
 import { runCounterProposalStep } from "./counter-proposal";
@@ -363,6 +368,7 @@ export async function runAsymmetricCollaborationSlice(
       backendForAgent,
       agentOneDraft,
       agentTwoDraft,
+      round,
     });
     if (proposedChangesOutcome.kind === "failed") {
       return proposedChangesOutcome.result;
@@ -379,6 +385,7 @@ export async function runAsymmetricCollaborationSlice(
       agentTwoDraft,
       crossReview,
       proposedChanges,
+      round,
     });
     if (counterProposalOutcome.kind === "failed") {
       return counterProposalOutcome.result;
@@ -418,7 +425,7 @@ export async function runAsymmetricCollaborationSlice(
       round,
       negotiationRoundsRemaining,
       policyKind: policyDecision.kind,
-      nextAction: resolution.nextAction,
+      nextAction: resolution.next_action,
     });
 
     if (policyDecision.kind === "continue_negotiation") {
@@ -452,7 +459,7 @@ export async function runAsymmetricCollaborationSlice(
       flowAgent: "agent_one",
       errorSummary:
         latestResolutionDecision.rationale ||
-        "agent_one returned nextAction=fail",
+        "agent_one returned next_action=fail",
     });
   }
 
@@ -480,6 +487,8 @@ export async function runAsymmetricCollaborationSlice(
     otherDraft: agentTwoDraft,
     latestCounterProposal: latestCounterProposal,
     latestResolutionDecision: latestResolutionDecision,
+    workflowId: input.workflowId,
+    round: roundsCompleted,
     artifactStream: [...tracker.artifacts],
     ...(latestOpenConflicts !== null
       ? { openConflicts: latestOpenConflicts }
@@ -517,6 +526,21 @@ export async function runAsymmetricCollaborationSlice(
       tracker,
       flowAgent: "agent_one",
       errorSummary: finalAnswer.error,
+    });
+  }
+  const finalAnswerValidation = await validateGeneratedArtifactFiles({
+    worktreePath: input.worktreePath,
+    workflowId: input.workflowId,
+    artifact: finalAnswer.value,
+  });
+  if (!finalAnswerValidation.success) {
+    return failRun({
+      input,
+      deps,
+      now,
+      tracker,
+      flowAgent: "agent_one",
+      errorSummary: `final_answer (agent_one) artifact_files: ${finalAnswerValidation.error}`,
     });
   }
 
@@ -882,8 +906,10 @@ async function pauseForUserInput(
   });
   const openConflicts: CollaborationOpenConflictsOutput = {
     kind: "open_conflicts",
-    disagreements: latestResolutionDecision.remainingDisagreements,
-    questions: latestResolutionDecision.userQuestions,
+    round: negotiationRoundsCompleted,
+    summary: "Collaboration requires user clarification.",
+    disagreements: latestResolutionDecision.remaining_disagreements,
+    questions: latestResolutionDecision.user_questions,
   };
   await trackArtifact(tracker, openConflicts);
   await updateEnvelope(input, deps, now, (existing) => {
@@ -953,17 +979,49 @@ export async function finalizeFinal(
     ctx;
   await trackArtifact(tracker, finalAnswer);
 
+  const answerRef = findGeneratedArtifactRef(
+    finalAnswer,
+    finalAnswer.answer_artifact_id,
+  );
+  if (!answerRef) {
+    return failRun({
+      input,
+      deps,
+      now,
+      tracker,
+      flowAgent: "agent_one",
+      errorSummary:
+        "final_answer (agent_one) artifact_files: missing answer artifact ref",
+    });
+  }
+
+  let finalAnswerText = "";
+  try {
+    finalAnswerText = await readGeneratedArtifactFile(
+      input.worktreePath,
+      answerRef,
+    );
+  } catch (err) {
+    return failRun({
+      input,
+      deps,
+      now,
+      tracker,
+      flowAgent: "agent_one",
+      errorSummary: `final_answer (agent_one) artifact_files: ${getErrorMessage(err)}`,
+    });
+  }
+
   // Transcript writeback runs first so the user-facing answer survives any
-  // downstream failure: `finalAnswer.report` and `supporting` are inline
-  // content (markdown the UI renders as the collapsed audit), not on-disk
-  // artifact paths. The artifact stream itself is the canonical record.
+  // downstream failure. The answer body lives in the generated markdown file;
+  // the structured artifact stores only the file reference.
   if (input.conversationId && deps.appendTranscriptEntry) {
     try {
       await deps.appendTranscriptEntry(input.conversationId, {
         timestamp: now(),
         type: "assistant",
         role: "assistant",
-        content: [{ type: "text", text: finalAnswer.answer }],
+        content: [{ type: "text", text: finalAnswerText }],
       });
     } catch (err) {
       logger.warn("collaboration.asymmetric.transcript_writeback_failed", {
@@ -1045,7 +1103,7 @@ export async function finalizeFinal(
 
   return {
     kind: "completed_final",
-    finalAnswerArtifactId: `${input.workflowId}-final-answer`,
+    finalAnswerArtifactId: `${input.workflowId}:final_answer:${finalAnswer.round}:answer`,
     negotiationRoundsCompleted,
   };
 }
@@ -1196,6 +1254,8 @@ async function runResumeFinalAnswer(
     otherDraft: agentTwoInitialDraft,
     latestCounterProposal,
     latestResolutionDecision,
+    workflowId: input.workflowId,
+    round: negotiationRoundsCompleted,
     artifactStream: [...tracker.artifacts],
     ...(latestOpenConflicts !== null
       ? { openConflicts: latestOpenConflicts }

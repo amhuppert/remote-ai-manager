@@ -1,26 +1,8 @@
 /**
  * Reusable typed fixtures for the asymmetric Collaboration Mode artifact
  * stream. Used by backend prompt/orchestrator tests and Storybook stories so
- * the same canonical objects exercise validation, prompt construction, and
- * UI rendering.
- *
- * Each canonical fixture is built by a factory that returns a fully populated
- * artifact and accepts shallow `Partial<>` overrides for tests that need to
- * tweak a single field. The shapes match the Zod schemas in
- * `src/lib/schemas.ts` (re-exported via `./types.ts`).
- *
- * The fixtures cover:
- *   1. Agent One initial draft
- *   2. Agent Two initial draft
- *   3. Agent Two cross-review of Agent One's draft
- *   4. Agent One proposed changes
- *   5. Agent Two counter-proposal (round 1)
- *   6. Agent Two counter-proposal (round 2 — for the stale-resolution
- *      regression test, where the counter-proposal differs from round 1's)
- *   7. Agent One resolution decisions: `final`, `continue_negotiation`,
- *      `ask_user`, `fail`
- *   8. Open conflicts (orchestrator-produced)
- *   9. Final answer with a collapsed-audit `report` path the UI links to
+ * the same canonical objects exercise validation, prompt construction, and UI
+ * rendering.
  */
 import type {
   CollaborationArtifactAgreement,
@@ -29,6 +11,7 @@ import type {
   CollaborationCounterProposalOutput,
   CollaborationCrossReviewOutput,
   CollaborationFinalAnswerOutput,
+  CollaborationGeneratedArtifact,
   CollaborationInitialDraftOutput,
   CollaborationOpenConflictsOutput,
   CollaborationProposedChangesOutput,
@@ -38,16 +21,47 @@ import type {
   CollaborationUserQuestion,
 } from "./types";
 
-const WORKFLOW_BASE = "memory-bank/collaboration/wf-fixture";
+const WORKFLOW_ID = "wf-fixture";
+const WORKFLOW_BASE = `memory-bank/collaboration/${WORKFLOW_ID}`;
 
-const reportPath = (segment: string): string =>
-  `${WORKFLOW_BASE}/${segment}.md`;
-const supportingPath = (segment: string, file: string): string =>
-  `${WORKFLOW_BASE}/${segment}/${file}`;
+type FixtureAgent = "agent_one" | "agent_two";
+type FixturePhase = CollaborationGeneratedArtifact["phase"];
 
-// ============================================================
-// Leaf fixtures: agreements, disagreements, change proposals.
-// ============================================================
+const artifactPath = (
+  round: number,
+  agent: FixtureAgent,
+  phase: FixturePhase,
+  file: string,
+): string => `${WORKFLOW_BASE}/round-${round}/${agent}/${phase}/${file}`;
+
+function generatedArtifact(
+  round: number,
+  agent: FixtureAgent,
+  phase: FixturePhase,
+  overrides: Partial<CollaborationGeneratedArtifact> = {},
+): CollaborationGeneratedArtifact {
+  const id = phase === "final_answer" ? "answer" : "main";
+  const file = phase === "final_answer" ? "answer.md" : "main.md";
+  return {
+    id,
+    artifact_type: "main_response",
+    path: artifactPath(round, agent, phase, file),
+    round,
+    agent,
+    phase,
+    summary: `Full ${phase} response.`,
+    ...overrides,
+  };
+}
+
+function finalAuditArtifact(round = 1): CollaborationGeneratedArtifact {
+  return generatedArtifact(round, "agent_one", "final_answer", {
+    id: "audit",
+    artifact_type: "audit",
+    path: artifactPath(round, "agent_one", "final_answer", "audit.md"),
+    summary: "Final answer audit.",
+  });
+}
 
 function makeAgreement(
   overrides: Partial<CollaborationArtifactAgreement> = {},
@@ -56,7 +70,7 @@ function makeAgreement(
     id: "A-1",
     claim: "Reuse the workflow envelope as the persistence boundary",
     ref: {
-      artifact: reportPath("initial/agent-one"),
+      artifact: artifactPath(0, "agent_one", "initial_draft", "main.md"),
       locator: "#persistence",
     },
     ...overrides,
@@ -72,9 +86,9 @@ export function makeImplementationDisagreement(
     severity: "major",
     claim: "Introduce a separate notification table",
     reason: "Adds operational overhead without solving a real problem",
-    proposedResolution: "Reuse the existing envelope-driven status bus",
+    proposed_resolution: "Reuse the existing envelope-driven status bus",
     ref: {
-      artifact: reportPath("cross-review/agent-two"),
+      artifact: artifactPath(0, "agent_two", "cross_review", "main.md"),
       locator: "#notification-table",
     },
     ...overrides,
@@ -127,7 +141,7 @@ function makeChangeProposal(
     id: "PC-1",
     change: "Use the workflow envelope store for progress snapshots",
     rationale: "Both UI and backend already consume it",
-    addressesDisagreementIds: ["D-impl-1"],
+    addresses_disagreement_ids: ["D-impl-1"],
     ...overrides,
   };
 }
@@ -148,7 +162,7 @@ export function makeUserQuestion(
   return {
     id: "Q-1",
     question: "Should the output be a design document or implementation plan?",
-    relatedDisagreementIds: ["D-obj-1"],
+    related_disagreement_ids: ["D-obj-1"],
     ...overrides,
   };
 }
@@ -157,43 +171,42 @@ export function makeResolvedDisagreement(
   overrides: Partial<CollaborationResolvedDisagreement> = {},
 ): CollaborationResolvedDisagreement {
   return {
-    disagreementId: "D-impl-1",
+    disagreement_id: "D-impl-1",
     resolution: "Use the envelope store with a separate snapshot view",
-    resolvedAutonomously: true,
+    resolved_autonomously: true,
     rationale:
       "Major implementation disagreement is within configured threshold",
     ...overrides,
   };
 }
 
-// ============================================================
-// Initial drafts (agents draft in parallel, see only the user prompt).
-// ============================================================
-
 export function makeAgentOneInitialDraft(
   overrides: Partial<CollaborationInitialDraftOutput> = {},
 ): CollaborationInitialDraftOutput {
+  const round = overrides.round ?? 0;
   return {
     kind: "initial_draft",
     agent: "agent_one",
-    narrative:
+    round,
+    summary:
       "Agent One proposes reusing the workflow envelope as the source of truth.",
-    report: reportPath("initial/agent-one"),
-    supporting: [supportingPath("initial/agent-one", "api-sketch.md")],
+    artifacts: overrides.artifacts ?? [
+      generatedArtifact(round, "agent_one", "initial_draft"),
+    ],
     assumptions: [
       "Synthesis remains in the conversation transcript.",
       "Pause/resume is driven by the existing envelope state.",
     ],
-    keyClaims: [
+    key_claims: [
       makeAgreement({
         id: "A-1",
         claim: "Reuse the workflow envelope for state",
       }),
       makeAgreement({
         id: "A-2",
-        claim: "Persist artifacts as ArtifactRegistry references",
+        claim: "Persist artifacts as generated markdown files",
         ref: {
-          artifact: reportPath("initial/agent-one"),
+          artifact: artifactPath(0, "agent_one", "initial_draft", "main.md"),
           locator: "#artifacts",
         },
       }),
@@ -205,23 +218,26 @@ export function makeAgentOneInitialDraft(
 export function makeAgentTwoInitialDraft(
   overrides: Partial<CollaborationInitialDraftOutput> = {},
 ): CollaborationInitialDraftOutput {
+  const round = overrides.round ?? 0;
   return {
     kind: "initial_draft",
     agent: "agent_two",
-    narrative:
+    round,
+    summary:
       "Agent Two proposes a dedicated notification table to track delivery.",
-    report: reportPath("initial/agent-two"),
-    supporting: [supportingPath("initial/agent-two", "schema.md")],
+    artifacts: overrides.artifacts ?? [
+      generatedArtifact(round, "agent_two", "initial_draft"),
+    ],
     assumptions: [
       "Notifications must survive process restarts.",
       "A new table simplifies query patterns for the UI.",
     ],
-    keyClaims: [
+    key_claims: [
       makeAgreement({
         id: "A-1",
         claim: "Persist run state for resumability",
         ref: {
-          artifact: reportPath("initial/agent-two"),
+          artifact: artifactPath(0, "agent_two", "initial_draft", "main.md"),
           locator: "#persistence",
         },
       }),
@@ -230,60 +246,55 @@ export function makeAgentTwoInitialDraft(
   };
 }
 
-// ============================================================
-// Cross-review: Agent Two reviews Agent One's draft.
-// (Agent One's symmetrical review is folded into proposed_changes.)
-// ============================================================
-
 export function makeAgentTwoCrossReview(
   overrides: Partial<CollaborationCrossReviewOutput> = {},
 ): CollaborationCrossReviewOutput {
+  const round = overrides.round ?? 0;
   return {
     kind: "cross_review",
     agent: "agent_two",
-    targetAgent: "agent_one",
-    narrative:
+    target_agent: "agent_one",
+    round,
+    summary:
       "Agent Two agrees with envelope reuse but flags the notification table tradeoff.",
-    report: reportPath("cross-review/agent-two"),
-    supporting: [
-      supportingPath("cross-review/agent-two", "table-pros-cons.md"),
+    artifacts: overrides.artifacts ?? [
+      generatedArtifact(round, "agent_two", "cross_review"),
     ],
     agree: [makeAgreement({ id: "A-1" })],
     disagree: [makeImplementationDisagreement()],
-    reviseSelf: [makeReviseSelf()],
+    revise_self: [makeReviseSelf()],
     ...overrides,
   };
 }
 
-// ============================================================
-// Negotiation: Agent One -> proposed_changes, Agent Two -> counter_proposal.
-// ============================================================
-
 export function makeAgentOneProposedChanges(
   overrides: Partial<CollaborationProposedChangesOutput> = {},
 ): CollaborationProposedChangesOutput {
+  const round = overrides.round ?? 1;
   return {
     kind: "proposed_changes",
     agent: "agent_one",
-    targetAgent: "agent_two",
-    narrative:
+    target_agent: "agent_two",
+    round,
+    summary:
       "Agent One incorporates Agent Two's review and proposes envelope-based snapshots.",
-    acceptedFromAgentTwoDraft: [
+    artifacts: overrides.artifacts ?? [
+      generatedArtifact(round, "agent_one", "proposed_changes"),
+    ],
+    accepted_from_other_agent_draft: [
       makeAgreement({
         id: "A-2-from-two",
         claim: "Persist run state for resumability",
       }),
     ],
-    proposedChanges: [
+    proposed_changes: [
       makeChangeProposal({
         id: "PC-1",
         change: "Use the envelope store for progress snapshots",
-        addressesDisagreementIds: ["D-impl-1"],
+        addresses_disagreement_ids: ["D-impl-1"],
       }),
     ],
-    remainingDisagreements: [makeImplementationDisagreement()],
-    report: reportPath("negotiation-1/proposed"),
-    supporting: [supportingPath("negotiation-1", "envelope-snapshot-plan.md")],
+    remaining_disagreements: [makeImplementationDisagreement()],
     ...overrides,
   };
 }
@@ -291,26 +302,30 @@ export function makeAgentOneProposedChanges(
 export function makeAgentTwoCounterProposalRound1(
   overrides: Partial<CollaborationCounterProposalOutput> = {},
 ): CollaborationCounterProposalOutput {
+  const round = overrides.round ?? 1;
   return {
     kind: "counter_proposal",
     agent: "agent_two",
-    narrative:
+    target_agent: "agent_one",
+    round,
+    summary:
       "Agent Two accepts the envelope snapshot but pushes back on collapsing notifications.",
-    acceptedProposedChangeIds: ["PC-1"],
-    rejectedProposedChangeIds: [],
-    alternativeChanges: [
+    artifacts: overrides.artifacts ?? [
+      generatedArtifact(round, "agent_two", "counter_proposal"),
+    ],
+    accepted_change_ids: ["PC-1"],
+    rejected_change_ids: [],
+    alternative_changes: [
       makeChangeProposal({
         id: "AC-1",
         change: "Materialize an envelope-derived notification view",
         rationale:
           "Keeps single source of truth without losing query ergonomics",
-        addressesDisagreementIds: ["D-impl-1"],
+        addresses_disagreement_ids: ["D-impl-1"],
       }),
     ],
     agree: [makeAgreement({ id: "A-1" })],
     disagree: [makeImplementationDisagreement()],
-    report: reportPath("negotiation-1/counter"),
-    supporting: [supportingPath("negotiation-1", "view-shape.md")],
     ...overrides,
   };
 }
@@ -318,54 +333,62 @@ export function makeAgentTwoCounterProposalRound1(
 export function makeAgentTwoCounterProposalRound2(
   overrides: Partial<CollaborationCounterProposalOutput> = {},
 ): CollaborationCounterProposalOutput {
+  const round = overrides.round ?? 2;
   return {
     kind: "counter_proposal",
     agent: "agent_two",
-    narrative:
+    target_agent: "agent_one",
+    round,
+    summary:
       "Round 2: Agent Two drops the implementation disagreement and surfaces an objective scope concern.",
-    acceptedProposedChangeIds: ["PC-1", "PC-2"],
-    rejectedProposedChangeIds: [],
-    alternativeChanges: [],
+    artifacts: overrides.artifacts ?? [
+      generatedArtifact(round, "agent_two", "counter_proposal"),
+    ],
+    accepted_change_ids: ["PC-1", "PC-2"],
+    rejected_change_ids: [],
+    alternative_changes: [],
     agree: [
       makeAgreement({ id: "A-1" }),
       makeAgreement({
         id: "A-3",
         claim: "Envelope-derived view is acceptable",
         ref: {
-          artifact: reportPath("negotiation-2/counter"),
+          artifact: artifactPath(2, "agent_two", "counter_proposal", "main.md"),
           locator: "#view",
         },
       }),
     ],
     disagree: [makeObjectiveDisagreement()],
-    report: reportPath("negotiation-2/counter"),
-    supporting: [supportingPath("negotiation-2", "scope-question.md")],
     ...overrides,
   };
 }
 
-// ============================================================
-// Resolution decisions (Agent One only, one per nextAction value).
-// ============================================================
-
 export function makeResolutionDecisionFinal(
   overrides: Partial<CollaborationResolutionDecisionOutput> = {},
 ): CollaborationResolutionDecisionOutput {
+  const round = overrides.round ?? 1;
   return {
     kind: "resolution_decision",
     agent: "agent_one",
-    agreementReached: true,
-    nextAction: "final",
-    acceptedPoints: [makeAgreement({ id: "A-1" })],
-    resolvedDisagreements: [
+    target_agent: "agent_two",
+    round,
+    summary:
+      "All disagreements are resolved within the configured autonomous threshold.",
+    artifacts: overrides.artifacts ?? [
+      generatedArtifact(round, "agent_one", "resolution_decision"),
+    ],
+    agreement_reached: true,
+    next_action: "final",
+    accepted_points: [makeAgreement({ id: "A-1" })],
+    resolved_disagreements: [
       makeResolvedDisagreement({
-        disagreementId: "D-impl-1",
+        disagreement_id: "D-impl-1",
         resolution: "Adopt envelope-derived notification view (AC-1)",
-        resolvedAutonomously: true,
+        resolved_autonomously: true,
       }),
     ],
-    remainingDisagreements: [],
-    userQuestions: [],
+    remaining_disagreements: [],
+    user_questions: [],
     rationale:
       "All disagreements are resolved within the configured autonomous threshold.",
     ...overrides,
@@ -375,15 +398,22 @@ export function makeResolutionDecisionFinal(
 export function makeResolutionDecisionContinue(
   overrides: Partial<CollaborationResolutionDecisionOutput> = {},
 ): CollaborationResolutionDecisionOutput {
+  const round = overrides.round ?? 1;
   return {
     kind: "resolution_decision",
     agent: "agent_one",
-    agreementReached: false,
-    nextAction: "continue_negotiation",
-    acceptedPoints: [makeAgreement({ id: "A-1" })],
-    resolvedDisagreements: [],
-    remainingDisagreements: [makeImplementationDisagreement()],
-    userQuestions: [],
+    target_agent: "agent_two",
+    round,
+    summary: "Implementation disagreement remains; continue negotiation.",
+    artifacts: overrides.artifacts ?? [
+      generatedArtifact(round, "agent_one", "resolution_decision"),
+    ],
+    agreement_reached: false,
+    next_action: "continue_negotiation",
+    accepted_points: [makeAgreement({ id: "A-1" })],
+    resolved_disagreements: [],
+    remaining_disagreements: [makeImplementationDisagreement()],
+    user_questions: [],
     rationale:
       "Implementation disagreement remains; rounds remain so continue negotiation.",
     ...overrides,
@@ -393,15 +423,23 @@ export function makeResolutionDecisionContinue(
 export function makeResolutionDecisionAskUser(
   overrides: Partial<CollaborationResolutionDecisionOutput> = {},
 ): CollaborationResolutionDecisionOutput {
+  const round = overrides.round ?? 1;
   return {
     kind: "resolution_decision",
     agent: "agent_one",
-    agreementReached: false,
-    nextAction: "ask_user",
-    acceptedPoints: [makeAgreement({ id: "A-1" })],
-    resolvedDisagreements: [],
-    remainingDisagreements: [makeObjectiveDisagreement()],
-    userQuestions: [makeUserQuestion()],
+    target_agent: "agent_two",
+    round,
+    summary:
+      "Objective disagreement requires user clarification before continuing.",
+    artifacts: overrides.artifacts ?? [
+      generatedArtifact(round, "agent_one", "resolution_decision"),
+    ],
+    agreement_reached: false,
+    next_action: "ask_user",
+    accepted_points: [makeAgreement({ id: "A-1" })],
+    resolved_disagreements: [],
+    remaining_disagreements: [makeObjectiveDisagreement()],
+    user_questions: [makeUserQuestion()],
     rationale:
       "Objective disagreement requires user clarification before continuing.",
     ...overrides,
@@ -411,61 +449,64 @@ export function makeResolutionDecisionAskUser(
 export function makeResolutionDecisionFail(
   overrides: Partial<CollaborationResolutionDecisionOutput> = {},
 ): CollaborationResolutionDecisionOutput {
+  const round = overrides.round ?? 1;
   return {
     kind: "resolution_decision",
     agent: "agent_one",
-    agreementReached: false,
-    nextAction: "fail",
-    acceptedPoints: [],
-    resolvedDisagreements: [],
-    remainingDisagreements: [makeBlockingImplementationDisagreement()],
-    userQuestions: [],
+    target_agent: "agent_two",
+    round,
+    summary: "Blocking disagreement cannot be resolved.",
+    artifacts: overrides.artifacts ?? [
+      generatedArtifact(round, "agent_one", "resolution_decision"),
+    ],
+    agreement_reached: false,
+    next_action: "fail",
+    accepted_points: [],
+    resolved_disagreements: [],
+    remaining_disagreements: [makeBlockingImplementationDisagreement()],
+    user_questions: [],
     rationale:
       "Blocking disagreement cannot be resolved under the configured threshold.",
     ...overrides,
   };
 }
 
-// ============================================================
-// Open conflicts (orchestrator-produced — surfaced when nextAction is ask_user).
-// ============================================================
-
 export function makeOpenConflicts(
   overrides: Partial<CollaborationOpenConflictsOutput> = {},
 ): CollaborationOpenConflictsOutput {
   return {
     kind: "open_conflicts",
+    round: 1,
+    summary: "Objective disagreement requires user attention.",
     disagreements: [makeObjectiveDisagreement()],
     questions: [makeUserQuestion()],
     ...overrides,
   };
 }
 
-// ============================================================
-// Final answer (Agent One only). The `report` path is the collapsed-audit
-// source the UI's "Resolution audit" disclosure links back to.
-// ============================================================
-
 export function makeFinalAnswer(
   overrides: Partial<CollaborationFinalAnswerOutput> = {},
 ): CollaborationFinalAnswerOutput {
+  const round = overrides.round ?? 1;
   return {
     kind: "final_answer",
     agent: "agent_one",
-    answer:
-      "# Final design\n\nReuse the workflow envelope as the source of truth and expose an envelope-derived notification view.",
-    report: reportPath("final/answer"),
-    supporting: [
-      supportingPath("final", "resolution-audit.md"),
-      supportingPath("final", "key-decisions.md"),
+    round,
+    summary:
+      "Reuse the workflow envelope as the source of truth and expose an envelope-derived notification view.",
+    artifacts: overrides.artifacts ?? [
+      generatedArtifact(round, "agent_one", "final_answer", {
+        id: "answer",
+        path: artifactPath(round, "agent_one", "final_answer", "answer.md"),
+        summary: "Final answer.",
+      }),
+      finalAuditArtifact(round),
     ],
+    answer_artifact_id: "answer",
+    audit_artifact_id: "audit",
     ...overrides,
   };
 }
-
-// ============================================================
-// Canonical full-stream snapshot for stories and integration tests.
-// ============================================================
 
 export interface CollaborationAsymmetricStreamFixture {
   agentOneInitialDraft: CollaborationInitialDraftOutput;

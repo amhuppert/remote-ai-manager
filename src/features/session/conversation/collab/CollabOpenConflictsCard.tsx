@@ -59,12 +59,12 @@ function QuestionMeta({
       <span className="font-mono text-[length:var(--font-size-floor)] font-bold tracking-[0.06em] text-text-secondary">
         {question.id}
       </span>
-      {question.relatedDisagreementIds.length > 0 ? (
+      {question.related_disagreement_ids.length > 0 ? (
         <ul
           className="m-0 flex list-none flex-wrap items-center gap-[4px] p-0"
           aria-label={`Related disagreements for ${question.id}`}
         >
-          {question.relatedDisagreementIds.map((id) => {
+          {question.related_disagreement_ids.map((id) => {
             const target = lookup.get(id);
             return (
               <li

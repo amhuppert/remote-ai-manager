@@ -29,11 +29,21 @@ function draftOutput(round: number): CollaborationInitialDraftOutput {
   return {
     kind: "initial_draft",
     agent: "agent_one",
-    narrative: `# Round ${round} draft`,
-    report: `memory-bank/collaboration/round-${round}/report.md`,
-    supporting: [],
+    round: 0,
+    summary: `# Round ${round} draft`,
+    artifacts: [
+      {
+        id: "main",
+        artifact_type: "main_response",
+        path: `memory-bank/collaboration/wf-fixture/round-0/agent_one/initial_draft/main.md`,
+        round: 0,
+        agent: "agent_one",
+        phase: "initial_draft",
+        summary: `Round ${round} draft artifact.`,
+      },
+    ],
     assumptions: [],
-    keyClaims: [
+    key_claims: [
       {
         id: `claim-${round}`,
         claim: `round ${round} key claim`,
@@ -85,7 +95,7 @@ function makeRecordingClaudeFactory(
             numTurns: 1,
             contextTokens: null,
             contextWindowMax: null,
-            contentBlocks: [{ type: "text", text: structuredOutput.narrative }],
+            contentBlocks: [{ type: "text", text: structuredOutput.summary }],
             structuredOutput,
             aborted: false,
             error: null,
@@ -147,9 +157,7 @@ describe("createCollaborationProductionCallAgent", () => {
               numTurns: 1,
               contextTokens: null,
               contextWindowMax: null,
-              contentBlocks: [
-                { type: "text", text: structuredOutput.narrative },
-              ],
+              contentBlocks: [{ type: "text", text: structuredOutput.summary }],
               structuredOutput,
               aborted: false,
               error: null,
@@ -245,9 +253,7 @@ describe("createCollaborationProductionCallAgent", () => {
               numTurns: 1,
               contextTokens: null,
               contextWindowMax: null,
-              contentBlocks: [
-                { type: "text", text: structuredOutput.narrative },
-              ],
+              contentBlocks: [{ type: "text", text: structuredOutput.summary }],
               structuredOutput,
               aborted: false,
               error: null,
@@ -344,9 +350,7 @@ describe("createCollaborationProductionCallAgent", () => {
               numTurns: 1,
               contextTokens: null,
               contextWindowMax: null,
-              contentBlocks: [
-                { type: "text", text: structuredOutput.narrative },
-              ],
+              contentBlocks: [{ type: "text", text: structuredOutput.summary }],
               structuredOutput,
               aborted: false,
               error: null,
@@ -609,9 +613,7 @@ describe("createCollaborationProductionCallAgent", () => {
               numTurns: 1,
               contextTokens: null,
               contextWindowMax: null,
-              contentBlocks: [
-                { type: "text", text: structuredOutput.narrative },
-              ],
+              contentBlocks: [{ type: "text", text: structuredOutput.summary }],
               structuredOutput,
               aborted: false,
               error: null,

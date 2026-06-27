@@ -39,6 +39,7 @@ import type { WorkflowEnvelope } from "@/lib/workflows/primitives/workflow-envel
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
 import { createInMemoryLaneStore } from "@/lib/workflows/primitives/lane-store";
 import type { PublishScopedStatusEventInput } from "@/lib/workflows/primitives/default-session-status-bus";
+import { makeFinalAnswer } from "./test-fixtures";
 
 function buildEnvelope(
   overrides: Partial<WorkflowEnvelope> = {},
@@ -655,18 +656,7 @@ describe("createCollaborationManager.getEnvelope / listActive", () => {
     );
 
     const sidecar = new Map<string, CollaborationArtifact[]>([
-      [
-        "wf-hydrate",
-        [
-          {
-            kind: "final_answer",
-            agent: "agent_one",
-            answer: "ship it",
-            report: "r",
-            supporting: [],
-          },
-        ],
-      ],
+      ["wf-hydrate", [makeFinalAnswer({ summary: "ship it" })]],
     ]);
 
     const { deps } = buildScriptedDeps({
@@ -702,18 +692,7 @@ describe("createCollaborationManager.getEnvelope / listActive", () => {
     // sidecar; the user schema would reject it, so hydration MUST be skipped
     // rather than silently emptying the stream onto the snapshot.
     const sidecar = new Map<string, CollaborationArtifact[]>([
-      [
-        "wf-graph-collab",
-        [
-          {
-            kind: "final_answer",
-            agent: "agent_one",
-            answer: "x",
-            report: "r",
-            supporting: [],
-          },
-        ],
-      ],
+      ["wf-graph-collab", [makeFinalAnswer({ summary: "x" })]],
     ]);
 
     const { deps } = buildScriptedDeps({
@@ -744,7 +723,9 @@ describe("createCollaborationManager.getEnvelope / listActive", () => {
       }),
     );
 
-    const { deps } = buildScriptedDeps({ envelopeStoreOverride: envelopeStore });
+    const { deps } = buildScriptedDeps({
+      envelopeStoreOverride: envelopeStore,
+    });
     const manager = createCollaborationManager(deps);
 
     const env = await manager.getEnvelope({

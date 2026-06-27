@@ -109,9 +109,9 @@ export function decideCollaborationNextStep(
     autonomousResolutionThreshold,
     negotiationRoundsRemaining,
   } = input;
-  const remaining = decision.remainingDisagreements;
+  const remaining = decision.remaining_disagreements;
 
-  if (decision.nextAction === "fail") {
+  if (decision.next_action === "fail") {
     return { kind: "fail" };
   }
 
@@ -119,7 +119,7 @@ export function decideCollaborationNextStep(
     return { kind: "ask_user", reason: "objective_disagreement" };
   }
 
-  if (decision.nextAction === "ask_user") {
+  if (decision.next_action === "ask_user") {
     return { kind: "ask_user", reason: "explicit_ask_user" };
   }
 
@@ -128,7 +128,7 @@ export function decideCollaborationNextStep(
   }
 
   // Loop discipline: while implementation disagreements remain AND
-  // negotiation rounds remain, continue regardless of `nextAction`.
+  // negotiation rounds remain, continue regardless of `next_action`.
   // Threshold-based finalization or escalation applies only after rounds
   // are exhausted.
   if (

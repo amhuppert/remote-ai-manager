@@ -25,12 +25,12 @@ const QUESTIONS = [
   {
     id: "q-1",
     question: "Ship v1 or v2?",
-    relatedDisagreementIds: ["d-1"],
+    related_disagreement_ids: ["d-1"],
   },
   {
     id: "q-2",
     question: "Allow brief cache miss spike?",
-    relatedDisagreementIds: ["d-2"],
+    related_disagreement_ids: ["d-2"],
   },
 ];
 

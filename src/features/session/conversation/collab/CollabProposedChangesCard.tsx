@@ -5,19 +5,18 @@ import type {
   CollaborationArtifactAgreement,
   CollaborationArtifactDisagreement,
   CollaborationChangeProposal,
+  CollaborationGeneratedArtifact,
   CollaborationReference,
 } from "@/lib/workflows/collaboration/types";
+import CollabArtifactRefs from "@/features/session/conversation/collab/CollabArtifactRefs";
 import CollabClaimsList from "@/features/session/conversation/collab/CollabClaimsList";
 import CollabCollapsibleCard from "@/features/session/conversation/collab/CollabCollapsibleCard";
 import CollabMarkdownText from "@/features/session/conversation/collab/CollabMarkdownText";
 import {
   cardAgent,
   cardEyebrow,
-  cardList,
   cardNarrative,
   cardRound,
-  cardSection,
-  cardSectionTitle,
   cardSummary,
   changeList,
   changeListAddresses,
@@ -27,16 +26,18 @@ import {
   changeListId,
   changeListItem,
   changeListRationale,
+  cardSection,
+  cardSectionTitle,
 } from "@/features/session/conversation/collab/card-chrome";
 
 export interface CollabProposedChangesCardProps {
   fromAgent: CollaborationAgent;
   round: number;
-  narrative: string;
-  acceptedFromAgentTwoDraft: CollaborationArtifactAgreement[];
-  proposedChanges: CollaborationChangeProposal[];
-  remainingDisagreements: CollaborationArtifactDisagreement[];
-  supporting: string[];
+  summary: string;
+  artifacts: CollaborationGeneratedArtifact[];
+  accepted_from_other_agent_draft: CollaborationArtifactAgreement[];
+  proposed_changes: CollaborationChangeProposal[];
+  remaining_disagreements: CollaborationArtifactDisagreement[];
   defaultOpen?: boolean;
   onRefClick?: (ref: CollaborationReference) => void;
 }
@@ -49,18 +50,18 @@ const AGENT_LABEL: Record<CollaborationAgent, string> = {
 export default function CollabProposedChangesCard({
   fromAgent,
   round,
-  narrative,
-  acceptedFromAgentTwoDraft,
-  proposedChanges,
-  remainingDisagreements,
-  supporting,
+  summary,
+  artifacts,
+  accepted_from_other_agent_draft,
+  proposed_changes,
+  remaining_disagreements,
   defaultOpen,
   onRefClick,
 }: CollabProposedChangesCardProps): React.JSX.Element {
-  const summary = [
-    `${proposedChanges.length} ${proposedChanges.length === 1 ? "change" : "changes"}`,
-    remainingDisagreements.length > 0
-      ? `${remainingDisagreements.length} disagree`
+  const headerSummary = [
+    `${proposed_changes.length} ${proposed_changes.length === 1 ? "change" : "changes"}`,
+    remaining_disagreements.length > 0
+      ? `${remaining_disagreements.length} disagree`
       : null,
   ]
     .filter(Boolean)
@@ -81,36 +82,36 @@ export default function CollabProposedChangesCard({
           <span className={cardRound} aria-label={`Round ${round}`}>
             R{round}
           </span>
-          <span className={cardSummary}>{summary}</span>
+          <span className={cardSummary}>{headerSummary}</span>
         </>
       }
     >
-      <CollabMarkdownText content={narrative} className={cardNarrative} />
+      <CollabMarkdownText content={summary} className={cardNarrative} />
 
-      {acceptedFromAgentTwoDraft.length > 0 ? (
+      {accepted_from_other_agent_draft.length > 0 ? (
         <CollabClaimsList
-          agree={acceptedFromAgentTwoDraft}
+          agree={accepted_from_other_agent_draft}
           onRefClick={onRefClick}
         />
       ) : null}
 
-      {proposedChanges.length > 0 ? (
+      {proposed_changes.length > 0 ? (
         <section className={cardSection}>
           <h4 className={cardSectionTitle}>
-            Proposed changes ({proposedChanges.length})
+            Proposed changes ({proposed_changes.length})
           </h4>
           <ul className={changeList}>
-            {proposedChanges.map((change) => (
+            {proposed_changes.map((change) => (
               <li className={changeListItem} key={change.id}>
                 <span className={changeListId}>{change.id}</span>
                 <span className={changeListChange}>{change.change}</span>
                 <span className={changeListRationale}>
                   rationale: {change.rationale}
                 </span>
-                {change.addressesDisagreementIds.length > 0 ? (
+                {change.addresses_disagreement_ids.length > 0 ? (
                   <span className={changeListAddresses}>
                     <span className={changeListAddressesLabel}>addresses:</span>
-                    {change.addressesDisagreementIds.map((id) => (
+                    {change.addresses_disagreement_ids.map((id) => (
                       <span key={id} className={changeListAddressesId}>
                         {id}
                       </span>
@@ -123,23 +124,14 @@ export default function CollabProposedChangesCard({
         </section>
       ) : null}
 
-      {remainingDisagreements.length > 0 ? (
+      {remaining_disagreements.length > 0 ? (
         <CollabClaimsList
-          disagree={remainingDisagreements}
+          disagree={remaining_disagreements}
           onRefClick={onRefClick}
         />
       ) : null}
 
-      {supporting.length > 0 ? (
-        <section className={cardSection}>
-          <h4 className={cardSectionTitle}>Evidence ({supporting.length})</h4>
-          <ul className={cardList}>
-            {supporting.map((item, idx) => (
-              <li key={`supporting-${idx}`}>{item}</li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
+      <CollabArtifactRefs artifacts={artifacts} />
     </CollabCollapsibleCard>
   );
 }

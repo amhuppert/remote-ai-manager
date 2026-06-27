@@ -1,8 +1,13 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/ui/cn";
-import type { CollaborationAgent } from "@/lib/workflows/collaboration/types";
+import type {
+  CollaborationAgent,
+  CollaborationGeneratedArtifact,
+} from "@/lib/workflows/collaboration/types";
+import CollabArtifactRefs from "@/features/session/conversation/collab/CollabArtifactRefs";
 
 const MarkdownContent = dynamic(() => import("@/components/MarkdownContent"), {
   ssr: false,
@@ -10,7 +15,10 @@ const MarkdownContent = dynamic(() => import("@/components/MarkdownContent"), {
 
 export interface CollabFinalAnswerMessageProps {
   agent: CollaborationAgent;
-  answer: string;
+  summary: string;
+  artifacts: CollaborationGeneratedArtifact[];
+  answer_artifact_id: string;
+  artifactFileUrl?: (artifact: CollaborationGeneratedArtifact) => string;
 }
 
 const AGENT_LABEL: Record<CollaborationAgent, string> = {
@@ -31,8 +39,58 @@ const roleColorByAgent: Record<CollaborationAgent, string> = {
 
 export default function CollabFinalAnswerMessage({
   agent,
-  answer,
+  summary,
+  artifacts,
+  answer_artifact_id,
+  artifactFileUrl,
 }: CollabFinalAnswerMessageProps): React.JSX.Element {
+  const answerArtifact = useMemo(
+    () => artifacts.find((artifact) => artifact.id === answer_artifact_id),
+    [answer_artifact_id, artifacts],
+  );
+  const answerArtifactUrl = useMemo(
+    () =>
+      answerArtifact && artifactFileUrl
+        ? artifactFileUrl(answerArtifact)
+        : null,
+    [answerArtifact, artifactFileUrl],
+  );
+  const [loadedAnswer, setLoadedAnswer] = useState<{
+    url: string;
+    content: string;
+  } | null>(null);
+  const [failedAnswerUrl, setFailedAnswerUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!answerArtifactUrl) return;
+
+    const controller = new AbortController();
+    fetch(answerArtifactUrl, {
+      signal: controller.signal,
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`artifact read failed: ${response.status}`);
+        }
+        return response.text();
+      })
+      .then((content) => {
+        if (!controller.signal.aborted) {
+          setLoadedAnswer({ url: answerArtifactUrl, content });
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setFailedAnswerUrl(answerArtifactUrl);
+      });
+
+    return () => controller.abort();
+  }, [answerArtifactUrl]);
+
+  const body =
+    loadedAnswer?.url === answerArtifactUrl ? loadedAnswer.content : summary;
+  const loadFailed = failedAnswerUrl === answerArtifactUrl;
+
   return (
     // The component owns `p-md` (its legacy `.collab-final-answer-message`
     // padding). In production (inside `.conversation-virtuoso-item`) the article
@@ -64,8 +122,14 @@ export default function CollabFinalAnswerMessage({
       </header>
 
       <div className="message-content">
-        <MarkdownContent content={answer} />
+        <MarkdownContent content={body} />
       </div>
+      {loadFailed ? (
+        <p className="m-0 font-mono text-[0.72rem] text-text-secondary">
+          Full answer artifact could not be loaded.
+        </p>
+      ) : null}
+      <CollabArtifactRefs artifacts={artifacts} />
     </article>
   );
 }

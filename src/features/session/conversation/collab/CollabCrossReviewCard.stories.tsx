@@ -38,11 +38,11 @@ function fromCrossReviewFixture(
   return {
     reviewerAgent: reviewerBackend,
     targetAgent: targetBackend,
-    narrative: fixture.narrative,
-    supporting: fixture.supporting,
+    summary: fixture.summary,
+    artifacts: fixture.artifacts,
     agree: fixture.agree,
     disagree: fixture.disagree,
-    reviseSelf: fixture.reviseSelf,
+    revise_self: fixture.revise_self,
   };
 }
 
@@ -53,7 +53,7 @@ export const CodexReviewsClaudeFromFixture = {
         makeBlockingImplementationDisagreement(),
         makeMinorImplementationDisagreement(),
       ],
-      reviseSelf: [makeReviseSelf()],
+      revise_self: [makeReviseSelf()],
     }),
     "codex",
     "claude",
@@ -64,12 +64,12 @@ export const ClaudeReviewsCodexFromFixture = {
   args: fromCrossReviewFixture(
     makeAgentTwoCrossReview({
       agent: "agent_one",
-      targetAgent: "agent_two",
-      narrative:
+      target_agent: "agent_two",
+      summary:
         "Claude reviewing Codex's draft — objective scope concern blocks acceptance.",
       agree: [],
       disagree: [makeObjectiveDisagreement()],
-      reviseSelf: [],
+      revise_self: [],
     }),
     "claude",
     "codex",

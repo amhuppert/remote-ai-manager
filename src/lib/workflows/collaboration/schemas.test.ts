@@ -168,10 +168,29 @@ function validateAgainstJsonSchema(
       return [`${path}: string shorter than minLength`];
     }
     if (
+      typeof objectSchema["maxLength"] === "number" &&
+      value.length > (objectSchema["maxLength"] as number)
+    ) {
+      return [`${path}: string longer than maxLength`];
+    }
+    if (
       Array.isArray(objectSchema["enum"]) &&
       !(objectSchema["enum"] as unknown[]).includes(value)
     ) {
       return [`${path}: not in enum`];
+    }
+    return [];
+  }
+
+  if (objectSchema["type"] === "integer") {
+    if (typeof value !== "number" || !Number.isInteger(value)) {
+      return [`${path}: expected integer`];
+    }
+    if (
+      typeof objectSchema["minimum"] === "number" &&
+      value < (objectSchema["minimum"] as number)
+    ) {
+      return [`${path}: integer below minimum`];
     }
     return [];
   }
@@ -188,7 +207,8 @@ const agreement = {
   id: "A-1",
   claim: "Use the existing session status bus",
   ref: {
-    artifact: "memory-bank/collaboration/wf/agent-one/draft.md",
+    artifact:
+      "memory-bank/collaboration/wf/round-0/agent_one/initial_draft/main.md",
     locator: "#status-bus",
   },
 };
@@ -199,9 +219,10 @@ const implementationDisagreement = {
   severity: "major" as const,
   claim: "Use a separate queue table",
   reason: "A table would add operational overhead for this workflow",
-  proposedResolution: "Reuse the workflow envelope store instead",
+  proposed_resolution: "Reuse the workflow envelope store instead",
   ref: {
-    artifact: "memory-bank/collaboration/wf/agent-two/review.md",
+    artifact:
+      "memory-bank/collaboration/wf/round-0/agent_two/cross_review/main.md",
   },
 };
 
@@ -213,26 +234,49 @@ const objectiveDisagreement = {
   reason: "The scope changes which artifacts should be produced",
 };
 
+const mainArtifact = (
+  agent: "agent_one" | "agent_two",
+  phase:
+    | "initial_draft"
+    | "cross_review"
+    | "proposed_changes"
+    | "counter_proposal"
+    | "resolution_decision"
+    | "final_answer",
+  round: number,
+  id = "main",
+  artifact_type: "main_response" | "audit" | "supporting" = "main_response",
+  fileName = "main.md",
+) => ({
+  id,
+  artifact_type,
+  path: `memory-bank/collaboration/wf/round-${round}/${agent}/${phase}/${fileName}`,
+  round,
+  agent,
+  phase,
+  summary: `${phase} ${id}`,
+});
+
 const initialDraft = {
   kind: "initial_draft" as const,
   agent: "agent_one" as const,
-  narrative: "Initial primary proposal.",
-  report: "memory-bank/collaboration/wf/initial/agent-one.md",
-  supporting: [],
+  round: 0,
+  summary: "Initial primary proposal.",
+  artifacts: [mainArtifact("agent_one", "initial_draft", 0)],
   assumptions: ["The final answer should stay in the conversation."],
-  keyClaims: [agreement],
+  key_claims: [agreement],
 };
 
 const crossReview = {
   kind: "cross_review" as const,
   agent: "agent_two" as const,
-  targetAgent: "agent_one" as const,
-  narrative: "Agent Two review of Agent One's draft.",
-  report: "memory-bank/collaboration/wf/cross-review/agent-two.md",
-  supporting: [],
+  target_agent: "agent_one" as const,
+  round: 0,
+  summary: "Agent Two review of Agent One's draft.",
+  artifacts: [mainArtifact("agent_two", "cross_review", 0)],
   agree: [agreement],
   disagree: [implementationDisagreement],
-  reviseSelf: [
+  revise_self: [
     {
       change: "Adopt the existing notification path",
       because: "It avoids introducing a second delivery mechanism",
@@ -243,62 +287,67 @@ const crossReview = {
 const proposedChanges = {
   kind: "proposed_changes" as const,
   agent: "agent_one" as const,
-  targetAgent: "agent_two" as const,
-  narrative: "Primary proposed changes after reading Agent Two's draft.",
-  acceptedFromAgentTwoDraft: [agreement],
-  proposedChanges: [
+  target_agent: "agent_two" as const,
+  round: 1,
+  summary: "Primary proposed changes after reading Agent Two's draft.",
+  artifacts: [mainArtifact("agent_one", "proposed_changes", 1)],
+  accepted_from_other_agent_draft: [agreement],
+  proposed_changes: [
     {
       id: "PC-1",
       change: "Use the envelope store for progress snapshots",
       rationale: "Both UI and backend already consume it",
-      addressesDisagreementIds: ["D-1"],
+      addresses_disagreement_ids: ["D-1"],
     },
   ],
-  remainingDisagreements: [implementationDisagreement],
-  report: "memory-bank/collaboration/wf/negotiation-1/proposed.md",
-  supporting: [],
+  remaining_disagreements: [implementationDisagreement],
 };
 
 const counterProposal = {
   kind: "counter_proposal" as const,
   agent: "agent_two" as const,
-  narrative: "Agent Two accepts most proposed changes with one alternative.",
-  acceptedProposedChangeIds: ["PC-1"],
-  rejectedProposedChangeIds: [],
-  alternativeChanges: [
+  target_agent: "agent_one" as const,
+  round: 1,
+  summary: "Agent Two accepts most proposed changes with one alternative.",
+  artifacts: [mainArtifact("agent_two", "counter_proposal", 1)],
+  accepted_change_ids: ["PC-1"],
+  rejected_change_ids: [],
+  alternative_changes: [
     {
       id: "AC-1",
       change: "Store open conflicts as first-class artifacts",
       rationale: "The UI needs stable links to each disagreement",
-      addressesDisagreementIds: ["D-2"],
+      addresses_disagreement_ids: ["D-2"],
     },
   ],
   agree: [agreement],
   disagree: [objectiveDisagreement],
-  report: "memory-bank/collaboration/wf/negotiation-1/counter.md",
-  supporting: [],
 };
 
 const resolutionDecision = {
   kind: "resolution_decision" as const,
   agent: "agent_one" as const,
-  agreementReached: false,
-  nextAction: "ask_user" as const,
-  acceptedPoints: [agreement],
-  resolvedDisagreements: [
+  target_agent: "agent_two" as const,
+  round: 1,
+  summary: "Objective disagreement requires user clarification.",
+  artifacts: [mainArtifact("agent_one", "resolution_decision", 1)],
+  agreement_reached: false,
+  next_action: "ask_user" as const,
+  accepted_points: [agreement],
+  resolved_disagreements: [
     {
-      disagreementId: "D-1",
+      disagreement_id: "D-1",
       resolution: "Use the workflow envelope store",
-      resolvedAutonomously: true,
+      resolved_autonomously: true,
       rationale: "Major implementation disagreements are within threshold",
     },
   ],
-  remainingDisagreements: [objectiveDisagreement],
-  userQuestions: [
+  remaining_disagreements: [objectiveDisagreement],
+  user_questions: [
     {
       id: "Q-1",
       question: "Should the output be a design or implementation plan?",
-      relatedDisagreementIds: ["D-2"],
+      related_disagreement_ids: ["D-2"],
     },
   ],
   rationale: "Objective disagreement requires user clarification.",
@@ -306,12 +355,14 @@ const resolutionDecision = {
 
 const openConflicts = {
   kind: "open_conflicts" as const,
+  round: 1,
+  summary: "Two conflicts require user attention.",
   disagreements: [implementationDisagreement, objectiveDisagreement],
   questions: [
     {
       id: "Q-1",
       question: "Should the output be a design or implementation plan?",
-      relatedDisagreementIds: ["D-2"],
+      related_disagreement_ids: ["D-2"],
     },
   ],
 };
@@ -319,9 +370,21 @@ const openConflicts = {
 const finalAnswer = {
   kind: "final_answer" as const,
   agent: "agent_one" as const,
-  answer: "# Final design\n\nUse the existing workflow envelope store.",
-  report: "memory-bank/collaboration/wf/final.md",
-  supporting: [],
+  round: 1,
+  summary: "Use the existing workflow envelope store.",
+  artifacts: [
+    mainArtifact(
+      "agent_one",
+      "final_answer",
+      1,
+      "answer",
+      "main_response",
+      "answer.md",
+    ),
+    mainArtifact("agent_one", "final_answer", 1, "audit", "audit", "audit.md"),
+  ],
+  answer_artifact_id: "answer" as const,
+  audit_artifact_id: "audit" as const,
 };
 
 describe("Collaboration Mode asymmetric artifact schemas", () => {
@@ -393,6 +456,51 @@ describe("Collaboration Mode asymmetric artifact schemas", () => {
       ],
     });
     expect(badSeverity.success).toBe(false);
+  });
+
+  it("rejects old inline payload fields and camelCase names", () => {
+    const oldStyle = {
+      kind: "proposed_changes" as const,
+      agent: "agent_one" as const,
+      targetAgent: "agent_two" as const,
+      narrative: "Old inline narrative.",
+      acceptedFromAgentTwoDraft: [agreement],
+      proposedChanges: [],
+      remainingDisagreements: [],
+      report: "inline report",
+      supporting: [],
+    };
+
+    expect(
+      collaborationProposedChangesOutputSchema.safeParse(oldStyle).success,
+    ).toBe(false);
+  });
+
+  it("requires generated artifact refs for agent-generated artifacts", () => {
+    const withoutArtifacts = { ...initialDraft, artifacts: [] };
+    expect(
+      collaborationInitialDraftOutputSchema.safeParse(withoutArtifacts).success,
+    ).toBe(false);
+  });
+
+  it("requires final_answer to reference answer and audit artifacts", () => {
+    const missingAudit = {
+      ...finalAnswer,
+      artifacts: [finalAnswer.artifacts[0]],
+    };
+    expect(
+      collaborationFinalAnswerOutputSchema.safeParse(missingAudit).success,
+    ).toBe(false);
+  });
+
+  it("bounds inline strings so full prose stays in generated files", () => {
+    const tooLongClaim = {
+      ...initialDraft,
+      key_claims: [{ id: "A-long", claim: "x".repeat(501) }],
+    };
+    expect(
+      collaborationInitialDraftOutputSchema.safeParse(tooLongClaim).success,
+    ).toBe(false);
   });
 
   it("validates autonomous resolution threshold values", () => {
@@ -485,7 +593,7 @@ describe("Collaboration Mode asymmetric JSON Schema projections", () => {
     expect(errors.length).toBeGreaterThan(0);
   });
 
-  it("accepts a disagreement without optional ref or proposedResolution in counter_proposal", () => {
+  it("accepts a disagreement without optional ref or proposed_resolution in counter_proposal", () => {
     const minimal = {
       ...counterProposal,
       disagree: [
@@ -509,7 +617,7 @@ describe("Collaboration Mode asymmetric JSON Schema projections", () => {
   it("accepts an agreement without optional ref in initial_draft", () => {
     const minimal = {
       ...initialDraft,
-      keyClaims: [{ id: "A-2", claim: "No ref needed" }],
+      key_claims: [{ id: "A-2", claim: "No ref needed" }],
     };
     expect(
       validateAgainstJsonSchema(
@@ -522,7 +630,7 @@ describe("Collaboration Mode asymmetric JSON Schema projections", () => {
   it("rejects a resolution_decision with an unknown nextAction", () => {
     const bad = {
       ...resolutionDecision,
-      nextAction: "abort",
+      next_action: "abort",
     };
     const errors = validateAgainstJsonSchema(
       bad,

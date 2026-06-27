@@ -23,6 +23,12 @@ import { collaborationArtifactSchema } from "./types";
 import { collaborationWorkflowArtifactEntrySchema } from "./feature-snapshot";
 import type { CollaborationArtifact } from "./types";
 import type { CollaborationWorkflowArtifactEntry } from "./feature-snapshot";
+import {
+  makeAgentOneInitialDraft,
+  makeAgentOneProposedChanges,
+  makeFinalAnswer,
+  makeOpenConflicts,
+} from "./test-fixtures";
 
 let configDir: string;
 
@@ -34,29 +40,20 @@ afterEach(async () => {
   await fs.rm(configDir, { recursive: true, force: true });
 });
 
-const INITIAL_DRAFT: CollaborationArtifact = {
-  kind: "initial_draft",
-  agent: "agent_one",
-  narrative: "draft narrative",
-  report: "draft report",
-  supporting: [],
+const INITIAL_DRAFT: CollaborationArtifact = makeAgentOneInitialDraft({
+  summary: "draft narrative",
   assumptions: [],
-  keyClaims: [],
-};
+  key_claims: [],
+});
 
-const FINAL_ANSWER: CollaborationArtifact = {
-  kind: "final_answer",
-  agent: "agent_one",
-  answer: "the answer",
-  report: "the report",
-  supporting: [],
-};
+const FINAL_ANSWER: CollaborationArtifact = makeFinalAnswer({
+  summary: "the answer",
+});
 
-const OPEN_CONFLICTS: CollaborationArtifact = {
-  kind: "open_conflicts",
+const OPEN_CONFLICTS: CollaborationArtifact = makeOpenConflicts({
   disagreements: [],
   questions: [],
-};
+});
 
 describe("collaboration artifacts sidecar store", () => {
   it("appends several artifacts and reads them back in append order", async () => {
@@ -157,17 +154,13 @@ describe("collaboration artifacts sidecar store", () => {
       kind: "proposed_changes",
       agent: "agent_one",
       round: 2,
-      value: {
-        kind: "proposed_changes",
-        agent: "agent_one",
-        targetAgent: "agent_two",
-        narrative: "n",
-        acceptedFromAgentTwoDraft: [],
-        proposedChanges: [],
-        remainingDisagreements: [],
-        report: "r",
-        supporting: [],
-      },
+      value: makeAgentOneProposedChanges({
+        round: 2,
+        summary: "n",
+        accepted_from_other_agent_draft: [],
+        proposed_changes: [],
+        remaining_disagreements: [],
+      }),
     };
     await appendCollaborationArtifact("wf-wrap", entry, configDir);
 

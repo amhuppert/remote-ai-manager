@@ -54,7 +54,7 @@ describe("collaboration asymmetric fixtures", () => {
       collaborationCrossReviewOutputSchema.safeParse(fixture).success,
     ).toBe(true);
     expect(fixture.agent).toBe("agent_two");
-    expect(fixture.targetAgent).toBe("agent_one");
+    expect(fixture.target_agent).toBe("agent_one");
   });
 
   it("agent one proposed changes validates and targets agent_two", () => {
@@ -63,7 +63,7 @@ describe("collaboration asymmetric fixtures", () => {
       collaborationProposedChangesOutputSchema.safeParse(fixture).success,
     ).toBe(true);
     expect(fixture.agent).toBe("agent_one");
-    expect(fixture.targetAgent).toBe("agent_two");
+    expect(fixture.target_agent).toBe("agent_two");
   });
 
   it("agent two counter-proposals validate (round 1 and round 2)", () => {
@@ -78,7 +78,7 @@ describe("collaboration asymmetric fixtures", () => {
     expect(r1).not.toEqual(r2);
   });
 
-  it("each resolution decision variant validates with its own nextAction", () => {
+  it("each resolution decision variant validates with its own next_action", () => {
     const variants = [
       { fn: makeResolutionDecisionFinal, expected: "final" as const },
       {
@@ -93,7 +93,7 @@ describe("collaboration asymmetric fixtures", () => {
       expect(
         collaborationResolutionDecisionOutputSchema.safeParse(fixture).success,
       ).toBe(true);
-      expect(fixture.nextAction).toBe(expected);
+      expect(fixture.next_action).toBe(expected);
       expect(fixture.agent).toBe("agent_one");
     }
   });
@@ -105,13 +105,17 @@ describe("collaboration asymmetric fixtures", () => {
     ).toBe(true);
   });
 
-  it("final answer validates and exposes a collapsed-audit report path", () => {
+  it("final answer validates and exposes answer and audit artifact refs", () => {
     const fixture = makeFinalAnswer();
     expect(
       collaborationFinalAnswerOutputSchema.safeParse(fixture).success,
     ).toBe(true);
-    expect(fixture.report).toMatch(/\.md$/);
-    expect(fixture.supporting.length).toBeGreaterThan(0);
+    expect(fixture.answer_artifact_id).toBe("answer");
+    expect(fixture.audit_artifact_id).toBe("audit");
+    expect(fixture.artifacts.map((artifact) => artifact.id)).toEqual([
+      "answer",
+      "audit",
+    ]);
   });
 
   it("the canonical stream snapshot exposes every artifact kind once", () => {
@@ -138,8 +142,8 @@ describe("collaboration asymmetric fixtures", () => {
   });
 
   it("override pattern lets tests change a single field deterministically", () => {
-    const draft = makeAgentOneInitialDraft({ narrative: "custom narrative" });
-    expect(draft.narrative).toBe("custom narrative");
+    const draft = makeAgentOneInitialDraft({ summary: "custom summary" });
+    expect(draft.summary).toBe("custom summary");
     expect(draft.agent).toBe("agent_one");
   });
 });

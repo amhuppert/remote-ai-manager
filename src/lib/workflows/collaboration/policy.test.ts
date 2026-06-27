@@ -36,8 +36,8 @@ import {
   makeResolutionDecisionFinal,
 } from "./test-fixtures";
 
-describe("decideCollaborationNextStep — nextAction passthrough", () => {
-  it("returns kind=final when Agent One declared agreement and nextAction=final", () => {
+describe("decideCollaborationNextStep — next_action passthrough", () => {
+  it("returns kind=final when Agent One declared agreement and next_action=final", () => {
     const decision = makeResolutionDecisionFinal();
 
     const result = decideCollaborationNextStep({
@@ -65,9 +65,9 @@ describe("decideCollaborationNextStep — nextAction passthrough", () => {
 });
 
 describe("decideCollaborationNextStep — objective disagreements always halt", () => {
-  it("forces ask_user when an objective disagreement remains, regardless of nextAction=continue_negotiation", () => {
+  it("forces ask_user when an objective disagreement remains, regardless of next_action=continue_negotiation", () => {
     const decision = makeResolutionDecisionContinue({
-      remainingDisagreements: [makeObjectiveDisagreement()],
+      remaining_disagreements: [makeObjectiveDisagreement()],
     });
 
     const result = decideCollaborationNextStep({
@@ -79,10 +79,10 @@ describe("decideCollaborationNextStep — objective disagreements always halt", 
     expect(result.kind).toBe("ask_user");
   });
 
-  it("forces ask_user when an objective disagreement remains, regardless of nextAction=final", () => {
+  it("forces ask_user when an objective disagreement remains, regardless of next_action=final", () => {
     const decision = makeResolutionDecisionFinal({
-      agreementReached: false,
-      remainingDisagreements: [makeObjectiveDisagreement()],
+      agreement_reached: false,
+      remaining_disagreements: [makeObjectiveDisagreement()],
     });
 
     const result = decideCollaborationNextStep({
@@ -98,7 +98,7 @@ describe("decideCollaborationNextStep — objective disagreements always halt", 
 describe("decideCollaborationNextStep — implementation disagreement loops while rounds remain", () => {
   it("returns kind=continue_negotiation when implementation disagreements remain and rounds remain", () => {
     const decision = makeResolutionDecisionContinue({
-      remainingDisagreements: [makeImplementationDisagreement()],
+      remaining_disagreements: [makeImplementationDisagreement()],
     });
 
     const result = decideCollaborationNextStep({
@@ -114,7 +114,7 @@ describe("decideCollaborationNextStep — implementation disagreement loops whil
 describe("decideCollaborationNextStep — exhausted rounds + implementation disagreements", () => {
   it("returns ask_user when implementation disagreement severity exceeds threshold and no rounds remain", () => {
     const decision = makeResolutionDecisionContinue({
-      remainingDisagreements: [makeImplementationDisagreement()],
+      remaining_disagreements: [makeImplementationDisagreement()],
     });
 
     const result = decideCollaborationNextStep({
@@ -128,7 +128,7 @@ describe("decideCollaborationNextStep — exhausted rounds + implementation disa
 
   it("returns final when implementation disagreement severity is at or below threshold and no rounds remain", () => {
     const decision = makeResolutionDecisionContinue({
-      remainingDisagreements: [makeImplementationDisagreement()],
+      remaining_disagreements: [makeImplementationDisagreement()],
     });
 
     const result = decideCollaborationNextStep({
@@ -142,7 +142,7 @@ describe("decideCollaborationNextStep — exhausted rounds + implementation disa
 
   it("returns final when only minor disagreements remain and threshold is minor", () => {
     const decision = makeResolutionDecisionContinue({
-      remainingDisagreements: [makeMinorImplementationDisagreement()],
+      remaining_disagreements: [makeMinorImplementationDisagreement()],
     });
 
     const result = decideCollaborationNextStep({
@@ -158,7 +158,7 @@ describe("decideCollaborationNextStep — exhausted rounds + implementation disa
 describe("decideCollaborationNextStep — blocking severity gates", () => {
   it("returns ask_user when a blocking implementation disagreement remains and threshold is major", () => {
     const decision = makeResolutionDecisionContinue({
-      remainingDisagreements: [makeBlockingImplementationDisagreement()],
+      remaining_disagreements: [makeBlockingImplementationDisagreement()],
     });
 
     const result = decideCollaborationNextStep({
@@ -172,7 +172,7 @@ describe("decideCollaborationNextStep — blocking severity gates", () => {
 
   it("returns final when a blocking implementation disagreement remains and threshold is blocking", () => {
     const decision = makeResolutionDecisionContinue({
-      remainingDisagreements: [makeBlockingImplementationDisagreement()],
+      remaining_disagreements: [makeBlockingImplementationDisagreement()],
     });
 
     const result = decideCollaborationNextStep({
@@ -188,7 +188,7 @@ describe("decideCollaborationNextStep — blocking severity gates", () => {
 describe("decideCollaborationNextStep — threshold=none halts on any remaining disagreement", () => {
   it("returns ask_user when any disagreement remains and threshold is none, even with rounds remaining and continue_negotiation", () => {
     const decision = makeResolutionDecisionContinue({
-      remainingDisagreements: [makeMinorImplementationDisagreement()],
+      remaining_disagreements: [makeMinorImplementationDisagreement()],
     });
 
     const result = decideCollaborationNextStep({
@@ -202,7 +202,7 @@ describe("decideCollaborationNextStep — threshold=none halts on any remaining 
 });
 
 describe("decideCollaborationNextStep — ask_user explicit", () => {
-  it("returns ask_user when Agent One returned nextAction=ask_user", () => {
+  it("returns ask_user when Agent One returned next_action=ask_user", () => {
     const decision = makeResolutionDecisionAskUser();
 
     const result = decideCollaborationNextStep({
@@ -216,9 +216,9 @@ describe("decideCollaborationNextStep — ask_user explicit", () => {
 });
 
 describe("decideCollaborationNextStep — final with no remaining disagreements", () => {
-  it("returns final when no disagreements remain and Agent One returned nextAction=final, regardless of threshold", () => {
+  it("returns final when no disagreements remain and Agent One returned next_action=final, regardless of threshold", () => {
     const decision = makeResolutionDecisionFinal({
-      remainingDisagreements: [],
+      remaining_disagreements: [],
     });
 
     const result = decideCollaborationNextStep({
@@ -231,11 +231,11 @@ describe("decideCollaborationNextStep — final with no remaining disagreements"
   });
 });
 
-describe("decideCollaborationNextStep — loop discipline overrides nextAction=final while rounds remain", () => {
-  it("returns continue_negotiation when nextAction=final but implementation disagreements remain within threshold and rounds remain", () => {
+describe("decideCollaborationNextStep — loop discipline overrides next_action=final while rounds remain", () => {
+  it("returns continue_negotiation when next_action=final but implementation disagreements remain within threshold and rounds remain", () => {
     const decision = makeResolutionDecisionFinal({
-      agreementReached: false,
-      remainingDisagreements: [makeImplementationDisagreement()],
+      agreement_reached: false,
+      remaining_disagreements: [makeImplementationDisagreement()],
     });
 
     const result = decideCollaborationNextStep({
@@ -247,10 +247,10 @@ describe("decideCollaborationNextStep — loop discipline overrides nextAction=f
     expect(result.kind).toBe("continue_negotiation");
   });
 
-  it("returns continue_negotiation when nextAction=final but implementation disagreements above threshold remain and rounds remain", () => {
+  it("returns continue_negotiation when next_action=final but implementation disagreements above threshold remain and rounds remain", () => {
     const decision = makeResolutionDecisionFinal({
-      agreementReached: false,
-      remainingDisagreements: [makeBlockingImplementationDisagreement()],
+      agreement_reached: false,
+      remaining_disagreements: [makeBlockingImplementationDisagreement()],
     });
 
     const result = decideCollaborationNextStep({

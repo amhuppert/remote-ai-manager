@@ -29,6 +29,7 @@ import {
   trackArtifact,
   type ArtifactTracker,
 } from "./helpers";
+import { validateGeneratedArtifactFiles } from "./artifact-files";
 
 export interface RunCounterProposalStepContext {
   input: AsymmetricCollaborationSliceInput;
@@ -40,6 +41,7 @@ export interface RunCounterProposalStepContext {
   agentTwoDraft: CollaborationInitialDraftOutput;
   crossReview: CollaborationCrossReviewOutput;
   proposedChanges: CollaborationProposedChangesOutput;
+  round: number;
 }
 
 export type RunCounterProposalStepOutcome =
@@ -62,6 +64,7 @@ export async function runCounterProposalStep(
     agentTwoDraft,
     crossReview,
     proposedChanges,
+    round,
   } = ctx;
 
   const counterProposalPrompt = buildAgentTwoCounterProposalPrompt({
@@ -70,6 +73,8 @@ export async function runCounterProposalStep(
     otherDraft: agentOneDraft,
     ownCrossReview: crossReview,
     proposedChanges,
+    workflowId: input.workflowId,
+    round,
   });
   const counterProposalCall = await callPrimitive({
     input,
@@ -107,6 +112,24 @@ export async function runCounterProposalStep(
         tracker,
         flowAgent: "agent_two",
         errorSummary: counterProposal.error,
+      }),
+    };
+  }
+  const validation = await validateGeneratedArtifactFiles({
+    worktreePath: input.worktreePath,
+    workflowId: input.workflowId,
+    artifact: counterProposal.value,
+  });
+  if (!validation.success) {
+    return {
+      kind: "failed",
+      result: await failRun({
+        input,
+        deps,
+        now,
+        tracker,
+        flowAgent: "agent_two",
+        errorSummary: `counter_proposal (agent_two) artifact_files: ${validation.error}`,
       }),
     };
   }

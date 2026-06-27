@@ -37,6 +37,10 @@ import {
   COLLABORATION_PROPOSED_CHANGES_OUTPUT_SCHEMA,
   COLLABORATION_RESOLUTION_DECISION_OUTPUT_SCHEMA,
 } from "./types";
+import {
+  requiredArtifactFileRefs,
+  type CollaborationArtifactFileContext,
+} from "./artifact-files";
 
 export interface BuiltCollaborationPrompt {
   prompt: string;
@@ -45,12 +49,15 @@ export interface BuiltCollaborationPrompt {
 
 interface InitialDraftInput {
   userPrompt: string;
+  workflowId: string;
 }
 
 interface CrossReviewInput {
   userPrompt: string;
   ownDraft: CollaborationInitialDraftOutput;
   otherDraft: CollaborationInitialDraftOutput;
+  workflowId: string;
+  round: number;
 }
 
 interface CounterProposalInput {
@@ -59,6 +66,8 @@ interface CounterProposalInput {
   otherDraft: CollaborationInitialDraftOutput;
   ownCrossReview: CollaborationCrossReviewOutput;
   proposedChanges: CollaborationProposedChangesOutput;
+  workflowId: string;
+  round: number;
 }
 
 interface ResolutionDecisionInput {
@@ -68,6 +77,7 @@ interface ResolutionDecisionInput {
   proposedChanges: CollaborationProposedChangesOutput;
   latestCounterProposal: CollaborationCounterProposalOutput;
   negotiationRound: number;
+  workflowId: string;
 }
 
 interface CollaborationUserAnswer {
@@ -82,6 +92,8 @@ interface FinalAnswerInput {
   otherDraft: CollaborationInitialDraftOutput;
   latestCounterProposal: CollaborationCounterProposalOutput;
   latestResolutionDecision: CollaborationResolutionDecisionOutput;
+  workflowId: string;
+  round: number;
   artifactStream?: CollaborationArtifact[];
   openConflicts?: CollaborationOpenConflictsOutput;
   userAnswers?: CollaborationUserAnswer[];
@@ -95,13 +107,13 @@ interface FinalAnswerInput {
 // schema enforcement. Single-call consumers (the graph-scoped collaborator)
 // keep this reminder verbatim.
 export const COLLABORATION_STRUCTURED_OUTPUT_REMINDER =
-  "Return only the structured JSON object that matches the supplied JSON Schema. Do not include prose outside the object.";
+  "Return only the structured JSON object that matches the supplied JSON Schema. Substantive content must already be written to the required generated artifact files; the JSON object must contain only short summaries, decisions, ids, and file references. Do not include prose outside the object.";
 
 export const COLLABORATION_PROSE_TURN_INSTRUCTION =
-  "Work through your full answer in prose for this turn — cover every field described above with complete detail. Do not emit JSON yet; a follow-up message will ask you to produce the structured JSON object.";
+  "Complete the phase work in prose and write the required generated artifact file(s) exactly as instructed above. Do not emit JSON yet; a follow-up message will ask you to produce the small structured manifest.";
 
 export const COLLABORATION_FORMAT_TURN_INSTRUCTION =
-  "Convert your previous response into a single JSON object that conforms to the required output schema. Restate the full substance of your answer — do not summarize, abbreviate, or drop any detail. Output only the JSON object, with no prose outside it.";
+  "Convert your previous response into a single JSON object that conforms to the required output schema. Return only the small structured manifest: short summaries, decisions, ids, and references to generated artifact files. Do not restate full details and do not copy generated file contents into JSON. Output only the JSON object, with no prose outside it.";
 
 function joinLines(...lines: Array<string | string[]>): string {
   return lines
@@ -137,15 +149,29 @@ function summarizeChangeProposals(
     id: string;
     change: string;
     rationale: string;
-    addressesDisagreementIds: string[];
+    addresses_disagreement_ids: string[];
   }>,
 ): string[] {
   if (changes.length === 0) return ["(none)"];
   return changes.map(
     (c) =>
       `- ${c.id}: ${c.change} (rationale: ${c.rationale}; addresses: ${
-        c.addressesDisagreementIds.join(", ") || "—"
+        c.addresses_disagreement_ids.join(", ") || "—"
       })`,
+  );
+}
+
+function artifactSummaryLines(
+  artifact: ReadonlyArray<{
+    id: string;
+    artifact_type: string;
+    path: string;
+    summary: string;
+  }>,
+): string[] {
+  if (artifact.length === 0) return ["(none)"];
+  return artifact.map(
+    (ref) => `- ${ref.id} [${ref.artifact_type}]: ${ref.path} — ${ref.summary}`,
   );
 }
 
@@ -155,14 +181,32 @@ function draftSection(
 ): string[] {
   return [
     `--- ${label} (agent=${draft.agent}) ---`,
-    `report: ${draft.report}`,
-    `narrative: ${draft.narrative}`,
+    `round: ${draft.round}`,
+    `summary: ${draft.summary}`,
+    `generated artifacts:`,
+    ...artifactSummaryLines(draft.artifacts),
     `assumptions:`,
     ...(draft.assumptions.length > 0
       ? draft.assumptions.map((a) => `- ${a}`)
       : ["(none)"]),
     `key claims:`,
-    ...summarizeAgreements(draft.keyClaims),
+    ...summarizeAgreements(draft.key_claims),
+  ];
+}
+
+function artifactProtocolSection(
+  context: CollaborationArtifactFileContext,
+): string[] {
+  const refs = requiredArtifactFileRefs(context);
+  return [
+    `--- generated artifact files ---`,
+    `Before returning structured output, create these markdown file(s) relative to the repository worktree:`,
+    ...refs.map(
+      (ref) =>
+        `- id=${ref.id}, artifact_type=${ref.artifact_type}, path=${ref.path}`,
+    ),
+    `Create parent directories if needed. These file(s) are mandatory and must contain the full substantive ${context.phase} response.`,
+    `The structured JSON must include matching entries in artifacts and must keep inline text short. Do not copy file contents into JSON.`,
   ];
 }
 
@@ -182,54 +226,63 @@ function artifactLedgerSection(
       case "initial_draft":
         lines.push(
           `${prefix} (agent=${artifact.agent})`,
-          `report: ${artifact.report}`,
-          `narrative: ${artifact.narrative}`,
+          `round: ${artifact.round}`,
+          `summary: ${artifact.summary}`,
+          `generated artifacts:`,
+          ...artifactSummaryLines(artifact.artifacts),
         );
         break;
       case "cross_review":
         lines.push(
-          `${prefix} (agent=${artifact.agent}, target=${artifact.targetAgent})`,
-          `report: ${artifact.report}`,
-          `narrative: ${artifact.narrative}`,
+          `${prefix} (agent=${artifact.agent}, target=${artifact.target_agent}, round=${artifact.round})`,
+          `summary: ${artifact.summary}`,
+          `generated artifacts:`,
+          ...artifactSummaryLines(artifact.artifacts),
           `disagreements:`,
           ...summarizeDisagreements(artifact.disagree),
         );
         break;
       case "proposed_changes":
         lines.push(
-          `${prefix} (agent=${artifact.agent}, target=${artifact.targetAgent})`,
-          `report: ${artifact.report}`,
-          `narrative: ${artifact.narrative}`,
+          `${prefix} (agent=${artifact.agent}, target=${artifact.target_agent}, round=${artifact.round})`,
+          `summary: ${artifact.summary}`,
+          `generated artifacts:`,
+          ...artifactSummaryLines(artifact.artifacts),
           `proposed changes:`,
-          ...summarizeChangeProposals(artifact.proposedChanges),
+          ...summarizeChangeProposals(artifact.proposed_changes),
           `remaining disagreements:`,
-          ...summarizeDisagreements(artifact.remainingDisagreements),
+          ...summarizeDisagreements(artifact.remaining_disagreements),
         );
         break;
       case "counter_proposal":
         lines.push(
-          `${prefix} (agent=${artifact.agent})`,
-          `report: ${artifact.report}`,
-          `narrative: ${artifact.narrative}`,
+          `${prefix} (agent=${artifact.agent}, target=${artifact.target_agent}, round=${artifact.round})`,
+          `summary: ${artifact.summary}`,
+          `generated artifacts:`,
+          ...artifactSummaryLines(artifact.artifacts),
           `alternative changes:`,
-          ...summarizeChangeProposals(artifact.alternativeChanges),
+          ...summarizeChangeProposals(artifact.alternative_changes),
           `remaining disagreements:`,
           ...summarizeDisagreements(artifact.disagree),
         );
         break;
       case "resolution_decision":
         lines.push(
-          `${prefix} (agent=${artifact.agent})`,
-          `nextAction: ${artifact.nextAction}`,
-          `agreementReached: ${artifact.agreementReached}`,
+          `${prefix} (agent=${artifact.agent}, target=${artifact.target_agent}, round=${artifact.round})`,
+          `summary: ${artifact.summary}`,
+          `generated artifacts:`,
+          ...artifactSummaryLines(artifact.artifacts),
+          `next_action: ${artifact.next_action}`,
+          `agreement_reached: ${artifact.agreement_reached}`,
           `rationale: ${artifact.rationale}`,
           `remaining disagreements:`,
-          ...summarizeDisagreements(artifact.remainingDisagreements),
+          ...summarizeDisagreements(artifact.remaining_disagreements),
         );
         break;
       case "open_conflicts":
         lines.push(
-          `${prefix}`,
+          `${prefix} (round=${artifact.round})`,
+          `summary: ${artifact.summary}`,
           `disagreements:`,
           ...summarizeDisagreements(artifact.disagreements),
           `questions asked:`,
@@ -238,8 +291,10 @@ function artifactLedgerSection(
         break;
       case "final_answer":
         lines.push(
-          `${prefix} (agent=${artifact.agent})`,
-          `report: ${artifact.report}`,
+          `${prefix} (agent=${artifact.agent}, round=${artifact.round})`,
+          `summary: ${artifact.summary}`,
+          `generated artifacts:`,
+          ...artifactSummaryLines(artifact.artifacts),
         );
         break;
     }
@@ -259,6 +314,13 @@ export function buildAgentOneInitialDraftPrompt(
     input.userPrompt,
     ``,
     `Produce your initial draft of an answer to the user prompt. You are drafting in parallel with agent_two; you have not seen agent_two's draft yet.`,
+    ``,
+    artifactProtocolSection({
+      workflowId: input.workflowId,
+      round: 0,
+      agent: "agent_one",
+      phase: "initial_draft",
+    }),
     ``,
     COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
   );
@@ -283,6 +345,13 @@ export function buildAgentTwoInitialDraftPrompt(
     input.userPrompt,
     ``,
     `Produce your initial draft of an answer to the user prompt. You are drafting in parallel with agent_one; you have not seen agent_one's draft yet.`,
+    ``,
+    artifactProtocolSection({
+      workflowId: input.workflowId,
+      round: 0,
+      agent: "agent_two",
+      phase: "initial_draft",
+    }),
     ``,
     COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
   );
@@ -310,7 +379,14 @@ export function buildAgentOneProposedChangesPrompt(
     ``,
     draftSection("agent_two initial draft", input.otherDraft),
     ``,
-    `Read agent_two's draft. Identify points you accept (acceptedFromAgentTwoDraft), formulate concrete proposed changes (proposedChanges) that address gaps or disagreements, and list any disagreements you still hold (remainingDisagreements) with category and severity.`,
+    `Read agent_two's draft. Identify points you accept (accepted_from_other_agent_draft), formulate concrete proposed changes (proposed_changes) that address gaps or disagreements, and list any disagreements you still hold (remaining_disagreements) with category and severity.`,
+    ``,
+    artifactProtocolSection({
+      workflowId: input.workflowId,
+      round: input.round,
+      agent: "agent_one",
+      phase: "proposed_changes",
+    }),
     ``,
     COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
   );
@@ -339,7 +415,14 @@ export function buildAgentTwoCrossReviewPrompt(
     ``,
     draftSection("agent_one initial draft", input.otherDraft),
     ``,
-    `Produce a structured cross-review of agent_one's draft. Categorize each disagreement as objective or implementation and assign a severity (minor, major, blocking). Include any reviseSelf items you would change in your own draft based on what you learned.`,
+    `Produce a structured cross-review of agent_one's draft. Categorize each disagreement as objective or implementation and assign a severity (minor, major, blocking). Include any revise_self items you would change in your own draft based on what you learned.`,
+    ``,
+    artifactProtocolSection({
+      workflowId: input.workflowId,
+      round: 0,
+      agent: "agent_two",
+      phase: "cross_review",
+    }),
     ``,
     COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
   );
@@ -368,20 +451,29 @@ export function buildAgentTwoCounterProposalPrompt(
     draftSection("agent_one initial draft", input.otherDraft),
     ``,
     `--- your cross-review of agent_one's draft ---`,
-    `report: ${input.ownCrossReview.report}`,
-    `narrative: ${input.ownCrossReview.narrative}`,
+    `summary: ${input.ownCrossReview.summary}`,
+    `generated artifacts:`,
+    ...artifactSummaryLines(input.ownCrossReview.artifacts),
     `disagree:`,
     ...summarizeDisagreements(input.ownCrossReview.disagree),
     ``,
     `--- agent_one proposed changes ---`,
-    `report: ${input.proposedChanges.report}`,
-    `narrative: ${input.proposedChanges.narrative}`,
+    `summary: ${input.proposedChanges.summary}`,
+    `generated artifacts:`,
+    ...artifactSummaryLines(input.proposedChanges.artifacts),
     `proposed changes:`,
-    ...summarizeChangeProposals(input.proposedChanges.proposedChanges),
+    ...summarizeChangeProposals(input.proposedChanges.proposed_changes),
     `agent_one remaining disagreements:`,
-    ...summarizeDisagreements(input.proposedChanges.remainingDisagreements),
+    ...summarizeDisagreements(input.proposedChanges.remaining_disagreements),
     ``,
     `Decide which proposed change ids you accept and which you reject (by id). Offer alternative changes only when needed. Restate any remaining agreements (agree) and disagreements (disagree) — including the points from your cross-review you still hold — with category and severity.`,
+    ``,
+    artifactProtocolSection({
+      workflowId: input.workflowId,
+      round: input.round,
+      agent: "agent_two",
+      phase: "counter_proposal",
+    }),
     ``,
     COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
   );
@@ -412,26 +504,35 @@ export function buildAgentOneResolutionDecisionPrompt(
     draftSection("agent_two initial draft", input.otherDraft),
     ``,
     `--- your proposed changes (round ${input.negotiationRound}) ---`,
-    `report: ${input.proposedChanges.report}`,
-    `narrative: ${input.proposedChanges.narrative}`,
+    `summary: ${input.proposedChanges.summary}`,
+    `generated artifacts:`,
+    ...artifactSummaryLines(input.proposedChanges.artifacts),
     `proposed changes:`,
-    ...summarizeChangeProposals(input.proposedChanges.proposedChanges),
+    ...summarizeChangeProposals(input.proposedChanges.proposed_changes),
     `your remaining disagreements:`,
-    ...summarizeDisagreements(input.proposedChanges.remainingDisagreements),
+    ...summarizeDisagreements(input.proposedChanges.remaining_disagreements),
     ``,
     `--- agent_two latest counter-proposal (round ${input.negotiationRound}) ---`,
-    `report: ${counter.report}`,
-    `narrative: ${counter.narrative}`,
-    `acceptedProposedChangeIds: ${counter.acceptedProposedChangeIds.join(", ") || "(none)"}`,
-    `rejectedProposedChangeIds: ${counter.rejectedProposedChangeIds.join(", ") || "(none)"}`,
+    `summary: ${counter.summary}`,
+    `generated artifacts:`,
+    ...artifactSummaryLines(counter.artifacts),
+    `accepted_change_ids: ${counter.accepted_change_ids.join(", ") || "(none)"}`,
+    `rejected_change_ids: ${counter.rejected_change_ids.join(", ") || "(none)"}`,
     `alternative changes:`,
-    ...summarizeChangeProposals(counter.alternativeChanges),
+    ...summarizeChangeProposals(counter.alternative_changes),
     `agent_two agreements:`,
     ...summarizeAgreements(counter.agree),
     `agent_two remaining disagreements:`,
     ...summarizeDisagreements(counter.disagree),
     ``,
-    `Choose nextAction: "final" if agreement is reached, "continue_negotiation" if implementation disagreements remain and rounds remain, "ask_user" if objective disagreements remain or remaining implementation disagreements exceed the autonomous threshold, or "fail" if the run cannot proceed. Populate resolvedDisagreements with autonomous resolutions you take and userQuestions for any clarification you need from the user.`,
+    `Choose next_action: "final" if agreement is reached, "continue_negotiation" if implementation disagreements remain and rounds remain, "ask_user" if objective disagreements remain or remaining implementation disagreements exceed the autonomous threshold, or "fail" if the run cannot proceed. Populate resolved_disagreements with autonomous resolutions you take and user_questions for any clarification you need from the user.`,
+    ``,
+    artifactProtocolSection({
+      workflowId: input.workflowId,
+      round: input.negotiationRound,
+      agent: "agent_one",
+      phase: "resolution_decision",
+    }),
     ``,
     COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
   );
@@ -451,7 +552,7 @@ export function buildAgentOneFinalAnswerPrompt(
   const sections: string[] = [
     `You are agent_one (the Primary) in a Collaboration Mode run.`,
     `Phase: Final Answer.`,
-    `Write the final answer for the user. Resolution details remain metadata in the artifact stream and the UI exposes them through a collapsed audit; do NOT include a separate resolution-audit section in your answer body.`,
+    `Write the final answer for the user into the required answer.md file. Write a concise audit of how the negotiation resolved into audit.md. Resolution details remain metadata in the artifact stream and the UI exposes them separately.`,
     ``,
     `User prompt:`,
     input.userPrompt,
@@ -464,18 +565,19 @@ export function buildAgentOneFinalAnswerPrompt(
       ? [...artifactLedgerSection(input.artifactStream), ``]
       : []),
     `--- agent_two latest counter-proposal ---`,
-    `report: ${input.latestCounterProposal.report}`,
-    `narrative: ${input.latestCounterProposal.narrative}`,
+    `summary: ${input.latestCounterProposal.summary}`,
+    `generated artifacts:`,
+    ...artifactSummaryLines(input.latestCounterProposal.artifacts),
     ``,
     `--- your latest resolution decision ---`,
-    `nextAction: ${input.latestResolutionDecision.nextAction}`,
-    `agreementReached: ${input.latestResolutionDecision.agreementReached}`,
+    `next_action: ${input.latestResolutionDecision.next_action}`,
+    `agreement_reached: ${input.latestResolutionDecision.agreement_reached}`,
     `rationale: ${input.latestResolutionDecision.rationale}`,
     `resolved disagreements:`,
-    ...(input.latestResolutionDecision.resolvedDisagreements.length > 0
-      ? input.latestResolutionDecision.resolvedDisagreements.map(
+    ...(input.latestResolutionDecision.resolved_disagreements.length > 0
+      ? input.latestResolutionDecision.resolved_disagreements.map(
           (r) =>
-            `- ${r.disagreementId}: ${r.resolution} (auto=${r.resolvedAutonomously}; ${r.rationale})`,
+            `- ${r.disagreement_id}: ${r.resolution} (auto=${r.resolved_autonomously}; ${r.rationale})`,
         )
       : ["(none)"]),
   ];
@@ -507,7 +609,14 @@ export function buildAgentOneFinalAnswerPrompt(
 
   sections.push(
     ``,
-    `Set "answer" to the user-facing final answer text. Set "report" to inline collapsed-audit markdown the UI surfaces alongside the final answer (a brief synthesis of how the negotiation resolved), and "supporting" to any inline supplementary markdown blocks; both are stored verbatim — do not return file paths and do not embed audit prose inside "answer".`,
+    ...artifactProtocolSection({
+      workflowId: input.workflowId,
+      round: input.round,
+      agent: "agent_one",
+      phase: "final_answer",
+    }),
+    ``,
+    `Set answer_artifact_id to "answer" and audit_artifact_id to "audit". The structured JSON must not contain the final answer body or audit body.`,
     ``,
     COLLABORATION_STRUCTURED_OUTPUT_REMINDER,
   );

@@ -57,6 +57,11 @@ import {
   buildAgentTwoInitialDraftPrompt,
   type BuiltCollaborationPrompt,
 } from "@/lib/workflows/collaboration/prompt-builders";
+import {
+  findGeneratedArtifactRef,
+  readGeneratedArtifactFile,
+  validateGeneratedArtifactFiles,
+} from "@/lib/workflows/collaboration/artifact-files";
 import type { WorkflowCollaborationCollaboratorCaller } from "@/lib/workflows/collaboration/workflow-envelope";
 import {
   collaborationCounterProposalOutputSchema,
@@ -72,41 +77,49 @@ const logger = createLogger("workflow-graph.workflow-collaborator-caller");
 
 const AGENT_ONE_INITIAL_DRAFT_SYSTEM_INSTRUCTIONS = [
   "You are agent_one in a workflow-scoped collaboration run.",
-  "Produce a single CollaborationInitialDraftOutput JSON object capturing your independent draft of the brief.",
+  "Write the full draft into the required generated artifact file before returning structured output.",
+  "Produce a single CollaborationInitialDraftOutput JSON object containing only short bounded manifest fields and generated artifact references.",
 ].join("\n");
 
 const AGENT_TWO_INITIAL_DRAFT_SYSTEM_INSTRUCTIONS = [
   "You are agent_two in a workflow-scoped collaboration run.",
-  "Produce a single CollaborationInitialDraftOutput JSON object capturing your independent draft of the brief.",
+  "Write the full draft into the required generated artifact file before returning structured output.",
+  "Produce a single CollaborationInitialDraftOutput JSON object containing only short bounded manifest fields and generated artifact references.",
 ].join("\n");
 
 const AGENT_TWO_CROSS_REVIEW_SYSTEM_INSTRUCTIONS = [
   "You are agent_two in a workflow-scoped collaboration run.",
-  "Read both initial drafts and emit a single CollaborationCrossReviewOutput JSON object.",
+  "Read both initial drafts and write the full review into the required generated artifact file before returning structured output.",
+  "Emit a single CollaborationCrossReviewOutput JSON object containing only short bounded manifest fields and generated artifact references.",
   "Classify each disagreement as objective or implementation, and assign minor|major|blocking severity.",
 ].join("\n");
 
 const AGENT_ONE_PROPOSED_CHANGES_SYSTEM_INSTRUCTIONS = [
   "You are agent_one in a workflow-scoped collaboration round.",
-  "Emit a single CollaborationProposedChangesOutput JSON object that critiques agent_two's draft, lists concrete proposed changes, and notes remaining disagreements.",
+  "Write the full proposed-changes analysis into the required generated artifact file before returning structured output.",
+  "Emit a single CollaborationProposedChangesOutput JSON object containing only short bounded manifest fields, concrete ids, and generated artifact references.",
 ].join("\n");
 
 const AGENT_TWO_COUNTER_PROPOSAL_SYSTEM_INSTRUCTIONS = [
   "You are agent_two in a workflow-scoped collaboration round.",
-  "Emit a single CollaborationCounterProposalOutput JSON object. Accept or reject every proposed change id, offer alternatives when warranted, and fold your prior cross-review points into agree/disagree as needed.",
+  "Write the full counter-proposal into the required generated artifact file before returning structured output.",
+  "Emit a single CollaborationCounterProposalOutput JSON object containing only short bounded manifest fields, concrete ids, and generated artifact references.",
+  "Accept or reject every proposed change id, offer alternatives when warranted, and fold your prior cross-review points into agree/disagree as needed.",
 ].join("\n");
 
 const AGENT_ONE_RESOLUTION_DECISION_SYSTEM_INSTRUCTIONS = [
   "You are agent_one in a workflow-scoped collaboration round.",
-  "You are the authoritative resolver. Emit a single CollaborationResolutionDecisionOutput JSON object based on the LATEST counter-proposal for this round.",
-  'Choose nextAction="final" only when the brief is resolved. Use "continue_negotiation" when implementation disagreements remain and rounds remain; "ask_user" when objective disagreements remain or implementation disagreements exceed the autonomous threshold; "fail" only when the run cannot proceed.',
-  "Every remainingDisagreement MUST include category (objective|implementation) and severity (minor|major|blocking).",
+  "You are the authoritative resolver. Write the full resolution analysis into the required generated artifact file before returning structured output.",
+  "Emit a single CollaborationResolutionDecisionOutput JSON object based on the LATEST counter-proposal for this round.",
+  'Choose next_action="final" only when the brief is resolved. Use "continue_negotiation" when implementation disagreements remain and rounds remain; "ask_user" when objective disagreements remain or implementation disagreements exceed the autonomous threshold; "fail" only when the run cannot proceed.',
+  "Every remaining_disagreement MUST include category (objective|implementation) and severity (minor|major|blocking).",
 ].join("\n");
 
 const AGENT_ONE_FINAL_ANSWER_SYSTEM_INSTRUCTIONS = [
   "You are agent_one in a workflow-scoped collaboration run.",
-  "Synthesize the final answer into a single CollaborationFinalAnswerOutput JSON object.",
-  "The answer field must be the user-facing resolution prose; collapsed-audit context belongs in report/supporting.",
+  "Write the user-facing final answer into answer.md and the audit into audit.md before returning structured output.",
+  "Synthesize a single CollaborationFinalAnswerOutput JSON object containing only short bounded manifest fields and generated artifact references.",
+  'Set answer_artifact_id="answer" and audit_artifact_id="audit".',
 ].join("\n");
 
 function oppositeBackend(backend: AgentBackendId): AgentBackendId {
@@ -253,6 +266,28 @@ export function createWorkflowCollaboratorCaller(
     return result.outcome.structuredOutput;
   }
 
+  async function validateArtifactFiles(
+    label: string,
+    artifact:
+      | ReturnType<typeof collaborationInitialDraftOutputSchema.parse>
+      | ReturnType<typeof collaborationCrossReviewOutputSchema.parse>
+      | ReturnType<typeof collaborationProposedChangesOutputSchema.parse>
+      | ReturnType<typeof collaborationCounterProposalOutputSchema.parse>
+      | ReturnType<typeof collaborationResolutionDecisionOutputSchema.parse>
+      | ReturnType<typeof collaborationFinalAnswerOutputSchema.parse>,
+  ): Promise<void> {
+    const validation = await validateGeneratedArtifactFiles({
+      worktreePath: input.worktreePath,
+      workflowId: input.workflowId,
+      artifact,
+    });
+    if (!validation.success) {
+      throw new Error(
+        `workflow collaborator ${label} generated invalid artifact files: ${validation.error}`,
+      );
+    }
+  }
+
   return {
     async runInitialDrafts(draftInput) {
       const [agentOneResult, agentTwoResult] = await Promise.all([
@@ -260,6 +295,7 @@ export function createWorkflowCollaboratorCaller(
           backend: agentOneBackend,
           built: buildAgentOneInitialDraftPrompt({
             userPrompt: draftInput.brief,
+            workflowId: input.workflowId,
           }),
           systemInstructions: AGENT_ONE_INITIAL_DRAFT_SYSTEM_INSTRUCTIONS,
           agent: "agent_one",
@@ -269,6 +305,7 @@ export function createWorkflowCollaboratorCaller(
           backend: agentTwoBackend,
           built: buildAgentTwoInitialDraftPrompt({
             userPrompt: draftInput.brief,
+            workflowId: input.workflowId,
           }),
           systemInstructions: AGENT_TWO_INITIAL_DRAFT_SYSTEM_INSTRUCTIONS,
           agent: "agent_two",
@@ -281,6 +318,8 @@ export function createWorkflowCollaboratorCaller(
       const agentTwoDraft = collaborationInitialDraftOutputSchema.parse(
         expectCompleted(agentTwoResult, "agent_two initial draft"),
       );
+      await validateArtifactFiles("agent_one initial draft", agentOneDraft);
+      await validateArtifactFiles("agent_two initial draft", agentTwoDraft);
       return { agentOneDraft, agentTwoDraft };
     },
 
@@ -291,6 +330,8 @@ export function createWorkflowCollaboratorCaller(
           userPrompt: reviewInput.brief,
           ownDraft: reviewInput.agentTwoDraft,
           otherDraft: reviewInput.agentOneDraft,
+          workflowId: input.workflowId,
+          round: 0,
         }),
         systemInstructions: AGENT_TWO_CROSS_REVIEW_SYSTEM_INSTRUCTIONS,
         agent: "agent_two",
@@ -298,6 +339,10 @@ export function createWorkflowCollaboratorCaller(
       });
       const agentTwoCrossReview = collaborationCrossReviewOutputSchema.parse(
         expectCompleted(reviewResult, "agent_two cross review"),
+      );
+      await validateArtifactFiles(
+        "agent_two cross review",
+        agentTwoCrossReview,
       );
       return { agentTwoCrossReview };
     },
@@ -309,6 +354,8 @@ export function createWorkflowCollaboratorCaller(
           userPrompt: roundInput.brief,
           ownDraft: roundInput.agentOneDraft,
           otherDraft: roundInput.agentTwoDraft,
+          workflowId: input.workflowId,
+          round: roundInput.round,
         }),
         systemInstructions: AGENT_ONE_PROPOSED_CHANGES_SYSTEM_INSTRUCTIONS,
         agent: "agent_one",
@@ -321,6 +368,10 @@ export function createWorkflowCollaboratorCaller(
           `round ${roundInput.round} agent_one proposed changes`,
         ),
       );
+      await validateArtifactFiles(
+        `round ${roundInput.round} agent_one proposed changes`,
+        proposedChanges,
+      );
 
       const counterResult = await runStructuredCall({
         backend: agentTwoBackend,
@@ -330,6 +381,8 @@ export function createWorkflowCollaboratorCaller(
           otherDraft: roundInput.agentOneDraft,
           ownCrossReview: roundInput.agentTwoCrossReview,
           proposedChanges,
+          workflowId: input.workflowId,
+          round: roundInput.round,
         }),
         systemInstructions: AGENT_TWO_COUNTER_PROPOSAL_SYSTEM_INSTRUCTIONS,
         agent: "agent_two",
@@ -342,6 +395,10 @@ export function createWorkflowCollaboratorCaller(
           `round ${roundInput.round} agent_two counter proposal`,
         ),
       );
+      await validateArtifactFiles(
+        `round ${roundInput.round} agent_two counter proposal`,
+        counterProposal,
+      );
 
       const resolutionResult = await runStructuredCall({
         backend: agentOneBackend,
@@ -352,6 +409,7 @@ export function createWorkflowCollaboratorCaller(
           proposedChanges,
           latestCounterProposal: counterProposal,
           negotiationRound: roundInput.round,
+          workflowId: input.workflowId,
         }),
         systemInstructions: AGENT_ONE_RESOLUTION_DECISION_SYSTEM_INSTRUCTIONS,
         agent: "agent_one",
@@ -363,6 +421,10 @@ export function createWorkflowCollaboratorCaller(
           resolutionResult,
           `round ${roundInput.round} agent_one resolution decision`,
         ),
+      );
+      await validateArtifactFiles(
+        `round ${roundInput.round} agent_one resolution decision`,
+        resolution,
       );
 
       return { proposedChanges, counterProposal, resolution };
@@ -377,6 +439,8 @@ export function createWorkflowCollaboratorCaller(
           otherDraft: finalInput.agentTwoDraft,
           latestCounterProposal: finalInput.latestCounterProposal,
           latestResolutionDecision: finalInput.latestResolutionDecision,
+          workflowId: input.workflowId,
+          round: finalInput.latestResolutionDecision.round,
         }),
         systemInstructions: AGENT_ONE_FINAL_ANSWER_SYSTEM_INSTRUCTIONS,
         agent: "agent_one",
@@ -385,7 +449,21 @@ export function createWorkflowCollaboratorCaller(
       const final = collaborationFinalAnswerOutputSchema.parse(
         expectCompleted(finalResult, "final answer"),
       );
-      return { finalAnswer: final };
+      await validateArtifactFiles("final answer", final);
+      const answerRef = findGeneratedArtifactRef(
+        final,
+        final.answer_artifact_id,
+      );
+      if (!answerRef) {
+        throw new Error(
+          `workflow collaborator final answer did not include artifact ${final.answer_artifact_id}`,
+        );
+      }
+      const finalAnswerText = await readGeneratedArtifactFile(
+        input.worktreePath,
+        answerRef,
+      );
+      return { finalAnswer: final, finalAnswerText };
     },
   };
 }

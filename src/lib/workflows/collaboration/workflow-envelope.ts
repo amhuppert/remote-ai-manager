@@ -146,6 +146,7 @@ export interface WorkflowCollaborationFinalAnswerInput {
 
 export interface WorkflowCollaborationFinalAnswerOutput {
   finalAnswer: CollaborationFinalAnswerOutput;
+  finalAnswerText: string;
 }
 
 export interface WorkflowCollaborationCollaboratorCaller {
@@ -431,7 +432,7 @@ export function createWorkflowCollaborationEnvelope(
           latestCounterProposal,
           latestResolutionDecision,
         });
-        finalAnswer = fa.finalAnswer.answer;
+        finalAnswer = fa.finalAnswerText;
         await pushArtifact({
           kind: "final_answer",
           agent: "agent_one",
@@ -526,7 +527,7 @@ function buildOpenConflicts(
   if (policyDecision.kind === "final") return [];
   const lastResolution = resolutions[resolutions.length - 1];
   if (!lastResolution) return [];
-  return lastResolution.remainingDisagreements.map((d) => ({
+  return lastResolution.remaining_disagreements.map((d) => ({
     rejectingAgent: "agent_one" as const,
     disputedPoint: d.claim,
     severity: d.severity,

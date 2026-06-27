@@ -122,9 +122,9 @@ export default function CollabClaimsList({
                 </dt>
                 <dd className={metaClass}>
                   <span className="italic">because {item.reason}</span>
-                  {item.proposedResolution ? (
+                  {item.proposed_resolution ? (
                     <span className="font-mono text-[0.72rem] text-text-secondary">
-                      proposed: {item.proposedResolution}
+                      proposed: {item.proposed_resolution}
                     </span>
                   ) : null}
                   <RefButton refValue={item.ref} onRefClick={onRefClick} />

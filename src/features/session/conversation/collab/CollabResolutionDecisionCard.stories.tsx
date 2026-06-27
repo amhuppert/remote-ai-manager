@@ -42,12 +42,12 @@ function fromResolutionDecisionFixture(
   return {
     agent: backend,
     round,
-    agreementReached: fixture.agreementReached,
-    nextAction: fixture.nextAction,
-    acceptedPoints: fixture.acceptedPoints,
-    resolvedDisagreements: fixture.resolvedDisagreements,
-    remainingDisagreements: fixture.remainingDisagreements,
-    userQuestions: fixture.userQuestions,
+    agreement_reached: fixture.agreement_reached,
+    next_action: fixture.next_action,
+    accepted_points: fixture.accepted_points,
+    resolved_disagreements: fixture.resolved_disagreements,
+    remaining_disagreements: fixture.remaining_disagreements,
+    user_questions: fixture.user_questions,
     rationale: fixture.rationale,
     trajectory,
   };
@@ -56,10 +56,10 @@ function fromResolutionDecisionFixture(
 export const ConvergedR3FromFixture = {
   args: fromResolutionDecisionFixture(
     makeResolutionDecisionFinal({
-      resolvedDisagreements: [
+      resolved_disagreements: [
         makeResolvedDisagreement(),
         makeResolvedDisagreement({
-          disagreementId: "D-obj-1",
+          disagreement_id: "D-obj-1",
           resolution: "Treat as design doc, not implementation plan",
           rationale: "Aligns with the user's original ask",
         }),
@@ -74,7 +74,7 @@ export const ConvergedR3FromFixture = {
 export const ContinueR1NoSparklineFromFixture = {
   args: fromResolutionDecisionFixture(
     makeResolutionDecisionContinue({
-      remainingDisagreements: [
+      remaining_disagreements: [
         makeImplementationDisagreement(),
         makeObjectiveDisagreement(),
       ],
@@ -97,7 +97,7 @@ export const AskUserR2FromFixture = {
 export const FailedR3FromFixture = {
   args: fromResolutionDecisionFixture(
     makeResolutionDecisionFail({
-      remainingDisagreements: [
+      remaining_disagreements: [
         makeBlockingImplementationDisagreement(),
         makeObjectiveDisagreement(),
       ],

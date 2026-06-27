@@ -1546,10 +1546,16 @@ export type WorkflowGeneratedDraft = z.infer<
 // schemas themselves remain here next to the per-artifact JSON-Schema
 // projections in `types.ts`.
 
+const collaborationShortIdSchema = z.string().min(1).max(80);
+const collaborationShortTextSchema = z.string().min(1).max(500);
+const collaborationSummarySchema = z.string().min(1).max(500);
+const collaborationArtifactSummarySchema = z.string().min(1).max(300);
+const collaborationArtifactPathSchema = z.string().min(1).max(512);
+
 const collaborationReferenceSchema = z
   .object({
-    artifact: z.string().min(1),
-    locator: z.string().min(1).optional(),
+    artifact: collaborationArtifactPathSchema,
+    locator: z.string().min(1).max(120).optional(),
   })
   .strict();
 export type CollaborationReference = z.infer<
@@ -1558,8 +1564,8 @@ export type CollaborationReference = z.infer<
 
 const collaborationArtifactAgreementSchema = z
   .object({
-    id: z.string().min(1),
-    claim: z.string().min(1),
+    id: collaborationShortIdSchema,
+    claim: collaborationShortTextSchema,
     ref: collaborationReferenceSchema.optional(),
   })
   .strict();
@@ -1569,12 +1575,12 @@ export type CollaborationArtifactAgreement = z.infer<
 
 const collaborationArtifactDisagreementSchema = z
   .object({
-    id: z.string().min(1),
+    id: collaborationShortIdSchema,
     category: collaborationDisagreementCategorySchema,
     severity: collaborationDisagreementSeveritySchema,
-    claim: z.string().min(1),
-    reason: z.string().min(1),
-    proposedResolution: z.string().min(1).optional(),
+    claim: collaborationShortTextSchema,
+    reason: collaborationShortTextSchema,
+    proposed_resolution: collaborationShortTextSchema.optional(),
     ref: collaborationReferenceSchema.optional(),
   })
   .strict();
@@ -1584,9 +1590,9 @@ export type CollaborationArtifactDisagreement = z.infer<
 
 const collaborationUserQuestionSchema = z
   .object({
-    id: z.string().min(1),
-    question: z.string().min(1),
-    relatedDisagreementIds: z.array(z.string().min(1)),
+    id: collaborationShortIdSchema,
+    question: collaborationShortTextSchema,
+    related_disagreement_ids: z.array(collaborationShortIdSchema).max(20),
   })
   .strict();
 export type CollaborationUserQuestion = z.infer<
@@ -1595,8 +1601,8 @@ export type CollaborationUserQuestion = z.infer<
 
 const collaborationReviseSelfArtifactSchema = z
   .object({
-    change: z.string().min(1),
-    because: z.string().min(1),
+    change: collaborationShortTextSchema,
+    because: collaborationShortTextSchema,
   })
   .strict();
 export type CollaborationReviseSelfArtifact = z.infer<
@@ -1605,27 +1611,104 @@ export type CollaborationReviseSelfArtifact = z.infer<
 
 const collaborationChangeProposalSchema = z
   .object({
-    id: z.string().min(1),
-    change: z.string().min(1),
-    rationale: z.string().min(1),
-    addressesDisagreementIds: z.array(z.string().min(1)),
+    id: collaborationShortIdSchema,
+    change: collaborationShortTextSchema,
+    rationale: collaborationShortTextSchema,
+    addresses_disagreement_ids: z.array(collaborationShortIdSchema).max(20),
   })
   .strict();
 export type CollaborationChangeProposal = z.infer<
   typeof collaborationChangeProposalSchema
 >;
 
+const collaborationAgentArtifactPhaseSchema = z.enum([
+  "initial_draft",
+  "cross_review",
+  "proposed_changes",
+  "counter_proposal",
+  "resolution_decision",
+  "final_answer",
+]);
+export type CollaborationAgentArtifactPhase = z.infer<
+  typeof collaborationAgentArtifactPhaseSchema
+>;
+
+const collaborationGeneratedArtifactTypeSchema = z.enum([
+  "main_response",
+  "audit",
+  "supporting",
+]);
+export type CollaborationGeneratedArtifactType = z.infer<
+  typeof collaborationGeneratedArtifactTypeSchema
+>;
+
+export const collaborationGeneratedArtifactSchema = z
+  .object({
+    id: collaborationShortIdSchema.regex(/^[a-z][a-z0-9_]*$/),
+    artifact_type: collaborationGeneratedArtifactTypeSchema,
+    path: collaborationArtifactPathSchema,
+    round: z.number().int().min(0),
+    agent: collaborationFlowAgentSchema,
+    phase: collaborationAgentArtifactPhaseSchema,
+    summary: collaborationArtifactSummarySchema,
+  })
+  .strict();
+export type CollaborationGeneratedArtifact = z.infer<
+  typeof collaborationGeneratedArtifactSchema
+>;
+
+const collaborationGeneratedArtifactsSchema = z
+  .array(collaborationGeneratedArtifactSchema)
+  .min(1)
+  .max(5);
+
+function hasArtifact(
+  artifacts: ReadonlyArray<CollaborationGeneratedArtifact>,
+  id: string,
+  artifactType: CollaborationGeneratedArtifactType,
+): boolean {
+  return artifacts.some(
+    (artifact) => artifact.id === id && artifact.artifact_type === artifactType,
+  );
+}
+
+function parentArtifactRefsMatch(
+  artifacts: ReadonlyArray<CollaborationGeneratedArtifact>,
+  parent: {
+    round: number;
+    agent: z.infer<typeof collaborationFlowAgentSchema>;
+    phase: CollaborationAgentArtifactPhase;
+  },
+): boolean {
+  return artifacts.every(
+    (artifact) =>
+      artifact.round === parent.round &&
+      artifact.agent === parent.agent &&
+      artifact.phase === parent.phase,
+  );
+}
+
 export const collaborationInitialDraftOutputSchema = z
   .object({
     kind: z.literal("initial_draft"),
     agent: collaborationFlowAgentSchema,
-    narrative: z.string().min(1),
-    report: z.string().min(1),
-    supporting: z.array(z.string().min(1)),
-    assumptions: z.array(z.string().min(1)),
-    keyClaims: z.array(collaborationArtifactAgreementSchema),
+    round: z.number().int().min(0),
+    summary: collaborationSummarySchema,
+    artifacts: collaborationGeneratedArtifactsSchema,
+    assumptions: z.array(collaborationShortTextSchema).max(10),
+    key_claims: z.array(collaborationArtifactAgreementSchema).max(20),
   })
-  .strict();
+  .strict()
+  .refine(
+    (artifact) =>
+      artifact.artifacts.length > 0 &&
+      hasArtifact(artifact.artifacts, "main", "main_response") &&
+      parentArtifactRefsMatch(artifact.artifacts, {
+        round: artifact.round,
+        agent: artifact.agent,
+        phase: artifact.kind,
+      }),
+  );
 export type CollaborationInitialDraftOutput = z.infer<
   typeof collaborationInitialDraftOutputSchema
 >;
@@ -1634,15 +1717,24 @@ export const collaborationCrossReviewOutputSchema = z
   .object({
     kind: z.literal("cross_review"),
     agent: collaborationFlowAgentSchema,
-    targetAgent: collaborationFlowAgentSchema,
-    narrative: z.string().min(1),
-    report: z.string().min(1),
-    supporting: z.array(z.string().min(1)),
-    agree: z.array(collaborationArtifactAgreementSchema),
-    disagree: z.array(collaborationArtifactDisagreementSchema),
-    reviseSelf: z.array(collaborationReviseSelfArtifactSchema),
+    target_agent: collaborationFlowAgentSchema,
+    round: z.number().int().min(0),
+    summary: collaborationSummarySchema,
+    artifacts: collaborationGeneratedArtifactsSchema,
+    agree: z.array(collaborationArtifactAgreementSchema).max(20),
+    disagree: z.array(collaborationArtifactDisagreementSchema).max(20),
+    revise_self: z.array(collaborationReviseSelfArtifactSchema).max(20),
   })
-  .strict();
+  .strict()
+  .refine(
+    (artifact) =>
+      hasArtifact(artifact.artifacts, "main", "main_response") &&
+      parentArtifactRefsMatch(artifact.artifacts, {
+        round: artifact.round,
+        agent: artifact.agent,
+        phase: artifact.kind,
+      }),
+  );
 export type CollaborationCrossReviewOutput = z.infer<
   typeof collaborationCrossReviewOutputSchema
 >;
@@ -1651,15 +1743,28 @@ export const collaborationProposedChangesOutputSchema = z
   .object({
     kind: z.literal("proposed_changes"),
     agent: z.literal("agent_one"),
-    targetAgent: z.literal("agent_two"),
-    narrative: z.string().min(1),
-    acceptedFromAgentTwoDraft: z.array(collaborationArtifactAgreementSchema),
-    proposedChanges: z.array(collaborationChangeProposalSchema),
-    remainingDisagreements: z.array(collaborationArtifactDisagreementSchema),
-    report: z.string().min(1),
-    supporting: z.array(z.string().min(1)),
+    target_agent: z.literal("agent_two"),
+    round: z.number().int().min(0),
+    summary: collaborationSummarySchema,
+    artifacts: collaborationGeneratedArtifactsSchema,
+    accepted_from_other_agent_draft: z
+      .array(collaborationArtifactAgreementSchema)
+      .max(20),
+    proposed_changes: z.array(collaborationChangeProposalSchema).max(20),
+    remaining_disagreements: z
+      .array(collaborationArtifactDisagreementSchema)
+      .max(20),
   })
-  .strict();
+  .strict()
+  .refine(
+    (artifact) =>
+      hasArtifact(artifact.artifacts, "main", "main_response") &&
+      parentArtifactRefsMatch(artifact.artifacts, {
+        round: artifact.round,
+        agent: artifact.agent,
+        phase: artifact.kind,
+      }),
+  );
 export type CollaborationProposedChangesOutput = z.infer<
   typeof collaborationProposedChangesOutputSchema
 >;
@@ -1668,16 +1773,26 @@ export const collaborationCounterProposalOutputSchema = z
   .object({
     kind: z.literal("counter_proposal"),
     agent: z.literal("agent_two"),
-    narrative: z.string().min(1),
-    acceptedProposedChangeIds: z.array(z.string().min(1)),
-    rejectedProposedChangeIds: z.array(z.string().min(1)),
-    alternativeChanges: z.array(collaborationChangeProposalSchema),
-    agree: z.array(collaborationArtifactAgreementSchema),
-    disagree: z.array(collaborationArtifactDisagreementSchema),
-    report: z.string().min(1),
-    supporting: z.array(z.string().min(1)),
+    target_agent: z.literal("agent_one"),
+    round: z.number().int().min(0),
+    summary: collaborationSummarySchema,
+    artifacts: collaborationGeneratedArtifactsSchema,
+    accepted_change_ids: z.array(collaborationShortIdSchema).max(20),
+    rejected_change_ids: z.array(collaborationShortIdSchema).max(20),
+    alternative_changes: z.array(collaborationChangeProposalSchema).max(20),
+    agree: z.array(collaborationArtifactAgreementSchema).max(20),
+    disagree: z.array(collaborationArtifactDisagreementSchema).max(20),
   })
-  .strict();
+  .strict()
+  .refine(
+    (artifact) =>
+      hasArtifact(artifact.artifacts, "main", "main_response") &&
+      parentArtifactRefsMatch(artifact.artifacts, {
+        round: artifact.round,
+        agent: artifact.agent,
+        phase: artifact.kind,
+      }),
+  );
 export type CollaborationCounterProposalOutput = z.infer<
   typeof collaborationCounterProposalOutputSchema
 >;
@@ -1694,10 +1809,10 @@ export type CollaborationResolutionDecisionNextAction = z.infer<
 
 const collaborationResolvedDisagreementSchema = z
   .object({
-    disagreementId: z.string().min(1),
-    resolution: z.string().min(1),
-    resolvedAutonomously: z.boolean(),
-    rationale: z.string().min(1),
+    disagreement_id: collaborationShortIdSchema,
+    resolution: collaborationShortTextSchema,
+    resolved_autonomously: z.boolean(),
+    rationale: collaborationShortTextSchema,
   })
   .strict();
 export type CollaborationResolvedDisagreement = z.infer<
@@ -1708,15 +1823,32 @@ export const collaborationResolutionDecisionOutputSchema = z
   .object({
     kind: z.literal("resolution_decision"),
     agent: z.literal("agent_one"),
-    agreementReached: z.boolean(),
-    nextAction: collaborationResolutionDecisionNextActionSchema,
-    acceptedPoints: z.array(collaborationArtifactAgreementSchema),
-    resolvedDisagreements: z.array(collaborationResolvedDisagreementSchema),
-    remainingDisagreements: z.array(collaborationArtifactDisagreementSchema),
-    userQuestions: z.array(collaborationUserQuestionSchema),
-    rationale: z.string().min(1),
+    target_agent: z.literal("agent_two"),
+    round: z.number().int().min(0),
+    summary: collaborationSummarySchema,
+    artifacts: collaborationGeneratedArtifactsSchema,
+    agreement_reached: z.boolean(),
+    next_action: collaborationResolutionDecisionNextActionSchema,
+    accepted_points: z.array(collaborationArtifactAgreementSchema).max(20),
+    resolved_disagreements: z
+      .array(collaborationResolvedDisagreementSchema)
+      .max(20),
+    remaining_disagreements: z
+      .array(collaborationArtifactDisagreementSchema)
+      .max(20),
+    user_questions: z.array(collaborationUserQuestionSchema).max(5),
+    rationale: collaborationShortTextSchema,
   })
-  .strict();
+  .strict()
+  .refine(
+    (artifact) =>
+      hasArtifact(artifact.artifacts, "main", "main_response") &&
+      parentArtifactRefsMatch(artifact.artifacts, {
+        round: artifact.round,
+        agent: artifact.agent,
+        phase: artifact.kind,
+      }),
+  );
 export type CollaborationResolutionDecisionOutput = z.infer<
   typeof collaborationResolutionDecisionOutputSchema
 >;
@@ -1724,8 +1856,10 @@ export type CollaborationResolutionDecisionOutput = z.infer<
 export const collaborationOpenConflictsOutputSchema = z
   .object({
     kind: z.literal("open_conflicts"),
-    disagreements: z.array(collaborationArtifactDisagreementSchema),
-    questions: z.array(collaborationUserQuestionSchema),
+    round: z.number().int().min(0),
+    summary: collaborationSummarySchema,
+    disagreements: z.array(collaborationArtifactDisagreementSchema).max(20),
+    questions: z.array(collaborationUserQuestionSchema).max(5),
   })
   .strict();
 export type CollaborationOpenConflictsOutput = z.infer<
@@ -1736,11 +1870,23 @@ export const collaborationFinalAnswerOutputSchema = z
   .object({
     kind: z.literal("final_answer"),
     agent: z.literal("agent_one"),
-    answer: z.string().min(1),
-    report: z.string().min(1),
-    supporting: z.array(z.string().min(1)),
+    round: z.number().int().min(0),
+    summary: collaborationSummarySchema,
+    artifacts: collaborationGeneratedArtifactsSchema,
+    answer_artifact_id: z.literal("answer"),
+    audit_artifact_id: z.literal("audit"),
   })
-  .strict();
+  .strict()
+  .refine(
+    (artifact) =>
+      hasArtifact(artifact.artifacts, "answer", "main_response") &&
+      hasArtifact(artifact.artifacts, "audit", "audit") &&
+      parentArtifactRefsMatch(artifact.artifacts, {
+        round: artifact.round,
+        agent: artifact.agent,
+        phase: artifact.kind,
+      }),
+  );
 export type CollaborationFinalAnswerOutput = z.infer<
   typeof collaborationFinalAnswerOutputSchema
 >;

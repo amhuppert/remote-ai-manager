@@ -55,18 +55,18 @@ describe("groupCollabArtifacts", () => {
       makeAgentOneProposedChanges(),
       makeAgentTwoCounterProposalRound1(),
       makeResolutionDecisionContinue(),
-      makeAgentOneProposedChanges({ narrative: "R2 proposed" }),
+      makeAgentOneProposedChanges({ round: 2, summary: "R2 proposed" }),
       makeAgentTwoCounterProposalRound2(),
-      makeResolutionDecisionFinal(),
+      makeResolutionDecisionFinal({ round: 2 }),
     ];
     const grouped = groupCollabArtifacts(artifacts);
     expect(grouped.rounds).toHaveLength(2);
     expect(grouped.rounds[0]!.round).toBe(1);
-    expect(grouped.rounds[0]!.decision?.nextAction).toBe(
+    expect(grouped.rounds[0]!.decision?.next_action).toBe(
       "continue_negotiation",
     );
     expect(grouped.rounds[1]!.round).toBe(2);
-    expect(grouped.rounds[1]!.decision?.nextAction).toBe("final");
+    expect(grouped.rounds[1]!.decision?.next_action).toBe("final");
   });
 
   it("captures initial drafts, cross-review, open_conflicts, and final_answer separately", () => {
@@ -92,9 +92,9 @@ describe("trajectoryThroughRound", () => {
       makeAgentOneProposedChanges(),
       makeAgentTwoCounterProposalRound1(),
       makeResolutionDecisionContinue(),
-      makeAgentOneProposedChanges({ narrative: "R2 proposed" }),
+      makeAgentOneProposedChanges({ round: 2, summary: "R2 proposed" }),
       makeAgentTwoCounterProposalRound2(),
-      makeResolutionDecisionFinal(),
+      makeResolutionDecisionFinal({ round: 2 }),
     ];
     expect(trajectoryThroughRound(artifacts, 1)).toEqual([
       makeAgentTwoCounterProposalRound1().disagree.length,

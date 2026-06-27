@@ -21,6 +21,7 @@ import {
 import type { ArtifactTracker } from "./helpers";
 import type {
   CollaborationAgent,
+  CollaborationArtifact,
   CollaborationCrossReviewOutput,
   CollaborationFlowAgent,
 } from "./types";
@@ -100,6 +101,32 @@ function backendOfRequest(request: AgentCallRequest): Backend {
   return request.kind === "conversation_turn"
     ? (request.backend ?? "claude")
     : (request.backend as Backend);
+}
+
+async function writeGeneratedFiles(
+  worktreePath: string,
+  artifact: CollaborationArtifact,
+): Promise<void> {
+  if (!("artifacts" in artifact)) return;
+  for (const ref of artifact.artifacts) {
+    const absolutePath = path.join(worktreePath, ref.path);
+    await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+    await fs.writeFile(absolutePath, `# ${ref.id}\n\n${ref.summary}`, "utf-8");
+  }
+}
+
+function withWorkflowId<T extends CollaborationArtifact>(
+  artifact: T,
+  workflowId: string,
+): T {
+  if (!("artifacts" in artifact)) return artifact;
+  return {
+    ...artifact,
+    artifacts: artifact.artifacts.map((ref) => ({
+      ...ref,
+      path: ref.path.replace("/wf-fixture/", `/${workflowId}/`),
+    })),
+  } as T;
 }
 
 async function buildTestHarness(
@@ -201,7 +228,11 @@ beforeEach(async () => {
 
 describe("runCrossReviewPhase", () => {
   it("dispatches Agent Two to its backend once, returns the parsed cross-review, and tracks the artifact", async () => {
-    const crossReviewFixture = makeAgentTwoCrossReview();
+    const crossReviewFixture = withWorkflowId(
+      makeAgentTwoCrossReview(),
+      "wf-cross-review-test",
+    );
+    await writeGeneratedFiles(workingDir, crossReviewFixture);
     const harness = await buildTestHarness(
       [makeCompletedResult("codex", crossReviewFixture)],
       workingDir,

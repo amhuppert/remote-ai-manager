@@ -26,13 +26,21 @@ import type { CollaborationPolicyDecision } from "./policy";
 import type { TranscriptEntry } from "@/lib/prompt/transcript";
 import type {
   CollaborationCounterProposalOutput,
-  CollaborationCrossReviewOutput,
-  CollaborationFinalAnswerOutput,
-  CollaborationInitialDraftOutput,
   CollaborationProposedChangesOutput,
   CollaborationResolutionDecisionOutput,
   ResolvedCollaborationConfig,
 } from "@/lib/workflows/schemas";
+import {
+  makeAgentOneInitialDraft,
+  makeAgentOneProposedChanges,
+  makeAgentTwoCounterProposalRound1,
+  makeAgentTwoCrossReview,
+  makeAgentTwoInitialDraft,
+  makeFinalAnswer,
+  makeObjectiveDisagreement,
+  makeResolutionDecisionAskUser,
+  makeResolutionDecisionFinal,
+} from "./test-fixtures";
 
 const RESOLVED_CONFIG: ResolvedCollaborationConfig = {
   secondAgent: {
@@ -43,127 +51,81 @@ const RESOLVED_CONFIG: ResolvedCollaborationConfig = {
   autonomousResolutionThreshold: { value: "minor", source: "per-node" },
 };
 
-const AGENT_ONE_DRAFT: CollaborationInitialDraftOutput = {
-  kind: "initial_draft",
-  agent: "agent_one",
-  narrative: "agent_one draft narrative",
-  report: "agent_one draft report",
-  supporting: [],
+const AGENT_ONE_DRAFT = makeAgentOneInitialDraft({
+  summary: "agent_one draft narrative",
   assumptions: [],
-  keyClaims: [],
-};
+  key_claims: [],
+});
 
-const AGENT_TWO_DRAFT: CollaborationInitialDraftOutput = {
-  kind: "initial_draft",
-  agent: "agent_two",
-  narrative: "agent_two draft narrative",
-  report: "agent_two draft report",
-  supporting: [],
+const AGENT_TWO_DRAFT = makeAgentTwoInitialDraft({
+  summary: "agent_two draft narrative",
   assumptions: [],
-  keyClaims: [],
-};
+  key_claims: [],
+});
 
-const AGENT_TWO_CROSS_REVIEW: CollaborationCrossReviewOutput = {
-  kind: "cross_review",
-  agent: "agent_two",
-  targetAgent: "agent_one",
-  narrative: "agent_two cross review narrative",
-  report: "agent_two cross review report",
-  supporting: [],
+const AGENT_TWO_CROSS_REVIEW = makeAgentTwoCrossReview({
+  summary: "agent_two cross review narrative",
   agree: [],
   disagree: [],
-  reviseSelf: [],
-};
+  revise_self: [],
+});
 
-const PROPOSED_CHANGES: CollaborationProposedChangesOutput = {
-  kind: "proposed_changes",
-  agent: "agent_one",
-  targetAgent: "agent_two",
-  narrative: "agent_one proposed changes narrative",
-  acceptedFromAgentTwoDraft: [],
-  proposedChanges: [],
-  remainingDisagreements: [],
-  report: "agent_one proposed changes report",
-  supporting: [],
-};
+const PROPOSED_CHANGES: CollaborationProposedChangesOutput =
+  makeAgentOneProposedChanges({
+    summary: "agent_one proposed changes narrative",
+    accepted_from_other_agent_draft: [],
+    proposed_changes: [],
+    remaining_disagreements: [],
+  });
 
-const COUNTER_PROPOSAL: CollaborationCounterProposalOutput = {
-  kind: "counter_proposal",
-  agent: "agent_two",
-  narrative: "agent_two counter proposal narrative",
-  acceptedProposedChangeIds: [],
-  rejectedProposedChangeIds: [],
-  alternativeChanges: [],
-  agree: [],
-  disagree: [],
-  report: "agent_two counter proposal report",
-  supporting: [],
-};
+const COUNTER_PROPOSAL: CollaborationCounterProposalOutput =
+  makeAgentTwoCounterProposalRound1({
+    summary: "agent_two counter proposal narrative",
+    accepted_change_ids: [],
+    rejected_change_ids: [],
+    alternative_changes: [],
+    agree: [],
+    disagree: [],
+  });
 
-const RESOLUTION_AGREED: CollaborationResolutionDecisionOutput = {
-  kind: "resolution_decision",
-  agent: "agent_one",
-  agreementReached: true,
-  nextAction: "final",
-  acceptedPoints: [],
-  resolvedDisagreements: [],
-  remainingDisagreements: [],
-  userQuestions: [],
-  rationale: "agreed",
-};
+const RESOLUTION_AGREED: CollaborationResolutionDecisionOutput =
+  makeResolutionDecisionFinal({
+    accepted_points: [],
+    resolved_disagreements: [],
+    remaining_disagreements: [],
+    user_questions: [],
+    rationale: "agreed",
+  });
 
-const FINAL_ANSWER: CollaborationFinalAnswerOutput = {
-  kind: "final_answer",
-  agent: "agent_one",
-  answer: "Adopt Postgres for the new service tier.",
-  report: "Both agents agreed on Postgres after one round.",
-  supporting: ["durability requirements"],
-};
-
-const FINAL_ANSWER_SHORT: CollaborationFinalAnswerOutput = {
-  kind: "final_answer",
-  agent: "agent_one",
-  answer: "Adopt Postgres.",
-  report: "agreed on Postgres",
-  supporting: [],
-};
-
-const FINAL_ANSWER_GENERIC: CollaborationFinalAnswerOutput = {
-  kind: "final_answer",
-  agent: "agent_one",
-  answer: "Final.",
-  report: "Final report.",
-  supporting: [],
-};
-
-const FINAL_ANSWER_X: CollaborationFinalAnswerOutput = {
-  kind: "final_answer",
-  agent: "agent_one",
-  answer: "x",
-  report: "x",
-  supporting: [],
-};
+const FINAL_ANSWER_TEXT = "Adopt Postgres for the new service tier.";
+const FINAL_ANSWER = makeFinalAnswer({
+  summary: "Both agents agreed on Postgres after one round.",
+});
+const FINAL_ANSWER_SHORT_TEXT = "Adopt Postgres.";
+const FINAL_ANSWER_SHORT = makeFinalAnswer({
+  summary: "agreed on Postgres",
+});
+const FINAL_ANSWER_GENERIC_TEXT = "Final.";
+const FINAL_ANSWER_GENERIC = makeFinalAnswer({
+  summary: "Final report.",
+});
+const FINAL_ANSWER_X_TEXT = "x";
+const FINAL_ANSWER_X = makeFinalAnswer({
+  summary: "x",
+});
 
 const RESOLUTION_WITH_OBJECTIVE_DISAGREEMENT: CollaborationResolutionDecisionOutput =
-  {
-    kind: "resolution_decision",
-    agent: "agent_one",
-    agreementReached: false,
-    nextAction: "ask_user",
-    acceptedPoints: [],
-    resolvedDisagreements: [],
-    remainingDisagreements: [
-      {
+  makeResolutionDecisionAskUser({
+    remaining_disagreements: [
+      makeObjectiveDisagreement({
         id: "d1",
-        category: "objective",
-        severity: "blocking",
         claim: "Postgres vs MySQL is the wrong dichotomy",
         reason: "User goal is unclear; need clarification",
-      },
+      }),
     ],
-    userQuestions: [],
+    user_questions: [],
     rationale: "objective disagreement",
-  };
+  });
 
 function makeRoundOutput(resolution: CollaborationResolutionDecisionOutput): {
   proposedChanges: CollaborationProposedChangesOutput;
@@ -202,6 +164,7 @@ function buildBaselineDeps(overrides?: {
       runRound: vi.fn(async () => makeRoundOutput(RESOLUTION_AGREED)),
       generateFinalAnswer: vi.fn(async () => ({
         finalAnswer: FINAL_ANSWER,
+        finalAnswerText: FINAL_ANSWER_TEXT,
       })),
     },
     now: () => "2026-05-31T00:00:00.000Z",
@@ -246,6 +209,7 @@ describe("createWorkflowCollaborationEnvelope", () => {
       const runRound = vi.fn(async () => makeRoundOutput(RESOLUTION_AGREED));
       const generateFinalAnswer = vi.fn(async () => ({
         finalAnswer: FINAL_ANSWER_GENERIC,
+        finalAnswerText: FINAL_ANSWER_GENERIC_TEXT,
       }));
       const deps = buildBaselineDeps({
         collaboratorCaller: {
@@ -268,6 +232,7 @@ describe("createWorkflowCollaborationEnvelope", () => {
       const runRound = vi.fn(async () => makeRoundOutput(RESOLUTION_AGREED));
       const generateFinalAnswer = vi.fn(async () => ({
         finalAnswer: FINAL_ANSWER_GENERIC,
+        finalAnswerText: FINAL_ANSWER_GENERIC_TEXT,
       }));
       const deps = buildBaselineDeps({
         collaboratorCaller: {
@@ -393,6 +358,7 @@ describe("createWorkflowCollaborationEnvelope", () => {
     it("does not call generateFinalAnswer on non-converged paths", async () => {
       const generateFinalAnswer = vi.fn(async () => ({
         finalAnswer: FINAL_ANSWER_X,
+        finalAnswerText: FINAL_ANSWER_X_TEXT,
       }));
       const deps = buildBaselineDeps({
         policyDecide: vi.fn(
@@ -445,6 +411,7 @@ describe("createWorkflowCollaborationEnvelope", () => {
           runRound,
           generateFinalAnswer: vi.fn(async () => ({
             finalAnswer: FINAL_ANSWER_GENERIC,
+            finalAnswerText: FINAL_ANSWER_GENERIC_TEXT,
           })),
         },
       });
@@ -480,6 +447,7 @@ describe("createWorkflowCollaborationEnvelope", () => {
           runRound,
           generateFinalAnswer: vi.fn(async () => ({
             finalAnswer: FINAL_ANSWER_X,
+            finalAnswerText: FINAL_ANSWER_X_TEXT,
           })),
         },
       });
@@ -538,9 +506,7 @@ describe("createWorkflowCollaborationEnvelope", () => {
       if (!finalAnswer || finalAnswer.kind !== "final_answer") {
         throw new Error("expected final_answer artifact");
       }
-      expect(finalAnswer.value.answer).toBe(
-        "Adopt Postgres for the new service tier.",
-      );
+      expect(finalAnswer.value.summary).toBe(FINAL_ANSWER.summary);
 
       // The unbounded artifact stream must no longer ride inside the envelope
       // blob — that round-trip cost is exactly what the sidecar removes.
@@ -574,6 +540,7 @@ describe("createWorkflowCollaborationEnvelope", () => {
           runRound: vi.fn(async () => makeRoundOutput(RESOLUTION_AGREED)),
           generateFinalAnswer: vi.fn(async () => ({
             finalAnswer: FINAL_ANSWER_SHORT,
+            finalAnswerText: FINAL_ANSWER_SHORT_TEXT,
           })),
         },
       });
@@ -622,6 +589,7 @@ describe("createWorkflowCollaborationEnvelope", () => {
           ),
           generateFinalAnswer: vi.fn(async () => ({
             finalAnswer: FINAL_ANSWER_X,
+            finalAnswerText: FINAL_ANSWER_X_TEXT,
           })),
         },
       });
@@ -697,6 +665,7 @@ describe("createWorkflowCollaborationEnvelope", () => {
           ),
           generateFinalAnswer: vi.fn(async () => ({
             finalAnswer: FINAL_ANSWER_X,
+            finalAnswerText: FINAL_ANSWER_X_TEXT,
           })),
         },
       });
@@ -789,6 +758,7 @@ describe("createWorkflowCollaborationEnvelope", () => {
           ),
           generateFinalAnswer: vi.fn(async () => ({
             finalAnswer: FINAL_ANSWER_X,
+            finalAnswerText: FINAL_ANSWER_X_TEXT,
           })),
         },
       });

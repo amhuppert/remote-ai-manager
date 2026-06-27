@@ -56,7 +56,7 @@ export const FullMix = {
         severity: "blocking",
         claim: "Whether to ship as v1 or v2",
         reason: "v2 changes the contract for existing consumers",
-        proposedResolution: "stay on v1 with additive fields",
+        proposed_resolution: "stay on v1 with additive fields",
         ref: { artifact: "agent_two/r1/draft.md", locator: "L88" },
       },
       {

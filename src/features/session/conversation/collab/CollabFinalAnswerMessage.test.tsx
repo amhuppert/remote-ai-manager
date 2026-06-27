@@ -2,13 +2,19 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import CollabFinalAnswerMessage from "@/features/session/conversation/collab/CollabFinalAnswerMessage";
+import { makeFinalAnswer } from "@/lib/workflows/collaboration/test-fixtures";
 
 describe("CollabFinalAnswerMessage", () => {
-  it("renders the answer body", async () => {
+  it("renders the manifest summary and artifact references", async () => {
+    const finalAnswer = makeFinalAnswer({
+      summary: "Ship the migration in three phases.",
+    });
     render(
       <CollabFinalAnswerMessage
         agent="claude"
-        answer="Ship the migration in three phases."
+        summary={finalAnswer.summary}
+        artifacts={finalAnswer.artifacts}
+        answer_artifact_id={finalAnswer.answer_artifact_id}
       />,
     );
 
@@ -24,11 +30,18 @@ describe("CollabFinalAnswerMessage", () => {
         },
       ),
     ).toBeInTheDocument();
+    expect(screen.getByText(/answer\.md/)).toBeInTheDocument();
   }, 30000);
 
   it("applies a per-agent left rail via data-agent", () => {
+    const finalAnswer = makeFinalAnswer();
     const { container, rerender } = render(
-      <CollabFinalAnswerMessage agent="claude" answer="x" />,
+      <CollabFinalAnswerMessage
+        agent="claude"
+        summary={finalAnswer.summary}
+        artifacts={finalAnswer.artifacts}
+        answer_artifact_id={finalAnswer.answer_artifact_id}
+      />,
     );
     expect(
       container
@@ -36,7 +49,14 @@ describe("CollabFinalAnswerMessage", () => {
         ?.getAttribute("data-agent"),
     ).toBe("claude");
 
-    rerender(<CollabFinalAnswerMessage agent="codex" answer="x" />);
+    rerender(
+      <CollabFinalAnswerMessage
+        agent="codex"
+        summary={finalAnswer.summary}
+        artifacts={finalAnswer.artifacts}
+        answer_artifact_id={finalAnswer.answer_artifact_id}
+      />,
+    );
     expect(
       container
         .querySelector('[data-kind="final_answer"]')

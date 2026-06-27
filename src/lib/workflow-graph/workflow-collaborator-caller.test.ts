@@ -12,7 +12,11 @@
  * thrown errors.
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import path from "node:path";
+import os from "node:os";
+import fs from "node:fs/promises";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
 import { createInMemoryLaneStore } from "@/lib/workflows/primitives/lane-store";
 import type { WorkflowAgentCaller } from "@/lib/workflows/primitives/workflow-agent-caller";
@@ -32,6 +36,35 @@ import type {
   CollaborationResolutionDecisionOutput,
   ResolvedCollaborationConfig,
 } from "@/lib/workflows/schemas";
+import {
+  makeAgentOneInitialDraft,
+  makeAgentOneProposedChanges,
+  makeAgentTwoCounterProposalRound1,
+  makeAgentTwoCrossReview,
+  makeAgentTwoInitialDraft,
+  makeFinalAnswer,
+  makeResolutionDecisionContinue,
+} from "@/lib/workflows/collaboration/test-fixtures";
+
+type GeneratedArtifactOutput =
+  | CollaborationInitialDraftOutput
+  | CollaborationCrossReviewOutput
+  | CollaborationProposedChangesOutput
+  | CollaborationCounterProposalOutput
+  | CollaborationResolutionDecisionOutput
+  | CollaborationFinalAnswerOutput;
+
+let worktreePath: string;
+
+beforeEach(async () => {
+  worktreePath = await fs.mkdtemp(
+    path.join(os.tmpdir(), "collab-caller-test-"),
+  );
+});
+
+afterEach(async () => {
+  await fs.rm(worktreePath, { recursive: true, force: true });
+});
 
 function resolvedConfigFixture(
   backend: "claude" | "codex",
@@ -50,90 +83,31 @@ function resolvedConfigFixture(
 }
 
 function agentOneDraftFixture(): CollaborationInitialDraftOutput {
-  return {
-    kind: "initial_draft",
-    agent: "agent_one",
-    narrative: "agent_one initial draft narrative",
-    report: "agent_one initial draft report",
-    supporting: [],
-    assumptions: [],
-    keyClaims: [],
-  };
+  return makeAgentOneInitialDraft();
 }
 
 function agentTwoDraftFixture(): CollaborationInitialDraftOutput {
-  return {
-    kind: "initial_draft",
-    agent: "agent_two",
-    narrative: "agent_two initial draft narrative",
-    report: "agent_two initial draft report",
-    supporting: [],
-    assumptions: [],
-    keyClaims: [],
-  };
+  return makeAgentTwoInitialDraft();
 }
 
 function crossReviewFixture(): CollaborationCrossReviewOutput {
-  return {
-    kind: "cross_review",
-    agent: "agent_two",
-    targetAgent: "agent_one",
-    narrative: "agent_two cross review narrative",
-    report: "agent_two cross review report",
-    supporting: [],
-    agree: [],
-    disagree: [],
-    reviseSelf: [],
-  };
+  return makeAgentTwoCrossReview();
 }
 
 function proposedChangesFixture(): CollaborationProposedChangesOutput {
-  return {
-    kind: "proposed_changes",
-    agent: "agent_one",
-    targetAgent: "agent_two",
-    narrative: "agent_one proposed changes narrative",
-    acceptedFromAgentTwoDraft: [],
-    proposedChanges: [],
-    remainingDisagreements: [],
-    report: "agent_one proposed changes report",
-    supporting: [],
-  };
+  return makeAgentOneProposedChanges();
 }
 
 function counterProposalFixture(
   overrides?: Partial<CollaborationCounterProposalOutput>,
 ): CollaborationCounterProposalOutput {
-  return {
-    kind: "counter_proposal",
-    agent: "agent_two",
-    narrative: "agent_two counter proposal narrative",
-    acceptedProposedChangeIds: [],
-    rejectedProposedChangeIds: [],
-    alternativeChanges: [],
-    agree: [],
-    disagree: [],
-    report: "agent_two counter proposal report",
-    supporting: [],
-    ...overrides,
-  };
+  return makeAgentTwoCounterProposalRound1(overrides);
 }
 
 function resolutionFixture(
   overrides?: Partial<CollaborationResolutionDecisionOutput>,
 ): CollaborationResolutionDecisionOutput {
-  return {
-    kind: "resolution_decision",
-    agent: "agent_one",
-    agreementReached: false,
-    nextAction: "continue_negotiation",
-    acceptedPoints: [],
-    resolvedDisagreements: [],
-    remainingDisagreements: [],
-    userQuestions: [],
-    rationale: "need another round",
-    ...overrides,
-  };
+  return makeResolutionDecisionContinue(overrides);
 }
 
 function capabilityFixture(backend: AgentBackendId): BackendCapabilityView {
@@ -165,6 +139,63 @@ function completedResult(
   };
 }
 
+function rehomeGeneratedArtifactPaths<T>(value: T, workflowId: string): T {
+  return JSON.parse(
+    JSON.stringify(value).replaceAll(
+      "memory-bank/collaboration/wf-fixture/",
+      `memory-bank/collaboration/${workflowId}/`,
+    ),
+  ) as T;
+}
+
+function hasGeneratedArtifactFiles(
+  value: unknown,
+): value is GeneratedArtifactOutput {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "artifacts" in value &&
+    Array.isArray((value as { artifacts?: unknown }).artifacts)
+  );
+}
+
+function materializeGeneratedFiles(structuredOutput: unknown): void {
+  if (!hasGeneratedArtifactFiles(structuredOutput)) return;
+  for (const ref of structuredOutput.artifacts) {
+    const absolutePath = path.join(worktreePath, ref.path);
+    mkdirSync(path.dirname(absolutePath), { recursive: true });
+    const content =
+      structuredOutput.kind === "final_answer" &&
+      ref.id === structuredOutput.answer_artifact_id
+        ? structuredOutput.summary
+        : `# ${ref.id}\n\n${structuredOutput.kind} ${ref.artifact_type}\n`;
+    writeFileSync(absolutePath, content, "utf-8");
+  }
+}
+
+function prepareResultForRequest(
+  result: AgentCallResult,
+  request: WorkflowAgentCallerRequest,
+): AgentCallResult {
+  if (result.outcome.kind !== "completed") return result;
+  const structuredOutput = result.outcome.structuredOutput;
+  if (!structuredOutput || typeof structuredOutput !== "object") return result;
+
+  const rehomedOutput = rehomeGeneratedArtifactPaths(
+    structuredOutput,
+    request.laneRef.workflowId,
+  );
+  materializeGeneratedFiles(rehomedOutput);
+
+  return {
+    ...result,
+    outcome: {
+      ...result.outcome,
+      structuredOutput: rehomedOutput,
+    },
+  };
+}
+
 function failedResult(
   backend: AgentBackendId,
   message: string,
@@ -190,7 +221,9 @@ function buildInMemoryDeps(
   callImpl: (req: WorkflowAgentCallerRequest) => Promise<AgentCallResult>,
 ) {
   const laneService = createLaneService({ store: createInMemoryLaneStore() });
-  const call = vi.fn(callImpl);
+  const call = vi.fn(async (req: WorkflowAgentCallerRequest) =>
+    prepareResultForRequest(await callImpl(req), req),
+  );
   const agentCaller: WorkflowAgentCaller = { call };
   return { laneService, agentCaller, call };
 }
@@ -212,7 +245,7 @@ describe("createWorkflowCollaboratorCaller", () => {
 
       const caller = createWorkflowCollaboratorCaller({
         resolvedConfig: resolvedConfigFixture("codex"),
-        worktreePath: "/wt",
+        worktreePath,
         brief: "use Postgres?",
         parentImplementerTurnId: "impl-1",
         executionContextId: "ctx-1",
@@ -252,7 +285,7 @@ describe("createWorkflowCollaboratorCaller", () => {
       });
       const caller = createWorkflowCollaboratorCaller({
         resolvedConfig: resolvedConfigFixture("codex"),
-        worktreePath: "/wt",
+        worktreePath,
         brief: "b",
         parentImplementerTurnId: "impl-1",
         executionContextId: "ctx-1",
@@ -290,7 +323,7 @@ describe("createWorkflowCollaboratorCaller", () => {
       );
       const caller = createWorkflowCollaboratorCaller({
         resolvedConfig: resolvedConfigFixture("codex"),
-        worktreePath: "/wt",
+        worktreePath,
         brief: "b",
         parentImplementerTurnId: "impl-1",
         executionContextId: "ctx-1",
@@ -328,7 +361,7 @@ describe("createWorkflowCollaboratorCaller", () => {
       });
       const caller = createWorkflowCollaboratorCaller({
         resolvedConfig: resolvedConfigFixture("codex"),
-        worktreePath: "/wt",
+        worktreePath,
         brief: "brief",
         parentImplementerTurnId: "impl-1",
         executionContextId: "ctx-1",
@@ -352,7 +385,7 @@ describe("createWorkflowCollaboratorCaller", () => {
       );
       const caller = createWorkflowCollaboratorCaller({
         resolvedConfig: resolvedConfigFixture("codex"),
-        worktreePath: "/wt",
+        worktreePath,
         brief: "brief",
         parentImplementerTurnId: "impl-1",
         executionContextId: "ctx-1",
@@ -377,7 +410,7 @@ describe("createWorkflowCollaboratorCaller", () => {
       expect(req.agentCallRequest.backend).toBe("codex");
       expect(req.laneRef.laneId).toBe("codex");
       expect(out.agentTwoCrossReview.agent).toBe("agent_two");
-      expect(out.agentTwoCrossReview.targetAgent).toBe("agent_one");
+      expect(out.agentTwoCrossReview.target_agent).toBe("agent_one");
     });
 
     it("throws when the cross review fails", async () => {
@@ -386,7 +419,7 @@ describe("createWorkflowCollaboratorCaller", () => {
       );
       const caller = createWorkflowCollaboratorCaller({
         resolvedConfig: resolvedConfigFixture("codex"),
-        worktreePath: "/wt",
+        worktreePath,
         brief: "brief",
         parentImplementerTurnId: "impl-1",
         executionContextId: "ctx-1",
@@ -424,7 +457,7 @@ describe("createWorkflowCollaboratorCaller", () => {
 
       const caller = createWorkflowCollaboratorCaller({
         resolvedConfig: resolvedConfigFixture("codex"),
-        worktreePath: "/wt",
+        worktreePath,
         brief: "use Postgres?",
         parentImplementerTurnId: "impl-1",
         executionContextId: "ctx-1",
@@ -464,7 +497,7 @@ describe("createWorkflowCollaboratorCaller", () => {
       );
       const caller = createWorkflowCollaboratorCaller({
         resolvedConfig: resolvedConfigFixture("codex"),
-        worktreePath: "/wt",
+        worktreePath,
         brief: "brief",
         parentImplementerTurnId: "impl-1",
         executionContextId: "ctx-1",
@@ -501,7 +534,7 @@ describe("createWorkflowCollaboratorCaller", () => {
       });
       const caller = createWorkflowCollaboratorCaller({
         resolvedConfig: resolvedConfigFixture("codex"),
-        worktreePath: "/wt",
+        worktreePath,
         brief: "brief",
         parentImplementerTurnId: "impl-1",
         executionContextId: "ctx-1",
@@ -539,7 +572,7 @@ describe("createWorkflowCollaboratorCaller", () => {
       });
       const caller = createWorkflowCollaboratorCaller({
         resolvedConfig: resolvedConfigFixture("codex"),
-        worktreePath: "/wt",
+        worktreePath,
         brief: "brief",
         parentImplementerTurnId: "impl-1",
         executionContextId: "ctx-1",
@@ -565,20 +598,17 @@ describe("createWorkflowCollaboratorCaller", () => {
 
   describe("generateFinalAnswer", () => {
     it("invokes the agent caller with the final-answer schema on agent_one's backend and returns the parsed answer", async () => {
-      const final: CollaborationFinalAnswerOutput = {
-        kind: "final_answer",
-        agent: "agent_one",
-        answer: "Use Postgres because durability requirements outweigh latency",
-        report: "Two-round negotiation converged on Postgres for durability.",
-        supporting: ["Both agents agreed on the consistency requirement"],
-      };
+      const final: CollaborationFinalAnswerOutput = makeFinalAnswer({
+        summary:
+          "Use Postgres because durability requirements outweigh latency",
+      });
       const { laneService, agentCaller, call } = buildInMemoryDeps(async () =>
         completedResult("claude", final),
       );
 
       const caller = createWorkflowCollaboratorCaller({
         resolvedConfig: resolvedConfigFixture("codex"),
-        worktreePath: "/wt",
+        worktreePath,
         brief: "use Postgres?",
         parentImplementerTurnId: "impl-1",
         executionContextId: "ctx-1",
@@ -595,8 +625,8 @@ describe("createWorkflowCollaboratorCaller", () => {
         agentTwoDraft: agentTwoDraftFixture(),
         latestCounterProposal: counterProposalFixture(),
         latestResolutionDecision: resolutionFixture({
-          nextAction: "final",
-          agreementReached: true,
+          next_action: "final",
+          agreement_reached: true,
           rationale: "agreed",
         }),
       });
@@ -609,7 +639,10 @@ describe("createWorkflowCollaboratorCaller", () => {
       expect(req.agentCallRequest.backend).toBe("claude");
       expect(req.laneRef.laneId).toBe("claude");
 
-      expect(out.finalAnswer).toEqual(final);
+      expect(out.finalAnswer).toEqual(
+        rehomeGeneratedArtifactPaths(final, "wf-1"),
+      );
+      expect(out.finalAnswerText).toContain("Use Postgres");
     });
 
     it("throws when the final answer call fails", async () => {
@@ -618,7 +651,7 @@ describe("createWorkflowCollaboratorCaller", () => {
       );
       const caller = createWorkflowCollaboratorCaller({
         resolvedConfig: resolvedConfigFixture("codex"),
-        worktreePath: "/wt",
+        worktreePath,
         brief: "brief",
         parentImplementerTurnId: "impl-1",
         executionContextId: "ctx-1",

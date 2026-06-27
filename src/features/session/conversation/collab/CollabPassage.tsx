@@ -63,6 +63,8 @@ interface CollabPauseHandlers {
 }
 
 export interface CollabPassageProps {
+  projectName?: string;
+  sessionName?: string;
   workflowId: string;
   primary: CollaborationAgent;
   status: CollabPassageStatus;
@@ -116,17 +118,15 @@ export function groupCollabArtifacts(
   const rounds: NegotiationRound[] = [];
   let openConflicts: CollaborationOpenConflictsOutput | undefined;
   let finalAnswer: CollaborationFinalAnswerOutput | undefined;
-  let pending: NegotiationRound | null = null;
 
-  const ensureRound = (): NegotiationRound => {
-    if (!pending) pending = { round: rounds.length + 1 };
-    return pending;
-  };
-  const closeRound = (): void => {
-    if (pending) {
-      rounds.push(pending);
-      pending = null;
+  const ensureRound = (roundNumber: number): NegotiationRound => {
+    let round = rounds.find((candidate) => candidate.round === roundNumber);
+    if (!round) {
+      round = { round: roundNumber };
+      rounds.push(round);
+      rounds.sort((a, b) => a.round - b.round);
     }
+    return round;
   };
 
   for (const artifact of artifacts) {
@@ -138,19 +138,18 @@ export function groupCollabArtifacts(
         crossReview = artifact;
         break;
       case "proposed_changes": {
-        const round = ensureRound();
+        const round = ensureRound(artifact.round);
         round.proposed = artifact;
         break;
       }
       case "counter_proposal": {
-        const round = ensureRound();
+        const round = ensureRound(artifact.round);
         round.counter = artifact;
         break;
       }
       case "resolution_decision": {
-        const round = ensureRound();
+        const round = ensureRound(artifact.round);
         round.decision = artifact;
-        closeRound();
         break;
       }
       case "open_conflicts":
@@ -161,7 +160,6 @@ export function groupCollabArtifacts(
         break;
     }
   }
-  closeRound();
 
   return { initialDrafts, crossReview, rounds, openConflicts, finalAnswer };
 }
@@ -171,11 +169,9 @@ export function trajectoryThroughRound(
   roundNumber: number,
 ): number[] {
   const series: number[] = [];
-  let currentRound = 0;
   for (const a of artifacts) {
     if (a.kind === "counter_proposal") {
-      currentRound += 1;
-      if (currentRound > roundNumber) break;
+      if (a.round > roundNumber) break;
       series.push(a.disagree.length);
     }
   }
@@ -349,6 +345,9 @@ interface BuiltTimeline {
 }
 
 function buildTimeline(
+  projectName: string | undefined,
+  sessionName: string | undefined,
+  workflowId: string,
   grouped: GroupedArtifacts,
   primary: CollaborationAgent,
   artifacts: CollaborationArtifact[],
@@ -361,6 +360,11 @@ function buildTimeline(
   const rows: Array<{ rowId: string; cardIds: string[]; rowKind: string }> = [];
   const isLatest = (artifact: CollaborationArtifact): boolean =>
     latestNonFinal !== undefined && latestNonFinal === artifact;
+  const artifactFileUrl =
+    projectName && sessionName
+      ? (artifact: { path: string }): string =>
+          `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/collaboration/${encodeURIComponent(workflowId)}/artifact-file?path=${encodeURIComponent(artifact.path)}`
+      : undefined;
 
   const primaryDraft = findPrimaryDraft(grouped.initialDrafts);
   const secondaryDraft = findSecondaryDraft(grouped.initialDrafts);
@@ -378,10 +382,10 @@ function buildTimeline(
           <CollabInitialDraftCard
             agent={flowAgentToBackend(primaryDraft.agent, primary)}
             isPrimary
-            narrative={primaryDraft.narrative}
-            supporting={primaryDraft.supporting}
+            summary={primaryDraft.summary}
+            artifacts={primaryDraft.artifacts}
             assumptions={primaryDraft.assumptions}
-            keyClaims={primaryDraft.keyClaims}
+            key_claims={primaryDraft.key_claims}
             defaultOpen={isLatest(primaryDraft)}
             onRefClick={onRefClick}
           />
@@ -399,10 +403,10 @@ function buildTimeline(
           <CollabInitialDraftCard
             agent={flowAgentToBackend(secondaryDraft.agent, primary)}
             isPrimary={false}
-            narrative={secondaryDraft.narrative}
-            supporting={secondaryDraft.supporting}
+            summary={secondaryDraft.summary}
+            artifacts={secondaryDraft.artifacts}
             assumptions={secondaryDraft.assumptions}
-            keyClaims={secondaryDraft.keyClaims}
+            key_claims={secondaryDraft.key_claims}
             defaultOpen={isLatest(secondaryDraft)}
             onRefClick={onRefClick}
           />
@@ -415,11 +419,11 @@ function buildTimeline(
   if (grouped.crossReview) {
     const cr = grouped.crossReview;
     const reviewerAgent = flowAgentToBackend(cr.agent, primary);
-    const targetAgent = flowAgentToBackend(cr.targetAgent, primary);
+    const targetAgent = flowAgentToBackend(cr.target_agent, primary);
     const lane: CollabConnectorAnchor =
       cr.agent === "agent_one" ? "left" : "right";
     const sourceLaneOverride: CollabConnectorAnchor =
-      cr.targetAgent === "agent_one" ? "left" : "right";
+      cr.target_agent === "agent_one" ? "left" : "right";
     const id = "cross-review";
     cards.push({
       id,
@@ -429,11 +433,11 @@ function buildTimeline(
         <CollabCrossReviewCard
           reviewerAgent={reviewerAgent}
           targetAgent={targetAgent}
-          narrative={cr.narrative}
-          supporting={cr.supporting}
+          summary={cr.summary}
+          artifacts={cr.artifacts}
           agree={cr.agree}
           disagree={cr.disagree}
-          reviseSelf={cr.reviseSelf}
+          revise_self={cr.revise_self}
           defaultOpen={isLatest(cr)}
           onRefClick={onRefClick}
         />
@@ -456,12 +460,14 @@ function buildTimeline(
         render: () => (
           <CollabProposedChangesCard
             fromAgent={flowAgentToBackend(proposed.agent, primary)}
-            round={round.round}
-            narrative={proposed.narrative}
-            acceptedFromAgentTwoDraft={proposed.acceptedFromAgentTwoDraft}
-            proposedChanges={proposed.proposedChanges}
-            remainingDisagreements={proposed.remainingDisagreements}
-            supporting={proposed.supporting}
+            round={proposed.round}
+            summary={proposed.summary}
+            artifacts={proposed.artifacts}
+            accepted_from_other_agent_draft={
+              proposed.accepted_from_other_agent_draft
+            }
+            proposed_changes={proposed.proposed_changes}
+            remaining_disagreements={proposed.remaining_disagreements}
             defaultOpen={isLatest(proposed)}
             onRefClick={onRefClick}
           />
@@ -482,14 +488,14 @@ function buildTimeline(
         render: () => (
           <CollabCounterProposalCard
             fromAgent={flowAgentToBackend(counter.agent, primary)}
-            round={round.round}
-            narrative={counter.narrative}
-            acceptedProposedChangeIds={counter.acceptedProposedChangeIds}
-            rejectedProposedChangeIds={counter.rejectedProposedChangeIds}
-            alternativeChanges={counter.alternativeChanges}
+            round={counter.round}
+            summary={counter.summary}
+            artifacts={counter.artifacts}
+            accepted_change_ids={counter.accepted_change_ids}
+            rejected_change_ids={counter.rejected_change_ids}
+            alternative_changes={counter.alternative_changes}
             agree={counter.agree}
             disagree={counter.disagree}
-            supporting={counter.supporting}
             defaultOpen={isLatest(counter)}
             onRefClick={onRefClick}
           />
@@ -510,15 +516,15 @@ function buildTimeline(
         render: () => (
           <CollabResolutionDecisionCard
             agent={flowAgentToBackend(decision.agent, primary)}
-            round={round.round}
-            agreementReached={decision.agreementReached}
-            nextAction={decision.nextAction}
-            acceptedPoints={decision.acceptedPoints}
-            resolvedDisagreements={decision.resolvedDisagreements}
-            remainingDisagreements={decision.remainingDisagreements}
-            userQuestions={decision.userQuestions}
+            round={decision.round}
+            agreement_reached={decision.agreement_reached}
+            next_action={decision.next_action}
+            accepted_points={decision.accepted_points}
+            resolved_disagreements={decision.resolved_disagreements}
+            remaining_disagreements={decision.remaining_disagreements}
+            user_questions={decision.user_questions}
             rationale={decision.rationale}
-            trajectory={trajectoryThroughRound(artifacts, round.round)}
+            trajectory={trajectoryThroughRound(artifacts, decision.round)}
             defaultOpen={isLatest(decision)}
             onRefClick={onRefClick}
           />
@@ -574,7 +580,10 @@ function buildTimeline(
       render: () => (
         <CollabFinalAnswerMessage
           agent={flowAgentToBackend(fa.agent, primary)}
-          answer={fa.answer}
+          summary={fa.summary}
+          artifacts={fa.artifacts}
+          answer_artifact_id={fa.answer_artifact_id}
+          artifactFileUrl={artifactFileUrl}
         />
       ),
     });
@@ -614,6 +623,8 @@ function buildTimeline(
 }
 
 export default function CollabPassage({
+  projectName,
+  sessionName,
   workflowId,
   primary,
   status,
@@ -639,6 +650,9 @@ export default function CollabPassage({
   const timeline = useMemo(
     () =>
       buildTimeline(
+        projectName,
+        sessionName,
+        workflowId,
         grouped,
         primary,
         artifacts,
@@ -649,12 +663,15 @@ export default function CollabPassage({
       ),
     [
       grouped,
+      projectName,
       primary,
       artifacts,
       latestNonFinal,
       pauseHandlers,
       submittedAnswers,
+      sessionName,
       onRefClick,
+      workflowId,
     ],
   );
 

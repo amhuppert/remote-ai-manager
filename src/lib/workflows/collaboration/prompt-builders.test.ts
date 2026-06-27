@@ -22,6 +22,7 @@ import {
   COLLABORATION_RESOLUTION_DECISION_OUTPUT_SCHEMA,
 } from "./types";
 import {
+  COLLABORATION_FORMAT_TURN_INSTRUCTION,
   buildAgentOneFinalAnswerPrompt,
   buildAgentOneInitialDraftPrompt,
   buildAgentOneProposedChangesPrompt,
@@ -44,18 +45,47 @@ import {
 } from "./test-fixtures";
 
 const USER_PROMPT = "Design pause/resume for the collaboration workflow.";
+const WORKFLOW_ID = "wf-fixture";
+
+function mainPath(artifact: { artifacts: Array<{ path: string }> }): string {
+  return artifact.artifacts[0]!.path;
+}
+
+describe("structured-output turn instructions", () => {
+  it("keeps the format turn as a small manifest and forbids file contents in JSON", () => {
+    expect(COLLABORATION_FORMAT_TURN_INSTRUCTION).toMatch(
+      /small structured manifest/i,
+    );
+    expect(COLLABORATION_FORMAT_TURN_INSTRUCTION).toMatch(
+      /do not copy generated file contents/i,
+    );
+    expect(COLLABORATION_FORMAT_TURN_INSTRUCTION).not.toMatch(
+      /restate the full substance/i,
+    );
+  });
+});
 
 describe("buildAgentOneInitialDraftPrompt", () => {
   it("requests the initial_draft schema and binds the agent_one role", () => {
-    const built = buildAgentOneInitialDraftPrompt({ userPrompt: USER_PROMPT });
+    const built = buildAgentOneInitialDraftPrompt({
+      userPrompt: USER_PROMPT,
+      workflowId: WORKFLOW_ID,
+    });
     expect(built.outputSchema).toBe(COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA);
     expect(built.prompt).toContain(USER_PROMPT);
     expect(built.prompt).toMatch(/agent_one/i);
     expect(built.prompt).toMatch(/initial draft/i);
+    expect(built.prompt).toContain(
+      "memory-bank/collaboration/wf-fixture/round-0/agent_one/initial_draft/main.md",
+    );
+    expect(built.prompt).toMatch(/create these markdown file/i);
   });
 
   it("does not leak Agent Two context into the initial draft prompt", () => {
-    const built = buildAgentOneInitialDraftPrompt({ userPrompt: USER_PROMPT });
+    const built = buildAgentOneInitialDraftPrompt({
+      userPrompt: USER_PROMPT,
+      workflowId: WORKFLOW_ID,
+    });
     expect(built.prompt).not.toMatch(/counter[- ]?proposal/i);
     expect(built.prompt).not.toMatch(/cross[- ]?review/i);
     expect(built.prompt).not.toMatch(/agent_two draft/i);
@@ -64,10 +94,16 @@ describe("buildAgentOneInitialDraftPrompt", () => {
 
 describe("buildAgentTwoInitialDraftPrompt", () => {
   it("requests the initial_draft schema and binds the agent_two role", () => {
-    const built = buildAgentTwoInitialDraftPrompt({ userPrompt: USER_PROMPT });
+    const built = buildAgentTwoInitialDraftPrompt({
+      userPrompt: USER_PROMPT,
+      workflowId: WORKFLOW_ID,
+    });
     expect(built.outputSchema).toBe(COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA);
     expect(built.prompt).toContain(USER_PROMPT);
     expect(built.prompt).toMatch(/agent_two/i);
+    expect(built.prompt).toContain(
+      "memory-bank/collaboration/wf-fixture/round-0/agent_two/initial_draft/main.md",
+    );
   });
 });
 
@@ -79,14 +115,22 @@ describe("buildAgentOneProposedChangesPrompt", () => {
       userPrompt: USER_PROMPT,
       ownDraft,
       otherDraft,
+      workflowId: WORKFLOW_ID,
+      round: 1,
     });
     expect(built.outputSchema).toBe(
       COLLABORATION_PROPOSED_CHANGES_OUTPUT_SCHEMA,
     );
     expect(built.prompt).toContain(USER_PROMPT);
-    expect(built.prompt).toContain(ownDraft.report);
-    expect(built.prompt).toContain(otherDraft.report);
-    expect(built.prompt).toContain(otherDraft.narrative);
+    expect(built.prompt).toContain(mainPath(ownDraft));
+    expect(built.prompt).toContain(mainPath(otherDraft));
+    expect(built.prompt).toContain(otherDraft.summary);
+    expect(built.prompt).toContain("accepted_from_other_agent_draft");
+    expect(built.prompt).toContain("proposed_changes");
+    expect(built.prompt).toContain("remaining_disagreements");
+    expect(built.prompt).toContain(
+      "memory-bank/collaboration/wf-fixture/round-1/agent_one/proposed_changes/main.md",
+    );
   });
 
   it("does not include Agent Two's cross-review (it is incorporated into the counter-proposal)", () => {
@@ -97,9 +141,11 @@ describe("buildAgentOneProposedChangesPrompt", () => {
       userPrompt: USER_PROMPT,
       ownDraft,
       otherDraft,
+      workflowId: WORKFLOW_ID,
+      round: 1,
     });
-    expect(built.prompt).not.toContain(crossReview.report);
-    expect(built.prompt).not.toContain(crossReview.narrative);
+    expect(built.prompt).not.toContain(mainPath(crossReview));
+    expect(built.prompt).not.toContain(crossReview.summary);
   });
 });
 
@@ -111,13 +157,16 @@ describe("buildAgentTwoCrossReviewPrompt", () => {
       userPrompt: USER_PROMPT,
       ownDraft,
       otherDraft,
+      workflowId: WORKFLOW_ID,
+      round: 0,
     });
     expect(built.outputSchema).toBe(COLLABORATION_CROSS_REVIEW_OUTPUT_SCHEMA);
     expect(built.prompt).toContain(USER_PROMPT);
-    expect(built.prompt).toContain(otherDraft.report);
-    expect(built.prompt).toContain(ownDraft.report);
+    expect(built.prompt).toContain(mainPath(otherDraft));
+    expect(built.prompt).toContain(mainPath(ownDraft));
     expect(built.prompt).toMatch(/cross[- ]?review/i);
     expect(built.prompt).toMatch(/output zone/i);
+    expect(built.prompt).toContain("revise_self");
   });
 });
 
@@ -133,18 +182,23 @@ describe("buildAgentTwoCounterProposalPrompt", () => {
       otherDraft,
       ownCrossReview,
       proposedChanges,
+      workflowId: WORKFLOW_ID,
+      round: 1,
     });
     expect(built.outputSchema).toBe(
       COLLABORATION_COUNTER_PROPOSAL_OUTPUT_SCHEMA,
     );
     expect(built.prompt).toContain(USER_PROMPT);
-    expect(built.prompt).toContain(ownDraft.report);
-    expect(built.prompt).toContain(otherDraft.report);
-    expect(built.prompt).toContain(ownCrossReview.report);
-    expect(built.prompt).toContain(proposedChanges.report);
-    for (const change of proposedChanges.proposedChanges) {
+    expect(built.prompt).toContain(mainPath(ownDraft));
+    expect(built.prompt).toContain(mainPath(otherDraft));
+    expect(built.prompt).toContain(mainPath(ownCrossReview));
+    expect(built.prompt).toContain(mainPath(proposedChanges));
+    for (const change of proposedChanges.proposed_changes) {
       expect(built.prompt).toContain(change.id);
     }
+    expect(built.prompt).toContain(
+      "memory-bank/collaboration/wf-fixture/round-1/agent_two/counter_proposal/main.md",
+    );
   });
 
   it("instructs Agent Two to incorporate its prior cross-review into the counter-proposal", () => {
@@ -158,6 +212,8 @@ describe("buildAgentTwoCounterProposalPrompt", () => {
       otherDraft,
       ownCrossReview,
       proposedChanges,
+      workflowId: WORKFLOW_ID,
+      round: 1,
     });
     expect(built.prompt).toMatch(/incorporate.*cross[- ]?review/i);
   });
@@ -174,20 +230,21 @@ describe("buildAgentOneResolutionDecisionPrompt", () => {
       proposedChanges: makeAgentOneProposedChanges(),
       latestCounterProposal: round2,
       negotiationRound: 2,
+      workflowId: WORKFLOW_ID,
     });
     expect(built.outputSchema).toBe(
       COLLABORATION_RESOLUTION_DECISION_OUTPUT_SCHEMA,
     );
-    expect(built.prompt).toContain(round2.report);
-    expect(built.prompt).toContain(round2.narrative);
-    expect(built.prompt).not.toContain(round1.report);
-    expect(built.prompt).not.toContain(round1.narrative);
+    expect(built.prompt).toContain(mainPath(round2));
+    expect(built.prompt).toContain(round2.summary);
+    expect(built.prompt).not.toContain(mainPath(round1));
+    expect(built.prompt).not.toContain(round1.summary);
   });
 
   it("regression: round 2 resolution prompt cites the round 2 counter-proposal, not round 1", () => {
     const round1 = makeAgentTwoCounterProposalRound1();
     const round2 = makeAgentTwoCounterProposalRound2();
-    expect(round1.report).not.toBe(round2.report);
+    expect(mainPath(round1)).not.toBe(mainPath(round2));
     const builtRound2 = buildAgentOneResolutionDecisionPrompt({
       userPrompt: USER_PROMPT,
       ownDraft: makeAgentOneInitialDraft(),
@@ -195,9 +252,10 @@ describe("buildAgentOneResolutionDecisionPrompt", () => {
       proposedChanges: makeAgentOneProposedChanges(),
       latestCounterProposal: round2,
       negotiationRound: 2,
+      workflowId: WORKFLOW_ID,
     });
-    expect(builtRound2.prompt).toContain(round2.report);
-    expect(builtRound2.prompt).not.toContain(round1.report);
+    expect(builtRound2.prompt).toContain(mainPath(round2));
+    expect(builtRound2.prompt).not.toContain(mainPath(round1));
     expect(builtRound2.prompt).toMatch(/round\s*2/i);
   });
 
@@ -216,6 +274,7 @@ describe("buildAgentOneResolutionDecisionPrompt", () => {
       proposedChanges: makeAgentOneProposedChanges(),
       latestCounterProposal: counter,
       negotiationRound: 1,
+      workflowId: WORKFLOW_ID,
     });
     for (const d of counter.disagree) {
       expect(built.prompt).toContain(d.id);
@@ -233,6 +292,8 @@ describe("buildAgentOneFinalAnswerPrompt", () => {
       otherDraft: makeAgentTwoInitialDraft(),
       latestCounterProposal: makeAgentTwoCounterProposalRound1(),
       latestResolutionDecision: makeResolutionDecisionAskUser(),
+      workflowId: WORKFLOW_ID,
+      round: 1,
     });
     expect(built.outputSchema).toBe(COLLABORATION_FINAL_ANSWER_OUTPUT_SCHEMA);
     expect(built.prompt).toContain(USER_PROMPT);
@@ -256,6 +317,8 @@ describe("buildAgentOneFinalAnswerPrompt", () => {
       latestResolutionDecision: makeResolutionDecisionAskUser(),
       openConflicts,
       userAnswers,
+      workflowId: WORKFLOW_ID,
+      round: 1,
     });
     expect(built.prompt).toContain(openConflicts.questions[0]!.question);
     expect(built.prompt).toContain(userAnswers[0]!.answer);
@@ -267,8 +330,15 @@ describe("buildAgentOneFinalAnswerPrompt", () => {
     const round1Counter = makeAgentTwoCounterProposalRound1();
     const round1Decision = makeResolutionDecisionContinue();
     const round2Proposed = makeAgentOneProposedChanges({
-      report: "memory-bank/collaboration/wf-fixture/negotiation-2/proposed.md",
-      narrative: "Round 2 proposed changes",
+      round: 2,
+      summary: "Round 2 proposed changes",
+      artifacts: [
+        {
+          ...makeAgentOneProposedChanges().artifacts[0]!,
+          round: 2,
+          path: "memory-bank/collaboration/wf-fixture/round-2/agent_one/proposed_changes/main.md",
+        },
+      ],
     });
     const round2Counter = makeAgentTwoCounterProposalRound2();
     const round2Decision = makeResolutionDecisionFinal();
@@ -279,6 +349,8 @@ describe("buildAgentOneFinalAnswerPrompt", () => {
       otherDraft: makeAgentTwoInitialDraft(),
       latestCounterProposal: round2Counter,
       latestResolutionDecision: round2Decision,
+      workflowId: WORKFLOW_ID,
+      round: 2,
       artifactStream: [
         makeAgentOneInitialDraft(),
         makeAgentTwoInitialDraft(),
@@ -292,12 +364,12 @@ describe("buildAgentOneFinalAnswerPrompt", () => {
       ],
     });
 
-    const crossReviewIndex = built.prompt.indexOf(crossReview.report);
-    const round1ProposedIndex = built.prompt.indexOf(round1Proposed.report);
-    const round1CounterIndex = built.prompt.indexOf(round1Counter.report);
+    const crossReviewIndex = built.prompt.indexOf(mainPath(crossReview));
+    const round1ProposedIndex = built.prompt.indexOf(mainPath(round1Proposed));
+    const round1CounterIndex = built.prompt.indexOf(mainPath(round1Counter));
     const round1DecisionIndex = built.prompt.indexOf(round1Decision.rationale);
-    const round2ProposedIndex = built.prompt.indexOf(round2Proposed.report);
-    const round2CounterIndex = built.prompt.indexOf(round2Counter.report);
+    const round2ProposedIndex = built.prompt.indexOf(mainPath(round2Proposed));
+    const round2CounterIndex = built.prompt.indexOf(mainPath(round2Counter));
     const round2DecisionIndex = built.prompt.indexOf(round2Decision.rationale);
 
     expect(crossReviewIndex).toBeGreaterThan(-1);
@@ -316,6 +388,8 @@ describe("buildAgentOneFinalAnswerPrompt", () => {
       otherDraft: makeAgentTwoInitialDraft(),
       latestCounterProposal: makeAgentTwoCounterProposalRound1(),
       latestResolutionDecision: makeResolutionDecisionAskUser(),
+      workflowId: WORKFLOW_ID,
+      round: 1,
     });
     expect(built.prompt).not.toMatch(/resolution audit section/i);
     expect(built.prompt).not.toMatch(/include.*resolution audit.*section/i);

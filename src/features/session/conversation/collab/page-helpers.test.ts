@@ -6,7 +6,7 @@ import {
   findCollabFinalDuplicateIndex,
   type CollabEnvelopeLike,
 } from "./page-helpers";
-import type { CollaborationArtifact } from "@/lib/workflows/collaboration/types";
+import { makeFinalAnswer } from "@/lib/workflows/collaboration/test-fixtures";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
 
 describe("findActiveCollab", () => {
@@ -65,12 +65,8 @@ describe("findCollabEnvelopeForConversation", () => {
 });
 
 describe("latestFinalAnswerText", () => {
-  it("returns last final_answer text", () => {
-    const artifacts: CollaborationArtifact[] = [
-      { kind: "final_answer", answer: "first" } as CollaborationArtifact,
-      { kind: "final_answer", answer: "second" } as CollaborationArtifact,
-    ];
-    expect(latestFinalAnswerText(artifacts)).toBe("second");
+  it("returns null because final_answer manifests do not contain answer text", () => {
+    expect(latestFinalAnswerText([makeFinalAnswer()])).toBeNull();
   });
 
   it("returns null when no final_answer", () => {

@@ -1203,9 +1203,10 @@ describe("ConversationWorkspace", () => {
       expect(allStrips).toHaveLength(1);
     });
 
-    it("does not render the terminal final answer twice after transcript writeback", async () => {
+    it("renders transcript writeback text and the terminal final-answer manifest", async () => {
+      const finalAnswerText = "Unique collaboration final answer";
       const finalAnswer = makeFinalAnswer({
-        answer: "Unique collaboration final answer",
+        summary: "Terminal final-answer manifest summary",
       });
       testMessages = [
         {
@@ -1215,7 +1216,7 @@ describe("ConversationWorkspace", () => {
         },
         {
           role: "assistant",
-          content: [{ type: "text", text: finalAnswer.answer }],
+          content: [{ type: "text", text: finalAnswerText }],
           timestamp: "2024-06-15T10:02:00Z",
         },
       ];
@@ -1233,15 +1234,17 @@ describe("ConversationWorkspace", () => {
       renderPage();
 
       // MarkdownContent loads via next/dynamic — wait for first render.
-      const matches = await screen.findAllByText(
-        "Unique collaboration final answer",
-      );
-      expect(matches).toHaveLength(1);
+      expect(await screen.findByText(finalAnswerText)).toBeInTheDocument();
+      expect(
+        await screen.findByText("Terminal final-answer manifest summary"),
+      ).toBeInTheDocument();
     });
 
-    it("does not render the terminal final answer twice when the /collab trigger is parsed as a command block", () => {
+    it("renders transcript writeback text when the /collab trigger is parsed as a command block", () => {
+      const finalAnswerText =
+        "Unique collaboration final answer from command block";
       const finalAnswer = makeFinalAnswer({
-        answer: "Unique collaboration final answer from command block",
+        summary: "Command-block final-answer manifest summary",
       });
       testMessages = [
         {
@@ -1257,7 +1260,7 @@ describe("ConversationWorkspace", () => {
         },
         {
           role: "assistant",
-          content: [{ type: "text", text: finalAnswer.answer }],
+          content: [{ type: "text", text: finalAnswerText }],
           timestamp: "2024-06-15T10:02:00Z",
         },
       ];
@@ -1274,11 +1277,10 @@ describe("ConversationWorkspace", () => {
 
       renderPage();
 
+      expect(screen.getByText(finalAnswerText)).toBeInTheDocument();
       expect(
-        screen.getAllByText(
-          "Unique collaboration final answer from command block",
-        ),
-      ).toHaveLength(1);
+        screen.getByText("Command-block final-answer manifest summary"),
+      ).toBeInTheDocument();
     });
   });
 

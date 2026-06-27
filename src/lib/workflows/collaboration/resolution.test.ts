@@ -25,6 +25,7 @@ import {
 import type { ArtifactTracker } from "./helpers";
 import type {
   CollaborationAgent,
+  CollaborationArtifact,
   CollaborationFlowAgent,
   CollaborationProposedChangesOutput,
   CollaborationResolutionDecisionOutput,
@@ -109,6 +110,32 @@ function backendOfRequest(request: AgentCallRequest): Backend {
   return request.kind === "conversation_turn"
     ? (request.backend ?? "claude")
     : (request.backend as Backend);
+}
+
+async function writeGeneratedFiles(
+  worktreePath: string,
+  artifact: CollaborationArtifact,
+): Promise<void> {
+  if (!("artifacts" in artifact)) return;
+  for (const ref of artifact.artifacts) {
+    const absolutePath = path.join(worktreePath, ref.path);
+    await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+    await fs.writeFile(absolutePath, `# ${ref.id}\n\n${ref.summary}`, "utf-8");
+  }
+}
+
+function withWorkflowId<T extends CollaborationArtifact>(
+  artifact: T,
+  workflowId: string,
+): T {
+  if (!("artifacts" in artifact)) return artifact;
+  return {
+    ...artifact,
+    artifacts: artifact.artifacts.map((ref) => ({
+      ...ref,
+      path: ref.path.replace("/wf-fixture/", `/${workflowId}/`),
+    })),
+  } as T;
 }
 
 async function buildTestHarness(
@@ -211,7 +238,11 @@ beforeEach(async () => {
 
 describe("runProposedChangesStep", () => {
   it("dispatches Agent One once to the primary backend, returns the parsed proposed_changes, and tracks it", async () => {
-    const proposedFixture = makeAgentOneProposedChanges();
+    const proposedFixture = withWorkflowId(
+      makeAgentOneProposedChanges(),
+      "wf-resolution-test",
+    );
+    await writeGeneratedFiles(workingDir, proposedFixture);
     const harness = await buildTestHarness(
       [makeCompletedResult("claude", proposedFixture)],
       workingDir,
@@ -225,6 +256,7 @@ describe("runProposedChangesStep", () => {
       backendForAgent: harness.backendForAgent,
       agentOneDraft: makeAgentOneInitialDraft(),
       agentTwoDraft: makeAgentTwoInitialDraft(),
+      round: 1,
     });
 
     expect(outcome.kind).toBe("ok");
@@ -250,6 +282,7 @@ describe("runProposedChangesStep", () => {
       backendForAgent: harness.backendForAgent,
       agentOneDraft: makeAgentOneInitialDraft(),
       agentTwoDraft: makeAgentTwoInitialDraft(),
+      round: 1,
     });
 
     expect(outcome.kind).toBe("failed");
@@ -262,7 +295,11 @@ describe("runProposedChangesStep", () => {
 
 describe("runResolutionDecisionStep", () => {
   it("dispatches Agent One once to the primary backend, returns the parsed resolution_decision, and tracks it", async () => {
-    const resolutionFixture = makeResolutionDecisionFinal();
+    const resolutionFixture = withWorkflowId(
+      makeResolutionDecisionFinal(),
+      "wf-resolution-test",
+    );
+    await writeGeneratedFiles(workingDir, resolutionFixture);
     const harness = await buildTestHarness(
       [makeCompletedResult("claude", resolutionFixture)],
       workingDir,

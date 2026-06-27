@@ -20,6 +20,7 @@ import {
 import type { ArtifactTracker } from "./helpers";
 import type {
   CollaborationAgent,
+  CollaborationArtifact,
   CollaborationFlowAgent,
   CollaborationInitialDraftOutput,
 } from "./types";
@@ -74,6 +75,32 @@ function backendOfRequest(request: AgentCallRequest): Backend {
   return request.kind === "conversation_turn"
     ? (request.backend ?? "claude")
     : (request.backend as Backend);
+}
+
+async function writeGeneratedFiles(
+  worktreePath: string,
+  artifact: CollaborationArtifact,
+): Promise<void> {
+  if (!("artifacts" in artifact)) return;
+  for (const ref of artifact.artifacts) {
+    const absolutePath = path.join(worktreePath, ref.path);
+    await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+    await fs.writeFile(absolutePath, `# ${ref.id}\n\n${ref.summary}`, "utf-8");
+  }
+}
+
+function withWorkflowId<T extends CollaborationArtifact>(
+  artifact: T,
+  workflowId: string,
+): T {
+  if (!("artifacts" in artifact)) return artifact;
+  return {
+    ...artifact,
+    artifacts: artifact.artifacts.map((ref) => ({
+      ...ref,
+      path: ref.path.replace("/wf-fixture/", `/${workflowId}/`),
+    })),
+  } as T;
 }
 
 async function buildTestHarness(
@@ -188,8 +215,16 @@ beforeEach(async () => {
 
 describe("runInitialDraftsPhase", () => {
   it("returns both drafts in the ok outcome, tracks them, and routes each agent to its assigned backend", async () => {
-    const agentOneFixture = makeAgentOneInitialDraft();
-    const agentTwoFixture = makeAgentTwoInitialDraft();
+    const agentOneFixture = withWorkflowId(
+      makeAgentOneInitialDraft(),
+      "wf-initial-draft-test",
+    );
+    const agentTwoFixture = withWorkflowId(
+      makeAgentTwoInitialDraft(),
+      "wf-initial-draft-test",
+    );
+    await writeGeneratedFiles(workingDir, agentOneFixture);
+    await writeGeneratedFiles(workingDir, agentTwoFixture);
     const harness = await buildTestHarness(
       {
         claude: [makeBackendResult("claude", agentOneFixture)],
@@ -216,11 +251,16 @@ describe("runInitialDraftsPhase", () => {
     const backends = harness.receivedRequests.map(backendOfRequest).sort();
     expect(backends).toEqual(["claude", "codex"]);
     for (const req of harness.receivedRequests) {
-      expect(req.writeCapability).toBe("read_only");
+      expect(req.writeCapability).toBe("write_capable");
     }
   });
 
   it("returns a failed outcome with the agent_one backend error message when Agent One's call fails", async () => {
+    const agentTwoFixture = withWorkflowId(
+      makeAgentTwoInitialDraft(),
+      "wf-initial-draft-test",
+    );
+    await writeGeneratedFiles(workingDir, agentTwoFixture);
     const harness = await buildTestHarness(
       {
         claude: [
@@ -247,7 +287,7 @@ describe("runInitialDraftsPhase", () => {
             },
           },
         ],
-        codex: [makeBackendResult("codex", makeAgentTwoInitialDraft())],
+        codex: [makeBackendResult("codex", agentTwoFixture)],
       },
       workingDir,
     );

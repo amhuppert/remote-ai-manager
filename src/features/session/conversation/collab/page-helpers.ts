@@ -61,10 +61,7 @@ function transcriptText(message: TranscriptMessage): string | null {
 export function latestFinalAnswerText(
   artifacts: readonly CollaborationArtifact[],
 ): string | null {
-  for (let i = artifacts.length - 1; i >= 0; i--) {
-    const artifact = artifacts[i];
-    if (artifact?.kind === "final_answer") return artifact.answer;
-  }
+  void artifacts;
   return null;
 }
 

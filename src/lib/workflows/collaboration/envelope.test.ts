@@ -27,6 +27,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs/promises";
+import { mkdirSync, writeFileSync } from "node:fs";
 
 import {
   runAsymmetricCollaborationSlice,
@@ -124,6 +125,64 @@ function makeBackendResult(
   };
 }
 
+function rehomeGeneratedArtifactPaths<T>(value: T, workflowId: string): T {
+  return JSON.parse(
+    JSON.stringify(value).replaceAll(
+      "memory-bank/collaboration/wf-fixture/",
+      `memory-bank/collaboration/${workflowId}/`,
+    ),
+  ) as T;
+}
+
+function hasGeneratedArtifactFiles(value: unknown): value is ArtifactKind & {
+  artifacts: NonNullable<ArtifactKind["artifacts"]>;
+} {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "artifacts" in value &&
+    Array.isArray((value as { artifacts?: unknown }).artifacts)
+  );
+}
+
+function prepareBackendResultForRequest(
+  result: AgentCallResult,
+  request: AgentCallRequest,
+): AgentCallResult {
+  if (result.outcome.kind !== "completed") return result;
+  const structuredOutput = result.outcome.structuredOutput;
+  if (!structuredOutput || typeof structuredOutput !== "object") return result;
+
+  const workflowId = request.laneRef?.workflowId ?? "wf-asym";
+  const rehomedOutput = rehomeGeneratedArtifactPaths(
+    structuredOutput,
+    workflowId,
+  );
+  materializeGeneratedFiles(rehomedOutput);
+
+  return {
+    ...result,
+    outcome: {
+      ...result.outcome,
+      structuredOutput: rehomedOutput,
+    },
+  };
+}
+
+function materializeGeneratedFiles(structuredOutput: unknown): void {
+  if (!hasGeneratedArtifactFiles(structuredOutput)) return;
+  for (const ref of structuredOutput.artifacts) {
+    const absolutePath = path.join(workingDir, ref.path);
+    mkdirSync(path.dirname(absolutePath), { recursive: true });
+    const content =
+      structuredOutput.kind === "final_answer" &&
+      ref.id === structuredOutput.answer_artifact_id
+        ? structuredOutput.summary
+        : `# ${ref.id}\n\n${structuredOutput.kind} ${ref.artifact_type}\n`;
+    writeFileSync(absolutePath, content, "utf-8");
+  }
+}
+
 function makeFailedResult(backend: Backend, message: string): AgentCallResult {
   return {
     backend,
@@ -152,21 +211,6 @@ function makeFailedResult(backend: Backend, message: string): AgentCallResult {
   };
 }
 
-function deferredAgentResult(): {
-  resolve: (r: AgentCallResult) => void;
-  promise: Promise<AgentCallResult>;
-} {
-  let resolveFn: (r: AgentCallResult) => void = () => {};
-  const promise = new Promise<AgentCallResult>((resolve) => {
-    resolveFn = resolve;
-  });
-  return { resolve: resolveFn, promise };
-}
-
-function bothInitialReceivedTimeout(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function makeProgrammedCallAgent(
   responsesByBackend: Record<Backend, AgentCallResult[]>,
 ): ScriptedAgentCall {
@@ -191,7 +235,7 @@ function makeProgrammedCallAgent(
         `programmed call-agent ran out of responses for backend "${backend}" (received so far: ${receivedRequests.length})`,
       );
     }
-    return next;
+    return prepareBackendResultForRequest(next, request);
   };
 
   return { backend: "claude", callAgent, receivedRequests };
@@ -318,7 +362,7 @@ describe("runAsymmetricCollaborationSlice — initial draft phase", () => {
         makeBackendResult("claude", makeAgentOneProposedChanges()),
         makeBackendResult(
           "claude",
-          makeResolutionDecisionFinal({ remainingDisagreements: [] }),
+          makeResolutionDecisionFinal({ remaining_disagreements: [] }),
         ),
         makeBackendResult("claude", makeFinalAnswer()),
       ],
@@ -356,7 +400,7 @@ describe("runAsymmetricCollaborationSlice — initial draft phase", () => {
         makeBackendResult("codex", makeAgentOneProposedChanges()),
         makeBackendResult(
           "codex",
-          makeResolutionDecisionFinal({ remainingDisagreements: [] }),
+          makeResolutionDecisionFinal({ remaining_disagreements: [] }),
         ),
         makeBackendResult("codex", makeFinalAnswer()),
       ],
@@ -386,89 +430,33 @@ describe("runAsymmetricCollaborationSlice — initial draft phase", () => {
     expect(initialBackends).toEqual(["claude", "codex"]);
   });
 
-  it("runs Agent One and Agent Two initial drafts truly in parallel through the lane scheduler (both call requests received before either resolves)", async () => {
-    const draftDeferreds: Record<
-      Backend,
-      {
-        resolve: (r: AgentCallResult) => void;
-        promise: Promise<AgentCallResult>;
-      }
-    > = {
-      claude: deferredAgentResult(),
-      codex: deferredAgentResult(),
-    };
-
-    const remainingResults: Record<Backend, AgentCallResult[]> = {
+  it("runs Agent One and Agent Two initial drafts as write-capable calls so both can create generated artifacts", async () => {
+    const programmed = makeProgrammedCallAgent({
       claude: [
+        makeBackendResult("claude", makeAgentOneInitialDraft()),
         makeBackendResult("claude", makeAgentOneProposedChanges()),
         makeBackendResult(
           "claude",
-          makeResolutionDecisionFinal({ remainingDisagreements: [] }),
+          makeResolutionDecisionFinal({ remaining_disagreements: [] }),
         ),
         makeBackendResult("claude", makeFinalAnswer()),
       ],
       codex: [
+        makeBackendResult("codex", makeAgentTwoInitialDraft()),
         makeBackendResult("codex", makeAgentTwoCrossReview()),
         makeBackendResult("codex", makeAgentTwoCounterProposalRound1()),
       ],
-    };
-
-    const receivedRequests: AgentCallRequest[] = [];
-    let initialDraftsSeen = 0;
-    const bothInitialReceived = new Promise<void>((resolve) => {
-      let resolved = false;
-      const tryResolve = () => {
-        if (initialDraftsSeen >= 2 && !resolved) {
-          resolved = true;
-          resolve();
-        }
-      };
-      const interval = setInterval(() => tryResolve(), 1);
-      void bothInitialReceivedTimeout(2000).then(() => {
-        clearInterval(interval);
-        if (!resolved) {
-          resolved = true;
-          resolve();
-        }
-      });
     });
-
-    const callAgent: AsymmetricCollaborationSliceDeps["callAgent"] = async (
-      request,
-    ) => {
-      receivedRequests.push(request);
-      const backend: Backend =
-        request.kind === "conversation_turn"
-          ? (request.backend ?? "claude")
-          : (request.backend as Backend);
-      // First call per backend = initial draft (held until both received).
-      if (initialDraftsSeen < 2) {
-        initialDraftsSeen += 1;
-        return draftDeferreds[backend].promise;
-      }
-      const queue = remainingResults[backend];
-      const next = queue.shift();
-      if (!next) {
-        throw new Error(
-          `parallel-test call-agent: no scripted response for backend "${backend}" (received=${receivedRequests.length})`,
-        );
-      }
-      return next;
-    };
-
-    const programmed: ScriptedAgentCall = {
-      backend: "claude",
-      callAgent,
-      receivedRequests,
-    };
     const built = await buildDeps(programmed);
 
-    const runPromise = runAsymmetricCollaborationSlice(baseInput(), built.deps);
+    const result = await runAsymmetricCollaborationSlice(
+      baseInput(),
+      built.deps,
+    );
 
-    await bothInitialReceived;
-
-    expect(initialDraftsSeen).toBe(2);
-    const initialBackends = receivedRequests
+    expect(result.kind).toBe("completed_final");
+    const initialRequests = programmed.receivedRequests.slice(0, 2);
+    const initialBackends = initialRequests
       .slice(0, 2)
       .map((req) =>
         req.kind === "conversation_turn"
@@ -477,26 +465,19 @@ describe("runAsymmetricCollaborationSlice — initial draft phase", () => {
       )
       .sort();
     expect(initialBackends).toEqual(["claude", "codex"]);
-
-    draftDeferreds.claude.resolve(
-      makeBackendResult("claude", makeAgentOneInitialDraft()),
-    );
-    draftDeferreds.codex.resolve(
-      makeBackendResult("codex", makeAgentTwoInitialDraft()),
-    );
-
-    const result = await runPromise;
-    expect(result.kind).toBe("completed_final");
+    for (const request of initialRequests) {
+      expect(request.writeCapability).toBe("write_capable");
+    }
   });
 
-  it("schedules initial draft calls with writeCapability=read_only so the lane scheduler does not serialize them on the same sessionKey", async () => {
+  it("schedules initial draft calls with writeCapability=write_capable", async () => {
     const programmed = makeProgrammedCallAgent({
       claude: [
         makeBackendResult("claude", makeAgentOneInitialDraft()),
         makeBackendResult("claude", makeAgentOneProposedChanges()),
         makeBackendResult(
           "claude",
-          makeResolutionDecisionFinal({ remainingDisagreements: [] }),
+          makeResolutionDecisionFinal({ remaining_disagreements: [] }),
         ),
         makeBackendResult("claude", makeFinalAnswer()),
       ],
@@ -516,18 +497,18 @@ describe("runAsymmetricCollaborationSlice — initial draft phase", () => {
     expect(result.kind).toBe("completed_final");
 
     const [first, second] = programmed.receivedRequests;
-    expect(first?.writeCapability).toBe("read_only");
-    expect(second?.writeCapability).toBe("read_only");
+    expect(first?.writeCapability).toBe("write_capable");
+    expect(second?.writeCapability).toBe("write_capable");
   });
 });
 
 describe("runAsymmetricCollaborationSlice — negotiation message routing", () => {
   it("includes Agent Two's initial draft inside Agent One's proposed_changes prompt and excludes Agent Two's cross-review (cross-review is not delivered to Agent One)", async () => {
     const agentTwoDraft = makeAgentTwoInitialDraft({
-      narrative: "AGENT_TWO_INITIAL_NARRATIVE_MARKER",
+      summary: "AGENT_TWO_INITIAL_NARRATIVE_MARKER",
     });
     const agentTwoCrossReview = makeAgentTwoCrossReview({
-      narrative: "AGENT_TWO_CROSS_REVIEW_MARKER",
+      summary: "AGENT_TWO_CROSS_REVIEW_MARKER",
     });
 
     const programmed = makeProgrammedCallAgent({
@@ -536,7 +517,7 @@ describe("runAsymmetricCollaborationSlice — negotiation message routing", () =
         makeBackendResult("claude", makeAgentOneProposedChanges()),
         makeBackendResult(
           "claude",
-          makeResolutionDecisionFinal({ remainingDisagreements: [] }),
+          makeResolutionDecisionFinal({ remaining_disagreements: [] }),
         ),
         makeBackendResult("claude", makeFinalAnswer()),
       ],
@@ -571,10 +552,10 @@ describe("runAsymmetricCollaborationSlice — negotiation message routing", () =
 
   it("Agent Two's counter_proposal prompt includes its own cross-review AND Agent One's proposed changes", async () => {
     const agentTwoCrossReview = makeAgentTwoCrossReview({
-      narrative: "CROSS_REVIEW_VISIBLE_TO_TWO",
+      summary: "CROSS_REVIEW_VISIBLE_TO_TWO",
     });
     const agentOneProposedChanges = makeAgentOneProposedChanges({
-      narrative: "PROPOSED_CHANGES_VISIBLE_TO_TWO",
+      summary: "PROPOSED_CHANGES_VISIBLE_TO_TWO",
     });
 
     const programmed = makeProgrammedCallAgent({
@@ -583,7 +564,7 @@ describe("runAsymmetricCollaborationSlice — negotiation message routing", () =
         makeBackendResult("claude", agentOneProposedChanges),
         makeBackendResult(
           "claude",
-          makeResolutionDecisionFinal({ remainingDisagreements: [] }),
+          makeResolutionDecisionFinal({ remaining_disagreements: [] }),
         ),
         makeBackendResult("claude", makeFinalAnswer()),
       ],
@@ -615,10 +596,10 @@ describe("runAsymmetricCollaborationSlice — negotiation message routing", () =
 describe("runAsymmetricCollaborationSlice — resolution sees latest counter-proposal", () => {
   it("Agent One's resolution_decision prompt in round 2 includes Agent Two's round 2 counter-proposal — never the round 1 one (regression boundary)", async () => {
     const round1Counter = makeAgentTwoCounterProposalRound1({
-      narrative: "ROUND_1_COUNTER_NARRATIVE",
+      summary: "ROUND_1_COUNTER_NARRATIVE",
     });
     const round2Counter = makeAgentTwoCounterProposalRound2({
-      narrative: "ROUND_2_COUNTER_NARRATIVE",
+      summary: "ROUND_2_COUNTER_NARRATIVE",
     });
 
     const programmed = makeProgrammedCallAgent({
@@ -631,7 +612,7 @@ describe("runAsymmetricCollaborationSlice — resolution sees latest counter-pro
         makeBackendResult(
           "claude",
           makeResolutionDecisionContinue({
-            remainingDisagreements: [makeImplementationDisagreement()],
+            remaining_disagreements: [makeImplementationDisagreement()],
           }),
         ),
         // Round 2 proposed_changes.
@@ -639,7 +620,7 @@ describe("runAsymmetricCollaborationSlice — resolution sees latest counter-pro
         // Round 2 resolution: final.
         makeBackendResult(
           "claude",
-          makeResolutionDecisionFinal({ remainingDisagreements: [] }),
+          makeResolutionDecisionFinal({ remaining_disagreements: [] }),
         ),
         // Final answer.
         makeBackendResult("claude", makeFinalAnswer()),
@@ -693,7 +674,7 @@ describe("runAsymmetricCollaborationSlice — policy edges", () => {
         makeBackendResult(
           "claude",
           makeResolutionDecisionContinue({
-            remainingDisagreements: [makeObjectiveDisagreement()],
+            remaining_disagreements: [makeObjectiveDisagreement()],
           }),
         ),
       ],
@@ -728,7 +709,7 @@ describe("runAsymmetricCollaborationSlice — policy edges", () => {
         makeBackendResult(
           "claude",
           makeResolutionDecisionContinue({
-            remainingDisagreements: [makeImplementationDisagreement()],
+            remaining_disagreements: [makeImplementationDisagreement()],
           }),
         ),
         // Round 2 proposed_changes.
@@ -736,7 +717,7 @@ describe("runAsymmetricCollaborationSlice — policy edges", () => {
         // Round 2 resolution: final.
         makeBackendResult(
           "claude",
-          makeResolutionDecisionFinal({ remainingDisagreements: [] }),
+          makeResolutionDecisionFinal({ remaining_disagreements: [] }),
         ),
         makeBackendResult("claude", makeFinalAnswer()),
       ],
@@ -769,7 +750,7 @@ describe("runAsymmetricCollaborationSlice — policy edges", () => {
         makeBackendResult(
           "claude",
           makeResolutionDecisionContinue({
-            remainingDisagreements: [makeImplementationDisagreement()],
+            remaining_disagreements: [makeImplementationDisagreement()],
           }),
         ),
       ],
@@ -802,7 +783,7 @@ describe("runAsymmetricCollaborationSlice — policy edges", () => {
         makeBackendResult(
           "claude",
           makeResolutionDecisionContinue({
-            remainingDisagreements: [makeImplementationDisagreement()],
+            remaining_disagreements: [makeImplementationDisagreement()],
           }),
         ),
         makeBackendResult("claude", makeFinalAnswer()),
@@ -834,7 +815,7 @@ describe("runAsymmetricCollaborationSlice — policy edges", () => {
         makeBackendResult(
           "claude",
           makeResolutionDecisionContinue({
-            remainingDisagreements: [makeBlockingImplementationDisagreement()],
+            remaining_disagreements: [makeBlockingImplementationDisagreement()],
           }),
         ),
       ],
@@ -863,7 +844,7 @@ describe("runAsymmetricCollaborationSlice — policy edges", () => {
         makeBackendResult(
           "claude",
           makeResolutionDecisionContinue({
-            remainingDisagreements: [makeBlockingImplementationDisagreement()],
+            remaining_disagreements: [makeBlockingImplementationDisagreement()],
           }),
         ),
         makeBackendResult("claude", makeFinalAnswer()),
@@ -976,7 +957,7 @@ describe("runAsymmetricCollaborationSlice — artifact sidecar persistence", () 
         makeBackendResult("claude", makeAgentOneProposedChanges()),
         makeBackendResult(
           "claude",
-          makeResolutionDecisionFinal({ remainingDisagreements: [] }),
+          makeResolutionDecisionFinal({ remaining_disagreements: [] }),
         ),
         makeBackendResult("claude", makeFinalAnswer()),
       ],
@@ -1025,7 +1006,7 @@ describe("runAsymmetricCollaborationSlice — artifact sidecar persistence", () 
         makeBackendResult("claude", makeAgentOneProposedChanges()),
         makeBackendResult(
           "claude",
-          makeResolutionDecisionFinal({ remainingDisagreements: [] }),
+          makeResolutionDecisionFinal({ remaining_disagreements: [] }),
         ),
         makeBackendResult("claude", makeFinalAnswer()),
       ],
@@ -1207,7 +1188,7 @@ describe("runAsymmetricCollaborationSlice — artifact sidecar persistence", () 
         makeBackendResult(
           "claude",
           makeResolutionDecisionContinue({
-            remainingDisagreements: [makeObjectiveDisagreement()],
+            remaining_disagreements: [makeObjectiveDisagreement()],
           }),
         ),
       ],
@@ -1270,7 +1251,7 @@ describe("runAsymmetricCollaborationSlice — mid-run progress envelopes", () =>
         makeBackendResult("claude", makeAgentOneProposedChanges()),
         makeBackendResult(
           "claude",
-          makeResolutionDecisionFinal({ remainingDisagreements: [] }),
+          makeResolutionDecisionFinal({ remaining_disagreements: [] }),
         ),
         makeBackendResult("claude", makeFinalAnswer()),
       ],
@@ -1337,7 +1318,7 @@ describe("runAsymmetricCollaborationSlice — resume short-circuit from paused o
       claude: [
         makeBackendResult(
           "claude",
-          makeFinalAnswer({ answer: "FINAL_RESUME_ANSWER" }),
+          makeFinalAnswer({ summary: "FINAL_RESUME_ANSWER" }),
         ),
       ],
       codex: [],
@@ -1431,7 +1412,7 @@ describe("runAsymmetricCollaborationSlice — resume input", () => {
         makeBackendResult("claude", makeAgentOneProposedChanges()),
         makeBackendResult(
           "claude",
-          makeResolutionDecisionFinal({ remainingDisagreements: [] }),
+          makeResolutionDecisionFinal({ remaining_disagreements: [] }),
         ),
         makeBackendResult("claude", makeFinalAnswer()),
       ],
@@ -1468,12 +1449,12 @@ describe("runAsymmetricCollaborationSlice — final answer + transcript writebac
         makeBackendResult("claude", makeAgentOneProposedChanges()),
         makeBackendResult(
           "claude",
-          makeResolutionDecisionFinal({ remainingDisagreements: [] }),
+          makeResolutionDecisionFinal({ remaining_disagreements: [] }),
         ),
         makeBackendResult(
           "claude",
           makeFinalAnswer({
-            answer: "FINAL_ANSWER_BODY",
+            summary: "FINAL_ANSWER_BODY",
           }),
         ),
       ],
@@ -1526,24 +1507,19 @@ describe("runAsymmetricCollaborationSlice — final answer + transcript writebac
     ]);
   });
 
-  it("treats finalAnswer.report and supporting as inline content and still writes the transcript when no files exist on disk", async () => {
+  it("reads the final answer transcript body from the generated answer artifact", async () => {
     const programmed = makeProgrammedCallAgent({
       claude: [
         makeBackendResult("claude", makeAgentOneInitialDraft()),
         makeBackendResult("claude", makeAgentOneProposedChanges()),
         makeBackendResult(
           "claude",
-          makeResolutionDecisionFinal({ remainingDisagreements: [] }),
+          makeResolutionDecisionFinal({ remaining_disagreements: [] }),
         ),
         makeBackendResult(
           "claude",
           makeFinalAnswer({
-            answer: "INLINE_FINAL_ANSWER",
-            report:
-              "# Final answer\n\nFull collapsed audit text inline; never on disk.",
-            supporting: [
-              "# Resolution audit\n\nKey decisions narrative inline.",
-            ],
+            summary: "INLINE_FINAL_ANSWER",
           }),
         ),
       ],
@@ -1586,7 +1562,7 @@ describe("runAsymmetricCollaborationSlice — conversation continuity", () => {
         makeBackendResult("claude", makeAgentOneProposedChanges()),
         makeBackendResult(
           "claude",
-          makeResolutionDecisionFinal({ remainingDisagreements: [] }),
+          makeResolutionDecisionFinal({ remaining_disagreements: [] }),
         ),
         makeBackendResult("claude", makeFinalAnswer()),
       ],
@@ -1605,7 +1581,7 @@ describe("runAsymmetricCollaborationSlice — conversation continuity", () => {
         makeBackendResult("codex", makeAgentOneProposedChanges()),
         makeBackendResult(
           "codex",
-          makeResolutionDecisionFinal({ remainingDisagreements: [] }),
+          makeResolutionDecisionFinal({ remaining_disagreements: [] }),
         ),
         makeBackendResult("codex", makeFinalAnswer()),
       ],
@@ -1864,7 +1840,7 @@ describe("runAsymmetricCollaborationSlice — conversation continuity", () => {
         noRefResult("claude", makeAgentOneProposedChanges()),
         noRefResult(
           "claude",
-          makeResolutionDecisionFinal({ remainingDisagreements: [] }),
+          makeResolutionDecisionFinal({ remaining_disagreements: [] }),
         ),
         noRefResult("claude", makeFinalAnswer()),
       ],
@@ -1950,7 +1926,7 @@ describe("runAsymmetricCollaborationSlice — conversation continuity", () => {
         makeBackendResult(
           "claude",
           makeResolutionDecisionContinue({
-            remainingDisagreements: [makeObjectiveDisagreement()],
+            remaining_disagreements: [makeObjectiveDisagreement()],
           }),
         ),
       ],

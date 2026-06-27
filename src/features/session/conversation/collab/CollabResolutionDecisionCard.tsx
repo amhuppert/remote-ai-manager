@@ -28,12 +28,12 @@ import {
 export interface CollabResolutionDecisionCardProps {
   agent: CollaborationAgent;
   round: number;
-  agreementReached: boolean;
-  nextAction: CollaborationResolutionDecisionNextAction;
-  acceptedPoints: CollaborationArtifactAgreement[];
-  resolvedDisagreements: CollaborationResolvedDisagreement[];
-  remainingDisagreements: CollaborationArtifactDisagreement[];
-  userQuestions: CollaborationUserQuestion[];
+  agreement_reached: boolean;
+  next_action: CollaborationResolutionDecisionNextAction;
+  accepted_points: CollaborationArtifactAgreement[];
+  resolved_disagreements: CollaborationResolvedDisagreement[];
+  remaining_disagreements: CollaborationArtifactDisagreement[];
+  user_questions: CollaborationUserQuestion[];
   rationale: string;
   trajectory: number[];
   defaultOpen?: boolean;
@@ -124,18 +124,18 @@ function TrajectorySparkline({
 export default function CollabResolutionDecisionCard({
   agent,
   round,
-  agreementReached,
-  nextAction,
-  acceptedPoints,
-  resolvedDisagreements,
-  remainingDisagreements,
-  userQuestions,
+  agreement_reached,
+  next_action,
+  accepted_points,
+  resolved_disagreements,
+  remaining_disagreements,
+  user_questions,
   rationale,
   trajectory,
   defaultOpen,
   onRefClick,
 }: CollabResolutionDecisionCardProps): React.JSX.Element {
-  const verdictLabel = VERDICT_LABEL[nextAction];
+  const verdictLabel = VERDICT_LABEL[next_action];
 
   return (
     <CollabCollapsibleCard
@@ -153,20 +153,20 @@ export default function CollabResolutionDecisionCard({
             R{round}
           </span>
           <span
-            className={cn(cardVerdict, cardVerdictColor[nextAction])}
-            data-next-action={nextAction}
+            className={cn(cardVerdict, cardVerdictColor[next_action])}
+            data-next-action={next_action}
           >
             {verdictLabel}
           </span>
           <span className={cardSummary}>
-            {acceptedPoints.length} accepted · {resolvedDisagreements.length}{" "}
-            resolved · {remainingDisagreements.length} remaining
-            {userQuestions.length > 0
-              ? ` · ${userQuestions.length} question${
-                  userQuestions.length === 1 ? "" : "s"
+            {accepted_points.length} accepted · {resolved_disagreements.length}{" "}
+            resolved · {remaining_disagreements.length} remaining
+            {user_questions.length > 0
+              ? ` · ${user_questions.length} question${
+                  user_questions.length === 1 ? "" : "s"
                 }`
               : ""}
-            {agreementReached ? " · agreement" : ""}
+            {agreement_reached ? " · agreement" : ""}
           </span>
         </>
       }
@@ -175,23 +175,23 @@ export default function CollabResolutionDecisionCard({
 
       <CollabMarkdownText content={rationale} className={cardNarrative} />
 
-      {resolvedDisagreements.length > 0 ? (
+      {resolved_disagreements.length > 0 ? (
         <section className={cardSection}>
           <h4 className={cardSectionTitle}>
-            Resolved disagreements ({resolvedDisagreements.length})
+            Resolved disagreements ({resolved_disagreements.length})
           </h4>
           <ul
             className="m-0 flex list-none flex-col gap-[6px] p-0"
             aria-label="Resolved disagreements"
           >
-            {resolvedDisagreements.map((item) => (
+            {resolved_disagreements.map((item) => (
               <li
                 className="flex flex-col gap-[2px] border-0 border-l-2 border-solid border-l-green-dim pl-sm text-[0.82rem] text-text-primary"
-                key={item.disagreementId}
+                key={item.disagreement_id}
               >
                 <div className="flex flex-wrap items-baseline gap-x-[4px] gap-y-0">
                   <span className="shrink-0 font-mono font-semibold text-text-secondary">
-                    {item.disagreementId} →
+                    {item.disagreement_id} →
                   </span>{" "}
                   <CollabMarkdownText
                     content={item.resolution}
@@ -204,7 +204,7 @@ export default function CollabResolutionDecisionCard({
                     sizes inline code inside this rationale's markdown. */}
                 <div className="collab-resolution-decision-card-resolved-meta flex flex-wrap items-baseline gap-x-[4px] gap-y-0 font-mono text-[0.7rem] text-text-secondary">
                   <span className="shrink-0">
-                    {item.resolvedAutonomously ? "auto" : "manual"} ·
+                    {item.resolved_autonomously ? "auto" : "manual"} ·
                   </span>{" "}
                   <CollabMarkdownText
                     content={item.rationale}
@@ -217,10 +217,10 @@ export default function CollabResolutionDecisionCard({
         </section>
       ) : null}
 
-      {remainingDisagreements.length > 0 || acceptedPoints.length > 0 ? (
+      {remaining_disagreements.length > 0 || accepted_points.length > 0 ? (
         <CollabClaimsList
-          agree={acceptedPoints}
-          disagree={remainingDisagreements}
+          agree={accepted_points}
+          disagree={remaining_disagreements}
           onRefClick={onRefClick}
         />
       ) : null}

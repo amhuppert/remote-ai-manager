@@ -32,11 +32,11 @@ function fromProposedChangesFixture(
   return {
     fromAgent: fromBackend,
     round,
-    narrative: fixture.narrative,
-    acceptedFromAgentTwoDraft: fixture.acceptedFromAgentTwoDraft,
-    proposedChanges: fixture.proposedChanges,
-    remainingDisagreements: fixture.remainingDisagreements,
-    supporting: fixture.supporting,
+    summary: fixture.summary,
+    artifacts: fixture.artifacts,
+    accepted_from_other_agent_draft: fixture.accepted_from_other_agent_draft,
+    proposed_changes: fixture.proposed_changes,
+    remaining_disagreements: fixture.remaining_disagreements,
   };
 }
 

@@ -26,7 +26,9 @@ function fromFinalAnswerFixture(
 ): CollabFinalAnswerMessageProps {
   return {
     agent: backend,
-    answer: fixture.answer,
+    summary: fixture.summary,
+    artifacts: fixture.artifacts,
+    answer_artifact_id: fixture.answer_artifact_id,
   };
 }
 
@@ -37,7 +39,7 @@ export const ClaudeFromFixture = {
 export const CodexFromFixture = {
   args: fromFinalAnswerFixture(
     makeFinalAnswer({
-      answer:
+      summary:
         "Ship as v1 with additive fields. Defer the v2 contract change to a separate proposal.",
     }),
     "codex",
