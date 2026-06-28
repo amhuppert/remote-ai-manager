@@ -172,8 +172,11 @@ describe("Pane", () => {
     expect(screen.getByText("Edited three files")).toBeInTheDocument();
   });
 
-  it("renders the empty state when the conversation has no messages", () => {
-    renderPane({}, []);
+  it("renders the empty state when an idle conversation has no messages", () => {
+    // `new` (not `running`): an idle conversation with no transcript shows the
+    // empty placeholder. A *running* empty conversation shows the typing
+    // indicator instead (see the "agent responding indicator" describe below).
+    renderPane({ conversation: baseConversation({ status: "new" }) }, []);
 
     expect(screen.getByText("No messages yet")).toBeInTheDocument();
   });
@@ -199,6 +202,53 @@ describe("Pane", () => {
     expect(container.querySelector("form")).toBeNull();
   });
 
+  describe("agent responding indicator (loading state)", () => {
+    beforeEach(() => useSessionDetailStore.getState().resetStore());
+    afterEach(() => useSessionDetailStore.getState().resetStore());
+
+    // The pane body is virtualized (react-virtuoso renders no items — and no
+    // Footer — under jsdom), so the in-thread typing footer isn't assertable
+    // here. The empty-but-running branch renders the indicator directly (not
+    // through Virtuoso), mirroring ProjectTranscriptHost, so it is the
+    // jsdom-observable signal that a pane surfaces agent activity.
+    it("shows the typing indicator in the active pane while its agent is responding", () => {
+      const { container } = renderPane(
+        { active: true, conversation: baseConversation({ status: "running" }) },
+        [],
+      );
+
+      expect(container.querySelector(".typing-indicator")).not.toBeNull();
+      expect(screen.queryByText("No messages yet")).toBeNull();
+    });
+
+    it("shows the typing indicator in a non-active pane whose own agent is responding", () => {
+      const { container } = renderPane(
+        {
+          active: false,
+          conversation: baseConversation({ status: "running" }),
+        },
+        [],
+      );
+
+      expect(container.querySelector(".typing-indicator")).not.toBeNull();
+      expect(screen.queryByText("No messages yet")).toBeNull();
+    });
+
+    it("does not show the typing indicator when the agent is not responding", () => {
+      const { container } = renderPane(
+        {
+          active: true,
+          conversation: baseConversation({ status: "awaiting" }),
+        },
+        [],
+      );
+
+      expect(container.querySelector(".typing-indicator")).toBeNull();
+      expect(container.querySelector(".streaming-indicator")).toBeNull();
+      expect(screen.getByText("No messages yet")).toBeInTheDocument();
+    });
+  });
+
   describe("optimistic message isolation (split-screen)", () => {
     beforeEach(() => useSessionDetailStore.getState().resetStore());
     afterEach(() => useSessionDetailStore.getState().resetStore());
@@ -215,9 +265,18 @@ describe("Pane", () => {
         .getState()
         .submitPrompt([{ type: "text", text: "pending to active convo" }], 0);
 
-      // An inactive pane (a different conversation in the split view) has no
-      // server messages and must NOT inherit the optimistic row → empty state.
-      const inactive = renderPane({ active: false }, []);
+      // An inactive pane (a different, idle conversation in the split view) has
+      // no server messages and must NOT inherit the optimistic row → empty
+      // state. Status is `awaiting` (not `running`) so the empty-vs-body signal
+      // isolates the optimistic-merge variable from the running-pane typing
+      // indicator (which would otherwise replace the empty state).
+      const inactive = renderPane(
+        {
+          active: false,
+          conversation: baseConversation({ status: "awaiting" }),
+        },
+        [],
+      );
       expect(screen.getByText("No messages yet")).toBeInTheDocument();
       inactive.unmount();
 

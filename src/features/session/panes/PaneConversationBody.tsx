@@ -5,9 +5,12 @@ import ConversationVirtuosoList, {
   type VirtuosoHandle,
 } from "@/components/conversation/ConversationVirtuosoList";
 import MessageRow from "@/components/conversation/MessageRow";
+import TypingIndicator from "@/components/conversation/TypingIndicator";
 import { buildConversationRows } from "@/features/session/conversation/conversation-rows";
 import { useConversationMessagesQuery } from "@/hooks/conversation/use-conversation-messages-query";
 import { useDisplayMessages } from "@/features/session/hooks/use-display-messages";
+import { useSending } from "@/stores/session-detail.store";
+import type { SessionActiveConversation } from "@/lib/active-conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 
 export interface PaneConversationBodyProps {
@@ -15,6 +18,8 @@ export interface PaneConversationBodyProps {
   sessionName: string;
   conversationId: string;
   selectedBackend: AgentBackendId;
+  /** This conversation's own status — drives the running typing indicator. */
+  status: SessionActiveConversation["status"];
   /**
    * Whether this pane is the active conversation — the one the shared pinned
    * composer targets. Only the active pane merges the page-level in-flight
@@ -43,6 +48,7 @@ export default function PaneConversationBody({
   sessionName,
   conversationId,
   selectedBackend,
+  status,
   isActive,
 }: PaneConversationBodyProps): React.JSX.Element {
   const { data, isLoading, isError } = useConversationMessagesQuery(
@@ -60,6 +66,20 @@ export default function PaneConversationBody({
   );
   const virtuosoRef = useRef<VirtuosoHandle>(null);
 
+  // The agent is responding when this conversation is running. The active pane
+  // additionally honours the shared composer's `sending` flag to bridge the
+  // submit→running gap (the page-level optimistic store targets the active
+  // conversation only), matching the single-conversation panel's gate.
+  const sending = useSending();
+  const responding = isActive
+    ? sending || status === "running"
+    : status === "running";
+  // The active pane shares the active conversation's optimistic state, so let
+  // the indicator read it (streaming variant when a partial reply exists).
+  // Non-active panes must not — the store would leak the active conversation's
+  // optimistic state into the wrong pane.
+  const hasAssistantOptimistic = isActive ? undefined : false;
+
   if (isLoading) {
     return <div className={bodyStatusClass}>Loading…</div>;
   }
@@ -67,7 +87,23 @@ export default function PaneConversationBody({
     return <div className={bodyStatusClass}>Could not load messages</div>;
   }
   if (rows.length === 0) {
-    return <div className={bodyStatusClass}>No messages yet</div>;
+    if (!responding) {
+      return <div className={bodyStatusClass}>No messages yet</div>;
+    }
+    // A running conversation with no transcript yet still shows the agent is
+    // working (e.g. the first turn before any message lands), rather than the
+    // misleading "No messages yet" placeholder.
+    return (
+      <div className="pane__body flex min-h-0 flex-1 cursor-auto flex-col overflow-hidden">
+        <div className="conversation" data-backend={selectedBackend}>
+          <TypingIndicator
+            selectedBackend={selectedBackend}
+            visible
+            hasAssistantOptimistic={hasAssistantOptimistic}
+          />
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -93,7 +129,13 @@ export default function PaneConversationBody({
             />
           )}
           renderCollab={() => null}
-          renderFooter={() => null}
+          renderFooter={() => (
+            <TypingIndicator
+              selectedBackend={selectedBackend}
+              visible={responding}
+              hasAssistantOptimistic={hasAssistantOptimistic}
+            />
+          )}
           onRangeChanged={noop}
           onAtBottomStateChange={noop}
           onAtTopStateChange={noop}

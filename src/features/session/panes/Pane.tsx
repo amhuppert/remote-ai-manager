@@ -190,6 +190,7 @@ export default function Pane({
         sessionName={conversation.sessionName}
         conversationId={conversation.id}
         selectedBackend={conversation.agentBackend}
+        status={conversation.status}
         isActive={active}
       />
     </section>
