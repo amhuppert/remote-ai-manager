@@ -23,36 +23,30 @@ references:
 lanes:
   - id: alignment
     label: Agent Alignment
-    description:
-      Shared contracts and source-of-truth so implementers and validators
+    description: Shared contracts and source-of-truth so implementers and validators
       resolve conflicts identically.
   - id: quality
     label: Output Quality & Validation
-    description:
-      Validator verdicts, adversarial verification, lenses, integration
+    description: Validator verdicts, adversarial verification, lenses, integration
       sweep, spec lint.
   - id: friction
     label: Friction & Reliability
-    description:
-      Pre-flight, failure taxonomy, resume, script-validator hardening,
+    description: Pre-flight, failure taxonomy, resume, script-validator hardening,
       gate ergonomics.
   - id: dynamic
     label: Dynamic Structure
-    description:
-      Typed graph-mutation proposals, expansion nodes, conditional edges,
+    description: Typed graph-mutation proposals, expansion nodes, conditional edges,
       review/remediation subgraphs.
   - id: parallelism
     label: Parallelism
-    description:
-      File-ownership maps and registration points to remove shared-file
+    description: File-ownership maps and registration points to remove shared-file
       contention.
   - id: crosscutting
     label: Cross-cutting
     description: Budgets, tiered validation, retrospectives, UI legibility.
   - id: reuse
     label: Reusability & Templates
-    description:
-      Parameterized definitions and a cross-project template library so a
+    description: Parameterized definitions and a cross-project template library so a
       workflow is authored once and launched many times.
 
 work_items:
@@ -67,9 +61,9 @@ work_items:
       sections.
     lane: alignment
     status: done
-    priority: p1
+    value: 80
     depends_on: []
-    tags: [alignment, shared-documents, agent-prompt, validation]
+    tags: [ alignment, shared-documents, agent-prompt, validation ]
     estimate: 5
     deliverables:
       - Reserved kind "charter" in the shared-documents registry
@@ -91,9 +85,9 @@ work_items:
       complete_task for rigor contexts.
     lane: alignment
     status: planned
-    priority: p1
+    value: 80
     depends_on: []
-    tags: [alignment, deterministic, validation]
+    tags: [ alignment, deterministic, validation ]
     estimate: 8
     deliverables:
       - deliverables + produces.contracts blocks on the resolved context schema
@@ -114,16 +108,15 @@ work_items:
       and per-execution decision log; propose_decision_change routes challenges.
     lane: alignment
     status: ready
-    priority: p0
+    value: 100
     depends_on: []
-    tags: [alignment, agent-tool, observability]
+    tags: [ alignment, agent-tool, observability ]
     estimate: 3
     deliverables:
       - Completion-report schema + execution-logger event
       - record_decision / propose_decision_change MCP tools
       - Decision-log injection into downstream prompts
-    notes:
-      Report §1.5. Foundation for gate digest, integration sweep, conditional
+    notes: Report §1.5. Foundation for gate digest, integration sweep, conditional
       edges.
 
   - id: shared-rubric
@@ -133,9 +126,9 @@ work_items:
       same checklist to both implementer and validator.
     lane: alignment
     status: future
-    priority: nice_to_have
+    value: 20
     depends_on: []
-    tags: [alignment]
+    tags: [ alignment ]
     estimate: 2
     notes: Report §1.6. Optional alignment refinement.
 
@@ -149,9 +142,9 @@ work_items:
       overlap, produce/consume and naming conflicts.
     lane: quality
     status: ready
-    priority: p0
+    value: 100
     depends_on: []
-    tags: [deterministic, planner, friction]
+    tags: [ deterministic, planner, friction ]
     estimate: 3
     deliverables:
       - Definition-accept-time lint in the create/replace handlers
@@ -168,9 +161,9 @@ work_items:
       counter-proposal slice.
     lane: quality
     status: planned
-    priority: p1
-    depends_on: [charter]
-    tags: [validation, agent-tool, approval-gate, collaboration]
+    value: 80
+    depends_on: [ charter ]
+    tags: [ validation, agent-tool, approval-gate, collaboration ]
     estimate: 5
     deliverables:
       - GO/NO-GO/ESCALATE verdict + reason in codex-agent-schemas.ts
@@ -188,9 +181,9 @@ work_items:
       against the real domain and reports spec smells as advisory gate findings.
     lane: quality
     status: planned
-    priority: p2
+    value: 60
     depends_on: []
-    tags: [validation, quality]
+    tags: [ validation, quality ]
     estimate: 5
     deliverables:
       - lenses/validators[] field on validator config
@@ -205,9 +198,9 @@ work_items:
       can spawn remediation contexts instead of only reopening a task.
     lane: quality
     status: planned
-    priority: p1
-    depends_on: [completion-reports, typed-contracts]
-    tags: [validation, quality]
+    value: 80
+    depends_on: [ completion-reports, typed-contracts ]
+    tags: [ validation, quality ]
     estimate: 5
     notes: Report §2.4. Makes the ad hoc final-verification pattern first-class;
       pins the review target.
@@ -218,10 +211,10 @@ work_items:
       Give the validator the context's exact commit range and review the diff
       against the AC, exploring the wider tree only as needed.
     lane: quality
-    status: planned
-    priority: p1
+    status: done
+    value: 80
     depends_on: []
-    tags: [validation, token-economy]
+    tags: [ validation, token-economy ]
     estimate: 2
     notes: Report §2.5. Cuts validator tokens; per-context commits already exist.
 
@@ -233,9 +226,9 @@ work_items:
       uses to decide whether evidence is complete; advisory, not hard gates.
     lane: quality
     status: planned
-    priority: p1
+    value: 80
     depends_on: []
-    tags: [quality, planner]
+    tags: [ quality, planner ]
     estimate: 3
     notes: Report §2.6. Makes the quality bar a declared artifact, not planner recall.
 
@@ -248,15 +241,14 @@ work_items:
       missing, infer a candidate from package.json and propose it via a gate.
     lane: friction
     status: ready
-    priority: p0
+    value: 100
     depends_on: []
-    tags: [reliability, friction, deterministic]
+    tags: [ reliability, friction, deterministic ]
     estimate: 5
     deliverables:
       - Pre-flight probe with precise halt diagnostics
       - devServers config inference + approval-gated apply
-    notes:
-      Report §3.1. Prevents run-1-style config write-offs and ensure_dev_server
+    notes: Report §3.1. Prevents run-1-style config write-offs and ensure_dev_server
       noise.
 
   - id: failure-taxonomy
@@ -267,9 +259,9 @@ work_items:
       failures consume iterations and feed the circuit breaker.
     lane: friction
     status: ready
-    priority: p0
+    value: 100
     depends_on: []
-    tags: [reliability]
+    tags: [ reliability ]
     estimate: 3
     notes: Report §3.2. Single highest-impact reliability fix; stops the
       21-zombie-iteration class.
@@ -282,9 +274,9 @@ work_items:
       working-definition revision with a recorded diff.
     lane: friction
     status: planned
-    priority: p2
+    value: 60
     depends_on: []
-    tags: [dynamic, reliability]
+    tags: [ dynamic, reliability ]
     estimate: 5
     deliverables:
       - Pending-subgraph editing in runtime-edits.ts
@@ -299,9 +291,9 @@ work_items:
       deterministic gate across contexts.
     lane: friction
     status: ready
-    priority: p0
+    value: 100
     depends_on: []
-    tags: [reliability, friction]
+    tags: [ reliability, friction ]
     estimate: 2
     notes: Report §3.5. Makes the lazy path the correct path.
 
@@ -312,9 +304,9 @@ work_items:
       validation.jsonl, not just the final verdict JSON.
     lane: friction
     status: done
-    priority: p0
+    value: 100
     depends_on: []
-    tags: [friction, observability]
+    tags: [ friction, observability ]
     estimate: 1
     notes: >
       Report §3.6. Implemented as contexts/<ctx>/validation-transcript.jsonl
@@ -333,9 +325,9 @@ work_items:
       append notes to any pending context's seed prompt.
     lane: friction
     status: planned
-    priority: p0
-    depends_on: [completion-reports]
-    tags: [friction, approval-gate, alignment]
+    value: 100
+    depends_on: [ completion-reports ]
+    tags: [ friction, approval-gate, alignment ]
     estimate: 5
     deliverables:
       - Gate digest assembly
@@ -354,15 +346,14 @@ work_items:
       design lenses) on top of the lane/join machinery.
     lane: dynamic
     status: planned
-    priority: p2
+    value: 60
     depends_on: []
-    tags: [dynamic, reliability]
+    tags: [ dynamic, reliability ]
     estimate: 5
     deliverables:
       - Batch-policy fields + per-lane deadline in join-runner/lane-readiness
       - Partial-salvage + replacement-spawn paths
-    notes:
-      Report §4.0. Imports fan-out without the dynamic workflow's hung-barrier
+    notes: Report §4.0. Imports fan-out without the dynamic workflow's hung-barrier
       risk.
 
   - id: propose-context
@@ -373,9 +364,9 @@ work_items:
       applies under a policy envelope, recording a graph-diff artifact.
     lane: dynamic
     status: planned
-    priority: p2
-    depends_on: [revision-resume]
-    tags: [dynamic, agent-tool]
+    value: 60
+    depends_on: [ revision-resume ]
+    tags: [ dynamic, agent-tool ]
     estimate: 8
     deliverables:
       - propose_graph_patch MCP tool
@@ -392,9 +383,9 @@ work_items:
       per item under caps, the liveness policy, and an optional gate.
     lane: dynamic
     status: planned
-    priority: p2
-    depends_on: [propose-context, liveness-policy]
-    tags: [dynamic]
+    value: 60
+    depends_on: [ propose-context, liveness-policy ]
+    tags: [ dynamic ]
     estimate: 5
     notes: Report §4.2. Declarative scout->fan-out; enables review-fix pipelines.
 
@@ -406,9 +397,9 @@ work_items:
       explicit router contexts, then native conditional edges.
     lane: dynamic
     status: planned
-    priority: p2
-    depends_on: [completion-reports]
-    tags: [dynamic]
+    value: 60
+    depends_on: [ completion-reports ]
+    tags: [ dynamic ]
     estimate: 5
     deliverables:
       - when-guard evaluation in the scheduler
@@ -424,12 +415,11 @@ work_items:
       all batches inherit the liveness policy.
     lane: dynamic
     status: planned
-    priority: p2
-    depends_on: [validator-trust, liveness-policy]
-    tags: [dynamic, validation, collaboration]
+    value: 60
+    depends_on: [ validator-trust, liveness-policy ]
+    tags: [ dynamic, validation, collaboration ]
     estimate: 5
-    notes:
-      Report §4.4. Generalizes per-finding verify into a durable, salvageable
+    notes: Report §4.4. Generalizes per-finding verify into a durable, salvageable
       review.
 
   - id: remediation-subgraphs
@@ -440,9 +430,9 @@ work_items:
       remediation contexts rather than overloading the final context.
     lane: dynamic
     status: planned
-    priority: p2
-    depends_on: [propose-context, integration-sweep]
-    tags: [dynamic, reliability]
+    value: 60
+    depends_on: [ propose-context, integration-sweep ]
+    tags: [ dynamic, reliability ]
     estimate: 3
     notes: Report §4.5. Converts bare halts into diagnosed, gated graph changes.
 
@@ -453,9 +443,9 @@ work_items:
       output required) that the scheduler can run aggressively in parallel.
     lane: dynamic
     status: planned
-    priority: p3
-    depends_on: [propose-context]
-    tags: [dynamic]
+    value: 40
+    depends_on: [ propose-context ]
+    tags: [ dynamic ]
     estimate: 3
     notes: Report §4.6. Investigation fan-out with no merge risk.
 
@@ -468,9 +458,9 @@ work_items:
       advisor that requires proven disjoint ownership.
     lane: dynamic
     status: planned
-    priority: p2
-    depends_on: [revision-resume, propose-context]
-    tags: [dynamic, planner]
+    value: 60
+    depends_on: [ revision-resume, propose-context ]
+    tags: [ dynamic, planner ]
     estimate: 5
     notes: Report §4.7. Re-planning as a discrete, auditable, gated event.
 
@@ -483,9 +473,9 @@ work_items:
       disjoint owners run in parallel lanes.
     lane: parallelism
     status: planned
-    priority: p2
-    depends_on: [typed-contracts]
-    tags: [parallelism, deterministic]
+    value: 60
+    depends_on: [ typed-contracts ]
+    tags: [ parallelism, deterministic ]
     estimate: 3
     notes: Report §5.1. Serialize only the spine, not everything; reuses the
       contract git-diff check.
@@ -498,9 +488,9 @@ work_items:
       during the script-validator step.
     lane: parallelism
     status: planned
-    priority: p2
+    value: 60
     depends_on: []
-    tags: [parallelism, planner]
+    tags: [ parallelism, planner ]
     estimate: 3
     notes: Report §5.2. Eliminates shared-file contention by construction.
 
@@ -515,9 +505,9 @@ work_items:
       flagging). Budget state surfaces in the UI and completion reports.
     lane: crosscutting
     status: planned
-    priority: p2
-    depends_on: [spec-lint]
-    tags: [token-economy, reliability]
+    value: 60
+    depends_on: [ spec-lint ]
+    tags: [ token-economy, reliability ]
     estimate: 5
     deliverables:
       - Token-cost budget policy + UI/report surfacing
@@ -535,9 +525,9 @@ work_items:
       diffs, or critical contexts.
     lane: crosscutting
     status: planned
-    priority: p2
-    depends_on: [script-validator-defaults, typed-contracts, validator-trust]
-    tags: [token-economy, validation]
+    value: 60
+    depends_on: [ script-validator-defaults, typed-contracts, validator-trust ]
+    tags: [ token-economy, validation ]
     estimate: 3
     notes: Report §6.2. Recovers the ~46 min of codex spent ratifying first-try
       passes.
@@ -550,9 +540,9 @@ work_items:
       smells) stored as recommendations for review; never auto-applied.
     lane: crosscutting
     status: future
-    priority: nice_to_have
+    value: 20
     depends_on: []
-    tags: [cross-cutting, learning]
+    tags: [ cross-cutting, learning ]
     estimate: 3
     notes: Report §6.3. Closes the learning loop; this analysis is itself such a
       retrospective.
@@ -565,9 +555,9 @@ work_items:
       acknowledged artifacts, and why a context is blocked.
     lane: crosscutting
     status: planned
-    priority: p2
-    depends_on: [propose-context, conditional-edges]
-    tags: [cross-cutting, ui]
+    value: 60
+    depends_on: [ propose-context, conditional-edges ]
+    tags: [ cross-cutting, ui ]
     estimate: 5
     notes: Report §6.4. Becomes load-bearing the moment any Part-4 dynamism ships.
 
@@ -583,9 +573,9 @@ work_items:
       working as zero-input templates.
     lane: reuse
     status: done
-    priority: p1
-    depends_on: [charter]
-    tags: [reuse, deterministic, planner, agent-tool, ui]
+    value: 80
+    depends_on: [ charter ]
+    tags: [ reuse, deterministic, planner, agent-tool, ui ]
     estimate: 8
     deliverables:
       - Typed parameter-declaration block on the semantic definition (name, type
@@ -615,9 +605,9 @@ work_items:
       halts with a precise diagnostic — before any tokens are spent.
     lane: reuse
     status: done
-    priority: p1
-    depends_on: [workflow-parameterization]
-    tags: [reuse, deterministic, ui, agent-tool]
+    value: 80
+    depends_on: [ workflow-parameterization ]
+    tags: [ reuse, deterministic, ui, agent-tool ]
     estimate: 5
     deliverables:
       - Global/cross-project template storage tier alongside project-level
