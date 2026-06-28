@@ -1114,6 +1114,80 @@ describe("conversation manager", () => {
       expect(promptText).toBe("hi");
       expect(images).toHaveLength(1);
     });
+
+    it("extracts documentFeedback from a document_feedback block so the drained submit re-emits it", () => {
+      const items = [
+        {
+          docPath: "design.md",
+          path: "design.md",
+          headingLabel: "Intro",
+          line: 4,
+          quote: "the passage",
+          note: "reconsider",
+        },
+      ];
+      const content: MessageContentBlock[] = [
+        { type: "document_feedback", items },
+      ];
+      const result = queuedBatchToSubmitPrompt(content);
+      expect(result.documentFeedback).toEqual({ items });
+      // No prose text block was persisted; the actor re-derives the agent text.
+      expect(result.promptText).toBe("");
+    });
+
+    it("merges items from multiple coalesced document_feedback blocks", () => {
+      const a = {
+        docPath: "a.md",
+        path: "a.md",
+        headingLabel: "A",
+        line: 1,
+        quote: "qa",
+        note: "na",
+      };
+      const b = {
+        docPath: "b.md",
+        path: "b.md",
+        headingLabel: "B",
+        line: 2,
+        quote: "qb",
+        note: "nb",
+      };
+      const content: MessageContentBlock[] = [
+        { type: "document_feedback", items: [a] },
+        { type: "document_feedback", items: [b] },
+      ];
+      expect(queuedBatchToSubmitPrompt(content).documentFeedback).toEqual({
+        items: [a, b],
+      });
+    });
+
+    it("omits documentFeedback when no feedback block is present", () => {
+      const content: MessageContentBlock[] = [{ type: "text", text: "hi" }];
+      expect(
+        queuedBatchToSubmitPrompt(content).documentFeedback,
+      ).toBeUndefined();
+    });
+
+    it("surfaces both promptText and documentFeedback for a coalesced mixed batch", () => {
+      const items = [
+        {
+          docPath: "design.md",
+          path: "design.md",
+          headingLabel: "Intro",
+          line: 4,
+          quote: "the passage",
+          note: "reconsider",
+        },
+      ];
+      // A normal queued text message coalesced with a queued feedback message.
+      const content: MessageContentBlock[] = [
+        { type: "text", text: "also handle the empty-state case" },
+        { type: "document_feedback", items },
+      ];
+      const result = queuedBatchToSubmitPrompt(content);
+      expect(result.promptText).toBe("also handle the empty-state case");
+      expect(result.documentFeedback).toEqual({ items });
+    });
   });
 
   describe("drainConversationQueue", () => {
@@ -1146,6 +1220,68 @@ describe("conversation manager", () => {
         deliveryAttemptId: "att-9",
       });
       expect(deps.markPending).not.toHaveBeenCalled();
+    });
+
+    it("dispatches a SUBMIT_PROMPT carrying documentFeedback for a queued feedback batch", async () => {
+      const items = [
+        {
+          docPath: "design.md",
+          path: "design.md",
+          headingLabel: "Intro",
+          line: 4,
+          quote: "the passage",
+          note: "reconsider",
+        },
+      ];
+      const feedbackBatch: ClaimedQueuedBatch = {
+        deliveryAttemptId: "att-fb",
+        messageIds: ["mfb"],
+        content: [{ type: "document_feedback", items }],
+        command: null,
+      };
+      const claimNextTurnBatch = vi.fn(async () => feedbackBatch);
+      const deps = makeQueueDeps({ claimNextTurnBatch });
+      const { self, send } = makeDrainSelf(true);
+
+      await drainConversationQueue(self, DRAIN_CONTEXT, deps);
+
+      expect(send).toHaveBeenCalledTimes(1);
+      const event = send.mock.calls[0]?.[0] as ConversationEvent;
+      if (event.type !== "SUBMIT_PROMPT") throw new Error("wrong event");
+      expect(event.documentFeedback).toEqual({ items });
+    });
+
+    it("dispatches a SUBMIT_PROMPT carrying BOTH text and documentFeedback for a coalesced mixed batch", async () => {
+      const items = [
+        {
+          docPath: "design.md",
+          path: "design.md",
+          headingLabel: "Intro",
+          line: 4,
+          quote: "the passage",
+          note: "reconsider",
+        },
+      ];
+      const mixedBatch: ClaimedQueuedBatch = {
+        deliveryAttemptId: "att-mix",
+        messageIds: ["mtext", "mfb"],
+        content: [
+          { type: "text", text: "also handle the empty-state case" },
+          { type: "document_feedback", items },
+        ],
+        command: null,
+      };
+      const claimNextTurnBatch = vi.fn(async () => mixedBatch);
+      const deps = makeQueueDeps({ claimNextTurnBatch });
+      const { self, send } = makeDrainSelf(true);
+
+      await drainConversationQueue(self, DRAIN_CONTEXT, deps);
+
+      expect(send).toHaveBeenCalledTimes(1);
+      const event = send.mock.calls[0]?.[0] as ConversationEvent;
+      if (event.type !== "SUBMIT_PROMPT") throw new Error("wrong event");
+      expect(event.promptText).toBe("also handle the empty-state case");
+      expect(event.documentFeedback).toEqual({ items });
     });
 
     it("returns the batch to pending when the actor cannot accept the prompt", async () => {

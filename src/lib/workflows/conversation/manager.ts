@@ -52,6 +52,7 @@ import type {
   ActiveTurnSource,
   MessageContentBlock,
 } from "@/lib/conversations/schemas";
+import type { DocumentFeedbackPayload } from "@/lib/conversations/message-content-schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { ActiveTurn } from "./types";
 import { messageQueueService } from "@/lib/conversations/message-queue-service";
@@ -172,12 +173,19 @@ function getConversationQueueDeps(): ConversationQueueDeps {
  * `image` blocks become strip images appended after text. `attachmentId` is a
  * synthetic within-turn correlation key (queued images carry no original id),
  * and no `inlineMarkerIndex` is set because queued images deliver as appended
- * strip images, not inline markers. Non-text/non-image blocks are dropped.
+ * strip images, not inline markers. A `document_feedback` block is surfaced as
+ * `documentFeedback` (items merged across coalesced blocks) so the drained
+ * `SUBMIT_PROMPT` re-emits it rather than dropping it; the actor re-derives the
+ * agent-facing prose from those items. Other block types are dropped.
  * Pure: the input is not mutated.
  */
 export function queuedBatchToSubmitPrompt(
   content: readonly MessageContentBlock[],
-): { promptText: string; images: ImagePayload[] } {
+): {
+  promptText: string;
+  images: ImagePayload[];
+  documentFeedback?: DocumentFeedbackPayload;
+} {
   const promptText = content
     .filter(
       (block): block is { type: "text"; text: string } => block.type === "text",
@@ -197,7 +205,17 @@ export function queuedBatchToSubmitPrompt(
     });
   }
 
-  return { promptText, images };
+  const feedbackItems = content.flatMap((block) =>
+    block.type === "document_feedback" ? block.items : [],
+  );
+
+  return {
+    promptText,
+    images,
+    ...(feedbackItems.length > 0
+      ? { documentFeedback: { items: feedbackItems } }
+      : {}),
+  };
 }
 
 const IMAGE_PAYLOAD_MEDIA_TYPES = [
@@ -350,12 +368,15 @@ export async function drainConversationQueue(
       return;
     }
 
-    const { promptText, images } = queuedBatchToSubmitPrompt(batch.content);
+    const { promptText, images, documentFeedback } = queuedBatchToSubmitPrompt(
+      batch.content,
+    );
 
     const event: ConversationEvent = {
       type: "SUBMIT_PROMPT",
       promptText,
       ...(images.length ? { images } : {}),
+      ...(documentFeedback ? { documentFeedback } : {}),
       streamId: `drain-${batch.deliveryAttemptId}`,
       queuedDelivery: {
         messageIds: batch.messageIds,

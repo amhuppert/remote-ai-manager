@@ -12,6 +12,7 @@ import {
 } from "@/lib/sessions/schemas";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import type { DocumentComment } from "@/lib/document-comments/schemas";
 import type { McpOverrides } from "@/lib/mcp/schemas";
 import type { ManagerState } from "@/lib/projects/schemas";
 import type { ReferenceDocument } from "@/lib/reference-documents/schemas";
@@ -389,6 +390,64 @@ export function createAccessors(core: StateStoreCore) {
     }
   }
 
+  async function getDocumentComments(
+    projectPath: string,
+    sessionName: string,
+    docPath: string,
+  ): Promise<DocumentComment[]> {
+    const start = performance.now();
+    try {
+      return repos.documentComments.findByDocument(
+        projectPath,
+        sessionName,
+        docPath,
+      );
+    } finally {
+      emitReadTiming(start, {
+        accessor: "getDocumentComments",
+        projectPath,
+        sessionName,
+      });
+    }
+  }
+
+  async function getSessionDocumentComments(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<DocumentComment[]> {
+    const start = performance.now();
+    try {
+      return repos.documentComments.findBySession(projectPath, sessionName);
+    } finally {
+      emitReadTiming(start, {
+        accessor: "getSessionDocumentComments",
+        projectPath,
+        sessionName,
+      });
+    }
+  }
+
+  async function getDocumentCommentInScope(
+    projectPath: string,
+    sessionName: string,
+    id: string,
+  ): Promise<DocumentComment | null> {
+    const start = performance.now();
+    try {
+      return repos.documentComments.findByIdInScope(
+        projectPath,
+        sessionName,
+        id,
+      );
+    } finally {
+      emitReadTiming(start, {
+        accessor: "getDocumentCommentInScope",
+        projectPath,
+        sessionName,
+      });
+    }
+  }
+
   async function getProjectMcpOverrides(
     projectPath: string,
   ): Promise<McpOverrides | undefined> {
@@ -526,6 +585,9 @@ export function createAccessors(core: StateStoreCore) {
     listAllProjectConversations,
     getSpawnedSessionStatuses,
     getReferenceDocuments,
+    getDocumentComments,
+    getSessionDocumentComments,
+    getDocumentCommentInScope,
     getProjectMcpOverrides,
     getArchivedProjects,
     getPinnedProjects,

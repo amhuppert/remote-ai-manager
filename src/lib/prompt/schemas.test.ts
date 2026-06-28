@@ -7,12 +7,26 @@ import {
   queueCancellationResponseSchema,
   queueEnqueueRequestSchema,
   queueEnqueueResponseSchema,
+  runPromptRequestSchema,
 } from "./schemas";
 
 const sampleImage: ImagePayload = {
   attachmentId: "att-1",
   mediaType: "image/png",
   base64Data: "aGVsbG8=",
+};
+
+const sampleFeedback = {
+  items: [
+    {
+      docPath: "design.md",
+      path: "design.md",
+      headingLabel: "Intro",
+      line: 3,
+      quote: "the passage",
+      note: "reconsider",
+    },
+  ],
 };
 
 describe("queueEnqueueRequestSchema", () => {
@@ -51,6 +65,48 @@ describe("queueEnqueueRequestSchema", () => {
       images: Array.from({ length: 6 }, () => sampleImage),
     });
     expect(result.success).toBe(false);
+  });
+
+  it("accepts a documentFeedback-only body (no text or images)", () => {
+    const result = queueEnqueueRequestSchema.safeParse({
+      documentFeedback: sampleFeedback,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("carries documentFeedback alongside text", () => {
+    const result = queueEnqueueRequestSchema.safeParse({
+      text: "feedback prose",
+      documentFeedback: sampleFeedback,
+    });
+    expect(result.success && result.data.documentFeedback).toEqual(
+      sampleFeedback,
+    );
+  });
+});
+
+describe("runPromptRequestSchema documentFeedback", () => {
+  it("accepts a documentFeedback-only body with empty prompt", () => {
+    const result = runPromptRequestSchema.safeParse({
+      prompt: "",
+      documentFeedback: sampleFeedback,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("still rejects a body with empty prompt, no images, and no feedback", () => {
+    const result = runPromptRequestSchema.safeParse({ prompt: "" });
+    expect(result.success).toBe(false);
+  });
+
+  it("carries documentFeedback alongside prompt text", () => {
+    const result = runPromptRequestSchema.safeParse({
+      prompt: "feedback prose",
+      documentFeedback: sampleFeedback,
+    });
+    expect(result.success && result.data.documentFeedback).toEqual(
+      sampleFeedback,
+    );
   });
 });
 

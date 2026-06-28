@@ -253,6 +253,9 @@ export const conversationMachine = setup({
               ...(event.queuedDelivery
                 ? { queuedDelivery: event.queuedDelivery }
                 : {}),
+              ...(event.documentFeedback
+                ? { documentFeedback: event.documentFeedback }
+                : {}),
             }),
             lastError: null,
           }),
@@ -488,6 +491,9 @@ export const conversationMachine = setup({
                   : {}),
                 ...(activeTurn.queuedDelivery
                   ? { queuedDelivery: activeTurn.queuedDelivery }
+                  : {}),
+                ...(activeTurn.documentFeedback
+                  ? { documentFeedback: activeTurn.documentFeedback }
                   : {}),
               };
             },
@@ -978,6 +984,9 @@ export const conversationMachine = setup({
                 : {}),
               ...(event.queuedDelivery
                 ? { queuedDelivery: event.queuedDelivery }
+                : {}),
+              ...(event.documentFeedback
+                ? { documentFeedback: event.documentFeedback }
                 : {}),
             }),
             lastError: null,

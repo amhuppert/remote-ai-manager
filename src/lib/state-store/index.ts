@@ -19,8 +19,7 @@ export const readState = defaultStore.readState;
 export const mutateState = defaultStore.mutateState;
 export const mutateSession = defaultStore.mutateSession;
 export const mutateConversation = defaultStore.mutateConversation;
-export const createSessionConversation =
-  defaultStore.createSessionConversation;
+export const createSessionConversation = defaultStore.createSessionConversation;
 export const mutateProjectConversation = defaultStore.mutateProjectConversation;
 export const getProjectSessionListItems =
   defaultStore.getProjectSessionListItems;
@@ -34,6 +33,12 @@ export const listAllProjectConversations =
   defaultStore.listAllProjectConversations;
 export const getSpawnedSessionStatuses = defaultStore.getSpawnedSessionStatuses;
 export const getReferenceDocuments = defaultStore.getReferenceDocuments;
+export const getDocumentComments = defaultStore.getDocumentComments;
+export const getSessionDocumentComments =
+  defaultStore.getSessionDocumentComments;
+export const getDocumentCommentInScope = defaultStore.getDocumentCommentInScope;
+export const upsertDocumentComment = defaultStore.upsertDocumentComment;
+export const deleteDocumentComment = defaultStore.deleteDocumentComment;
 /** @public Accessed via dynamic `import()` in actor-implementations. */
 export const getProjectMcpOverrides = defaultStore.getProjectMcpOverrides;
 export const getArchivedProjects = defaultStore.getArchivedProjects;

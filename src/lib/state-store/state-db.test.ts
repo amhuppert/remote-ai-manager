@@ -22,6 +22,7 @@ const EXPECTED_TABLES = [
   "sessions",
   "conversations",
   "reference_documents",
+  "document_comments",
   "notifications",
   "job_records",
 ] as const;
@@ -70,6 +71,27 @@ describe("state-db schema initialization", () => {
       for (const expected of EXPECTED_TABLES) {
         expect(tableNames.has(expected)).toBe(true);
       }
+    } finally {
+      db.close();
+    }
+  });
+
+  it("exposes the document_comments table and its lookup index on a fresh in-memory DB", () => {
+    const db = _createTestDb({ inMemory: true });
+    try {
+      const table = db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'document_comments'",
+        )
+        .get() as { name: string } | undefined;
+      expect(table?.name).toBe("document_comments");
+
+      const index = db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_document_comments_doc'",
+        )
+        .get() as { name: string } | undefined;
+      expect(index?.name).toBe("idx_document_comments_doc");
     } finally {
       db.close();
     }

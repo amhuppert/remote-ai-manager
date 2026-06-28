@@ -10,6 +10,8 @@ import {
   AccordionContent,
 } from "@/components/ui/Accordion";
 import MarkdownViewer from "@/components/MarkdownViewer";
+import DocumentSurface from "@/features/session/document-viewer/DocumentSurface";
+import type { DocumentRef } from "@/lib/document-comments/schemas";
 import { useKiroDocTreeQuery, useKiroDocFileQuery } from "@/lib/kiro/queries";
 
 // Shared file-item recipe (steering list + feature accordion). Differs only by
@@ -104,6 +106,13 @@ export interface SpecBrowserViewProps {
   onExpandFeature: (feature: string | null) => void;
   onSelectFile: (category: string, file: string) => void;
   onGoBack: () => void;
+  /**
+   * Renderer for the selected file's body, injected by the app so specs render
+   * through the comment-enabled annotated surface (selection/highlight/
+   * commenting, req 2.1–2.3). When omitted (presentational stories) the plain
+   * markdown viewer is rendered instead.
+   */
+  contentSlot?: React.ReactNode;
 }
 
 export function SpecBrowserView({
@@ -118,6 +127,7 @@ export function SpecBrowserView({
   onExpandFeature,
   onSelectFile,
   onGoBack,
+  contentSlot,
 }: SpecBrowserViewProps): React.JSX.Element {
   if (isLoading) {
     return (
@@ -188,11 +198,13 @@ export function SpecBrowserView({
           </Tabs>
         )}
         <div className="spec-browser-content flex min-h-0 flex-1 flex-col">
-          <MarkdownViewer
-            content={fileContent ?? null}
-            isLoading={isFileLoading}
-            emptyMessage="File not found."
-          />
+          {contentSlot ?? (
+            <MarkdownViewer
+              content={fileContent ?? null}
+              isLoading={isFileLoading}
+              emptyMessage="File not found."
+            />
+          )}
         </div>
       </div>
     );
@@ -319,6 +331,19 @@ export default function SpecBrowser({
     sessionName,
   );
 
+  // Specs live under `.kiro/` on disk; the canonical comment/content identity is
+  // that worktree-relative path, so a spec opened here and the same file opened
+  // from a transcript card or the Docs surface share one comment set (10.4).
+  const specDocRef: DocumentRef | null =
+    selectedFilePath && selection?.file
+      ? {
+          projectName,
+          sessionName,
+          docPath: `.kiro/${selectedFilePath}`,
+          title: selection.file,
+        }
+      : null;
+
   const handleSelectFile = useCallback(
     (category: string, file: string) => {
       selectFile(category, file);
@@ -353,6 +378,16 @@ export default function SpecBrowser({
       onExpandFeature={setExpandedFeature}
       onSelectFile={handleSelectFile}
       onGoBack={handleGoBack}
+      contentSlot={
+        specDocRef ? (
+          <DocumentSurface
+            docRef={specDocRef}
+            content={fileQuery.data ?? null}
+            isLoading={fileQuery.isPending}
+            contentError={fileQuery.isError ? "error" : null}
+          />
+        ) : undefined
+      }
     />
   );
 }

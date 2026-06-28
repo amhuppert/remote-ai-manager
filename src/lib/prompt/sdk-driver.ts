@@ -9,6 +9,7 @@
 
 import type { ConversationToolingOverrides } from "@/lib/agent-backends/types";
 import type { BackgroundWaitSummary } from "@/lib/agent-backends/conversation";
+import type { DocumentFeedbackPayload } from "@/lib/conversations/message-content-schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -451,6 +452,13 @@ export interface PromptStreamOptions {
    * planner/validator/collab turns) leaves it unset so behavior is unchanged.
    */
   waitForBackgroundTasks?: boolean;
+  /**
+   * Structured document-review feedback to record on the user turn. When set,
+   * the turn's transcript carries a `document_feedback` block and the
+   * agent-facing prompt text is derived from it when `promptText` is empty.
+   * Unset for every non-feedback send.
+   */
+  documentFeedback?: DocumentFeedbackPayload;
 }
 
 export interface PromptStreamResult {
@@ -825,6 +833,9 @@ export async function executePromptStream(
         outputFormat: options?.outputFormat,
         ...(options?.waitForBackgroundTasks
           ? { waitForBackgroundTasks: true }
+          : {}),
+        ...(options?.documentFeedback
+          ? { documentFeedback: options.documentFeedback }
           : {}),
       },
     );

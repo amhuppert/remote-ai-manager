@@ -556,9 +556,10 @@ body:has([data-cc-modal-scrim]) .app *::after {
 }
 
 .markdown-content {
-  padding: var(--space-lg);
+  /* Wide left gutter (50px) holds the comment pins/markers. */
+  padding: 20px 26px 28px 50px;
   font-family: var(--font-body);
-  font-size: 0.88rem;
+  font-size: 0.9rem;
   line-height: 1.7;
   color: var(--text-primary);
   min-width: 0;
@@ -586,13 +587,13 @@ body:has([data-cc-modal-scrim]) .app *::after {
 }
 
 .markdown-content h1 {
-  font-size: 1.4rem;
+  font-size: 1.42rem;
   border-bottom: 1px solid var(--border-subtle);
   padding-bottom: 0.4em;
 }
 
 .markdown-content h2 {
-  font-size: 1.15rem;
+  font-size: 1.16rem;
   border-bottom: 1px solid var(--border-subtle);
   padding-bottom: 0.3em;
 }
@@ -646,6 +647,7 @@ body:has([data-cc-modal-scrim]) .app *::after {
   background: var(--bg-raised);
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   color: var(--text-secondary);
+  line-height: 1.6;
 }
 
 .markdown-content blockquote p:last-child {

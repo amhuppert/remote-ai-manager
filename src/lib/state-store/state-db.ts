@@ -254,6 +254,32 @@ const SCHEMA_DDL = `
     UNIQUE (project_path, session_name, file_path)
   );
 
+  CREATE TABLE IF NOT EXISTS document_comments (
+    id            TEXT PRIMARY KEY,
+    project_path  TEXT NOT NULL,
+    session_name  TEXT NOT NULL,
+    doc_path      TEXT NOT NULL,
+    section_id    TEXT NOT NULL,
+    heading_label TEXT NOT NULL,
+    line          INTEGER NOT NULL,
+    char_start    INTEGER NOT NULL,
+    char_end      INTEGER NOT NULL,
+    quote         TEXT NOT NULL,
+    prefix        TEXT NOT NULL,
+    suffix        TEXT NOT NULL,
+    doc_revision  TEXT NOT NULL,
+    note          TEXT NOT NULL,
+    status        TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    sent_at       TEXT,
+    FOREIGN KEY (project_path, session_name)
+      REFERENCES sessions(project_path, session_name) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_document_comments_doc
+    ON document_comments (project_path, session_name, doc_path);
+
   ${NOTIFICATIONS_TABLE_DDL}
 
   CREATE TABLE IF NOT EXISTS job_records (

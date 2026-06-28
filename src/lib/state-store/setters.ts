@@ -3,6 +3,7 @@ import { createLogger } from "@/lib/logging";
 import { timed } from "@/lib/logging/timed";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import type { ConversationState } from "@/lib/conversations/schemas";
+import type { DocumentComment } from "@/lib/document-comments/schemas";
 import type { ReferenceDocument } from "@/lib/reference-documents/schemas";
 import type { SessionState, SpawnedFrom } from "@/lib/sessions/schemas";
 import type {
@@ -653,6 +654,41 @@ export function createSetters(core: StateStoreCore, mutations: MutationFns) {
     );
   }
 
+  /** Upsert a document comment through the serialized write queue. */
+  async function upsertDocumentComment(
+    comment: DocumentComment,
+  ): Promise<void> {
+    return writeQueue.withWriteQueue(
+      `upsertDocumentComment[${comment.id}]`,
+      async () =>
+        timed(
+          logger,
+          "state.mutate",
+          {
+            label: "upsertDocumentComment",
+            projectPath: comment.projectPath,
+            sessionName: comment.sessionName,
+          },
+          async () => {
+            repos.documentComments.upsert(comment);
+          },
+        ),
+    );
+  }
+
+  async function deleteDocumentComment(id: string): Promise<void> {
+    return writeQueue.withWriteQueue(`deleteDocumentComment[${id}]`, async () =>
+      timed(
+        logger,
+        "state.mutate",
+        { label: "deleteDocumentComment", id },
+        async () => {
+          repos.documentComments.delete(id);
+        },
+      ),
+    );
+  }
+
   return {
     setSessionArchived,
     setSessionTddEnabled,
@@ -673,5 +709,7 @@ export function createSetters(core: StateStoreCore, mutations: MutationFns) {
     mutateSessionWorkflowEnvelopes,
     createReferenceDocument,
     deleteReferenceDocument,
+    upsertDocumentComment,
+    deleteDocumentComment,
   };
 }

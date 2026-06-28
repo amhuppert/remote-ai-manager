@@ -214,6 +214,16 @@ const UTILITY_FIRST_PATHS = [
   // eslint.config.mjs MIGRATED_UTILITY_FIRST + .prettierrc).
   `${path.sep}components${path.sep}WorkflowLaunchForm.tsx`,
   `${path.sep}features${path.sep}workflow-templates${path.sep}`,
+  // markdown-doc-feedback feature: the multi-document viewer and its comment /
+  // selection surfaces are authored utility-first against the design system
+  // (Groups 4/5/6/8 deferred this allowlist registration to the integration
+  // context). The whole feature dir is dir-scoped; the shared transcript
+  // additions (file card, its scope provider, and the document-feedback card)
+  // are file-scoped.
+  `${path.sep}features${path.sep}session${path.sep}document-viewer${path.sep}`,
+  `${path.sep}components${path.sep}conversation${path.sep}MarkdownFileCard.tsx`,
+  `${path.sep}components${path.sep}conversation${path.sep}document-scope.tsx`,
+  `${path.sep}components${path.sep}conversation${path.sep}DocumentFeedbackCard.tsx`,
 ];
 
 function srcFiles(ext: string): string[] {

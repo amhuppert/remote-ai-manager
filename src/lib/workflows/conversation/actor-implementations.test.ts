@@ -3111,6 +3111,166 @@ describe("executePromptForMachine", () => {
   });
 
   // ---------------------------------------------------------------
+  // Document feedback threading (Task 7.1). With a documentFeedback payload
+  // the user turn records a document_feedback block (card-only, no duplicate
+  // prose block) and the agent-facing prompt is derived from the payload when
+  // no explicit text is supplied. Without the payload the turn is unchanged.
+  // ---------------------------------------------------------------
+  it("records a document_feedback block and derives agent text from the payload when no explicit text is supplied", async () => {
+    const fbItem = {
+      docPath: "design.md",
+      path: "design.md",
+      headingLabel: "Prompt pipeline",
+      line: 42,
+      quote: "the exact passage to review",
+      note: "please reconsider this section",
+    };
+    const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
+    const appendSpy = vi.fn<
+      ActorImplementationDeps["safeAppendTranscriptEntry"]
+    >(async () => {});
+    setActorDeps(
+      createMockDeps({
+        executeAgentCall: executeAgentCallSpy as unknown as ReturnType<
+          typeof vi.fn
+        >,
+        safeAppendTranscriptEntry: appendSpy,
+      } as unknown as Partial<ActorImplementationDeps>),
+    );
+
+    const input = makeExecutePromptInput({
+      promptText: "",
+      documentFeedback: { items: [fbItem] },
+    });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    await executePromptForMachine(input);
+
+    // Agent-facing prompt is derived from the payload and embeds each item's
+    // quote, path, heading, and line.
+    const [request] = executeAgentCallSpy.mock.calls[0]!;
+    const prompt = (request as { prompt: string }).prompt;
+    expect(prompt).toContain(fbItem.path);
+    expect(prompt).toContain(fbItem.headingLabel);
+    expect(prompt).toContain("L42");
+    expect(prompt).toContain(fbItem.quote);
+    expect(prompt).toContain(fbItem.note);
+
+    // The user turn's transcript content is the document_feedback card only —
+    // no duplicate prose text block.
+    const userEntry = appendSpy.mock.calls
+      .map((c) => c[1] as { type: string; content: unknown })
+      .find((e) => e.type === "user");
+    expect(userEntry?.content).toEqual([
+      { type: "document_feedback", items: [fbItem] },
+    ]);
+  });
+
+  it("leaves the user turn unchanged (text only, no feedback block) when documentFeedback is absent", async () => {
+    const appendSpy = vi.fn<
+      ActorImplementationDeps["safeAppendTranscriptEntry"]
+    >(async () => {});
+    setActorDeps(createMockDeps({ safeAppendTranscriptEntry: appendSpy }));
+
+    const input = makeExecutePromptInput({ promptText: "Hello, world!" });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    await executePromptForMachine(input);
+
+    const userEntry = appendSpy.mock.calls
+      .map((c) => c[1] as { type: string; content: unknown })
+      .find((e) => e.type === "user");
+    expect(userEntry?.content).toEqual([
+      { type: "text", text: "Hello, world!" },
+    ]);
+  });
+
+  // A drained queued batch can coalesce a normal text message with a feedback
+  // message (both non-command). The user text is genuine prompt text (the queue
+  // dropped the feedback prose at enqueue), so the agent must receive BOTH the
+  // user text AND the derived feedback prose, and the transcript must record the
+  // user text block alongside the document_feedback card — neither is dropped.
+  // (Requirement 8.2, 8.4)
+  it("drained mixed batch delivers user text + derived feedback to the agent and records both in the transcript", async () => {
+    const fbItem = {
+      docPath: "design.md",
+      path: "design.md",
+      headingLabel: "Prompt pipeline",
+      line: 42,
+      quote: "the exact passage to review",
+      note: "please reconsider this section",
+    };
+    const executeAgentCallSpy = vi.fn(defaultExecuteAgentCall);
+    const appendSpy = vi.fn<
+      ActorImplementationDeps["safeAppendTranscriptEntry"]
+    >(async () => {});
+    setActorDeps(
+      createMockDeps({
+        executeAgentCall: executeAgentCallSpy as unknown as ReturnType<
+          typeof vi.fn
+        >,
+        safeAppendTranscriptEntry: appendSpy,
+      } as unknown as Partial<ActorImplementationDeps>),
+    );
+
+    mockSendTurn.mockImplementation(
+      async (turnInput: ConversationBackendTurnInput) => {
+        await turnInput.onEvent({ type: "input_accepted" });
+        return defaultTurnResult;
+      },
+    );
+
+    const input = makeExecutePromptInput({
+      promptText: "also handle the empty-state case",
+      documentFeedback: { items: [fbItem] },
+      queuedDelivery: { messageIds: ["m1", "m2"], deliveryAttemptId: "att-1" },
+    });
+    const key = conversationRuntimeKey(
+      input.projectPath,
+      input.sessionName,
+      input.conversationId,
+    );
+    registerConversationRuntime(key, {
+      abortController: new AbortController(),
+    });
+
+    await executePromptForMachine(input);
+
+    // Agent receives the user's text AND the derived feedback prose.
+    const [request] = executeAgentCallSpy.mock.calls[0]!;
+    const prompt = (request as { prompt: string }).prompt;
+    expect(prompt).toContain("also handle the empty-state case");
+    expect(prompt).toContain(fbItem.path);
+    expect(prompt).toContain(fbItem.headingLabel);
+    expect(prompt).toContain("L42");
+    expect(prompt).toContain(fbItem.quote);
+    expect(prompt).toContain(fbItem.note);
+
+    // The transcript records the user text block AND the document_feedback card.
+    const userEntry = appendSpy.mock.calls
+      .map((c) => c[1] as { type: string; content: unknown })
+      .find((e) => e.type === "user");
+    expect(userEntry?.content).toEqual([
+      { type: "text", text: "also handle the empty-state case" },
+      { type: "document_feedback", items: [fbItem] },
+    ]);
+  });
+
+  // ---------------------------------------------------------------
   // Background-task wait threading (Task 4.1). The opt-in flag must
   // flow ExecutePromptInput → ConversationBackendTurnInput, and the
   // backgroundWait summary must flow the turn result → PromptActorResult.

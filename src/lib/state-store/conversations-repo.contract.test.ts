@@ -1383,6 +1383,19 @@ function buildMaximalConversation(): ConversationState {
         id: "q-maximal",
         content: [
           { type: "text", text: "queued follow-up that should round-trip" },
+          {
+            type: "document_feedback",
+            items: [
+              {
+                docPath: ".kiro/specs/x/design.md",
+                path: ".kiro/specs/x/design.md",
+                headingLabel: "Prompt pipeline extension",
+                line: 42,
+                quote: "the exact quoted passage that must round-trip",
+                note: "queued feedback note that must round-trip",
+              },
+            ],
+          },
         ],
         status: "delivering",
         enqueuedAt: "2026-03-01T00:00:00Z",

@@ -275,6 +275,14 @@ vi.mock("@/lib/conversations/queries", () => ({
     data: testConversations,
     isPending: false,
   }),
+  // The document viewer (rendered inside the session content) reads the
+  // cross-project conversation list to default its feedback target; this test
+  // does not exercise that path, so a quiet stub is sufficient.
+  useAllConversationsQuery: () => ({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+  }),
 }));
 vi.mock("@/hooks/conversation/use-conversation-messages-query", () => ({
   useConversationMessagesQuery: (...args: unknown[]) =>

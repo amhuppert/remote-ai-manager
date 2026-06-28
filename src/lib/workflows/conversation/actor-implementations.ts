@@ -42,6 +42,7 @@ import type { SessionState } from "@/lib/sessions/schemas";
 import type { AlignmentInjection } from "@/lib/session-alignment/render";
 import { ALIGN_SUGGESTION_INSTRUCTIONS } from "@/lib/session-alignment/render";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import { formatDocumentFeedbackPrompt } from "@/lib/document-comments/format-feedback";
 import { assembleUserContentBlocks } from "./assemble-user-blocks";
 import { buildUserTranscriptBlocks } from "./build-user-transcript-blocks";
 import type {
@@ -1262,13 +1263,45 @@ export async function executePromptForMachine(
   // assemble inline+strip images into a coherent block sequence with rewritten
   // markers. Images are persisted to disk by serverIndex before dispatch so
   // the backend (and downstream readers) can refer to them by path.
+  //
+  // Two send paths carry document feedback differently:
+  //  - Immediate path: the send hook puts the formatted feedback prose in
+  //    `promptText` (and `documentFeedback` for the card). The prose is used
+  //    as-is, or derived here when no explicit text was supplied.
+  //  - Drained queue path (`queuedDelivery` set): the durable queue dropped the
+  //    feedback prose at enqueue, so `promptText` is the user's OWN text — a
+  //    coalesced batch may pair a normal text message with a feedback message.
+  //    Both must reach the agent, so the derived feedback prose is appended to
+  //    the user text rather than replacing it.
+  // Absent feedback, `effectivePromptText` equals `input.promptText`, so
+  // non-feedback turns are unchanged.
+  const derivedFeedbackText = input.documentFeedback
+    ? formatDocumentFeedbackPrompt(input.documentFeedback.items)
+    : null;
+  const isDrainedFeedbackBatch =
+    input.queuedDelivery !== undefined && derivedFeedbackText !== null;
+  const hasExplicitPromptText = input.promptText.trim().length > 0;
+
+  let effectivePromptText: string;
+  if (!derivedFeedbackText) {
+    effectivePromptText = input.promptText;
+  } else if (isDrainedFeedbackBatch) {
+    effectivePromptText = hasExplicitPromptText
+      ? `${input.promptText}\n\n${derivedFeedbackText}`
+      : derivedFeedbackText;
+  } else {
+    effectivePromptText = hasExplicitPromptText
+      ? input.promptText
+      : derivedFeedbackText;
+  }
+
   const startIndex =
     input.images && input.images.length > 0
       ? await deps.getNextImageIndex(input.conversationId)
       : 1;
 
   const assembled = assembleUserContentBlocks({
-    promptText: input.promptText,
+    promptText: effectivePromptText,
     images: input.images ?? [],
     startIndex,
   });
@@ -1295,14 +1328,29 @@ export async function executePromptForMachine(
     });
   }
 
-  const transcriptBlocks =
-    imageRefs.length > 0
+  // For a feedback turn the transcript records the structured card. The
+  // agent-facing feedback prose is carried separately as the turn's prompt text,
+  // so the card-side `rewrittenPromptText` is the user's OWN text only — never
+  // the prose. Immediate feedback puts the prose in `promptText`, so the card is
+  // recorded alone (empty text). A drained mixed batch carries a distinct user
+  // text that is preserved as a text block before the card. Queued feedback
+  // content has no inline `[Image #N]` markers, so the raw user text is used
+  // directly. Non-feedback turns are unchanged: text+image interleaving, or a
+  // single text block, or nothing.
+  const transcriptUserText = isDrainedFeedbackBatch ? input.promptText : "";
+  const transcriptBlocks: MessageContentBlock[] = input.documentFeedback
+    ? buildUserTranscriptBlocks({
+        rewrittenPromptText: transcriptUserText,
+        imageRefs,
+        documentFeedback: input.documentFeedback,
+      })
+    : imageRefs.length > 0
       ? buildUserTranscriptBlocks({
           rewrittenPromptText: assembled.rewrittenPromptText,
           imageRefs,
         })
-      : input.promptText
-        ? [{ type: "text" as const, text: input.promptText }]
+      : effectivePromptText
+        ? [{ type: "text" as const, text: effectivePromptText }]
         : [];
 
   const currentTurnMessageId =

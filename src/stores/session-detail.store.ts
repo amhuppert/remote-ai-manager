@@ -5,6 +5,10 @@ import type {
   MessageContentBlock,
   AskQuestionItem,
 } from "@/lib/conversations/schemas";
+import type {
+  DocumentRef,
+  DocumentFeedbackTarget,
+} from "@/lib/document-comments/schemas";
 import type { LayoutMode } from "@/lib/sessions/schemas";
 // ---------------------------------------------------------------------------
 // Types
@@ -59,6 +63,20 @@ interface SessionDetailState {
   specBrowserSelection: SpecBrowserSelection | null;
   selectedDocId: string | null;
   composerFocused: boolean;
+  // -- Document viewer (multi-doc shell) --
+  /** Open documents shown as switchable tabs in the viewer (req 1.2). */
+  openDocuments: DocumentRef[];
+  /** The active document's normalized `docPath`, or null when none is open. */
+  activeDocPath: string | null;
+  /**
+   * Monotonically increments on every open/activate so the viewer can flash the
+   * body on activation (req 1.5) even when the same document is re-opened.
+   */
+  docActivationNonce: number;
+  /** Whether the pending-comments tray's per-comment list is expanded (req 7). */
+  pendingTrayExpanded: boolean;
+  /** The chosen feedback send destination, retained across sends (req 9.4). */
+  feedbackTarget: DocumentFeedbackTarget | null;
 }
 
 interface SessionDetailActions {
@@ -108,6 +126,12 @@ interface SessionDetailActions {
   clearSpecSelection: () => void;
   openDocById: (docId: string) => void;
   selectDocId: (docId: string | null) => void;
+  openDocument: (ref: DocumentRef) => void;
+  activateDocument: (docPath: string) => void;
+  closeDocument: (docPath: string) => void;
+  setPendingTrayExpanded: (expanded: boolean) => void;
+  togglePendingTray: () => void;
+  setFeedbackTarget: (target: DocumentFeedbackTarget) => void;
   clearConversationMessages: () => void;
   resetConversationState: () => void;
   resetStore: () => void;
@@ -153,6 +177,11 @@ const initialState: SessionDetailState = {
   specBrowserSelection: null,
   selectedDocId: null,
   composerFocused: false,
+  openDocuments: [],
+  activeDocPath: null,
+  docActivationNonce: 0,
+  pendingTrayExpanded: false,
+  feedbackTarget: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -482,6 +511,82 @@ export const useSessionDetailStore = create<SessionDetailStore>()(
         state.selectedDocId = docId;
       }),
 
+    // -- Document viewer (multi-doc shell) --
+
+    // Open a document by its canonical worktree-relative `docPath`: add a tab if
+    // not already open (dedup by `docPath`, refreshing the title), make it the
+    // active document, route the right pane / mobile panel to the docs surface,
+    // and bump the activation nonce so the body flashes (reqs 1.1, 1.2, 1.5).
+    openDocument: (ref) =>
+      set((state) => {
+        const existing = state.openDocuments.find(
+          (d) => d.docPath === ref.docPath,
+        );
+        if (existing) {
+          existing.title = ref.title;
+        } else {
+          state.openDocuments.push(ref);
+        }
+        state.activeDocPath = ref.docPath;
+        state.docActivationNonce += 1;
+        state.rightPaneTab = "docs";
+        state.mobilePanel = "docs";
+        // The viewer lives in the right pane, but two layouts give that pane no
+        // column to occupy: panes replaces the content area with a full-width
+        // conversation grid, and conversation-only is a single full-width column.
+        // A markdown file card clicked in either would otherwise mutate this
+        // state but never reveal the viewer, so opening switches to a layout that
+        // shows it — panes drops to default, conversation-only opens the split
+        // 50/50 view (req 4.3). This intentionally does not persist over the
+        // user's saved layout preference (openDocuments is itself not persisted);
+        // a reload restores it.
+        if (state.layout === "panes") {
+          state.layout = "default";
+        } else if (state.layout === "conversation") {
+          state.layout = "split";
+        }
+      }),
+
+    // Activate an already-open tab (req 1.3). Bumps the nonce so the body flashes
+    // (req 1.5); a no-op for an unknown path so a stale tab click cannot blank
+    // the viewer.
+    activateDocument: (docPath) =>
+      set((state) => {
+        if (!state.openDocuments.some((d) => d.docPath === docPath)) return;
+        state.activeDocPath = docPath;
+        state.docActivationNonce += 1;
+      }),
+
+    // Close a tab. When the active tab closes, fall through to the tab that takes
+    // its slot (or the previous one when the last tab closed), or null when no
+    // documents remain.
+    closeDocument: (docPath) =>
+      set((state) => {
+        const idx = state.openDocuments.findIndex((d) => d.docPath === docPath);
+        if (idx === -1) return;
+        state.openDocuments.splice(idx, 1);
+        if (state.activeDocPath !== docPath) return;
+        const next =
+          state.openDocuments[idx] ?? state.openDocuments[idx - 1] ?? null;
+        state.activeDocPath = next?.docPath ?? null;
+        if (next) state.docActivationNonce += 1;
+      }),
+
+    setPendingTrayExpanded: (expanded) =>
+      set((state) => {
+        state.pendingTrayExpanded = expanded;
+      }),
+
+    togglePendingTray: () =>
+      set((state) => {
+        state.pendingTrayExpanded = !state.pendingTrayExpanded;
+      }),
+
+    setFeedbackTarget: (target) =>
+      set((state) => {
+        state.feedbackTarget = target;
+      }),
+
     // -- Reset --
 
     clearConversationMessages: () =>
@@ -547,6 +652,16 @@ export const useSpecBrowserSelection = () =>
   useSessionDetailStore((s) => s.specBrowserSelection);
 export const useSelectedDocId = () =>
   useSessionDetailStore((s) => s.selectedDocId);
+export const useOpenDocuments = () =>
+  useSessionDetailStore((s) => s.openDocuments);
+export const useActiveDocPath = () =>
+  useSessionDetailStore((s) => s.activeDocPath);
+export const useDocActivationNonce = () =>
+  useSessionDetailStore((s) => s.docActivationNonce);
+export const usePendingTrayExpanded = () =>
+  useSessionDetailStore((s) => s.pendingTrayExpanded);
+export const useFeedbackTarget = () =>
+  useSessionDetailStore((s) => s.feedbackTarget);
 
 // ---------------------------------------------------------------------------
 // Action hooks
@@ -633,6 +748,18 @@ export const useSelectSpecFile = () =>
   useSessionDetailStore((s) => s.selectSpecFile);
 export const useOpenDocById = () => useSessionDetailStore((s) => s.openDocById);
 export const useSelectDocId = () => useSessionDetailStore((s) => s.selectDocId);
+export const useOpenDocument = () =>
+  useSessionDetailStore((s) => s.openDocument);
+export const useActivateDocument = () =>
+  useSessionDetailStore((s) => s.activateDocument);
+export const useCloseDocument = () =>
+  useSessionDetailStore((s) => s.closeDocument);
+export const useSetPendingTrayExpanded = () =>
+  useSessionDetailStore((s) => s.setPendingTrayExpanded);
+export const useTogglePendingTray = () =>
+  useSessionDetailStore((s) => s.togglePendingTray);
+export const useSetFeedbackTarget = () =>
+  useSessionDetailStore((s) => s.setFeedbackTarget);
 export const useClearConversationMessages = () =>
   useSessionDetailStore((s) => s.clearConversationMessages);
 export const useResetConversationState = () =>

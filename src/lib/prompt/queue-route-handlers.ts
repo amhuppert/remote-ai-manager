@@ -36,6 +36,7 @@ import type {
   QueueCancellationResponse,
   QueueEnqueueResponse,
 } from "@/lib/prompt/schemas";
+import type { DocumentFeedbackPayload } from "@/lib/conversations/message-content-schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -63,6 +64,7 @@ export interface QueueRouteDeps {
     conversationId: string;
     text?: string;
     images?: ImagePayload[];
+    documentFeedback?: DocumentFeedbackPayload;
     backend: AgentBackendId;
   }): Promise<{
     entry: PendingQueuedMessage;
@@ -234,6 +236,9 @@ export function createQueueRouteHandlers(deps: QueueRouteDeps = defaultDeps) {
       conversationId,
       text: parsed.data.text,
       images: parsed.data.images,
+      ...(parsed.data.documentFeedback
+        ? { documentFeedback: parsed.data.documentFeedback }
+        : {}),
       backend: conversation.agentBackend,
     });
 

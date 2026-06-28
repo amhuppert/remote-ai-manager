@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import type { readConfig } from "../config/loader";
 import type { ConversationsRepo } from "./conversations-repo";
+import type { DocumentCommentsRepo } from "./document-comments-repo";
 import type { GraphWorkflowArchivedExecutionsRepo } from "./graph-workflow-archived-executions-repo";
 import type { GraphWorkflowEventsRepo } from "./graph-workflow-events-repo";
 import type { GraphWorkflowExecutionsRepo } from "./graph-workflow-executions-repo";
@@ -19,6 +20,7 @@ export interface AllRepos {
   conversations: ConversationsRepo;
   projectConversations: ProjectConversationsRepo;
   referenceDocuments: ReferenceDocumentsRepo;
+  documentComments: DocumentCommentsRepo;
   graphWorkflowEvents: GraphWorkflowEventsRepo;
   graphWorkflowArchivedExecutions: GraphWorkflowArchivedExecutionsRepo;
   graphWorkflowExecutions: GraphWorkflowExecutionsRepo;

@@ -18,6 +18,7 @@ import type {
   MessageContentBlock,
   TranscriptMessageOrigin,
 } from "@/lib/conversations/schemas";
+import type { DocumentFeedbackPayload } from "@/lib/conversations/message-content-schemas";
 import type {
   DebugHypothesis,
   DebugModePhase,
@@ -70,6 +71,11 @@ export interface ConversationTurnActive {
   /** Set only for auto-drained queued next-turn deliveries; unset for normal
    *  user-initiated turns. */
   queuedDelivery?: QueuedDeliveryMetadata;
+  /** Structured document-review feedback carried with this turn. When set, the
+   *  user-turn transcript records a `document_feedback` block and the
+   *  agent-facing prompt text is derived from it when no explicit text was
+   *  supplied. Unset for every non-feedback turn. */
+  documentFeedback?: DocumentFeedbackPayload;
 }
 
 /** Single-shot task run: a non-streaming, structured-output execution invoked
@@ -181,6 +187,7 @@ export type ConversationEvent =
       outputFormat?: StructuredOutputFormat;
       waitForBackgroundTasks?: boolean;
       queuedDelivery?: QueuedDeliveryMetadata;
+      documentFeedback?: DocumentFeedbackPayload;
     }
   | {
       type: "SUBMIT_TASK_RUN";
@@ -326,6 +333,10 @@ export interface ExecutePromptInput {
    *  executor can confirm acceptance and mark the claimed queue rows delivered.
    *  Unset for normal user-initiated turns. */
   queuedDelivery?: QueuedDeliveryMetadata;
+  /** Structured document-review feedback for this turn. When set, the user-turn
+   *  transcript records a `document_feedback` block and the agent-facing prompt
+   *  text is derived from it when `promptText` is empty. Unset otherwise. */
+  documentFeedback?: DocumentFeedbackPayload;
 }
 
 /** Input for the prepareTurn actor (resource acquisition). */

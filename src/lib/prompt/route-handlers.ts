@@ -223,6 +223,9 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
             {
               effort: body.effort,
               backend: body.backend,
+              ...(body.documentFeedback
+                ? { documentFeedback: body.documentFeedback }
+                : {}),
               ...(isSessionCollab && body.collab
                 ? {
                     collab: {
@@ -474,6 +477,9 @@ export function createPromptRouteHandlers(deps: PromptRouteDeps = defaultDeps) {
             {
               effort: body.effort,
               backend: body.backend,
+              ...(body.documentFeedback
+                ? { documentFeedback: body.documentFeedback }
+                : {}),
             },
           );
         } catch (err) {

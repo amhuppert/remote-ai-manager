@@ -27,12 +27,14 @@ const EMPTY_DIFF: SessionDiff = {
 interface RightPaneProps {
   projectName: string;
   sessionName: string;
+  worktreePath: string;
   targetBranch?: string;
 }
 
 export default function RightPane({
   projectName,
   sessionName,
+  worktreePath,
   targetBranch,
 }: RightPaneProps): React.JSX.Element {
   const rightPaneTab = useRightPaneTab();
@@ -111,7 +113,11 @@ export default function RightPane({
             forceMount
             layoutClassName="min-h-0 flex-1 data-[state=active]:flex data-[state=active]:flex-col data-[state=inactive]:hidden"
           >
-            <DocsPanel projectName={projectName} sessionName={sessionName} />
+            <DocsPanel
+              projectName={projectName}
+              sessionName={sessionName}
+              worktreePath={worktreePath}
+            />
           </TabsContent>
           <TabsContent
             value="alignment"

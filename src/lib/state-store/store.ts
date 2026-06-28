@@ -11,6 +11,7 @@ import { isProjectSentinel } from "@/lib/conversations/project-conversation-scop
 import { createAccessors } from "./accessors";
 import { diffChangedConversationColumns } from "./conversation-row-codec";
 import { createConversationsRepo } from "./conversations-repo";
+import { createDocumentCommentsRepo } from "./document-comments-repo";
 import { createGraphWorkflowArchivedExecutionsRepo } from "./graph-workflow-archived-executions-repo";
 import { createGraphWorkflowEventsRepo } from "./graph-workflow-events-repo";
 import { createGraphWorkflowExecutionsRepo } from "./graph-workflow-executions-repo";
@@ -133,6 +134,8 @@ export function createStateStore(deps: StateStoreDeps = {}) {
       deps.repos?.projectConversations ?? createProjectConversationsRepo(db),
     referenceDocuments:
       deps.repos?.referenceDocuments ?? createReferenceDocumentsRepo(db),
+    documentComments:
+      deps.repos?.documentComments ?? createDocumentCommentsRepo(db),
     graphWorkflowEvents:
       deps.repos?.graphWorkflowEvents ?? createGraphWorkflowEventsRepo(db),
     graphWorkflowArchivedExecutions:
@@ -520,6 +523,9 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     listAllProjectConversations: accessors.listAllProjectConversations,
     getSpawnedSessionStatuses: accessors.getSpawnedSessionStatuses,
     getReferenceDocuments: accessors.getReferenceDocuments,
+    getDocumentComments: accessors.getDocumentComments,
+    getSessionDocumentComments: accessors.getSessionDocumentComments,
+    getDocumentCommentInScope: accessors.getDocumentCommentInScope,
     getProjectMcpOverrides: accessors.getProjectMcpOverrides,
     getArchivedProjects: accessors.getArchivedProjects,
     getPinnedProjects: accessors.getPinnedProjects,
@@ -557,6 +563,8 @@ export function createStateStore(deps: StateStoreDeps = {}) {
     mutateSessionWorkflowEnvelopes: setters.mutateSessionWorkflowEnvelopes,
     createReferenceDocument: setters.createReferenceDocument,
     deleteReferenceDocument: setters.deleteReferenceDocument,
+    upsertDocumentComment: setters.upsertDocumentComment,
+    deleteDocumentComment: setters.deleteDocumentComment,
   };
 }
 

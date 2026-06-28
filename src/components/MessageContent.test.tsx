@@ -65,3 +65,29 @@ describe("MessageContent — image_marker caption", () => {
     expect(screen.getByText("#2")).toBeInTheDocument();
   });
 });
+
+describe("MessageContent — document_feedback block", () => {
+  it("renders the DocumentFeedbackCard for a document_feedback block", () => {
+    const content: MessageContentBlock[] = [
+      {
+        type: "document_feedback",
+        items: [
+          {
+            docPath: "design.md",
+            path: "design.md",
+            headingLabel: "Intro",
+            line: 12,
+            quote: "the quoted passage",
+            note: "please revise",
+          },
+        ],
+      },
+    ];
+    render(<MessageContent content={content} />);
+    expect(screen.getByTestId("document-feedback-card")).toBeInTheDocument();
+    expect(screen.getByText("design.md")).toBeInTheDocument();
+    expect(screen.getByText("§ Intro · L12")).toBeInTheDocument();
+    expect(screen.getByText(/the quoted passage/)).toBeInTheDocument();
+    expect(screen.getByText("please revise")).toBeInTheDocument();
+  });
+});

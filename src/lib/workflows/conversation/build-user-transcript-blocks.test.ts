@@ -126,6 +126,83 @@ describe("buildUserTranscriptBlocks", () => {
     ]);
   });
 
+  it("appends a document_feedback block after text/image blocks when feedback is present", () => {
+    const r1 = ref(1, "/imgs/1.png");
+    const blocks = buildUserTranscriptBlocks({
+      rewrittenPromptText: "see [Image #1]",
+      imageRefs: [r1],
+      documentFeedback: {
+        items: [
+          {
+            docPath: "design.md",
+            path: "design.md",
+            headingLabel: "Intro",
+            line: 4,
+            quote: "the passage",
+            note: "reconsider",
+          },
+        ],
+      },
+    });
+    expect(blocks).toEqual([
+      { type: "text", text: "see " },
+      {
+        type: "image_marker",
+        index: 1,
+        mediaType: "image/png",
+        imagePath: "/imgs/1.png",
+      },
+      { type: "image_ref", mediaType: "image/png", imagePath: "/imgs/1.png" },
+      {
+        type: "document_feedback",
+        items: [
+          {
+            docPath: "design.md",
+            path: "design.md",
+            headingLabel: "Intro",
+            line: 4,
+            quote: "the passage",
+            note: "reconsider",
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("emits only the document_feedback block when text is empty (card-only feedback turn)", () => {
+    const blocks = buildUserTranscriptBlocks({
+      rewrittenPromptText: "",
+      imageRefs: [],
+      documentFeedback: {
+        items: [
+          {
+            docPath: "a.md",
+            path: "a.md",
+            headingLabel: "H",
+            line: 1,
+            quote: "q",
+            note: "n",
+          },
+        ],
+      },
+    });
+    expect(blocks).toEqual([
+      {
+        type: "document_feedback",
+        items: [
+          {
+            docPath: "a.md",
+            path: "a.md",
+            headingLabel: "H",
+            line: 1,
+            quote: "q",
+            note: "n",
+          },
+        ],
+      },
+    ]);
+  });
+
   it("orders strip refs by their position in imageRefs", () => {
     const r1 = ref(1, "/imgs/1.png");
     const r2 = ref(2, "/imgs/2.png");

@@ -21,9 +21,13 @@ import {
 } from "@/lib/images/transcript-images";
 import { buildUserTranscriptBlocks } from "@/lib/workflows/conversation/build-user-transcript-blocks";
 import { parseConversationCommand } from "@/lib/conversation-commands/parse";
+import { formatDocumentFeedbackPrompt } from "@/lib/document-comments/format-feedback";
 import { appendTranscriptEntry as defaultAppendTranscriptEntry } from "./transcript";
 import type { ConversationImageRef } from "@/lib/agent-backends/conversation";
-import type { MessageContentBlock } from "@/lib/conversations/message-content-schemas";
+import type {
+  DocumentFeedbackPayload,
+  MessageContentBlock,
+} from "@/lib/conversations/message-content-schemas";
 import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -33,14 +37,20 @@ import { createLogger } from "@/lib/logging";
 const logger = createLogger("message-queue");
 
 /**
- * Build the backend-delivery content blocks from raw `{ text, images }`. Text
+ * Build the content blocks from raw `{ text, images, documentFeedback }`. Text
  * (when non-empty) becomes a single `text` block first, then each image becomes
- * an inline base64 `image` block. This is the format the next-turn drain
- * coalesces, so the live-delivery path keeps it consistent.
+ * an inline base64 `image` block, then a `document_feedback` block (when
+ * present) is appended. This is the format the next-turn drain coalesces, so the
+ * live-delivery path keeps it consistent.
+ *
+ * NOTE: a `document_feedback` block is NOT a valid backend (SDK) content block —
+ * callers that deliver content to the backend (`queueUserInput`) must omit it
+ * and carry the derived prose as a `text` block instead.
  */
 export function buildQueueContent(args: {
   text?: string;
   images?: readonly ImagePayload[];
+  documentFeedback?: DocumentFeedbackPayload;
 }): MessageContentBlock[] {
   const content: MessageContentBlock[] = [];
   if (args.text && args.text.length > 0) {
@@ -51,6 +61,12 @@ export function buildQueueContent(args: {
       type: "image",
       mediaType: image.mediaType,
       base64Data: image.base64Data,
+    });
+  }
+  if (args.documentFeedback) {
+    content.push({
+      type: "document_feedback",
+      items: args.documentFeedback.items,
     });
   }
   return content;
@@ -112,6 +128,7 @@ export interface QueueMessageParams {
   conversationId: string;
   text?: string;
   images?: ImagePayload[];
+  documentFeedback?: DocumentFeedbackPayload;
   backend: AgentBackendId;
   /** Optional dependency overrides for testing. */
   deps?: Partial<QueueMessageDeps>;
@@ -134,9 +151,18 @@ async function buildDeliveredTranscriptBlocks(
   conversationId: string,
   text: string,
   images: readonly ImagePayload[],
+  documentFeedback?: DocumentFeedbackPayload,
 ): Promise<MessageContentBlock[]> {
+  // A feedback turn records the structured card only — its agent-facing prose
+  // was delivered separately, so no duplicate prose text block is written.
+  const transcriptText = documentFeedback ? "" : text;
+
   if (images.length === 0) {
-    return text.length > 0 ? [{ type: "text", text }] : [];
+    return buildUserTranscriptBlocks({
+      rewrittenPromptText: transcriptText,
+      imageRefs: [],
+      documentFeedback,
+    });
   }
 
   const startIndex = await deps.getNextImageIndex(conversationId);
@@ -158,7 +184,11 @@ async function buildDeliveredTranscriptBlocks(
     index += 1;
   }
 
-  return buildUserTranscriptBlocks({ rewrittenPromptText: text, imageRefs });
+  return buildUserTranscriptBlocks({
+    rewrittenPromptText: transcriptText,
+    imageRefs,
+    documentFeedback,
+  });
 }
 
 export async function queueMessage(
@@ -170,13 +200,29 @@ export async function queueMessage(
     conversationId,
     text,
     images,
+    documentFeedback,
     backend,
     deps: depsOverride,
   } = params;
 
   const deps: QueueMessageDeps = { ...defaultDeps, ...depsOverride };
 
-  const content = buildQueueContent({ text, images });
+  // Durable content carries the structured `document_feedback` block (the drain
+  // re-derives its prose) and omits the redundant feedback prose text — so the
+  // pending display and the drained submit do not double-render the feedback.
+  const content = documentFeedback
+    ? buildQueueContent({ images, documentFeedback })
+    : buildQueueContent({ text, images });
+
+  // Backend-delivery content (in-turn live delivery): the agent receives prose,
+  // never a `document_feedback` block (not a valid SDK block). Derive the prose
+  // from the items when feedback is present.
+  const deliveryContent = documentFeedback
+    ? buildQueueContent({
+        text: formatDocumentFeedbackPrompt(documentFeedback.items),
+        images,
+      })
+    : content;
 
   const entry = await deps.enqueue({
     projectPath,
@@ -264,7 +310,7 @@ export async function queueMessage(
   }
 
   try {
-    await runtime.queueUserInput({ content });
+    await runtime.queueUserInput({ content: deliveryContent });
   } catch (err) {
     const error = getErrorMessage(err);
     logger.warn("queue.failed", {
@@ -296,6 +342,7 @@ export async function queueMessage(
     conversationId,
     text ?? "",
     images ?? [],
+    documentFeedback,
   );
 
   await deps.appendTranscriptEntry(

@@ -133,6 +133,24 @@ describe("buildQueueContent", () => {
     expect(buildQueueContent({ text: "" })).toEqual([]);
     expect(buildQueueContent({})).toEqual([]);
   });
+
+  it("appends a document_feedback block after text/image blocks", () => {
+    const documentFeedback = {
+      items: [
+        {
+          docPath: "design.md",
+          path: "design.md",
+          headingLabel: "Intro",
+          line: 4,
+          quote: "the passage",
+          note: "reconsider",
+        },
+      ],
+    };
+    expect(buildQueueContent({ documentFeedback })).toEqual([
+      { type: "document_feedback", items: documentFeedback.items },
+    ]);
+  });
 });
 
 // ===========================================================================
@@ -163,6 +181,41 @@ describe("queueMessage next_turn", () => {
     expect(getRuntimeMock).not.toHaveBeenCalled();
     expect(result.deliveryTiming).toBe("next_turn");
     expect(result.entry.id).toBe("msg-1");
+  });
+
+  it("persists a document_feedback block (and no duplicate prose block) for a feedback message", async () => {
+    queueCapabilityForBackendMock.mockReturnValue({
+      acceptsWhileRunning: true,
+      deliveryTiming: "next_turn",
+    });
+
+    const documentFeedback = {
+      items: [
+        {
+          docPath: "design.md",
+          path: "design.md",
+          headingLabel: "Intro",
+          line: 4,
+          quote: "the passage",
+          note: "reconsider",
+        },
+      ],
+    };
+
+    await queueMessage({
+      ...baseParams,
+      text: "Document feedback:\n\nderivable prose",
+      documentFeedback,
+      backend: "codex",
+      deps,
+    });
+
+    // The durable entry carries the structured card, NOT the derivable prose
+    // text block (avoids duplicate display + the drain re-derives the prose).
+    expect(enqueueMock).toHaveBeenCalledWith({
+      ...baseParams,
+      content: [{ type: "document_feedback", items: documentFeedback.items }],
+    });
   });
 });
 
@@ -249,6 +302,61 @@ describe("queueMessage in_turn", () => {
       undefined,
       { projectName: "my-project", sessionName: "my-session" },
     );
+  });
+
+  it("delivers a feedback message as backend-safe prose (no document_feedback block) and records the card in the transcript", async () => {
+    const queueUserInputMock = vi.fn().mockResolvedValue(undefined);
+    getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+
+    const documentFeedback = {
+      items: [
+        {
+          docPath: "design.md",
+          path: "design.md",
+          headingLabel: "Intro",
+          line: 4,
+          quote: "the exact passage",
+          note: "reconsider this",
+        },
+      ],
+    };
+
+    await queueMessage({
+      ...baseParams,
+      text: "Document feedback:\n\nderivable prose",
+      documentFeedback,
+      backend: "claude",
+      deps,
+    });
+
+    // The durable entry carries the structured card.
+    expect(enqueueMock).toHaveBeenCalledWith({
+      ...baseParams,
+      content: [{ type: "document_feedback", items: documentFeedback.items }],
+    });
+
+    // The backend receives prose text only — a document_feedback block is not a
+    // valid SDK content block and must never reach queueUserInput.
+    const deliveredContent = (
+      queueUserInputMock.mock.calls[0]![0] as {
+        content: Array<{ type: string; text?: string }>;
+      }
+    ).content;
+    expect(deliveredContent).toHaveLength(1);
+    expect(deliveredContent[0]!.type).toBe("text");
+    expect(deliveredContent[0]!.text).toContain("the exact passage");
+    expect(deliveredContent[0]!.text).toContain("reconsider this");
+    expect(deliveredContent.some((b) => b.type === "document_feedback")).toBe(
+      false,
+    );
+
+    // The transcript records the card (no duplicate prose block).
+    const entry = appendTranscriptEntryMock.mock.calls[0]![1] as {
+      content: unknown;
+    };
+    expect(entry.content).toEqual([
+      { type: "document_feedback", items: documentFeedback.items },
+    ]);
   });
 
   it("persists images and writes image_ref blocks (no base64 in transcript)", async () => {

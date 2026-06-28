@@ -25,6 +25,32 @@ const debugModePhaseLiterals = z.enum([
   "cleanup_instrumentation",
 ]);
 
+/**
+ * One feedback line delivered to the agent and rendered in the transcript card.
+ * `docPath` is the worktree-relative identity used to open the document; `path`
+ * is the human-facing path embedded in the agent-facing prompt text. Defined
+ * here (the leaf content-block module) rather than in `document-comments` so the
+ * `document_feedback` block can reference it without forming an import cycle —
+ * `document-comments/schemas` re-exports it as part of its domain surface.
+ */
+export const documentFeedbackItemSchema = z.object({
+  docPath: z.string(),
+  path: z.string(),
+  headingLabel: z.string(),
+  line: z.number().int().positive(),
+  quote: z.string(),
+  note: z.string(),
+});
+export type DocumentFeedbackItem = z.infer<typeof documentFeedbackItemSchema>;
+
+/** The structured feedback payload threaded through the prompt/queue pipeline. */
+export const documentFeedbackPayloadSchema = z.object({
+  items: z.array(documentFeedbackItemSchema),
+});
+export type DocumentFeedbackPayload = z.infer<
+  typeof documentFeedbackPayloadSchema
+>;
+
 export const messageContentBlockSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
   z.object({
@@ -69,6 +95,14 @@ export const messageContentBlockSchema = z.discriminatedUnion("type", [
     type: z.literal("debug_structured"),
     phase: debugModePhaseLiterals,
     payload: z.unknown(),
+  }),
+  // Document review feedback delivered to the conversation: each item carries a
+  // quoted passage, its source path + heading/line, and the user's note. Built
+  // from a `documentFeedback` payload on the prompt/queue path and rendered as
+  // the transcript's DocumentFeedbackCard.
+  z.object({
+    type: z.literal("document_feedback"),
+    items: z.array(documentFeedbackItemSchema),
   }),
 ]);
 export type MessageContentBlock = z.infer<typeof messageContentBlockSchema>;

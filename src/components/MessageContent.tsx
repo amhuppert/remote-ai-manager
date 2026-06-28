@@ -12,7 +12,10 @@ import {
 import { cn } from "@/lib/ui/cn";
 import ToolUseGroup from "./ToolUseGroup";
 import DebugStructuredCard from "./DebugStructuredCard";
+import DocumentFeedbackCard from "./conversation/DocumentFeedbackCard";
+import MarkdownFileCard from "./conversation/MarkdownFileCard";
 import CommandIndicator from "./CommandIndicator";
+import { extractMarkdownFileRefs } from "@/lib/documents/markdown-file-refs";
 import { MessageTextWithRefs } from "@/features/session/conversation/MessageTextWithRefs";
 
 /** Minimum consecutive tool_use blocks required to form a collapsed group */
@@ -163,6 +166,9 @@ export default memo(function MessageContent({
 }: Props): React.JSX.Element {
   const grouped = useMemo(() => groupContentBlocks(content), [content]);
   const resultLookup = useMemo(() => buildToolResultLookup(content), [content]);
+  // Surfaced from the whole message so the cards stay visible even when the
+  // tool-uses that produced them are collapsed into a grouped rendering (4.x).
+  const fileRefs = useMemo(() => extractMarkdownFileRefs(content), [content]);
 
   return (
     <>
@@ -226,6 +232,9 @@ export default memo(function MessageContent({
             />
           );
         }
+        if (block.type === "document_feedback") {
+          return <DocumentFeedbackCard key={i} items={block.items} />;
+        }
         if (block.type === "tool_use") {
           const formatted = formatToolUse(block.name, block.input, {
             worktreePath,
@@ -237,6 +246,9 @@ export default memo(function MessageContent({
         // into the paired tool_use indicator via resultLookup above.
         return null;
       })}
+      {fileRefs.map((fileRef) => (
+        <MarkdownFileCard key={fileRef.docPath} fileRef={fileRef} />
+      ))}
     </>
   );
 });
