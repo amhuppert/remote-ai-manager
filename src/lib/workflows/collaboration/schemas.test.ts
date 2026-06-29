@@ -203,6 +203,46 @@ function validateAgainstJsonSchema(
   return [];
 }
 
+// Claude's native structured-output enforcement (`outputFormat: { type:
+// "json_schema" }`) does NOT support these keywords: it validates the model's
+// output against them but cannot steer generation to satisfy them, so a schema
+// that carries them makes the claude_code backend loop and fail ("Failed to
+// provide valid structured output after N attempts"). The JSON Schema handed to
+// the backend must omit them; bounds live in field descriptions (advisory) and
+// CC's own Zod `safeParse` instead. See docs/structured-data-responses.md.
+const UNSUPPORTED_STRUCTURED_OUTPUT_KEYWORDS = [
+  "minLength",
+  "maxLength",
+  "minItems",
+  "maxItems",
+  "minimum",
+  "maximum",
+  "pattern",
+] as const;
+
+function unsupportedStructuredOutputKeywordPaths(
+  schema: unknown,
+  path = "$",
+): string[] {
+  if (!schema || typeof schema !== "object") return [];
+  if (Array.isArray(schema)) {
+    return schema.flatMap((item, idx) =>
+      unsupportedStructuredOutputKeywordPaths(item, `${path}[${idx}]`),
+    );
+  }
+  const objectSchema = schema as Record<string, unknown>;
+  const hits: string[] = [];
+  for (const keyword of UNSUPPORTED_STRUCTURED_OUTPUT_KEYWORDS) {
+    if (keyword in objectSchema) hits.push(`${path}.${keyword}`);
+  }
+  for (const [key, child] of Object.entries(objectSchema)) {
+    hits.push(
+      ...unsupportedStructuredOutputKeywordPaths(child, `${path}.${key}`),
+    );
+  }
+  return hits;
+}
+
 const agreement = {
   id: "A-1",
   claim: "Use the existing session status bus",
@@ -493,14 +533,18 @@ describe("Collaboration Mode asymmetric artifact schemas", () => {
     ).toBe(false);
   });
 
-  it("bounds inline strings so full prose stays in generated files", () => {
-    const tooLongClaim = {
+  it("accepts long inline strings (length bounds are advisory, not schema-enforced)", () => {
+    // The manifest schema no longer hard-bounds inline string length: Claude's
+    // native json_schema enforcement cannot honor maxLength, so carrying it makes
+    // the claude_code backend loop and fail. The "full prose stays in generated
+    // files" contract is carried by the prompt and the artifact-file validator.
+    const longClaim = {
       ...initialDraft,
       key_claims: [{ id: "A-long", claim: "x".repeat(501) }],
     };
     expect(
-      collaborationInitialDraftOutputSchema.safeParse(tooLongClaim).success,
-    ).toBe(false);
+      collaborationInitialDraftOutputSchema.safeParse(longClaim).success,
+    ).toBe(true);
   });
 
   it("validates autonomous resolution threshold values", () => {
@@ -558,6 +602,10 @@ describe("Collaboration Mode asymmetric JSON Schema projections", () => {
   for (const { label, fixture, schema } of cases) {
     it(`exposes a strict-required JSON Schema for ${label}`, () => {
       expect(strictRequiredGaps(schema)).toEqual([]);
+    });
+
+    it(`omits json_schema keywords Claude cannot enforce in ${label}`, () => {
+      expect(unsupportedStructuredOutputKeywordPaths(schema)).toEqual([]);
     });
 
     it(`accepts the ${label} fixture against its JSON Schema projection`, () => {

@@ -1546,16 +1546,23 @@ export type WorkflowGeneratedDraft = z.infer<
 // schemas themselves remain here next to the per-artifact JSON-Schema
 // projections in `types.ts`.
 
-const collaborationShortIdSchema = z.string().min(1).max(80);
-const collaborationShortTextSchema = z.string().min(1).max(500);
-const collaborationSummarySchema = z.string().min(1).max(500);
-const collaborationArtifactSummarySchema = z.string().min(1).max(300);
-const collaborationArtifactPathSchema = z.string().min(1).max(512);
+// Length, item-count, numeric, and pattern bounds are intentionally omitted
+// from these artifact schemas: the per-artifact JSON-Schema projections in
+// `types.ts` are handed to Claude's native structured-output enforcement, which
+// cannot satisfy those keywords and fails the whole turn if they are present
+// (see that file's header and docs/structured-data-responses.md). The bounds
+// live in the prompt + field descriptions instead; this `safeParse` only checks
+// shape, required fields, enums, and the cross-field `.refine()` invariants.
+const collaborationShortIdSchema = z.string();
+const collaborationShortTextSchema = z.string();
+const collaborationSummarySchema = z.string();
+const collaborationArtifactSummarySchema = z.string();
+const collaborationArtifactPathSchema = z.string();
 
 const collaborationReferenceSchema = z
   .object({
     artifact: collaborationArtifactPathSchema,
-    locator: z.string().min(1).max(120).optional(),
+    locator: z.string().optional(),
   })
   .strict();
 export type CollaborationReference = z.infer<
@@ -1592,7 +1599,7 @@ const collaborationUserQuestionSchema = z
   .object({
     id: collaborationShortIdSchema,
     question: collaborationShortTextSchema,
-    related_disagreement_ids: z.array(collaborationShortIdSchema).max(20),
+    related_disagreement_ids: z.array(collaborationShortIdSchema),
   })
   .strict();
 export type CollaborationUserQuestion = z.infer<
@@ -1614,7 +1621,7 @@ const collaborationChangeProposalSchema = z
     id: collaborationShortIdSchema,
     change: collaborationShortTextSchema,
     rationale: collaborationShortTextSchema,
-    addresses_disagreement_ids: z.array(collaborationShortIdSchema).max(20),
+    addresses_disagreement_ids: z.array(collaborationShortIdSchema),
   })
   .strict();
 export type CollaborationChangeProposal = z.infer<
@@ -1644,10 +1651,10 @@ export type CollaborationGeneratedArtifactType = z.infer<
 
 export const collaborationGeneratedArtifactSchema = z
   .object({
-    id: collaborationShortIdSchema.regex(/^[a-z][a-z0-9_]*$/),
+    id: collaborationShortIdSchema,
     artifact_type: collaborationGeneratedArtifactTypeSchema,
     path: collaborationArtifactPathSchema,
-    round: z.number().int().min(0),
+    round: z.number().int(),
     agent: collaborationFlowAgentSchema,
     phase: collaborationAgentArtifactPhaseSchema,
     summary: collaborationArtifactSummarySchema,
@@ -1657,10 +1664,9 @@ export type CollaborationGeneratedArtifact = z.infer<
   typeof collaborationGeneratedArtifactSchema
 >;
 
-const collaborationGeneratedArtifactsSchema = z
-  .array(collaborationGeneratedArtifactSchema)
-  .min(1)
-  .max(5);
+const collaborationGeneratedArtifactsSchema = z.array(
+  collaborationGeneratedArtifactSchema,
+);
 
 function hasArtifact(
   artifacts: ReadonlyArray<CollaborationGeneratedArtifact>,
@@ -1692,11 +1698,11 @@ export const collaborationInitialDraftOutputSchema = z
   .object({
     kind: z.literal("initial_draft"),
     agent: collaborationFlowAgentSchema,
-    round: z.number().int().min(0),
+    round: z.number().int(),
     summary: collaborationSummarySchema,
     artifacts: collaborationGeneratedArtifactsSchema,
-    assumptions: z.array(collaborationShortTextSchema).max(10),
-    key_claims: z.array(collaborationArtifactAgreementSchema).max(20),
+    assumptions: z.array(collaborationShortTextSchema),
+    key_claims: z.array(collaborationArtifactAgreementSchema),
   })
   .strict()
   .refine(
@@ -1718,12 +1724,12 @@ export const collaborationCrossReviewOutputSchema = z
     kind: z.literal("cross_review"),
     agent: collaborationFlowAgentSchema,
     target_agent: collaborationFlowAgentSchema,
-    round: z.number().int().min(0),
+    round: z.number().int(),
     summary: collaborationSummarySchema,
     artifacts: collaborationGeneratedArtifactsSchema,
-    agree: z.array(collaborationArtifactAgreementSchema).max(20),
-    disagree: z.array(collaborationArtifactDisagreementSchema).max(20),
-    revise_self: z.array(collaborationReviseSelfArtifactSchema).max(20),
+    agree: z.array(collaborationArtifactAgreementSchema),
+    disagree: z.array(collaborationArtifactDisagreementSchema),
+    revise_self: z.array(collaborationReviseSelfArtifactSchema),
   })
   .strict()
   .refine(
@@ -1744,16 +1750,14 @@ export const collaborationProposedChangesOutputSchema = z
     kind: z.literal("proposed_changes"),
     agent: z.literal("agent_one"),
     target_agent: z.literal("agent_two"),
-    round: z.number().int().min(0),
+    round: z.number().int(),
     summary: collaborationSummarySchema,
     artifacts: collaborationGeneratedArtifactsSchema,
-    accepted_from_other_agent_draft: z
-      .array(collaborationArtifactAgreementSchema)
-      .max(20),
-    proposed_changes: z.array(collaborationChangeProposalSchema).max(20),
-    remaining_disagreements: z
-      .array(collaborationArtifactDisagreementSchema)
-      .max(20),
+    accepted_from_other_agent_draft: z.array(
+      collaborationArtifactAgreementSchema,
+    ),
+    proposed_changes: z.array(collaborationChangeProposalSchema),
+    remaining_disagreements: z.array(collaborationArtifactDisagreementSchema),
   })
   .strict()
   .refine(
@@ -1774,14 +1778,14 @@ export const collaborationCounterProposalOutputSchema = z
     kind: z.literal("counter_proposal"),
     agent: z.literal("agent_two"),
     target_agent: z.literal("agent_one"),
-    round: z.number().int().min(0),
+    round: z.number().int(),
     summary: collaborationSummarySchema,
     artifacts: collaborationGeneratedArtifactsSchema,
-    accepted_change_ids: z.array(collaborationShortIdSchema).max(20),
-    rejected_change_ids: z.array(collaborationShortIdSchema).max(20),
-    alternative_changes: z.array(collaborationChangeProposalSchema).max(20),
-    agree: z.array(collaborationArtifactAgreementSchema).max(20),
-    disagree: z.array(collaborationArtifactDisagreementSchema).max(20),
+    accepted_change_ids: z.array(collaborationShortIdSchema),
+    rejected_change_ids: z.array(collaborationShortIdSchema),
+    alternative_changes: z.array(collaborationChangeProposalSchema),
+    agree: z.array(collaborationArtifactAgreementSchema),
+    disagree: z.array(collaborationArtifactDisagreementSchema),
   })
   .strict()
   .refine(
@@ -1824,19 +1828,15 @@ export const collaborationResolutionDecisionOutputSchema = z
     kind: z.literal("resolution_decision"),
     agent: z.literal("agent_one"),
     target_agent: z.literal("agent_two"),
-    round: z.number().int().min(0),
+    round: z.number().int(),
     summary: collaborationSummarySchema,
     artifacts: collaborationGeneratedArtifactsSchema,
     agreement_reached: z.boolean(),
     next_action: collaborationResolutionDecisionNextActionSchema,
-    accepted_points: z.array(collaborationArtifactAgreementSchema).max(20),
-    resolved_disagreements: z
-      .array(collaborationResolvedDisagreementSchema)
-      .max(20),
-    remaining_disagreements: z
-      .array(collaborationArtifactDisagreementSchema)
-      .max(20),
-    user_questions: z.array(collaborationUserQuestionSchema).max(5),
+    accepted_points: z.array(collaborationArtifactAgreementSchema),
+    resolved_disagreements: z.array(collaborationResolvedDisagreementSchema),
+    remaining_disagreements: z.array(collaborationArtifactDisagreementSchema),
+    user_questions: z.array(collaborationUserQuestionSchema),
     rationale: collaborationShortTextSchema,
   })
   .strict()
@@ -1856,10 +1856,10 @@ export type CollaborationResolutionDecisionOutput = z.infer<
 export const collaborationOpenConflictsOutputSchema = z
   .object({
     kind: z.literal("open_conflicts"),
-    round: z.number().int().min(0),
+    round: z.number().int(),
     summary: collaborationSummarySchema,
-    disagreements: z.array(collaborationArtifactDisagreementSchema).max(20),
-    questions: z.array(collaborationUserQuestionSchema).max(5),
+    disagreements: z.array(collaborationArtifactDisagreementSchema),
+    questions: z.array(collaborationUserQuestionSchema),
   })
   .strict();
 export type CollaborationOpenConflictsOutput = z.infer<
@@ -1870,7 +1870,7 @@ export const collaborationFinalAnswerOutputSchema = z
   .object({
     kind: z.literal("final_answer"),
     agent: z.literal("agent_one"),
-    round: z.number().int().min(0),
+    round: z.number().int(),
     summary: collaborationSummarySchema,
     artifacts: collaborationGeneratedArtifactsSchema,
     answer_artifact_id: z.literal("answer"),
