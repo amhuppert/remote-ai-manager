@@ -17,6 +17,7 @@ function createTestDeps(): BulkSessionsRouteDeps {
       .mockImplementation(async (_projectPath: string, names: string[]) =>
         names.map((sessionName) => ({ sessionName, success: true })),
       ),
+    stopAllForSession: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -94,9 +95,23 @@ describe("POST /api/projects/[name]/sessions/bulk", () => {
       true,
     );
     expect(deps.bulkDeleteSessions).not.toHaveBeenCalled();
+    expect(deps.stopAllForSession).toHaveBeenCalledWith({
+      projectPath: "/home/projects/test-proj",
+      sessionName: "a",
+    });
+    expect(deps.stopAllForSession).toHaveBeenCalledWith({
+      projectPath: "/home/projects/test-proj",
+      sessionName: "b",
+    });
+    // Stop must run before the archive flag flips for each session.
+    const stopOrder = vi.mocked(deps.stopAllForSession).mock
+      .invocationCallOrder[0]!;
+    const archiveOrder = vi.mocked(deps.setSessionArchived).mock
+      .invocationCallOrder[0]!;
+    expect(stopOrder).toBeLessThan(archiveOrder);
   });
 
-  it("unarchives passes archived=false", async () => {
+  it("unarchives passes archived=false and does not stop dev servers", async () => {
     await handlers.POST(
       makeRequest({ op: "unarchive", sessionNames: ["a"] }),
       makeParams(),
@@ -106,6 +121,7 @@ describe("POST /api/projects/[name]/sessions/bulk", () => {
       "a",
       false,
     );
+    expect(deps.stopAllForSession).not.toHaveBeenCalled();
   });
 
   it("deletes every session via a single bulkDeleteSessions call", async () => {

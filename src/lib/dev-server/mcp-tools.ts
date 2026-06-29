@@ -20,6 +20,13 @@ const logger = createLogger("dev-server-mcp-tools");
 export interface DevServerToolContext {
   projectPath: string;
   sessionName: string;
+  /**
+   * Worktree the dev server should run in. For an ordinary session this is the
+   * session worktree; for a graph-workflow lane conversation it is the lane
+   * worktree, so lane dev servers are spawned in and keyed by their own
+   * worktree rather than the parent session's.
+   */
+  worktreePath: string;
 }
 
 const ensureDevServerInputSchema = {
@@ -115,6 +122,7 @@ function createGetHandler(
       const servers = await service.list({
         projectPath: context.projectPath,
         sessionName: context.sessionName,
+        worktreePath: context.worktreePath,
       });
       return {
         content: [
@@ -144,6 +152,7 @@ function createEnsureHandler(
       const ensureParams: Parameters<DevServerService["ensure"]>[0] = {
         projectPath: context.projectPath,
         sessionName: context.sessionName,
+        worktreePath: context.worktreePath,
       };
       if (args.name !== undefined) ensureParams.serverName = args.name;
       if (args.wait !== undefined) ensureParams.wait = args.wait;
@@ -176,6 +185,7 @@ function createStopHandler(
       const server = await service.stop({
         projectPath: context.projectPath,
         sessionName: context.sessionName,
+        worktreePath: context.worktreePath,
         serverName: args.name,
       });
       return {

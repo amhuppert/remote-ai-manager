@@ -46,9 +46,10 @@ export function createDevServerReconciler(deps: DevServerReconciliationDeps) {
   function makeKey(
     projectPath: string,
     sessionName: string,
+    worktreePath: string,
     serverName: string,
   ): string {
-    return `${projectPath}::${sessionName}::${serverName}`;
+    return `${projectPath}::${sessionName}::${worktreePath}::${serverName}`;
   }
 
   function buildEvent(entry: DevServerEntry): DevServerStatusEvent {
@@ -149,7 +150,12 @@ export function createDevServerReconciler(deps: DevServerReconciliationDeps) {
     const registry = deps.getRegistry();
 
     for (const cfg of configuredServers) {
-      const key = makeKey(projectPath, sessionName, cfg.name);
+      const key = makeKey(
+        projectPath,
+        sessionName,
+        input.worktreePath,
+        cfg.name,
+      );
       const existing = registry.get(key);
 
       if (existing?.status === "running") {

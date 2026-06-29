@@ -159,9 +159,10 @@ export function createDevServerRegistry(
   function makeKey(
     projectPath: string,
     sessionName: string,
+    worktreePath: string,
     serverName: string,
   ): string {
-    return `${projectPath}::${sessionName}::${serverName}`;
+    return `${projectPath}::${sessionName}::${worktreePath}::${serverName}`;
   }
 
   function broadcastStatus(entry: DevServerEntry): void {
@@ -446,7 +447,7 @@ export function createDevServerRegistry(
       startMode,
     } = params;
     const registry = getRegistry();
-    const key = makeKey(projectPath, sessionName, serverName);
+    const key = makeKey(projectPath, sessionName, worktreePath, serverName);
 
     const existing = registry.get(key);
     if (
@@ -620,11 +621,12 @@ export function createDevServerRegistry(
   async function stopServer(params: {
     projectPath: string;
     sessionName: string;
+    worktreePath: string;
     serverName: string;
   }): Promise<void> {
-    const { projectPath, sessionName, serverName } = params;
+    const { projectPath, sessionName, worktreePath, serverName } = params;
     const registry = getRegistry();
-    const key = makeKey(projectPath, sessionName, serverName);
+    const key = makeKey(projectPath, sessionName, worktreePath, serverName);
     const entry = registry.get(key);
 
     if (!entry) return;
@@ -703,7 +705,43 @@ export function createDevServerRegistry(
         stopServer({
           projectPath: params.projectPath,
           sessionName: params.sessionName,
+          worktreePath: s.worktreePath,
           serverName: s.serverName,
+        }),
+      ),
+    );
+  }
+
+  /**
+   * Stop all dev servers whose spawn worktree matches `worktreePath`. Used at
+   * graph-workflow worktree-teardown boundaries to stop lane dev servers before
+   * the worktree directory is removed (stop-before-remove). Best-effort per
+   * entry — one failed stop never skips the rest.
+   */
+  async function stopAllForWorktree(params: {
+    projectPath: string;
+    worktreePath: string;
+  }): Promise<void> {
+    const registry = getRegistry();
+    const target = path.resolve(params.worktreePath);
+    const matches = Array.from(registry.values()).filter(
+      (e) =>
+        e.projectPath === params.projectPath &&
+        path.resolve(e.worktreePath) === target &&
+        (e.status === "running" || e.status === "starting"),
+    );
+    logger.info("dev-server.stop_all_for_worktree", {
+      projectPath: params.projectPath,
+      worktreePath: params.worktreePath,
+      matched: matches.length,
+    });
+    await Promise.allSettled(
+      matches.map((e) =>
+        stopServer({
+          projectPath: e.projectPath,
+          sessionName: e.sessionName,
+          worktreePath: e.worktreePath,
+          serverName: e.serverName,
         }),
       ),
     );
@@ -720,6 +758,7 @@ export function createDevServerRegistry(
         stopServer({
           projectPath: e.projectPath,
           sessionName: e.sessionName,
+          worktreePath: e.worktreePath,
           serverName: e.serverName,
         }),
       ),
@@ -746,12 +785,14 @@ export function createDevServerRegistry(
   function getServer(params: {
     projectPath: string;
     sessionName: string;
+    worktreePath: string;
     serverName: string;
   }): DevServerEntry | undefined {
     const registry = getRegistry();
     const key = makeKey(
       params.projectPath,
       params.sessionName,
+      params.worktreePath,
       params.serverName,
     );
     return registry.get(key);
@@ -893,6 +934,7 @@ export function createDevServerRegistry(
     startServer,
     stopServer,
     stopAllForSession,
+    stopAllForWorktree,
     stopAll,
     getSessionServers,
     getServer,
@@ -1009,6 +1051,8 @@ const defaultRegistry = createDevServerRegistry();
 export const startServer = defaultRegistry.startServer;
 export const stopServer = defaultRegistry.stopServer;
 export const stopAllForSession = defaultRegistry.stopAllForSession;
+export const stopAllForWorktree = defaultRegistry.stopAllForWorktree;
+export const stopAll = defaultRegistry.stopAll;
 export const getSessionServers = defaultRegistry.getSessionServers;
 export const getServer = defaultRegistry.getServer;
 export const killListeningProcessForPort =

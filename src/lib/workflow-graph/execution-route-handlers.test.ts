@@ -77,6 +77,7 @@ describe("graph workflow execution route handlers", () => {
   const recordPendingHaltReason = vi.fn();
   const drainAndHalt = vi.fn();
   const recordApprovalDecision = vi.fn();
+  const stopExecutionLaneDevServers = vi.fn(async () => {});
   const listArchivedExecutions =
     vi.fn<
       (
@@ -100,6 +101,7 @@ describe("graph workflow execution route handlers", () => {
     recordPendingHaltReason,
     drainAndHalt,
     recordApprovalDecision,
+    stopExecutionLaneDevServers,
     listArchivedExecutions,
   });
 
@@ -1217,6 +1219,38 @@ describe("graph workflow execution route handlers", () => {
     );
 
     expect(response.status).toBe(200);
+    expect(archiveExecution).toHaveBeenCalledWith("/repo", "session-1");
+  });
+
+  it("stops lane dev servers before archiving on clear", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(
+      makeSession({
+        graphWorkflowExecution: createWorkflowExecution({
+          status: "halted",
+          completedAt: "2026-03-27T13:30:00.000Z",
+          haltReason: {
+            type: "circuit_breaker",
+            contextId: "context-plan",
+            condition: "retry_exhaustion",
+            summary: "tests failed",
+            failureCount: 2,
+          },
+        }),
+      }),
+    );
+
+    await handlers.CLEAR(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/clear",
+        "POST",
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+
+    expect(stopExecutionLaneDevServers).toHaveBeenCalledWith(
+      expect.objectContaining({ projectPath: "/repo" }),
+    );
     expect(archiveExecution).toHaveBeenCalledWith("/repo", "session-1");
   });
 

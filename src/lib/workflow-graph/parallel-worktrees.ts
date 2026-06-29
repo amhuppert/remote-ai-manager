@@ -7,6 +7,7 @@ import {
 } from "@/lib/shared/exec";
 import { defaultGitClient, type GitClient } from "@/lib/git/client";
 import { fastRemoveWorktree as defaultFastRemoveWorktree } from "@/lib/git/worktree-fast-remove";
+import { stopAllForWorktree as defaultStopAllForWorktree } from "@/lib/dev-server/registry";
 import { createLogger, type Logger } from "@/lib/logging";
 import { timed } from "@/lib/logging/timed";
 import { getErrorMessage } from "@/lib/shared/errors";
@@ -92,6 +93,15 @@ export interface ParallelWorktreesDeps {
   buildChildEnv?(): NodeJS.ProcessEnv;
   logger?: Logger;
   fastRemoveWorktree?: typeof defaultFastRemoveWorktree;
+  /**
+   * Stop any CC-managed dev servers running in a worktree. Invoked before a
+   * worktree is removed (stop-before-remove) so lane dev servers never outlive
+   * their worktree. Defaults to the dev-server registry's worktree-scoped stop.
+   */
+  stopDevServersForWorktree?(input: {
+    projectPath: string;
+    worktreePath: string;
+  }): Promise<void>;
 }
 
 /**
@@ -173,6 +183,8 @@ export function createParallelWorktrees(
   const logger = deps.logger ?? defaultLogger;
   const fastRemoveWorktree =
     deps.fastRemoveWorktree ?? defaultFastRemoveWorktree;
+  const stopDevServersForWorktree =
+    deps.stopDevServersForWorktree ?? defaultStopAllForWorktree;
 
   async function getBranchForWorktree(
     projectPath: string,
@@ -488,6 +500,21 @@ export function createParallelWorktrees(
   }
 
   async function disposeImpl(input: DisposeInput): Promise<DisposeResult> {
+    // Stop dev servers running in this worktree before removing it, so the
+    // directory is never pruned out from under a live process. Best-effort:
+    // a failed stop must not block worktree removal.
+    try {
+      await stopDevServersForWorktree({
+        projectPath: input.projectPath,
+        worktreePath: input.worktreePath,
+      });
+    } catch (err) {
+      logger.warn("dispose_stop_dev_servers_failed", {
+        worktreePath: input.worktreePath,
+        reason: getErrorMessage(err),
+      });
+    }
+
     try {
       await fastRemoveWorktree({
         projectPath: input.projectPath,

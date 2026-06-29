@@ -8,8 +8,15 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
-import { setProjectArchived as defaultSetProjectArchived } from "@/lib/state-store";
+import {
+  getProjectSessionListItems as defaultGetProjectSessionListItems,
+  setProjectArchived as defaultSetProjectArchived,
+} from "@/lib/state-store";
+import { stopAllForSession as defaultStopAllForSession } from "@/lib/dev-server/registry";
+import { createLogger } from "@/lib/logging";
 import type { ApiError } from "@/lib/api/errors";
+
+const logger = createLogger("project-archive-route");
 // ---------------------------------------------------------------------------
 // Deps interface
 // ---------------------------------------------------------------------------
@@ -17,11 +24,20 @@ import type { ApiError } from "@/lib/api/errors";
 export interface ArchiveRouteDeps {
   resolveProjectPath: (name: string) => Promise<string | null>;
   setProjectArchived: (projectPath: string, archived: boolean) => Promise<void>;
+  getProjectSessionListItems: (
+    projectPath: string,
+  ) => Promise<Array<{ sessionName: string }>>;
+  stopAllForSession: (params: {
+    projectPath: string;
+    sessionName: string;
+  }) => Promise<void>;
 }
 
 const defaultDeps: ArchiveRouteDeps = {
   resolveProjectPath: defaultResolveProjectPath,
   setProjectArchived: defaultSetProjectArchived,
+  getProjectSessionListItems: defaultGetProjectSessionListItems,
+  stopAllForSession: defaultStopAllForSession,
 };
 
 // ---------------------------------------------------------------------------
@@ -69,6 +85,31 @@ export function createArchiveRouteHandlers(
     }
 
     try {
+      // Archiving a project is a lifecycle event: stop every session's dev
+      // servers so none keep running in the background. Best-effort per session
+      // — failures never block archival. Unarchive does not restart them.
+      if (body.archived) {
+        try {
+          const sessions = await deps.getProjectSessionListItems(projectPath);
+          for (const session of sessions) {
+            try {
+              await deps.stopAllForSession({
+                projectPath,
+                sessionName: session.sessionName,
+              });
+            } catch {
+              // best-effort: don't block archival
+            }
+          }
+          logger.info("project.archive.dev_servers_stopped", {
+            projectPath,
+            sessionCount: sessions.length,
+          });
+        } catch {
+          // best-effort: don't block archival
+        }
+      }
+
       await deps.setProjectArchived(projectPath, body.archived);
       return NextResponse.json({ ok: true });
     } catch (err) {

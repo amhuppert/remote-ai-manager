@@ -726,6 +726,59 @@ describe("graph workflow manager", () => {
     }
   });
 
+  describe("lane dev-server cleanup on terminal transitions", () => {
+    function runningExecution(): GraphWorkflowExecution {
+      return createWorkflowExecution({
+        status: "running",
+        activeContextIds: ["context-plan"],
+        machineSnapshot: {
+          schemaVersion: 1,
+          lifecycleStatus: "running",
+          activeContextId: "context-plan",
+          recoveryMode: "none",
+          hasLiveIteration: false,
+        },
+      });
+    }
+
+    function managerWithSpy(execution: GraphWorkflowExecution) {
+      const stopExecutionLaneDevServers = vi.fn(async () => {});
+      const manager = createGraphWorkflowManager({
+        executionRepository: createRepository(execution),
+        async loadDefinition() {
+          return null;
+        },
+        stopExecutionLaneDevServers,
+      });
+      return { manager, stopExecutionLaneDevServers };
+    }
+
+    it("stops lane dev servers on abort", async () => {
+      const { manager, stopExecutionLaneDevServers } =
+        managerWithSpy(runningExecution());
+      await manager.send("/repo", "session-1", { type: "abort" });
+      expect(stopExecutionLaneDevServers).toHaveBeenCalledWith(
+        expect.objectContaining({ projectPath: "/repo" }),
+      );
+    });
+
+    it("stops lane dev servers on halt", async () => {
+      const { manager, stopExecutionLaneDevServers } =
+        managerWithSpy(runningExecution());
+      await manager.send("/repo", "session-1", {
+        type: "halt",
+        reason: {
+          type: "max_iterations",
+          contextId: "context-plan",
+          iterationCount: 1,
+        },
+      });
+      expect(stopExecutionLaneDevServers).toHaveBeenCalledWith(
+        expect.objectContaining({ projectPath: "/repo" }),
+      );
+    });
+  });
+
   it("does not invoke abortConversation when no tasks are running", async () => {
     const repository = createRepository(
       createWorkflowExecution({
@@ -2515,6 +2568,28 @@ describe("graph workflow manager", () => {
         },
       });
     }
+
+    it("stops the reset context's lane dev servers, scoped to that context, before resetting", async () => {
+      const repository = createRepository(createPausedExecutionWithRunState());
+      const stopExecutionLaneDevServers = vi.fn(async () => {});
+
+      const manager = createGraphWorkflowManager({
+        executionRepository: repository,
+        async loadDefinition() {
+          return null;
+        },
+        stopExecutionLaneDevServers,
+      });
+
+      await manager.resetContext("/repo", "session-1", "context-implement");
+
+      expect(stopExecutionLaneDevServers).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectPath: "/repo",
+          contextIds: ["context-implement"],
+        }),
+      );
+    });
 
     it("resets the selected context to execution-start defaults and persists via the repository", async () => {
       const repository = createRepository(createPausedExecutionWithRunState());

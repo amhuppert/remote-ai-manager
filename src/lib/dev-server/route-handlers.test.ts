@@ -48,7 +48,9 @@ function makeHandlers(
 ) {
   const deps: DevServerRouteDeps = {
     resolveProjectPath: vi.fn(async () => "/repos/project"),
-    getSession: vi.fn(async () => ({ sessionName: "s1" })),
+    getSession: vi.fn(async () => ({
+      worktreePath: "/repos/project/.worktrees/s1",
+    })),
     service,
     stopAllForSession: vi.fn(async () => {}),
     getServer: vi.fn(() => ({ status: "running" })),

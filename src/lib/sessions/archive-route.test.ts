@@ -13,6 +13,8 @@ function createTestDeps(): ArchiveRouteDeps {
   return {
     resolveProjectPath: vi.fn().mockResolvedValue("/home/projects/test-proj"),
     setProjectArchived: vi.fn().mockResolvedValue(undefined),
+    getProjectSessionListItems: vi.fn().mockResolvedValue([]),
+    stopAllForSession: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -64,7 +66,34 @@ describe("POST /api/projects/[name]/archive", () => {
     );
   });
 
-  it("unarchives a project when archived:false", async () => {
+  it("stops every session's dev servers before archiving the project", async () => {
+    vi.mocked(deps.getProjectSessionListItems).mockResolvedValue([
+      { sessionName: "alpha" },
+      { sessionName: "beta" },
+    ]);
+
+    const response = await handlers.POST(
+      makeRequest({ archived: true }),
+      makeParams(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(deps.stopAllForSession).toHaveBeenCalledWith({
+      projectPath: "/home/projects/test-proj",
+      sessionName: "alpha",
+    });
+    expect(deps.stopAllForSession).toHaveBeenCalledWith({
+      projectPath: "/home/projects/test-proj",
+      sessionName: "beta",
+    });
+    const stopOrder = vi.mocked(deps.stopAllForSession).mock
+      .invocationCallOrder[0]!;
+    const archiveOrder = vi.mocked(deps.setProjectArchived).mock
+      .invocationCallOrder[0]!;
+    expect(stopOrder).toBeLessThan(archiveOrder);
+  });
+
+  it("unarchives a project when archived:false and does not stop dev servers", async () => {
     const response = await handlers.POST(
       makeRequest({ archived: false }),
       makeParams(),
@@ -75,6 +104,8 @@ describe("POST /api/projects/[name]/archive", () => {
       "/home/projects/test-proj",
       false,
     );
+    expect(deps.stopAllForSession).not.toHaveBeenCalled();
+    expect(deps.getProjectSessionListItems).not.toHaveBeenCalled();
   });
 
   it("returns 404 for unknown project", async () => {

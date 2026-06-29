@@ -76,6 +76,7 @@ describe("DevServerRegistry", () => {
       const server = registry.getServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: "/tmp",
         serverName: "web",
       });
       expect(server).toBeUndefined();
@@ -96,6 +97,7 @@ describe("DevServerRegistry", () => {
       const server = registry.getServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: "/tmp",
         serverName: "web",
       });
 
@@ -151,6 +153,7 @@ describe("DevServerRegistry", () => {
       const server = registry.getServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: "/tmp",
         serverName: "port-test",
       });
 
@@ -176,6 +179,7 @@ describe("DevServerRegistry", () => {
       const server = registry.getServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: "/tmp",
         serverName: "tailscale-test",
       });
 
@@ -200,6 +204,7 @@ describe("DevServerRegistry", () => {
       const server = registry.getServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: "/tmp",
         serverName: "fail-test",
       });
 
@@ -224,6 +229,7 @@ describe("DevServerRegistry", () => {
       const server = registry.getServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: "/tmp",
         serverName: "output-test",
       });
 
@@ -249,12 +255,14 @@ describe("DevServerRegistry", () => {
       await registry.stopServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: "/tmp",
         serverName: "stop-test",
       });
 
       const server = registry.getServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: "/tmp",
         serverName: "stop-test",
       });
 
@@ -266,6 +274,7 @@ describe("DevServerRegistry", () => {
       await registry.stopServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: "/tmp",
         serverName: "nonexistent",
       });
     });
@@ -302,6 +311,126 @@ describe("DevServerRegistry", () => {
       });
 
       expect(servers.every((s) => s.status === "stopped")).toBe(true);
+    });
+  });
+
+  describe("stopAllForWorktree", () => {
+    it("stops only servers whose worktree matches, leaving others running", async () => {
+      vi.mocked(deps.checkPortListening).mockResolvedValue(true);
+      const laneAPath = mkdtempSync(path.join(tmpdir(), "cc-laneA-"));
+      const laneBPath = mkdtempSync(path.join(tmpdir(), "cc-laneB-"));
+
+      await registry.startServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "web",
+        command: "sleep 60",
+        worktreePath: laneAPath,
+        startMode: startMode(59820, { readinessTimeoutMs: 2000 }),
+      });
+      await registry.startServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "web",
+        command: "sleep 60",
+        worktreePath: laneBPath,
+        startMode: startMode(59821, { readinessTimeoutMs: 2000 }),
+      });
+
+      await new Promise((r) => setTimeout(r, 500));
+
+      await registry.stopAllForWorktree({
+        projectPath: "/proj",
+        worktreePath: laneAPath,
+      });
+
+      const laneA = registry.getServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        worktreePath: laneAPath,
+        serverName: "web",
+      });
+      const laneB = registry.getServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        worktreePath: laneBPath,
+        serverName: "web",
+      });
+
+      expect(laneA!.status).toBe("stopped");
+      expect(laneB!.status).toBe("running");
+
+      rmSync(laneAPath, { recursive: true, force: true });
+      rmSync(laneBPath, { recursive: true, force: true });
+    });
+
+    it("matches worktree paths after normalization (trailing slash)", async () => {
+      const lanePath = mkdtempSync(path.join(tmpdir(), "cc-lane-norm-"));
+
+      await registry.startServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "web",
+        command: "sleep 60",
+        worktreePath: lanePath,
+        startMode: startMode(59822),
+      });
+
+      await registry.stopAllForWorktree({
+        projectPath: "/proj",
+        worktreePath: `${lanePath}/`,
+      });
+
+      const lane = registry.getServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        worktreePath: lanePath,
+        serverName: "web",
+      });
+      expect(lane!.status).toBe("stopped");
+
+      rmSync(lanePath, { recursive: true, force: true });
+    });
+  });
+
+  describe("worktree-disambiguated keys", () => {
+    it("tracks same (project, session, serverName) in two worktrees independently", async () => {
+      const sessionPath = mkdtempSync(path.join(tmpdir(), "cc-session-"));
+      const lanePath = mkdtempSync(path.join(tmpdir(), "cc-lane-"));
+
+      await registry.startServer({
+        projectPath: "/proj",
+        sessionName: "s1",
+        serverName: "web",
+        command: "sleep 60",
+        worktreePath: sessionPath,
+        startMode: startMode(59830),
+      });
+
+      // Same project/session/serverName, different worktree — must NOT collide
+      // or throw "already running"; both entries coexist.
+      await expect(
+        registry.startServer({
+          projectPath: "/proj",
+          sessionName: "s1",
+          serverName: "web",
+          command: "sleep 60",
+          worktreePath: lanePath,
+          startMode: startMode(59831),
+        }),
+      ).resolves.toBeUndefined();
+
+      const servers = registry.getSessionServers({
+        projectPath: "/proj",
+        sessionName: "s1",
+      });
+      expect(servers).toHaveLength(2);
+      expect(new Set(servers.map((s) => s.worktreePath))).toEqual(
+        new Set([sessionPath, lanePath]),
+      );
+
+      rmSync(sessionPath, { recursive: true, force: true });
+      rmSync(lanePath, { recursive: true, force: true });
     });
   });
 
@@ -343,6 +472,7 @@ describe("DevServerRegistry", () => {
       const server = registry.getServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: "/tmp",
         serverName: "pid-test",
       });
 
@@ -366,6 +496,7 @@ describe("DevServerRegistry", () => {
         const s = registry.getServer({
           projectPath: "/proj",
           sessionName: "s1",
+          worktreePath: "/tmp",
           serverName: "group-kill-test",
         });
         return s?.status === "running";
@@ -374,6 +505,7 @@ describe("DevServerRegistry", () => {
       const server = registry.getServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: "/tmp",
         serverName: "group-kill-test",
       });
       expect(server!.status).toBe("running");
@@ -385,6 +517,7 @@ describe("DevServerRegistry", () => {
       await registry.stopServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: "/tmp",
         serverName: "group-kill-test",
       });
 
@@ -411,6 +544,7 @@ describe("DevServerRegistry", () => {
         const s = registry.getServer({
           projectPath: "/proj",
           sessionName: "s1",
+          worktreePath: WORKTREE,
           serverName,
         });
         if (s?.status === "running") return s;
@@ -442,6 +576,7 @@ describe("DevServerRegistry", () => {
       await registry.stopServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: "/tmp",
         serverName: "listener-only-test",
       });
 
@@ -472,6 +607,7 @@ describe("DevServerRegistry", () => {
       await registry.stopServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: "/tmp",
         serverName: "client-only-test",
       });
 
@@ -502,6 +638,7 @@ describe("DevServerRegistry", () => {
       await registry.stopServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: "/tmp",
         serverName: "unresolved-cwd-test",
       });
 
@@ -509,6 +646,7 @@ describe("DevServerRegistry", () => {
       const server = registry.getServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: "/tmp",
         serverName: "unresolved-cwd-test",
       });
       expect(server!.errorMessage).toBeTruthy();
@@ -544,6 +682,7 @@ describe("DevServerRegistry", () => {
       await registry.stopServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: "/tmp",
         serverName: "foreign-cwd-test",
       });
 
@@ -551,6 +690,7 @@ describe("DevServerRegistry", () => {
       const server = registry.getServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: "/tmp",
         serverName: "foreign-cwd-test",
       });
       expect(server!.errorMessage).toMatch(/verified|ownership|verify/i);
@@ -581,6 +721,7 @@ describe("DevServerRegistry", () => {
       await registry.stopServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: "/tmp",
         serverName: "owned-sigterm-test",
       });
 
@@ -620,6 +761,7 @@ describe("DevServerRegistry", () => {
       await registry.stopServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: "/tmp",
         serverName: "owned-sigkill-test",
       });
 
@@ -706,6 +848,7 @@ describe("DevServerRegistry", () => {
       const server = registry.getServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: logWorktree,
         serverName: "logged-server",
       });
 
@@ -769,6 +912,7 @@ describe("DevServerRegistry", () => {
       await registry.stopServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: logWorktree,
         serverName: "truncate-log",
       });
 
@@ -835,6 +979,7 @@ describe("DevServerRegistry", () => {
       const server = registry.getServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: "/tmp",
         serverName: "cc-assigned-env",
       });
       expect(server).toBeDefined();
@@ -862,6 +1007,7 @@ describe("DevServerRegistry", () => {
       let server = registry.getServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: "/tmp",
         serverName: "cc-assigned-tcp-ready",
       });
       while (Date.now() < deadline && server?.status !== "running") {
@@ -869,6 +1015,7 @@ describe("DevServerRegistry", () => {
         server = registry.getServer({
           projectPath: "/proj",
           sessionName: "s1",
+          worktreePath: "/tmp",
           serverName: "cc-assigned-tcp-ready",
         });
       }
@@ -896,6 +1043,7 @@ describe("DevServerRegistry", () => {
       let server = registry.getServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: "/tmp",
         serverName: "cc-assigned-tcp-timeout",
       });
       while (Date.now() < deadline && server?.status === "starting") {
@@ -903,6 +1051,7 @@ describe("DevServerRegistry", () => {
         server = registry.getServer({
           projectPath: "/proj",
           sessionName: "s1",
+          worktreePath: "/tmp",
           serverName: "cc-assigned-tcp-timeout",
         });
       }
@@ -932,6 +1081,7 @@ describe("DevServerRegistry", () => {
       const server = registry.getServer({
         projectPath: "/proj",
         sessionName: "s1",
+        worktreePath: "/tmp",
         serverName: "cc-assigned-cwd",
       });
       const pwdLine = server?.recentOutput.find((l) => l.startsWith("PWD="));

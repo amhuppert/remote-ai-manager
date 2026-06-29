@@ -816,6 +816,10 @@ const claudeConversationBackendFactory = {
         name: input.projectName,
         session: input.sessionName,
         conversationId: mcpScopeConversationId,
+        // For a graph-workflow lane, input.worktreePath is the lane worktree
+        // (sessionName stays the parent), so lane dev servers are spawned in
+        // and keyed by their own worktree.
+        worktreePath: input.worktreePath,
       });
 
     const sessionToolsInstance = await recreateSessionToolsServer();

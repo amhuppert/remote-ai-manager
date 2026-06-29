@@ -209,6 +209,24 @@ describe("dev-server-service", () => {
       ).rejects.toBeInstanceOf(NoDevServersConfiguredError);
     });
 
+    it("spawns the dev server in the lane worktree when a worktreePath override is given", async () => {
+      const h = makeHarness();
+      const service = createDevServerService(h.deps);
+      const laneWorktree = "/projects/test/.worktrees/s1.laneA";
+      await service.ensure({
+        projectPath: "/projects/test",
+        sessionName: "s1",
+        serverName: "nextjs",
+        worktreePath: laneWorktree,
+        wait: false,
+      });
+      // The override (graph-workflow lane) must reach startServer rather than
+      // defaulting to the parent session worktree.
+      expect(h.startServer).toHaveBeenCalledWith(
+        expect.objectContaining({ worktreePath: laneWorktree }),
+      );
+    });
+
     it("returns ambiguity error when multiple servers and no name supplied", async () => {
       const h = makeHarness({
         configured: [
@@ -652,6 +670,7 @@ describe("dev-server-service", () => {
       expect(h.stopServer).toHaveBeenCalledWith({
         projectPath: "/projects/test",
         sessionName: "s1",
+        worktreePath: "/projects/test/.worktrees/s1",
         serverName: "nextjs",
       });
       expect(result?.status).toBe("stopped");

@@ -11,7 +11,7 @@ const SESSION = "s1";
 const WORKTREE = "/tmp/wt";
 
 function key(serverName: string): string {
-  return `${PROJECT}::${SESSION}::${serverName}`;
+  return `${PROJECT}::${SESSION}::${WORKTREE}::${serverName}`;
 }
 
 function makeRunningEntry(

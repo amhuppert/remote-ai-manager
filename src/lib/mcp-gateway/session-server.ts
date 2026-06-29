@@ -42,6 +42,12 @@ export interface SessionMcpServerParams {
   name: string;
   session: string;
   conversationId: string;
+  /**
+   * Worktree this conversation runs in. For a graph-workflow lane conversation
+   * this is the lane worktree (which differs from the parent session
+   * worktree); omit for ordinary sessions to default to the session worktree.
+   */
+  worktreePath?: string;
 }
 
 interface SessionWithConversations extends Pick<
@@ -109,7 +115,7 @@ export interface SessionMcpServerDeps {
   ): void;
   registerDevServerTools(
     server: McpServer,
-    context: { projectPath: string; sessionName: string },
+    context: { projectPath: string; sessionName: string; worktreePath: string },
   ): void;
 }
 
@@ -352,6 +358,7 @@ export async function createSessionMcpServer(
   deps.registerDevServerTools(server, {
     projectPath,
     sessionName: session.sessionName,
+    worktreePath: params.worktreePath ?? session.worktreePath,
   });
 
   return server;

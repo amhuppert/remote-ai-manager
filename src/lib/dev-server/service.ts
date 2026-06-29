@@ -50,6 +50,8 @@ export interface DevServerStatusItem {
 interface ListDevServersParams {
   projectPath: string;
   sessionName: string;
+  /** Override the resolved worktree (graph-workflow lane). Defaults to the session worktree. */
+  worktreePath?: string;
 }
 
 interface EnsureDevServerParams {
@@ -58,12 +60,16 @@ interface EnsureDevServerParams {
   serverName?: string;
   wait?: boolean;
   timeoutMs?: number;
+  /** Override the resolved worktree (graph-workflow lane). Defaults to the session worktree. */
+  worktreePath?: string;
 }
 
 interface StopDevServerParams {
   projectPath: string;
   sessionName: string;
   serverName: string;
+  /** Override the resolved worktree (graph-workflow lane). Defaults to the session worktree. */
+  worktreePath?: string;
 }
 
 interface StopUnmanagedParams {
@@ -121,6 +127,7 @@ export interface DevServerServiceDeps {
   getServer(input: {
     projectPath: string;
     sessionName: string;
+    worktreePath: string;
     serverName: string;
   }): DevServerEntry | undefined;
   startServer(input: {
@@ -142,6 +149,7 @@ export interface DevServerServiceDeps {
   stopServer(input: {
     projectPath: string;
     sessionName: string;
+    worktreePath: string;
     serverName: string;
   }): Promise<void>;
   killListeningProcessForPort(input: {
@@ -316,6 +324,7 @@ export function createDevServerService(
   async function resolveContext(params: {
     projectPath: string;
     sessionName: string;
+    worktreePath?: string;
   }): Promise<{
     worktreePath: string;
     configured: NormalizedDevServerConfig[];
@@ -327,12 +336,16 @@ export function createDevServerService(
     if (!session) {
       throw new SessionNotFoundError(params.projectPath, params.sessionName);
     }
-    const repoConfig = await deps.readRepoConfig(session.worktreePath);
+    // A graph-workflow lane conversation runs under the parent session name but
+    // in its own worktree; honor that override so the dev server is spawned in
+    // and keyed by the lane worktree. Ordinary sessions pass no override.
+    const worktreePath = params.worktreePath ?? session.worktreePath;
+    const repoConfig = await deps.readRepoConfig(worktreePath);
     const configured = (repoConfig?.devServers ?? []).map(
       normalizeDevServerConfig,
     );
     return {
-      worktreePath: session.worktreePath,
+      worktreePath,
       configured,
     };
   }
@@ -363,7 +376,12 @@ export function createDevServerService(
     });
 
     return configured.map((cfg) => {
-      const entry = runtime.find((r) => r.serverName === cfg.name);
+      // Scope to this context's own worktree: a session can hold multiple
+      // entries per serverName (parent worktree + graph-workflow lane
+      // worktrees), all sharing the session prefix.
+      const entry = runtime.find(
+        (r) => r.serverName === cfg.name && r.worktreePath === worktreePath,
+      );
       return toStatusItem(entry, cfg);
     });
   }
@@ -397,6 +415,7 @@ export function createDevServerService(
     let runtime = deps.getServer({
       projectPath: params.projectPath,
       sessionName: params.sessionName,
+      worktreePath,
       serverName: target.name,
     });
 
@@ -447,6 +466,7 @@ export function createDevServerService(
       runtime = deps.getServer({
         projectPath: params.projectPath,
         sessionName: params.sessionName,
+        worktreePath,
         serverName: target.name,
       });
     }
@@ -464,6 +484,7 @@ export function createDevServerService(
       const current = deps.getServer({
         projectPath: params.projectPath,
         sessionName: params.sessionName,
+        worktreePath,
         serverName: target.name,
       });
       lastStatus = current?.status ?? "stopped";
@@ -549,7 +570,7 @@ export function createDevServerService(
   async function stop(
     params: StopDevServerParams,
   ): Promise<DevServerStatusItem | null> {
-    const { configured } = await resolveContext(params);
+    const { worktreePath, configured } = await resolveContext(params);
     const target = configured.find((s) => s.name === params.serverName);
     if (!target) throw new UnknownDevServerError(params.serverName);
 
@@ -562,12 +583,14 @@ export function createDevServerService(
     await deps.stopServer({
       projectPath: params.projectPath,
       sessionName: params.sessionName,
+      worktreePath,
       serverName: target.name,
     });
 
     const after = deps.getServer({
       projectPath: params.projectPath,
       sessionName: params.sessionName,
+      worktreePath,
       serverName: target.name,
     });
     return toStatusItem(after, target);

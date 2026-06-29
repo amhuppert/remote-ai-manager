@@ -32,6 +32,7 @@ import {
 import type { MutateActiveResult } from "@/lib/workflow-graph/execution-repository";
 import type { TemplateTier } from "@/lib/workflow-graph/template-library-service";
 import { computeUsedBackends } from "@/lib/workflow-graph/resolve-config";
+import { stopExecutionLaneDevServers as defaultStopExecutionLaneDevServers } from "@/lib/workflow-graph/dev-server-lane-cleanup";
 import {
   createPreflightPrerequisiteService,
   type MissingPrerequisite,
@@ -263,6 +264,17 @@ export interface GraphWorkflowManagerDeps {
     sessionName: string;
     conversationId: string;
   }): void;
+  /**
+   * Stop dev servers running in an execution's lane worktrees. Invoked on
+   * abort/halt/drain/reset so a workflow that ends (or has a context reset)
+   * never leaves orphaned lane dev servers. Defaults to the real worktree-
+   * scoped registry stop; injected in tests to assert invocation.
+   */
+  stopExecutionLaneDevServers?(input: {
+    execution: GraphWorkflowExecution;
+    projectPath: string;
+    contextIds?: string[];
+  }): Promise<void>;
 }
 
 export interface ScheduleEligibleContextsInput {
@@ -471,6 +483,9 @@ function transitionToNonRunningState(
 }
 
 export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
+  const stopLaneDevServers =
+    deps.stopExecutionLaneDevServers ?? defaultStopExecutionLaneDevServers;
+
   function abortRunningTaskConversations(
     projectPath: string,
     sessionName: string,
@@ -752,6 +767,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         sessionName,
         conversationIdsToAbort,
       );
+      await stopLaneDevServers({ execution: nextExecution, projectPath });
       const execLogger = getExecutionLogger(nextExecution.id);
       execLogger?.lifecycle("execution.aborted");
       execLogger?.writeManifest(nextExecution);
@@ -809,6 +825,7 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       sessionName,
       conversationIdsToAbort,
     );
+    await stopLaneDevServers({ execution: nextExecution, projectPath });
     const execLogger = getExecutionLogger(nextExecution.id);
     execLogger?.lifecycle("execution.halted", {
       haltReason,
@@ -1821,6 +1838,8 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       },
     );
 
+    await stopLaneDevServers({ execution: nextExecution, projectPath });
+
     const execLogger = getExecutionLogger(nextExecution.id);
     execLogger?.lifecycle("execution.halted", {
       haltReason: nextExecution.haltReason,
@@ -1870,6 +1889,13 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         active.id,
         contextId,
       );
+      // Stop this context's lane dev servers before the reset drops its lane
+      // association (resetExecutionContext rebuilds the context's lane state).
+      await stopLaneDevServers({
+        execution: active,
+        projectPath,
+        contextIds: [contextId],
+      });
     }
 
     const nextExecution = await deps.executionRepository.mutateActive(

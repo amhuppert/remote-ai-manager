@@ -65,6 +65,7 @@ import {
   type DrainAndHaltInput,
 } from "@/lib/workflow-graph/workflow-manager";
 import { createPreflightPrerequisiteService } from "@/lib/workflow-graph/preflight-prerequisite-service";
+import { stopExecutionLaneDevServers as defaultStopExecutionLaneDevServers } from "@/lib/workflow-graph/dev-server-lane-cleanup";
 import { toHaltReason } from "@/lib/workflow-graph/errors";
 import { readWorktreeDirtyPaths } from "@/lib/git/worktree";
 import { createWorkflowContinuityService } from "@/lib/workflow-graph/workflow-continuity-service";
@@ -447,6 +448,15 @@ export interface GraphWorkflowExecutionRouteDeps {
     executionId: string,
     limit: number,
   ): Promise<GraphWorkflowExecutionEvent[]>;
+  /**
+   * Stop dev servers running in a terminal execution's lane worktrees before it
+   * is cleared/archived. Backstop for the case where halt/abort/merge cleanup
+   * did not stop them. Defaults to the real worktree-scoped cleanup.
+   */
+  stopExecutionLaneDevServers?(input: {
+    execution: GraphWorkflowExecution;
+    projectPath: string;
+  }): Promise<void>;
 }
 
 const approvalGateService = createApprovalGateService({
@@ -483,6 +493,8 @@ const defaultDeps: GraphWorkflowExecutionRouteDeps = {
     listArchivedGraphWorkflowExecutions(projectPath, sessionName),
   getEventsTail: (executionId, limit) =>
     getGraphWorkflowEventsTail(executionId, limit),
+  stopExecutionLaneDevServers: (input) =>
+    defaultStopExecutionLaneDevServers(input),
 };
 
 function isTerminalStatus(status: GraphWorkflowStatus): boolean {
@@ -1316,6 +1328,12 @@ export function createGraphWorkflowExecutionRouteHandlers(
       );
     }
 
+    // Backstop: stop any lane dev servers that survived prior cleanup before
+    // the terminal execution (and its lane references) is archived away.
+    await deps.stopExecutionLaneDevServers?.({
+      execution: activeExecution,
+      projectPath: resolved.projectPath,
+    });
     await deps.archiveExecution(resolved.projectPath, resolved.sessionName);
     return NextResponse.json({ cleared: true });
   }

@@ -37,7 +37,10 @@ type RouteContext = {
 
 export interface DevServerRouteDeps {
   resolveProjectPath(name: string): Promise<string | null>;
-  getSession(projectPath: string, sessionName: string): Promise<unknown>;
+  getSession(
+    projectPath: string,
+    sessionName: string,
+  ): Promise<{ worktreePath: string } | null>;
   service: DevServerService;
   stopAllForSession(params: {
     projectPath: string;
@@ -46,11 +49,13 @@ export interface DevServerRouteDeps {
   getServer(params: {
     projectPath: string;
     sessionName: string;
+    worktreePath: string;
     serverName: string;
   }): { status: string } | undefined;
   stopServer(params: {
     projectPath: string;
     sessionName: string;
+    worktreePath: string;
     serverName: string;
   }): Promise<void>;
 }
@@ -154,14 +159,17 @@ async function resolveProjectAndSessionOr404(
   deps: DevServerRouteDeps,
   projectName: string,
   sessionName: string,
-): Promise<{ projectPath: string } | Response> {
+): Promise<{ projectPath: string; worktreePath: string } | Response> {
   const resolved = await resolveProjectOr404(deps, projectName);
   if (resolved instanceof Response) return resolved;
   const sessionState = await deps.getSession(resolved.projectPath, sessionName);
   if (!sessionState) {
     return apiError("Session not found", 404);
   }
-  return resolved;
+  return {
+    projectPath: resolved.projectPath,
+    worktreePath: sessionState.worktreePath,
+  };
 }
 
 export function createDevServerRouteHandlers(
@@ -289,6 +297,7 @@ export function createDevServerRouteHandlers(
     const existing = deps.getServer({
       projectPath: resolved.projectPath,
       sessionName,
+      worktreePath: resolved.worktreePath,
       serverName,
     });
     if (
@@ -301,6 +310,7 @@ export function createDevServerRouteHandlers(
     await deps.stopServer({
       projectPath: resolved.projectPath,
       sessionName,
+      worktreePath: resolved.worktreePath,
       serverName,
     });
     return NextResponse.json({ status: "ok" });

@@ -446,12 +446,17 @@ export interface BulkSessionsRouteDeps {
     projectPath: string,
     sessionNames: string[],
   ): Promise<BulkSessionResult[]>;
+  stopAllForSession(params: {
+    projectPath: string;
+    sessionName: string;
+  }): Promise<void>;
 }
 
 const defaultBulkDeps: BulkSessionsRouteDeps = {
   resolveProjectPath,
   setSessionArchived,
   bulkDeleteSessions,
+  stopAllForSession,
 };
 
 export function createBulkSessionsRouteHandlers(
@@ -513,6 +518,13 @@ export function createBulkSessionsRouteHandlers(
       results = [];
       for (const sessionName of sessionNames) {
         try {
+          if (op === "archive") {
+            try {
+              await deps.stopAllForSession({ projectPath, sessionName });
+            } catch {
+              // best-effort: don't block archival
+            }
+          }
           await deps.setSessionArchived(
             projectPath,
             sessionName,

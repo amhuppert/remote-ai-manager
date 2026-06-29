@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { type GitClient } from "@/lib/git/client";
 import { createParallelWorktrees } from "./parallel-worktrees";
 
@@ -102,5 +102,59 @@ describe("createParallelWorktrees.provision dirty-after-create probe", () => {
     expect(
       warnCalls.find((c) => c.message === "provision_dirty_after_create"),
     ).toBeUndefined();
+  });
+});
+
+describe("createParallelWorktrees.dispose stop-before-remove", () => {
+  it("stops dev servers in the worktree before removing it", async () => {
+    const order: string[] = [];
+    const stopDevServersForWorktree = vi.fn(async () => {
+      order.push("stop");
+    });
+    const fastRemoveWorktree = vi.fn(async () => {
+      order.push("remove");
+      return { status: "moved" as const };
+    });
+
+    const pwt = createParallelWorktrees({
+      stopDevServersForWorktree,
+      fastRemoveWorktree,
+    });
+
+    const result = await pwt.dispose({
+      projectPath: "/fake",
+      worktreePath: "/fake/.worktrees/session.ctx1",
+      branchName: "csm/session-ctx1",
+    });
+
+    expect(result.status).toBe("removed");
+    expect(order).toEqual(["stop", "remove"]);
+    expect(stopDevServersForWorktree).toHaveBeenCalledWith({
+      projectPath: "/fake",
+      worktreePath: "/fake/.worktrees/session.ctx1",
+    });
+  });
+
+  it("removes the worktree even when stopping dev servers throws", async () => {
+    const fastRemoveWorktree = vi.fn(async () => ({
+      status: "moved" as const,
+    }));
+    const stopDevServersForWorktree = vi.fn(async () => {
+      throw new Error("stop failed");
+    });
+
+    const pwt = createParallelWorktrees({
+      stopDevServersForWorktree,
+      fastRemoveWorktree,
+    });
+
+    const result = await pwt.dispose({
+      projectPath: "/fake",
+      worktreePath: "/fake/.worktrees/session.ctx1",
+      branchName: "csm/session-ctx1",
+    });
+
+    expect(result.status).toBe("removed");
+    expect(fastRemoveWorktree).toHaveBeenCalledTimes(1);
   });
 });

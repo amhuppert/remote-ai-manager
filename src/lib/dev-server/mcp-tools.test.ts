@@ -33,6 +33,7 @@ function createCapturingServer() {
 const CONTEXT: DevServerToolContext = {
   projectPath: "/projects/test",
   sessionName: "s1",
+  worktreePath: "/projects/test/.worktrees/s1",
 };
 
 function makeStatusItem(
@@ -116,6 +117,7 @@ describe("dev-server-mcp-tools", () => {
       expect(service.list).toHaveBeenCalledWith({
         projectPath: "/projects/test",
         sessionName: "s1",
+        worktreePath: "/projects/test/.worktrees/s1",
       });
       const payload = parseJson(result.content[0]!.text) as {
         servers: DevServerStatusItem[];
@@ -147,6 +149,7 @@ describe("dev-server-mcp-tools", () => {
       expect(service.ensure).toHaveBeenCalledWith({
         projectPath: "/projects/test",
         sessionName: "s1",
+        worktreePath: "/projects/test/.worktrees/s1",
         wait: true,
       });
       const payload = parseJson(result.content[0]!.text) as {
@@ -165,6 +168,7 @@ describe("dev-server-mcp-tools", () => {
       expect(service.ensure).toHaveBeenCalledWith({
         projectPath: "/projects/test",
         sessionName: "s1",
+        worktreePath: "/projects/test/.worktrees/s1",
         serverName: "storybook",
         wait: false,
         timeoutMs: 1234,
@@ -254,6 +258,7 @@ describe("dev-server-mcp-tools", () => {
       expect(service.stop).toHaveBeenCalledWith({
         projectPath: "/projects/test",
         sessionName: "s1",
+        worktreePath: "/projects/test/.worktrees/s1",
         serverName: "nextjs",
       });
       const payload = parseJson(result.content[0]!.text) as {
