@@ -25,6 +25,7 @@ import {
   deriveActiveTurnSource,
   shouldRehydrateSnapshot,
   ensureConversationActor,
+  ensureConversationActorAndDrain,
   setEnsureConversationActorDeps,
   _resetEnsureConversationActorDepsForTesting,
   notifyProjectConversationStatusFromContext,
@@ -1664,6 +1665,77 @@ describe("conversation manager", () => {
         sessionName: DEFAULT_INPUT.sessionName,
         conversationId: "conv-user",
       });
+    });
+  });
+
+  describe("ensureConversationActorAndDrain", () => {
+    afterEach(() => {
+      _resetConversationQueueDepsForTesting();
+      _resetEnsureConversationActorDepsForTesting();
+    });
+
+    it("explicitly drains an already-idle existing actor (whose idle entry won't re-fire)", async () => {
+      const claimNextTurnBatch = vi.fn(async () => null);
+      setConversationQueueDeps(makeQueueDeps({ claimNextTurnBatch }));
+
+      // A registered actor already sitting in idle: re-ensuring it does not
+      // re-enter idle, so the machine's idle-entry drain will not fire again —
+      // the explicit drain is what delivers the just-enqueued turn.
+      startConversationActor({
+        ...DEFAULT_INPUT,
+        conversationId: "conv-idle-existing",
+        role: null,
+      });
+      claimNextTurnBatch.mockClear();
+
+      await ensureConversationActorAndDrain(
+        DEFAULT_INPUT.projectPath,
+        DEFAULT_INPUT.sessionName,
+        "conv-idle-existing",
+      );
+      await Promise.resolve();
+
+      expect(claimNextTurnBatch).toHaveBeenCalledTimes(1);
+      expect(claimNextTurnBatch).toHaveBeenCalledWith({
+        projectPath: DEFAULT_INPUT.projectPath,
+        sessionName: DEFAULT_INPUT.sessionName,
+        conversationId: "conv-idle-existing",
+      });
+    });
+
+    it("does not add an explicit drain for a freshly started actor (its idle entry owns delivery)", async () => {
+      const claimNextTurnBatch = vi.fn(async () => null);
+      setConversationQueueDeps(makeQueueDeps({ claimNextTurnBatch }));
+
+      const loadActorInput = vi.fn(
+        async () =>
+          ({
+            projectName: DEFAULT_INPUT.projectName,
+            sessionWorktreePath: DEFAULT_INPUT.worktreePath,
+            conversation: {
+              createdAt: DEFAULT_INPUT.createdAt,
+              forkedFrom: null,
+              role: null,
+              transcriptPath: null,
+              agentBackend: "claude",
+              backendRef: null,
+              promptCount: 0,
+              debugMode: null,
+            },
+          }) satisfies EnsureActorInputData,
+      );
+      setEnsureConversationActorDeps({ loadActorInput });
+
+      await ensureConversationActorAndDrain(
+        DEFAULT_INPUT.projectPath,
+        DEFAULT_INPUT.sessionName,
+        "conv-fresh",
+      );
+      await Promise.resolve();
+
+      // The actor was created fresh, so the redundant explicit drain is skipped;
+      // the machine's idle-entry drain owns delivery for a new actor.
+      expect(claimNextTurnBatch).not.toHaveBeenCalled();
     });
   });
 

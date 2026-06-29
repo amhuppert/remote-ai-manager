@@ -1162,6 +1162,50 @@ export async function ensureConversationActor(
 }
 
 /**
+ * Ensure the conversation actor is running and deliver any pending queued
+ * messages now. Used to route an out-of-band enqueued turn (e.g. the /align
+ * authoring turn) into a conversation that may have no in-flight turn — without
+ * this the row sits `pending` because in-turn delivery has no live runtime and
+ * the next-turn drain only fires on a live actor's idle entry.
+ *
+ * A freshly started actor drains on its startup idle entry. An actor that was
+ * already registered and idle does NOT re-enter idle, so its entry-action drain
+ * will not re-fire — drain it explicitly. A busy actor drains when its current
+ * turn settles, so it needs no nudge here. Draining is fire-and-forget and a
+ * no-op when the queue is empty, so the explicit drain is safe.
+ */
+export async function ensureConversationActorAndDrain(
+  projectPath: string,
+  sessionName: string,
+  conversationId: string,
+): Promise<void> {
+  const existing = getConversationActor(
+    projectPath,
+    sessionName,
+    conversationId,
+  );
+  const actor = await ensureConversationActor(
+    projectPath,
+    sessionName,
+    conversationId,
+  );
+  const explicitDrain = Boolean(existing) && isActorIdle(actor);
+  logger.info("conversation-manager.ensure_and_drain", {
+    sessionName,
+    conversationId,
+    hadExistingActor: Boolean(existing),
+    explicitDrain,
+  });
+  if (explicitDrain) {
+    void drainConversationQueue(
+      actor,
+      actor.getSnapshot().context,
+      getConversationQueueDeps(),
+    );
+  }
+}
+
+/**
  * Send an event to a running conversation actor.
  * Returns false if no actor exists.
  */
