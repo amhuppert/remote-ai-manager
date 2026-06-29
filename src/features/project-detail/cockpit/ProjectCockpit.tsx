@@ -109,6 +109,11 @@ const RAIL_CLASS =
   "[grid-area:rail] flex flex-col min-w-0 min-h-0 h-full overflow-hidden " +
   "border-y-0 border-l-0 border-r border-solid border-border-subtle bg-bg-base " +
   "[&>.convo-sidebar]:flex-1 [&>.convo-sidebar]:min-h-0 [&>.convo-sidebar]:h-auto " +
+  // The injected ConversationSidebar carries the session-page shell's own
+  // `--convo-sidebar-w` width/min-width (340px floor), but the cockpit rail
+  // column is `--plc-rail-w` (≤308px). Pin the embedded sidebar to the rail
+  // column so its content isn't clipped by this pane's `overflow-hidden`.
+  "[&>.convo-sidebar]:w-full [&>.convo-sidebar]:min-w-0 " +
   "max-768:hidden max-768:group-data-[mobile-pane=rail]:flex " +
   "max-768:group-data-[mobile-pane=rail]:flex-1 max-768:group-data-[mobile-pane=rail]:w-full " +
   "max-768:group-data-[mobile-pane=rail]:border-r-0 " +
