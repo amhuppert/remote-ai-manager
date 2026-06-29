@@ -22,6 +22,7 @@ import type {
 import type { BuiltCollaborationPrompt } from "./prompt-builders";
 import type {
   CollaborationAgent,
+  CollaborationAgentArtifactPhase,
   CollaborationArtifact,
   CollaborationFlowAgent,
 } from "./types";
@@ -76,29 +77,100 @@ export interface ParseSchema<T> {
       };
 }
 
-export function parseStructured<T>(
-  artifactKind: string,
+/**
+ * Orchestrator-owned bookkeeping injected onto a model-authored artifact after
+ * parsing. The model is no longer asked to emit any of these — they are derived
+ * deterministically from the phase the orchestrator is running:
+ *   - envelope: `kind` (the phase), `agent`, optional `target_agent`, `round`
+ *   - each generated artifact: `round` = envelope round, `agent` = envelope
+ *     agent, `phase` = envelope kind
+ */
+export interface ArtifactInjection {
+  kind: CollaborationAgentArtifactPhase;
+  agent: CollaborationFlowAgent;
+  round: number;
+  target_agent?: CollaborationFlowAgent;
+}
+
+function formatSchemaIssues(
+  issues: ReadonlyArray<{ path: ReadonlyArray<unknown>; message: string }>,
+): string {
+  return issues
+    .map(
+      (issue) => `${(issue.path.join(".") || "$") as string}: ${issue.message}`,
+    )
+    .join("; ");
+}
+
+/**
+ * Parses a phase turn's structured output against the model-facing `content`
+ * schema, injects the orchestrator-owned bookkeeping, then validates the
+ * reconstructed full artifact against `full`.
+ *
+ * Splitting the two stages is what makes failures legible: a `schema_validation`
+ * error is something the model got wrong about the content it authored (with a
+ * named path, e.g. `artifacts: must include a generated artifact with id
+ * "main"...`), whereas an `injection_invariant` error means the orchestrator
+ * produced an inconsistent envelope — a programming error, not the model's
+ * fault. The old single-schema parse collapsed both into an opaque
+ * `$: Invalid input`.
+ */
+export function parseAndInjectArtifact<F>(
   flowAgent: CollaborationFlowAgent,
   result: AgentCallResult,
-  schema: ParseSchema<T>,
-): ParseOutcome<T> {
+  args: {
+    contentSchema: ParseSchema<unknown>;
+    fullSchema: ParseSchema<F>;
+    injection: ArtifactInjection;
+  },
+): ParseOutcome<F> {
+  const { contentSchema, fullSchema, injection } = args;
+  const artifactKind = injection.kind;
   if (result.outcome.kind !== "completed") {
     return {
       success: false,
       error: `${artifactKind} (${flowAgent}) did not complete (outcome=${result.outcome.kind})`,
     };
   }
-  const parsed = schema.safeParse(result.outcome.structuredOutput);
-  if (parsed.success) {
-    return { success: true, value: parsed.data };
+
+  const content = contentSchema.safeParse(result.outcome.structuredOutput);
+  if (!content.success) {
+    return {
+      success: false,
+      error: `${artifactKind} (${flowAgent}) schema_validation: ${formatSchemaIssues(content.error.issues)}`,
+    };
   }
-  const summary = parsed.error.issues
-    .map((i) => `${(i.path.join(".") || "$") as string}: ${i.message}`)
-    .join("; ");
-  return {
-    success: false,
-    error: `${artifactKind} (${flowAgent}) schema_validation: ${summary}`,
+
+  // content.data validated against an object schema above, so it is safe to read
+  // its `artifacts` array. The orchestrator owns every envelope and per-artifact
+  // bookkeeping field; inject them so persistence, the artifact-file validator,
+  // the UI, and downstream prompt building all see the full artifact shape.
+  const contentData = content.data as {
+    artifacts?: ReadonlyArray<Record<string, unknown>>;
+  } & Record<string, unknown>;
+  const artifactRefs = {
+    round: injection.round,
+    agent: injection.agent,
+    phase: injection.kind,
   };
+  const injectedArtifacts = (contentData.artifacts ?? []).map((artifact) => ({
+    ...artifact,
+    ...artifactRefs,
+  }));
+  const merged = {
+    ...injection,
+    ...contentData,
+    artifacts: injectedArtifacts,
+  };
+
+  const full = fullSchema.safeParse(merged);
+  if (!full.success) {
+    return {
+      success: false,
+      error: `${artifactKind} (${flowAgent}) injection_invariant: ${formatSchemaIssues(full.error.issues)}`,
+    };
+  }
+  return { success: true, value: full.data };
 }
 
 // ============================================================

@@ -616,14 +616,17 @@ describe("runAsymmetricCollaborationSlice — resolution sees latest counter-pro
           }),
         ),
         // Round 2 proposed_changes.
-        makeBackendResult("claude", makeAgentOneProposedChanges()),
+        makeBackendResult("claude", makeAgentOneProposedChanges({ round: 2 })),
         // Round 2 resolution: final.
         makeBackendResult(
           "claude",
-          makeResolutionDecisionFinal({ remaining_disagreements: [] }),
+          makeResolutionDecisionFinal({
+            remaining_disagreements: [],
+            round: 2,
+          }),
         ),
         // Final answer.
-        makeBackendResult("claude", makeFinalAnswer()),
+        makeBackendResult("claude", makeFinalAnswer({ round: 2 })),
       ],
       codex: [
         // Initial draft.
@@ -713,13 +716,16 @@ describe("runAsymmetricCollaborationSlice — policy edges", () => {
           }),
         ),
         // Round 2 proposed_changes.
-        makeBackendResult("claude", makeAgentOneProposedChanges()),
+        makeBackendResult("claude", makeAgentOneProposedChanges({ round: 2 })),
         // Round 2 resolution: final.
         makeBackendResult(
           "claude",
-          makeResolutionDecisionFinal({ remaining_disagreements: [] }),
+          makeResolutionDecisionFinal({
+            remaining_disagreements: [],
+            round: 2,
+          }),
         ),
-        makeBackendResult("claude", makeFinalAnswer()),
+        makeBackendResult("claude", makeFinalAnswer({ round: 2 })),
       ],
       codex: [
         makeBackendResult("codex", makeAgentTwoInitialDraft()),

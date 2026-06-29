@@ -14,7 +14,9 @@ import {
   buildAgentOneResolutionDecisionPrompt,
 } from "./prompt-builders";
 import {
+  collaborationProposedChangesContentSchema,
   collaborationProposedChangesOutputSchema,
+  collaborationResolutionDecisionContentSchema,
   collaborationResolutionDecisionOutputSchema,
   type CollaborationAgent,
   type CollaborationCounterProposalOutput,
@@ -32,7 +34,7 @@ import {
 } from "./envelope";
 import {
   callPrimitive,
-  parseStructured,
+  parseAndInjectArtifact,
   trackArtifact,
   type ArtifactTracker,
 } from "./helpers";
@@ -97,11 +99,19 @@ export async function runProposedChangesStep(
       }),
     };
   }
-  const proposedChanges = parseStructured(
-    "proposed_changes",
+  const proposedChanges = parseAndInjectArtifact(
     "agent_one",
     proposedChangesCall.result,
-    collaborationProposedChangesOutputSchema,
+    {
+      contentSchema: collaborationProposedChangesContentSchema,
+      fullSchema: collaborationProposedChangesOutputSchema,
+      injection: {
+        kind: "proposed_changes",
+        agent: "agent_one",
+        target_agent: "agent_two",
+        round,
+      },
+    },
   );
   if (!proposedChanges.success) {
     return {
@@ -205,11 +215,19 @@ export async function runResolutionDecisionStep(
       }),
     };
   }
-  const resolution = parseStructured(
-    "resolution_decision",
+  const resolution = parseAndInjectArtifact(
     "agent_one",
     resolutionCall.result,
-    collaborationResolutionDecisionOutputSchema,
+    {
+      contentSchema: collaborationResolutionDecisionContentSchema,
+      fullSchema: collaborationResolutionDecisionOutputSchema,
+      injection: {
+        kind: "resolution_decision",
+        agent: "agent_one",
+        target_agent: "agent_two",
+        round,
+      },
+    },
   );
   if (!resolution.success) {
     return {

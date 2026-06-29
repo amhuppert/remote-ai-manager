@@ -8,6 +8,7 @@
 
 import { buildAgentTwoCounterProposalPrompt } from "./prompt-builders";
 import {
+  collaborationCounterProposalContentSchema,
   collaborationCounterProposalOutputSchema,
   type CollaborationAgent,
   type CollaborationCounterProposalOutput,
@@ -25,7 +26,7 @@ import {
 } from "./envelope";
 import {
   callPrimitive,
-  parseStructured,
+  parseAndInjectArtifact,
   trackArtifact,
   type ArtifactTracker,
 } from "./helpers";
@@ -96,11 +97,19 @@ export async function runCounterProposalStep(
       }),
     };
   }
-  const counterProposal = parseStructured(
-    "counter_proposal",
+  const counterProposal = parseAndInjectArtifact(
     "agent_two",
     counterProposalCall.result,
-    collaborationCounterProposalOutputSchema,
+    {
+      contentSchema: collaborationCounterProposalContentSchema,
+      fullSchema: collaborationCounterProposalOutputSchema,
+      injection: {
+        kind: "counter_proposal",
+        agent: "agent_two",
+        target_agent: "agent_one",
+        round,
+      },
+    },
   );
   if (!counterProposal.success) {
     return {

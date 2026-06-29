@@ -62,13 +62,24 @@ import {
   readGeneratedArtifactFile,
   validateGeneratedArtifactFiles,
 } from "@/lib/workflows/collaboration/artifact-files";
+import {
+  parseAndInjectArtifact,
+  type ArtifactInjection,
+  type ParseSchema,
+} from "@/lib/workflows/collaboration/helpers";
 import type { WorkflowCollaborationCollaboratorCaller } from "@/lib/workflows/collaboration/workflow-envelope";
 import {
+  collaborationCounterProposalContentSchema,
   collaborationCounterProposalOutputSchema,
+  collaborationCrossReviewContentSchema,
   collaborationCrossReviewOutputSchema,
+  collaborationFinalAnswerContentSchema,
   collaborationFinalAnswerOutputSchema,
+  collaborationInitialDraftContentSchema,
   collaborationInitialDraftOutputSchema,
+  collaborationProposedChangesContentSchema,
   collaborationProposedChangesOutputSchema,
+  collaborationResolutionDecisionContentSchema,
   collaborationResolutionDecisionOutputSchema,
   type ResolvedCollaborationConfig,
 } from "@/lib/workflows/schemas";
@@ -257,13 +268,31 @@ export function createWorkflowCollaboratorCaller(
     return `unexpected outcome kind: ${result.outcome.kind}`;
   }
 
-  function expectCompleted(result: AgentCallResult, label: string): unknown {
+  // Parses the model-authored content for one phase and injects the
+  // orchestrator-owned bookkeeping (envelope kind/agent/target_agent/round and
+  // each generated artifact's round/agent/phase) to reconstruct the full
+  // artifact, mirroring the asymmetric slice's `parseAndInjectArtifact` path.
+  function parseArtifact<F>(
+    result: AgentCallResult,
+    label: string,
+    contentSchema: ParseSchema<unknown>,
+    fullSchema: ParseSchema<F>,
+    injection: ArtifactInjection,
+  ): F {
     if (result.outcome.kind !== "completed") {
       throw new Error(
         `workflow collaborator ${label} did not complete: ${failureWhy(result)}`,
       );
     }
-    return result.outcome.structuredOutput;
+    const outcome = parseAndInjectArtifact(injection.agent, result, {
+      contentSchema,
+      fullSchema,
+      injection,
+    });
+    if (!outcome.success) {
+      throw new Error(`workflow collaborator ${label}: ${outcome.error}`);
+    }
+    return outcome.value;
   }
 
   async function validateArtifactFiles(
@@ -312,11 +341,19 @@ export function createWorkflowCollaboratorCaller(
           phase: "initial_draft",
         }),
       ]);
-      const agentOneDraft = collaborationInitialDraftOutputSchema.parse(
-        expectCompleted(agentOneResult, "agent_one initial draft"),
+      const agentOneDraft = parseArtifact(
+        agentOneResult,
+        "agent_one initial draft",
+        collaborationInitialDraftContentSchema,
+        collaborationInitialDraftOutputSchema,
+        { kind: "initial_draft", agent: "agent_one", round: 0 },
       );
-      const agentTwoDraft = collaborationInitialDraftOutputSchema.parse(
-        expectCompleted(agentTwoResult, "agent_two initial draft"),
+      const agentTwoDraft = parseArtifact(
+        agentTwoResult,
+        "agent_two initial draft",
+        collaborationInitialDraftContentSchema,
+        collaborationInitialDraftOutputSchema,
+        { kind: "initial_draft", agent: "agent_two", round: 0 },
       );
       await validateArtifactFiles("agent_one initial draft", agentOneDraft);
       await validateArtifactFiles("agent_two initial draft", agentTwoDraft);
@@ -337,8 +374,17 @@ export function createWorkflowCollaboratorCaller(
         agent: "agent_two",
         phase: "cross_review",
       });
-      const agentTwoCrossReview = collaborationCrossReviewOutputSchema.parse(
-        expectCompleted(reviewResult, "agent_two cross review"),
+      const agentTwoCrossReview = parseArtifact(
+        reviewResult,
+        "agent_two cross review",
+        collaborationCrossReviewContentSchema,
+        collaborationCrossReviewOutputSchema,
+        {
+          kind: "cross_review",
+          agent: "agent_two",
+          target_agent: "agent_one",
+          round: 0,
+        },
       );
       await validateArtifactFiles(
         "agent_two cross review",
@@ -362,11 +408,17 @@ export function createWorkflowCollaboratorCaller(
         phase: "proposed_changes",
         round: roundInput.round,
       });
-      const proposedChanges = collaborationProposedChangesOutputSchema.parse(
-        expectCompleted(
-          proposedResult,
-          `round ${roundInput.round} agent_one proposed changes`,
-        ),
+      const proposedChanges = parseArtifact(
+        proposedResult,
+        `round ${roundInput.round} agent_one proposed changes`,
+        collaborationProposedChangesContentSchema,
+        collaborationProposedChangesOutputSchema,
+        {
+          kind: "proposed_changes",
+          agent: "agent_one",
+          target_agent: "agent_two",
+          round: roundInput.round,
+        },
       );
       await validateArtifactFiles(
         `round ${roundInput.round} agent_one proposed changes`,
@@ -389,11 +441,17 @@ export function createWorkflowCollaboratorCaller(
         phase: "counter_proposal",
         round: roundInput.round,
       });
-      const counterProposal = collaborationCounterProposalOutputSchema.parse(
-        expectCompleted(
-          counterResult,
-          `round ${roundInput.round} agent_two counter proposal`,
-        ),
+      const counterProposal = parseArtifact(
+        counterResult,
+        `round ${roundInput.round} agent_two counter proposal`,
+        collaborationCounterProposalContentSchema,
+        collaborationCounterProposalOutputSchema,
+        {
+          kind: "counter_proposal",
+          agent: "agent_two",
+          target_agent: "agent_one",
+          round: roundInput.round,
+        },
       );
       await validateArtifactFiles(
         `round ${roundInput.round} agent_two counter proposal`,
@@ -416,11 +474,17 @@ export function createWorkflowCollaboratorCaller(
         phase: "resolution_decision",
         round: roundInput.round,
       });
-      const resolution = collaborationResolutionDecisionOutputSchema.parse(
-        expectCompleted(
-          resolutionResult,
-          `round ${roundInput.round} agent_one resolution decision`,
-        ),
+      const resolution = parseArtifact(
+        resolutionResult,
+        `round ${roundInput.round} agent_one resolution decision`,
+        collaborationResolutionDecisionContentSchema,
+        collaborationResolutionDecisionOutputSchema,
+        {
+          kind: "resolution_decision",
+          agent: "agent_one",
+          target_agent: "agent_two",
+          round: roundInput.round,
+        },
       );
       await validateArtifactFiles(
         `round ${roundInput.round} agent_one resolution decision`,
@@ -446,8 +510,16 @@ export function createWorkflowCollaboratorCaller(
         agent: "agent_one",
         phase: "final_answer",
       });
-      const final = collaborationFinalAnswerOutputSchema.parse(
-        expectCompleted(finalResult, "final answer"),
+      const final = parseArtifact(
+        finalResult,
+        "final answer",
+        collaborationFinalAnswerContentSchema,
+        collaborationFinalAnswerOutputSchema,
+        {
+          kind: "final_answer",
+          agent: "agent_one",
+          round: finalInput.latestResolutionDecision.round,
+        },
       );
       await validateArtifactFiles("final answer", final);
       const answerRef = findGeneratedArtifactRef(

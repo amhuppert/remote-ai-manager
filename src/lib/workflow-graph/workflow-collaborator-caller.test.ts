@@ -469,7 +469,7 @@ describe("createWorkflowCollaboratorCaller", () => {
       });
 
       const out = await caller.runRound({
-        round: 2,
+        round: 1,
         brief: "use Postgres?",
         agentOneDraft: agentOneDraftFixture(),
         agentTwoDraft: agentTwoDraftFixture(),

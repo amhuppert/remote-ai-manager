@@ -1668,135 +1668,191 @@ const collaborationGeneratedArtifactsSchema = z.array(
   collaborationGeneratedArtifactSchema,
 );
 
-function hasArtifact(
-  artifacts: ReadonlyArray<CollaborationGeneratedArtifact>,
-  id: string,
-  artifactType: CollaborationGeneratedArtifactType,
-): boolean {
-  return artifacts.some(
-    (artifact) => artifact.id === id && artifact.artifact_type === artifactType,
-  );
+// The model-authored ("content") shape of a generated artifact: only the fields
+// the agent actually decides — id, artifact_type, path, summary. The
+// orchestrator owns round/agent/phase (they are always the envelope's
+// round/agent/kind) and injects them after parsing, so the model is never asked
+// to echo bookkeeping it cannot reliably get right. Default (strip) object mode,
+// not `.strict()`: if a backend echoes the injected fields anyway they are
+// dropped and then overwritten by the orchestrator — a resilient gate, not a
+// hard failure.
+const collaborationGeneratedArtifactContentSchema = z.object({
+  id: collaborationShortIdSchema,
+  artifact_type: collaborationGeneratedArtifactTypeSchema,
+  path: collaborationArtifactPathSchema,
+  summary: collaborationArtifactSummarySchema,
+});
+const collaborationGeneratedArtifactContentsSchema = z.array(
+  collaborationGeneratedArtifactContentSchema,
+);
+
+type CollaborationRequiredArtifact = {
+  id: string;
+  artifact_type: CollaborationGeneratedArtifactType;
+};
+
+const MAIN_RESPONSE_REQUIRED: ReadonlyArray<CollaborationRequiredArtifact> = [
+  { id: "main", artifact_type: "main_response" },
+];
+const FINAL_ANSWER_REQUIRED: ReadonlyArray<CollaborationRequiredArtifact> = [
+  { id: "answer", artifact_type: "main_response" },
+  { id: "audit", artifact_type: "audit" },
+];
+
+// Validates the one structural invariant the model owns — the required generated
+// artifact entries are present — and emits a named, path-attributed issue per
+// missing entry. This replaces the old bare `.refine()` whose failure surfaced
+// as an opaque root-level `$: Invalid input`. Per-artifact round/agent/phase
+// consistency is no longer checked here: the orchestrator injects those values,
+// so they are correct by construction (and the artifact-file validator still
+// re-checks the derived paths).
+function requireGeneratedArtifacts(
+  required: ReadonlyArray<CollaborationRequiredArtifact>,
+) {
+  return (
+    value: {
+      artifacts: ReadonlyArray<{
+        id: string;
+        artifact_type: CollaborationGeneratedArtifactType;
+      }>;
+    },
+    ctx: z.RefinementCtx,
+  ): void => {
+    for (const req of required) {
+      const present = value.artifacts.some(
+        (artifact) =>
+          artifact.id === req.id &&
+          artifact.artifact_type === req.artifact_type,
+      );
+      if (!present) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["artifacts"],
+          message: `must include a generated artifact with id "${req.id}" and artifact_type "${req.artifact_type}"`,
+        });
+      }
+    }
+  };
 }
 
-function parentArtifactRefsMatch(
-  artifacts: ReadonlyArray<CollaborationGeneratedArtifact>,
-  parent: {
-    round: number;
-    agent: z.infer<typeof collaborationFlowAgentSchema>;
-    phase: CollaborationAgentArtifactPhase;
-  },
-): boolean {
-  return artifacts.every(
-    (artifact) =>
-      artifact.round === parent.round &&
-      artifact.agent === parent.agent &&
-      artifact.phase === parent.phase,
-  );
-}
-
+const initialDraftBodyShape = {
+  summary: collaborationSummarySchema,
+  assumptions: z.array(collaborationShortTextSchema),
+  key_claims: z.array(collaborationArtifactAgreementSchema),
+};
+export const collaborationInitialDraftContentSchema = z
+  .object({
+    ...initialDraftBodyShape,
+    artifacts: collaborationGeneratedArtifactContentsSchema,
+  })
+  .superRefine(requireGeneratedArtifacts(MAIN_RESPONSE_REQUIRED));
+export type CollaborationInitialDraftContent = z.infer<
+  typeof collaborationInitialDraftContentSchema
+>;
 export const collaborationInitialDraftOutputSchema = z
   .object({
     kind: z.literal("initial_draft"),
     agent: collaborationFlowAgentSchema,
     round: z.number().int(),
-    summary: collaborationSummarySchema,
+    ...initialDraftBodyShape,
     artifacts: collaborationGeneratedArtifactsSchema,
-    assumptions: z.array(collaborationShortTextSchema),
-    key_claims: z.array(collaborationArtifactAgreementSchema),
   })
   .strict()
-  .refine(
-    (artifact) =>
-      artifact.artifacts.length > 0 &&
-      hasArtifact(artifact.artifacts, "main", "main_response") &&
-      parentArtifactRefsMatch(artifact.artifacts, {
-        round: artifact.round,
-        agent: artifact.agent,
-        phase: artifact.kind,
-      }),
-  );
+  .superRefine(requireGeneratedArtifacts(MAIN_RESPONSE_REQUIRED));
 export type CollaborationInitialDraftOutput = z.infer<
   typeof collaborationInitialDraftOutputSchema
 >;
 
+const crossReviewBodyShape = {
+  summary: collaborationSummarySchema,
+  agree: z.array(collaborationArtifactAgreementSchema),
+  disagree: z.array(collaborationArtifactDisagreementSchema),
+  revise_self: z.array(collaborationReviseSelfArtifactSchema),
+};
+export const collaborationCrossReviewContentSchema = z
+  .object({
+    ...crossReviewBodyShape,
+    artifacts: collaborationGeneratedArtifactContentsSchema,
+  })
+  .superRefine(requireGeneratedArtifacts(MAIN_RESPONSE_REQUIRED));
+export type CollaborationCrossReviewContent = z.infer<
+  typeof collaborationCrossReviewContentSchema
+>;
 export const collaborationCrossReviewOutputSchema = z
   .object({
     kind: z.literal("cross_review"),
     agent: collaborationFlowAgentSchema,
     target_agent: collaborationFlowAgentSchema,
     round: z.number().int(),
-    summary: collaborationSummarySchema,
+    ...crossReviewBodyShape,
     artifacts: collaborationGeneratedArtifactsSchema,
-    agree: z.array(collaborationArtifactAgreementSchema),
-    disagree: z.array(collaborationArtifactDisagreementSchema),
-    revise_self: z.array(collaborationReviseSelfArtifactSchema),
   })
   .strict()
-  .refine(
-    (artifact) =>
-      hasArtifact(artifact.artifacts, "main", "main_response") &&
-      parentArtifactRefsMatch(artifact.artifacts, {
-        round: artifact.round,
-        agent: artifact.agent,
-        phase: artifact.kind,
-      }),
-  );
+  .superRefine(requireGeneratedArtifacts(MAIN_RESPONSE_REQUIRED));
 export type CollaborationCrossReviewOutput = z.infer<
   typeof collaborationCrossReviewOutputSchema
 >;
 
+const proposedChangesBodyShape = {
+  summary: collaborationSummarySchema,
+  accepted_from_other_agent_draft: z.array(
+    collaborationArtifactAgreementSchema,
+  ),
+  proposed_changes: z.array(collaborationChangeProposalSchema),
+  remaining_disagreements: z.array(collaborationArtifactDisagreementSchema),
+};
+export const collaborationProposedChangesContentSchema = z
+  .object({
+    ...proposedChangesBodyShape,
+    artifacts: collaborationGeneratedArtifactContentsSchema,
+  })
+  .superRefine(requireGeneratedArtifacts(MAIN_RESPONSE_REQUIRED));
+export type CollaborationProposedChangesContent = z.infer<
+  typeof collaborationProposedChangesContentSchema
+>;
 export const collaborationProposedChangesOutputSchema = z
   .object({
     kind: z.literal("proposed_changes"),
     agent: z.literal("agent_one"),
     target_agent: z.literal("agent_two"),
     round: z.number().int(),
-    summary: collaborationSummarySchema,
+    ...proposedChangesBodyShape,
     artifacts: collaborationGeneratedArtifactsSchema,
-    accepted_from_other_agent_draft: z.array(
-      collaborationArtifactAgreementSchema,
-    ),
-    proposed_changes: z.array(collaborationChangeProposalSchema),
-    remaining_disagreements: z.array(collaborationArtifactDisagreementSchema),
   })
   .strict()
-  .refine(
-    (artifact) =>
-      hasArtifact(artifact.artifacts, "main", "main_response") &&
-      parentArtifactRefsMatch(artifact.artifacts, {
-        round: artifact.round,
-        agent: artifact.agent,
-        phase: artifact.kind,
-      }),
-  );
+  .superRefine(requireGeneratedArtifacts(MAIN_RESPONSE_REQUIRED));
 export type CollaborationProposedChangesOutput = z.infer<
   typeof collaborationProposedChangesOutputSchema
 >;
 
+const counterProposalBodyShape = {
+  summary: collaborationSummarySchema,
+  accepted_change_ids: z.array(collaborationShortIdSchema),
+  rejected_change_ids: z.array(collaborationShortIdSchema),
+  alternative_changes: z.array(collaborationChangeProposalSchema),
+  agree: z.array(collaborationArtifactAgreementSchema),
+  disagree: z.array(collaborationArtifactDisagreementSchema),
+};
+export const collaborationCounterProposalContentSchema = z
+  .object({
+    ...counterProposalBodyShape,
+    artifacts: collaborationGeneratedArtifactContentsSchema,
+  })
+  .superRefine(requireGeneratedArtifacts(MAIN_RESPONSE_REQUIRED));
+export type CollaborationCounterProposalContent = z.infer<
+  typeof collaborationCounterProposalContentSchema
+>;
 export const collaborationCounterProposalOutputSchema = z
   .object({
     kind: z.literal("counter_proposal"),
     agent: z.literal("agent_two"),
     target_agent: z.literal("agent_one"),
     round: z.number().int(),
-    summary: collaborationSummarySchema,
+    ...counterProposalBodyShape,
     artifacts: collaborationGeneratedArtifactsSchema,
-    accepted_change_ids: z.array(collaborationShortIdSchema),
-    rejected_change_ids: z.array(collaborationShortIdSchema),
-    alternative_changes: z.array(collaborationChangeProposalSchema),
-    agree: z.array(collaborationArtifactAgreementSchema),
-    disagree: z.array(collaborationArtifactDisagreementSchema),
   })
   .strict()
-  .refine(
-    (artifact) =>
-      hasArtifact(artifact.artifacts, "main", "main_response") &&
-      parentArtifactRefsMatch(artifact.artifacts, {
-        round: artifact.round,
-        agent: artifact.agent,
-        phase: artifact.kind,
-      }),
-  );
+  .superRefine(requireGeneratedArtifacts(MAIN_RESPONSE_REQUIRED));
 export type CollaborationCounterProposalOutput = z.infer<
   typeof collaborationCounterProposalOutputSchema
 >;
@@ -1823,32 +1879,36 @@ export type CollaborationResolvedDisagreement = z.infer<
   typeof collaborationResolvedDisagreementSchema
 >;
 
+const resolutionDecisionBodyShape = {
+  summary: collaborationSummarySchema,
+  agreement_reached: z.boolean(),
+  next_action: collaborationResolutionDecisionNextActionSchema,
+  accepted_points: z.array(collaborationArtifactAgreementSchema),
+  resolved_disagreements: z.array(collaborationResolvedDisagreementSchema),
+  remaining_disagreements: z.array(collaborationArtifactDisagreementSchema),
+  user_questions: z.array(collaborationUserQuestionSchema),
+  rationale: collaborationShortTextSchema,
+};
+export const collaborationResolutionDecisionContentSchema = z
+  .object({
+    ...resolutionDecisionBodyShape,
+    artifacts: collaborationGeneratedArtifactContentsSchema,
+  })
+  .superRefine(requireGeneratedArtifacts(MAIN_RESPONSE_REQUIRED));
+export type CollaborationResolutionDecisionContent = z.infer<
+  typeof collaborationResolutionDecisionContentSchema
+>;
 export const collaborationResolutionDecisionOutputSchema = z
   .object({
     kind: z.literal("resolution_decision"),
     agent: z.literal("agent_one"),
     target_agent: z.literal("agent_two"),
     round: z.number().int(),
-    summary: collaborationSummarySchema,
+    ...resolutionDecisionBodyShape,
     artifacts: collaborationGeneratedArtifactsSchema,
-    agreement_reached: z.boolean(),
-    next_action: collaborationResolutionDecisionNextActionSchema,
-    accepted_points: z.array(collaborationArtifactAgreementSchema),
-    resolved_disagreements: z.array(collaborationResolvedDisagreementSchema),
-    remaining_disagreements: z.array(collaborationArtifactDisagreementSchema),
-    user_questions: z.array(collaborationUserQuestionSchema),
-    rationale: collaborationShortTextSchema,
   })
   .strict()
-  .refine(
-    (artifact) =>
-      hasArtifact(artifact.artifacts, "main", "main_response") &&
-      parentArtifactRefsMatch(artifact.artifacts, {
-        round: artifact.round,
-        agent: artifact.agent,
-        phase: artifact.kind,
-      }),
-  );
+  .superRefine(requireGeneratedArtifacts(MAIN_RESPONSE_REQUIRED));
 export type CollaborationResolutionDecisionOutput = z.infer<
   typeof collaborationResolutionDecisionOutputSchema
 >;
@@ -1866,27 +1926,30 @@ export type CollaborationOpenConflictsOutput = z.infer<
   typeof collaborationOpenConflictsOutputSchema
 >;
 
+const finalAnswerBodyShape = {
+  summary: collaborationSummarySchema,
+  answer_artifact_id: z.literal("answer"),
+  audit_artifact_id: z.literal("audit"),
+};
+export const collaborationFinalAnswerContentSchema = z
+  .object({
+    ...finalAnswerBodyShape,
+    artifacts: collaborationGeneratedArtifactContentsSchema,
+  })
+  .superRefine(requireGeneratedArtifacts(FINAL_ANSWER_REQUIRED));
+export type CollaborationFinalAnswerContent = z.infer<
+  typeof collaborationFinalAnswerContentSchema
+>;
 export const collaborationFinalAnswerOutputSchema = z
   .object({
     kind: z.literal("final_answer"),
     agent: z.literal("agent_one"),
     round: z.number().int(),
-    summary: collaborationSummarySchema,
+    ...finalAnswerBodyShape,
     artifacts: collaborationGeneratedArtifactsSchema,
-    answer_artifact_id: z.literal("answer"),
-    audit_artifact_id: z.literal("audit"),
   })
   .strict()
-  .refine(
-    (artifact) =>
-      hasArtifact(artifact.artifacts, "answer", "main_response") &&
-      hasArtifact(artifact.artifacts, "audit", "audit") &&
-      parentArtifactRefsMatch(artifact.artifacts, {
-        round: artifact.round,
-        agent: artifact.agent,
-        phase: artifact.kind,
-      }),
-  );
+  .superRefine(requireGeneratedArtifacts(FINAL_ANSWER_REQUIRED));
 export type CollaborationFinalAnswerOutput = z.infer<
   typeof collaborationFinalAnswerOutputSchema
 >;

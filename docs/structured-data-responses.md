@@ -76,16 +76,20 @@ Recommended:
 
 - `snake_case` field names.
 - Shared field names across related agents or phases.
-- `kind`, `agent`, `round`, `summary`, and `artifacts` as common manifest
-  fields when they apply.
+- `summary` and `artifacts` as common manifest fields when they apply.
 - Short bounded IDs such as `answer`, `audit`, `main`, `D-1`, or `PC-1`.
 - Arrays with small maximum lengths.
 - Enums for workflow decisions and categories.
-- Artifact references with `id`, `artifact_type`, `path`, `round`, `agent`,
-  `phase`, and a short `summary`.
+- Artifact references with `id`, `artifact_type`, `path`, and a short `summary`.
 
 Avoid:
 
+- **Asking the model to echo bookkeeping the orchestrator already owns.** Fields
+  the orchestrator determines from the phase it is running — the collaboration
+  envelope's `kind`/`agent`/`target_agent`/`round` and each artifact reference's
+  `round`/`agent`/`phase` — are kept out of the model-facing schema and injected
+  after parsing (see [Orchestrator-Owned Fields](#orchestrator-owned-fields)).
+  The model authors only judgment and content.
 - Inline final answers, reports, audits, or research bodies.
 - Free-form object maps keyed by model-generated strings.
 - Large nullable surfaces where many combinations are technically valid.
@@ -141,6 +145,34 @@ Rules:
   unsupported keywords. See
   `src/lib/workflows/collaboration/schemas.test.ts` ("omits json_schema
   keywords Claude cannot enforce").
+
+## Orchestrator-Owned Fields
+
+Some fields in a manifest are not judgments the model makes — they are facts the
+orchestrator already knows from the phase it is running. In collaboration mode
+these are the envelope's `kind` (the phase), `agent`, `target_agent`, and
+`round`, plus each artifact reference's `round`, `agent`, and `phase`. Asking the
+model to emit them is pure downside: it cannot get them more right than the
+orchestrator, and a self-consistency slip (an artifact tagged with the wrong
+round, or an envelope echoing a stale phase) fails the run on bookkeeping rather
+than substance — the failure mode that produced the opaque `$: Invalid input`.
+
+Per the agent-offloading principle, keep these fields **out of the model-facing
+schema entirely** and inject them after parsing:
+
+- The JSON Schema projection and a `*ContentSchema` describe only the
+  model-authored content. The content schema uses strip (non-`strict`) mode, so
+  if a backend echoes an owned field anyway it is dropped, then overwritten —
+  resilient rather than a hard failure.
+- `parseAndInjectArtifact`
+  (`src/lib/workflows/collaboration/helpers.ts`) parses the content, injects the
+  orchestrator's values to rebuild the full artifact, and re-validates against
+  the persisted schema. A content failure (`schema_validation`) is the model's
+  fault and carries a named path; an injection failure (`injection_invariant`)
+  is the orchestrator's. Neither collapses into an unattributed root error.
+- The required-artifact check that remains in the content schema emits a named,
+  path-attributed issue (`artifacts: must include a generated artifact with id
+  "main"…`) instead of a bare refinement.
 
 ## Artifact File Rules
 

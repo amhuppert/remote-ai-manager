@@ -8,7 +8,7 @@ import {
 } from "./prompt-builders";
 import {
   COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA,
-  type CollaborationInitialDraftOutput,
+  type CollaborationInitialDraftContent,
 } from "./types";
 import type { AgentTaskRunner } from "@/lib/agent-backends/task";
 import type {
@@ -25,20 +25,17 @@ import { createLaneService } from "@/lib/workflows/primitives/lane-service";
 import { createInMemoryLaneStore } from "@/lib/workflows/primitives/lane-store";
 import type { AgentCallRequest } from "@/lib/workflows/primitives/agent-call-vocabulary";
 
-function draftOutput(round: number): CollaborationInitialDraftOutput {
+// The format turn emits model-authored content only — the orchestrator owns
+// kind/agent/round and each artifact's round/agent/phase and injects them after
+// parsing, so they are absent here (and would fail the trimmed json_schema).
+function draftOutput(round: number): CollaborationInitialDraftContent {
   return {
-    kind: "initial_draft",
-    agent: "agent_one",
-    round: 0,
     summary: `# Round ${round} draft`,
     artifacts: [
       {
         id: "main",
         artifact_type: "main_response",
         path: `memory-bank/collaboration/wf-fixture/round-0/agent_one/initial_draft/main.md`,
-        round: 0,
-        agent: "agent_one",
-        phase: "initial_draft",
         summary: `Round ${round} draft artifact.`,
       },
     ],
@@ -244,7 +241,7 @@ describe("createCollaborationProductionCallAgent", () => {
             _turn: ConversationBackendTurnInput,
           ): Promise<ConversationBackendTurnResult> {
             callCount += 1;
-            const structuredOutput: CollaborationInitialDraftOutput =
+            const structuredOutput: CollaborationInitialDraftContent =
               draftOutput(callCount);
             return {
               backendRef: {
@@ -342,7 +339,7 @@ describe("createCollaborationProductionCallAgent", () => {
             errors: {},
           }),
           async sendTurn(): Promise<ConversationBackendTurnResult> {
-            const structuredOutput: CollaborationInitialDraftOutput =
+            const structuredOutput: CollaborationInitialDraftContent =
               draftOutput(1);
             return {
               backendRef: {
@@ -605,7 +602,7 @@ describe("createCollaborationProductionCallAgent", () => {
                 error: "resume session not found",
               };
             }
-            const structuredOutput: CollaborationInitialDraftOutput =
+            const structuredOutput: CollaborationInitialDraftContent =
               draftOutput(sendTurnCount);
             return {
               backendRef: {

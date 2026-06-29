@@ -9,6 +9,7 @@
 
 import { buildAgentTwoCrossReviewPrompt } from "./prompt-builders";
 import {
+  collaborationCrossReviewContentSchema,
   collaborationCrossReviewOutputSchema,
   type CollaborationAgent,
   type CollaborationCrossReviewOutput,
@@ -24,7 +25,7 @@ import {
 } from "./envelope";
 import {
   callPrimitive,
-  parseStructured,
+  parseAndInjectArtifact,
   trackArtifact,
   type ArtifactTracker,
 } from "./helpers";
@@ -87,11 +88,19 @@ export async function runCrossReviewPhase(
       }),
     };
   }
-  const crossReview = parseStructured(
-    "cross_review",
+  const crossReview = parseAndInjectArtifact(
     "agent_two",
     crossReviewCall.result,
-    collaborationCrossReviewOutputSchema,
+    {
+      contentSchema: collaborationCrossReviewContentSchema,
+      fullSchema: collaborationCrossReviewOutputSchema,
+      injection: {
+        kind: "cross_review",
+        agent: "agent_two",
+        target_agent: "agent_one",
+        round: 0,
+      },
+    },
   );
   if (!crossReview.success) {
     return {

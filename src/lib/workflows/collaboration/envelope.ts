@@ -53,6 +53,7 @@ import {
   type CollaborationPolicyDecision,
 } from "./policy";
 import {
+  collaborationFinalAnswerContentSchema,
   collaborationFinalAnswerOutputSchema,
   type CollaborationAgent,
   type CollaborationArtifact,
@@ -66,7 +67,7 @@ import {
 } from "./types";
 import {
   callPrimitive,
-  parseStructured,
+  parseAndInjectArtifact,
   trackArtifact,
   type ArtifactTracker,
 } from "./helpers";
@@ -512,11 +513,18 @@ export async function runAsymmetricCollaborationSlice(
       errorSummary: finalAnswerCall.errorSummary,
     });
   }
-  const finalAnswer = parseStructured(
-    "final_answer",
+  const finalAnswer = parseAndInjectArtifact(
     "agent_one",
     finalAnswerCall.result,
-    collaborationFinalAnswerOutputSchema,
+    {
+      contentSchema: collaborationFinalAnswerContentSchema,
+      fullSchema: collaborationFinalAnswerOutputSchema,
+      injection: {
+        kind: "final_answer",
+        agent: "agent_one",
+        round: roundsCompleted,
+      },
+    },
   );
   if (!finalAnswer.success) {
     return failRun({
@@ -1286,11 +1294,18 @@ async function runResumeFinalAnswer(
       errorSummary: finalAnswerCall.errorSummary,
     });
   }
-  const finalAnswer = parseStructured(
-    "final_answer",
+  const finalAnswer = parseAndInjectArtifact(
     "agent_one",
     finalAnswerCall.result,
-    collaborationFinalAnswerOutputSchema,
+    {
+      contentSchema: collaborationFinalAnswerContentSchema,
+      fullSchema: collaborationFinalAnswerOutputSchema,
+      injection: {
+        kind: "final_answer",
+        agent: "agent_one",
+        round: negotiationRoundsCompleted,
+      },
+    },
   );
   if (!finalAnswer.success) {
     return failRun({

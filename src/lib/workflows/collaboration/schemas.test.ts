@@ -13,9 +13,12 @@ import {
   collaborationAutonomousResolutionThresholdSchema,
   collaborationCounterProposalOutputSchema,
   collaborationCrossReviewOutputSchema,
+  collaborationFinalAnswerContentSchema,
   collaborationFinalAnswerOutputSchema,
+  collaborationInitialDraftContentSchema,
   collaborationInitialDraftOutputSchema,
   collaborationOpenConflictsOutputSchema,
+  collaborationProposedChangesContentSchema,
   collaborationProposedChangesOutputSchema,
   collaborationResolutionDecisionOutputSchema,
   type CollaborationArtifact,
@@ -561,6 +564,32 @@ describe("Collaboration Mode asymmetric artifact schemas", () => {
   });
 });
 
+// The JSON Schema projections describe only the model-authored content: the
+// orchestrator owns the envelope bookkeeping (kind/agent/target_agent/round) and
+// every generated artifact's round/agent/phase, injecting them after parsing.
+// Strip those from a full fixture to get the shape the model actually emits.
+function stripBookkeeping(
+  fixture: Record<string, unknown>,
+): Record<string, unknown> {
+  const clone: Record<string, unknown> = { ...fixture };
+  for (const key of ["kind", "agent", "target_agent", "round"]) {
+    delete clone[key];
+  }
+  const artifacts = clone["artifacts"];
+  if (Array.isArray(artifacts)) {
+    clone["artifacts"] = artifacts.map((ref) => {
+      const refClone: Record<string, unknown> = {
+        ...(ref as Record<string, unknown>),
+      };
+      for (const key of ["round", "agent", "phase"]) {
+        delete refClone[key];
+      }
+      return refClone;
+    });
+  }
+  return clone;
+}
+
 describe("Collaboration Mode asymmetric JSON Schema projections", () => {
   const cases: Array<{
     label: string;
@@ -569,32 +598,32 @@ describe("Collaboration Mode asymmetric JSON Schema projections", () => {
   }> = [
     {
       label: "initial_draft",
-      fixture: initialDraft,
+      fixture: stripBookkeeping(initialDraft),
       schema: COLLABORATION_INITIAL_DRAFT_OUTPUT_SCHEMA,
     },
     {
       label: "cross_review",
-      fixture: crossReview,
+      fixture: stripBookkeeping(crossReview),
       schema: COLLABORATION_CROSS_REVIEW_OUTPUT_SCHEMA,
     },
     {
       label: "proposed_changes",
-      fixture: proposedChanges,
+      fixture: stripBookkeeping(proposedChanges),
       schema: COLLABORATION_PROPOSED_CHANGES_OUTPUT_SCHEMA,
     },
     {
       label: "counter_proposal",
-      fixture: counterProposal,
+      fixture: stripBookkeeping(counterProposal),
       schema: COLLABORATION_COUNTER_PROPOSAL_OUTPUT_SCHEMA,
     },
     {
       label: "resolution_decision",
-      fixture: resolutionDecision,
+      fixture: stripBookkeeping(resolutionDecision),
       schema: COLLABORATION_RESOLUTION_DECISION_OUTPUT_SCHEMA,
     },
     {
       label: "final_answer",
-      fixture: finalAnswer,
+      fixture: stripBookkeeping(finalAnswer),
       schema: COLLABORATION_FINAL_ANSWER_OUTPUT_SCHEMA,
     },
   ];
@@ -625,7 +654,7 @@ describe("Collaboration Mode asymmetric JSON Schema projections", () => {
   }
 
   it("rejects an unknown disagreement category in cross_review", () => {
-    const bad = {
+    const bad = stripBookkeeping({
       ...crossReview,
       disagree: [
         {
@@ -633,7 +662,7 @@ describe("Collaboration Mode asymmetric JSON Schema projections", () => {
           category: "process",
         },
       ],
-    };
+    });
     const errors = validateAgainstJsonSchema(
       bad,
       COLLABORATION_CROSS_REVIEW_OUTPUT_SCHEMA,
@@ -642,7 +671,7 @@ describe("Collaboration Mode asymmetric JSON Schema projections", () => {
   });
 
   it("accepts a disagreement without optional ref or proposed_resolution in counter_proposal", () => {
-    const minimal = {
+    const minimal = stripBookkeeping({
       ...counterProposal,
       disagree: [
         {
@@ -653,7 +682,7 @@ describe("Collaboration Mode asymmetric JSON Schema projections", () => {
           reason: "It is purely cosmetic",
         },
       ],
-    };
+    });
     expect(
       validateAgainstJsonSchema(
         minimal,
@@ -663,10 +692,10 @@ describe("Collaboration Mode asymmetric JSON Schema projections", () => {
   });
 
   it("accepts an agreement without optional ref in initial_draft", () => {
-    const minimal = {
+    const minimal = stripBookkeeping({
       ...initialDraft,
       key_claims: [{ id: "A-2", claim: "No ref needed" }],
-    };
+    });
     expect(
       validateAgainstJsonSchema(
         minimal,
@@ -676,10 +705,10 @@ describe("Collaboration Mode asymmetric JSON Schema projections", () => {
   });
 
   it("rejects a resolution_decision with an unknown nextAction", () => {
-    const bad = {
+    const bad = stripBookkeeping({
       ...resolutionDecision,
       next_action: "abort",
-    };
+    });
     const errors = validateAgainstJsonSchema(
       bad,
       COLLABORATION_RESOLUTION_DECISION_OUTPUT_SCHEMA,
@@ -687,12 +716,67 @@ describe("Collaboration Mode asymmetric JSON Schema projections", () => {
     expect(errors.length).toBeGreaterThan(0);
   });
 
-  it("rejects a final_answer authored by agent_two", () => {
+  // The agent-authorship constraint moved out of the projection: the
+  // orchestrator owns `agent`, so it is enforced by the full Zod schema
+  // (an injected `agent_two` here would be an injection_invariant), not the
+  // model-facing projection.
+  it("rejects a final_answer authored by agent_two in the full schema", () => {
     const bad = { ...finalAnswer, agent: "agent_two" };
-    const errors = validateAgainstJsonSchema(
-      bad,
-      COLLABORATION_FINAL_ANSWER_OUTPUT_SCHEMA,
+    expect(collaborationFinalAnswerOutputSchema.safeParse(bad).success).toBe(
+      false,
     );
-    expect(errors.length).toBeGreaterThan(0);
+  });
+});
+
+describe("Collaboration Mode model-authored content schemas", () => {
+  it("accepts model content without the orchestrator-owned bookkeeping", () => {
+    const content = stripBookkeeping(proposedChanges);
+    expect(
+      collaborationProposedChangesContentSchema.safeParse(content).success,
+    ).toBe(true);
+  });
+
+  it("strips injected bookkeeping if a backend echoes the full shape", () => {
+    // A full artifact still carries kind/agent/target_agent/round and per-artifact
+    // round/agent/phase. The content schema must not reject it — it drops those so
+    // the orchestrator re-injects authoritative values rather than failing the run.
+    const parsed =
+      collaborationProposedChangesContentSchema.safeParse(proposedChanges);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    for (const key of ["kind", "agent", "target_agent", "round"]) {
+      expect(parsed.data).not.toHaveProperty(key);
+    }
+    for (const key of ["round", "agent", "phase"]) {
+      expect(parsed.data.artifacts[0]).not.toHaveProperty(key);
+    }
+  });
+
+  it("reports a legible, path-attributed error when the required main artifact is missing", () => {
+    const content = stripBookkeeping({ ...initialDraft, artifacts: [] });
+    const parsed = collaborationInitialDraftContentSchema.safeParse(content);
+    expect(parsed.success).toBe(false);
+    if (parsed.success) return;
+    const issue = parsed.error.issues.find(
+      (i) => i.path.join(".") === "artifacts",
+    );
+    expect(issue).toBeDefined();
+    expect(issue?.message).toContain('id "main"');
+    expect(issue?.message).toContain('artifact_type "main_response"');
+    // The opaque root-level `$: Invalid input` is gone: every issue has a path.
+    expect(parsed.error.issues.every((i) => i.path.length > 0)).toBe(true);
+  });
+
+  it("requires both answer and audit artifacts for final_answer content", () => {
+    const missingAudit = stripBookkeeping({
+      ...finalAnswer,
+      artifacts: [finalAnswer.artifacts[0]],
+    });
+    const parsed =
+      collaborationFinalAnswerContentSchema.safeParse(missingAudit);
+    expect(parsed.success).toBe(false);
+    if (parsed.success) return;
+    const messages = parsed.error.issues.map((i) => i.message).join(" | ");
+    expect(messages).toContain('id "audit"');
   });
 });

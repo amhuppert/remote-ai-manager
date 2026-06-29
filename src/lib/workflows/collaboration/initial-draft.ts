@@ -15,6 +15,7 @@ import {
   buildAgentTwoInitialDraftPrompt,
 } from "./prompt-builders";
 import {
+  collaborationInitialDraftContentSchema,
   collaborationInitialDraftOutputSchema,
   type CollaborationAgent,
   type CollaborationFlowAgent,
@@ -29,7 +30,7 @@ import {
 } from "./envelope";
 import {
   callPrimitive,
-  parseStructured,
+  parseAndInjectArtifact,
   trackArtifact,
   type ArtifactTracker,
 } from "./helpers";
@@ -91,21 +92,19 @@ export async function runInitialDraftsPhase(
   // in the snapshot.
   const agentOneDraft =
     agentOneDraftCall.kind === "ok"
-      ? parseStructured(
-          "initial_draft",
-          "agent_one",
-          agentOneDraftCall.result,
-          collaborationInitialDraftOutputSchema,
-        )
+      ? parseAndInjectArtifact("agent_one", agentOneDraftCall.result, {
+          contentSchema: collaborationInitialDraftContentSchema,
+          fullSchema: collaborationInitialDraftOutputSchema,
+          injection: { kind: "initial_draft", agent: "agent_one", round: 0 },
+        })
       : null;
   const agentTwoDraft =
     agentTwoDraftCall.kind === "ok"
-      ? parseStructured(
-          "initial_draft",
-          "agent_two",
-          agentTwoDraftCall.result,
-          collaborationInitialDraftOutputSchema,
-        )
+      ? parseAndInjectArtifact("agent_two", agentTwoDraftCall.result, {
+          contentSchema: collaborationInitialDraftContentSchema,
+          fullSchema: collaborationInitialDraftOutputSchema,
+          injection: { kind: "initial_draft", agent: "agent_two", round: 0 },
+        })
       : null;
 
   if (agentOneDraft && agentOneDraft.success) {
