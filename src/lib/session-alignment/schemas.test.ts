@@ -38,12 +38,13 @@ describe("alignment version status / source enums", () => {
     );
   });
 
-  it("accepts the four version sources and rejects others", () => {
+  it("accepts the five version sources and rejects others", () => {
     for (const source of [
       "align_initial",
       "align_rerun",
       "decision",
       "rollback",
+      "forked",
     ]) {
       expect(alignmentVersionSourceSchema.safeParse(source).success).toBe(true);
     }

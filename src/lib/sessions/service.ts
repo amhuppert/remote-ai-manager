@@ -39,6 +39,7 @@ import {
 } from "../jobs/repo";
 import { createLaneWorktreeSweep } from "./lane-worktree-sweep";
 import { deleteCollaborationArtifacts } from "../workflows/collaboration/artifacts-store";
+import { createSessionAlignmentServiceForProduction } from "@/lib/session-alignment/service-factory";
 
 const logger = createLogger("sessions");
 
@@ -85,6 +86,28 @@ export interface SessionDeps {
     projectPath: string;
     sessionWorktreePath: string;
   }): Promise<string[]>;
+  /**
+   * Copy the parent session's active alignment charter into a freshly-forked
+   * session. Best-effort: implementations must not throw on a missing charter
+   * (it is a no-op) — the caller additionally guards so a failure never fails
+   * session creation.
+   */
+  copyAlignmentCharterFromParent(input: {
+    projectPath: string;
+    sourceSessionName: string;
+    targetSessionName: string;
+  }): Promise<void>;
+}
+
+// Built lazily so importing this module never opens the DB; the alignment
+// service is constructed on the first charter copy.
+let alignmentService: ReturnType<
+  typeof createSessionAlignmentServiceForProduction
+> | null = null;
+
+function getAlignmentService() {
+  alignmentService ??= createSessionAlignmentServiceForProduction();
+  return alignmentService;
 }
 
 const defaultSessionDeps: SessionDeps = {
@@ -107,6 +130,9 @@ const defaultSessionDeps: SessionDeps = {
   deleteNotificationsForProject: defaultDeleteNotificationsForProject,
   deleteJobRecordsForProject: defaultDeleteJobRecordsForProject,
   sweepLaneWorktrees: (input) => createLaneWorktreeSweep().sweep(input),
+  copyAlignmentCharterFromParent: async (input) => {
+    await getAlignmentService().copyActiveCharter(input);
+  },
 };
 
 // ============================================================
@@ -138,6 +164,7 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
     deleteNotificationsForProject,
     deleteJobRecordsForProject,
     sweepLaneWorktrees,
+    copyAlignmentCharterFromParent,
   } = deps;
 
   /** Execute a git command in the given working directory */
@@ -411,6 +438,26 @@ export function createSessionService(deps: SessionDeps = defaultSessionDeps) {
       }
 
       throw err;
+    }
+
+    // Seed a forked normal session with its parent's active alignment charter.
+    // Best-effort: a copy failure must never fail session creation (the session
+    // and worktree are already fully provisioned above).
+    if (opts.mode === "normal" && opts.parentSessionName) {
+      try {
+        await copyAlignmentCharterFromParent({
+          projectPath,
+          sourceSessionName: opts.parentSessionName,
+          targetSessionName: sessionName,
+        });
+      } catch (err) {
+        logger.warn("session.copy_alignment_charter_failure", {
+          projectName: projectPath,
+          sessionName,
+          parentSessionName: opts.parentSessionName,
+          error: getErrorMessage(err),
+        });
+      }
     }
 
     return session;

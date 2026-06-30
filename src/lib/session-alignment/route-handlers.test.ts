@@ -520,6 +520,7 @@ function makeFakeHandlers(
     getActiveInjection: throwing,
     diff: throwing,
     rollback: throwing,
+    copyActiveCharter: throwing,
     ...overrides,
   };
   return createSessionAlignmentRouteHandlers({

@@ -25,6 +25,9 @@ function createTestDeps() {
     .fn()
     .mockResolvedValue({ status: "moved", trashPath: "/trash/x" });
   const sweepLaneWorktreesMock = vi.fn().mockResolvedValue([]);
+  const copyAlignmentCharterFromParentMock = vi
+    .fn()
+    .mockResolvedValue(undefined);
 
   const deps: SessionDeps = {
     existsSync: existsSyncMock as unknown as SessionDeps["existsSync"],
@@ -60,6 +63,7 @@ function createTestDeps() {
     deleteNotificationsForProject: vi.fn().mockReturnValue(0),
     deleteJobRecordsForProject: vi.fn().mockReturnValue(0),
     sweepLaneWorktrees: sweepLaneWorktreesMock,
+    copyAlignmentCharterFromParent: copyAlignmentCharterFromParentMock,
   };
 
   return {
@@ -72,6 +76,7 @@ function createTestDeps() {
     fastRemoveWorktreeMock,
     sweepLaneWorktreesMock,
     queryMock,
+    copyAlignmentCharterFromParentMock,
   };
 }
 
@@ -165,6 +170,7 @@ let execFileAsyncMock: Mock;
 let fastRemoveWorktreeMock: Mock;
 let sweepLaneWorktreesMock: Mock;
 let queryMock: Mock;
+let copyAlignmentCharterFromParentMock: Mock;
 let service: ReturnType<typeof createSessionService>;
 
 /** Make gitMock resolve with { stdout, stderr } */
@@ -206,6 +212,8 @@ beforeEach(() => {
   fastRemoveWorktreeMock = testSetup.fastRemoveWorktreeMock;
   sweepLaneWorktreesMock = testSetup.sweepLaneWorktreesMock;
   queryMock = testSetup.queryMock;
+  copyAlignmentCharterFromParentMock =
+    testSetup.copyAlignmentCharterFromParentMock;
   service = createSessionService(deps);
 });
 
@@ -1492,6 +1500,70 @@ describe("provisionSession — child session branching", () => {
       savedState.projects["/projects/repo"].sessions["persisted-child"];
     expect(session.targetBranch).toBe("csm/parent-abc");
     expect(session.parentSessionName).toBe("Parent");
+  });
+});
+
+// ===========================================================================
+// Alignment charter copy on fork (normal mode + parent)
+// ===========================================================================
+
+describe("provisionSession — alignment charter copy on fork", () => {
+  it("copies the parent's alignment charter when branched from a parent in normal mode", async () => {
+    mockGitSuccess();
+    await service.provisionSession("/projects/repo", "child-session", {
+      mode: "normal",
+      parentSessionName: "Parent Session",
+    });
+
+    expect(copyAlignmentCharterFromParentMock).toHaveBeenCalledTimes(1);
+    expect(copyAlignmentCharterFromParentMock).toHaveBeenCalledWith({
+      projectPath: "/projects/repo",
+      sourceSessionName: "Parent Session",
+      targetSessionName: "child-session",
+    });
+  });
+
+  it("does not copy a charter when there is no parent session", async () => {
+    mockGitSuccess();
+    await service.provisionSession("/projects/repo", "lonely-session", {
+      mode: "normal",
+    });
+
+    expect(copyAlignmentCharterFromParentMock).not.toHaveBeenCalled();
+  });
+
+  it("does not copy a charter for an optimistic fork", async () => {
+    mockGitSuccess();
+    await service.provisionSession("/projects/repo", "optimistic-child", {
+      mode: "optimistic",
+      parentSessionName: "Parent Session",
+    });
+
+    expect(copyAlignmentCharterFromParentMock).not.toHaveBeenCalled();
+  });
+
+  it("does not fail session creation when the charter copy throws (best-effort)", async () => {
+    mockGitSuccess();
+    copyAlignmentCharterFromParentMock.mockRejectedValueOnce(
+      new Error("alignment service unavailable"),
+    );
+
+    const session = await service.provisionSession(
+      "/projects/repo",
+      "resilient-child",
+      {
+        mode: "normal",
+        parentSessionName: "Parent Session",
+      },
+    );
+
+    expect(session.sessionName).toBe("resilient-child");
+    expect(copyAlignmentCharterFromParentMock).toHaveBeenCalledTimes(1);
+    // The session was still persisted despite the copy failure.
+    const savedState = writeStateMock.mock.calls[0]![0];
+    expect(
+      savedState.projects["/projects/repo"].sessions["resilient-child"],
+    ).toBeDefined();
   });
 });
 

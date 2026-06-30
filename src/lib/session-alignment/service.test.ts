@@ -11,7 +11,10 @@ import {
   computeAlignmentHash,
   renderAlignmentPromptSection,
 } from "@/lib/session-alignment/render";
-import type { SessionAlignmentUpdatedEvent } from "@/lib/session-alignment/schemas";
+import type {
+  AlignmentVersion,
+  SessionAlignmentUpdatedEvent,
+} from "@/lib/session-alignment/schemas";
 import {
   createSessionAlignmentService,
   type CharterMirrorCall,
@@ -1123,6 +1126,163 @@ describe("rollback", () => {
         projectPath: PROJECT_PATH,
         sessionName: SESSION_NAME,
         version: 1,
+      }),
+    ).rejects.toThrow();
+  });
+});
+
+describe("copyActiveCharter", () => {
+  const PARENT_SESSION = "s0";
+  const PARENT_WORKTREE = "/p1/.worktrees/s0";
+  const PARENT_CONTENT = "# Mission\nInherited from the parent session.";
+
+  function seedParentActiveCharter(content = PARENT_CONTENT): AlignmentVersion {
+    h.fixture.seedSession(PROJECT_PATH, PARENT_SESSION, {
+      creationMode: "normal",
+    });
+    const parentActive: AlignmentVersion = {
+      id: "parent-active",
+      version: 1,
+      content,
+      contentHash: computeAlignmentHash(content),
+      status: "active",
+      source: "align_initial",
+      authorConversationId: "parent-conv",
+      autoActivate: false,
+      linkedDecisionIds: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      activatedAt: "2026-01-01T01:00:00.000Z",
+      approver: "alex",
+    };
+    h.repo.insertVersion(PROJECT_PATH, PARENT_SESSION, parentActive);
+    return parentActive;
+  }
+
+  it("copies the parent's active charter into the target as an active forked version 1", async () => {
+    const parentActive = seedParentActiveCharter();
+
+    const copied = await h.service.copyActiveCharter({
+      projectPath: PROJECT_PATH,
+      sourceSessionName: PARENT_SESSION,
+      targetSessionName: SESSION_NAME,
+    });
+
+    expect(copied).not.toBeNull();
+    expect(copied?.version).toBe(1);
+    expect(copied?.status).toBe("active");
+    expect(copied?.source).toBe("forked");
+    expect(copied?.content).toBe(parentActive.content);
+    expect(copied?.contentHash).toBe(parentActive.contentHash);
+    expect(copied?.authorConversationId).toBeNull();
+    expect(copied?.autoActivate).toBe(false);
+    expect(copied?.approver).toBeNull();
+    expect(copied?.activatedAt).not.toBeNull();
+    expect(copied?.linkedDecisionIds).toEqual([]);
+    // A fresh identity, not the parent's row.
+    expect(copied?.id).not.toBe(parentActive.id);
+
+    // Reload from the real store: the target now governs with this forked version.
+    const active = h.repo.findActiveVersion(PROJECT_PATH, SESSION_NAME);
+    expect(active?.id).toBe(copied?.id);
+    expect(active?.version).toBe(1);
+    expect(active?.source).toBe("forked");
+    expect(active?.content).toBe(PARENT_CONTENT);
+    expect(h.repo.findActiveVersionNumber(PROJECT_PATH, SESSION_NAME)).toBe(1);
+
+    // The parent's charter is untouched.
+    expect(h.repo.findActiveVersion(PROJECT_PATH, PARENT_SESSION)?.id).toBe(
+      parentActive.id,
+    );
+
+    // Mirror materialized with the inherited content at the target worktree.
+    expect(h.mirrorCalls).toHaveLength(1);
+    expect(h.mirrorCalls[0]).toMatchObject({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      worktreePath: WORKTREE_PATH,
+      content: PARENT_CONTENT,
+    });
+
+    // Exactly one broadcast announcing the target's new active version.
+    expect(h.broadcasts).toHaveLength(1);
+    expect(h.broadcasts[0]).toMatchObject({
+      type: "session-alignment-updated",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      activeVersion: 1,
+      hasDraft: false,
+      pendingProposalBatchIds: [],
+    });
+  });
+
+  it("is a no-op when the parent has no active charter", async () => {
+    h.fixture.seedSession(PROJECT_PATH, PARENT_SESSION, {
+      creationMode: "normal",
+    });
+
+    const copied = await h.service.copyActiveCharter({
+      projectPath: PROJECT_PATH,
+      sourceSessionName: PARENT_SESSION,
+      targetSessionName: SESSION_NAME,
+    });
+
+    expect(copied).toBeNull();
+    expect(h.repo.findActiveVersion(PROJECT_PATH, SESSION_NAME)).toBeNull();
+    expect(h.mirrorCalls).toHaveLength(0);
+    expect(h.broadcasts).toHaveLength(0);
+  });
+
+  it("is a no-op when the target already has an active charter", async () => {
+    seedParentActiveCharter();
+    const existingContent = "# Mission\nTarget already aligned.";
+    const existing: AlignmentVersion = {
+      id: "target-existing",
+      version: 1,
+      content: existingContent,
+      contentHash: computeAlignmentHash(existingContent),
+      status: "active",
+      source: "align_initial",
+      authorConversationId: null,
+      autoActivate: false,
+      linkedDecisionIds: [],
+      createdAt: "2026-01-02T00:00:00.000Z",
+      activatedAt: "2026-01-02T01:00:00.000Z",
+      approver: null,
+    };
+    h.repo.insertVersion(PROJECT_PATH, SESSION_NAME, existing);
+
+    const copied = await h.service.copyActiveCharter({
+      projectPath: PROJECT_PATH,
+      sourceSessionName: PARENT_SESSION,
+      targetSessionName: SESSION_NAME,
+    });
+
+    expect(copied).toBeNull();
+    expect(h.repo.findActiveVersion(PROJECT_PATH, SESSION_NAME)?.id).toBe(
+      "target-existing",
+    );
+    expect(h.mirrorCalls).toHaveLength(0);
+    expect(h.broadcasts).toHaveLength(0);
+  });
+
+  it("refuses to copy into a non-normal target session", async () => {
+    const { service } = makeService(h.fixture, {
+      loadSession: (projectPath, sessionName) =>
+        Promise.resolve(
+          projectPath === PROJECT_PATH && sessionName === PARENT_SESSION
+            ? { worktreePath: PARENT_WORKTREE, creationMode: "normal" as const }
+            : {
+                worktreePath: "/p1/.worktrees/opt",
+                creationMode: "optimistic" as const,
+              },
+        ),
+    });
+
+    await expect(
+      service.copyActiveCharter({
+        projectPath: PROJECT_PATH,
+        sourceSessionName: PARENT_SESSION,
+        targetSessionName: SESSION_NAME,
       }),
     ).rejects.toThrow();
   });

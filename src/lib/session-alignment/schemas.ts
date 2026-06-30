@@ -14,12 +14,16 @@ export type AlignmentVersionStatus = z.infer<
   typeof alignmentVersionStatusSchema
 >;
 
-/** What produced a charter version. */
+/**
+ * What produced a charter version. `forked` = seeded by copying a parent
+ * session's active charter into a session branched from it.
+ */
 export const alignmentVersionSourceSchema = z.enum([
   "align_initial",
   "align_rerun",
   "decision",
   "rollback",
+  "forked",
 ]);
 export type AlignmentVersionSource = z.infer<
   typeof alignmentVersionSourceSchema

@@ -98,6 +98,14 @@ export interface RollbackInput {
   conversationId?: string | null;
 }
 
+export interface CopyActiveCharterInput {
+  projectPath: string;
+  /** The parent session whose active charter is copied. */
+  sourceSessionName: string;
+  /** The freshly-forked session that inherits the charter. */
+  targetSessionName: string;
+}
+
 export type FillDraftResult =
   | { status: "draft_ready"; version: null }
   | { status: "activated"; version: number };
@@ -143,6 +151,16 @@ export interface SessionAlignmentService {
   ): Promise<AlignmentDiff>;
   /** Roll back to a prior version: a new active version cloned from its content. */
   rollback(input: RollbackInput): Promise<AlignmentVersion>;
+  /**
+   * Seed a freshly-forked normal session's active charter by copying the parent
+   * session's active charter. No-op (returns null) when the parent has no active
+   * charter or the target already has one. Inserts an immediately-active version
+   * (no human gate), writes the worktree mirror, and broadcasts. The target must
+   * be a normal session; throws {@link AlignmentNotSupportedError} otherwise.
+   */
+  copyActiveCharter(
+    input: CopyActiveCharterInput,
+  ): Promise<AlignmentVersion | null>;
 }
 
 // ============================================================
@@ -338,21 +356,18 @@ export function createSessionAlignmentService(
     });
   }
 
-  async function activate(
+  /**
+   * Post-commit publication shared by every path that makes a version active:
+   * best-effort worktree mirror (a failure must NOT fail activation, R8.3) and
+   * the `session-alignment-updated` broadcast. The version is already persisted
+   * and consumed any open draft, so `hasDraft` is always false here.
+   */
+  async function publishActivation(
     projectPath: string,
     sessionName: string,
     worktreePath: string,
-    draft: AlignmentVersion,
-    approver: string | null,
-  ): Promise<AlignmentVersion> {
-    const activated = activateInTransaction(
-      projectPath,
-      sessionName,
-      draft,
-      approver,
-    );
-
-    // Best-effort mirror: a failure must NOT fail activation (R8.3).
+    activated: AlignmentVersion,
+  ): Promise<void> {
     const mirrorResult = await deps.mirror.write({
       projectPath,
       sessionName,
@@ -367,13 +382,6 @@ export function createSessionAlignmentService(
       });
     }
 
-    logger.info("align.activate", {
-      projectPath,
-      sessionName,
-      version: activated.version,
-      conversationId: activated.authorConversationId,
-    });
-
     broadcast(
       {
         type: "session-alignment-updated",
@@ -387,6 +395,30 @@ export function createSessionAlignmentService(
       },
       { projectPath, sessionName, version: activated.version },
     );
+  }
+
+  async function activate(
+    projectPath: string,
+    sessionName: string,
+    worktreePath: string,
+    draft: AlignmentVersion,
+    approver: string | null,
+  ): Promise<AlignmentVersion> {
+    const activated = activateInTransaction(
+      projectPath,
+      sessionName,
+      draft,
+      approver,
+    );
+
+    logger.info("align.activate", {
+      projectPath,
+      sessionName,
+      version: activated.version,
+      conversationId: activated.authorConversationId,
+    });
+
+    await publishActivation(projectPath, sessionName, worktreePath, activated);
 
     return activated;
   }
@@ -792,6 +824,72 @@ export function createSessionAlignmentService(
         clone,
         input.approver ?? null,
       );
+    },
+
+    async copyActiveCharter(input) {
+      const { projectPath, sourceSessionName, targetSessionName } = input;
+      const target = await requireNormalSession(projectPath, targetSessionName);
+
+      const sourceActive = deps.repo.findActiveVersion(
+        projectPath,
+        sourceSessionName,
+      );
+      if (!sourceActive) {
+        logger.info("align.copy_charter_skipped", {
+          projectPath,
+          sourceSessionName,
+          targetSessionName,
+          reason: "no_active_source",
+        });
+        return null;
+      }
+
+      // A freshly-forked session has no charter; this guard keeps the copy
+      // idempotent and refuses to clobber a target that already governs.
+      if (deps.repo.findActiveVersion(projectPath, targetSessionName)) {
+        logger.info("align.copy_charter_skipped", {
+          projectPath,
+          sourceSessionName,
+          targetSessionName,
+          reason: "target_has_active",
+        });
+        return null;
+      }
+
+      // Byte-identical clone of the parent's content (its hash is, by
+      // definition, the hash of that content), activated immediately with no
+      // human gate and `forked` provenance.
+      const copied: AlignmentVersion = alignmentVersionSchema.parse({
+        id: newId(),
+        version: 1,
+        content: sourceActive.content,
+        contentHash: sourceActive.contentHash,
+        status: "active",
+        source: "forked",
+        authorConversationId: null,
+        autoActivate: false,
+        linkedDecisionIds: [],
+        createdAt: now(),
+        activatedAt: now(),
+        approver: null,
+      });
+      deps.repo.insertVersion(projectPath, targetSessionName, copied);
+
+      logger.info("align.copy_charter", {
+        projectPath,
+        sourceSessionName,
+        targetSessionName,
+        version: copied.version,
+      });
+
+      await publishActivation(
+        projectPath,
+        targetSessionName,
+        target.worktreePath,
+        copied,
+      );
+
+      return copied;
     },
   };
 }
