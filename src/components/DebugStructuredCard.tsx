@@ -40,15 +40,19 @@ const CODE_CLASS =
 const HYP_LIST_CLASS = "m-0 list-none pl-0";
 // The amber row-divider (1px var(--cc-amber-a08) top border, suppressed on the
 // first row) and step dividers are token-backed utilities. Same divider for the
-// `<ol>` step rows in STEPS_CLASS below.
+// `<ol>` step rows in STEPS_CLASS below. `border-x-0 border-b-0` are required:
+// `border-solid` sets border-style on all four edges, and with Preflight off
+// nothing resets the un-widthed sides, so they fall back to the CSS default
+// `border-width: medium` (~3px) in currentColor — a thick light border around
+// every row. Zeroing the other three sides leaves only the intended top divider.
 const HYP_CLASS =
-  "flex gap-sm border-t border-solid border-t-[var(--cc-amber-a08)] py-[6px] first:border-t-0";
+  "flex gap-sm border-x-0 border-b-0 border-t border-solid border-t-[var(--cc-amber-a08)] py-[6px] first:border-t-0";
 const HYP_ID_CLASS = "flex-[0_0_auto] font-mono font-bold text-amber";
 const HYP_BODY_CLASS = "flex-[1_1_auto]";
 const HYP_PLAN_CLASS = "mt-[2px] text-[0.9em] opacity-[0.85]";
 const STEPS_CLASS =
   "mt-[4px] list-none pl-0 [counter-reset:debug-step] " +
-  "[&>li]:relative [&>li]:[counter-increment:debug-step] [&>li]:border-t [&>li]:border-solid [&>li]:border-t-[var(--cc-amber-a08)] [&>li]:py-[6px] [&>li]:pr-0 [&>li]:pl-[2em] [&>li:first-child]:border-t-0 " +
+  "[&>li]:relative [&>li]:[counter-increment:debug-step] [&>li]:border-x-0 [&>li]:border-b-0 [&>li]:border-t [&>li]:border-solid [&>li]:border-t-[var(--cc-amber-a08)] [&>li]:py-[6px] [&>li]:pr-0 [&>li]:pl-[2em] [&>li:first-child]:border-t-0 " +
   "[&>li]:before:absolute [&>li]:before:left-0 [&>li]:before:font-mono [&>li]:before:font-semibold [&>li]:before:text-amber [&>li]:before:content-[counter(debug-step)_'.']";
 const VERDICTS_CLASS = "mb-sm flex flex-wrap gap-sm";
 const VERDICT_CLASS =
