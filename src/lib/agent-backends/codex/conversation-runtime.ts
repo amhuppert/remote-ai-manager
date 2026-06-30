@@ -630,7 +630,16 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
         acc.setErrorMessage(item.message);
         break;
       }
-      // reasoning, todo_list, web_search — ignored
+      case "reasoning": {
+        const block: MessageContentBlock = {
+          type: "thinking",
+          text: item.text,
+        };
+        contentBlocks.push(block);
+        input.onEvent({ type: "content", block });
+        break;
+      }
+      // todo_list, web_search — ignored
     }
   }
 }

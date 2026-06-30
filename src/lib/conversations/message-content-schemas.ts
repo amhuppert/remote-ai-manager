@@ -53,6 +53,15 @@ export type DocumentFeedbackPayload = z.infer<
 
 export const messageContentBlockSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text"), text: z.string() }),
+  // The agent's internal reasoning, surfaced separately from its answer text.
+  // `text` is the model's thinking summary (Anthropic) or reasoning item
+  // (Codex); empty when `redacted` is true (encrypted/opaque thinking the
+  // provider won't reveal — rendered as a label-only indicator, never a body).
+  z.object({
+    type: z.literal("thinking"),
+    text: z.string(),
+    redacted: z.boolean().optional(),
+  }),
   z.object({
     type: z.literal("tool_use"),
     id: z.string().optional(),

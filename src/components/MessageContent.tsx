@@ -11,6 +11,7 @@ import {
 } from "@/lib/conversations/format-tool-use";
 import { cn } from "@/lib/ui/cn";
 import ToolUseGroup from "./ToolUseGroup";
+import ThinkingBlock from "./ThinkingBlock";
 import DebugStructuredCard from "./DebugStructuredCard";
 import DocumentFeedbackCard from "./conversation/DocumentFeedbackCard";
 import MarkdownFileCard from "./conversation/MarkdownFileCard";
@@ -188,6 +189,15 @@ export default memo(function MessageContent({
 
         if (block.type === "text") {
           return <MessageTextWithRefs key={i} text={block.text} />;
+        }
+        if (block.type === "thinking") {
+          return (
+            <ThinkingBlock
+              key={i}
+              text={block.text}
+              redacted={block.redacted}
+            />
+          );
         }
         if (block.type === "command") {
           return (

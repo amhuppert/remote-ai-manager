@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import MessageContent from "./MessageContent";
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
 const TINY_PNG =
@@ -63,6 +63,66 @@ describe("MessageContent — image_marker caption", () => {
     render(<MessageContent content={content} />);
     expect(screen.getByText("#1")).toBeInTheDocument();
     expect(screen.getByText("#2")).toBeInTheDocument();
+  });
+});
+
+describe("MessageContent — thinking block", () => {
+  it("renders a collapsed reasoning aside whose body is hidden until expanded", () => {
+    const content: MessageContentBlock[] = [
+      {
+        type: "thinking",
+        text: "Two candidates: a regression or a stale test.",
+      },
+      { type: "text", text: "The component is correct." },
+    ];
+    render(<MessageContent content={content} />);
+
+    const toggle = screen.getByRole("button", { name: /thinking/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    // The reasoning text is not shown while collapsed; the answer always is.
+    expect(screen.queryByText(/Two candidates/)).not.toBeInTheDocument();
+    expect(screen.getByText("The component is correct.")).toBeInTheDocument();
+
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(/Two candidates/)).toBeInTheDocument();
+  });
+
+  it("renders the reasoning body as markdown once expanded", async () => {
+    const content: MessageContentBlock[] = [
+      {
+        type: "thinking",
+        text: "Check **the selector** and the `cn()` helper.",
+      },
+    ];
+    render(<MessageContent content={content} />);
+    fireEvent.click(screen.getByRole("button", { name: /thinking/i }));
+
+    // Markdown renders to semantic elements (not literal **/`` text). The
+    // markdown renderer is lazy-loaded, so allow for the dynamic import under
+    // parallel-suite load (mirrors MarkdownContent.test.tsx's 5s budget).
+    const strong = await screen.findByText(
+      "the selector",
+      {},
+      { timeout: 5000 },
+    );
+    expect(strong.tagName).toBe("STRONG");
+    const code = await screen.findByText("cn()", {}, { timeout: 5000 });
+    expect(code.tagName).toBe("CODE");
+  });
+
+  it("renders a redacted thinking block as a label-only indicator with no toggle or body", () => {
+    const content: MessageContentBlock[] = [
+      { type: "thinking", text: "", redacted: true },
+      { type: "text", text: "Answer." },
+    ];
+    render(<MessageContent content={content} />);
+
+    expect(screen.getByText("Internal reasoning")).toBeInTheDocument();
+    expect(screen.getByText("— hidden")).toBeInTheDocument();
+    // Redacted reasoning cannot be expanded — there is no disclosure control.
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 });
 

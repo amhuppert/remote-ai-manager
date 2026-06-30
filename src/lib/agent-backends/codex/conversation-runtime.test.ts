@@ -793,7 +793,7 @@ describe("CodexConversationRuntime", () => {
       expect(summary!.type === "text" && summary!.text).toContain("src/bar.ts");
     });
 
-    it("ignores reasoning and todo_list events", async () => {
+    it("maps reasoning into a thinking block and still ignores todo_list", async () => {
       setupThread([
         threadStarted(),
         reasoningCompleted("Thinking hard..."),
@@ -804,12 +804,12 @@ describe("CodexConversationRuntime", () => {
       const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
       const result = await runtime.sendTurn(makeTurnInput());
 
-      // Only the agent_message block should appear
-      expect(result.contentBlocks).toHaveLength(1);
-      expect(result.contentBlocks[0]).toEqual({
-        type: "text",
-        text: "Done",
-      });
+      // Reasoning becomes a thinking block ahead of the answer; todo_list is
+      // still dropped.
+      expect(result.contentBlocks).toEqual([
+        { type: "thinking", text: "Thinking hard..." },
+        { type: "text", text: "Done" },
+      ]);
     });
 
     it("captures usage from turn.completed", async () => {

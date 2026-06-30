@@ -236,6 +236,64 @@ describe("QuerySession.sendPrompt", () => {
     session.close();
   });
 
+  it("maps thinking and redacted_thinking blocks into thinking content blocks", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const emit = vi.fn();
+
+    const turnPromise = session.sendPrompt("Why did the test fail?", emit);
+
+    mock.pushMessage({
+      type: "assistant",
+      session_id: "sess-think",
+      uuid: "u1",
+      message: {
+        content: [
+          {
+            type: "thinking",
+            thinking: "Two candidates: a regression, or a stale selector.",
+            signature: "sig-abc",
+          },
+          { type: "redacted_thinking", data: "encrypted-blob" },
+          { type: "text", text: "The component is correct." },
+        ],
+      },
+    } as unknown as SDKMessage);
+
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-think",
+      uuid: "u2",
+      total_cost_usd: 0.01,
+      duration_ms: 100,
+      num_turns: 1,
+      result: "The component is correct.",
+      is_error: false,
+    } as unknown as SDKMessage);
+
+    const result = await turnPromise;
+
+    // Reasoning is surfaced as distinct thinking blocks, in order, ahead of the
+    // answer text — not dropped and not merged into the text stream.
+    expect(result.contentBlocks.map((b) => b.type)).toEqual([
+      "thinking",
+      "thinking",
+      "text",
+    ]);
+    expect(result.contentBlocks.filter((b) => b.type === "thinking")).toEqual([
+      {
+        type: "thinking",
+        text: "Two candidates: a regression, or a stale selector.",
+      },
+      { type: "thinking", text: "", redacted: true },
+    ]);
+
+    session.close();
+  });
+
   it("calls emit for each message during a turn", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
@@ -1241,6 +1299,22 @@ describe("strictMcpConfig", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const sdkOptions = (queryMock.mock.calls[0] as any)[0].options;
     expect(sdkOptions.strictMcpConfig).toBe(true);
+
+    session.close();
+  });
+
+  it("requests summarized adaptive thinking so reasoning blocks carry text", () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sdkOptions = (queryMock.mock.calls[0] as any)[0].options;
+    expect(sdkOptions.thinking).toEqual({
+      type: "adaptive",
+      display: "summarized",
+    });
 
     session.close();
   });

@@ -184,6 +184,11 @@ const UTILITY_FIRST_PATHS = [
   // omitted it; added here (UTILITY_FIRST_PATHS only — eslint/prettier allowlist
   // sync deferred to integration) so the collision guardrail stays green.
   `${path.sep}components${path.sep}MessageContent.tsx`,
+  // ThinkingBlock — the agent-reasoning aside dispatched from MessageContent —
+  // is utility-first by design (cn() + design tokens, no legacy classes). Both
+  // the component and its story are exempt.
+  `${path.sep}components${path.sep}ThinkingBlock.tsx`,
+  `${path.sep}components${path.sep}ThinkingBlock.stories.tsx`,
   `${path.sep}components${path.sep}MobileActionMenu.tsx`,
   `${path.sep}features${path.sep}session${path.sep}conversation${path.sep}SessionInfoStrip.tsx`,
   `${path.sep}components${path.sep}CopyableId.tsx`,

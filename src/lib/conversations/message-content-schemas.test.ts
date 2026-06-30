@@ -32,6 +32,24 @@ describe("documentFeedbackItemSchema", () => {
   });
 });
 
+describe("messageContentBlockSchema thinking variant", () => {
+  it("parses a thinking block carrying summary text", () => {
+    const block = { type: "thinking", text: "Considering two candidates." };
+    expect(messageContentBlockSchema.parse(block)).toEqual(block);
+  });
+
+  it("parses a redacted thinking block with empty text", () => {
+    const block = { type: "thinking", text: "", redacted: true };
+    expect(messageContentBlockSchema.parse(block)).toEqual(block);
+  });
+
+  it("rejects a thinking block without text", () => {
+    expect(
+      messageContentBlockSchema.safeParse({ type: "thinking" }).success,
+    ).toBe(false);
+  });
+});
+
 describe("messageContentBlockSchema document_feedback variant", () => {
   const item = {
     docPath: "README.md",

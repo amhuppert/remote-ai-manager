@@ -387,6 +387,11 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     cwd: options.cwd,
     model: options.model ?? undefined,
     ...(options.effort ? { effort: options.effort as Options["effort"] } : {}),
+    // Surface a summary of the model's reasoning so thinking blocks carry text.
+    // On Opus 4.7/4.8 the thinking summary is `omitted` by default; without
+    // this, thinking blocks stream empty. Adaptive is already the preset
+    // default for supported models — we only opt into the summarized display.
+    thinking: { type: "adaptive", display: "summarized" },
     systemPrompt: options.systemPrompt,
     settingSources: options.settingSources,
     permissionMode: "bypassPermissions",
@@ -1303,6 +1308,19 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
             };
             turn.contentBlocks.push(toolBlock);
             turn.toolNamesById.set(block.id, block.name);
+          } else if (block.type === "thinking" && "thinking" in block) {
+            turn.contentBlocks.push({
+              type: "thinking",
+              text: block.thinking,
+            });
+          } else if (block.type === "redacted_thinking") {
+            // Encrypted reasoning the API won't reveal — keep an empty-text
+            // marker so the UI can show a "reasoning hidden" indicator.
+            turn.contentBlocks.push({
+              type: "thinking",
+              text: "",
+              redacted: true,
+            });
           }
         }
 
