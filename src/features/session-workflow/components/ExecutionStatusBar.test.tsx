@@ -23,7 +23,78 @@ const baseProps = {
   onAbort: vi.fn(),
   onClear: vi.fn(),
   isMutating: false,
+  pendingAction: null,
 };
+
+describe("ExecutionStatusBar per-action pending feedback", () => {
+  it("shows Pausing… on the pause button and disables the others while pause is in flight", () => {
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={makeExecution({ status: "running", haltReason: null })}
+        isMutating
+        pendingAction="pause"
+      />,
+    );
+
+    const pauseBtn = screen.getByRole("button", { name: /pausing…/i });
+    expect(pauseBtn).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Abort" })).toBeDisabled();
+  });
+
+  it("shows Resuming… while resume is in flight", () => {
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={makeExecution({ status: "paused", haltReason: null })}
+        isMutating
+        pendingAction="resume"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /resuming…/i })).toBeDisabled();
+  });
+
+  it("shows Aborting… while abort is in flight", () => {
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={makeExecution({ status: "running", haltReason: null })}
+        isMutating
+        pendingAction="abort"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /aborting…/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Pause" })).toBeDisabled();
+  });
+
+  it("shows Clearing… while clear is in flight", () => {
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={makeExecution({ status: "completed", haltReason: null })}
+        isMutating
+        pendingAction="clear"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /clearing…/i })).toBeDisabled();
+  });
+
+  it("keeps static labels when no control action is pending", () => {
+    render(
+      <ExecutionStatusBar
+        {...baseProps}
+        execution={makeExecution({ status: "running", haltReason: null })}
+        isMutating
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Pause" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Abort" })).toBeDisabled();
+  });
+});
 
 describe("ExecutionStatusBar awaiting-approval chip", () => {
   it("renders an awaiting-approval chip with count when a context is parked", () => {

@@ -73,6 +73,15 @@ function parseUnmanagedConflict(error: unknown): UnmanagedConflict | null {
 }
 
 /**
+ * A runtime state row plus the client-only stop-pending flag: the status enum
+ * has no "stopping" value, so an in-flight stop is surfaced as a per-server
+ * pending indicator instead of an optimistic status patch.
+ */
+export type DevServerDisplayState = DevServerRuntimeState & {
+  isStopPending: boolean;
+};
+
+/**
  * Data-fetching hook for dev server state.
  * Real-time updates driven by SSE invalidation in NotificationListener.
  */
@@ -83,39 +92,109 @@ export function useDevServers(projectName: string, sessionName: string) {
 
   const [unmanagedConflict, setUnmanagedConflict] =
     useState<UnmanagedConflict | null>(null);
+  const [stopPendingNames, setStopPendingNames] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
 
   const query = useQuery({
     queryKey,
     queryFn: () => apiFetch<DevServersStatusResponse>(base),
   });
 
+  const patchStatuses = useCallback(
+    async (
+      shouldPatch: (server: DevServerRuntimeState) => boolean,
+      status: DevServerRuntimeState["status"],
+    ) => {
+      await queryClient.cancelQueries({ queryKey });
+      const previous =
+        queryClient.getQueryData<DevServersStatusResponse>(queryKey);
+      if (previous) {
+        queryClient.setQueryData<DevServersStatusResponse>(queryKey, {
+          ...previous,
+          servers: previous.servers.map((s) =>
+            shouldPatch(s) ? { ...s, status } : s,
+          ),
+        });
+      }
+      return { previous };
+    },
+    [queryClient, queryKey],
+  );
+
+  const rollback = useCallback(
+    (context: { previous?: DevServersStatusResponse } | undefined) => {
+      if (context?.previous) {
+        queryClient.setQueryData(queryKey, context.previous);
+      }
+    },
+    [queryClient, queryKey],
+  );
+
+  const markStopPending = useCallback((names: string[]) => {
+    setStopPendingNames((prev) => new Set([...prev, ...names]));
+  }, []);
+
+  const clearStopPending = useCallback((names: string[]) => {
+    setStopPendingNames((prev) => {
+      const next = new Set(prev);
+      for (const name of names) next.delete(name);
+      return next;
+    });
+  }, []);
+
   const startServerMutation = useMutation({
     mutationFn: (serverName: string) =>
       apiPost(`${base}/${encodeURIComponent(serverName)}/start`),
-    onSuccess: () => {
-      setUnmanagedConflict(null);
-      queryClient.invalidateQueries({ queryKey });
-    },
-    onError: (error) => {
+    onMutate: (serverName) =>
+      patchStatuses((s) => s.serverName === serverName, "starting"),
+    onSuccess: () => setUnmanagedConflict(null),
+    onError: (error, _serverName, context) => {
+      rollback(context);
       const conflict = parseUnmanagedConflict(error);
       if (conflict) setUnmanagedConflict(conflict);
     },
+    onSettled: () => queryClient.invalidateQueries({ queryKey }),
   });
 
   const stopServerMutation = useMutation({
     mutationFn: (serverName: string) =>
       apiPost(`${base}/${encodeURIComponent(serverName)}/stop`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey }),
+    onMutate: (serverName) => {
+      markStopPending([serverName]);
+    },
+    onSettled: (_data, _error, serverName) => {
+      clearStopPending([serverName]);
+      queryClient.invalidateQueries({ queryKey });
+    },
   });
 
   const startAllMutation = useMutation({
     mutationFn: () => apiPost(`${base}/start-all`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey }),
+    onMutate: () =>
+      patchStatuses(
+        (s) => s.status === "stopped" || s.status === "error",
+        "starting",
+      ),
+    onError: (_error, _vars, context) => rollback(context),
+    onSettled: () => queryClient.invalidateQueries({ queryKey }),
   });
 
   const stopAllMutation = useMutation({
     mutationFn: () => apiPost(`${base}/stop-all`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey }),
+    onMutate: () => {
+      const cached =
+        queryClient.getQueryData<DevServersStatusResponse>(queryKey);
+      const names = (cached?.servers ?? [])
+        .filter((s) => s.status === "running" || s.status === "starting")
+        .map((s) => s.serverName);
+      markStopPending(names);
+      return { names };
+    },
+    onSettled: (_data, _error, _vars, context) => {
+      clearStopPending(context?.names ?? []);
+      queryClient.invalidateQueries({ queryKey });
+    },
   });
 
   const stopUnmanagedMutation = useMutation({
@@ -144,7 +223,9 @@ export function useDevServers(projectName: string, sessionName: string) {
     });
   }, [unmanagedConflict, stopUnmanagedMutation]);
 
-  const servers: DevServerRuntimeState[] = query.data?.servers ?? [];
+  const servers: DevServerDisplayState[] = (query.data?.servers ?? []).map(
+    (s) => ({ ...s, isStopPending: stopPendingNames.has(s.serverName) }),
+  );
   const hasRunning = servers.some(
     (s) => s.status === "running" || s.status === "starting",
   );

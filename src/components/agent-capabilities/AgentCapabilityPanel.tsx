@@ -34,6 +34,8 @@ export interface AgentCapabilityPanelProps {
   selectedScope: AgentCapabilityScope;
   onScopeChange(scope: AgentCapabilityScope): void;
   loading?: boolean;
+  /** True while the refresh mutation is in flight — shown on the Refresh control. */
+  refreshing?: boolean;
   errorMessage?: string;
   onRefresh?: () => void;
   onToggleItem?: (itemId: string, enabled: boolean) => void;
@@ -99,6 +101,7 @@ export function AgentCapabilityPanel({
   selectedScope,
   onScopeChange,
   loading,
+  refreshing,
   errorMessage,
   onRefresh,
   onToggleItem,
@@ -169,6 +172,7 @@ export function AgentCapabilityPanel({
                 variant="ghost"
                 size="sm"
                 touch
+                loading={refreshing}
                 onClick={onRefresh}
               >
                 Refresh

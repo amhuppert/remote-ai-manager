@@ -57,6 +57,7 @@ import {
   ContextMenuTrigger,
   ContextMenuContent,
 } from "@/components/ui/ContextMenu";
+import { Spinner } from "@/components/ui/Spinner";
 import {
   ConversationRowMenuItems,
   type ConversationRowMenuItem,
@@ -517,10 +518,12 @@ function ConversationSidebar({
     };
   })();
 
+  // Returns the fork promise so the triggering control (MessageActions' Fork
+  // button inside the peek) can render its in-flight pending state.
   const handlePeekFork = useCallback(
     (messageIndex: number) => {
       if (peek === null || peekConversation === null) return;
-      void peekForkMutation
+      return peekForkMutation
         .mutateAsync({ conversationId: peek.conversationId, messageIndex })
         .then(({ conversationId }) => {
           closePeek();
@@ -990,10 +993,15 @@ function ConversationSidebar({
                 className="relative flex size-[28px] shrink-0 cursor-pointer items-center justify-center rounded-sm border border-solid border-transparent bg-transparent p-0 text-[1rem] font-medium text-cyan transition-[color,background-color,border-color] duration-150 ease-[ease] hover:border-cyan-dim hover:bg-[var(--cc-cyan-a10)] hover:text-text-primary disabled:cursor-not-allowed disabled:text-text-tertiary disabled:opacity-50 max-768:size-[44px] [&>svg]:size-[18px]"
                 onClick={handleNewConversation}
                 disabled={createConvoMutation.isPending}
+                aria-busy={createConvoMutation.isPending || undefined}
                 data-tooltip="New conversation"
                 aria-label="New conversation"
               >
-                <PlusIcon />
+                {createConvoMutation.isPending ? (
+                  <Spinner size="sm" tone="inherit" />
+                ) : (
+                  <PlusIcon />
+                )}
               </button>
             )}
             {showCollapseControl && (
@@ -1155,6 +1163,7 @@ function ConversationSidebar({
           onReplyText={(text) => {
             peekReplyMutation.mutate(text);
           }}
+          isSendingReply={peekReplyMutation.isPending}
           onAnswerQuestion={(answers) => {
             peekAnswerMutation.mutate({
               questionId:

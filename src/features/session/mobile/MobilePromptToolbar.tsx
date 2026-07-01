@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/lib/ui/cn";
+import { Spinner } from "@/components/ui/Spinner";
 import { useOverlayScope } from "@/hooks/useOverlayScope";
 import type { EffortLevel } from "@/lib/agent-backends/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
@@ -60,6 +61,8 @@ export interface MobilePromptToolbarProps {
   debugSupported: boolean;
   onToggleDebug(): void;
   debugDisabled?: boolean;
+  /** Debug toggle mutation in flight — the row shows a visible pending state. */
+  debugPending?: boolean;
 
   /**
    * Optional MCP row rendered inside the More sheet. The trigger inside this
@@ -98,6 +101,7 @@ export default function MobilePromptToolbar({
   debugSupported,
   onToggleDebug,
   debugDisabled,
+  debugPending = false,
   mcpRow,
   voiceButton,
   sendButton,
@@ -293,6 +297,7 @@ export default function MobilePromptToolbar({
               onClick={onToggleDebug}
               disabled={debugDisabled || isReadOnly}
               aria-pressed={debugActive}
+              aria-busy={debugPending || undefined}
             >
               <span className={MOBILE_PROMPT_ROW_ICON_CLASS} aria-hidden>
                 <span className="size-[6px] shrink-0 rounded-full bg-text-tertiary transition-all duration-200 ease-[ease]" />
@@ -302,12 +307,17 @@ export default function MobilePromptToolbar({
                   Debug mode
                 </span>
                 <span className="text-[0.7rem] text-text-tertiary">
-                  {debugActive
-                    ? "Enabled — extra diagnostics"
-                    : "Capture extra diagnostics"}
+                  {debugPending
+                    ? debugActive
+                      ? "Exiting…"
+                      : "Entering…"
+                    : debugActive
+                      ? "Enabled — extra diagnostics"
+                      : "Capture extra diagnostics"}
                 </span>
               </span>
               <span className="flex shrink-0 items-center gap-xs">
+                {debugPending && <Spinner size="sm" tone="inherit" />}
                 <span
                   className="relative h-[20px] w-[36px] shrink-0 rounded-[10px] bg-border-default transition-[background] duration-150 after:absolute after:top-2xs after:left-2xs after:h-[16px] after:w-[16px] after:rounded-full after:bg-text-secondary after:transition-[transform,background] after:duration-150 after:content-[''] data-[on=true]:bg-[var(--cc-amber-a35)] data-[on=true]:after:translate-x-[16px] data-[on=true]:after:bg-amber"
                   data-on={debugActive}

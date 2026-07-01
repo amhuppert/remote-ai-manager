@@ -8,13 +8,17 @@ import {
   useRenameConversationMutation,
   useArchiveConversationMutation,
   useAnswerQuestionMutation,
+  useMarkConversationReadMutation,
   useGenericRenameConversationMutation,
   useGenericArchiveConversationMutation,
 } from "@/lib/conversations/mutations";
 import { conversationKeys } from "@/lib/conversations/query-keys";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
-import type { ConversationState } from "@/lib/conversations/schemas";
+import type {
+  AskQuestionItem,
+  ConversationState,
+} from "@/lib/conversations/schemas";
 import type {
   ActiveConversation,
   ProjectActiveConversation,
@@ -841,6 +845,23 @@ describe("useGenericArchiveConversationMutation", () => {
   });
 });
 
+function askQuestionItem(
+  overrides: Partial<AskQuestionItem> = {},
+): AskQuestionItem {
+  return {
+    id: "q1",
+    question: "Which store?",
+    options: [
+      { label: "SQLite", recommended: true },
+      { label: "Redis", recommended: false },
+    ],
+    multiSelect: false,
+    required: true,
+    allowNote: true,
+    ...overrides,
+  };
+}
+
 describe("useAnswerQuestionMutation", () => {
   const fetchSpy = vi.fn<typeof fetch>();
 
@@ -853,13 +874,155 @@ describe("useAnswerQuestionMutation", () => {
     vi.unstubAllGlobals();
   });
 
+  it("optimistically clears the pending question and marks the conversation running in the active cache", async () => {
+    const client = makeClient();
+    const activeKey = conversationKeys.active();
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([
+        activeConvo({
+          id: "c1",
+          status: "waiting_for_input",
+          pendingQuestion: "Which store?",
+          pendingQuestionId: "q1",
+          pendingQuestions: [askQuestionItem()],
+        }),
+      ]),
+    );
+
+    let resolveFetch: (res: Response) => void = () => {};
+    fetchSpy.mockImplementation(
+      () => new Promise<Response>((r) => (resolveFetch = r)),
+    );
+
+    const { result } = renderHook(
+      () => useAnswerQuestionMutation("p", "s", "c1"),
+      { wrapper: wrapperFor(client) },
+    );
+
+    result.current.mutate({
+      questionId: "q1",
+      answers: { q1: { selected: ["SQLite"], note: null, skipped: false } },
+    });
+
+    await waitFor(() => {
+      const convo =
+        client.getQueryData<ActiveConversationsResponse>(activeKey)
+          ?.conversations[0];
+      expect(convo?.pendingQuestion).toBeNull();
+      expect(convo?.pendingQuestionId).toBeNull();
+      expect(convo?.pendingQuestions).toBeNull();
+      expect(convo?.status).toBe("running");
+    });
+
+    resolveFetch(jsonResponse({ ok: true }));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+
+  it("optimistically clears the pending question in the session detail cache", async () => {
+    const client = makeClient();
+    const sessionKey = sessionKeys.detail("p", "s");
+    client.setQueryData(sessionKey, {
+      sessionName: "s",
+      conversations: [
+        conversation({
+          id: "c1",
+          status: "waiting_for_input",
+          pendingQuestionId: "q1",
+          pendingQuestions: [askQuestionItem()],
+        }),
+      ],
+    });
+
+    let resolveFetch: (res: Response) => void = () => {};
+    fetchSpy.mockImplementation(
+      () => new Promise<Response>((r) => (resolveFetch = r)),
+    );
+
+    const { result } = renderHook(
+      () => useAnswerQuestionMutation("p", "s", "c1"),
+      { wrapper: wrapperFor(client) },
+    );
+
+    result.current.mutate({
+      questionId: "q1",
+      answers: { q1: { selected: ["SQLite"], note: null, skipped: false } },
+    });
+
+    await waitFor(() => {
+      const session = client.getQueryData<{
+        conversations: ConversationState[];
+      }>(sessionKey);
+      expect(session?.conversations[0]?.pendingQuestionId).toBeNull();
+      expect(session?.conversations[0]?.pendingQuestions).toBeNull();
+      expect(session?.conversations[0]?.status).toBe("running");
+    });
+
+    resolveFetch(jsonResponse({ ok: true }));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+
+  it("rolls back the pending question in both caches when the server rejects", async () => {
+    const client = makeClient();
+    const activeKey = conversationKeys.active();
+    const sessionKey = sessionKeys.detail("p", "s");
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([
+        activeConvo({
+          id: "c1",
+          status: "waiting_for_input",
+          pendingQuestion: "Which store?",
+          pendingQuestionId: "q1",
+          pendingQuestions: [askQuestionItem()],
+        }),
+      ]),
+    );
+    client.setQueryData(sessionKey, {
+      sessionName: "s",
+      conversations: [
+        conversation({
+          id: "c1",
+          status: "waiting_for_input",
+          pendingQuestionId: "q1",
+          pendingQuestions: [askQuestionItem()],
+        }),
+      ],
+    });
+
+    fetchSpy.mockResolvedValue(jsonResponse({ error: "boom" }, 500));
+
+    const { result } = renderHook(
+      () => useAnswerQuestionMutation("p", "s", "c1"),
+      { wrapper: wrapperFor(client) },
+    );
+
+    result.current.mutate({
+      questionId: "q1",
+      answers: { q1: { selected: ["SQLite"], note: null, skipped: false } },
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const convo =
+      client.getQueryData<ActiveConversationsResponse>(activeKey)
+        ?.conversations[0];
+    expect(convo?.pendingQuestionId).toBe("q1");
+    expect(convo?.status).toBe("waiting_for_input");
+    const session = client.getQueryData<{
+      conversations: ConversationState[];
+    }>(sessionKey);
+    expect(session?.conversations[0]?.pendingQuestionId).toBe("q1");
+    expect(session?.conversations[0]?.status).toBe("waiting_for_input");
+  });
+
   it("submits answers and invalidates messages, session detail, and active conversations", async () => {
     const client = makeClient();
     const messagesKey = conversationKeys.messages("p", "s", "c1");
     const sessionKey = sessionKeys.detail("p", "s");
     const activeKey = conversationKeys.active();
     client.setQueryData(messagesKey, []);
-    client.setQueryData(sessionKey, { sessionName: "s" });
+    client.setQueryData(sessionKey, { sessionName: "s", conversations: [] });
     client.setQueryData(activeKey, { conversations: [] });
     fetchSpy.mockResolvedValue(jsonResponse({ ok: true }));
 
@@ -900,7 +1063,7 @@ describe("useAnswerQuestionMutation", () => {
     const sessionKey = sessionKeys.detail("p", "s");
     const activeKey = conversationKeys.active();
     client.setQueryData(messagesKey, []);
-    client.setQueryData(sessionKey, { sessionName: "s" });
+    client.setQueryData(sessionKey, { sessionName: "s", conversations: [] });
     client.setQueryData(activeKey, { conversations: [] });
     fetchSpy.mockResolvedValue(
       jsonResponse({ error: "Question expired" }, 410),
@@ -921,6 +1084,135 @@ describe("useAnswerQuestionMutation", () => {
     await waitFor(() => {
       expect(client.getQueryState(messagesKey)?.isInvalidated).toBe(true);
       expect(client.getQueryState(sessionKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(activeKey)?.isInvalidated).toBe(true);
+    });
+  });
+
+  it("invalidates messages, session detail, and active conversations on settle even when the server rejects", async () => {
+    const client = makeClient();
+    const messagesKey = conversationKeys.messages("p", "s", "c1");
+    const sessionKey = sessionKeys.detail("p", "s");
+    const activeKey = conversationKeys.active();
+    client.setQueryData(messagesKey, []);
+    client.setQueryData(sessionKey, { sessionName: "s", conversations: [] });
+    client.setQueryData(activeKey, { conversations: [] });
+    fetchSpy.mockResolvedValue(jsonResponse({ error: "boom" }, 500));
+
+    const { result } = renderHook(
+      () => useAnswerQuestionMutation("p", "s", "c1"),
+      { wrapper: wrapperFor(client) },
+    );
+
+    result.current.mutate({
+      questionId: "q1",
+      answers: { choice: { selected: ["yes"], note: null, skipped: false } },
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    await waitFor(() => {
+      expect(client.getQueryState(messagesKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(sessionKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(activeKey)?.isInvalidated).toBe(true);
+    });
+  });
+});
+
+describe("useMarkConversationReadMutation", () => {
+  const fetchSpy = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("optimistically clears unread in the active conversations cache before the server resolves", async () => {
+    const client = makeClient();
+    const activeKey = conversationKeys.active();
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([
+        activeConvo({ id: "c1", unread: true }),
+        activeConvo({ id: "c2", unread: true }),
+      ]),
+    );
+
+    let resolveFetch: (res: Response) => void = () => {};
+    fetchSpy.mockImplementation(
+      () => new Promise<Response>((r) => (resolveFetch = r)),
+    );
+
+    const { result } = renderHook(() => useMarkConversationReadMutation(), {
+      wrapper: wrapperFor(client),
+    });
+
+    result.current.mutate({
+      projectName: "p",
+      sessionName: "s",
+      conversationId: "c1",
+    });
+
+    await waitFor(() => {
+      const data = client.getQueryData<ActiveConversationsResponse>(activeKey);
+      expect(data?.conversations[0]?.unread).toBe(false);
+      expect(data?.conversations[1]?.unread).toBe(true);
+    });
+
+    resolveFetch(jsonResponse({ ok: true }));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+
+  it("rolls back unread when the server rejects", async () => {
+    const client = makeClient();
+    const activeKey = conversationKeys.active();
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([activeConvo({ id: "c1", unread: true })]),
+    );
+
+    fetchSpy.mockResolvedValue(jsonResponse({ error: "boom" }, 500));
+
+    const { result } = renderHook(() => useMarkConversationReadMutation(), {
+      wrapper: wrapperFor(client),
+    });
+
+    result.current.mutate({
+      projectName: "p",
+      sessionName: "s",
+      conversationId: "c1",
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const data = client.getQueryData<ActiveConversationsResponse>(activeKey);
+    expect(data?.conversations[0]?.unread).toBe(true);
+  });
+
+  it("invalidates the active conversations cache on settle even when the server rejects", async () => {
+    const client = makeClient();
+    const activeKey = conversationKeys.active();
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([activeConvo({ id: "c1", unread: true })]),
+    );
+
+    fetchSpy.mockResolvedValue(jsonResponse({ error: "boom" }, 500));
+
+    const { result } = renderHook(() => useMarkConversationReadMutation(), {
+      wrapper: wrapperFor(client),
+    });
+
+    result.current.mutate({
+      projectName: "p",
+      sessionName: "s",
+      conversationId: "c1",
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    await waitFor(() => {
       expect(client.getQueryState(activeKey)?.isInvalidated).toBe(true);
     });
   });

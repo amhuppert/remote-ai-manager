@@ -16,53 +16,37 @@ import {
 } from "@/lib/sessions/schemas";
 import type { ActiveConversationsResponse } from "@/lib/active-conversations/schemas";
 
-interface ArchiveSessionOptimisticSnapshot {
+interface SessionCachesSnapshot {
   previousSessions: SessionListItem[] | undefined;
   previousActive: ActiveConversationsResponse | undefined;
 }
 
-function applyArchiveSessionOptimistic(
+async function cancelSessionCaches(
   client: QueryClient,
   projectName: string,
-  sessionName: string,
-  archived: boolean,
-): ArchiveSessionOptimisticSnapshot {
-  const sessionListKey = sessionKeys.list(projectName);
-  const activeKey = conversationKeys.active();
-  const previousSessions =
-    client.getQueryData<SessionListItem[]>(sessionListKey);
-  const previousActive =
-    client.getQueryData<ActiveConversationsResponse>(activeKey);
-
-  client.setQueryData<SessionListItem[]>(sessionListKey, (old) =>
-    old?.map((s) => (s.sessionName === sessionName ? { ...s, archived } : s)),
-  );
-
-  if (archived) {
-    client.setQueryData<ActiveConversationsResponse>(activeKey, (old) =>
-      old === undefined
-        ? old
-        : {
-            ...old,
-            conversations: old.conversations.filter(
-              (c) =>
-                !(
-                  c.scope === "session" &&
-                  c.projectName === projectName &&
-                  c.sessionName === sessionName
-                ),
-            ),
-          },
-    );
-  }
-
-  return { previousSessions, previousActive };
+): Promise<void> {
+  await client.cancelQueries({ queryKey: sessionKeys.list(projectName) });
+  await client.cancelQueries({ queryKey: conversationKeys.active() });
 }
 
-function rollbackArchiveSessionOptimistic(
+function snapshotSessionCaches(
   client: QueryClient,
   projectName: string,
-  snapshot: ArchiveSessionOptimisticSnapshot | undefined,
+): SessionCachesSnapshot {
+  return {
+    previousSessions: client.getQueryData<SessionListItem[]>(
+      sessionKeys.list(projectName),
+    ),
+    previousActive: client.getQueryData<ActiveConversationsResponse>(
+      conversationKeys.active(),
+    ),
+  };
+}
+
+function rollbackSessionCaches(
+  client: QueryClient,
+  projectName: string,
+  snapshot: SessionCachesSnapshot | undefined,
 ): void {
   if (snapshot === undefined) return;
   if (snapshot.previousSessions !== undefined) {
@@ -74,6 +58,74 @@ function rollbackArchiveSessionOptimistic(
   if (snapshot.previousActive !== undefined) {
     client.setQueryData(conversationKeys.active(), snapshot.previousActive);
   }
+}
+
+function invalidateSessionCaches(
+  client: QueryClient,
+  projectName: string,
+): void {
+  void client.invalidateQueries({ queryKey: sessionKeys.list(projectName) });
+  void client.invalidateQueries({ queryKey: conversationKeys.active() });
+}
+
+function setSessionsArchived(
+  client: QueryClient,
+  projectName: string,
+  sessionNames: ReadonlySet<string>,
+  archived: boolean,
+): void {
+  client.setQueryData<SessionListItem[]>(sessionKeys.list(projectName), (old) =>
+    old?.map((s) => (sessionNames.has(s.sessionName) ? { ...s, archived } : s)),
+  );
+}
+
+function removeSessionsFromList(
+  client: QueryClient,
+  projectName: string,
+  sessionNames: ReadonlySet<string>,
+): void {
+  client.setQueryData<SessionListItem[]>(sessionKeys.list(projectName), (old) =>
+    old?.filter((s) => !sessionNames.has(s.sessionName)),
+  );
+}
+
+function removeSessionsActiveConversations(
+  client: QueryClient,
+  projectName: string,
+  sessionNames: ReadonlySet<string>,
+): void {
+  client.setQueryData<ActiveConversationsResponse>(
+    conversationKeys.active(),
+    (old) =>
+      old === undefined
+        ? old
+        : {
+            ...old,
+            conversations: old.conversations.filter(
+              (c) =>
+                !(
+                  c.scope === "session" &&
+                  c.projectName === projectName &&
+                  sessionNames.has(c.sessionName)
+                ),
+            ),
+          },
+  );
+}
+
+function applyArchiveSessionOptimistic(
+  client: QueryClient,
+  projectName: string,
+  sessionName: string,
+  archived: boolean,
+): SessionCachesSnapshot {
+  const snapshot = snapshotSessionCaches(client, projectName);
+  const sessionNames = new Set([sessionName]);
+  setSessionsArchived(client, projectName, sessionNames, archived);
+  if (archived) {
+    removeSessionsActiveConversations(client, projectName, sessionNames);
+  }
+  return snapshot;
 }
 export function useCreateSessionMutation(projectName: string) {
   const queryClient = useQueryClient();
@@ -116,10 +168,19 @@ export function useDeleteSessionMutation(projectName: string) {
         "delete-session",
         { method: "DELETE" },
       ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: sessionKeys.list(projectName),
-      });
+    onMutate: async (sessionName) => {
+      await cancelSessionCaches(queryClient, projectName);
+      const snapshot = snapshotSessionCaches(queryClient, projectName);
+      const sessionNames = new Set([sessionName]);
+      removeSessionsFromList(queryClient, projectName, sessionNames);
+      removeSessionsActiveConversations(queryClient, projectName, sessionNames);
+      return snapshot;
+    },
+    onError: (_err, _vars, context) => {
+      rollbackSessionCaches(queryClient, projectName, context);
+    },
+    onSettled: () => {
+      invalidateSessionCaches(queryClient, projectName);
     },
   });
 }
@@ -142,10 +203,7 @@ export function useArchiveSessionMutation(
         },
       ),
     onMutate: async (archived) => {
-      await queryClient.cancelQueries({
-        queryKey: sessionKeys.list(projectName),
-      });
-      await queryClient.cancelQueries({ queryKey: conversationKeys.active() });
+      await cancelSessionCaches(queryClient, projectName);
       return applyArchiveSessionOptimistic(
         queryClient,
         projectName,
@@ -154,15 +212,10 @@ export function useArchiveSessionMutation(
       );
     },
     onError: (_err, _vars, context) => {
-      rollbackArchiveSessionOptimistic(queryClient, projectName, context);
+      rollbackSessionCaches(queryClient, projectName, context);
     },
     onSettled: () => {
-      void queryClient.invalidateQueries({
-        queryKey: sessionKeys.list(projectName),
-      });
-      void queryClient.invalidateQueries({
-        queryKey: conversationKeys.active(),
-      });
+      invalidateSessionCaches(queryClient, projectName);
     },
   });
 }
@@ -181,7 +234,27 @@ export function useTddToggleMutation(projectName: string, sessionName: string) {
           body: JSON.stringify({ tddEnabled }),
         },
       ),
-    onSuccess: () => {
+    onMutate: async (tddEnabled) => {
+      const listKey = sessionKeys.list(projectName);
+      await queryClient.cancelQueries({ queryKey: listKey });
+      const previousSessions =
+        queryClient.getQueryData<SessionListItem[]>(listKey);
+      queryClient.setQueryData<SessionListItem[]>(listKey, (old) =>
+        old?.map((s) =>
+          s.sessionName === sessionName ? { ...s, tddEnabled } : s,
+        ),
+      );
+      return { previousSessions };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previousSessions !== undefined) {
+        queryClient.setQueryData(
+          sessionKeys.list(projectName),
+          context.previousSessions,
+        );
+      }
+    },
+    onSettled: () => {
       void queryClient.invalidateQueries({
         queryKey: sessionKeys.list(projectName),
       });
@@ -204,10 +277,35 @@ export function useBulkSessionsMutation(projectName: string) {
         },
         bulkSessionsResponseSchema,
       ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: sessionKeys.list(projectName),
-      });
+    onMutate: async (req) => {
+      await cancelSessionCaches(queryClient, projectName);
+      const snapshot = snapshotSessionCaches(queryClient, projectName);
+      const sessionNames = new Set(req.sessionNames);
+      if (req.op === "delete") {
+        removeSessionsFromList(queryClient, projectName, sessionNames);
+        removeSessionsActiveConversations(
+          queryClient,
+          projectName,
+          sessionNames,
+        );
+      } else {
+        const archived = req.op === "archive";
+        setSessionsArchived(queryClient, projectName, sessionNames, archived);
+        if (archived) {
+          removeSessionsActiveConversations(
+            queryClient,
+            projectName,
+            sessionNames,
+          );
+        }
+      }
+      return snapshot;
+    },
+    onError: (_err, _vars, context) => {
+      rollbackSessionCaches(queryClient, projectName, context);
+    },
+    onSettled: () => {
+      invalidateSessionCaches(queryClient, projectName);
     },
   });
 }
@@ -240,10 +338,7 @@ export function useGenericArchiveSessionMutation() {
         },
       ),
     onMutate: async ({ projectName, sessionName, archived }) => {
-      await queryClient.cancelQueries({
-        queryKey: sessionKeys.list(projectName),
-      });
-      await queryClient.cancelQueries({ queryKey: conversationKeys.active() });
+      await cancelSessionCaches(queryClient, projectName);
       return applyArchiveSessionOptimistic(
         queryClient,
         projectName,
@@ -252,15 +347,10 @@ export function useGenericArchiveSessionMutation() {
       );
     },
     onError: (_err, { projectName }, context) => {
-      rollbackArchiveSessionOptimistic(queryClient, projectName, context);
+      rollbackSessionCaches(queryClient, projectName, context);
     },
     onSettled: (_data, _err, { projectName }) => {
-      void queryClient.invalidateQueries({
-        queryKey: sessionKeys.list(projectName),
-      });
-      void queryClient.invalidateQueries({
-        queryKey: conversationKeys.active(),
-      });
+      invalidateSessionCaches(queryClient, projectName);
     },
   });
 }

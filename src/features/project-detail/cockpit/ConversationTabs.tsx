@@ -1,4 +1,5 @@
 import { CloseIcon, PlusIcon } from "@/components/icons";
+import { Spinner } from "@/components/ui/Spinner";
 import { StatusDot } from "@/components/ui/StatusDot";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ConversationStatus } from "@/lib/conversations/schemas";
@@ -19,6 +20,9 @@ export interface ConversationTabsProps {
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
   onNewChat: () => void;
+  /** True while the create-conversation mutation is pending — the `+ New chat`
+   * affordance disables and shows in-progress state. */
+  creating?: boolean;
 }
 
 const TAB_STRIP_CLASS =
@@ -44,7 +48,9 @@ const TAB_NEWCHAT_CLASS =
   "inline-flex items-center gap-2xs px-sm py-xs rounded-sm border border-dashed border-border-subtle " +
   "bg-transparent text-text-secondary font-mono text-[0.74rem] cursor-pointer " +
   "transition-[background,color,border-color] duration-150 ease-[ease] " +
-  "hover:bg-bg-hover hover:text-text-primary hover:border-border-default";
+  "hover:bg-bg-hover hover:text-text-primary hover:border-border-default " +
+  "disabled:cursor-default disabled:opacity-60 disabled:hover:bg-transparent " +
+  "disabled:hover:text-text-secondary disabled:hover:border-border-subtle";
 
 /**
  * The conversation-pane tab strip: one tab per open project conversation, the
@@ -59,6 +65,7 @@ export default function ConversationTabs({
   onSelect,
   onClose,
   onNewChat,
+  creating = false,
 }: ConversationTabsProps): React.JSX.Element {
   return (
     <div className={TAB_STRIP_CLASS} role="tablist" aria-label="Conversations">
@@ -118,10 +125,16 @@ export default function ConversationTabs({
         type="button"
         className={TAB_NEWCHAT_CLASS}
         onClick={onNewChat}
+        disabled={creating}
+        aria-busy={creating || undefined}
         aria-label="New chat"
       >
-        <PlusIcon size={12} />
-        New chat
+        {creating ? (
+          <Spinner size="sm" tone="inherit" />
+        ) : (
+          <PlusIcon size={12} />
+        )}
+        {creating ? "Creating…" : "New chat"}
       </button>
     </div>
   );

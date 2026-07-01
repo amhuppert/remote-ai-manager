@@ -46,7 +46,13 @@ export default function DebugModeToggle({
       aria-pressed={isActive}
     >
       <span className="size-[6px] shrink-0 rounded-full bg-text-tertiary transition-all duration-200 ease-[ease] group-data-[on=true]:bg-amber group-data-[on=true]:shadow-[0_0_6px_var(--color-amber)]" />
-      <span>Debug</span>
+      <span>
+        {toggleMutation.isPending
+          ? isActive
+            ? "Exiting…"
+            : "Entering…"
+          : "Debug"}
+      </span>
     </button>
   );
 }

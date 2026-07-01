@@ -13,6 +13,7 @@ import {
   type AskQuestionAnswer,
 } from "./schemas";
 import type { ActiveConversationsResponse } from "@/lib/active-conversations/schemas";
+import type { SessionState } from "@/lib/sessions/schemas";
 import { mutationFetch } from "@/lib/api/fetcher";
 
 function renameInActiveCache(
@@ -348,7 +349,62 @@ export function useAnswerQuestionMutation(
 
       throw new Error(`Answer submission failed: ${res.status}`);
     },
-    onSuccess: () => {
+    onMutate: async () => {
+      const activeKey = conversationKeys.active();
+      const sessionKey = sessionKeys.detail(projectName, sessionName);
+      await queryClient.cancelQueries({ queryKey: activeKey });
+      await queryClient.cancelQueries({ queryKey: sessionKey });
+
+      const previousActive =
+        queryClient.getQueryData<ActiveConversationsResponse>(activeKey);
+      queryClient.setQueryData<ActiveConversationsResponse>(activeKey, (old) =>
+        old === undefined
+          ? old
+          : {
+              ...old,
+              conversations: old.conversations.map((c) =>
+                c.id === conversationId
+                  ? {
+                      ...c,
+                      status: "running" as const,
+                      pendingQuestion: null,
+                      pendingQuestionId: null,
+                      pendingQuestions: null,
+                    }
+                  : c,
+              ),
+            },
+      );
+
+      const previousSession =
+        queryClient.getQueryData<SessionState>(sessionKey);
+      queryClient.setQueryData<SessionState>(sessionKey, (old) =>
+        old === undefined
+          ? old
+          : {
+              ...old,
+              conversations: old.conversations.map((c) =>
+                c.id === conversationId
+                  ? {
+                      ...c,
+                      status: "running" as const,
+                      pendingQuestionId: null,
+                      pendingQuestions: null,
+                    }
+                  : c,
+              ),
+            },
+      );
+
+      return { previousActive, previousSession, sessionKey };
+    },
+    onError: (_err, _vars, context) => {
+      restoreActiveCache(queryClient, context?.previousActive);
+      if (context?.previousSession !== undefined) {
+        queryClient.setQueryData(context.sessionKey, context.previousSession);
+      }
+    },
+    onSettled: () => {
       void queryClient.invalidateQueries({
         queryKey: conversationKeys.messages(
           projectName,
@@ -515,6 +571,26 @@ export function useMarkConversationReadMutation() {
         "mark-conversation-read",
         { method: "POST" },
       ),
+    onMutate: async ({ conversationId }) => {
+      const activeKey = conversationKeys.active();
+      await queryClient.cancelQueries({ queryKey: activeKey });
+      const previousActive =
+        queryClient.getQueryData<ActiveConversationsResponse>(activeKey);
+      queryClient.setQueryData<ActiveConversationsResponse>(activeKey, (old) =>
+        old === undefined
+          ? old
+          : {
+              ...old,
+              conversations: old.conversations.map((c) =>
+                c.id === conversationId ? { ...c, unread: false } : c,
+              ),
+            },
+      );
+      return { previousActive };
+    },
+    onError: (_err, _vars, context) => {
+      restoreActiveCache(queryClient, context?.previousActive);
+    },
     onSettled: () => {
       void queryClient.invalidateQueries({
         queryKey: conversationKeys.active(),

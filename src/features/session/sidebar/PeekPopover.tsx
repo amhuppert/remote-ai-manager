@@ -53,6 +53,8 @@ interface PeekPopoverProps {
   onClose: () => void;
   onOpenFull: () => void;
   onReplyText: (text: string) => void;
+  /** Reply mutation in flight — the send control shows a visible sending state. */
+  isSendingReply?: boolean;
   onAnswerQuestion: (answers: Record<string, AskQuestionAnswer>) => void;
   onFork: (messageIndex: number) => void;
   approvalGate?: PeekApprovalGate | null;
@@ -125,9 +127,11 @@ async function ignorePeekImagePaste(): Promise<ImageAttachment | null> {
 function PeekReplyComposer({
   conversation,
   onReplyText,
+  isSending = false,
 }: {
   conversation: SessionActiveConversation;
   onReplyText: (text: string) => void;
+  isSending?: boolean;
 }): React.JSX.Element {
   const [replyText, setReplyText] = useState("");
   const [hasReplyContent, setHasReplyContent] = useState(false);
@@ -208,7 +212,8 @@ function PeekReplyComposer({
     };
   }, [voiceAvailable, isProcessing, handleToggleRecording]);
 
-  const sendDisabled = !hasReplyContent || isRecording || isProcessing;
+  const sendDisabled =
+    !hasReplyContent || isRecording || isProcessing || isSending;
 
   return (
     <div className="peek__composer-box grid grid-cols-[minmax(0,1fr)_auto] items-end gap-sm rounded-md border border-solid border-cyan-dim bg-bg-surface px-[10px] py-[8px] shadow-[0_0_0_3px_var(--color-cyan-glow)] focus-within:border-cyan focus-within:shadow-[0_0_0_3px_var(--color-cyan-glow-strong)]">
@@ -242,8 +247,9 @@ function PeekReplyComposer({
           className="inline-flex min-h-[28px] cursor-pointer items-center justify-center rounded-sm border-0 bg-cyan px-[10px] py-[4px] font-mono text-[9.5px] font-semibold tracking-[0.06em] text-text-inverse uppercase disabled:cursor-not-allowed disabled:opacity-50"
           onClick={handleSubmit}
           disabled={sendDisabled}
+          aria-busy={isSending || undefined}
         >
-          Send
+          {isSending ? "Sending…" : "Send"}
         </button>
       </div>
     </div>
@@ -257,6 +263,7 @@ export default function PeekPopover({
   onClose,
   onOpenFull,
   onReplyText,
+  isSendingReply = false,
   onAnswerQuestion,
   onFork,
   approvalGate = null,
@@ -541,6 +548,7 @@ export default function PeekPopover({
                   <PeekReplyComposer
                     conversation={conversation}
                     onReplyText={onReplyText}
+                    isSending={isSendingReply}
                   />
                 )}
               </footer>

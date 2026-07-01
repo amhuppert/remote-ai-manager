@@ -168,9 +168,9 @@ export function DecisionApprovalPanelView({
           size="sm"
           touch
           onClick={handleSubmit}
-          disabled={isSubmitting}
+          loading={isSubmitting}
         >
-          Submit decisions
+          {isSubmitting ? "Submitting…" : "Submit decisions"}
         </Button>
         <span className="font-mono text-[0.66rem] text-text-tertiary">
           Approved decisions fold into the charter; rejections send feedback

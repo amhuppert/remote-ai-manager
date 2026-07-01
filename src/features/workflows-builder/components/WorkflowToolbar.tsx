@@ -35,6 +35,8 @@ interface WorkflowToolbarProps {
   onOpenWorkflowSettings?: () => void;
   dirty: boolean;
   saving: boolean;
+  /** True while the delete-definition mutation is in flight. */
+  deleting?: boolean;
   hasValidationErrors: boolean;
   isMobile?: boolean;
 }
@@ -51,6 +53,7 @@ export default function WorkflowToolbar({
   onOpenWorkflowSettings,
   dirty,
   saving,
+  deleting = false,
   hasValidationErrors,
   isMobile,
 }: WorkflowToolbarProps) {
@@ -228,9 +231,11 @@ export default function WorkflowToolbar({
                     onDelete();
                     setOverflowOpen(false);
                   }}
+                  disabled={deleting}
+                  aria-busy={deleting || undefined}
                   type="button"
                 >
-                  Delete
+                  {deleting ? "Deleting…" : "Delete"}
                 </button>
               </div>
             )}
@@ -304,9 +309,11 @@ export default function WorkflowToolbar({
       <button
         className={cn(WB_BTN_BASE, WB_BTN_SM, WB_BTN_DANGER)}
         onClick={onDelete}
+        disabled={deleting}
+        aria-busy={deleting || undefined}
         type="button"
       >
-        Delete
+        {deleting ? "Deleting…" : "Delete"}
       </button>
     </div>
   );

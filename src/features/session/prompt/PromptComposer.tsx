@@ -472,6 +472,7 @@ export default function PromptComposer({
           debugSupported={!!activeConversation}
           onToggleDebug={onDebugToggle}
           debugDisabled={sending || debugTogglePending}
+          debugPending={debugTogglePending}
           mcpRow={
             <div className={MOBILE_PROMPT_ROW_CLASS}>
               <ConversationAgentCapabilitiesConfig

@@ -58,6 +58,19 @@ export const Disabled: Story = {
   args: { variant: "primary", disabled: true, children: "Disabled" },
 };
 
+/** Rung-3 pending state: inherit-tone spinner + label, disabled, aria-busy. */
+export const Loading: Story = {
+  render: () => (
+    <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+      {variants.map((variant) => (
+        <Button key={variant} variant={variant} loading>
+          Saving…
+        </Button>
+      ))}
+    </div>
+  ),
+};
+
 /** layoutClassName places the button from its container (external geometry only). */
 export const LayoutPlacement: Story = {
   render: () => (

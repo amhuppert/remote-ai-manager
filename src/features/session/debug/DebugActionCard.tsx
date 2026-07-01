@@ -110,6 +110,8 @@ function DebugActionCard({
 
   const phase = debugMode.phase;
   const anyPending = toggleMutation.isPending || phaseMutation.isPending;
+  const phasePending = (action: typeof phaseMutation.variables) =>
+    phaseMutation.isPending && phaseMutation.variables === action;
 
   const handleMarkReproduced = async () => {
     await phaseMutation.mutateAsync("mark_reproduced");
@@ -173,6 +175,7 @@ function DebugActionCard({
           touch
           onClick={handleExit}
           disabled={anyPending}
+          loading={toggleMutation.isPending}
         >
           Exit Debug
         </Button>
@@ -184,6 +187,7 @@ function DebugActionCard({
               touch
               onClick={handleRetry}
               disabled={isBusy || anyPending}
+              loading={phasePending("retry_turn")}
             >
               Retry
             </Button>
@@ -195,6 +199,7 @@ function DebugActionCard({
               touch
               onClick={() => void handleMarkReproduced()}
               disabled={isBusy || anyPending}
+              loading={phasePending("mark_reproduced")}
             >
               Mark Reproduced
             </Button>
@@ -206,6 +211,7 @@ function DebugActionCard({
               touch
               onClick={() => void handleMarkFix()}
               disabled={isBusy || anyPending}
+              loading={phasePending("mark_fix_verified")}
             >
               Mark Fixed
             </Button>
@@ -217,6 +223,7 @@ function DebugActionCard({
               touch
               onClick={() => void handleMarkFixFailed()}
               disabled={isBusy || anyPending}
+              loading={phasePending("mark_fix_failed")}
             >
               Mark Fix Failed
             </Button>

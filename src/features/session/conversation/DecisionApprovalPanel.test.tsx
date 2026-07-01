@@ -154,6 +154,20 @@ describe("DecisionApprovalPanelView", () => {
     );
     expect(screen.getByRole("button", { name: /submit/i })).toBeDisabled();
   });
+
+  it("shows Submitting… on the submit button while a resolution is in flight", () => {
+    const batch = makeBatch([makeProposal({ id: "p1" })]);
+    render(
+      <DecisionApprovalPanelView
+        batch={batch}
+        isSubmitting
+        onSubmit={vi.fn()}
+      />,
+    );
+    const submit = screen.getByRole("button", { name: /submitting…/i });
+    expect(submit).toBeDisabled();
+    expect(submit).toHaveAttribute("aria-busy", "true");
+  });
 });
 
 describe("DecisionApprovalPanel (container)", () => {

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/ui/cn";
+import { Spinner } from "@/components/ui/Spinner";
 import McpInheritBadge from "./McpInheritBadge";
 import McpToolRow from "./McpToolRow";
 import { pendingDot } from "./styles";
@@ -78,6 +79,7 @@ export default function McpServerCard({
   }, [open, server.toolDiscovery.kind, server.id, actions]);
 
   const { status } = server;
+  const isRefreshing = actions.refreshingServerId === server.id;
   const isInherited = status.kind === "inherited";
   const isDisabled = status.kind === "disabled";
   const isOverridden = status.kind === "overridden";
@@ -259,12 +261,14 @@ export default function McpServerCard({
             {actions.onRefreshTools ? (
               <button
                 type="button"
-                className="inline-flex size-[24px] cursor-pointer items-center justify-center rounded-sm border border-solid border-border-subtle bg-transparent p-0 text-[0.85rem] leading-none text-text-secondary transition-all duration-[120ms] hover:border-cyan-dim hover:bg-bg-hover hover:text-cyan focus-visible:[outline:2px_solid_var(--cyan)] focus-visible:outline-offset-1"
+                className="inline-flex size-[24px] cursor-pointer items-center justify-center rounded-sm border border-solid border-border-subtle bg-transparent p-0 text-[0.85rem] leading-none text-text-secondary transition-all duration-[120ms] hover:border-cyan-dim hover:bg-bg-hover hover:text-cyan focus-visible:[outline:2px_solid_var(--cyan)] focus-visible:outline-offset-1 disabled:cursor-default"
                 onClick={handleRefresh}
                 title="Refresh tool list"
                 aria-label="Refresh tool list"
+                disabled={isRefreshing}
+                aria-busy={isRefreshing || undefined}
               >
-                ↻
+                {isRefreshing ? <Spinner size="sm" tone="inherit" /> : "↻"}
               </button>
             ) : null}
           </div>

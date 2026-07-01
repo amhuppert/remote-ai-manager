@@ -31,6 +31,8 @@ interface WorkflowBuilderEditorProps {
   revision: number | null;
   onRename: (name: string) => void;
   onDelete: () => void;
+  /** True while the delete-definition mutation is in flight. */
+  deleting?: boolean;
   onSave?: (draft: {
     definition: WorkflowDefinitionRecord["definition"];
     layout: WorkflowDefinitionRecord["layout"];
@@ -62,6 +64,7 @@ function WorkflowBuilderEditorInner({
   revision,
   onRename,
   onDelete,
+  deleting,
   onSave,
   saveError,
   defaultImplementerConfig,
@@ -202,6 +205,7 @@ function WorkflowBuilderEditorInner({
         onOpenWorkflowSettings={onOpenWorkflowSettings}
         dirty={dirty}
         saving={isSaving}
+        deleting={deleting}
         hasValidationErrors={validationErrors.length > 0}
         isMobile={isMobile}
       />

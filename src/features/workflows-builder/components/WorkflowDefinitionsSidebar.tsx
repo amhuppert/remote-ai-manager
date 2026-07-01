@@ -36,6 +36,8 @@ interface WorkflowDefinitionsSidebarProps {
   onSelect: (id: string) => void;
   onCreate: () => void;
   isLoading: boolean;
+  /** True while the create-definition mutation is in flight. */
+  isCreating?: boolean;
   footer?: React.ReactNode;
   /** Heading shown above the list. Defaults to "Definitions". */
   title?: string;
@@ -100,6 +102,7 @@ export default function WorkflowDefinitionsSidebar({
   onSelect,
   onCreate,
   isLoading,
+  isCreating = false,
   footer,
   title = "Definitions",
 }: WorkflowDefinitionsSidebarProps) {
@@ -112,10 +115,12 @@ export default function WorkflowDefinitionsSidebar({
         <button
           className={cn(WB_BTN_BASE, WB_BTN_XS, WB_BTN_DEFAULT)}
           onClick={onCreate}
+          disabled={isCreating}
+          aria-busy={isCreating || undefined}
           type="button"
           title="Create workflow"
         >
-          +
+          {isCreating ? "Creating…" : "+"}
         </button>
       </div>
 

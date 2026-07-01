@@ -109,6 +109,7 @@ export default function ConflictsPage() {
       targetBranch={targetBranch}
       conflicts={conflicts}
       error={error || submissionError}
+      isSubmitting={resolveConflicts.isPending}
       onAcceptAll={handleAcceptAll}
       onFixApproved={handleFixApproved}
       onBack={handleBack}

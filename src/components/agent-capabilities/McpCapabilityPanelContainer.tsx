@@ -200,6 +200,7 @@ export function McpCapabilityPanelContainer({
             key={server.id}
             server={server}
             scopeName={scopeLabel(mcpScope)}
+            refreshing={actions.refreshingServerId === server.id}
             expanded={expandedServerId === server.id}
             onExpand={() => {
               setExpandedServerId((current) =>
@@ -233,6 +234,7 @@ export function McpCapabilityPanelContainer({
 function McpCapabilityRow({
   server,
   scopeName,
+  refreshing,
   expanded,
   onExpand,
   onToggle,
@@ -243,6 +245,7 @@ function McpCapabilityRow({
 }: {
   server: McpServerView;
   scopeName: string;
+  refreshing: boolean;
   expanded: boolean;
   onExpand(): void;
   onToggle(enabled: boolean): void;
@@ -337,6 +340,7 @@ function McpCapabilityRow({
               variant="ghost"
               size="sm"
               touch
+              loading={refreshing}
               onClick={onRefreshTools}
             >
               refresh

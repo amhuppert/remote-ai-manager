@@ -13,6 +13,11 @@ import {
   graphWorkflowExecutionKeys,
 } from "@/lib/workflows/query-keys";
 import { sessionKeys } from "@/lib/sessions/query-keys";
+import { notificationKeys } from "@/lib/notifications/query-keys";
+import type {
+  JobNotification,
+  NotificationsResponse,
+} from "@/lib/notifications/schemas";
 import { projectConversationKeys } from "@/lib/project-conversations-client/query-keys";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 
@@ -1557,5 +1562,307 @@ describe("NotificationListener", () => {
     expect(invalidateQueries).not.toHaveBeenCalledWith({
       queryKey: conversationKeys.active(),
     });
+  });
+
+  function emitAndGetSpies() {
+    const client = makeClient();
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
+    renderWithClient(client);
+    const es = FakeEventSource.instances[0];
+    if (!es) throw new Error("expected EventSource instance");
+    return { client, invalidateQueries, es };
+  }
+
+  it("invalidates the execution detail (not the event log) on graph-workflow-pending-halt-reason", async () => {
+    const { invalidateQueries, es } = emitAndGetSpies();
+
+    es.emit("graph-workflow-pending-halt-reason", {
+      type: "graph-workflow-pending-halt-reason",
+      projectName: "proj",
+      sessionName: "sess",
+      executionId: "exec-1",
+      pendingHaltReason: null,
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: graphWorkflowExecutionKeys.detail("proj", "sess"),
+      }),
+    );
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: graphWorkflowEventsKeys.list("proj", "sess", "exec-1"),
+    });
+  });
+
+  it("invalidates the execution detail and event log on graph-workflow-batch-scheduled", async () => {
+    const { invalidateQueries, es } = emitAndGetSpies();
+
+    es.emit("graph-workflow-batch-scheduled", {
+      type: "graph-workflow-batch-scheduled",
+      projectName: "proj",
+      sessionName: "sess",
+      executionId: "exec-2",
+      batchId: "batch-1",
+      contextIds: ["ctx-1", "ctx-2"],
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: graphWorkflowExecutionKeys.detail("proj", "sess"),
+      }),
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: graphWorkflowEventsKeys.list("proj", "sess", "exec-2"),
+    });
+  });
+
+  it("invalidates the execution detail and event log on graph-workflow-merge-status", async () => {
+    const { invalidateQueries, es } = emitAndGetSpies();
+
+    es.emit("graph-workflow-merge-status", {
+      type: "graph-workflow-merge-status",
+      projectName: "proj",
+      sessionName: "sess",
+      executionId: "exec-3",
+      contextId: "ctx-1",
+      branchName: "csm/ctx-1",
+      mergeStatus: "in-progress",
+      cleanupStatus: "pending",
+      lastMergeError: null,
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: graphWorkflowExecutionKeys.detail("proj", "sess"),
+      }),
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: graphWorkflowEventsKeys.list("proj", "sess", "exec-3"),
+    });
+  });
+
+  it("invalidates the execution detail and event log on graph-workflow-lane-status", async () => {
+    const { invalidateQueries, es } = emitAndGetSpies();
+
+    es.emit("graph-workflow-lane-status", {
+      type: "graph-workflow-lane-status",
+      projectName: "proj",
+      sessionName: "sess",
+      executionId: "exec-4",
+      laneId: "lane-1",
+      kind: "worktree",
+      status: "active",
+      branchName: "csm/lane-1",
+      worktreePath: null,
+      includedContextIds: ["ctx-1"],
+      lastCommittingContextId: null,
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: graphWorkflowExecutionKeys.detail("proj", "sess"),
+      }),
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: graphWorkflowEventsKeys.list("proj", "sess", "exec-4"),
+    });
+  });
+
+  it("invalidates the execution detail and event log on graph-workflow-join-status", async () => {
+    const { invalidateQueries, es } = emitAndGetSpies();
+
+    es.emit("graph-workflow-join-status", {
+      type: "graph-workflow-join-status",
+      projectName: "proj",
+      sessionName: "sess",
+      executionId: "exec-5",
+      joinId: "join-1",
+      kind: "context_merge",
+      contextId: "ctx-1",
+      status: "running",
+      sourceLaneIds: ["lane-1"],
+      mergedSourceLaneIds: [],
+      targetLaneId: "lane-0",
+      errorMessage: null,
+      conflicts: null,
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: graphWorkflowExecutionKeys.detail("proj", "sess"),
+      }),
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: graphWorkflowEventsKeys.list("proj", "sess", "exec-5"),
+    });
+  });
+
+  it("invalidates the execution detail (not the event log) on graph-workflow-charter-registered", async () => {
+    const { invalidateQueries, es } = emitAndGetSpies();
+
+    es.emit("graph-workflow-charter-registered", {
+      type: "graph-workflow-charter-registered",
+      projectName: "proj",
+      sessionName: "sess",
+      executionId: "exec-6",
+      definitionId: "def-1",
+      definitionRevision: 1,
+      charterHash: "hash-1",
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: graphWorkflowExecutionKeys.detail("proj", "sess"),
+      }),
+    );
+    expect(invalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: graphWorkflowEventsKeys.list("proj", "sess", "exec-6"),
+    });
+  });
+
+  it("invalidates the execution detail on graph-workflow-charter-updated with a null executionId", async () => {
+    const { invalidateQueries, es } = emitAndGetSpies();
+
+    es.emit("graph-workflow-charter-updated", {
+      type: "graph-workflow-charter-updated",
+      projectName: "proj",
+      sessionName: "sess",
+      executionId: null,
+      definitionId: "def-1",
+      definitionRevision: 2,
+      charterHash: "hash-2",
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: graphWorkflowExecutionKeys.detail("proj", "sess"),
+      }),
+    );
+  });
+
+  it("invalidates the project's sessions list on spawn-result", async () => {
+    const { invalidateQueries, es } = emitAndGetSpies();
+
+    es.emit("spawn-result", {
+      type: "spawn-result",
+      scope: "project",
+      projectName: "proj",
+      conversationId: "conv-1",
+      result: {
+        created: [
+          {
+            name: "api",
+            sessionName: "api",
+            branchName: "csm/api",
+            initialPromptDispatched: true,
+          },
+        ],
+        failed: [{ name: "web", error: "branch exists" }],
+      },
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: sessionKeys.list("proj"),
+      }),
+    );
+  });
+
+  function makeJobNotification(
+    overrides: Partial<JobNotification> = {},
+  ): JobNotification {
+    return {
+      id: "notif-1",
+      title: "Merge completed",
+      message: "sess merged into main",
+      read: false,
+      projectName: "proj",
+      createdAt: "2026-06-10T00:00:00.000Z",
+      source: "job",
+      type: "merge-completed",
+      sessionName: "sess",
+      branchName: "csm/sess",
+      jobId: "job-1",
+      jobType: "merge",
+      ...overrides,
+    };
+  }
+
+  it("prepends a new notification into the fetched list cache without refetching", async () => {
+    const { client, invalidateQueries, es } = emitAndGetSpies();
+    const existing = makeJobNotification({ id: "notif-0", read: true });
+    client.setQueryData(notificationKeys.list(), {
+      notifications: [existing],
+      total: 1,
+      unreadCount: 0,
+    } satisfies NotificationsResponse);
+    invalidateQueries.mockClear();
+
+    es.emit("notification-created", {
+      type: "notification-created",
+      notification: makeJobNotification({ id: "notif-1", read: false }),
+    });
+
+    await waitFor(() => {
+      const cached = client.getQueryData<NotificationsResponse>(
+        notificationKeys.list(),
+      );
+      expect(cached?.notifications.map((n) => n.id)).toEqual([
+        "notif-1",
+        "notif-0",
+      ]);
+      expect(cached?.total).toBe(2);
+      expect(cached?.unreadCount).toBe(1);
+    });
+    expect(invalidateQueries).not.toHaveBeenCalled();
+    expect(notificationStoreMocks.enqueueToast).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "notif-1" }),
+    );
+  });
+
+  it("is idempotent when the created notification is already in the list cache", async () => {
+    const { client, es } = emitAndGetSpies();
+    const existing = makeJobNotification({ id: "notif-1", read: false });
+    client.setQueryData(notificationKeys.list(), {
+      notifications: [existing],
+      total: 1,
+      unreadCount: 1,
+    } satisfies NotificationsResponse);
+
+    es.emit("notification-created", {
+      type: "notification-created",
+      notification: makeJobNotification({ id: "notif-1", read: false }),
+    });
+
+    await waitFor(() =>
+      expect(notificationStoreMocks.enqueueToast).toHaveBeenCalled(),
+    );
+    const cached = client.getQueryData<NotificationsResponse>(
+      notificationKeys.list(),
+    );
+    expect(cached?.notifications).toHaveLength(1);
+    expect(cached?.total).toBe(1);
+    expect(cached?.unreadCount).toBe(1);
+  });
+
+  it("falls back to invalidation when the notifications list cache is unfetched", async () => {
+    const { client, invalidateQueries, es } = emitAndGetSpies();
+
+    es.emit("notification-created", {
+      type: "notification-created",
+      notification: makeJobNotification(),
+    });
+
+    await waitFor(() =>
+      expect(invalidateQueries).toHaveBeenCalledWith({
+        queryKey: notificationKeys.list(),
+      }),
+    );
+    expect(
+      client.getQueryData<NotificationsResponse>(notificationKeys.list()),
+    ).toBeUndefined();
+    expect(notificationStoreMocks.enqueueToast).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "notif-1" }),
+    );
   });
 });

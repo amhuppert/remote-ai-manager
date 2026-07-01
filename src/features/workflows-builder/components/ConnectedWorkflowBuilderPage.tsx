@@ -255,6 +255,7 @@ export default function ConnectedWorkflowBuilderPage({
             onSelect={handleSelectDefinition}
             onCreate={() => void handleCreateWorkflow()}
             isLoading={definitionsQuery.isPending}
+            isCreating={createMutation.isPending}
             footer={
               <Link
                 className="flex items-center gap-[6px] px-0 py-[6px] text-[0.72rem] font-medium text-text-secondary no-underline transition-colors duration-150 hover:text-text-primary"
@@ -292,6 +293,7 @@ export default function ConnectedWorkflowBuilderPage({
                 revision={selectedSummary?.revision ?? null}
                 onRename={(name) => void handleRenameWorkflow(name)}
                 onDelete={() => void handleDeleteWorkflow()}
+                deleting={deleteMutation.isPending}
                 saveError={saveError}
                 defaultImplementerConfig={defaultImplementerConfig}
                 codexConfig={codexConfig}

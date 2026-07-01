@@ -1,13 +1,17 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React from "react";
-import { renderHook, act } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ConversationState } from "@/lib/conversations/schemas";
+import type { ActiveConversationsResponse } from "@/lib/active-conversations/schemas";
+import { conversationKeys } from "@/lib/conversations/query-keys";
 import {
   useCreateProjectConversation,
   useCloseProjectConversation,
   useReopenProjectConversation,
   useRenameProjectConversation,
+  useMarkProjectConversationReadMutation,
   useSendProjectPrompt,
 } from "./mutations";
 import { projectConversationKeys } from "./query-keys";
@@ -40,7 +44,7 @@ function sseResponse(frames: string[], status = 200): Response {
   });
 }
 
-const okConversation = {
+const okConversation: ConversationState = {
   id: "c1",
   scope: "project",
   name: "c1",
@@ -67,6 +71,10 @@ const okConversation = {
   contextWindowMax: null,
   agentBackend: "claude",
   backendRef: null,
+  debugMode: null,
+  machineSnapshot: null,
+  pendingQueue: [],
+  lastSeenAlignmentVersion: null,
 };
 
 describe("project conversation lifecycle mutations", () => {
@@ -143,6 +151,262 @@ describe("project conversation lifecycle mutations", () => {
     expect(spy.mock.calls.map((c) => c[0]?.queryKey)).toContainEqual(
       projectConversationKeys.list("proj"),
     );
+  });
+});
+
+function deferredResponse() {
+  let resolve!: (value: Response) => void;
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<Response>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+const activeResponse: ActiveConversationsResponse = {
+  conversations: [
+    {
+      scope: "project",
+      id: "c1",
+      name: "c1",
+      status: "awaiting",
+      lastActivityAt: "2026-01-01T00:00:00Z",
+      projectName: "proj",
+      projectPath: "/repos/proj",
+      agentBackend: "claude",
+      summary: null,
+      pendingQuestion: null,
+      pendingQuestionId: null,
+      pendingQuestions: null,
+      forkedFrom: null,
+      debugActive: false,
+      role: null,
+      worktreePath: "/repos/proj",
+      lastActivitySummary: null,
+      unread: true,
+      pendingApproval: null,
+      open: true,
+    },
+  ],
+  graphWorkflowExecutions: [],
+  activeCollaborationExecutions: [],
+};
+
+describe("optimistic lifecycle updates", () => {
+  const fetchSpy = vi.fn<typeof fetch>();
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  function seededClient(): QueryClient {
+    const client = new QueryClient();
+    client.setQueryData<ConversationState[]>(
+      projectConversationKeys.list("proj"),
+      [okConversation, { ...okConversation, id: "c2", name: "c2" }],
+    );
+    client.setQueryData<ActiveConversationsResponse>(
+      conversationKeys.active(),
+      activeResponse,
+    );
+    return client;
+  }
+
+  function listNames(client: QueryClient): (string | null)[] {
+    const list =
+      client.getQueryData<ConversationState[]>(
+        projectConversationKeys.list("proj"),
+      ) ?? [];
+    return list.map((c) => c.name);
+  }
+
+  function openFlag(client: QueryClient, id: string): boolean | undefined {
+    const list =
+      client.getQueryData<ConversationState[]>(
+        projectConversationKeys.list("proj"),
+      ) ?? [];
+    return list.find((c) => c.id === id)?.open;
+  }
+
+  it("close flips open:false in the list cache before the server responds, then invalidates on settle", async () => {
+    const deferred = deferredResponse();
+    fetchSpy.mockReturnValue(deferred.promise);
+    const client = seededClient();
+    const spy = vi.spyOn(client, "invalidateQueries");
+    const { result } = renderHook(() => useCloseProjectConversation("proj"), {
+      wrapper: wrapperFor(client),
+    });
+
+    act(() => {
+      result.current.mutate("c1");
+    });
+    await waitFor(() => expect(openFlag(client, "c1")).toBe(false));
+    expect(openFlag(client, "c2")).toBe(true);
+    expect(spy).not.toHaveBeenCalled();
+
+    await act(async () => {
+      deferred.resolve(jsonResponse({ ok: true }));
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const invalidatedKeys = spy.mock.calls.map((c) => c[0]?.queryKey);
+    expect(invalidatedKeys).toContainEqual(
+      projectConversationKeys.list("proj"),
+    );
+    expect(invalidatedKeys).toContainEqual(
+      projectConversationKeys.openCount("proj"),
+    );
+  });
+
+  it("close rolls the list cache back when the server rejects", async () => {
+    const deferred = deferredResponse();
+    fetchSpy.mockReturnValue(deferred.promise);
+    const client = seededClient();
+    const { result } = renderHook(() => useCloseProjectConversation("proj"), {
+      wrapper: wrapperFor(client),
+    });
+
+    act(() => {
+      result.current.mutate("c1");
+    });
+    await waitFor(() => expect(openFlag(client, "c1")).toBe(false));
+
+    await act(async () => {
+      deferred.reject(new Error("boom"));
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(openFlag(client, "c1")).toBe(true);
+  });
+
+  it("reopen flips open:true in the list cache before the server responds", async () => {
+    const deferred = deferredResponse();
+    fetchSpy.mockReturnValue(deferred.promise);
+    const client = new QueryClient();
+    client.setQueryData<ConversationState[]>(
+      projectConversationKeys.list("proj"),
+      [{ ...okConversation, open: false }],
+    );
+    const { result } = renderHook(() => useReopenProjectConversation("proj"), {
+      wrapper: wrapperFor(client),
+    });
+
+    act(() => {
+      result.current.mutate("c1");
+    });
+    await waitFor(() => expect(openFlag(client, "c1")).toBe(true));
+  });
+
+  it("rename patches the list and active caches before the server responds, then invalidates on settle", async () => {
+    const deferred = deferredResponse();
+    fetchSpy.mockReturnValue(deferred.promise);
+    const client = seededClient();
+    const spy = vi.spyOn(client, "invalidateQueries");
+    const { result } = renderHook(() => useRenameProjectConversation("proj"), {
+      wrapper: wrapperFor(client),
+    });
+
+    act(() => {
+      result.current.mutate({ conversationId: "c1", name: "Renamed" });
+    });
+    await waitFor(() => expect(listNames(client)).toEqual(["Renamed", "c2"]));
+    const active = client.getQueryData<ActiveConversationsResponse>(
+      conversationKeys.active(),
+    );
+    expect(active?.conversations[0]?.name).toBe("Renamed");
+
+    await act(async () => {
+      deferred.resolve(jsonResponse({ ok: true }));
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const invalidatedKeys = spy.mock.calls.map((c) => c[0]?.queryKey);
+    expect(invalidatedKeys).toContainEqual(
+      projectConversationKeys.list("proj"),
+    );
+    expect(invalidatedKeys).toContainEqual(conversationKeys.active());
+  });
+
+  it("rename rolls both caches back when the server rejects", async () => {
+    const deferred = deferredResponse();
+    fetchSpy.mockReturnValue(deferred.promise);
+    const client = seededClient();
+    const { result } = renderHook(() => useRenameProjectConversation("proj"), {
+      wrapper: wrapperFor(client),
+    });
+
+    act(() => {
+      result.current.mutate({ conversationId: "c1", name: "Renamed" });
+    });
+    await waitFor(() => expect(listNames(client)).toEqual(["Renamed", "c2"]));
+
+    await act(async () => {
+      deferred.reject(new Error("boom"));
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(listNames(client)).toEqual(["c1", "c2"]);
+    const active = client.getQueryData<ActiveConversationsResponse>(
+      conversationKeys.active(),
+    );
+    expect(active?.conversations[0]?.name).toBe("c1");
+  });
+
+  it("mark-read clears unread in the active cache before the server responds, then invalidates on settle", async () => {
+    const deferred = deferredResponse();
+    fetchSpy.mockReturnValue(deferred.promise);
+    const client = seededClient();
+    const spy = vi.spyOn(client, "invalidateQueries");
+    const { result } = renderHook(
+      () => useMarkProjectConversationReadMutation(),
+      { wrapper: wrapperFor(client) },
+    );
+
+    act(() => {
+      result.current.mutate({ projectName: "proj", conversationId: "c1" });
+    });
+    await waitFor(() => {
+      const active = client.getQueryData<ActiveConversationsResponse>(
+        conversationKeys.active(),
+      );
+      expect(active?.conversations[0]?.unread).toBe(false);
+    });
+    expect(spy).not.toHaveBeenCalled();
+
+    await act(async () => {
+      deferred.resolve(jsonResponse({ ok: true }));
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(spy.mock.calls.map((c) => c[0]?.queryKey)).toContainEqual(
+      conversationKeys.active(),
+    );
+  });
+
+  it("mark-read restores unread when the server rejects", async () => {
+    const deferred = deferredResponse();
+    fetchSpy.mockReturnValue(deferred.promise);
+    const client = seededClient();
+    const { result } = renderHook(
+      () => useMarkProjectConversationReadMutation(),
+      { wrapper: wrapperFor(client) },
+    );
+
+    act(() => {
+      result.current.mutate({ projectName: "proj", conversationId: "c1" });
+    });
+    await waitFor(() => {
+      const active = client.getQueryData<ActiveConversationsResponse>(
+        conversationKeys.active(),
+      );
+      expect(active?.conversations[0]?.unread).toBe(false);
+    });
+
+    await act(async () => {
+      deferred.reject(new Error("boom"));
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    const active = client.getQueryData<ActiveConversationsResponse>(
+      conversationKeys.active(),
+    );
+    expect(active?.conversations[0]?.unread).toBe(true);
   });
 });
 

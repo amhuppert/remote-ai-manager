@@ -25,6 +25,8 @@ export interface AlignmentPanelViewProps {
   onSelectDiff(from: number, to: number): void;
   /** Roll back to a prior activated version (cloned into a new active one). */
   onRollback(version: number): void;
+  /** Version whose rollback mutation is in flight; disables all rollback controls. */
+  pendingRollbackVersion?: number | null;
   /** Jump to a decision's originating message in its conversation. */
   onNavigateToMessage?(conversationId: string, messageId: string): void;
 }
@@ -197,12 +199,14 @@ function HistorySection({
   diff,
   onSelectDiff,
   onRollback,
+  pendingRollbackVersion,
 }: {
   history: AlignmentVersion[];
   activeVersion: number | null;
   diff: AlignmentDiff | null | undefined;
   onSelectDiff: (from: number, to: number) => void;
   onRollback: (version: number) => void;
+  pendingRollbackVersion: number | null;
 }): React.JSX.Element {
   const versions = history
     .map((v) => v.version)
@@ -243,9 +247,13 @@ function HistorySection({
                 variant="ghost"
                 size="sm"
                 layoutClassName="ml-auto"
+                loading={pendingRollbackVersion === v.version}
+                disabled={pendingRollbackVersion != null}
                 onClick={() => onRollback(v.version!)}
               >
-                Roll back to v{v.version}
+                {pendingRollbackVersion === v.version
+                  ? "Rolling back…"
+                  : `Roll back to v${v.version}`}
               </Button>
             )}
           </li>
@@ -384,6 +392,7 @@ export default function AlignmentPanelView({
   diff,
   onSelectDiff,
   onRollback,
+  pendingRollbackVersion = null,
   onNavigateToMessage,
 }: AlignmentPanelViewProps): React.JSX.Element {
   if (isLoading && !state) {
@@ -430,6 +439,7 @@ export default function AlignmentPanelView({
           diff={diff}
           onSelectDiff={onSelectDiff}
           onRollback={onRollback}
+          pendingRollbackVersion={pendingRollbackVersion}
         />
       )}
 

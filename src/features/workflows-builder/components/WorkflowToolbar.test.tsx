@@ -87,4 +87,23 @@ describe("WorkflowToolbar", () => {
       expect(screen.getByText("Validation errors")).toBeInTheDocument();
     });
   });
+
+  describe("delete pending feedback", () => {
+    it("shows Deleting… and disables the desktop delete button while deletion is in flight", () => {
+      render(<WorkflowToolbar {...defaultProps} deleting />);
+      const deleteBtn = screen.getByRole("button", { name: /deleting…/i });
+      expect(deleteBtn).toBeDisabled();
+      expect(screen.queryByText("Delete")).not.toBeInTheDocument();
+    });
+
+    it("shows Deleting… and disables the overflow delete item on mobile while deletion is in flight", async () => {
+      const user = userEvent.setup();
+      render(<WorkflowToolbar {...defaultProps} isMobile deleting />);
+      await user.click(
+        screen.getByRole("button", { name: /More workflow actions/i }),
+      );
+      const deleteItem = screen.getByRole("button", { name: /deleting…/i });
+      expect(deleteItem).toBeDisabled();
+    });
+  });
 });

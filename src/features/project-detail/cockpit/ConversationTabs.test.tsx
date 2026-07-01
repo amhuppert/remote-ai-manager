@@ -115,4 +115,24 @@ describe("ConversationTabs", () => {
     fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     expect(onNewChat).toHaveBeenCalledTimes(1);
   });
+
+  it("shows a busy, disabled Creating… affordance while the create mutation is pending", () => {
+    const onNewChat = vi.fn();
+    render(
+      <ConversationTabs
+        tabs={tabs}
+        activeTabId="a"
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+        onNewChat={onNewChat}
+        creating
+      />,
+    );
+    const button = screen.getByRole("button", { name: "New chat" });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(button).toHaveTextContent("Creating…");
+    fireEvent.click(button);
+    expect(onNewChat).not.toHaveBeenCalled();
+  });
 });

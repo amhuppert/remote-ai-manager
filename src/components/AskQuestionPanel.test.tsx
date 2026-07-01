@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import AskQuestionPanel from "@/components/AskQuestionPanel";
 import type { AskQuestionItem } from "@/lib/conversations/schemas";
 
@@ -122,6 +122,35 @@ describe("AskQuestionPanel", () => {
       screen.getByRole("button", { name: /expand question panel/i }),
     );
     expect(screen.getAllByText("Which store?").length).toBeGreaterThan(0);
+  });
+
+  it("shows a pending state on the submit control while an async submit is in flight", async () => {
+    let resolveSubmit: () => void = () => {};
+    const onSubmit = vi.fn(
+      () => new Promise<void>((resolve) => (resolveSubmit = resolve)),
+    );
+    render(
+      <AskQuestionPanel
+        questions={[makeQuestion()]}
+        questionId="batch-1"
+        currentIndex={0}
+        onNavigate={vi.fn()}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("SQLite"));
+    fireEvent.click(submitButton());
+
+    // In flight: visible progress + disabled control; re-clicks don't resubmit.
+    expect(screen.getByText(/sending/i)).toBeTruthy();
+    expect(submitButton().disabled).toBe(true);
+    fireEvent.click(submitButton());
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+
+    resolveSubmit();
+    await waitFor(() => expect(submitButton().disabled).toBe(false));
+    expect(screen.queryByText(/sending/i)).toBeNull();
   });
 
   it("lets Space type into the Other free-text field instead of toggling the option", () => {

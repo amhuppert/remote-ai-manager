@@ -163,6 +163,14 @@ describe("PeekPopover", () => {
     expect(editor).toHaveTextContent("");
   });
 
+  it("shows a sending state on the reply button while the reply is in flight", () => {
+    renderPeek({ isSendingReply: true });
+
+    const sendButton = screen.getByRole("button", { name: /sending/i });
+    expect(sendButton).toBeDisabled();
+    expect(sendButton.getAttribute("aria-busy")).toBe("true");
+  });
+
   it("uses the shared Tiptap prompt editor for free-text replies", () => {
     renderPeek();
 

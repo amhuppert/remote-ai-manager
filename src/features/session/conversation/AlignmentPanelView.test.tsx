@@ -60,6 +60,46 @@ function makeState(overrides: Partial<AlignmentState> = {}): AlignmentState {
 
 const noop = () => {};
 
+describe("AlignmentPanelView rollback pending feedback", () => {
+  function renderHistory(pendingRollbackVersion: number | null) {
+    const v1 = makeVersion({ id: "v1", version: 1, status: "superseded" });
+    const v2 = makeVersion({ id: "v2", version: 2, status: "superseded" });
+    const v3 = makeVersion({ id: "v3", version: 3, status: "active" });
+    render(
+      <AlignmentPanelView
+        state={makeState({ active: v3, history: [v3, v2, v1] })}
+        isLoading={false}
+        onSelectDiff={noop}
+        onRollback={noop}
+        pendingRollbackVersion={pendingRollbackVersion}
+      />,
+    );
+  }
+
+  it("shows Rolling back… on the version being rolled back and disables every rollback button", () => {
+    renderHistory(1);
+    const pending = screen.getByRole("button", { name: /rolling back…/i });
+    expect(pending).toBeDisabled();
+    expect(pending).toHaveAttribute("aria-busy", "true");
+    expect(
+      screen.getByRole("button", { name: /roll back to v2/i }),
+    ).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: /roll back to v1/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps rollback buttons enabled when no rollback is pending", () => {
+    renderHistory(null);
+    expect(
+      screen.getByRole("button", { name: /roll back to v1/i }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: /roll back to v2/i }),
+    ).toBeEnabled();
+  });
+});
+
 describe("AlignmentPanelView", () => {
   it("renders an empty state when there is no alignment", () => {
     render(

@@ -61,7 +61,7 @@ describe("ApproveCharterBannerView", () => {
       <ApproveCharterBannerView
         onApprove={onApprove}
         onReject={vi.fn()}
-        isSubmitting={false}
+        pendingAction={null}
       />,
     );
     await userEvent.click(screen.getByRole("button", { name: "Approve" }));
@@ -74,23 +74,35 @@ describe("ApproveCharterBannerView", () => {
       <ApproveCharterBannerView
         onApprove={vi.fn()}
         onReject={onReject}
-        isSubmitting={false}
+        pendingAction={null}
       />,
     );
     await userEvent.click(screen.getByRole("button", { name: "Reject" }));
     expect(onReject).toHaveBeenCalledTimes(1);
   });
 
-  it("disables both actions while submitting", () => {
+  it("shows Approving… on the approve button and disables both while approve is in flight", () => {
     render(
       <ApproveCharterBannerView
         onApprove={vi.fn()}
         onReject={vi.fn()}
-        isSubmitting
+        pendingAction="approve"
       />,
     );
-    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /approving…/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Reject" })).toBeDisabled();
+  });
+
+  it("shows Rejecting… on the reject button and disables both while reject is in flight", () => {
+    render(
+      <ApproveCharterBannerView
+        onApprove={vi.fn()}
+        onReject={vi.fn()}
+        pendingAction="reject"
+      />,
+    );
+    expect(screen.getByRole("button", { name: /rejecting…/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
   });
 });
 
@@ -135,6 +147,28 @@ describe("ApproveCharterBanner (container)", () => {
     const init = call[1] as RequestInit;
     expect(init.method).toBe("POST");
     expect(JSON.parse(String(init.body))).toEqual({ draftId: "draft-1" });
+  });
+
+  it("marks only the clicked action as pending while the request is in flight", async () => {
+    // A fetch that never resolves keeps the approve mutation pending.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
+    renderSeeded(
+      <ApproveCharterBanner
+        projectName={PROJECT}
+        sessionName={SESSION}
+        draft={makeDraft()}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /approving…/i }),
+      ).toBeDisabled();
+    });
+    expect(screen.getByRole("button", { name: "Reject" })).toBeDisabled();
   });
 
   it("POSTs a reject request for the draft", async () => {

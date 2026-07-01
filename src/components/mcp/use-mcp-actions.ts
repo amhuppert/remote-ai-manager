@@ -58,6 +58,9 @@ export function useMcpActions(
       onExpand: (serverKey) => {
         refreshTools.mutate(serverKey);
       },
+      refreshingServerId: refreshTools.isPending
+        ? refreshTools.variables
+        : undefined,
     };
   }, [servers, toggleServer, resetServer, toggleTool, resetTool, refreshTools]);
 }

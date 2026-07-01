@@ -15,6 +15,32 @@ SSE never delivers bulk data. TanStack Query never polls when an SSE channel can
 
 ---
 
+## Perceived Responsiveness
+
+**Hard rule: every mutable action gives the user immediate visual feedback.** Either the change appears instantly (optimistic update) or the UI visibly shows work in progress (pending indicator). Under no circumstances may the app look unresponsive between the user's action and the API response — a click that changes nothing on screen reads as a broken app, even if the cache eventually catches up.
+
+### Decision ladder — pick the highest rung that applies
+
+1. **Optimistic update (default).** The client can predict the post-mutation state: rename, archive/unarchive, toggles, mark-read, single-field edits, list add/remove. Apply it in `onMutate` with snapshot + rollback (pattern below). Prefer this whenever the predicted state won't mislead.
+2. **Optimistic placeholder.** The client can't predict the full result but can represent the *attempt*: insert a placeholder entry with a `pending` status and a temporary id (`optimistic-<uuid>`), then reconcile with the server response or SSE event. Reference implementation: `src/lib/document-comments/mutations.ts`.
+3. **Pending indicator (the floor).** Neither applies — spawning processes, launching workflows, server-side computation whose outcome is genuinely unknown. The triggering control must reflect `mutation.isPending` with *visible* in-progress state: spinner, label change ("Creating…"), or a progress row — plus disabling. Disabling alone is not feedback; a button that merely stops responding is indistinguishable from a hang.
+
+There is no rung 4. "Fire mutation → `invalidateQueries` → wait for the refetch or SSE event to repaint" is **not** an acceptable feedback mechanism on its own. Background invalidation is cache hygiene — it guarantees eventual correctness, not perceived responsiveness. Every mutation that today relies on it still needs rung 1, 2, or 3 layered on top.
+
+### How this composes with SSE
+
+- The optimistic layer is presentation-only; the server stays authoritative. `onSettled` invalidation (or the SSE-driven `setQueryData`) overwrites the optimistic state with the real one.
+- Optimistic writes and SSE handlers touch the same caches, so SSE `setQueryData` handlers must be idempotent (delta application keyed by id, not blind replacement) — arrival order between the mutation response and the SSE event must not matter.
+- Placeholder entries (rung 2) are reconciled by id: the success handler or SSE event replaces the `optimistic-*` entry rather than appending a duplicate.
+
+### Pending-indicator conventions (rung 3)
+
+- Consume `isPending` from the mutation hook at the triggering control — don't thread bespoke `loading` booleans through state.
+- Buttons: disable **and** swap the label or show a spinner. Modals: disable inputs and show progress on the confirm button.
+- If a mutation updates several caches or the affected entity is visible in multiple places (list + detail), the pending state should appear where the user acted; the other surfaces update on settle.
+
+---
+
 ## SSE
 
 ### Single global notification bus
@@ -176,7 +202,7 @@ If the SSE payload contains enough information to update the cache directly, do 
 
 ## Optimistic Updates
 
-Use optimistic mutations for high-confidence operations: rename, archive, mark-read, simple toggles, single-field edits. Skip them for operations with significant server-side computation (spawning processes, running workflows) where the optimistic state would be misleading.
+Optimistic mutations are the default for mutable actions (see **Perceived Responsiveness** above): rename, archive, mark-read, simple toggles, single-field edits, list add/remove. Skip them only where the optimistic state would be misleading — significant server-side computation, spawning processes, running workflows — and in that case a pending indicator is mandatory, not optional.
 
 ### Pattern
 
@@ -267,6 +293,8 @@ SSE-first. Polling is a fallback, not a default.
 - ❌ `invalidateQueries({ queryKey: sessionKeys.all })` from a handler that knows `{ projectName, sessionName }`.
 - ❌ A `useQuery` with `refetchInterval` next to a feature whose state is already broadcast by SSE.
 - ❌ A mutation that writes via API and then waits for the SSE event to update local state with no optimistic step (visible UI lag for trivial operations).
+- ❌ A mutation whose only feedback is `onSuccess: () => invalidateQueries(...)` — the user sees nothing until the refetch lands. Add an optimistic update or a pending indicator.
+- ❌ A triggering control that only sets `disabled={isPending}` on a slow operation, with no visible in-progress state.
 - ❌ A second `new EventSource(...)` somewhere in feature code for "lifecycle" updates.
 - ❌ Per-feature route handlers calling `broadcaster.broadcast(...)` directly, bypassing `StatusBus`.
 - ❌ SSE handlers that re-fetch via `invalidateQueries` when the event payload already contained the delta.

@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import {
   useMutation,
   useQueryClient,
+  type QueryClient,
   type UseMutationResult,
 } from "@tanstack/react-query";
 import { mutationFetch } from "@/lib/api/fetcher";
@@ -9,6 +10,10 @@ import {
   conversationStateSchema,
   type ConversationState,
 } from "@/lib/conversations/schemas";
+import type {
+  ActiveConversation,
+  ActiveConversationsResponse,
+} from "@/lib/active-conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import { conversationKeys } from "@/lib/conversations/query-keys";
@@ -24,6 +29,81 @@ function invalidateProjectLifecycle(
   void queryClient.invalidateQueries({
     queryKey: projectConversationKeys.openCount(projectName),
   });
+}
+
+/**
+ * Cancel in-flight list/open-count fetches and snapshot the list cache for
+ * rollback. The open-count query shares the list query key (it derives via
+ * `select`), so patching the list cache updates the count optimistically too.
+ */
+async function snapshotProjectList(
+  queryClient: QueryClient,
+  projectName: string,
+): Promise<ConversationState[] | undefined> {
+  await queryClient.cancelQueries({
+    queryKey: projectConversationKeys.list(projectName),
+  });
+  await queryClient.cancelQueries({
+    queryKey: projectConversationKeys.openCount(projectName),
+  });
+  return queryClient.getQueryData<ConversationState[]>(
+    projectConversationKeys.list(projectName),
+  );
+}
+
+function patchProjectListConversation(
+  queryClient: QueryClient,
+  projectName: string,
+  conversationId: string,
+  patch: (c: ConversationState) => ConversationState,
+): void {
+  queryClient.setQueryData<ConversationState[]>(
+    projectConversationKeys.list(projectName),
+    (old) => old?.map((c) => (c.id === conversationId ? patch(c) : c)),
+  );
+}
+
+function restoreProjectList(
+  queryClient: QueryClient,
+  projectName: string,
+  previous: ConversationState[] | undefined,
+): void {
+  if (previous !== undefined) {
+    queryClient.setQueryData(
+      projectConversationKeys.list(projectName),
+      previous,
+    );
+  }
+}
+
+function patchActiveConversation(
+  queryClient: QueryClient,
+  conversationId: string,
+  patch: (c: ActiveConversation) => ActiveConversation,
+): ActiveConversationsResponse | undefined {
+  const activeKey = conversationKeys.active();
+  const previous =
+    queryClient.getQueryData<ActiveConversationsResponse>(activeKey);
+  queryClient.setQueryData<ActiveConversationsResponse>(activeKey, (old) =>
+    old === undefined
+      ? old
+      : {
+          ...old,
+          conversations: old.conversations.map((c) =>
+            c.id === conversationId ? patch(c) : c,
+          ),
+        },
+  );
+  return previous;
+}
+
+function restoreActiveConversations(
+  queryClient: QueryClient,
+  previous: ActiveConversationsResponse | undefined,
+): void {
+  if (previous !== undefined) {
+    queryClient.setQueryData(conversationKeys.active(), previous);
+  }
 }
 
 /** Create a new project conversation (defaults backend via config when omitted). */
@@ -68,7 +148,20 @@ function useProjectOpenMutation(
           body: JSON.stringify({ open }),
         },
       ),
-    onSuccess: () => invalidateProjectLifecycle(queryClient, projectName),
+    onMutate: async (conversationId) => {
+      const previousList = await snapshotProjectList(queryClient, projectName);
+      patchProjectListConversation(
+        queryClient,
+        projectName,
+        conversationId,
+        (c) => ({ ...c, open }),
+      );
+      return { previousList };
+    },
+    onError: (_err, _conversationId, context) => {
+      restoreProjectList(queryClient, projectName, context?.previousList);
+    },
+    onSettled: () => invalidateProjectLifecycle(queryClient, projectName),
   });
 }
 
@@ -119,6 +212,18 @@ export function useMarkProjectConversationReadMutation(): UseMutationResult<
         "mark-project-conversation-read",
         { method: "POST" },
       ),
+    onMutate: async ({ conversationId }) => {
+      await queryClient.cancelQueries({ queryKey: conversationKeys.active() });
+      const previousActive = patchActiveConversation(
+        queryClient,
+        conversationId,
+        (c) => ({ ...c, unread: false }),
+      );
+      return { previousActive };
+    },
+    onError: (_err, _vars, context) => {
+      restoreActiveConversations(queryClient, context?.previousActive);
+    },
     onSettled: () => {
       void queryClient.invalidateQueries({
         queryKey: conversationKeys.active(),
@@ -149,10 +254,34 @@ export function useRenameProjectConversation(
           body: JSON.stringify({ name }),
         },
       ),
-    onSuccess: () =>
+    onMutate: async ({ conversationId, name }) => {
+      await queryClient.cancelQueries({ queryKey: conversationKeys.active() });
+      const previousList = await snapshotProjectList(queryClient, projectName);
+      patchProjectListConversation(
+        queryClient,
+        projectName,
+        conversationId,
+        (c) => ({ ...c, name }),
+      );
+      const previousActive = patchActiveConversation(
+        queryClient,
+        conversationId,
+        (c) => ({ ...c, name }),
+      );
+      return { previousList, previousActive };
+    },
+    onError: (_err, _vars, context) => {
+      restoreProjectList(queryClient, projectName, context?.previousList);
+      restoreActiveConversations(queryClient, context?.previousActive);
+    },
+    onSettled: () => {
       void queryClient.invalidateQueries({
         queryKey: projectConversationKeys.list(projectName),
-      }),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: conversationKeys.active(),
+      });
+    },
   });
 }
 

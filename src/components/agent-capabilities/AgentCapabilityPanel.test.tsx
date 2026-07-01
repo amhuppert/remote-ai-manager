@@ -179,6 +179,44 @@ describe("AgentCapabilityPanel", () => {
     expect(screen.getByText("Overridden")).toBeInTheDocument();
   });
 
+  it("shows a busy Refresh control while a refresh is in flight", () => {
+    render(
+      <AgentCapabilityPanel
+        title="Claude Skills"
+        view={baseView()}
+        layerOptions={[{ label: "Global", scope: { level: "global" } }]}
+        selectedScope={{ level: "global" }}
+        onScopeChange={vi.fn()}
+        onRefresh={vi.fn()}
+        refreshing
+      />,
+    );
+
+    const refreshButton = screen.getByRole("button", { name: "Refresh" });
+    expect(refreshButton).toBeDisabled();
+    expect(refreshButton).toHaveAttribute("aria-busy", "true");
+  });
+
+  it("keeps the Refresh control interactive when no refresh is in flight", () => {
+    const onRefresh = vi.fn();
+    render(
+      <AgentCapabilityPanel
+        title="Claude Skills"
+        view={baseView()}
+        layerOptions={[{ label: "Global", scope: { level: "global" } }]}
+        selectedScope={{ level: "global" }}
+        onScopeChange={vi.fn()}
+        onRefresh={onRefresh}
+      />,
+    );
+
+    const refreshButton = screen.getByRole("button", { name: "Refresh" });
+    expect(refreshButton).toBeEnabled();
+    expect(refreshButton).not.toHaveAttribute("aria-busy");
+    fireEvent.click(refreshButton);
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
+
   it("renders prototype row state without exposing raw resolver metadata", () => {
     render(
       <AgentCapabilityPanel

@@ -1,5 +1,6 @@
 import type { ButtonHTMLAttributes } from "react";
 import { cn } from "@/lib/ui/cn";
+import { Spinner } from "./Spinner";
 
 export type ButtonVariant =
   | "default"
@@ -23,6 +24,13 @@ export type ButtonProps = Omit<
    * `layoutClassName` (docs/tailwind-conventions.md §2).
    */
   touch?: boolean;
+  /**
+   * Visible in-progress state for a mutation triggered by this button: renders
+   * an inherit-tone spinner before the label, disables the button, and sets
+   * `aria-busy`. This is the perceived-responsiveness floor (rung 3) — use it
+   * whenever the click fires work whose outcome the UI can't show optimistically.
+   */
+  loading?: boolean;
   /**
    * External-geometry utilities applied by the parent (margin, grid/flex
    * placement, order, self-align, width/basis). Appended after the appearance
@@ -65,12 +73,17 @@ export function Button({
   variant = "default",
   size = "md",
   touch = false,
-  layoutClassName,
+  loading = false,
+  disabled,
+  children,
   ...rest
 }: ButtonProps) {
+  const { layoutClassName, ...buttonProps } = rest;
   return (
     <button
-      {...rest}
+      {...buttonProps}
+      disabled={loading || disabled}
+      aria-busy={loading || undefined}
       className={cn(
         base,
         variantClass[variant],
@@ -78,6 +91,9 @@ export function Button({
         touch && touchClass,
         layoutClassName,
       )}
-    />
+    >
+      {loading ? <Spinner size="sm" tone="inherit" /> : null}
+      {children}
+    </button>
   );
 }

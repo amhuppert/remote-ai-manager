@@ -15,6 +15,7 @@ import {
   useRuntimeEditGraphWorkflowMutation,
 } from "@/lib/workflows/mutations";
 import type { ExecutionMobilePanel } from "../SessionWorkflowPage";
+import type { ExecutionControlAction } from "./ExecutionStatusBar";
 import GraphWorkflowPanel from "./GraphWorkflowPanel";
 
 interface ConnectedGraphWorkflowPanelProps {
@@ -146,6 +147,16 @@ export default function ConnectedGraphWorkflowPanel({
     [executionId, resetContextMutation],
   );
 
+  const pendingAction: ExecutionControlAction | null = pauseMutation.isPending
+    ? "pause"
+    : resumeMutation.isPending
+      ? "resume"
+      : abortMutation.isPending
+        ? "abort"
+        : clearMutation.isPending
+          ? "clear"
+          : null;
+
   return (
     <GraphWorkflowPanel
       projectName={projectName}
@@ -172,6 +183,7 @@ export default function ConnectedGraphWorkflowPanel({
         runtimeEditMutation.isPending ||
         resetContextMutation.isPending
       }
+      pendingAction={pendingAction}
       isMobile={isMobile}
       mobilePanel={mobilePanel}
       autoSwitchPanel={autoSwitchPanel}

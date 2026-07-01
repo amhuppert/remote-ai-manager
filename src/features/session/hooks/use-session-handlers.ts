@@ -130,15 +130,7 @@ export function useSessionHandlers({
         failPrompt(message);
       }
     },
-    [
-      forkMutation,
-      projectName,
-      sessionName,
-      conversationId,
-      router,
-      failPrompt,
-      onOpenConversation,
-    ],
+    [forkMutation, conversationId, router, failPrompt, onOpenConversation],
   );
 
   const buildContext = useCallback((): string | null => {

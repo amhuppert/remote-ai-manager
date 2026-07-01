@@ -66,4 +66,5 @@ bun run lint         # eslint
 - **Claude Agent SDK** options: `systemPrompt: { type: "preset", preset: "claude_code" }`, `permissionMode: "bypassPermissions"`, `settingSources: ["user", "project", "local"]`
 - **Own transcript storage** — CC writes its own JSONL files; no dependency on `~/.claude/projects/`
 - **SSE over hooks** — conversation/job/notification updates broadcast via SSE
+- **Responsiveness contract** — every mutable action gives immediate visual feedback: optimistic update by default, pending indicator (`mutation.isPending` + visible in-progress state) as the floor. `invalidateQueries` alone is never user feedback. Full strategy: `.kiro/steering/data-fetching-and-sse.md` §Perceived Responsiveness
 - **OS-aware config dir** — macOS `~/Library/Application Support/cc`, Linux `$XDG_CONFIG_HOME/cc` or `~/.config/cc`

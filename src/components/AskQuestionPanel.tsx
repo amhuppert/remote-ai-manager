@@ -7,6 +7,7 @@ import type {
 } from "@/lib/conversations/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { cn } from "@/lib/ui/cn";
+import { Spinner } from "@/components/ui/Spinner";
 import {
   ArrowUpIcon,
   CheckIcon,
@@ -41,10 +42,15 @@ interface AskQuestionPanelProps {
   /** Active question index — controlled by the store (docked) or peek nav. */
   currentIndex: number;
   onNavigate: (index: number) => void;
+  /**
+   * Returning a promise puts the submit controls into a visible pending state
+   * (spinner + disabled) until it settles — fire-and-forget handlers keep the
+   * previous behavior.
+   */
   onSubmit: (
     questionId: string,
     answers: Record<string, AskQuestionAnswer>,
-  ) => void;
+  ) => void | Promise<void>;
   /** Asking agent; drives the accent color (cyan = claude, violet = codex). */
   agent?: AgentBackendId;
   /** Container-driven: swaps the rail for a chip pager and grows touch targets. */
@@ -549,6 +555,7 @@ export default function AskQuestionPanel({
     Object.fromEntries(questions.map((q, i) => [questionKey(q, i), true])),
   );
   const [search, setSearch] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const sheetRef = useRef<HTMLDivElement>(null);
   const bannerAnswerRef = useRef<HTMLButtonElement>(null);
 
@@ -591,8 +598,16 @@ export default function AskQuestionPanel({
   );
 
   const doSubmit = useCallback(() => {
-    onSubmit(questionId, buildAnswerPayload(questions, drafts));
-  }, [onSubmit, questionId, questions, drafts]);
+    if (submitting) return;
+    const result = onSubmit(questionId, buildAnswerPayload(questions, drafts));
+    if (result instanceof Promise) {
+      setSubmitting(true);
+      result.then(
+        () => setSubmitting(false),
+        () => setSubmitting(false),
+      );
+    }
+  }, [onSubmit, questionId, questions, drafts, submitting]);
 
   // Keyboard answering — desktop, maximized only; suppressed while typing.
   useEffect(() => {
@@ -725,10 +740,23 @@ export default function AskQuestionPanel({
               <button
                 type="button"
                 ref={bannerAnswerRef}
-                className={bannerAnswerClass}
+                className={cn(
+                  bannerAnswerClass,
+                  "disabled:cursor-not-allowed disabled:opacity-60",
+                )}
+                disabled={submitting}
+                aria-busy={submitting || undefined}
                 onClick={doSubmit}
               >
-                Send answers <ArrowUpIcon size={13} />
+                {submitting ? (
+                  <>
+                    Sending… <Spinner size="sm" tone="inherit" />
+                  </>
+                ) : (
+                  <>
+                    Send answers <ArrowUpIcon size={13} />
+                  </>
+                )}
               </button>
             ) : (
               <button
@@ -922,6 +950,7 @@ export default function AskQuestionPanel({
                 <button
                   type="button"
                   className={cn(ghostBtnBase, ghostBtnPlain)}
+                  disabled={submitting}
                   onClick={() => skipQuestion(activeKey)}
                 >
                   Skip this
@@ -930,14 +959,23 @@ export default function AskQuestionPanel({
               <button
                 type="button"
                 className={submitClass}
-                disabled={!progress.canSubmit}
+                disabled={!progress.canSubmit || submitting}
+                aria-busy={submitting || undefined}
                 onClick={doSubmit}
               >
-                Send{" "}
-                {progress.answeredCount > 0
-                  ? `${progress.answeredCount} ${progress.answeredCount === 1 ? "answer" : "answers"}`
-                  : "answers"}
-                {showKbd && <span className={submitSkClass}>⌘↵</span>}
+                {submitting ? (
+                  <>
+                    Sending… <Spinner size="sm" tone="inherit" />
+                  </>
+                ) : (
+                  <>
+                    Send{" "}
+                    {progress.answeredCount > 0
+                      ? `${progress.answeredCount} ${progress.answeredCount === 1 ? "answer" : "answers"}`
+                      : "answers"}
+                    {showKbd && <span className={submitSkClass}>⌘↵</span>}
+                  </>
+                )}
               </button>
             </div>
           </div>

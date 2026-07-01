@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
 import { Button } from "./Button";
 import { Badge } from "./Badge";
+import { Spinner } from "./Spinner";
 import { StatusDot } from "./StatusDot";
 import { Tabs, Tab, TabCount } from "./Tabs";
 import {
@@ -42,6 +43,34 @@ function expectAll(el: HTMLElement, expected: string[]) {
     expect(present.has(c), `missing class: ${c}`).toBe(true);
 }
 
+describe("Spinner", () => {
+  it("renders a current-color ring with the spin animation, cyan by default", () => {
+    const el = root(<Spinner />);
+    expectAll(el, [
+      "inline-block",
+      "rounded-full",
+      "border-2",
+      "border-solid",
+      "border-current",
+      "border-t-transparent",
+      "animate-spin",
+      "text-cyan",
+      "size-[16px]",
+    ]);
+    expect(el.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("inherit tone drops the cyan color so it follows the parent text color", () => {
+    const el = root(<Spinner tone="inherit" />);
+    expect(classes(el)).not.toContain("text-cyan");
+  });
+
+  it("sm size renders the 12px box", () => {
+    const el = root(<Spinner size="sm" />);
+    expectAll(el, ["size-[12px]"]);
+  });
+});
+
 describe("Button", () => {
   const baseSet = [
     "inline-flex",
@@ -72,6 +101,34 @@ describe("Button", () => {
       "py-[10px]",
       "text-[0.78rem]",
     ]);
+  });
+
+  it("loading shows a spinner, keeps the label, disables, and marks aria-busy", () => {
+    const { container, getByText } = render(<Button loading>Save</Button>);
+    const btn = container.firstElementChild as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    expect(btn.getAttribute("aria-busy")).toBe("true");
+    expect(btn.querySelector(".animate-spin")).not.toBeNull();
+    getByText("Save");
+  });
+
+  it("not loading renders no spinner and stays enabled", () => {
+    const { container } = render(<Button>Save</Button>);
+    const btn = container.firstElementChild as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+    expect(btn.getAttribute("aria-busy")).toBeNull();
+    expect(btn.querySelector(".animate-spin")).toBeNull();
+  });
+
+  it("loading spinner inherits the variant text color (inherit tone)", () => {
+    const { container } = render(
+      <Button variant="primary" loading>
+        Save
+      </Button>,
+    );
+    const spinner = container.querySelector(".animate-spin") as HTMLElement;
+    expect(classes(spinner)).not.toContain("text-cyan");
+    expect(classes(spinner)).toContain("border-current");
   });
 
   it("renders the primary variant (cyan fill, semibold, hover glow)", () => {

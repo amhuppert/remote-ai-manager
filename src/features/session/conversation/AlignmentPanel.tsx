@@ -47,6 +47,9 @@ export default function AlignmentPanel({
       diff={diffPair ? (diffQuery.data ?? null) : null}
       onSelectDiff={(from, to) => setDiffPair({ from, to })}
       onRollback={(version) => rollback.mutate({ version })}
+      pendingRollbackVersion={
+        rollback.isPending ? (rollback.variables?.version ?? null) : null
+      }
       onNavigateToMessage={(conversationId, messageId) =>
         router.push(conversationsPageHref({ conversationId, messageId }))
       }

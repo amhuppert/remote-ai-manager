@@ -11,7 +11,9 @@ import type {
   GraphWorkflowVisualLayout,
 } from "@/lib/workflows/schemas";
 import type { ExecutionMobilePanel } from "../SessionWorkflowPage";
-import ExecutionStatusBar from "./ExecutionStatusBar";
+import ExecutionStatusBar, {
+  type ExecutionControlAction,
+} from "./ExecutionStatusBar";
 import WorkflowExecutionCanvas from "./WorkflowExecutionCanvas";
 import ExecutionInspectorPanel from "./ExecutionInspectorPanel";
 import WorkflowConversationViewer from "./WorkflowConversationViewer";
@@ -42,6 +44,7 @@ interface GraphWorkflowPanelProps {
   onReorderTask(contextId: string, orderedTaskIds: string[]): void;
   onResetContext(contextId: string): void;
   isMutating: boolean;
+  pendingAction: ExecutionControlAction | null;
   isMobile: boolean;
   mobilePanel: ExecutionMobilePanel;
   autoSwitchPanel: (panel: ExecutionMobilePanel) => void;
@@ -63,6 +66,7 @@ export default function GraphWorkflowPanel({
   onReorderTask,
   onResetContext,
   isMutating,
+  pendingAction,
   isMobile,
   mobilePanel,
   autoSwitchPanel,
@@ -156,6 +160,7 @@ export default function GraphWorkflowPanel({
           onAbort={onAbort}
           onClear={onClear}
           isMutating={isMutating}
+          pendingAction={pendingAction}
         />
         <div className="flex min-h-0 flex-1 max-768:flex-col">
           {isMobile ? (

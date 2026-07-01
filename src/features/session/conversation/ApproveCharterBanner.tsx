@@ -7,10 +7,13 @@ import {
 } from "@/lib/session-alignment/mutations";
 import type { AlignmentVersion } from "@/lib/session-alignment/schemas";
 
+export type CharterPendingAction = "approve" | "reject";
+
 export interface ApproveCharterBannerViewProps {
   onApprove(): void;
   onReject(): void;
-  isSubmitting: boolean;
+  /** Which action's mutation is in flight, so its button shows progress. */
+  pendingAction: CharterPendingAction | null;
 }
 
 /**
@@ -20,8 +23,9 @@ export interface ApproveCharterBannerViewProps {
 export function ApproveCharterBannerView({
   onApprove,
   onReject,
-  isSubmitting,
+  pendingAction,
 }: ApproveCharterBannerViewProps): React.JSX.Element {
+  const isSubmitting = pendingAction !== null;
   return (
     <div className="flex shrink-0 items-center justify-between gap-md border-x-0 border-t border-b-0 border-solid border-border-subtle bg-bg-surface px-lg py-sm">
       <div className="flex min-w-0 flex-col gap-[2px]">
@@ -39,18 +43,20 @@ export function ApproveCharterBannerView({
           size="sm"
           touch
           onClick={onReject}
+          loading={pendingAction === "reject"}
           disabled={isSubmitting}
         >
-          Reject
+          {pendingAction === "reject" ? "Rejecting…" : "Reject"}
         </Button>
         <Button
           variant="primary"
           size="sm"
           touch
           onClick={onApprove}
+          loading={pendingAction === "approve"}
           disabled={isSubmitting}
         >
-          Approve
+          {pendingAction === "approve" ? "Approving…" : "Approve"}
         </Button>
       </div>
     </div>
@@ -70,13 +76,17 @@ export default function ApproveCharterBanner({
 }: ApproveCharterBannerProps): React.JSX.Element {
   const approve = useApproveCharterMutation(projectName, sessionName);
   const reject = useRejectCharterMutation(projectName, sessionName);
-  const isSubmitting = approve.isPending || reject.isPending;
+  const pendingAction: CharterPendingAction | null = approve.isPending
+    ? "approve"
+    : reject.isPending
+      ? "reject"
+      : null;
 
   return (
     <ApproveCharterBannerView
       onApprove={() => approve.mutate({ draftId: draft.id })}
       onReject={() => reject.mutate({ draftId: draft.id })}
-      isSubmitting={isSubmitting}
+      pendingAction={pendingAction}
     />
   );
 }

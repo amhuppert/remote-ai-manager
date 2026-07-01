@@ -319,6 +319,104 @@ describe("DebugActionCard Strategy B rollback", () => {
   });
 });
 
+describe("DebugActionCard per-button pending", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("shows busy only on the clicked phase button while its action is in flight; siblings stay merely disabled", async () => {
+    let resolveFetch: (res: Response) => void = () => {};
+    globalThis.fetch = vi.fn().mockImplementation(
+      () =>
+        new Promise<Response>((r) => {
+          resolveFetch = r;
+        }),
+    ) as unknown as typeof fetch;
+
+    renderWithQuery(
+      <DebugActionCard
+        projectName="p"
+        sessionName="s"
+        conversation={makeConversation("awaiting_verification")}
+        onSendPrompt={vi.fn().mockResolvedValue(undefined)}
+        isBusy={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark Fixed" }));
+
+    await waitFor(() => {
+      const markFixed = screen.getByRole("button", { name: "Mark Fixed" });
+      expect(markFixed.getAttribute("aria-busy")).toBe("true");
+    });
+
+    const markFixFailed = screen.getByRole("button", {
+      name: "Mark Fix Failed",
+    });
+    expect(markFixFailed.getAttribute("aria-busy")).toBeNull();
+    expect((markFixFailed as HTMLButtonElement).disabled).toBe(true);
+
+    const exit = screen.getByRole("button", { name: "Exit Debug" });
+    expect(exit.getAttribute("aria-busy")).toBeNull();
+    expect((exit as HTMLButtonElement).disabled).toBe(true);
+
+    resolveFetch(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    await waitFor(() => {
+      const markFixed = screen.getByRole("button", { name: "Mark Fixed" });
+      expect(markFixed.getAttribute("aria-busy")).toBeNull();
+    });
+  });
+
+  it("shows busy on Exit Debug while the exit toggle is in flight", async () => {
+    let resolveFetch: (res: Response) => void = () => {};
+    globalThis.fetch = vi.fn().mockImplementation(
+      () =>
+        new Promise<Response>((r) => {
+          resolveFetch = r;
+        }),
+    ) as unknown as typeof fetch;
+
+    renderWithQuery(
+      <DebugActionCard
+        projectName="p"
+        sessionName="s"
+        conversation={makeConversation("awaiting_reproduction")}
+        onSendPrompt={vi.fn().mockResolvedValue(undefined)}
+        isBusy={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Exit Debug" }));
+
+    await waitFor(() => {
+      const exit = screen.getByRole("button", { name: "Exit Debug" });
+      expect(exit.getAttribute("aria-busy")).toBe("true");
+    });
+
+    const markReproduced = screen.getByRole("button", {
+      name: "Mark Reproduced",
+    });
+    expect(markReproduced.getAttribute("aria-busy")).toBeNull();
+    expect((markReproduced as HTMLButtonElement).disabled).toBe(true);
+
+    resolveFetch(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    await waitFor(() => {
+      const exit = screen.getByRole("button", { name: "Exit Debug" });
+      expect(exit.getAttribute("aria-busy")).toBeNull();
+    });
+  });
+});
+
 describe("DebugActionCard Retry CTA", () => {
   let phaseCalls: string[];
 

@@ -198,6 +198,38 @@ describe("AlignmentPanel", () => {
     expect(JSON.parse(String(init.body))).toEqual({ version: 1 });
   });
 
+  it("shows Rolling back… on the clicked version and disables rollback controls while the request is in flight", async () => {
+    // A fetch that never resolves keeps the rollback mutation pending.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
+
+    const v1 = makeVersion({ id: "v1", version: 1, status: "superseded" });
+    const v2 = makeVersion({ id: "v2", version: 2, status: "superseded" });
+    const v3 = makeVersion({ id: "v3", version: 3, status: "active" });
+    renderSeeded(
+      <AlignmentPanel projectName={PROJECT} sessionName={SESSION} />,
+      [
+        [
+          alignmentKeys.state(PROJECT, SESSION),
+          makeState({ active: v3, history: [v3, v2, v1] }),
+        ],
+      ],
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /roll back to v1/i }),
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /rolling back…/i }),
+      ).toBeDisabled();
+    });
+    expect(
+      screen.getByRole("button", { name: /roll back to v2/i }),
+    ).toBeDisabled();
+  });
+
   it("navigates to a decision's originating message from the decision-log link", async () => {
     renderSeeded(
       <AlignmentPanel projectName={PROJECT} sessionName={SESSION} />,

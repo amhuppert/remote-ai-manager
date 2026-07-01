@@ -9,6 +9,8 @@ import {
   useArchiveSessionMutation,
   useBulkSessionsMutation,
   useCreateSessionMutation,
+  useDeleteSessionMutation,
+  useTddToggleMutation,
 } from "@/lib/sessions/mutations";
 import { sessionKeys } from "@/lib/sessions/query-keys";
 import { conversationKeys } from "@/lib/conversations/query-keys";
@@ -346,6 +348,165 @@ describe("useArchiveSessionMutation", () => {
   });
 });
 
+describe("useDeleteSessionMutation", () => {
+  const fetchSpy = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("optimistically removes the session from the list and its conversations from the active cache, then invalidates both on settle", async () => {
+    const client = makeClient();
+    const listKey = sessionKeys.list("p");
+    const activeKey = conversationKeys.active();
+    client.setQueryData<SessionListItem[]>(listKey, [
+      sessionListItem({ sessionName: "s" }),
+      sessionListItem({ sessionName: "other" }),
+    ]);
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([
+        activeConvo({ id: "c1", sessionName: "s" }),
+        activeConvo({ id: "c2", sessionName: "s" }),
+        activeConvo({ id: "c3", sessionName: "other" }),
+      ]),
+    );
+
+    let resolveFetch: (res: Response) => void = () => {};
+    fetchSpy.mockImplementation(
+      () => new Promise<Response>((r) => (resolveFetch = r)),
+    );
+
+    const { result } = renderHook(() => useDeleteSessionMutation("p"), {
+      wrapper: wrapperFor(client),
+    });
+
+    result.current.mutate("s");
+
+    await waitFor(() => {
+      const sessions = client.getQueryData<SessionListItem[]>(listKey);
+      const active =
+        client.getQueryData<ActiveConversationsResponse>(activeKey);
+      expect(sessions?.map((s) => s.sessionName)).toEqual(["other"]);
+      expect(active?.conversations.map((c) => c.id)).toEqual(["c3"]);
+    });
+
+    resolveFetch(jsonResponse({ ok: true }));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    await waitFor(() => {
+      expect(client.getQueryState(listKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(activeKey)?.isInvalidated).toBe(true);
+    });
+  });
+
+  it("rolls back both caches when the server rejects", async () => {
+    const client = makeClient();
+    const listKey = sessionKeys.list("p");
+    const activeKey = conversationKeys.active();
+    client.setQueryData<SessionListItem[]>(listKey, [
+      sessionListItem({ sessionName: "s" }),
+      sessionListItem({ sessionName: "other" }),
+    ]);
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([
+        activeConvo({ id: "c1", sessionName: "s" }),
+        activeConvo({ id: "c3", sessionName: "other" }),
+      ]),
+    );
+
+    fetchSpy.mockResolvedValue(jsonResponse({ error: "boom" }, 500));
+
+    const { result } = renderHook(() => useDeleteSessionMutation("p"), {
+      wrapper: wrapperFor(client),
+    });
+
+    result.current.mutate("s");
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const sessions = client.getQueryData<SessionListItem[]>(listKey);
+    const active = client.getQueryData<ActiveConversationsResponse>(activeKey);
+    expect(sessions?.map((s) => s.sessionName)).toEqual(["s", "other"]);
+    expect(active?.conversations.map((c) => c.id)).toEqual(["c1", "c3"]);
+  });
+});
+
+describe("useTddToggleMutation", () => {
+  const fetchSpy = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    fetchSpy.mockReset();
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("optimistically patches tddEnabled on the matching session, then invalidates the list on settle", async () => {
+    const client = makeClient();
+    const listKey = sessionKeys.list("p");
+    client.setQueryData<SessionListItem[]>(listKey, [
+      sessionListItem({ sessionName: "s", tddEnabled: true }),
+      sessionListItem({ sessionName: "other", tddEnabled: true }),
+    ]);
+
+    let resolveFetch: (res: Response) => void = () => {};
+    fetchSpy.mockImplementation(
+      () => new Promise<Response>((r) => (resolveFetch = r)),
+    );
+
+    const { result } = renderHook(() => useTddToggleMutation("p", "s"), {
+      wrapper: wrapperFor(client),
+    });
+
+    result.current.mutate(false);
+
+    await waitFor(() => {
+      const sessions = client.getQueryData<SessionListItem[]>(listKey);
+      expect(sessions?.find((s) => s.sessionName === "s")?.tddEnabled).toBe(
+        false,
+      );
+      expect(sessions?.find((s) => s.sessionName === "other")?.tddEnabled).toBe(
+        true,
+      );
+    });
+
+    resolveFetch(jsonResponse({ ok: true }));
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    await waitFor(() => {
+      expect(client.getQueryState(listKey)?.isInvalidated).toBe(true);
+    });
+  });
+
+  it("rolls back the session list when the server rejects", async () => {
+    const client = makeClient();
+    const listKey = sessionKeys.list("p");
+    client.setQueryData<SessionListItem[]>(listKey, [
+      sessionListItem({ sessionName: "s", tddEnabled: true }),
+    ]);
+
+    fetchSpy.mockResolvedValue(jsonResponse({ error: "boom" }, 500));
+
+    const { result } = renderHook(() => useTddToggleMutation("p", "s"), {
+      wrapper: wrapperFor(client),
+    });
+
+    result.current.mutate(false);
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const sessions = client.getQueryData<SessionListItem[]>(listKey);
+    expect(sessions?.find((s) => s.sessionName === "s")?.tddEnabled).toBe(true);
+  });
+});
+
 describe("useBulkSessionsMutation", () => {
   const fetchSpy = vi.fn<typeof fetch>();
 
@@ -419,7 +580,7 @@ describe("useBulkSessionsMutation", () => {
     );
   });
 
-  it("surfaces server errors as a rejected mutation without invalidating", async () => {
+  it("surfaces server errors as a rejected mutation and still invalidates on settle", async () => {
     const client = makeClient();
     const listKey = sessionKeys.list("p");
     client.setQueryData(listKey, []);
@@ -433,6 +594,177 @@ describe("useBulkSessionsMutation", () => {
       result.current.mutateAsync({ op: "unarchive", sessionNames: ["a"] }),
     ).rejects.toThrow("nope");
 
-    expect(client.getQueryState(listKey)?.isInvalidated).toBe(false);
+    await waitFor(() => {
+      expect(client.getQueryState(listKey)?.isInvalidated).toBe(true);
+    });
+  });
+
+  it("optimistically archives matching sessions and removes their conversations from the active cache, then invalidates both on settle", async () => {
+    const client = makeClient();
+    const listKey = sessionKeys.list("p");
+    const activeKey = conversationKeys.active();
+    client.setQueryData<SessionListItem[]>(listKey, [
+      sessionListItem({ sessionName: "a", archived: false }),
+      sessionListItem({ sessionName: "b", archived: false }),
+      sessionListItem({ sessionName: "keep", archived: false }),
+    ]);
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([
+        activeConvo({ id: "c1", sessionName: "a" }),
+        activeConvo({ id: "c2", sessionName: "b" }),
+        activeConvo({ id: "c3", sessionName: "keep" }),
+      ]),
+    );
+
+    let resolveFetch: (res: Response) => void = () => {};
+    fetchSpy.mockImplementation(
+      () => new Promise<Response>((r) => (resolveFetch = r)),
+    );
+
+    const { result } = renderHook(() => useBulkSessionsMutation("p"), {
+      wrapper: wrapperFor(client),
+    });
+
+    result.current.mutate({ op: "archive", sessionNames: ["a", "b"] });
+
+    await waitFor(() => {
+      const sessions = client.getQueryData<SessionListItem[]>(listKey);
+      const active =
+        client.getQueryData<ActiveConversationsResponse>(activeKey);
+      expect(sessions?.map((s) => s.archived)).toEqual([true, true, false]);
+      expect(active?.conversations.map((c) => c.id)).toEqual(["c3"]);
+    });
+
+    resolveFetch(
+      jsonResponse({
+        results: [
+          { sessionName: "a", success: true },
+          { sessionName: "b", success: true },
+        ],
+      }),
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    await waitFor(() => {
+      expect(client.getQueryState(listKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(activeKey)?.isInvalidated).toBe(true);
+    });
+  });
+
+  it("optimistically unarchives matching sessions without touching the active cache", async () => {
+    const client = makeClient();
+    const listKey = sessionKeys.list("p");
+    const activeKey = conversationKeys.active();
+    client.setQueryData<SessionListItem[]>(listKey, [
+      sessionListItem({ sessionName: "a", archived: true }),
+      sessionListItem({ sessionName: "keep", archived: true }),
+    ]);
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([activeConvo({ id: "c3", sessionName: "other" })]),
+    );
+
+    let resolveFetch: (res: Response) => void = () => {};
+    fetchSpy.mockImplementation(
+      () => new Promise<Response>((r) => (resolveFetch = r)),
+    );
+
+    const { result } = renderHook(() => useBulkSessionsMutation("p"), {
+      wrapper: wrapperFor(client),
+    });
+
+    result.current.mutate({ op: "unarchive", sessionNames: ["a"] });
+
+    await waitFor(() => {
+      const sessions = client.getQueryData<SessionListItem[]>(listKey);
+      expect(sessions?.map((s) => s.archived)).toEqual([false, true]);
+    });
+    const active = client.getQueryData<ActiveConversationsResponse>(activeKey);
+    expect(active?.conversations.map((c) => c.id)).toEqual(["c3"]);
+
+    resolveFetch(
+      jsonResponse({ results: [{ sessionName: "a", success: true }] }),
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+
+  it("optimistically removes matching sessions and their conversations for the delete op", async () => {
+    const client = makeClient();
+    const listKey = sessionKeys.list("p");
+    const activeKey = conversationKeys.active();
+    client.setQueryData<SessionListItem[]>(listKey, [
+      sessionListItem({ sessionName: "a" }),
+      sessionListItem({ sessionName: "b" }),
+      sessionListItem({ sessionName: "keep" }),
+    ]);
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([
+        activeConvo({ id: "c1", sessionName: "a" }),
+        activeConvo({ id: "c2", sessionName: "b" }),
+        activeConvo({ id: "c3", sessionName: "keep" }),
+      ]),
+    );
+
+    let resolveFetch: (res: Response) => void = () => {};
+    fetchSpy.mockImplementation(
+      () => new Promise<Response>((r) => (resolveFetch = r)),
+    );
+
+    const { result } = renderHook(() => useBulkSessionsMutation("p"), {
+      wrapper: wrapperFor(client),
+    });
+
+    result.current.mutate({ op: "delete", sessionNames: ["a", "b"] });
+
+    await waitFor(() => {
+      const sessions = client.getQueryData<SessionListItem[]>(listKey);
+      const active =
+        client.getQueryData<ActiveConversationsResponse>(activeKey);
+      expect(sessions?.map((s) => s.sessionName)).toEqual(["keep"]);
+      expect(active?.conversations.map((c) => c.id)).toEqual(["c3"]);
+    });
+
+    resolveFetch(
+      jsonResponse({
+        results: [
+          { sessionName: "a", success: true },
+          { sessionName: "b", success: true },
+        ],
+      }),
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+
+  it("rolls back both caches when the server rejects", async () => {
+    const client = makeClient();
+    const listKey = sessionKeys.list("p");
+    const activeKey = conversationKeys.active();
+    client.setQueryData<SessionListItem[]>(listKey, [
+      sessionListItem({ sessionName: "a", archived: false }),
+      sessionListItem({ sessionName: "keep", archived: false }),
+    ]);
+    client.setQueryData<ActiveConversationsResponse>(
+      activeKey,
+      activeResponse([
+        activeConvo({ id: "c1", sessionName: "a" }),
+        activeConvo({ id: "c3", sessionName: "keep" }),
+      ]),
+    );
+
+    fetchSpy.mockResolvedValue(jsonResponse({ error: "boom" }, 500));
+
+    const { result } = renderHook(() => useBulkSessionsMutation("p"), {
+      wrapper: wrapperFor(client),
+    });
+
+    result.current.mutate({ op: "archive", sessionNames: ["a"] });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    const sessions = client.getQueryData<SessionListItem[]>(listKey);
+    const active = client.getQueryData<ActiveConversationsResponse>(activeKey);
+    expect(sessions?.map((s) => s.archived)).toEqual([false, false]);
+    expect(active?.conversations.map((c) => c.id)).toEqual(["c1", "c3"]);
   });
 });

@@ -31,6 +31,7 @@ const noopCallbacks = {
   onReorderTask: vi.fn(),
   onResetContext: vi.fn(),
   isMutating: false,
+  pendingAction: null,
   layout: null,
   isMobile: false,
   mobilePanel: "graph" as const,

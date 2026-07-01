@@ -361,6 +361,7 @@ export default function ProjectCockpit({
             onSelect={setActiveTab}
             onClose={handleClose}
             onNewChat={handleNewChat}
+            creating={createConversation.isPending}
           />
         }
         transcript={transcript}

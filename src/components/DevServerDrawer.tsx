@@ -125,9 +125,14 @@ export interface UnmanagedConflictInfo {
   cwd: string;
 }
 
+/** Runtime state plus the client-only stop-pending flag from useDevServers. */
+export type DevServerRowState = DevServerRuntimeState & {
+  isStopPending?: boolean;
+};
+
 export interface DevServerDrawerProps {
   open: boolean;
-  servers: DevServerRuntimeState[];
+  servers: DevServerRowState[];
   onClose: () => void;
   onToggle: () => void;
   onStart: (name: string) => void;
@@ -182,7 +187,7 @@ function ServerRow({
   onStart,
   onStop,
 }: {
-  server: DevServerRuntimeState;
+  server: DevServerRowState;
   onStart: () => void;
   onStop: () => void;
 }) {
@@ -212,7 +217,12 @@ function ServerRow({
       </div>
       <div className="shrink-0">
         {isActive ? (
-          <Button size="sm" onClick={onStop} type="button">
+          <Button
+            size="sm"
+            onClick={onStop}
+            type="button"
+            loading={server.isStopPending ?? false}
+          >
             Stop
           </Button>
         ) : (

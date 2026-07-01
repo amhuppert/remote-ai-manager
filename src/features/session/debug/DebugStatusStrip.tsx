@@ -89,7 +89,7 @@ export default function DebugStatusStrip({
             disabled={anyPending}
             data-tooltip="Clear debug log entries"
           >
-            Clear
+            {clearLogsMutation.isPending ? "Clearing…" : "Clear"}
           </button>
         </div>
       </div>

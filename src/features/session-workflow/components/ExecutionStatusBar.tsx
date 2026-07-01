@@ -2,8 +2,11 @@
 
 import { useMemo } from "react";
 import { cn } from "@/lib/ui/cn";
+import { Spinner } from "@/components/ui/Spinner";
 import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
 import ContextHaltCard from "@/components/workflow-graph/ContextHaltCard";
+
+export type ExecutionControlAction = "pause" | "resume" | "abort" | "clear";
 
 const wbBtn =
   "inline-flex items-center justify-center gap-[6px] font-medium rounded-sm cursor-pointer transition-all duration-150 border border-border-default whitespace-nowrap";
@@ -39,6 +42,28 @@ interface ExecutionStatusBarProps {
   onAbort: () => void;
   onClear: () => void;
   isMutating: boolean;
+  /** Which control mutation is in flight, so its button shows progress. */
+  pendingAction: ExecutionControlAction | null;
+}
+
+function ControlLabel({
+  action,
+  pendingAction,
+  idleLabel,
+  pendingLabel,
+}: {
+  action: ExecutionControlAction;
+  pendingAction: ExecutionControlAction | null;
+  idleLabel: string;
+  pendingLabel: string;
+}) {
+  if (pendingAction !== action) return <>{idleLabel}</>;
+  return (
+    <>
+      <Spinner size="sm" tone="inherit" />
+      {pendingLabel}
+    </>
+  );
 }
 
 function getActiveContextTitle(
@@ -79,6 +104,7 @@ export default function ExecutionStatusBar({
   onAbort,
   onClear,
   isMutating,
+  pendingAction,
 }: ExecutionStatusBarProps) {
   const definition = execution.workingDefinition;
   const index = useMemo(
@@ -150,9 +176,15 @@ export default function ExecutionStatusBar({
             className={cn(wbBtn, wbBtnXs, wbBtnDefault, execControlBtn)}
             onClick={onPause}
             disabled={isMutating}
+            aria-busy={pendingAction === "pause" || undefined}
             type="button"
           >
-            Pause
+            <ControlLabel
+              action="pause"
+              pendingAction={pendingAction}
+              idleLabel="Pause"
+              pendingLabel="Pausing…"
+            />
           </button>
         )}
         {showResume && (
@@ -160,9 +192,15 @@ export default function ExecutionStatusBar({
             className={cn(wbBtn, wbBtnXs, wbBtnPrimary, execControlBtn)}
             onClick={onResume}
             disabled={isMutating}
+            aria-busy={pendingAction === "resume" || undefined}
             type="button"
           >
-            Resume
+            <ControlLabel
+              action="resume"
+              pendingAction={pendingAction}
+              idleLabel="Resume"
+              pendingLabel="Resuming…"
+            />
           </button>
         )}
         {showAbort && (
@@ -170,10 +208,16 @@ export default function ExecutionStatusBar({
             className={cn(wbBtn, wbBtnXs, wbBtnDefault, execControlBtn)}
             onClick={onAbort}
             disabled={isMutating}
+            aria-busy={pendingAction === "abort" || undefined}
             style={{ color: "var(--red)" }}
             type="button"
           >
-            Abort
+            <ControlLabel
+              action="abort"
+              pendingAction={pendingAction}
+              idleLabel="Abort"
+              pendingLabel="Aborting…"
+            />
           </button>
         )}
         {showClear && (
@@ -181,9 +225,15 @@ export default function ExecutionStatusBar({
             className={cn(wbBtn, wbBtnXs, wbBtnDefault, execControlBtn)}
             onClick={onClear}
             disabled={isMutating}
+            aria-busy={pendingAction === "clear" || undefined}
             type="button"
           >
-            Clear
+            <ControlLabel
+              action="clear"
+              pendingAction={pendingAction}
+              idleLabel="Clear"
+              pendingLabel="Clearing…"
+            />
           </button>
         )}
       </div>

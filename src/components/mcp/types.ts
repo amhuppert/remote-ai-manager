@@ -87,4 +87,9 @@ export interface McpServerCardActions {
   onRefreshTools?(serverId: string): void;
   /** Fires when the user expands the card and we should lazy-fetch tools. */
   onExpand?(serverId: string): void;
+  /**
+   * Server whose tool-refresh mutation is currently in flight. Cards compare
+   * against their own id to show a pending spinner on the refresh control.
+   */
+  refreshingServerId?: string;
 }

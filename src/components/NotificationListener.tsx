@@ -26,7 +26,9 @@ import { z } from "zod";
 import {
   notificationCreatedEventSchema,
   notificationUpdatedEventSchema,
+  type NotificationsResponse,
 } from "@/lib/notifications/schemas";
+import { spawnResultEventSchema } from "@/lib/chat-spawning/schemas";
 import { scopedStatusEventSchema } from "@/lib/api/sse-events";
 import {
   conversationStatusEventSchema,
@@ -62,6 +64,13 @@ import {
   graphWorkflowSharedDocumentsUpdatedEventSchema,
   graphWorkflowApprovalPendingEventSchema,
   graphWorkflowApprovalResolvedEventSchema,
+  graphWorkflowPendingHaltReasonEventSchema,
+  graphWorkflowBatchScheduledEventSchema,
+  graphWorkflowMergeStatusEventSchema,
+  graphWorkflowLaneStatusEventSchema,
+  graphWorkflowJoinStatusEventSchema,
+  graphWorkflowCharterRegisteredEventSchema,
+  graphWorkflowCharterUpdatedEventSchema,
 } from "@/lib/workflows/schemas";
 import type { ConversationState } from "@/lib/conversations/schemas";
 import {
@@ -568,6 +577,23 @@ export default function NotificationListener(): null {
       });
     });
 
+    // The spawn card in the submitting tab shows the result from its own
+    // mutation state; every tab's card resolves spawned-session statuses by
+    // cross-referencing the project's sessions list (selectSpawnedSessionStatuses),
+    // and the payload lacks full SessionListItem rows — so the reaction is a
+    // narrow refetch of that list rather than a setQueryData patch.
+    es.addEventListener("spawn-result", (event) => {
+      try {
+        const parsed = spawnResultEventSchema.safeParse(JSON.parse(event.data));
+        if (!parsed.success) return;
+        void queryClient.invalidateQueries({
+          queryKey: sessionKeys.list(parsed.data.projectName),
+        });
+      } catch {
+        // best-effort
+      }
+    });
+
     es.addEventListener("job-status", (event) => {
       try {
         const parsed = JSON.parse(event.data);
@@ -592,17 +618,32 @@ export default function NotificationListener(): null {
       }
     });
 
-    // New: notification-created events → invalidate cache + enqueue toast
+    // notification-created events → patch the list cache + enqueue toast. The
+    // payload carries the full notification, so the fetched list is patched in
+    // place (idempotent by id); an unfetched list falls back to invalidation —
+    // seeding it via setQueryData would create a partial cache masquerading as
+    // a fetched response.
     es.addEventListener("notification-created", (event) => {
       try {
         const parsed = JSON.parse(event.data);
         const result = notificationCreatedEventSchema.safeParse(parsed);
         if (!result.success) return;
+        const notification = result.data.notification;
+        const listKey = notificationKeys.list();
 
-        void queryClient.invalidateQueries({
-          queryKey: notificationKeys.all,
-        });
-        actionsRef.current.enqueueToast(result.data.notification);
+        const cached = queryClient.getQueryData<NotificationsResponse>(listKey);
+        if (cached === undefined) {
+          void queryClient.invalidateQueries({ queryKey: listKey });
+        } else if (
+          !cached.notifications.some((n) => n.id === notification.id)
+        ) {
+          queryClient.setQueryData<NotificationsResponse>(listKey, {
+            notifications: [notification, ...cached.notifications],
+            total: cached.total + 1,
+            unreadCount: cached.unreadCount + (notification.read ? 0 : 1),
+          });
+        }
+        actionsRef.current.enqueueToast(notification);
       } catch {
         // best-effort
       }
@@ -782,6 +823,133 @@ export default function NotificationListener(): null {
     es.addEventListener("graph-workflow-shared-documents-updated", (event) => {
       try {
         const parsed = graphWorkflowSharedDocumentsUpdatedEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        invalidateGraphWorkflow(
+          parsed.data.projectName,
+          parsed.data.sessionName,
+        );
+      } catch {
+        // best-effort
+      }
+    });
+
+    // Not a log-visible transition (WorkflowEventLog renders it as null), so
+    // only the execution detail refetches — same for the charter events below.
+    es.addEventListener("graph-workflow-pending-halt-reason", (event) => {
+      try {
+        const parsed = graphWorkflowPendingHaltReasonEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        invalidateGraphWorkflow(
+          parsed.data.projectName,
+          parsed.data.sessionName,
+        );
+      } catch {
+        // best-effort
+      }
+    });
+
+    es.addEventListener("graph-workflow-batch-scheduled", (event) => {
+      try {
+        const parsed = graphWorkflowBatchScheduledEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        invalidateGraphWorkflow(
+          parsed.data.projectName,
+          parsed.data.sessionName,
+        );
+        invalidateGraphWorkflowEvents(
+          parsed.data.projectName,
+          parsed.data.sessionName,
+          parsed.data.executionId,
+        );
+      } catch {
+        // best-effort
+      }
+    });
+
+    es.addEventListener("graph-workflow-merge-status", (event) => {
+      try {
+        const parsed = graphWorkflowMergeStatusEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        invalidateGraphWorkflow(
+          parsed.data.projectName,
+          parsed.data.sessionName,
+        );
+        invalidateGraphWorkflowEvents(
+          parsed.data.projectName,
+          parsed.data.sessionName,
+          parsed.data.executionId,
+        );
+      } catch {
+        // best-effort
+      }
+    });
+
+    es.addEventListener("graph-workflow-lane-status", (event) => {
+      try {
+        const parsed = graphWorkflowLaneStatusEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        invalidateGraphWorkflow(
+          parsed.data.projectName,
+          parsed.data.sessionName,
+        );
+        invalidateGraphWorkflowEvents(
+          parsed.data.projectName,
+          parsed.data.sessionName,
+          parsed.data.executionId,
+        );
+      } catch {
+        // best-effort
+      }
+    });
+
+    es.addEventListener("graph-workflow-join-status", (event) => {
+      try {
+        const parsed = graphWorkflowJoinStatusEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        invalidateGraphWorkflow(
+          parsed.data.projectName,
+          parsed.data.sessionName,
+        );
+        invalidateGraphWorkflowEvents(
+          parsed.data.projectName,
+          parsed.data.sessionName,
+          parsed.data.executionId,
+        );
+      } catch {
+        // best-effort
+      }
+    });
+
+    es.addEventListener("graph-workflow-charter-registered", (event) => {
+      try {
+        const parsed = graphWorkflowCharterRegisteredEventSchema.safeParse(
+          JSON.parse(event.data),
+        );
+        if (!parsed.success) return;
+        invalidateGraphWorkflow(
+          parsed.data.projectName,
+          parsed.data.sessionName,
+        );
+      } catch {
+        // best-effort
+      }
+    });
+
+    es.addEventListener("graph-workflow-charter-updated", (event) => {
+      try {
+        const parsed = graphWorkflowCharterUpdatedEventSchema.safeParse(
           JSON.parse(event.data),
         );
         if (!parsed.success) return;

@@ -6,7 +6,7 @@ const meta = {
   title: "Session/ApproveCharterBanner",
   component: ApproveCharterBannerView,
   args: {
-    isSubmitting: false,
+    pendingAction: null,
     onApprove: fn(),
     onReject: fn(),
   },
@@ -27,6 +27,10 @@ type Story = StoryObj<typeof meta>;
 
 export const Default = {} satisfies Story;
 
-export const Submitting = {
-  args: { isSubmitting: true },
+export const Approving = {
+  args: { pendingAction: "approve" },
+} satisfies Story;
+
+export const Rejecting = {
+  args: { pendingAction: "reject" },
 } satisfies Story;

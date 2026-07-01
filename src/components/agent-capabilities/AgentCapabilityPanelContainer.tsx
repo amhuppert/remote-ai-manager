@@ -81,6 +81,7 @@ export function AgentCapabilityPanelContainer({
       selectedScope={effectiveScope}
       onScopeChange={setEffectiveScope}
       loading={query.isPending || refresh.isPending}
+      refreshing={refresh.isPending}
       errorMessage={errorMessage}
       onRefresh={() => refresh.mutate()}
       onToggleItem={(itemId, enabled) => {

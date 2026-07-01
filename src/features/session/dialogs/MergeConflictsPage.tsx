@@ -29,6 +29,8 @@ interface MergeConflictsPageProps {
   targetBranch?: string;
   conflicts: ConflictEntry[];
   error?: string | null;
+  /** True while the resolve-conflicts mutation is in flight. */
+  isSubmitting?: boolean;
   /** Callback when user clicks "Accept All and Fix" — fires async job */
   onAcceptAll?: () => void;
   /** Callback when user clicks "Fix with Claude" — fires async job with decisions */
@@ -284,6 +286,7 @@ export default function MergeConflictsPage({
   targetBranch = "main",
   conflicts,
   error = null,
+  isSubmitting = false,
   onAcceptAll,
   onFixApproved,
   onBack,
@@ -291,6 +294,11 @@ export default function MergeConflictsPage({
   const [decisions, setDecisions] = useState<ConflictState[]>(
     conflicts.map(() => ({ decision: "pending" as const, feedback: "" })),
   );
+  // Both submit controls fire the same mutation, so remember which one the
+  // user clicked to show progress on that control only.
+  const [submitAction, setSubmitAction] = useState<
+    "acceptAll" | "fixApproved" | null
+  >(null);
 
   const handleApprove = useCallback((index: number) => {
     setDecisions((prev) =>
@@ -337,10 +345,12 @@ export default function MergeConflictsPage({
     setDecisions((prev) =>
       prev.map((d) => ({ ...d, decision: "approved" as const })),
     );
+    setSubmitAction("acceptAll");
     onAcceptAll?.();
   }, [onAcceptAll]);
 
   const handleFixApproved = useCallback(() => {
+    setSubmitAction("fixApproved");
     onFixApproved?.(
       conflicts.map((c, i) => ({
         file: c.file,
@@ -458,18 +468,33 @@ export default function MergeConflictsPage({
           + backdrop-filter; `.cr-*` per docs/reports/css-inventory.md) ── */}
       <div className="cr-action-bar">
         <div className="cr-action-bar-inner">
-          <Button size="sm" touch onClick={handleAcceptAll}>
-            <CheckIcon size={11} /> Accept All and Fix
+          <Button
+            size="sm"
+            touch
+            loading={isSubmitting && submitAction === "acceptAll"}
+            disabled={isSubmitting}
+            onClick={handleAcceptAll}
+          >
+            {isSubmitting && submitAction === "acceptAll" ? (
+              "Submitting…"
+            ) : (
+              <>
+                <CheckIcon size={11} /> Accept All and Fix
+              </>
+            )}
           </Button>
           <div className="h-[20px] w-px bg-border-subtle" />
           <Button
             variant="primary"
             size="sm"
             touch
-            disabled={!hasAnyDecision}
+            loading={isSubmitting && submitAction === "fixApproved"}
+            disabled={!hasAnyDecision || isSubmitting}
             onClick={handleFixApproved}
           >
-            Fix with Claude
+            {isSubmitting && submitAction === "fixApproved"
+              ? "Submitting…"
+              : "Fix with Claude"}
           </Button>
         </div>
       </div>

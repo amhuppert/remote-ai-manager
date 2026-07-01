@@ -97,6 +97,14 @@ describe("WorkflowDefinitionsSidebar dot indicator", () => {
     );
   });
 
+  it("shows Creating… and disables the create button while creation is in flight", () => {
+    render(
+      <WorkflowDefinitionsSidebar {...baseProps} definitions={[]} isCreating />,
+    );
+    const createBtn = screen.getByRole("button", { name: /creating…/i });
+    expect(createBtn).toBeDisabled();
+  });
+
   it("places the dot after the revision chip within each row", () => {
     render(
       <WorkflowDefinitionsSidebar

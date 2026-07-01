@@ -31,7 +31,7 @@ export function useDebugModeToggleMutation(
           body: JSON.stringify({ action }),
         },
       ),
-    onSuccess: () => {
+    onSettled: () => {
       void queryClient.invalidateQueries({
         queryKey: sessionKeys.detail(projectName, sessionName),
       });
@@ -68,7 +68,7 @@ export function useDebugPhaseMutation(
           body: JSON.stringify({ action }),
         },
       ),
-    onSuccess: () => {
+    onSettled: () => {
       void queryClient.invalidateQueries({
         queryKey: sessionKeys.detail(projectName, sessionName),
       });
@@ -129,6 +129,8 @@ export function useClearDebugLogsMutation(
 ) {
   const queryClient = useQueryClient();
 
+  const statsKey = debugLogKeys.stats(projectName, sessionName, conversationId);
+
   return useMutation({
     mutationFn: () =>
       mutationFetch(
@@ -136,13 +138,22 @@ export function useClearDebugLogsMutation(
         "clear-debug-logs",
         { method: "DELETE" },
       ),
-    onSuccess: () => {
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: statsKey });
+      const previous = queryClient.getQueryData<number>(statsKey);
+      queryClient.setQueryData<number>(statsKey, 0);
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previous !== undefined) {
+        queryClient.setQueryData<number>(statsKey, context.previous);
+      }
+    },
+    onSettled: () => {
       void queryClient.invalidateQueries({
         queryKey: sessionKeys.detail(projectName, sessionName),
       });
-      void queryClient.invalidateQueries({
-        queryKey: debugLogKeys.stats(projectName, sessionName, conversationId),
-      });
+      void queryClient.invalidateQueries({ queryKey: statsKey });
     },
   });
 }

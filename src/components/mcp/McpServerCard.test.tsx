@@ -59,6 +59,49 @@ describe("McpServerCard — tool toggles", () => {
     );
   });
 
+  it("shows a busy refresh control while this server's tool refresh is pending", () => {
+    const onRefreshTools = vi.fn();
+    const server = baseServer({ id: "playwright" });
+    const { container } = render(
+      <McpServerCard
+        viewLevel="conversation"
+        server={server}
+        actions={{ onRefreshTools, refreshingServerId: "playwright" }}
+        defaultOpen
+      />,
+    );
+    const refreshButton = container.querySelector(
+      'button[aria-label="Refresh tool list"]',
+    ) as HTMLButtonElement;
+    expect(refreshButton).toBeTruthy();
+    expect(refreshButton.disabled).toBe(true);
+    expect(refreshButton.getAttribute("aria-busy")).toBe("true");
+    expect(refreshButton.querySelector(".animate-spin")).toBeTruthy();
+    fireEvent.click(refreshButton);
+    expect(onRefreshTools).not.toHaveBeenCalled();
+  });
+
+  it("keeps the refresh control idle when a different server is refreshing", () => {
+    const onRefreshTools = vi.fn();
+    const server = baseServer({ id: "playwright" });
+    const { container } = render(
+      <McpServerCard
+        viewLevel="conversation"
+        server={server}
+        actions={{ onRefreshTools, refreshingServerId: "other-server" }}
+        defaultOpen
+      />,
+    );
+    const refreshButton = container.querySelector(
+      'button[aria-label="Refresh tool list"]',
+    ) as HTMLButtonElement;
+    expect(refreshButton.disabled).toBe(false);
+    expect(refreshButton.getAttribute("aria-busy")).toBeNull();
+    expect(refreshButton.querySelector(".animate-spin")).toBeNull();
+    fireEvent.click(refreshButton);
+    expect(onRefreshTools).toHaveBeenCalledWith("playwright");
+  });
+
   it("still locks tool toggles when the server is effectively off (even if inherited)", () => {
     const onToggleTool = vi.fn();
     const server = baseServer({
