@@ -76,6 +76,7 @@ import {
   tagQuerySessionError,
   QUERY_SESSION_ERROR_CODES,
 } from "@/lib/agent-backends/claude/query-session-errors";
+import { mapAssistantContentBlocks } from "@/lib/agent-backends/claude/map-content-blocks";
 import { buildSyntheticForkSeed } from "@/lib/sessions/synthetic-fork-seed";
 import { isProjectSentinel } from "@/lib/conversations/project-conversation-scope";
 import {
@@ -872,27 +873,10 @@ export async function processMessage(
 
     case "assistant": {
       const asstMsg = message as SDKAssistantMessage;
-      const blocks: MessageContentBlock[] = [];
-      for (const block of asstMsg.message.content) {
-        if (block.type === "text" && "text" in block) {
-          const textBlock: MessageContentBlock = {
-            type: "text",
-            text: block.text,
-          };
-          blocks.push(textBlock);
-          contentBlocks.push(textBlock);
-          emit("content", textBlock);
-        } else if (block.type === "tool_use" && "name" in block) {
-          const toolBlock: MessageContentBlock = {
-            type: "tool_use",
-            id: block.id,
-            name: block.name,
-            input: block.input as Record<string, unknown> | undefined,
-          };
-          blocks.push(toolBlock);
-          contentBlocks.push(toolBlock);
-          emit("content", toolBlock);
-        }
+      const blocks = mapAssistantContentBlocks(asstMsg.message.content);
+      for (const block of blocks) {
+        contentBlocks.push(block);
+        emit("content", block);
       }
 
       await safeAppendTranscriptEntry(conversationId, {

@@ -34,6 +34,7 @@ import {
   extractContextWindow,
 } from "@/lib/conversations/context-fill";
 import { parseToolResultMetrics } from "@/lib/conversations/parse-tool-result";
+import { mapAssistantContentBlocks } from "./map-content-blocks";
 import {
   QUERY_SESSION_ERROR_CODES,
   tagQuerySessionError,
@@ -1292,35 +1293,12 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         const asstMsg = message as SDKAssistantMessage;
         turn.sessionId = asstMsg.session_id;
 
-        for (const block of asstMsg.message.content) {
-          if (block.type === "text" && "text" in block) {
-            const textBlock: MessageContentBlock = {
-              type: "text",
-              text: block.text,
-            };
-            turn.contentBlocks.push(textBlock);
-          } else if (block.type === "tool_use" && "name" in block) {
-            const toolBlock: MessageContentBlock = {
-              type: "tool_use",
-              id: block.id,
-              name: block.name,
-              input: block.input as Record<string, unknown> | undefined,
-            };
-            turn.contentBlocks.push(toolBlock);
+        for (const block of mapAssistantContentBlocks(
+          asstMsg.message.content,
+        )) {
+          turn.contentBlocks.push(block);
+          if (block.type === "tool_use" && block.id) {
             turn.toolNamesById.set(block.id, block.name);
-          } else if (block.type === "thinking" && "thinking" in block) {
-            turn.contentBlocks.push({
-              type: "thinking",
-              text: block.thinking,
-            });
-          } else if (block.type === "redacted_thinking") {
-            // Encrypted reasoning the API won't reveal — keep an empty-text
-            // marker so the UI can show a "reasoning hidden" indicator.
-            turn.contentBlocks.push({
-              type: "thinking",
-              text: "",
-              redacted: true,
-            });
           }
         }
 

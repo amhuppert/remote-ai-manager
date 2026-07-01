@@ -981,6 +981,69 @@ describe("processMessage", () => {
     expect(contentBlocks).toHaveLength(1);
   });
 
+  it("maps assistant thinking and redacted_thinking blocks into thinking content blocks", async () => {
+    const emit = vi.fn();
+    const appendEntry = vi.fn(async () => {});
+    const contentBlocks: unknown[] = [];
+
+    await processMessage(
+      {
+        type: "assistant",
+        uuid: "msg-think",
+        message: {
+          content: [
+            {
+              type: "thinking",
+              thinking: "Two candidates: a regression, or a stale selector.",
+              signature: "sig-abc",
+            },
+            { type: "redacted_thinking", data: "encrypted-blob" },
+            { type: "text", text: "The component is correct." },
+          ],
+        },
+      } as never,
+      "conv-1",
+      emit,
+      contentBlocks as never,
+      appendEntry,
+    );
+
+    // Reasoning is surfaced as distinct thinking blocks, in order, ahead of the
+    // answer — streamed live AND persisted to the transcript (not dropped).
+    expect(emit).toHaveBeenCalledWith("content", {
+      type: "thinking",
+      text: "Two candidates: a regression, or a stale selector.",
+    });
+    expect(emit).toHaveBeenCalledWith("content", {
+      type: "thinking",
+      text: "",
+      redacted: true,
+    });
+    expect(contentBlocks).toEqual([
+      {
+        type: "thinking",
+        text: "Two candidates: a regression, or a stale selector.",
+      },
+      { type: "thinking", text: "", redacted: true },
+      { type: "text", text: "The component is correct." },
+    ]);
+
+    expect(appendEntry).toHaveBeenCalledWith(
+      "conv-1",
+      expect.objectContaining({
+        role: "assistant",
+        content: [
+          {
+            type: "thinking",
+            text: "Two candidates: a regression, or a stale selector.",
+          },
+          { type: "thinking", text: "", redacted: true },
+          { type: "text", text: "The component is correct." },
+        ],
+      }),
+    );
+  });
+
   it("handles result success", async () => {
     const emit = vi.fn();
     const appendEntry = vi.fn(async () => {});
