@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "node_modules",
+    ".design-sync",
+    ".worktrees",
+    "memory-bank",
+    "ds-bundle"
+  ]
+}
