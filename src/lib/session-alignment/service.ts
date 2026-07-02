@@ -34,6 +34,8 @@ export interface BeginDraftInput {
   sessionName: string;
   /** The conversation that ran `/align`; recorded as the draft's author. */
   conversationId: string;
+  /** Optional free-text guidance the user typed after `/align`, steering the charter. */
+  guidance?: string;
 }
 
 export interface FillDraftInput {
@@ -435,7 +437,11 @@ export function createSessionAlignmentService(
       const authoringBody = active
         ? active.content
         : deps.render.scaffoldTemplate;
-      const authoringPrompt = composeAuthoringPrompt(source, authoringBody);
+      const authoringPrompt = composeAuthoringPrompt(
+        source,
+        authoringBody,
+        input.guidance ?? "",
+      );
 
       // ≤1 draft per session: replace any open draft (last-writer-wins).
       const openDraft = deps.repo.findDraftVersion(projectPath, sessionName);
@@ -897,18 +903,25 @@ export function createSessionAlignmentService(
 /**
  * Compose the agent authoring turn body: a first charter seeds the soft scaffold
  * and instructs population from the conversation (R3.2); a rerun provides the
- * existing charter to rewrite from without overwriting it (R3.4).
+ * existing charter to rewrite from without overwriting it (R3.4). Optional
+ * `guidance` is the free text the user typed after `/align`; when present it is
+ * surfaced as an explicit instruction so the agent weights it while authoring.
  */
 function composeAuthoringPrompt(
   source: AlignmentVersionSource,
   body: string,
+  guidance: string,
 ): string {
+  const guidanceLines =
+    guidance !== "" ? ["", `User guidance for the charter: ${guidance}`] : [];
+
   if (source === "align_rerun") {
     return [
       "Rewrite the session's Alignment charter from the conversation so far.",
       "Here is the current charter to revise (do not start from scratch unless the conversation calls for it):",
       "",
       body,
+      ...guidanceLines,
       "",
       "Call `write_session_charter` with the revised charter when ready. The result is a draft pending the user's approval; the active charter is unchanged until then.",
     ].join("\n");
@@ -919,6 +932,7 @@ function composeAuthoringPrompt(
     "Use this soft scaffold as a starting point — adapt, restructure, or remove sections as the conversation warrants; the charter is free-text markdown:",
     "",
     body,
+    ...guidanceLines,
     "",
     "Call `write_session_charter` with the charter content when ready. The result is a draft pending the user's approval.",
   ].join("\n");

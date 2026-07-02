@@ -82,6 +82,8 @@ export interface ConversationCommandDeps {
     projectPath: string;
     sessionName: string;
     conversationId: string;
+    /** Free-text guidance the user typed after `/align` (empty string if none). */
+    guidance: string;
   }): Promise<{ authoringPrompt: string; draftId: string }>;
   /** Enqueue the alignment authoring turn into the originating conversation. */
   enqueueAuthoringTurn(input: {
@@ -418,6 +420,7 @@ export function createConversationCommandService(
         projectPath: input.projectPath,
         sessionName: input.sessionName,
         conversationId: input.conversationId,
+        guidance: input.parsed.hint,
       });
     } catch (err) {
       if (err instanceof AlignmentNotSupportedError) {
@@ -490,7 +493,12 @@ const productionDeps: ConversationCommandDeps = {
   dispatchMergeJob,
   appendNotice,
   beginAlignmentDraft(input) {
-    return getAlignmentService().beginDraft(input);
+    return getAlignmentService().beginDraft({
+      projectPath: input.projectPath,
+      sessionName: input.sessionName,
+      conversationId: input.conversationId,
+      guidance: input.guidance,
+    });
   },
   enqueueAuthoringTurn: enqueueConversationMessage,
 };

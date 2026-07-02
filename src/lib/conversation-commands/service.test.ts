@@ -605,6 +605,7 @@ describe("/align command", () => {
           projectPath: input.projectPath,
           sessionName: input.sessionName,
           conversationId: input.conversationId,
+          guidance: input.guidance,
         }),
       enqueueAuthoringTurn: async (input) => {
         enqueuedAuthoringTurns.push({ ...input });
@@ -667,6 +668,26 @@ describe("/align command", () => {
     expectNoAgentOrDispatch(h.deps);
   });
 
+  it("forwards the command's guidance hint into the enqueued authoring turn", async () => {
+    const h = makeAlignHarness("normal");
+    harnesses.push(h.fixture);
+    const service = createConversationCommandService(h.deps);
+
+    const outcome = await service.run(
+      alignInput({
+        parsed: { command: "align", hint: "focus on the API boundaries" },
+      }),
+    );
+
+    expect(outcome.status).toBe("alignment_draft_started");
+
+    expect(h.enqueuedAuthoringTurns).toHaveLength(1);
+    const turn = h.enqueuedAuthoringTurns[0]!;
+    expect(turn.message).toContain(
+      "User guidance for the charter: focus on the API boundaries",
+    );
+  });
+
   it("on rerun enqueues the existing charter (not the scaffold), leaves the active charter unchanged, and does not archive", async () => {
     const h = makeAlignHarness("normal");
     harnesses.push(h.fixture);
@@ -677,6 +698,7 @@ describe("/align command", () => {
       projectPath: ALIGN_PROJECT,
       sessionName: ALIGN_SESSION,
       conversationId: ALIGN_CONVERSATION,
+      guidance: "",
     });
     const activationService = createSessionAlignmentService({
       repo,

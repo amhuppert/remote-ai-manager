@@ -216,6 +216,63 @@ describe("beginDraft", () => {
     expect(draft?.id).toBe(second.draftId);
   });
 
+  it("weaves the user's guidance into a first-charter authoring prompt", async () => {
+    const result = await h.service.beginDraft({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      guidance: "focus on the API boundaries",
+    });
+
+    expect(result.authoringPrompt).toContain(SCAFFOLD_TEMPLATE);
+    expect(result.authoringPrompt).toContain(
+      "User guidance for the charter: focus on the API boundaries",
+    );
+  });
+
+  it("weaves the user's guidance into a redraft authoring prompt", async () => {
+    const begin = await h.service.beginDraft({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+    });
+    await h.service.fillDraft({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      content: "# Mission\nShip the alignment feature.",
+    });
+    await h.service.approveDraft({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      draftId: begin.draftId,
+    });
+
+    const redraft = await h.service.beginDraft({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      guidance: "tighten the non-goals section",
+    });
+
+    expect(redraft.authoringPrompt).toContain("Ship the alignment feature.");
+    expect(redraft.authoringPrompt).toContain(
+      "User guidance for the charter: tighten the non-goals section",
+    );
+  });
+
+  it("omits the guidance framing when no guidance is given", async () => {
+    const result = await h.service.beginDraft({
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+    });
+
+    expect(result.authoringPrompt).not.toContain(
+      "User guidance for the charter",
+    );
+  });
+
   it("refuses to operate on an optimistic session", async () => {
     h.fixture.seedSession(PROJECT_PATH, "opt", { creationMode: "optimistic" });
     const { service } = makeService(h.fixture, {
