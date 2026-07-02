@@ -2,6 +2,7 @@ import { createLogger } from "@/lib/logging";
 import { getExecutionLogger } from "@/lib/workflow-graph/execution-logger";
 import {
   toGraph,
+  toGraphLimitEvaluation,
   toPrimitive,
   type GraphWorkflowLaneAdapterInputContext,
 } from "@/lib/workflows/primitives/graph-workflow-lane-adapter";
@@ -107,6 +108,8 @@ export interface RecordClaudeLaneTurnInput {
   contextTokens: number | null;
   contextWindowMax: number | null;
   contextLimitTokens: number | undefined;
+  /** True when the SDK auto-compacted the context at least once this turn. */
+  compacted?: boolean;
 }
 
 export interface RecordCodexLaneTurnInput {
@@ -263,22 +266,18 @@ export function createWorkflowContinuityService(
     if (!existing) {
       await laneService.initialize(primitive);
     }
-    const updated = await laneService.recordOutcome(
-      { workflowId: primitive.workflowId, laneId: primitive.laneId },
-      outcome,
-    );
-    // Carry forward any limitEvaluation override the outcome encodes (Codex
-    // never supports limit-based rotation; Claude flips to "supported" once
-    // contextLimitTokens is observed). The primitive layer doesn't model that
-    // distinction so the extras are recomputed from the outcome semantics.
-    const nextExtras = { ...extras };
-    if (outcome.backend === "claude") {
-      nextExtras.limitEvaluation =
-        outcome.contextLimitTokens !== undefined ? "supported" : "disabled";
-    } else {
-      nextExtras.limitEvaluation =
-        outcome.contextLimitTokens !== undefined ? "unsupported" : "disabled";
-    }
+    const { state: updated, contextLimitEvaluation } =
+      await laneService.recordOutcome(
+        { workflowId: primitive.workflowId, laneId: primitive.laneId },
+        outcome,
+      );
+    // The lane service is the single decision site; map its honest verdict onto
+    // the coarser graph label. A Claude turn without occupancy metrics surfaces
+    // as "metrics_unavailable" rather than a fabricated "supported".
+    const nextExtras = {
+      ...extras,
+      limitEvaluation: toGraphLimitEvaluation(contextLimitEvaluation),
+    };
     return toGraph(updated, nextExtras);
   }
 
@@ -813,19 +812,31 @@ export function createWorkflowContinuityService(
       contextTokens,
       contextWindowMax,
       contextLimitTokens,
+      compacted,
     } = input;
     const laneState = getCurrentLane(execution, contextId, lane);
     if (!laneState || laneState.engine !== "claude") return execution;
 
-    if (
+    const overLimit =
       contextLimitTokens !== undefined &&
       contextTokens !== null &&
-      contextTokens > contextLimitTokens
-    ) {
+      contextTokens > contextLimitTokens;
+    // A compaction deflates the recorded occupancy below the limit, so the
+    // numeric comparison alone would miss it — treat "compacted under a
+    // configured limit" as a rotation trigger too.
+    const compactionUnderLimit =
+      compacted === true && contextLimitTokens !== undefined;
+
+    if (overLimit || compactionUnderLimit) {
+      const reason: "context_over_limit" | "compaction_detected" = overLimit
+        ? "context_over_limit"
+        : "compaction_detected";
+
       logger.info("workflow-continuity.rotation.scheduled", {
         lane,
         contextTokens,
         limit: contextLimitTokens,
+        reason,
       });
 
       const execLogger = getExecutionLogger(execution.id);
@@ -836,9 +847,11 @@ export function createWorkflowContinuityService(
         contextTokens,
         contextWindowMax,
         contextLimitTokens,
-        utilization: contextWindowMax
-          ? Math.round((contextTokens / contextWindowMax) * 100)
-          : null,
+        reason,
+        utilization:
+          contextWindowMax && contextTokens !== null
+            ? Math.round((contextTokens / contextWindowMax) * 100)
+            : null,
       });
     }
 
@@ -847,6 +860,7 @@ export function createWorkflowContinuityService(
       ...(contextTokens !== null ? { contextTokens } : {}),
       ...(contextWindowMax !== null ? { contextWindowMax } : {}),
       ...(contextLimitTokens !== undefined ? { contextLimitTokens } : {}),
+      compactedThisTurn: compacted ?? false,
     };
 
     const updatedLane = await recordLaneOutcome(execution, laneState, outcome);

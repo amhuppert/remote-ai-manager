@@ -29,6 +29,7 @@ import {
   type GraphWorkflowLaneKind,
   type GraphWorkflowAgentSessionState,
 } from "@/lib/workflows/schemas";
+import type { ContextLimitEvaluation } from "./context-limit-gate";
 import {
   laneStateSchema,
   type LanePolicy,
@@ -38,7 +39,35 @@ import {
 
 const logger = createLogger("workflows.primitives.lane.graph-workflow-adapter");
 
-type GraphLaneLimitEvaluation = "disabled" | "supported" | "unsupported";
+type GraphLaneLimitEvaluation =
+  | "disabled"
+  | "supported"
+  | "unsupported"
+  | "metrics_unavailable";
+
+/**
+ * Maps the primitive-layer `ContextLimitEvaluation` taxonomy onto the coarser
+ * `limitEvaluation` value the graph schema persists. The graph state only
+ * records whether occupancy metrics were reported, so both occupancy verdicts
+ * (`no_rotation` / `rotation_required`) collapse to `supported`; `disabled`,
+ * `unsupported`, and `metrics_unavailable` pass through unchanged.
+ */
+export function toGraphLimitEvaluation(
+  evaluation: ContextLimitEvaluation,
+): GraphLaneLimitEvaluation {
+  switch (evaluation) {
+    case "disabled":
+      return "disabled";
+    case "unsupported":
+      return "unsupported";
+    case "metrics_unavailable":
+      return "metrics_unavailable";
+    case "no_rotation":
+      return "supported";
+    case "rotation_required":
+      return "supported";
+  }
+}
 
 export interface GraphWorkflowLaneAdapterInputContext {
   executionId: string;
@@ -209,10 +238,11 @@ function reconstructClaude(
   }
   if (extras.limitEvaluation === "unsupported") {
     throw new Error(
-      "graph-lane adapter: a Claude lane cannot carry limitEvaluation=unsupported (graph schema only allows disabled|supported)",
+      "graph-lane adapter: a Claude lane cannot carry limitEvaluation=unsupported (graph schema only allows disabled|supported|metrics_unavailable)",
     );
   }
-  const limitEvaluation: "disabled" | "supported" = extras.limitEvaluation;
+  const limitEvaluation: "disabled" | "supported" | "metrics_unavailable" =
+    extras.limitEvaluation;
 
   return graphWorkflowAgentSessionStateSchema.parse({
     engine: "claude",
@@ -248,9 +278,12 @@ function reconstructCodex(
       "graph-lane adapter: primitive metrics branch is not Codex",
     );
   }
-  if (extras.limitEvaluation === "supported") {
+  if (
+    extras.limitEvaluation === "supported" ||
+    extras.limitEvaluation === "metrics_unavailable"
+  ) {
     throw new Error(
-      "graph-lane adapter: a Codex lane cannot carry limitEvaluation=supported (graph schema only allows disabled|unsupported)",
+      "graph-lane adapter: a Codex lane cannot carry limitEvaluation=supported or metrics_unavailable (graph schema only allows disabled|unsupported)",
     );
   }
   const limitEvaluation: "disabled" | "unsupported" = extras.limitEvaluation;

@@ -94,6 +94,7 @@ export function createExternalTurnHandler(
           contentBlocks: event.result.contentBlocks,
           structuredOutput: event.result.structuredOutput,
           aborted: event.result.aborted,
+          compacted: event.result.compacted,
           error: event.result.error,
         };
         runtime.sendToMachine({ type: "EXTERNAL_TURN_COMPLETED", result });

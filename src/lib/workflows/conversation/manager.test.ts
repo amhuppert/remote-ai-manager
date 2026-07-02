@@ -88,6 +88,7 @@ function createTestMachine() {
           cachedInputTokens: null,
           contentBlocks: [],
           aborted: false,
+          compacted: false,
           error: null,
         }),
       ),
@@ -536,6 +537,7 @@ describe("conversation manager", () => {
             cachedInputTokens: null,
             contentBlocks: [],
             aborted: false,
+            compacted: false,
             error: "Previous turn failed",
           },
           pendingQuestion: {

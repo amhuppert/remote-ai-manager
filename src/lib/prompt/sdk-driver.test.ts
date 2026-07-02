@@ -732,6 +732,71 @@ describe("executePromptStream (facade)", () => {
     expect(result.aborted).toBe(false);
   });
 
+  it("maps compacted=true from the actor snapshot's lastResult", async () => {
+    mockActor.getSnapshot
+      .mockReturnValueOnce({
+        value: "idle",
+        status: "active" as const,
+        context: {},
+      })
+      .mockReturnValue({
+        value: "idle",
+        status: "active" as const,
+        context: {
+          lastResult: {
+            aborted: false,
+            compacted: true,
+          },
+        },
+      });
+
+    deps = createTestDeps();
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    const result = await executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello",
+      vi.fn(),
+      "conv-123",
+    );
+
+    expect(result.compacted).toBe(true);
+  });
+
+  it("defaults compacted to false when the actor snapshot omits it", async () => {
+    mockActor.getSnapshot
+      .mockReturnValueOnce({
+        value: "idle",
+        status: "active" as const,
+        context: {},
+      })
+      .mockReturnValue({
+        value: "idle",
+        status: "active" as const,
+        context: {
+          lastResult: {
+            aborted: false,
+          },
+        },
+      });
+
+    deps = createTestDeps();
+    const executor = createPromptExecutor(deps);
+    executePromptStream = executor.executePromptStream;
+
+    const result = await executePromptStream(
+      "/projects/repo",
+      makeSession(),
+      "Hello",
+      vi.fn(),
+      "conv-123",
+    );
+
+    expect(result.compacted).toBe(false);
+  });
+
   it("forwards waitForBackgroundTasks into the SUBMIT_PROMPT event when opted in", async () => {
     deps = createTestDeps();
     const executor = createPromptExecutor(deps);
@@ -1436,6 +1501,7 @@ describe("conversation command interception", () => {
       conversationId: "conv-123",
       contextTokens: null,
       contextWindowMax: null,
+      compacted: false,
     });
   });
 

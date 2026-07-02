@@ -1238,6 +1238,7 @@ export async function executePromptForMachine(
         cachedInputTokens: null,
         contentBlocks: [],
         aborted: false,
+        compacted: false,
         error: errorMessage,
       };
     }
@@ -2011,6 +2012,7 @@ export async function executePromptForMachine(
           cachedInputTokens: null,
           contentBlocks: [],
           aborted: false,
+          compacted: false,
           error: errorMessage,
         };
       }
@@ -2135,6 +2137,7 @@ export async function executePromptForMachine(
         cachedInputTokens: null,
         contentBlocks,
         aborted: true,
+        compacted: false,
         ...(abortReason !== undefined ? { abortReason } : {}),
         ...(timeoutFired ? { timeoutMs } : {}),
         error: null,
@@ -2160,6 +2163,7 @@ export async function executePromptForMachine(
       cachedInputTokens: null,
       contentBlocks,
       aborted: false,
+      compacted: false,
       error: errorMsg,
     };
   } finally {
@@ -2315,6 +2319,7 @@ export async function executePromptForMachine(
     contentBlocks: turnResult?.contentBlocks ?? contentBlocks,
     structuredOutput: effectiveStructuredOutput,
     aborted: turnResult?.aborted ?? false,
+    compacted: turnResult?.compacted ?? false,
     ...(turnResult?.aborted && timeoutFired
       ? { abortReason: "timeout" as const, timeoutMs }
       : {}),
@@ -2435,6 +2440,7 @@ export async function runTaskRunTurnForMachine(
       cachedInputTokens: null,
       contentBlocks: [],
       aborted: false,
+      compacted: false,
       error: errorMsg,
     };
   }
@@ -2497,6 +2503,7 @@ export async function runTaskRunTurnForMachine(
         ? { transcript: result.outcome.transcript }
         : {}),
       aborted: false,
+      compacted: false,
       error: null,
     };
   }
@@ -2526,6 +2533,7 @@ export async function runTaskRunTurnForMachine(
         ? { transcript: result.outcome.transcript }
         : {}),
       aborted: failureKind === "aborted",
+      compacted: false,
       error: errorMsg,
     };
   }
@@ -2549,6 +2557,7 @@ export async function runTaskRunTurnForMachine(
     cachedInputTokens: usage.cachedInputTokens ?? null,
     contentBlocks: [],
     aborted: false,
+    compacted: false,
     error: "task_run produced unexpected paused outcome",
   };
 }

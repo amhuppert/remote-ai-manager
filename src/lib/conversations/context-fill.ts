@@ -26,14 +26,19 @@ export function extractContextTokens(
 
 /**
  * Extract the context window max from the SDK's per-model usage breakdown.
- * Returns the contextWindow from the first model entry, or null if unavailable.
+ * Selects the largest contextWindow across all model entries, independent of
+ * Record insertion order. On a multi-model turn (e.g. a sub-agent alongside the
+ * main conversation model) the main conversation model has the largest window,
+ * so the max reflects the true window the utilization percentage is measured
+ * against. Returns null when there are no model entries.
  */
 export function extractContextWindow(
   modelUsage: Record<string, { contextWindow: number }> | undefined,
 ): number | null {
   if (!modelUsage) return null;
-  const first = Object.values(modelUsage)[0];
-  return first?.contextWindow ?? null;
+  const windows = Object.values(modelUsage).map((entry) => entry.contextWindow);
+  if (windows.length === 0) return null;
+  return Math.max(...windows);
 }
 
 /**

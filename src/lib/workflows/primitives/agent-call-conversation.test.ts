@@ -46,6 +46,7 @@ function makeStubRuntime(opts: StubRuntimeOptions = {}): {
     contentBlocks: [],
     structuredOutput: undefined,
     aborted: false,
+    compacted: false,
     error: null,
   };
 

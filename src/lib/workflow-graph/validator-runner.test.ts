@@ -1082,6 +1082,70 @@ describe("context validator continuity runtime integration", () => {
     expect(conversationIds[0]).toBe(conversationIds[1]);
   });
 
+  it("records limitEvaluation=metrics_unavailable for a Claude validator turn when a limit is configured", async () => {
+    const limitedClaudeValidator: GraphWorkflowAgentValidatorConfig = {
+      type: "claude",
+      enabled: true,
+      continuity: { enabled: true, contextLimitTokens: 100_000 },
+      agent: { backend: "claude", model: "sonnet", reasoningEffort: "medium" },
+    };
+    const execution = buildExecutionWithContextValidation(
+      limitedClaudeValidator,
+    );
+    const contextDef = execution.workingDefinition.executionContexts.find(
+      (c) => c.id === "context-plan",
+    )!;
+    const repo = createInMemoryRepo(execution);
+
+    let convCounter = 0;
+    const createConversation = vi.fn(async () => ({
+      id: `conv-val-${++convCounter}`,
+    }));
+    const getConversation = vi.fn(
+      async (_p: string, _s: string, id: string) => ({ id }),
+    );
+
+    const continuityService = createWorkflowContinuityService({
+      createConversation,
+      getConversation,
+      startCodexThread: vi.fn(),
+      resumeCodexThread: vi.fn(),
+      now: () => NOW,
+    });
+
+    const executeWorkflowTaskRun = vi.fn(async () =>
+      textTaskRun(passResponseJson, {
+        backendRef: { backend: "claude", sessionId: "sdk-session-1" },
+      }),
+    );
+
+    const runner = createValidatorRunner({
+      resolveWorktreePath: stubWorktreePath,
+      resolveTimeoutMs: stubTimeoutMs,
+      continuityService,
+      executionRepository: repo,
+      executeWorkflowTaskRun,
+      getProjectDisplayName: stubProjectDisplayName,
+    });
+
+    const result = await runner.runContextValidator({
+      projectPath: "/repo",
+      sessionName: "session-1",
+      execution,
+      context: contextDef,
+      validator: limitedClaudeValidator,
+    });
+
+    // The Claude validator turn is recorded with contextTokens: null, so with a
+    // configured limit the honest label is metrics_unavailable (never a
+    // fabricated "supported").
+    expect(result.metadata.limitEvaluation).toBe("metrics_unavailable");
+    expect(
+      repo.read().laneStates["context-plan"]?.["context_validator"]
+        ?.limitEvaluation,
+    ).toBe("metrics_unavailable");
+  });
+
   it("resumes the Codex context-validator thread after a schema round-trip", async () => {
     const codexValidator: GraphWorkflowAgentValidatorConfig = {
       type: "codex",

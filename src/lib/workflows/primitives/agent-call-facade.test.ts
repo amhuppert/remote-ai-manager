@@ -70,6 +70,7 @@ function makeConversationRuntime(
     contentBlocks: [{ type: "text", text: "hi" }],
     structuredOutput: undefined,
     aborted: false,
+    compacted: false,
     error: null,
   };
 

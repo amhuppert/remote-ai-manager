@@ -1266,6 +1266,7 @@ describe("executePromptForMachine", () => {
     contextWindowMax: 200000,
     contentBlocks: [{ type: "text", text: "Hello!" }],
     aborted: false,
+    compacted: false,
     error: null,
   };
 
@@ -3826,6 +3827,7 @@ describe("executePromptForMachine alignment injection", () => {
     contextWindowMax: 200000,
     contentBlocks: [{ type: "text", text: "ok" }],
     aborted: false,
+    compacted: false,
     error: null,
   };
 
@@ -4232,6 +4234,7 @@ describe("executePromptForMachine alignment propagation to live runtimes", () =>
         contextWindowMax: 200000,
         contentBlocks: [{ type: "text", text: "ok" }],
         aborted: false,
+        compacted: false,
         error: null,
       } satisfies ConversationBackendTurnResult);
       const freshRuntime = createMockBackendRuntime({

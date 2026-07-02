@@ -467,6 +467,8 @@ export interface PromptStreamResult {
   contextWindowMax: number | null;
   structuredOutput?: unknown;
   aborted?: boolean;
+  /** True when the SDK auto-compacted the context at least once this turn. */
+  compacted: boolean;
   abortReason?: "timeout" | "user" | "shutdown";
   timeoutMs?: number;
   error?: string | null;
@@ -650,6 +652,7 @@ export async function executePromptStream(
         conversationId,
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     } catch (err) {
       const errorMsg =
@@ -665,6 +668,7 @@ export async function executePromptStream(
         conversationId,
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
         error: errorMsg,
       };
     }
@@ -716,6 +720,7 @@ export async function executePromptStream(
         conversationId,
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     } catch (err) {
       const errorMsg =
@@ -730,6 +735,7 @@ export async function executePromptStream(
         conversationId,
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
         error: errorMsg,
       };
     }
@@ -941,6 +947,7 @@ function readContextFromSnapshot(
     | {
         structuredOutput?: unknown;
         aborted?: boolean;
+        compacted?: boolean;
         abortReason?: "timeout" | "user" | "shutdown";
         timeoutMs?: number;
         error?: string | null;
@@ -954,6 +961,7 @@ function readContextFromSnapshot(
     contextWindowMax: totals?.contextWindowMax ?? null,
     structuredOutput: lastResult?.structuredOutput,
     aborted: lastResult?.aborted ?? false,
+    compacted: lastResult?.compacted ?? false,
     ...(lastResult?.abortReason !== undefined
       ? { abortReason: lastResult.abortReason }
       : {}),

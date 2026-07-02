@@ -12,6 +12,10 @@ import {
   type ExecutionLogger,
   getExecutionLogger as defaultGetExecutionLogger,
 } from "./execution-logger";
+import type {
+  CompleteTaskContextLimitStop,
+  CompleteTaskResult,
+} from "./execution-tool-context";
 import { IterationHaltedError } from "./iteration-orchestrator";
 import {
   buildHaltMessage,
@@ -161,7 +165,7 @@ export interface GraphWorkflowToolServerContext {
   allowAgentTaskAdd: boolean;
   allowAgentCollaboration: boolean;
   collaboration?: GraphWorkflowCollaborationContextBlock;
-  completeTask(taskId: string, summary: string): Promise<unknown>;
+  completeTask(taskId: string, summary: string): Promise<CompleteTaskResult>;
   addTask(task: AgentAddedTask): Promise<unknown>;
   upsertSharedDocument(document: SharedDocumentUpsertInput): Promise<unknown>;
   /**
@@ -181,6 +185,30 @@ const UPSERT_SHARED_DOCUMENT_DESCRIPTION =
 const ADD_TASK_DESCRIPTION =
   "Append a new task to the end of this execution context. Use this when you discover necessary work not covered by the existing task list.";
 
+/**
+ * The clause slotted into the "CONTEXT LIMIT REACHED: …" instruction. Precedence
+ * matches the sticky-flag semantics: an already-scheduled rotation reports itself
+ * first (its occupancy numbers are stale by definition), then a mid-turn
+ * compaction (which masks the occupancy reading), then the plain over-limit case.
+ */
+function buildContextLimitStopClause(
+  stop: CompleteTaskContextLimitStop,
+): string {
+  if (stop.alreadyScheduled) {
+    return "a context rotation is already scheduled for this conversation";
+  }
+  if (stop.compactedThisTurn) {
+    return `this conversation auto-compacted mid-turn, exceeding the configured context-limit policy (${stop.contextLimitTokens} tokens)`;
+  }
+  return `this conversation is at ~${stop.contextTokens} context tokens, over the configured limit of ${stop.contextLimitTokens}`;
+}
+
+function buildContextLimitStopInstruction(
+  stop: CompleteTaskContextLimitStop,
+): string {
+  return `CONTEXT LIMIT REACHED: ${buildContextLimitStopClause(stop)}. Do not start another task or begin new work. End your turn now with a brief handoff note (what you completed, anything left in flight). The workflow will continue the remaining tasks automatically in a fresh conversation.`;
+}
+
 function createCompleteTaskHandler(context: GraphWorkflowToolServerContext) {
   return async (args: unknown) => {
     const parsed = completeTaskSchema.safeParse(args);
@@ -198,9 +226,18 @@ function createCompleteTaskHandler(context: GraphWorkflowToolServerContext) {
     });
 
     try {
-      await context.completeTask(parsed.data.taskSlug, parsed.data.summary);
+      const { contextLimitStop } = await context.completeTask(
+        parsed.data.taskSlug,
+        parsed.data.summary,
+      );
+      const successText = `Task ${parsed.data.taskSlug} was completed and recorded for "${context.executionContextTitle}".`;
+      // The completion itself succeeded — the stop instruction rides the same
+      // success content block and is never surfaced as an error.
+      if (!contextLimitStop) {
+        return createTextResult(successText);
+      }
       return createTextResult(
-        `Task ${parsed.data.taskSlug} was completed and recorded for "${context.executionContextTitle}".`,
+        `${successText}\n\n${buildContextLimitStopInstruction(contextLimitStop)}`,
       );
     } catch (error) {
       if (error instanceof IterationHaltedError) {

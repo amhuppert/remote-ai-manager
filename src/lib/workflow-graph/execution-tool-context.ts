@@ -1,5 +1,9 @@
+import type { LiveOccupancySnapshot } from "@/lib/conversations/live-occupancy";
 import { createLogger } from "@/lib/logging";
+import { evaluateContextLimit } from "@/lib/workflows/primitives/context-limit-gate";
+import type { LaneMetrics } from "@/lib/workflows/primitives/lane-vocabulary";
 import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import { getExecutionLogger } from "./execution-logger";
 import type { ExecutionTarget } from "./execution-target-resolver";
 import type { AgentAddedTask } from "./runtime-edits";
 import type { SharedDocumentUpsertInput } from "./shared-documents";
@@ -37,7 +41,28 @@ export interface GraphWorkflowExecutionToolContextDeps {
   workflowManager: GraphWorkflowExecutionToolContextWorkflowManager;
   runtimeEditService: GraphWorkflowExecutionToolContextRuntimeEditService;
   sharedDocumentRegistry: GraphWorkflowExecutionToolContextSharedDocumentRegistry;
+  readLiveOccupancy(conversationId: string): LiveOccupancySnapshot | null;
   now?(): string;
+}
+
+/**
+ * The mid-turn context-limit decision surfaced by `completeTask`. Non-null only
+ * when the implementer lane was scheduled to rotate; `tool-server` composes the
+ * cooperative stop instruction from it. `contextTokens` is the occupancy the
+ * decision used (live reading, else the lane's persisted fallback), and
+ * `source` records which of those it came from.
+ */
+export interface CompleteTaskContextLimitStop {
+  contextTokens: number | null;
+  contextLimitTokens: number | null;
+  compactedThisTurn: boolean;
+  alreadyScheduled: boolean;
+  source: "live" | "lane" | "none";
+}
+
+export interface CompleteTaskResult {
+  execution: GraphWorkflowExecution;
+  contextLimitStop: CompleteTaskContextLimitStop | null;
 }
 
 interface CreateGraphWorkflowExecutionToolContextInput {
@@ -58,10 +83,7 @@ interface BoundGraphWorkflowExecutionToolContext {
   allowAgentTaskAdd: boolean;
   allowAgentCollaboration: boolean;
   collaboration?: GraphWorkflowCollaborationContextBlock;
-  completeTask(
-    taskId: string,
-    summary: string,
-  ): Promise<GraphWorkflowExecution>;
+  completeTask(taskId: string, summary: string): Promise<CompleteTaskResult>;
   addTask(task: AgentAddedTask): Promise<GraphWorkflowExecution>;
   upsertSharedDocument(
     document: Omit<SharedDocumentUpsertInput, "conversationId">,
@@ -155,17 +177,111 @@ export function createGraphWorkflowExecutionToolContext(
       return input.conversationId;
     }
 
+    /**
+     * Mid-turn context-limit gate. Runs inside the completion mutation so the
+     * lane flag rides the same serialized write as the task record. Reads live
+     * occupancy for the resolved conversation (falling back to the lane's
+     * persisted `lastContextTokens`), defers the rotation decision to
+     * `evaluateContextLimit` (never an inline numeric comparison), and on
+     * `rotation_required` sets the sticky `rotateBeforeNextTurn` flag and
+     * returns the stop descriptor. Skipped for a missing or non-Claude lane —
+     * Codex exposes no mid-turn occupancy — with no registry read.
+     */
+    function evaluateMidTurnContextLimit(
+      execution: GraphWorkflowExecution,
+      taskId: string,
+      conversationId: string,
+    ): CompleteTaskContextLimitStop | null {
+      const lane = execution.laneStates[input.contextId]?.["implementer"];
+      if (!lane || lane.engine !== "claude") {
+        return null;
+      }
+
+      const executionContext =
+        execution.workingDefinition.executionContexts.find(
+          (context) => context.id === input.contextId,
+        );
+      const contextLimitTokens =
+        executionContext?.iterationPolicy.continuity.contextLimitTokens;
+
+      const live = deps.readLiveOccupancy(conversationId);
+
+      let contextTokens: number | undefined;
+      let source: CompleteTaskContextLimitStop["source"];
+      if (live?.contextTokens != null) {
+        contextTokens = live.contextTokens;
+        source = "live";
+      } else if (lane.lastContextTokens != null) {
+        contextTokens = lane.lastContextTokens;
+        source = "lane";
+      } else {
+        contextTokens = undefined;
+        source = "none";
+      }
+
+      const compactedThisTurn = live?.compactedThisTurn ?? false;
+
+      const metrics: LaneMetrics = {
+        backend: "claude",
+        rotateBeforeNextTurn: lane.rotateBeforeNextTurn,
+        ...(contextTokens !== undefined ? { contextTokens } : {}),
+      };
+
+      const evaluation = evaluateContextLimit({
+        metrics,
+        policy: { contextLimitTokens },
+        compactedThisTurn,
+      });
+
+      if (evaluation !== "rotation_required") {
+        return null;
+      }
+
+      const alreadyScheduled = lane.rotateBeforeNextTurn;
+      lane.rotateBeforeNextTurn = true;
+      lane.lastUsedAt = now();
+
+      const stop: CompleteTaskContextLimitStop = {
+        contextTokens: contextTokens ?? null,
+        contextLimitTokens: contextLimitTokens ?? null,
+        compactedThisTurn,
+        alreadyScheduled,
+        source,
+      };
+
+      const logPayload = {
+        executionId: execution.id,
+        contextId: input.contextId,
+        taskId,
+        conversationId,
+        contextTokens: stop.contextTokens,
+        contextLimitTokens: stop.contextLimitTokens,
+        compactedThisTurn,
+        source,
+        alreadyScheduled,
+      };
+      logger.info("graph-workflow.context_limit.mid_turn_stop", logPayload);
+      getExecutionLogger(execution.id)?.decision(
+        "rotation.scheduled_mid_turn",
+        logPayload,
+      );
+
+      return stop;
+    }
+
     async function completeTask(
       taskId: string,
       summary: string,
-    ): Promise<GraphWorkflowExecution> {
-      return deps.workflowManager.mutateActive(
+    ): Promise<CompleteTaskResult> {
+      let contextLimitStop: CompleteTaskContextLimitStop | null = null;
+
+      const execution = await deps.workflowManager.mutateActive(
         input.projectPath,
         input.sessionName,
-        (execution) => {
-          ensureBoundContextActive(execution);
+        (draft) => {
+          ensureBoundContextActive(draft);
 
-          const taskState = execution.taskStates[taskId];
+          const taskState = draft.taskStates[taskId];
           if (!taskState) {
             throw new Error(`Task "${taskId}" does not exist in runtime state`);
           }
@@ -175,17 +291,23 @@ export function createGraphWorkflowExecutionToolContext(
             );
           }
 
+          const conversationId = resolveConversationId(draft, taskId);
+
           if (taskState.status === "completed") {
             logger.info("graph-workflow.task.completion_idempotent", {
-              executionId: execution.id,
+              executionId: draft.id,
               contextId: input.contextId,
               taskId,
               firstCompletedAt: taskState.completedAt,
             });
-            return execution;
+            contextLimitStop = evaluateMidTurnContextLimit(
+              draft,
+              taskId,
+              conversationId,
+            );
+            return draft;
           }
 
-          const conversationId = resolveConversationId(execution, taskId);
           const completedAt = now();
           taskState.status = "completed";
           taskState.summary = summary;
@@ -193,18 +315,25 @@ export function createGraphWorkflowExecutionToolContext(
           taskState.lastConversationId = conversationId;
           taskState.failureMessage = null;
 
-          const contextState = execution.contextStates[input.contextId];
+          const contextState = draft.contextStates[input.contextId];
           if (contextState) {
             contextState.completedTaskCount = countCompletedTasks(
-              execution,
+              draft,
               input.contextId,
             );
           }
 
-          execution.machineSnapshot = buildMachineSnapshot(execution);
-          return execution;
+          draft.machineSnapshot = buildMachineSnapshot(draft);
+          contextLimitStop = evaluateMidTurnContextLimit(
+            draft,
+            taskId,
+            conversationId,
+          );
+          return draft;
         },
       );
+
+      return { execution, contextLimitStop };
     }
 
     async function addTask(

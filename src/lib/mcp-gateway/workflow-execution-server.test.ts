@@ -10,7 +10,10 @@ function createDeps(overrides: Record<string, unknown> = {}) {
       executionContextTitle: "Build auth",
       allowAgentTaskAdd: true,
       allowAgentCollaboration: false,
-      completeTask: vi.fn(async () => undefined),
+      completeTask: vi.fn(async () => ({
+        execution: createWorkflowExecution(),
+        contextLimitStop: null,
+      })),
       addTask: vi.fn(async () => undefined),
       upsertSharedDocument: vi.fn(async () => undefined),
     })),

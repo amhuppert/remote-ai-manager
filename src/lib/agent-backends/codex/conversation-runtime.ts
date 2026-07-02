@@ -306,6 +306,8 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
       contentBlocks,
       structuredOutput,
       aborted: acc.aborted,
+      // Codex never surfaces an SDK compaction under CC's view.
+      compacted: false,
       error: acc.errorMessage,
     };
 

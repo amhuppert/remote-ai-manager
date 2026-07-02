@@ -6,11 +6,19 @@ import {
   type RequestCollaborationHandlerContext,
   type RequestCollaborationHandlerDeps,
 } from "./tool-server";
+import type { CompleteTaskResult } from "./execution-tool-context";
 import { IterationHaltedError } from "./iteration-orchestrator";
+import { createWorkflowExecution } from "./test-fixtures";
 import type { ResolvedCollaborationConfig } from "@/lib/workflows/schemas";
 import type { ExecutionLogger } from "./execution-logger";
 
 type ToolHandler = (args: unknown) => Promise<unknown>;
+
+function completeTaskResult(
+  contextLimitStop: CompleteTaskResult["contextLimitStop"] = null,
+): CompleteTaskResult {
+  return { execution: createWorkflowExecution(), contextLimitStop };
+}
 
 const TOOLS_KEY = "__test_graph_workflow_tools";
 
@@ -53,7 +61,7 @@ describe("graph workflow tool server", () => {
   });
 
   it("registers explicit task and shared-document tools", async () => {
-    const completeTask = vi.fn(async () => undefined);
+    const completeTask = vi.fn(async () => completeTaskResult());
     const addTask = vi.fn(async () => undefined);
     const upsertSharedDocument = vi.fn(async () => undefined);
 
@@ -111,7 +119,7 @@ describe("graph workflow tool server", () => {
       executionContextTitle: "Implement",
       allowAgentTaskAdd: false,
       allowAgentCollaboration: false,
-      completeTask: vi.fn(async () => undefined),
+      completeTask: vi.fn(async () => completeTaskResult()),
       addTask: vi.fn(async () => undefined),
       upsertSharedDocument: vi.fn(async () => undefined),
     });
@@ -163,7 +171,7 @@ describe("graph workflow tool server", () => {
       executionContextTitle: "Plan",
       allowAgentTaskAdd: true,
       allowAgentCollaboration: false,
-      completeTask: vi.fn(async () => undefined),
+      completeTask: vi.fn(async () => completeTaskResult()),
       addTask: vi.fn(async () => undefined),
       upsertSharedDocument: vi.fn(async () => {
         throw haltError;
@@ -194,7 +202,7 @@ describe("graph workflow tool server", () => {
       executionContextTitle: "Plan",
       allowAgentTaskAdd: true,
       allowAgentCollaboration: false,
-      completeTask: vi.fn(async () => undefined),
+      completeTask: vi.fn(async () => completeTaskResult()),
       addTask: vi.fn(async () => {
         throw haltError;
       }),
@@ -217,7 +225,7 @@ describe("graph workflow tool server", () => {
       executionContextTitle: "Implement",
       allowAgentTaskAdd: false,
       allowAgentCollaboration: false,
-      completeTask: vi.fn(async () => undefined),
+      completeTask: vi.fn(async () => completeTaskResult()),
       addTask: vi.fn(async () => undefined),
       upsertSharedDocument: vi.fn(async () => undefined),
     });
@@ -254,7 +262,7 @@ describe("graph workflow tool server", () => {
         triggerWorkflowCollaboration: async () => ({ workflowId: "wf-1" }),
         setPendingHaltReason: async () => undefined,
       },
-      completeTask: vi.fn(async () => undefined),
+      completeTask: vi.fn(async () => completeTaskResult()),
       addTask: vi.fn(async () => undefined),
       upsertSharedDocument: vi.fn(async () => undefined),
     });
@@ -267,7 +275,7 @@ describe("graph workflow tool server", () => {
       executionContextTitle: "Plan",
       allowAgentTaskAdd: true,
       allowAgentCollaboration: false,
-      completeTask: vi.fn(async () => undefined),
+      completeTask: vi.fn(async () => completeTaskResult()),
       addTask: vi.fn(async () => undefined),
       upsertSharedDocument: vi.fn(async () => {
         throw new Error("Path escaped shared-document directory");
@@ -284,6 +292,124 @@ describe("graph workflow tool server", () => {
     expect(failingDocumentResult.content[0]?.text).toContain(
       "Path escaped shared-document directory",
     );
+  });
+});
+
+describe("complete_task context-limit stop message", () => {
+  it("returns the byte-identical success message when there is no context-limit stop", async () => {
+    registerGraphWorkflowExecutionTools(createCapturingServer() as never, {
+      executionContextTitle: "Plan",
+      allowAgentTaskAdd: true,
+      allowAgentCollaboration: false,
+      completeTask: vi.fn(async () => completeTaskResult(null)),
+      addTask: vi.fn(async () => undefined),
+      upsertSharedDocument: vi.fn(async () => undefined),
+    });
+
+    const result = (await getHandler("complete_task")({
+      taskSlug: "setup-auth",
+      summary: "done",
+    })) as { content: Array<{ text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]?.text).toBe(
+      'Task setup-auth was completed and recorded for "Plan".',
+    );
+  });
+
+  it("appends the over-limit stop instruction with real numbers and never marks isError", async () => {
+    registerGraphWorkflowExecutionTools(createCapturingServer() as never, {
+      executionContextTitle: "Implement",
+      allowAgentTaskAdd: false,
+      allowAgentCollaboration: false,
+      completeTask: vi.fn(async () =>
+        completeTaskResult({
+          contextTokens: 210_000,
+          contextLimitTokens: 150_000,
+          compactedThisTurn: false,
+          alreadyScheduled: false,
+          source: "live",
+        }),
+      ),
+      addTask: vi.fn(async () => undefined),
+      upsertSharedDocument: vi.fn(async () => undefined),
+    });
+
+    const result = (await getHandler("complete_task")({
+      taskSlug: "write-code",
+      summary: "done",
+    })) as { content: Array<{ text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeUndefined();
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain(
+      'Task write-code was completed and recorded for "Implement".',
+    );
+    expect(text).toContain(
+      "CONTEXT LIMIT REACHED: this conversation is at ~210000 context tokens, over the configured limit of 150000. Do not start another task or begin new work. End your turn now with a brief handoff note (what you completed, anything left in flight). The workflow will continue the remaining tasks automatically in a fresh conversation.",
+    );
+  });
+
+  it("uses the compaction clause when the turn auto-compacted mid-turn", async () => {
+    registerGraphWorkflowExecutionTools(createCapturingServer() as never, {
+      executionContextTitle: "Implement",
+      allowAgentTaskAdd: false,
+      allowAgentCollaboration: false,
+      completeTask: vi.fn(async () =>
+        completeTaskResult({
+          contextTokens: 50_000,
+          contextLimitTokens: 150_000,
+          compactedThisTurn: true,
+          alreadyScheduled: false,
+          source: "live",
+        }),
+      ),
+      addTask: vi.fn(async () => undefined),
+      upsertSharedDocument: vi.fn(async () => undefined),
+    });
+
+    const result = (await getHandler("complete_task")({
+      taskSlug: "write-code",
+      summary: "done",
+    })) as { content: Array<{ text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeUndefined();
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain(
+      "CONTEXT LIMIT REACHED: this conversation auto-compacted mid-turn, exceeding the configured context-limit policy (150000 tokens). Do not start another task or begin new work.",
+    );
+  });
+
+  it("uses the already-scheduled clause and it takes precedence over compaction", async () => {
+    registerGraphWorkflowExecutionTools(createCapturingServer() as never, {
+      executionContextTitle: "Implement",
+      allowAgentTaskAdd: false,
+      allowAgentCollaboration: false,
+      completeTask: vi.fn(async () =>
+        completeTaskResult({
+          contextTokens: 210_000,
+          contextLimitTokens: 150_000,
+          compactedThisTurn: true,
+          alreadyScheduled: true,
+          source: "live",
+        }),
+      ),
+      addTask: vi.fn(async () => undefined),
+      upsertSharedDocument: vi.fn(async () => undefined),
+    });
+
+    const result = (await getHandler("complete_task")({
+      taskSlug: "write-code",
+      summary: "done",
+    })) as { content: Array<{ text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeUndefined();
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain(
+      "CONTEXT LIMIT REACHED: a context rotation is already scheduled for this conversation. Do not start another task or begin new work.",
+    );
+    expect(text).not.toContain("auto-compacted");
+    expect(text).not.toContain("context tokens, over the configured limit");
   });
 });
 

@@ -7,6 +7,11 @@ import { graphWorkflowExecutionSchema } from "@/lib/workflows/schemas";
 import { createInMemoryLaneStore } from "@/lib/workflows/primitives/lane-store";
 import { createLaneService } from "@/lib/workflows/primitives/lane-service";
 import type { LaneState } from "@/lib/workflows/primitives/lane-vocabulary";
+import {
+  registerExecutionLogger,
+  unregisterExecutionLogger,
+  type ExecutionLogger,
+} from "@/lib/workflow-graph/execution-logger";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowAgentSessionState,
@@ -932,7 +937,47 @@ describe("recordClaudeTurnOutcome", () => {
     }
   });
 
-  it("clears rotateBeforeNextTurn when tokens are under the limit", async () => {
+  it("does not flag rotation and records supported when tokens are under the limit (no prior flag)", async () => {
+    const deps = makeDeps();
+    const svc = createWorkflowContinuityService(deps);
+
+    const existingLane: GraphWorkflowAgentSessionState = {
+      engine: "claude",
+      lane: "implementer",
+      contextId: "ctx-1",
+      sessionRef: {
+        engine: "claude",
+        lane: "implementer",
+        conversationId: "conv-1",
+      },
+      lastContextTokens: 40000,
+      lastContextWindowMax: 200000,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "disabled",
+      lastUsedAt: NOW,
+    };
+
+    const execution = makeExecution({
+      laneStates: laneStatesByContext(existingLane),
+    });
+
+    const result = await svc.recordClaudeTurnOutcome({
+      execution,
+      contextId: "ctx-1",
+      lane: "implementer",
+      contextTokens: 40000,
+      contextWindowMax: 200000,
+      contextLimitTokens: 100000,
+    });
+
+    const updated = result.laneStates["ctx-1"]?.["implementer"];
+    if (updated?.engine === "claude") {
+      expect(updated.rotateBeforeNextTurn).toBe(false);
+      expect(updated.limitEvaluation).toBe("supported");
+    }
+  });
+
+  it("keeps rotation sticky once flagged even when a later turn is under the limit", async () => {
     const deps = makeDeps();
     const svc = createWorkflowContinuityService(deps);
 
@@ -967,6 +1012,47 @@ describe("recordClaudeTurnOutcome", () => {
 
     const updated = result.laneStates["ctx-1"]?.["implementer"];
     if (updated?.engine === "claude") {
+      expect(updated.rotateBeforeNextTurn).toBe(true);
+      expect(updated.limitEvaluation).toBe("supported");
+    }
+  });
+
+  it("records metrics_unavailable for a Claude validator turn with no contextTokens under a configured limit", async () => {
+    const deps = makeDeps();
+    const svc = createWorkflowContinuityService(deps);
+
+    const existingLane: GraphWorkflowAgentSessionState = {
+      engine: "claude",
+      lane: "context_validator",
+      contextId: "ctx-1",
+      sessionRef: {
+        engine: "claude",
+        lane: "context_validator",
+        conversationId: "conv-val",
+      },
+      lastContextTokens: null,
+      lastContextWindowMax: null,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "disabled",
+      lastUsedAt: NOW,
+    };
+
+    const execution = makeExecution({
+      laneStates: laneStatesByContext(existingLane),
+    });
+
+    const result = await svc.recordClaudeTurnOutcome({
+      execution,
+      contextId: "ctx-1",
+      lane: "context_validator",
+      contextTokens: null,
+      contextWindowMax: null,
+      contextLimitTokens: 100000,
+    });
+
+    const updated = result.laneStates["ctx-1"]?.["context_validator"];
+    if (updated?.engine === "claude") {
+      expect(updated.limitEvaluation).toBe("metrics_unavailable");
       expect(updated.rotateBeforeNextTurn).toBe(false);
     }
   });
@@ -1009,6 +1095,163 @@ describe("recordClaudeTurnOutcome", () => {
     if (updated?.engine === "claude") {
       expect(updated.rotateBeforeNextTurn).toBe(false);
       expect(updated.limitEvaluation).toBe("disabled");
+    }
+  });
+
+  it("flags rotation when the turn auto-compacted under a configured limit even with tokens below the limit", async () => {
+    const deps = makeDeps();
+    const svc = createWorkflowContinuityService(deps);
+
+    const existingLane: GraphWorkflowAgentSessionState = {
+      engine: "claude",
+      lane: "implementer",
+      contextId: "ctx-1",
+      sessionRef: {
+        engine: "claude",
+        lane: "implementer",
+        conversationId: "conv-1",
+      },
+      lastContextTokens: null,
+      lastContextWindowMax: null,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "disabled",
+      lastUsedAt: NOW,
+    };
+
+    const execution = makeExecution({
+      laneStates: laneStatesByContext(existingLane),
+    });
+
+    const result = await svc.recordClaudeTurnOutcome({
+      execution,
+      contextId: "ctx-1",
+      lane: "implementer",
+      contextTokens: 40000,
+      contextWindowMax: 200000,
+      contextLimitTokens: 100000,
+      compacted: true,
+    });
+
+    const updated = result.laneStates["ctx-1"]?.["implementer"];
+    if (updated?.engine === "claude") {
+      expect(updated.rotateBeforeNextTurn).toBe(true);
+      expect(updated.limitEvaluation).toBe("supported");
+    }
+  });
+
+  it("does not flag rotation on compaction when no limit is configured", async () => {
+    const deps = makeDeps();
+    const svc = createWorkflowContinuityService(deps);
+
+    const existingLane: GraphWorkflowAgentSessionState = {
+      engine: "claude",
+      lane: "implementer",
+      contextId: "ctx-1",
+      sessionRef: {
+        engine: "claude",
+        lane: "implementer",
+        conversationId: "conv-1",
+      },
+      lastContextTokens: null,
+      lastContextWindowMax: null,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "disabled",
+      lastUsedAt: NOW,
+    };
+
+    const execution = makeExecution({
+      laneStates: laneStatesByContext(existingLane),
+    });
+
+    const result = await svc.recordClaudeTurnOutcome({
+      execution,
+      contextId: "ctx-1",
+      lane: "implementer",
+      contextTokens: 40000,
+      contextWindowMax: 200000,
+      contextLimitTokens: undefined,
+      compacted: true,
+    });
+
+    const updated = result.laneStates["ctx-1"]?.["implementer"];
+    if (updated?.engine === "claude") {
+      expect(updated.rotateBeforeNextTurn).toBe(false);
+      expect(updated.limitEvaluation).toBe("disabled");
+    }
+  });
+
+  it("emits a rotation.scheduled decision whose reason distinguishes context_over_limit from compaction_detected", async () => {
+    const deps = makeDeps();
+    const svc = createWorkflowContinuityService(deps);
+
+    const decisions: Array<{ event: string; data?: Record<string, unknown> }> =
+      [];
+    const capturingLogger: ExecutionLogger = {
+      executionId: "exec-1",
+      logDir: "",
+      writeManifest() {},
+      lifecycle() {},
+      iteration() {},
+      task() {},
+      validation() {},
+      writePrompt() {},
+      writeValidatorResponse() {},
+      writeValidatorTranscript() {},
+      decision(event, data) {
+        decisions.push({ event, data });
+      },
+    };
+    registerExecutionLogger(capturingLogger);
+
+    const makeLane = (): GraphWorkflowAgentSessionState => ({
+      engine: "claude",
+      lane: "implementer",
+      contextId: "ctx-1",
+      sessionRef: {
+        engine: "claude",
+        lane: "implementer",
+        conversationId: "conv-1",
+      },
+      lastContextTokens: null,
+      lastContextWindowMax: null,
+      rotateBeforeNextTurn: false,
+      limitEvaluation: "disabled",
+      lastUsedAt: NOW,
+    });
+
+    try {
+      // Over the limit, not compacted → context_over_limit.
+      await svc.recordClaudeTurnOutcome({
+        execution: makeExecution({
+          laneStates: laneStatesByContext(makeLane()),
+        }),
+        contextId: "ctx-1",
+        lane: "implementer",
+        contextTokens: 150000,
+        contextWindowMax: 200000,
+        contextLimitTokens: 100000,
+        compacted: false,
+      });
+
+      // Below the limit but compacted → compaction_detected.
+      await svc.recordClaudeTurnOutcome({
+        execution: makeExecution({
+          laneStates: laneStatesByContext(makeLane()),
+        }),
+        contextId: "ctx-1",
+        lane: "implementer",
+        contextTokens: 40000,
+        contextWindowMax: 200000,
+        contextLimitTokens: 100000,
+        compacted: true,
+      });
+
+      const reasons = decisions
+        .filter((d) => d.event === "rotation.scheduled")
+        .map((d) => d.data?.reason);
+      expect(reasons).toEqual(["context_over_limit", "compaction_detected"]);
+    } finally {
+      unregisterExecutionLogger("exec-1");
     }
   });
 

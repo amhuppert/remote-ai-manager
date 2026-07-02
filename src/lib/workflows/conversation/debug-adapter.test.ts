@@ -88,6 +88,7 @@ function successResult(
     cachedInputTokens: null,
     contentBlocks: [{ type: "text", text: "Hello" }],
     aborted: false,
+    compacted: false,
     error: null,
     ...overrides,
   };

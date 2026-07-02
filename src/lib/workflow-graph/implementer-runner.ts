@@ -89,6 +89,7 @@ export function createGraphWorkflowImplementerRunner(
     conversationId: string;
     contextTokens: number | null;
     contextWindowMax: number | null;
+    compacted: boolean;
     sessionRef: AgentSessionRef | null;
     backgroundWait?: BackgroundWaitSummary;
   }> {
@@ -200,6 +201,7 @@ export function createGraphWorkflowImplementerRunner(
       conversationId: result.conversationId,
       contextTokens: result.contextTokens,
       contextWindowMax: result.contextWindowMax,
+      compacted: result.compacted,
       sessionRef: conversation?.backendRef ?? null,
       ...(result.backgroundWait !== undefined
         ? { backgroundWait: result.backgroundWait }

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { readConfig } from "@/lib/config/loader";
+import { readLiveOccupancy } from "@/lib/conversations/live-occupancy";
 import { createLogger } from "@/lib/logging";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import {
@@ -134,6 +135,7 @@ const executionToolContextFactory = createGraphWorkflowExecutionToolContext({
   workflowManager,
   runtimeEditService,
   sharedDocumentRegistry,
+  readLiveOccupancy: (conversationId) => readLiveOccupancy(conversationId),
 });
 
 const defaultWorkflowExecutionMcpServerDeps: WorkflowExecutionMcpServerDeps = {

@@ -167,6 +167,36 @@ describe("buildIterationPrompt", () => {
     expect(prompt).toContain("summary");
   });
 
+  it("primes the Required Protocol to end the turn on a CONTEXT LIMIT REACHED result", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+    });
+
+    const protocol = prompt.slice(prompt.indexOf("## Required Protocol"));
+    expect(protocol).toContain(
+      "If a complete_task result reports CONTEXT LIMIT REACHED, end your turn immediately — do not begin another task. The workflow continues the remaining tasks in a fresh conversation automatically.",
+    );
+  });
+
+  it("notes on the complete_task tool reference that a stop instruction is mandatory", () => {
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask()],
+      taskStates: {},
+      sharedDocuments: [],
+      allowAgentTaskAdd: false,
+    });
+
+    const toolRef = prompt.slice(prompt.indexOf("### complete_task"));
+    expect(toolRef).toContain(
+      "The result may instruct you to end your turn (context limit reached). Treat that instruction as mandatory.",
+    );
+  });
+
   it("documents upsert_shared_document MCP tool", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),

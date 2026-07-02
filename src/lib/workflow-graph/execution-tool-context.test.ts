@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type { LiveOccupancySnapshot } from "@/lib/conversations/live-occupancy";
+import type {
+  GraphWorkflowAgentSessionState,
+  GraphWorkflowExecution,
+} from "@/lib/workflows/schemas";
 import {
   createGraphWorkflowExecutionToolContext,
   type GraphWorkflowExecutionToolContextDeps,
@@ -73,6 +77,7 @@ function withRunningContext(
 
 interface FactoryOptions {
   initialExecution?: GraphWorkflowExecution;
+  readLiveOccupancy?: GraphWorkflowExecutionToolContextDeps["readLiveOccupancy"];
 }
 
 interface FactoryResult {
@@ -122,6 +127,7 @@ function buildToolContext(
     },
     runtimeEditService,
     sharedDocumentRegistry,
+    readLiveOccupancy: factoryOptions.readLiveOccupancy ?? (() => null),
     now: () => "2026-03-27T12:00:00.000Z",
   };
   const factory = createGraphWorkflowExecutionToolContext(deps);
@@ -440,6 +446,7 @@ describe("GraphWorkflowExecutionToolContext", () => {
       workflowManager: { mutateActive: createFakeMutateActive(store) },
       runtimeEditService,
       sharedDocumentRegistry,
+      readLiveOccupancy: () => null,
     };
     const factory = createGraphWorkflowExecutionToolContext(deps);
 
@@ -513,6 +520,7 @@ describe("GraphWorkflowExecutionToolContext", () => {
       runtimeEditService: createGraphWorkflowRuntimeEditService(),
       sharedDocumentRegistry:
         createGraphWorkflowSharedDocumentRegistryService(),
+      readLiveOccupancy: () => null,
     });
     const bound = factory.create({
       projectPath: "/projects/test",
@@ -558,6 +566,7 @@ describe("GraphWorkflowExecutionToolContext", () => {
       workflowManager: { mutateActive: createFakeMutateActive(store) },
       runtimeEditService,
       sharedDocumentRegistry,
+      readLiveOccupancy: () => null,
     };
     const factory = createGraphWorkflowExecutionToolContext(deps);
     const planContext = factory.create({
@@ -598,5 +607,305 @@ describe("GraphWorkflowExecutionToolContext", () => {
     expect(store.current.taskStates["task-implement-1"]?.status).toBe(
       "completed",
     );
+  });
+});
+
+function makeClaudeImplementerLane(
+  overrides: Partial<
+    Extract<GraphWorkflowAgentSessionState, { engine: "claude" }>
+  > = {},
+): GraphWorkflowAgentSessionState {
+  return {
+    engine: "claude",
+    lane: "implementer",
+    contextId: "context-plan",
+    sessionRef: {
+      engine: "claude",
+      lane: "implementer",
+      conversationId: "conv-bound",
+    },
+    lastContextTokens: null,
+    lastContextWindowMax: null,
+    rotateBeforeNextTurn: false,
+    limitEvaluation: "disabled",
+    lastUsedAt: "2026-03-27T11:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function makeCodexImplementerLane(): GraphWorkflowAgentSessionState {
+  return {
+    engine: "codex",
+    lane: "implementer",
+    contextId: "context-plan",
+    sessionRef: {
+      engine: "codex",
+      lane: "implementer",
+      threadId: "thread-1",
+    },
+    lastTurnUsage: null,
+    rotateBeforeNextTurn: false,
+    limitEvaluation: "disabled",
+    lastUsedAt: "2026-03-27T11:00:00.000Z",
+  };
+}
+
+function buildContextLimitExecution(options: {
+  limit?: number;
+  lane?: GraphWorkflowAgentSessionState | null;
+}): GraphWorkflowExecution {
+  const base = withRunningContext(createWorkflowExecution(), ["context-plan"]);
+  const limit = options.limit;
+  const executionContexts = base.workingDefinition.executionContexts.map(
+    (ctx) => {
+      if (ctx.id !== "context-plan" || limit === undefined) {
+        return ctx;
+      }
+      return {
+        ...ctx,
+        iterationPolicy: {
+          ...ctx.iterationPolicy,
+          continuity: {
+            ...ctx.iterationPolicy.continuity,
+            contextLimitTokens: limit,
+          },
+        },
+      };
+    },
+  );
+  const withLimit: GraphWorkflowExecution = {
+    ...base,
+    workingDefinition: { ...base.workingDefinition, executionContexts },
+  };
+  if (options.lane === null) {
+    return withLimit;
+  }
+  const lane = options.lane ?? makeClaudeImplementerLane();
+  return {
+    ...withLimit,
+    laneStates: {
+      ...withLimit.laneStates,
+      "context-plan": { implementer: lane },
+    },
+  };
+}
+
+describe("GraphWorkflowExecutionToolContext mid-turn context-limit gate", () => {
+  it("flags the implementer lane and returns a live-source stop when live occupancy exceeds the limit", async () => {
+    const readLiveOccupancy = vi.fn(
+      (): LiveOccupancySnapshot => ({
+        contextTokens: 200,
+        compactedThisTurn: false,
+      }),
+    );
+    const { store, toolContext } = buildToolContext({
+      initialExecution: buildContextLimitExecution({ limit: 100 }),
+      readLiveOccupancy,
+    });
+
+    const result = await toolContext.completeTask("task-plan-1", "done");
+
+    expect(store.current.taskStates["task-plan-1"]?.status).toBe("completed");
+    expect(
+      store.current.laneStates["context-plan"]?.["implementer"]
+        ?.rotateBeforeNextTurn,
+    ).toBe(true);
+    expect(result.contextLimitStop).toEqual({
+      contextTokens: 200,
+      contextLimitTokens: 100,
+      compactedThisTurn: false,
+      alreadyScheduled: false,
+      source: "live",
+    });
+  });
+
+  it("completes without flagging or a stop when live occupancy is below the limit", async () => {
+    const { store, toolContext } = buildToolContext({
+      initialExecution: buildContextLimitExecution({ limit: 100 }),
+      readLiveOccupancy: () => ({
+        contextTokens: 50,
+        compactedThisTurn: false,
+      }),
+    });
+
+    const result = await toolContext.completeTask("task-plan-1", "done");
+
+    expect(store.current.taskStates["task-plan-1"]?.status).toBe("completed");
+    expect(
+      store.current.laneStates["context-plan"]?.["implementer"]
+        ?.rotateBeforeNextTurn,
+    ).toBe(false);
+    expect(result.contextLimitStop).toBeNull();
+  });
+
+  it("falls back to the lane's lastContextTokens when there is no live entry", async () => {
+    const { store, toolContext } = buildToolContext({
+      initialExecution: buildContextLimitExecution({
+        limit: 100,
+        lane: makeClaudeImplementerLane({ lastContextTokens: 200 }),
+      }),
+      readLiveOccupancy: () => null,
+    });
+
+    const result = await toolContext.completeTask("task-plan-1", "done");
+
+    expect(
+      store.current.laneStates["context-plan"]?.["implementer"]
+        ?.rotateBeforeNextTurn,
+    ).toBe(true);
+    expect(result.contextLimitStop).toEqual({
+      contextTokens: 200,
+      contextLimitTokens: 100,
+      compactedThisTurn: false,
+      alreadyScheduled: false,
+      source: "lane",
+    });
+  });
+
+  it("returns a null stop when neither a live entry nor lastContextTokens is available", async () => {
+    const { store, toolContext } = buildToolContext({
+      initialExecution: buildContextLimitExecution({
+        limit: 100,
+        lane: makeClaudeImplementerLane({ lastContextTokens: null }),
+      }),
+      readLiveOccupancy: () => null,
+    });
+
+    const result = await toolContext.completeTask("task-plan-1", "done");
+
+    expect(store.current.taskStates["task-plan-1"]?.status).toBe("completed");
+    expect(
+      store.current.laneStates["context-plan"]?.["implementer"]
+        ?.rotateBeforeNextTurn,
+    ).toBe(false);
+    expect(result.contextLimitStop).toBeNull();
+  });
+
+  it("returns a null stop with no flag when no context limit is configured, even with huge live occupancy", async () => {
+    const readLiveOccupancy = vi.fn(
+      (): LiveOccupancySnapshot => ({
+        contextTokens: 999_999,
+        compactedThisTurn: false,
+      }),
+    );
+    const { store, toolContext } = buildToolContext({
+      initialExecution: buildContextLimitExecution({ limit: undefined }),
+      readLiveOccupancy,
+    });
+
+    const result = await toolContext.completeTask("task-plan-1", "done");
+
+    expect(
+      store.current.laneStates["context-plan"]?.["implementer"]
+        ?.rotateBeforeNextTurn,
+    ).toBe(false);
+    expect(result.contextLimitStop).toBeNull();
+  });
+
+  it("schedules rotation on a mid-turn compaction even when occupancy is below the limit", async () => {
+    const { store, toolContext } = buildToolContext({
+      initialExecution: buildContextLimitExecution({ limit: 100 }),
+      readLiveOccupancy: () => ({ contextTokens: 50, compactedThisTurn: true }),
+    });
+
+    const result = await toolContext.completeTask("task-plan-1", "done");
+
+    expect(
+      store.current.laneStates["context-plan"]?.["implementer"]
+        ?.rotateBeforeNextTurn,
+    ).toBe(true);
+    expect(result.contextLimitStop).toEqual({
+      contextTokens: 50,
+      contextLimitTokens: 100,
+      compactedThisTurn: true,
+      alreadyScheduled: false,
+      source: "live",
+    });
+  });
+
+  it("reports alreadyScheduled and keeps the flag set when the lane is already flagged", async () => {
+    const { store, toolContext } = buildToolContext({
+      initialExecution: buildContextLimitExecution({
+        limit: 100,
+        lane: makeClaudeImplementerLane({ rotateBeforeNextTurn: true }),
+      }),
+      readLiveOccupancy: () => null,
+    });
+
+    const result = await toolContext.completeTask("task-plan-1", "done");
+
+    expect(
+      store.current.laneStates["context-plan"]?.["implementer"]
+        ?.rotateBeforeNextTurn,
+    ).toBe(true);
+    expect(result.contextLimitStop).toEqual({
+      contextTokens: null,
+      contextLimitTokens: 100,
+      compactedThisTurn: false,
+      alreadyScheduled: true,
+      source: "none",
+    });
+  });
+
+  it("skips the check for a codex lane and never reads live occupancy", async () => {
+    const readLiveOccupancy = vi.fn(() => null);
+    const { store, toolContext } = buildToolContext({
+      initialExecution: buildContextLimitExecution({
+        limit: 100,
+        lane: makeCodexImplementerLane(),
+      }),
+      readLiveOccupancy,
+    });
+
+    const result = await toolContext.completeTask("task-plan-1", "done");
+
+    expect(store.current.taskStates["task-plan-1"]?.status).toBe("completed");
+    expect(result.contextLimitStop).toBeNull();
+    expect(readLiveOccupancy).not.toHaveBeenCalled();
+  });
+
+  it("evaluates the gate on an idempotent re-completion and can set the flag", async () => {
+    const base = buildContextLimitExecution({ limit: 100 });
+    const taskState = base.taskStates["task-plan-1"];
+    if (!taskState) throw new Error("missing task fixture");
+    base.taskStates["task-plan-1"] = {
+      ...taskState,
+      status: "completed",
+      completedAt: "2026-01-01T00:00:00.000Z",
+      summary: "first completion",
+    };
+    const { store, toolContext } = buildToolContext({
+      initialExecution: base,
+      readLiveOccupancy: () => ({
+        contextTokens: 200,
+        compactedThisTurn: false,
+      }),
+    });
+
+    const result = await toolContext.completeTask("task-plan-1", "second time");
+
+    // Idempotent: the original completion summary is preserved.
+    expect(store.current.taskStates["task-plan-1"]?.summary).toBe(
+      "first completion",
+    );
+    expect(
+      store.current.laneStates["context-plan"]?.["implementer"]
+        ?.rotateBeforeNextTurn,
+    ).toBe(true);
+    expect(result.contextLimitStop?.source).toBe("live");
+  });
+
+  it("does not throw and returns a null stop when the implementer lane is missing", async () => {
+    const readLiveOccupancy = vi.fn(() => null);
+    const { store, toolContext } = buildToolContext({
+      initialExecution: buildContextLimitExecution({ limit: 100, lane: null }),
+      readLiveOccupancy,
+    });
+
+    const result = await toolContext.completeTask("task-plan-1", "done");
+
+    expect(store.current.taskStates["task-plan-1"]?.status).toBe("completed");
+    expect(result.contextLimitStop).toBeNull();
+    expect(readLiveOccupancy).not.toHaveBeenCalled();
   });
 });

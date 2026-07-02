@@ -14,6 +14,7 @@ import type {
   SDKResultSuccess,
   SDKResultError,
   SDKSystemMessage,
+  SDKCompactBoundaryMessage,
   CanUseTool,
   Options,
   Settings,
@@ -33,6 +34,11 @@ import {
   extractContextTokens,
   extractContextWindow,
 } from "@/lib/conversations/context-fill";
+import {
+  recordLiveOccupancy,
+  markLiveCompaction,
+  clearLiveOccupancy,
+} from "@/lib/conversations/live-occupancy";
 import { parseToolResultMetrics } from "@/lib/conversations/parse-tool-result";
 import { mapAssistantContentBlocks } from "./map-content-blocks";
 import {
@@ -70,6 +76,8 @@ export interface TurnResult {
   contentBlocks: MessageContentBlock[];
   structuredOutput?: unknown;
   aborted: boolean;
+  /** True when the SDK auto-compacted the context at least once this turn. */
+  compacted: boolean;
   error: string | null;
 }
 
@@ -306,6 +314,8 @@ interface PendingTurn {
   contextTokens: number | null;
   contextWindow: number | null;
   contentBlocks: MessageContentBlock[];
+  /** Set true when an SDK compact_boundary is observed during this turn. */
+  compacted: boolean;
   /** Map from tool_use.id → tool name, for parsing tool_result metrics. */
   toolNamesById: Map<string, string>;
   structuredOutput?: unknown;
@@ -705,6 +715,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         contextTokens: null,
         contextWindow: null,
         contentBlocks: [],
+        compacted: false,
         toolNamesById: new Map(),
         traceContext: callerTraceContext,
       };
@@ -855,6 +866,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       pendingTurn = null;
       currentTurnOptions = null;
       awaitingSubsequentPromptDelivery = false;
+      clearLiveOccupancy(options.conversationId);
       turn.reject(new Error("QuerySession closed while turn was in progress"));
     }
 
@@ -1263,6 +1275,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         contextTokens: null,
         contextWindow: null,
         contentBlocks: [],
+        compacted: false,
         toolNamesById: new Map(),
         traceContext: null,
       };
@@ -1281,6 +1294,18 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
 
     switch (message.type) {
       case "system": {
+        if (message.subtype === "compact_boundary") {
+          const { compact_metadata } = message as SDKCompactBoundaryMessage;
+          turn.compacted = true;
+          markLiveCompaction(options.conversationId);
+          logger.info("query-session.compact_boundary", {
+            conversationId: options.conversationId,
+            trigger: compact_metadata.trigger,
+            preTokens: compact_metadata.pre_tokens,
+            postTokens: compact_metadata.post_tokens,
+          });
+          break;
+        }
         const sysMsg = message as SDKSystemMessage;
         if (sysMsg.subtype === "init") {
           turn.sessionId = sysMsg.session_id;
@@ -1306,6 +1331,11 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         const contextTokens = extractContextTokens(asstMsg.message.usage);
         if (contextTokens > 0) {
           turn.contextTokens = contextTokens;
+          // Publish the same reading to the live-occupancy registry so the
+          // mid-turn complete_task gate sees identical semantics to the
+          // recorded last-wins value, but observable while the turn is in
+          // flight (before a compaction can mask it).
+          recordLiveOccupancy(options.conversationId, contextTokens);
         }
         break;
       }
@@ -1421,6 +1451,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         const resolve = turn.resolve;
         pendingTurn = null;
         currentTurnOptions = null;
+        clearLiveOccupancy(options.conversationId);
 
         logger.debug("query-session.turn_complete", {
           conversationId: options.conversationId,
@@ -1467,6 +1498,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     pendingTurn = null;
     currentTurnOptions = null;
     awaitingSubsequentPromptDelivery = false;
+    clearLiveOccupancy(options.conversationId);
     turn.reject(error);
   }
 
@@ -1524,6 +1556,7 @@ function buildTurnResult(
     contentBlocks: turn.contentBlocks,
     structuredOutput: turn.structuredOutput,
     aborted: outcome.aborted,
+    compacted: turn.compacted,
     error: outcome.error,
   };
 }

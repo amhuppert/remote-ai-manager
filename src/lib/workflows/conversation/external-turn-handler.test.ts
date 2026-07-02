@@ -128,6 +128,7 @@ describe("createExternalTurnHandler", () => {
         contextWindowMax: 200_000,
         contentBlocks: [{ type: "text", text: "Hello from external turn" }],
         aborted: false,
+        compacted: false,
         error: null,
       },
     });
@@ -182,6 +183,7 @@ describe("createExternalTurnHandler", () => {
         contextWindowMax: null,
         contentBlocks: [{ type: "text", text: "turn1" }],
         aborted: false,
+        compacted: false,
         error: null,
       },
     });
@@ -209,6 +211,7 @@ describe("createExternalTurnHandler", () => {
         contextWindowMax: null,
         contentBlocks: [{ type: "text", text: "turn2" }],
         aborted: false,
+        compacted: false,
         error: null,
       },
     });
@@ -287,6 +290,7 @@ describe("createExternalTurnHandler", () => {
         contextWindowMax: null,
         contentBlocks: [{ type: "text", text: "hi" }],
         aborted: false,
+        compacted: false,
         error: null,
       },
     });
@@ -332,6 +336,7 @@ describe("createExternalTurnHandler", () => {
           contextWindowMax: null,
           contentBlocks: [],
           aborted: false,
+          compacted: false,
           error: null,
         },
       });

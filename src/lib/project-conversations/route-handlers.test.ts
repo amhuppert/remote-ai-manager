@@ -99,6 +99,7 @@ function harness(overrides?: Partial<ProjectConversationRouteDeps>) {
         conversationId: input.conversationId ?? "new-1",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     },
     isConversationBusy: () => false,

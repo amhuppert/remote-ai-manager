@@ -333,7 +333,11 @@ export function parseValidatorResponse(
 export interface ValidatorExecutionMetadata {
   sessionRef: AgentSessionRef | null;
   reviewArtifact: GraphWorkflowValidationReviewArtifact | null;
-  limitEvaluation: "disabled" | "supported" | "unsupported";
+  limitEvaluation:
+    | "disabled"
+    | "supported"
+    | "unsupported"
+    | "metrics_unavailable";
   rotateBeforeNextTurn: boolean;
 }
 
@@ -629,7 +633,11 @@ export function createValidatorRunner(deps: ValidatorRunnerDeps) {
     contextId: string,
     lane: GraphWorkflowLaneKind,
   ): {
-    limitEvaluation: "disabled" | "supported" | "unsupported";
+    limitEvaluation:
+      | "disabled"
+      | "supported"
+      | "unsupported"
+      | "metrics_unavailable";
     rotateBeforeNextTurn: boolean;
   } {
     const laneState = updatedExecution.laneStates[contextId]?.[lane];

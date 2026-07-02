@@ -96,6 +96,7 @@ function makeRecordingClaudeFactory(
             contentBlocks: [{ type: "text", text: structuredOutput.summary }],
             structuredOutput,
             aborted: false,
+            compacted: false,
             error: null,
           };
         },
@@ -159,6 +160,7 @@ describe("createCollaborationProductionCallAgent", () => {
               contentBlocks: [{ type: "text", text: structuredOutput.summary }],
               structuredOutput,
               aborted: false,
+              compacted: false,
               error: null,
             };
           },
@@ -256,6 +258,7 @@ describe("createCollaborationProductionCallAgent", () => {
               contentBlocks: [{ type: "text", text: structuredOutput.summary }],
               structuredOutput,
               aborted: false,
+              compacted: false,
               error: null,
             };
           },
@@ -354,6 +357,7 @@ describe("createCollaborationProductionCallAgent", () => {
               contentBlocks: [{ type: "text", text: structuredOutput.summary }],
               structuredOutput,
               aborted: false,
+              compacted: false,
               error: null,
             };
           },
@@ -599,6 +603,7 @@ describe("createCollaborationProductionCallAgent", () => {
                 contextWindowMax: null,
                 contentBlocks: [],
                 aborted: false,
+                compacted: false,
                 error: "resume session not found",
               };
             }
@@ -618,6 +623,7 @@ describe("createCollaborationProductionCallAgent", () => {
               contentBlocks: [{ type: "text", text: structuredOutput.summary }],
               structuredOutput,
               aborted: false,
+              compacted: false,
               error: null,
             };
           },

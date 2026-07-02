@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { gateResultSchema } from "./gate-vocabulary";
-import { runContextLimitGate } from "./context-limit-gate";
+import {
+  contextLimitEvaluationSchema,
+  evaluateContextLimit,
+  runContextLimitGate,
+} from "./context-limit-gate";
 import type { LaneMetrics } from "./lane-vocabulary";
 
 const claudeMetrics = (
@@ -21,6 +25,134 @@ const codexMetrics = (
 ): LaneMetrics => ({
   backend: "codex",
   rotateBeforeNextTurn: overrides.rotateBeforeNextTurn ?? false,
+});
+
+describe("evaluateContextLimit", () => {
+  it("returns rotation_required when the lane already flags rotateBeforeNextTurn (no limit configured)", () => {
+    expect(
+      evaluateContextLimit({
+        metrics: claudeMetrics({ rotateBeforeNextTurn: true }),
+        policy: {},
+      }),
+    ).toBe("rotation_required");
+  });
+
+  it("returns rotation_required for the sticky case: rotateBeforeNextTurn true even when contextTokens are below the limit", () => {
+    expect(
+      evaluateContextLimit({
+        metrics: claudeMetrics({
+          rotateBeforeNextTurn: true,
+          contextTokens: 10_000,
+        }),
+        policy: { contextLimitTokens: 100_000 },
+      }),
+    ).toBe("rotation_required");
+  });
+
+  it("returns disabled when no contextLimitTokens policy is configured", () => {
+    expect(
+      evaluateContextLimit({
+        metrics: claudeMetrics({ contextTokens: 9_000_000 }),
+        policy: {},
+      }),
+    ).toBe("disabled");
+  });
+
+  it("returns unsupported when the backend is codex", () => {
+    expect(
+      evaluateContextLimit({
+        metrics: codexMetrics(),
+        policy: { contextLimitTokens: 100_000 },
+      }),
+    ).toBe("unsupported");
+  });
+
+  it("returns metrics_unavailable when a Claude lane has not recorded contextTokens", () => {
+    expect(
+      evaluateContextLimit({
+        metrics: claudeMetrics({}),
+        policy: { contextLimitTokens: 100_000 },
+      }),
+    ).toBe("metrics_unavailable");
+  });
+
+  it("returns rotation_required when contextTokens exceed the limit", () => {
+    expect(
+      evaluateContextLimit({
+        metrics: claudeMetrics({ contextTokens: 200_000 }),
+        policy: { contextLimitTokens: 100_000 },
+      }),
+    ).toBe("rotation_required");
+  });
+
+  it("returns no_rotation when contextTokens are at or below the limit", () => {
+    expect(
+      evaluateContextLimit({
+        metrics: claudeMetrics({ contextTokens: 100_000 }),
+        policy: { contextLimitTokens: 100_000 },
+      }),
+    ).toBe("no_rotation");
+  });
+
+  it("returns rotation_required when compactedThisTurn is set even though contextTokens are below the limit (the masking case)", () => {
+    expect(
+      evaluateContextLimit({
+        metrics: claudeMetrics({ contextTokens: 10_000 }),
+        policy: { contextLimitTokens: 100_000 },
+        compactedThisTurn: true,
+      }),
+    ).toBe("rotation_required");
+  });
+
+  it("returns disabled for a compacted turn when no contextLimitTokens policy is configured", () => {
+    expect(
+      evaluateContextLimit({
+        metrics: claudeMetrics({ contextTokens: 10_000 }),
+        policy: {},
+        compactedThisTurn: true,
+      }),
+    ).toBe("disabled");
+  });
+
+  it("returns unsupported for a compacted turn on a codex backend", () => {
+    expect(
+      evaluateContextLimit({
+        metrics: codexMetrics(),
+        policy: { contextLimitTokens: 100_000 },
+        compactedThisTurn: true,
+      }),
+    ).toBe("unsupported");
+  });
+
+  it("returns rotation_required when compacted with no recorded contextTokens (compaction masks the metric before metrics_unavailable)", () => {
+    expect(
+      evaluateContextLimit({
+        metrics: claudeMetrics({}),
+        policy: { contextLimitTokens: 100_000 },
+        compactedThisTurn: true,
+      }),
+    ).toBe("rotation_required");
+  });
+
+  it("leaves non-compacted paths unchanged when compactedThisTurn is false", () => {
+    expect(
+      evaluateContextLimit({
+        metrics: claudeMetrics({ contextTokens: 10_000 }),
+        policy: { contextLimitTokens: 100_000 },
+        compactedThisTurn: false,
+      }),
+    ).toBe("no_rotation");
+  });
+
+  it("exposes the full evaluation taxonomy via contextLimitEvaluationSchema", () => {
+    expect(contextLimitEvaluationSchema.options).toEqual([
+      "disabled",
+      "unsupported",
+      "metrics_unavailable",
+      "no_rotation",
+      "rotation_required",
+    ]);
+  });
 });
 
 describe("runContextLimitGate", () => {

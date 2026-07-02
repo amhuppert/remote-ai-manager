@@ -15,7 +15,10 @@ import {
 
 type MutateActiveReturn =
   | GraphWorkflowExecution
-  | { execution: GraphWorkflowExecution; events: GraphWorkflowExecutionEvent[] };
+  | {
+      execution: GraphWorkflowExecution;
+      events: GraphWorkflowExecutionEvent[];
+    };
 
 interface InMemoryExecutionRepository {
   getActive(
@@ -250,6 +253,7 @@ describe("graph workflow iteration context validation integration", () => {
           conversationId: "conversation-1",
           contextTokens: null,
           contextWindowMax: null,
+          compacted: false,
         };
       },
       validationService: { validateContextCompletion },
@@ -323,6 +327,7 @@ describe("graph workflow iteration context validation integration", () => {
           conversationId: "conversation-1",
           contextTokens: null,
           contextWindowMax: null,
+          compacted: false,
         };
       },
       validationService: { validateContextCompletion },
@@ -378,6 +383,7 @@ describe("graph workflow iteration context validation integration", () => {
           conversationId: "conversation-1",
           contextTokens: null,
           contextWindowMax: null,
+          compacted: false,
         };
       },
       signalHalt,
@@ -462,6 +468,7 @@ describe("graph workflow iteration context validation integration", () => {
           conversationId: "conversation-1",
           contextTokens: null,
           contextWindowMax: null,
+          compacted: false,
         };
       },
       signalHalt,
@@ -557,6 +564,7 @@ describe("graph workflow iteration context validation integration", () => {
           conversationId: "conversation-1",
           contextTokens: null,
           contextWindowMax: null,
+          compacted: false,
         };
       },
       validationService: { validateContextCompletion },

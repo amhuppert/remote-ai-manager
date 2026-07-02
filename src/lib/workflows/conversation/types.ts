@@ -292,6 +292,8 @@ export interface PromptActorResult {
    */
   transcript?: AgentTranscriptEntry[];
   aborted: boolean;
+  /** True when the SDK auto-compacted the context at least once this turn. */
+  compacted: boolean;
   abortReason?: "timeout" | "user" | "shutdown";
   timeoutMs?: number;
   error: string | null;

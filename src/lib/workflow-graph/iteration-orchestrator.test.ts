@@ -359,6 +359,7 @@ describe("graph workflow iteration orchestrator", () => {
         conversationId: "conversation-1",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -446,6 +447,7 @@ describe("graph workflow iteration orchestrator", () => {
         conversationId: "conversation-1",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -512,6 +514,7 @@ describe("graph workflow iteration orchestrator", () => {
         conversationId: "conversation-1",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -571,6 +574,7 @@ describe("graph workflow iteration orchestrator", () => {
         conversationId: "conv-mock",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -629,6 +633,7 @@ describe("graph workflow iteration orchestrator", () => {
         conversationId: "conv-mock",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -693,6 +698,7 @@ describe("graph workflow iteration orchestrator", () => {
         conversationId: "conv-mock",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -754,6 +760,7 @@ describe("graph workflow iteration orchestrator", () => {
         conversationId: "conv-mock",
         contextTokens: 50_000,
         contextWindowMax: 200_000,
+        compacted: false,
       };
     });
 
@@ -815,6 +822,7 @@ describe("graph workflow iteration orchestrator", () => {
         conversationId: "conv-mock",
         contextTokens: 180_000,
         contextWindowMax: 200_000,
+        compacted: false,
       };
     });
 
@@ -854,6 +862,7 @@ describe("graph workflow iteration orchestrator", () => {
       conversationId: "conv-mock",
       contextTokens: 180_000,
       contextWindowMax: 200_000,
+      compacted: false,
     }));
 
     const resolveImplementerCall = vi.fn(
@@ -932,6 +941,7 @@ describe("graph workflow iteration orchestrator", () => {
       conversationId: "conv-mock",
       contextTokens: 50_000,
       contextWindowMax: 200_000,
+      compacted: false,
     }));
 
     const resolveImplementerCall = vi.fn(
@@ -1025,6 +1035,7 @@ describe("graph workflow iteration orchestrator", () => {
       conversationId: "conv-mock",
       contextTokens: 50_000,
       contextWindowMax: 200_000,
+      compacted: false,
     }));
 
     const resolveImplementerCall = vi.fn(
@@ -1094,6 +1105,7 @@ describe("graph workflow iteration orchestrator", () => {
         conversationId: "conv-mock",
         contextTokens: 50_000,
         contextWindowMax: 200_000,
+        compacted: false,
       };
     });
 
@@ -1152,6 +1164,7 @@ describe("graph workflow iteration orchestrator", () => {
         conversationId: "conv-mock",
         contextTokens: 50000,
         contextWindowMax: 200000,
+        compacted: false,
       };
     });
 
@@ -1202,6 +1215,7 @@ describe("graph workflow iteration orchestrator", () => {
         lane: "implementer",
         contextTokens: 50000,
         contextWindowMax: 200000,
+        compacted: false,
       }),
     );
   });
@@ -1253,6 +1267,7 @@ describe("graph workflow iteration orchestrator", () => {
         conversationId: "conv-mock",
         contextTokens: 25_000,
         contextWindowMax: 200_000,
+        compacted: false,
       };
     });
 
@@ -1352,6 +1367,7 @@ describe("task validation continuity state preservation (fix-0582fa53)", () => {
         conversationId: "conv-mock",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -1446,6 +1462,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
         conversationId: "conv-mock",
         contextTokens: 60_000,
         contextWindowMax: 200_000,
+        compacted: false,
       };
     });
 
@@ -1535,6 +1552,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
         conversationId: "conv-mock",
         contextTokens: 50_000,
         contextWindowMax: 200_000,
+        compacted: false,
       };
     });
 
@@ -1632,6 +1650,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
         conversationId: "conv-mock",
         contextTokens: 50_000,
         contextWindowMax: 200_000,
+        compacted: false,
       };
     });
 
@@ -1687,6 +1706,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
       conversationId: "conv-mock",
       contextTokens: 50_000,
       contextWindowMax: 200_000,
+      compacted: false,
     }));
 
     const continuityService = createWorkflowContinuityService({
@@ -1770,11 +1790,13 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
             conversationId: "conv-mock",
             contextTokens: 120_000,
             contextWindowMax: 200_000,
+            compacted: false,
           }
         : {
             conversationId: "conv-mock",
             contextTokens: 50_000,
             contextWindowMax: 200_000,
+            compacted: false,
           };
     });
 
@@ -1836,6 +1858,7 @@ describe("session continuity across runIteration calls (end-to-end)", () => {
       conversationId: "conv-mock",
       contextTokens: 50_000,
       contextWindowMax: 200_000,
+      compacted: false,
     }));
 
     const continuityService = createWorkflowContinuityService({
@@ -1936,6 +1959,7 @@ describe("task validation event publishing (fix-30388517)", () => {
         conversationId: "conv-mock",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -2030,6 +2054,7 @@ describe("task validation failure handling (circuit breaker)", () => {
         conversationId: "conv-mock",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -2093,6 +2118,7 @@ describe("task validation failure handling (circuit breaker)", () => {
           conversationId: "conversation-retry",
           contextTokens: null,
           contextWindowMax: null,
+          compacted: false,
         };
       }),
       now: () => "2026-03-27T16:00:00.000Z",
@@ -2161,6 +2187,7 @@ describe("task validation failure handling (circuit breaker)", () => {
         conversationId: "conv-mock",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -2217,6 +2244,7 @@ describe("task validation failure handling (circuit breaker)", () => {
           conversationId: "conversation-null",
           contextTokens: null,
           contextWindowMax: null,
+          compacted: false,
         };
       }),
       now: () => "2026-03-27T16:00:00.000Z",
@@ -2266,6 +2294,7 @@ describe("task validation failure handling (circuit breaker)", () => {
           conversationId: "conversation-disabled",
           contextTokens: null,
           contextWindowMax: null,
+          compacted: false,
         };
       }),
       now: () => "2026-03-27T16:00:00.000Z",
@@ -2315,6 +2344,7 @@ describe("task validation failure handling (circuit breaker)", () => {
           conversationId: "conversation-enabled",
           contextTokens: null,
           contextWindowMax: null,
+          compacted: false,
         };
       }),
       now: () => "2026-03-27T16:00:00.000Z",
@@ -2461,6 +2491,7 @@ describe("codex implementer continuity", () => {
         conversationId: "conv-mock",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
         sessionRef: { backend: "codex" as const, threadId: "thread-real-123" },
       };
     });
@@ -2528,6 +2559,7 @@ describe("codex implementer continuity", () => {
       conversationId: "conv-mock",
       contextTokens: null,
       contextWindowMax: null,
+      compacted: false,
     }));
 
     const resolveImplementerCall = vi.fn(
@@ -2617,6 +2649,7 @@ describe("codex implementer continuity", () => {
       conversationId: "conv-mock",
       contextTokens: null,
       contextWindowMax: null,
+      compacted: false,
       sessionRef: { backend: "codex" as const, threadId: "thread-real-1" },
     }));
 
@@ -2736,6 +2769,7 @@ describe("mid-iteration halt via signalHalt", () => {
         conversationId: "conv-mock",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -2818,6 +2852,7 @@ describe("mid-iteration halt via signalHalt", () => {
         conversationId: "conv-mock",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -2912,6 +2947,7 @@ describe("mid-iteration halt via signalHalt", () => {
         conversationId: "conv-mock",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -3024,6 +3060,7 @@ describe("mid-iteration halt via signalHalt", () => {
         conversationId: "conv-mock",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -3118,6 +3155,7 @@ describe("mid-iteration halt via signalHalt", () => {
         conversationId: "conv-mock",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -3199,6 +3237,7 @@ describe("mid-iteration halt via signalHalt", () => {
         conversationId: "conv-mock",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -3272,6 +3311,7 @@ describe("mid-iteration halt via signalHalt", () => {
         conversationId: "conv-mock",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -3359,6 +3399,7 @@ describe("mid-iteration halt via signalHalt", () => {
         conversationId: "conv-mock",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -3457,6 +3498,7 @@ describe("mid-iteration halt via signalHalt", () => {
         conversationId: "conv-mock",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -3542,6 +3584,7 @@ describe("mid-iteration halt via signalHalt", () => {
         conversationId: "conv-mock",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -3881,6 +3924,7 @@ describe("script validator integration", () => {
         conversationId: "conv-s1",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -3937,6 +3981,7 @@ describe("script validator integration", () => {
         conversationId: "conv-s2",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -3987,6 +4032,7 @@ describe("script validator integration", () => {
         conversationId: "conv-s3",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -4068,6 +4114,7 @@ describe("script validator integration", () => {
         conversationId: "conv-s4",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -4142,6 +4189,7 @@ describe("script validator integration", () => {
         conversationId: "conv-s5",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -4220,6 +4268,7 @@ describe("script validator integration", () => {
         conversationId: "conv-s6",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -4301,6 +4350,7 @@ describe("script validator integration", () => {
         conversationId: "conv-script-gate",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -4382,6 +4432,7 @@ describe("iteration failure with partial turn progress", () => {
           conversationId: "conversation-progress",
           contextTokens: null,
           contextWindowMax: null,
+          compacted: false,
         };
       }
       throw new Error("SDK error: QuerySession is dead");
@@ -4534,6 +4585,7 @@ describe("background-task wait lifecycle (task 4.2)", () => {
         conversationId: "conversation-1",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
         backgroundWait: backgroundWaitSummary({
           waitedTaskIds: ["bg-task-1", "bg-task-2"],
           settledTaskIds: ["bg-task-1", "bg-task-2"],
@@ -4614,6 +4666,7 @@ describe("background-task wait lifecycle (task 4.2)", () => {
         conversationId: "conversation-1",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
         backgroundWait: backgroundWaitSummary({
           waitedTaskIds: ["bg-task-1", "bg-task-2"],
           settledTaskIds: ["bg-task-1"],
@@ -4695,6 +4748,7 @@ describe("background-task wait lifecycle (task 4.2)", () => {
         conversationId: "conversation-1",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
 
@@ -4758,6 +4812,7 @@ describe("background-task wait lifecycle (task 4.2)", () => {
         conversationId: "conversation-1",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
         backgroundWait: backgroundWaitSummary(),
       };
     });
@@ -4820,6 +4875,7 @@ describe("background-task wait lifecycle (task 4.2)", () => {
         conversationId: "conversation-1",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
         backgroundWait: backgroundWaitSummary({ timedOut: true }),
       };
     });
@@ -4898,6 +4954,7 @@ describe("human approval gate at finalization", () => {
         conversationId: "conversation-gate",
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
   }

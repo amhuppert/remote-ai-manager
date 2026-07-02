@@ -267,6 +267,7 @@ describe("section 7.1 — structured-output enforcement always flows through the
           contentBlocks: [{ type: "text", text: "ok" }],
           structuredOutput: { wrong: "shape" },
           aborted: false,
+          compacted: false,
           error: null,
         };
       },
@@ -331,6 +332,7 @@ describe("section 7.1 — structured-output enforcement always flows through the
           contentBlocks: [{ type: "text", text: "ok" }],
           structuredOutput: undefined,
           aborted: false,
+          compacted: false,
           error: null,
         };
       },
@@ -400,6 +402,7 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
           contentBlocks: [{ type: "text", text: "ok" }],
           structuredOutput: undefined,
           aborted: false,
+          compacted: false,
           error: null,
         };
       },
@@ -456,6 +459,7 @@ describe("section 7.1 — MCP application boundary preserves runtime support", (
           contentBlocks: [{ type: "text", text: "ok" }],
           structuredOutput: undefined,
           aborted: false,
+          compacted: false,
           error: null,
         };
       },
@@ -701,6 +705,7 @@ describe("section 7.1 — capability view is attached to every dispatched result
           contentBlocks: [{ type: "text", text: "ok" }],
           structuredOutput: undefined,
           aborted: false,
+          compacted: false,
           error: null,
         };
       },

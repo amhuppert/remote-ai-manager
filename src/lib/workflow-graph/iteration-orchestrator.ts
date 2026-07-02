@@ -116,6 +116,8 @@ export interface GraphWorkflowAgentIterationResult {
   conversationId: string;
   contextTokens: number | null;
   contextWindowMax: number | null;
+  /** True when the SDK auto-compacted the context at least once this turn. */
+  compacted: boolean;
   sessionRef?: AgentSessionRef | null;
   /**
    * Summary of the bounded background-task wait the implementer turn performed
@@ -1837,6 +1839,7 @@ export function createGraphWorkflowIterationOrchestrator(
                   contextTokens: agentResult.contextTokens,
                   contextWindowMax: agentResult.contextWindowMax,
                   contextLimitTokens,
+                  compacted: agentResult.compacted,
                 });
           },
         );

@@ -63,6 +63,7 @@ function successResult(
     cachedInputTokens: null,
     contentBlocks: [{ type: "text", text: "Hello" }],
     aborted: false,
+    compacted: false,
     error: null,
     // Non-null sentinel so the debug phase-advancement gate passes by
     // default. Tests that exercise the failure path override this with

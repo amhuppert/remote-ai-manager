@@ -34,6 +34,10 @@ import {
   type QuerySessionOptions,
   type TurnResult,
 } from "./query-session";
+import {
+  readLiveOccupancy,
+  _resetLiveOccupancyForTesting,
+} from "@/lib/conversations/live-occupancy";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -162,6 +166,7 @@ function makeDefaultOptions(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  _resetLiveOccupancyForTesting();
 });
 
 describe("createQuerySession", () => {
@@ -3599,6 +3604,164 @@ describe("onSdkMcpStreamClosed callback", () => {
     finishTurn(mock);
     const result = await turnPromise;
     expect(result.error).toBeNull();
+    session.close();
+  });
+});
+
+describe("QuerySession live-occupancy publishing and compaction", () => {
+  const CONV_ID = "conv-123";
+
+  function assistantMessageWithUsage(
+    uuid: string,
+    usage: {
+      input_tokens: number;
+      cache_read_input_tokens?: number;
+      cache_creation_input_tokens?: number;
+    },
+  ): SDKMessage {
+    return {
+      type: "assistant",
+      session_id: "sess-occ",
+      uuid,
+      message: {
+        content: [{ type: "text", text: "working" }],
+        usage,
+      },
+    } as unknown as SDKMessage;
+  }
+
+  function compactBoundaryMessage(uuid: string): SDKMessage {
+    return {
+      type: "system",
+      subtype: "compact_boundary",
+      session_id: "sess-occ",
+      uuid,
+      compact_metadata: {
+        trigger: "auto",
+        pre_tokens: 150_000,
+        post_tokens: 40_000,
+      },
+    } as unknown as SDKMessage;
+  }
+
+  function successResult(uuid: string): SDKMessage {
+    return {
+      type: "result",
+      subtype: "success",
+      session_id: "sess-occ",
+      uuid,
+      total_cost_usd: 0.01,
+      duration_ms: 100,
+      num_turns: 1,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage;
+  }
+
+  it("publishes summed occupancy to the live registry per assistant message", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const turnPromise = session.sendPrompt("Hello", vi.fn());
+
+    mock.pushMessage(
+      assistantMessageWithUsage("u1", {
+        input_tokens: 1000,
+        cache_read_input_tokens: 2000,
+        cache_creation_input_tokens: 500,
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(readLiveOccupancy(CONV_ID)).toEqual({
+      contextTokens: 3500,
+      compactedThisTurn: false,
+    });
+
+    mock.pushMessage(successResult("u2"));
+    await turnPromise;
+    session.close();
+  });
+
+  it("overwrites the live occupancy with the latest assistant message (last-wins)", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const turnPromise = session.sendPrompt("Hello", vi.fn());
+
+    mock.pushMessage(assistantMessageWithUsage("u1", { input_tokens: 3500 }));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(readLiveOccupancy(CONV_ID)?.contextTokens).toBe(3500);
+
+    mock.pushMessage(
+      assistantMessageWithUsage("u2", {
+        input_tokens: 6000,
+        cache_read_input_tokens: 2000,
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    expect(readLiveOccupancy(CONV_ID)?.contextTokens).toBe(8000);
+
+    mock.pushMessage(successResult("u3"));
+    await turnPromise;
+    session.close();
+  });
+
+  it("marks TurnResult.compacted and the registry on a compact_boundary system message", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const turnPromise = session.sendPrompt("Hello", vi.fn());
+
+    mock.pushMessage(assistantMessageWithUsage("u1", { input_tokens: 40_000 }));
+    mock.pushMessage(compactBoundaryMessage("u2"));
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Registry reflects the compaction while the turn is still in flight.
+    expect(readLiveOccupancy(CONV_ID)).toEqual({
+      contextTokens: 40_000,
+      compactedThisTurn: true,
+    });
+
+    mock.pushMessage(successResult("u3"));
+    const result = await turnPromise;
+    expect(result.compacted).toBe(true);
+    session.close();
+  });
+
+  it("clears the registry entry when the turn settles with a result", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const turnPromise = session.sendPrompt("Hello", vi.fn());
+
+    mock.pushMessage(assistantMessageWithUsage("u1", { input_tokens: 5000 }));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(readLiveOccupancy(CONV_ID)).not.toBeNull();
+
+    mock.pushMessage(successResult("u2"));
+    await turnPromise;
+
+    expect(readLiveOccupancy(CONV_ID)).toBeNull();
+    session.close();
+  });
+
+  it("reports compacted false on a TurnResult when no compaction occurred", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const session = createQuerySession(makeDefaultOptions());
+    const turnPromise = session.sendPrompt("Hello", vi.fn());
+
+    mock.pushMessage(assistantMessageWithUsage("u1", { input_tokens: 5000 }));
+    mock.pushMessage(successResult("u2"));
+    const result = await turnPromise;
+
+    expect(result.compacted).toBe(false);
     session.close();
   });
 });

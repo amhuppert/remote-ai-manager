@@ -2146,6 +2146,100 @@ describe("ClaudeConversationRuntime — background-task wait barrier (sendTurn)"
   });
 });
 
+describe("ClaudeConversationRuntime — compaction pass-through (sendTurn)", () => {
+  function pushResult(
+    mock: ReturnType<typeof createControllableMockQuery>,
+    uuid: string,
+  ) {
+    mock.pushMessage({
+      type: "result",
+      subtype: "success",
+      session_id: "sess-compact",
+      uuid,
+      total_cost_usd: 0,
+      duration_ms: 0,
+      num_turns: 0,
+      result: "",
+      is_error: false,
+    } as unknown as SDKMessage);
+  }
+
+  it("carries compacted=true onto the turn result when the SDK auto-compacts mid-turn", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-compact",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "do a lot of work",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: true,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+
+    mock.pushMessage({
+      type: "system",
+      subtype: "compact_boundary",
+      session_id: "sess-compact",
+      uuid: "u-compact",
+      compact_metadata: {
+        trigger: "auto",
+        pre_tokens: 150_000,
+        post_tokens: 40_000,
+      },
+    } as unknown as SDKMessage);
+    pushResult(mock, "u-result");
+
+    const result = await turnPromise;
+    expect(result.compacted).toBe(true);
+
+    runtime.close();
+  });
+
+  it("reports compacted=false on the turn result when no compaction occurred", async () => {
+    const mock = createControllableMockQuery();
+    queryMock.mockReturnValue(mock.query);
+
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-no-compact",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
+    });
+
+    const turnPromise = runtime.sendTurn({
+      promptText: "do a small amount of work",
+      imageRefs: [],
+      sessionInstructions: [],
+      autonomous: true,
+      signal: new AbortController().signal,
+      onEvent: () => {},
+    });
+
+    pushResult(mock, "u-result");
+
+    const result = await turnPromise;
+    expect(result.compacted).toBe(false);
+
+    runtime.close();
+  });
+});
+
 describe("ClaudeConversationRuntime — sendTurn input acceptance", () => {
   it("emits input_accepted on the first raw message, before the first provider_event and any content", async () => {
     const mock = createControllableMockQuery();

@@ -68,6 +68,7 @@ describe("graph workflow implementer runner", () => {
       conversationId: "conversation-1",
       contextTokens: 12_345,
       contextWindowMax: 200_000,
+      compacted: false,
     }));
     const getConversation = vi.fn(async () =>
       makeConversation({
@@ -129,6 +130,7 @@ describe("graph workflow implementer runner", () => {
       conversationId: "conversation-1",
       contextTokens: 12_345,
       contextWindowMax: 200_000,
+      compacted: false,
       sessionRef: { backend: "claude", sessionId: "sdk-session-1" },
     });
   });
@@ -138,6 +140,7 @@ describe("graph workflow implementer runner", () => {
       conversationId: "conversation-codex",
       contextTokens: null,
       contextWindowMax: null,
+      compacted: false,
     }));
     const getConversation = vi.fn(async () =>
       makeConversation({
@@ -189,6 +192,7 @@ describe("graph workflow implementer runner", () => {
       conversationId: "conversation-codex",
       contextTokens: null,
       contextWindowMax: null,
+      compacted: false,
       sessionRef: { backend: "codex", threadId: "thread-codex-1" },
     });
   });
@@ -198,6 +202,7 @@ describe("graph workflow implementer runner", () => {
       conversationId: "conversation-1",
       contextTokens: null,
       contextWindowMax: null,
+      compacted: false,
     }));
     const getConversation = vi.fn(async () => makeConversation());
 
@@ -245,6 +250,7 @@ describe("graph workflow implementer runner", () => {
       conversationId: "conversation-1",
       contextTokens: null,
       contextWindowMax: null,
+      compacted: false,
     }));
     const getConversation = vi.fn(async () => makeConversation());
 
@@ -283,6 +289,7 @@ describe("graph workflow implementer runner", () => {
       conversationId: "conversation-1",
       contextTokens: null,
       contextWindowMax: null,
+      compacted: false,
     }));
     const getConversation = vi.fn(async () => makeConversation());
 
@@ -326,6 +333,7 @@ describe("graph workflow implementer runner", () => {
       conversationId: "conversation-1",
       contextTokens: 100,
       contextWindowMax: 200_000,
+      compacted: false,
       backgroundWait,
     }));
     const getConversation = vi.fn(async () =>
@@ -355,6 +363,7 @@ describe("graph workflow implementer runner", () => {
       conversationId: "conversation-1",
       contextTokens: 100,
       contextWindowMax: 200_000,
+      compacted: false,
       sessionRef: { backend: "claude", sessionId: "sdk-session-1" },
       backgroundWait,
     });
@@ -365,6 +374,7 @@ describe("graph workflow implementer runner", () => {
       conversationId: "conversation-1",
       contextTokens: null,
       contextWindowMax: null,
+      compacted: false,
     }));
     const getConversation = vi.fn(async () => makeConversation());
 
@@ -395,6 +405,7 @@ describe("graph workflow implementer runner", () => {
       contextWindowMax: null,
       error: "Claude API overloaded",
       aborted: false,
+      compacted: false,
     }));
     const getConversation = vi.fn(async () => makeConversation());
 
@@ -426,6 +437,7 @@ describe("graph workflow implementer runner", () => {
       contextTokens: null,
       contextWindowMax: null,
       aborted: true,
+      compacted: false,
       abortReason: "timeout" as const,
       timeoutMs: 10_800_000,
     }));

@@ -252,6 +252,36 @@ describe("assertExecutionSupported", () => {
     expect(result.id).toBe("exec-1");
   });
 
+  it("accepts an execution whose Claude lane carries limitEvaluation metrics_unavailable", () => {
+    const execution = makeValidExecution();
+    (execution as Record<string, unknown>).laneStates = {
+      "ctx-1": {
+        context_validator: {
+          engine: "claude",
+          lane: "context_validator",
+          contextId: "ctx-1",
+          sessionRef: {
+            engine: "claude",
+            lane: "context_validator",
+            conversationId: "conv-1",
+          },
+          lastContextTokens: null,
+          lastContextWindowMax: null,
+          rotateBeforeNextTurn: false,
+          limitEvaluation: "metrics_unavailable",
+          lastUsedAt: timestamp,
+        },
+      },
+    };
+
+    const result = assertExecutionSupported(execution);
+    const lane = result.laneStates["ctx-1"]?.["context_validator"];
+    expect(lane?.engine).toBe("claude");
+    if (lane?.engine === "claude") {
+      expect(lane.limitEvaluation).toBe("metrics_unavailable");
+    }
+  });
+
   it("rejects an execution whose workingDefinition has contextSoftLimitTokens", () => {
     const execution = makeValidExecution();
     (

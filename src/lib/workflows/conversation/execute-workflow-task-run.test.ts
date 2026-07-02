@@ -85,6 +85,7 @@ function createTestMachine() {
           cachedInputTokens: null,
           contentBlocks: [],
           aborted: false,
+          compacted: false,
           error: null,
         }),
       ),
@@ -150,6 +151,7 @@ function defaultResult(
     cachedInputTokens: null,
     contentBlocks: [{ type: "text", text: "hello world" }],
     aborted: false,
+    compacted: false,
     error: null,
     ...overrides,
   };

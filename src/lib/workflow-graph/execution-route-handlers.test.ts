@@ -1900,6 +1900,7 @@ describe("implementer runner wiring (unified executePromptStream path)", () => {
       conversationId: "conv-codex-1",
       contextTokens: null,
       contextWindowMax: null,
+      compacted: false,
     }));
     const implementerRunner = createGraphWorkflowImplementerRunner({
       executePromptStream,
@@ -1976,6 +1977,7 @@ describe("implementer runner wiring (unified executePromptStream path)", () => {
         conversationId: `conv-codex-${callCount}`,
         contextTokens: null,
         contextWindowMax: null,
+        compacted: false,
       };
     });
     const implementerRunner = createGraphWorkflowImplementerRunner({

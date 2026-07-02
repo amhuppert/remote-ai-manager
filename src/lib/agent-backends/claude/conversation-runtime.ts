@@ -392,6 +392,7 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
         contentBlocks: turnResult.contentBlocks,
         structuredOutput: turnResult.structuredOutput,
         aborted: turnResult.aborted,
+        compacted: turnResult.compacted,
         error: turnResult.error,
         ...(backgroundWait ? { backgroundWait } : {}),
       };
@@ -441,6 +442,7 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
         contextWindowMax: null,
         contentBlocks: [],
         aborted: wasAborted,
+        compacted: false,
         error: wasAborted ? null : errorMsg,
       };
     }
@@ -756,6 +758,7 @@ function buildExternalTurnHandler(
           contentBlocks: turnResult.contentBlocks,
           structuredOutput: turnResult.structuredOutput,
           aborted: turnResult.aborted,
+          compacted: turnResult.compacted,
           error: turnResult.error,
         },
       });

@@ -41,18 +41,46 @@ describe("extractContextTokens", () => {
 // =============================================================================
 
 describe("extractContextWindow", () => {
-  it("returns contextWindow from first model entry", () => {
+  const smallWindowModel = {
+    inputTokens: 5000,
+    outputTokens: 2000,
+    cacheReadInputTokens: 100,
+    cacheCreationInputTokens: 0,
+    webSearchRequests: 0,
+    costUSD: 0.05,
+    contextWindow: 200000,
+    maxOutputTokens: 16384,
+  };
+  const mainWindowModel = {
+    inputTokens: 12000,
+    outputTokens: 3000,
+    cacheReadInputTokens: 400,
+    cacheCreationInputTokens: 0,
+    webSearchRequests: 0,
+    costUSD: 0.12,
+    contextWindow: 1000000,
+    maxOutputTokens: 32000,
+  };
+
+  it("returns the largest contextWindow across model entries", () => {
     const modelUsage = {
-      "claude-sonnet-4-20250514": {
-        inputTokens: 5000,
-        outputTokens: 2000,
-        cacheReadInputTokens: 100,
-        cacheCreationInputTokens: 0,
-        webSearchRequests: 0,
-        costUSD: 0.05,
-        contextWindow: 200000,
-        maxOutputTokens: 16384,
-      },
+      "claude-haiku-sub-agent": smallWindowModel,
+      "claude-opus-4-8": mainWindowModel,
+    };
+    expect(extractContextWindow(modelUsage)).toBe(1000000);
+  });
+
+  it("returns the largest contextWindow regardless of insertion order", () => {
+    const modelUsage = {
+      "claude-opus-4-8": mainWindowModel,
+      "claude-haiku-sub-agent": smallWindowModel,
+    };
+    expect(extractContextWindow(modelUsage)).toBe(1000000);
+  });
+
+  it("returns the sole entry's window when only one model is present", () => {
+    const modelUsage = {
+      "claude-sonnet-4-20250514": smallWindowModel,
     };
     expect(extractContextWindow(modelUsage)).toBe(200000);
   });

@@ -114,6 +114,8 @@ export interface ConversationBackendTurnResult {
   contentBlocks: MessageContentBlock[];
   structuredOutput?: unknown;
   aborted: boolean;
+  /** True when the SDK auto-compacted the context at least once this turn. */
+  compacted: boolean;
   error: string | null;
   /**
    * Summary of the bounded background-task wait this turn performed. Present

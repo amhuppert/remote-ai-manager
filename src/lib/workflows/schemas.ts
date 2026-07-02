@@ -1332,7 +1332,7 @@ export const graphWorkflowAgentSessionStateSchema = z.discriminatedUnion(
       lastContextTokens: z.number().int().nullable().default(null),
       lastContextWindowMax: z.number().int().nullable().default(null),
       rotateBeforeNextTurn: z.boolean().default(false),
-      limitEvaluation: z.enum(["disabled", "supported"]),
+      limitEvaluation: z.enum(["disabled", "supported", "metrics_unavailable"]),
       lastUsedAt: z.string(),
     }),
     z.object({

@@ -15,6 +15,10 @@
 import { z } from "zod";
 import { createLogger } from "@/lib/logging";
 import { agentBackendSchema } from "@/lib/shared/schemas";
+import {
+  evaluateContextLimit,
+  type ContextLimitEvaluation,
+} from "./context-limit-gate";
 import type { LaneStore } from "./lane-store";
 import {
   laneStateSchema,
@@ -40,6 +44,12 @@ const claudeLaneOutcomeSchema = z
     conversationId: z.string().min(1).optional(),
     staleSession: z.boolean().optional(),
     failed: z.boolean().optional(),
+    /**
+     * True when the turn auto-compacted. Outcome-scoped (not persisted into
+     * lane metrics): it enters the rotation decision as a separate input
+     * because a compaction deflates the occupancy reading below the limit.
+     */
+    compactedThisTurn: z.boolean().optional(),
   })
   .strict();
 
@@ -65,10 +75,18 @@ export interface LaneServiceDeps {
   now?: () => string;
 }
 
+export interface RecordOutcomeResult {
+  state: LaneState;
+  contextLimitEvaluation: ContextLimitEvaluation;
+}
+
 export interface LaneService {
   resolve(ref: LaneRef): Promise<LaneState | null>;
   initialize(state: LaneState): Promise<LaneState>;
-  recordOutcome(ref: LaneRef, outcome: LaneOutcome): Promise<LaneState>;
+  recordOutcome(
+    ref: LaneRef,
+    outcome: LaneOutcome,
+  ): Promise<RecordOutcomeResult>;
 }
 
 export function createLaneService(deps: LaneServiceDeps): LaneService {
@@ -110,8 +128,12 @@ export function createLaneService(deps: LaneServiceDeps): LaneService {
         );
       }
 
-      const updated = applyOutcome(existing, parsedOutcome, now());
-      const reparsed = laneStateSchema.parse(updated);
+      const { state, contextLimitEvaluation } = applyOutcome(
+        existing,
+        parsedOutcome,
+        now(),
+      );
+      const reparsed = laneStateSchema.parse(state);
       await store.write(reparsed);
 
       logger.debug("lane.service.record_outcome", {
@@ -119,12 +141,13 @@ export function createLaneService(deps: LaneServiceDeps): LaneService {
         laneId: reparsed.laneId,
         backend: reparsed.backend,
         rotateBeforeNextTurn: reparsed.metrics.rotateBeforeNextTurn,
+        contextLimitEvaluation,
         staleSession:
           reparsed.backendState.backend === "claude"
             ? reparsed.backendState.staleSession
             : reparsed.backendState.staleSession,
       });
-      return reparsed;
+      return { state: reparsed, contextLimitEvaluation };
     },
   };
 }
@@ -133,7 +156,7 @@ function applyOutcome(
   existing: LaneState,
   outcome: LaneOutcome,
   timestamp: string,
-): LaneState {
+): RecordOutcomeResult {
   if (outcome.backend === "claude") {
     return applyClaudeOutcome(existing, outcome, timestamp);
   }
@@ -144,7 +167,7 @@ function applyClaudeOutcome(
   existing: LaneState,
   outcome: Extract<LaneOutcome, { backend: "claude" }>,
   timestamp: string,
-): LaneState {
+): RecordOutcomeResult {
   if (existing.backendState.backend !== "claude") {
     throw new Error("lane backendState branch mismatched at outcome time");
   }
@@ -155,13 +178,18 @@ function applyClaudeOutcome(
   const limit =
     outcome.contextLimitTokens ?? existing.policy.contextLimitTokens;
 
-  const nextRotate = (() => {
-    if (limit === undefined) return existing.metrics.rotateBeforeNextTurn;
-    if (outcome.contextTokens === undefined) {
-      return existing.metrics.rotateBeforeNextTurn;
-    }
-    return outcome.contextTokens > limit;
-  })();
+  const evaluation = evaluateContextLimit({
+    metrics: {
+      backend: "claude",
+      ...(outcome.contextTokens !== undefined
+        ? { contextTokens: outcome.contextTokens }
+        : {}),
+      rotateBeforeNextTurn: existing.metrics.rotateBeforeNextTurn,
+    },
+    policy: { contextLimitTokens: limit },
+    compactedThisTurn: outcome.compactedThisTurn,
+  });
+  const nextRotate = evaluation === "rotation_required";
 
   const nextBackendState: LaneState["backendState"] = {
     backend: "claude",
@@ -193,10 +221,13 @@ function applyClaudeOutcome(
   };
 
   return {
-    ...existing,
-    backendState: nextBackendState,
-    metrics: nextMetrics,
-    lastUsedAt: timestamp,
+    state: {
+      ...existing,
+      backendState: nextBackendState,
+      metrics: nextMetrics,
+      lastUsedAt: timestamp,
+    },
+    contextLimitEvaluation: evaluation,
   };
 }
 
@@ -204,13 +235,16 @@ function applyCodexOutcome(
   existing: LaneState,
   outcome: Extract<LaneOutcome, { backend: "codex" }>,
   timestamp: string,
-): LaneState {
+): RecordOutcomeResult {
   if (existing.backendState.backend !== "codex") {
     throw new Error("lane backendState branch mismatched at outcome time");
   }
   if (existing.metrics.backend !== "codex") {
     throw new Error("lane metrics branch mismatched at outcome time");
   }
+
+  const limit =
+    outcome.contextLimitTokens ?? existing.policy.contextLimitTokens;
 
   const nextBackendState: LaneState["backendState"] = {
     backend: "codex",
@@ -240,9 +274,12 @@ function applyCodexOutcome(
   };
 
   return {
-    ...existing,
-    backendState: nextBackendState,
-    metrics: nextMetrics,
-    lastUsedAt: timestamp,
+    state: {
+      ...existing,
+      backendState: nextBackendState,
+      metrics: nextMetrics,
+      lastUsedAt: timestamp,
+    },
+    contextLimitEvaluation: limit === undefined ? "disabled" : "unsupported",
   };
 }

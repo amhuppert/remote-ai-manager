@@ -116,27 +116,7 @@ describe("createLaneService — initialize", () => {
 });
 
 describe("createLaneService — recordOutcome (Claude)", () => {
-  it("records context metrics and bumps lastUsedAt without flagging rotation when below limit", async () => {
-    const store = createInMemoryLaneStore();
-    await store.write(buildClaudeLane());
-    const service = createLaneService({ store, now: clockOnce(T1) });
-    const updated = await service.recordOutcome(
-      { workflowId: "wf-A", laneId: "primary" },
-      {
-        backend: "claude",
-        contextTokens: 50_000,
-        contextWindowMax: 200_000,
-      },
-    );
-    expect(updated.lastUsedAt).toBe(T1);
-    if (updated.metrics.backend === "claude") {
-      expect(updated.metrics.contextTokens).toBe(50_000);
-      expect(updated.metrics.contextWindowMax).toBe(200_000);
-      expect(updated.metrics.rotateBeforeNextTurn).toBe(false);
-    }
-  });
-
-  it("flags rotateBeforeNextTurn when context tokens exceed the lane's configured limit", async () => {
+  it("records context metrics and reports no_rotation without flagging rotation when below limit", async () => {
     const store = createInMemoryLaneStore();
     await store.write(
       buildClaudeLane({
@@ -144,7 +124,32 @@ describe("createLaneService — recordOutcome (Claude)", () => {
       }),
     );
     const service = createLaneService({ store, now: clockOnce(T1) });
-    const updated = await service.recordOutcome(
+    const { state, contextLimitEvaluation } = await service.recordOutcome(
+      { workflowId: "wf-A", laneId: "primary" },
+      {
+        backend: "claude",
+        contextTokens: 50_000,
+        contextWindowMax: 200_000,
+      },
+    );
+    expect(contextLimitEvaluation).toBe("no_rotation");
+    expect(state.lastUsedAt).toBe(T1);
+    if (state.metrics.backend === "claude") {
+      expect(state.metrics.contextTokens).toBe(50_000);
+      expect(state.metrics.contextWindowMax).toBe(200_000);
+      expect(state.metrics.rotateBeforeNextTurn).toBe(false);
+    }
+  });
+
+  it("flags rotation and reports rotation_required when context tokens exceed the lane's configured limit", async () => {
+    const store = createInMemoryLaneStore();
+    await store.write(
+      buildClaudeLane({
+        policy: { continuityEnabled: true, contextLimitTokens: 100_000 },
+      }),
+    );
+    const service = createLaneService({ store, now: clockOnce(T1) });
+    const { state, contextLimitEvaluation } = await service.recordOutcome(
       { workflowId: "wf-A", laneId: "primary" },
       {
         backend: "claude",
@@ -152,8 +157,41 @@ describe("createLaneService — recordOutcome (Claude)", () => {
         contextWindowMax: 200_000,
       },
     );
-    if (updated.metrics.backend === "claude") {
-      expect(updated.metrics.rotateBeforeNextTurn).toBe(true);
+    expect(contextLimitEvaluation).toBe("rotation_required");
+    if (state.metrics.backend === "claude") {
+      expect(state.metrics.rotateBeforeNextTurn).toBe(true);
+    }
+  });
+
+  it("reports metrics_unavailable without flagging rotation when a limit is configured but contextTokens is absent", async () => {
+    const store = createInMemoryLaneStore();
+    await store.write(
+      buildClaudeLane({
+        policy: { continuityEnabled: true, contextLimitTokens: 100_000 },
+      }),
+    );
+    const service = createLaneService({ store, now: clockOnce(T1) });
+    const { state, contextLimitEvaluation } = await service.recordOutcome(
+      { workflowId: "wf-A", laneId: "primary" },
+      { backend: "claude", conversationId: "conv-validator" },
+    );
+    expect(contextLimitEvaluation).toBe("metrics_unavailable");
+    if (state.metrics.backend === "claude") {
+      expect(state.metrics.rotateBeforeNextTurn).toBe(false);
+    }
+  });
+
+  it("reports disabled when no limit is configured", async () => {
+    const store = createInMemoryLaneStore();
+    await store.write(buildClaudeLane({ policy: { continuityEnabled: true } }));
+    const service = createLaneService({ store, now: clockOnce(T1) });
+    const { state, contextLimitEvaluation } = await service.recordOutcome(
+      { workflowId: "wf-A", laneId: "primary" },
+      { backend: "claude", contextTokens: 199_000, contextWindowMax: 200_000 },
+    );
+    expect(contextLimitEvaluation).toBe("disabled");
+    if (state.metrics.backend === "claude") {
+      expect(state.metrics.rotateBeforeNextTurn).toBe(false);
     }
   });
 
@@ -161,11 +199,11 @@ describe("createLaneService — recordOutcome (Claude)", () => {
     const store = createInMemoryLaneStore();
     await store.write(buildClaudeLane());
     const service = createLaneService({ store, now: clockOnce(T1) });
-    const updated = await service.recordOutcome(
+    const { state } = await service.recordOutcome(
       { workflowId: "wf-A", laneId: "primary" },
       { backend: "claude", conversationId: "conv-rotated" },
     );
-    expect(updated.backendState).toMatchObject({
+    expect(state.backendState).toMatchObject({
       conversationId: "conv-rotated",
     });
   });
@@ -174,11 +212,53 @@ describe("createLaneService — recordOutcome (Claude)", () => {
     const store = createInMemoryLaneStore();
     await store.write(buildClaudeLane());
     const service = createLaneService({ store, now: clockOnce(T1) });
-    const updated = await service.recordOutcome(
+    const { state } = await service.recordOutcome(
       { workflowId: "wf-A", laneId: "primary" },
       { backend: "claude", staleSession: true },
     );
-    expect(updated.backendState).toMatchObject({ staleSession: true });
+    expect(state.backendState).toMatchObject({ staleSession: true });
+  });
+
+  it("flags rotation when the turn auto-compacted under a configured limit even with tokens below the limit", async () => {
+    const store = createInMemoryLaneStore();
+    await store.write(
+      buildClaudeLane({
+        policy: { continuityEnabled: true, contextLimitTokens: 100_000 },
+      }),
+    );
+    const service = createLaneService({ store, now: clockOnce(T1) });
+    const { state, contextLimitEvaluation } = await service.recordOutcome(
+      { workflowId: "wf-A", laneId: "primary" },
+      {
+        backend: "claude",
+        contextTokens: 40_000,
+        contextWindowMax: 200_000,
+        compactedThisTurn: true,
+      },
+    );
+    expect(contextLimitEvaluation).toBe("rotation_required");
+    if (state.metrics.backend === "claude") {
+      expect(state.metrics.rotateBeforeNextTurn).toBe(true);
+    }
+  });
+
+  it("does not flag rotation on compaction when no limit is configured (disabled short-circuits)", async () => {
+    const store = createInMemoryLaneStore();
+    await store.write(buildClaudeLane({ policy: { continuityEnabled: true } }));
+    const service = createLaneService({ store, now: clockOnce(T1) });
+    const { state, contextLimitEvaluation } = await service.recordOutcome(
+      { workflowId: "wf-A", laneId: "primary" },
+      {
+        backend: "claude",
+        contextTokens: 40_000,
+        contextWindowMax: 200_000,
+        compactedThisTurn: true,
+      },
+    );
+    expect(contextLimitEvaluation).toBe("disabled");
+    if (state.metrics.backend === "claude") {
+      expect(state.metrics.rotateBeforeNextTurn).toBe(false);
+    }
   });
 });
 
@@ -187,7 +267,7 @@ describe("createLaneService — recordOutcome (Codex)", () => {
     const store = createInMemoryLaneStore();
     await store.write(buildCodexLane());
     const service = createLaneService({ store, now: clockOnce(T1) });
-    const updated = await service.recordOutcome(
+    const { state, contextLimitEvaluation } = await service.recordOutcome(
       { workflowId: "wf-A", laneId: "secondary" },
       {
         backend: "codex",
@@ -199,23 +279,43 @@ describe("createLaneService — recordOutcome (Codex)", () => {
         },
       },
     );
-    expect(updated.backendState).toMatchObject({ threadId: "thr-real" });
-    if (updated.metrics.backend === "codex") {
-      expect(updated.metrics.lastTurnUsage?.inputTokens).toBe(100);
-      expect(updated.metrics).not.toHaveProperty("contextTokens");
+    expect(contextLimitEvaluation).toBe("disabled");
+    expect(state.backendState).toMatchObject({ threadId: "thr-real" });
+    if (state.metrics.backend === "codex") {
+      expect(state.metrics.lastTurnUsage?.inputTokens).toBe(100);
+      expect(state.metrics).not.toHaveProperty("contextTokens");
     }
   });
 
-  it("flags rotateBeforeNextTurn when the Codex turn failed", async () => {
+  it("flags rotateBeforeNextTurn when the Codex turn failed while keeping the label disabled with no limit", async () => {
     const store = createInMemoryLaneStore();
     await store.write(buildCodexLane());
     const service = createLaneService({ store, now: clockOnce(T1) });
-    const updated = await service.recordOutcome(
+    const { state, contextLimitEvaluation } = await service.recordOutcome(
       { workflowId: "wf-A", laneId: "secondary" },
       { backend: "codex", failed: true },
     );
-    if (updated.metrics.backend === "codex") {
-      expect(updated.metrics.rotateBeforeNextTurn).toBe(true);
+    expect(contextLimitEvaluation).toBe("disabled");
+    if (state.metrics.backend === "codex") {
+      expect(state.metrics.rotateBeforeNextTurn).toBe(true);
+    }
+  });
+
+  it("reports unsupported when a limit is configured, without routing Codex rotation through the gate", async () => {
+    const store = createInMemoryLaneStore();
+    await store.write(
+      buildCodexLane({
+        policy: { continuityEnabled: true, contextLimitTokens: 50_000 },
+      }),
+    );
+    const service = createLaneService({ store, now: clockOnce(T1) });
+    const { state, contextLimitEvaluation } = await service.recordOutcome(
+      { workflowId: "wf-A", laneId: "secondary" },
+      { backend: "codex", failed: true },
+    );
+    expect(contextLimitEvaluation).toBe("unsupported");
+    if (state.metrics.backend === "codex") {
+      expect(state.metrics.rotateBeforeNextTurn).toBe(true);
     }
   });
 });
@@ -246,7 +346,7 @@ describe("createLaneService — invariants", () => {
     ).rejects.toThrow(/backend/i);
   });
 
-  it("clears rotation flag once a turn comes back below the configured limit", async () => {
+  it("keeps rotation sticky once flagged even when a later turn comes back below the limit", async () => {
     const store = createInMemoryLaneStore();
     await store.write(
       buildClaudeLane({
@@ -260,12 +360,13 @@ describe("createLaneService — invariants", () => {
       }),
     );
     const service = createLaneService({ store, now: clockOnce(T1) });
-    const updated = await service.recordOutcome(
+    const { state, contextLimitEvaluation } = await service.recordOutcome(
       { workflowId: "wf-A", laneId: "primary" },
       { backend: "claude", contextTokens: 80_000, contextWindowMax: 200_000 },
     );
-    if (updated.metrics.backend === "claude") {
-      expect(updated.metrics.rotateBeforeNextTurn).toBe(false);
+    expect(contextLimitEvaluation).toBe("rotation_required");
+    if (state.metrics.backend === "claude") {
+      expect(state.metrics.rotateBeforeNextTurn).toBe(true);
     }
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   toPrimitive,
   toGraph,
+  toGraphLimitEvaluation,
   type GraphWorkflowLaneAdapterInputContext,
 } from "./graph-workflow-lane-adapter";
 import { createInMemoryLaneStore } from "./lane-store";
@@ -286,14 +287,16 @@ describe("graphWorkflowLaneAdapter — lane-service parity", () => {
     const store = createInMemoryLaneStore();
     const service = createLaneService({ store, now: () => T1 });
     await service.initialize(primitive);
-    const updated = await service.recordOutcome(
-      { workflowId: primitive.workflowId, laneId: primitive.laneId },
-      {
-        backend: "claude",
-        contextTokens: 120_000,
-        contextWindowMax: 200_000,
-      },
-    );
+    const { state: updated, contextLimitEvaluation } =
+      await service.recordOutcome(
+        { workflowId: primitive.workflowId, laneId: primitive.laneId },
+        {
+          backend: "claude",
+          contextTokens: 120_000,
+          contextWindowMax: 200_000,
+        },
+      );
+    expect(contextLimitEvaluation).toBe("rotation_required");
     const reconstructed = toGraph(updated, extras);
     expect(reconstructed).toMatchObject({
       engine: "claude",
@@ -316,10 +319,12 @@ describe("graphWorkflowLaneAdapter — lane-service parity", () => {
     const store = createInMemoryLaneStore();
     const service = createLaneService({ store, now: () => T1 });
     await service.initialize(primitive);
-    const updated = await service.recordOutcome(
-      { workflowId: primitive.workflowId, laneId: primitive.laneId },
-      { backend: "codex", failed: true },
-    );
+    const { state: updated, contextLimitEvaluation } =
+      await service.recordOutcome(
+        { workflowId: primitive.workflowId, laneId: primitive.laneId },
+        { backend: "codex", failed: true },
+      );
+    expect(contextLimitEvaluation).toBe("disabled");
     const reconstructed = toGraph(updated, extras);
     expect(reconstructed.engine).toBe("codex");
     expect(reconstructed.rotateBeforeNextTurn).toBe(true);
@@ -372,5 +377,47 @@ describe("graphWorkflowLaneAdapter — invariants", () => {
         limitEvaluation: "supported",
       }),
     ).toThrow();
+  });
+
+  it("rejects toGraph for a Codex primitive carrying limitEvaluation=metrics_unavailable in extras", () => {
+    const original = buildCodexImplementer();
+    const { primitive } = toPrimitive(original, {
+      executionId: "exec-1",
+      policy: { continuityEnabled: true },
+    });
+    expect(() =>
+      toGraph(primitive, {
+        lane: "implementer",
+        contextId: "ctx-1",
+        limitEvaluation: "metrics_unavailable",
+      }),
+    ).toThrow(/disabled\|unsupported/i);
+  });
+});
+
+describe("toGraphLimitEvaluation", () => {
+  it("maps each ContextLimitEvaluation to its graph-schema counterpart", () => {
+    expect(toGraphLimitEvaluation("disabled")).toBe("disabled");
+    expect(toGraphLimitEvaluation("unsupported")).toBe("unsupported");
+    expect(toGraphLimitEvaluation("metrics_unavailable")).toBe(
+      "metrics_unavailable",
+    );
+    expect(toGraphLimitEvaluation("no_rotation")).toBe("supported");
+    expect(toGraphLimitEvaluation("rotation_required")).toBe("supported");
+  });
+});
+
+describe("graphWorkflowLaneAdapter — metrics_unavailable Claude lane", () => {
+  it("round-trips a Claude lane carrying limitEvaluation=metrics_unavailable", () => {
+    const original = buildClaudeImplementer({
+      lastContextTokens: null,
+      limitEvaluation: "metrics_unavailable",
+    });
+    const projected = toPrimitive(original, {
+      executionId: "exec-1",
+      policy: { continuityEnabled: true, contextLimitTokens: 150_000 },
+    });
+    expect(projected.extras.limitEvaluation).toBe("metrics_unavailable");
+    expect(toGraph(projected.primitive, projected.extras)).toEqual(original);
   });
 });
