@@ -28,6 +28,7 @@ const UI = [
   "SectionHeader",
   "SegmentedControl",
   "Select",
+  "Spinner",
   "StatusDot",
   "Switch",
   "Tabs",

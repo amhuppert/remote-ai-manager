@@ -21,6 +21,7 @@ export { FormInput as FormField } from "../src/components/ui/FormField";
 export * from "../src/components/ui/IconButton";
 export * from "../src/components/ui/SectionHeader";
 export * from "../src/components/ui/StatusDot";
+export * from "../src/components/ui/Spinner";
 export * from "../src/components/ui/Tabs";
 // Radix-backed overlay primitives (each module exports its Root wrapper named
 // after the story title — DropdownMenu/Select/ContextMenu — plus its sub-parts).

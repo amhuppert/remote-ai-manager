@@ -15,11 +15,20 @@ Repo-specific gotchas for `/design-sync`. Read before any re-sync.
   - `cfg.extraEntries` path needs a leading `./` (`./.design-sync/ds-entry.tsx`) or
     it's treated as a bare node_modules specifier.
   - `--node-modules` is the repo root `node_modules`.
-- **Scope is curated, not "all stories".** The app has many more stories; only 37 are synced
-  (as of 2026-06-25 — was 26). `.design-sync/sb-config/main.ts` narrows the `stories` glob to
-  exactly those 37 (23 UI + 13 TOP + a CONVERSATION array for `src/components/conversation/`)
+- **Scope is curated, not "all stories".** The app has many more stories; only 38 are synced
+  (as of 2026-07-01 — was 37). `.design-sync/sb-config/main.ts` narrows the `stories` glob to
+  exactly those 38 (24 UI + 13 TOP + a CONVERSATION array for `src/components/conversation/`)
   so the converter discovers only them. It inherits framework/addons/viteFinal from the real
   `.storybook/main.ts`.
+- **2026-07-01 — `Spinner` added** (`src/components/ui/Spinner.tsx`, the perceived-responsiveness
+  contract commit). Added to `.design-sync/sb-config/main.ts`'s `UI` array and re-exported from
+  `.design-sync/ds-entry.tsx` (both edits are required for a new `ui/` component to be
+  discovered — the storybook config controls what gets built into the reference, the barrel
+  controls what the bundle's export scanner can name). No override needed — fits a grid cell
+  as-is. Same commit added a `loading` prop to `Button` (renders a `Spinner` inline) and gave
+  it a new `Loading` story; both `Button` and `SegmentedControl`'s story sets showed as
+  `changed` on this sync (`SegmentedControl`'s story predates this commit — pre-existing
+  unsynced drift, not caused by the Spinner work) and were re-graded `match` in full.
 - **2026-06-25 — Radix `ui/` primitive wave added (12), `ModalShell` removed.** The commit
   "Add Radix UI primitive migration workflow" landed a batch of new `src/components/ui/`
   primitives and **deleted `ModalShell`** (replaced by `Dialog`/`AlertDialog`). Added to
