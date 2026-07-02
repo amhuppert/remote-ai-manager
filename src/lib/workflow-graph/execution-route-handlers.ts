@@ -63,7 +63,9 @@ import {
   type RecordPendingHaltReasonInput,
   type RecordPendingHaltReasonResult,
   type DrainAndHaltInput,
+  type GraphWorkflowResumeOptions,
 } from "@/lib/workflow-graph/workflow-manager";
+import { conflictDecisionInputSchema } from "@/lib/jobs/schemas";
 import { createPreflightPrerequisiteService } from "@/lib/workflow-graph/preflight-prerequisite-service";
 import { stopExecutionLaneDevServers as defaultStopExecutionLaneDevServers } from "@/lib/workflow-graph/dev-server-lane-cleanup";
 import { toHaltReason } from "@/lib/workflow-graph/errors";
@@ -113,6 +115,13 @@ const resolveApprovalSchema = z.discriminatedUnion("decision", [
     message: z.string().trim().min(1),
   }),
 ]);
+
+// Resume accepts an optional body: per-file operator guidance for the next
+// conflict-resolution attempt of any failed join being retried. An absent or
+// empty body resumes without guidance (every pre-existing caller).
+const resumeRequestSchema = z.object({
+  conflictGuidance: z.array(conflictDecisionInputSchema).optional(),
+});
 
 const logger = createLogger("graph-workflow-route-handlers");
 
@@ -404,6 +413,7 @@ export interface GraphWorkflowExecutionRouteDeps {
   resumeExecution(
     projectPath: string,
     sessionName: string,
+    options?: GraphWorkflowResumeOptions,
   ): Promise<GraphWorkflowExecution>;
   abortExecution(
     projectPath: string,
@@ -472,8 +482,8 @@ const defaultDeps: GraphWorkflowExecutionRouteDeps = {
   startExecution: (input) => workflowManager.start(input),
   pauseExecution: (projectPath, sessionName) =>
     workflowManager.send(projectPath, sessionName, { type: "pause" }),
-  resumeExecution: (projectPath, sessionName) =>
-    workflowManager.resume(projectPath, sessionName),
+  resumeExecution: (projectPath, sessionName, options) =>
+    workflowManager.resume(projectPath, sessionName, options),
   abortExecution: (projectPath, sessionName) =>
     workflowManager.send(projectPath, sessionName, { type: "abort" }),
   resetExecutionContext: (projectPath, sessionName, contextId) =>
@@ -1112,13 +1122,29 @@ export function createGraphWorkflowExecutionRouteHandlers(
   }
 
   async function RESUME(
-    _request: Request,
+    request: Request,
     context: RouteContext,
   ): Promise<Response> {
     const resolved = await resolveSession(context, deps);
     if ("error" in resolved) {
       return resolved.error;
     }
+
+    const rawBody: unknown = await request.json().catch(() => ({}));
+    const parsedBody = resumeRequestSchema.safeParse(rawBody ?? {});
+    if (!parsedBody.success) {
+      return NextResponse.json(
+        {
+          error: `Invalid resume request: ${parsedBody.error.issues[0]?.message ?? "malformed body"}`,
+        },
+        { status: 400 },
+      );
+    }
+    const resumeOptions: GraphWorkflowResumeOptions | undefined =
+      parsedBody.data.conflictGuidance &&
+      parsedBody.data.conflictGuidance.length > 0
+        ? { conflictGuidance: parsedBody.data.conflictGuidance }
+        : undefined;
 
     try {
       await deps.normalizeExecutionAfterRestart(
@@ -1128,6 +1154,7 @@ export function createGraphWorkflowExecutionRouteHandlers(
       const execution = await deps.resumeExecution(
         resolved.projectPath,
         resolved.sessionName,
+        resumeOptions,
       );
       void Promise.resolve(
         deps.kickOffExecutionLoop({

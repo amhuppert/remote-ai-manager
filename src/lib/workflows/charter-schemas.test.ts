@@ -27,7 +27,6 @@ function makeMaximalCharter(): WorkflowCharter {
     conventions: ["Round half-up", "Floor at integer boundaries"],
     nonGoals: ["Reworking the scoring pipeline"],
     vocabulary: ["floor = round toward zero", "round = nearest integer"],
-    ownershipMap: "AeroTrainer owns conversion; Scoring owns aggregation.",
     testStrategy: "Pin behavior with a fixture matching the prototype.",
     knownAmbiguities: ["AC-7 wording contradicts the prototype"],
     sourcesOfTruth: [

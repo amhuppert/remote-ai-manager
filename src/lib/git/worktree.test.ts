@@ -782,3 +782,46 @@ describe("ensureGraphWorkflowDocsExcluded (real git)", () => {
     expect(lineCount).toBe(1);
   });
 });
+
+describe("abortInProgressMerge", () => {
+  it("aborts and returns true when MERGE_HEAD exists", async () => {
+    mockGitSequence([
+      { stdout: "abc123\n" }, // rev-parse -q --verify MERGE_HEAD
+      { stdout: "" }, // merge --abort
+    ]);
+
+    const aborted = await ops.abortInProgressMerge("/worktree");
+    expect(aborted).toBe(true);
+
+    expect(gitMock.mock.calls[0]![0]).toEqual([
+      "rev-parse",
+      "-q",
+      "--verify",
+      "MERGE_HEAD",
+    ]);
+    expect(gitMock.mock.calls[0]![1]).toBe("/worktree");
+    expect(gitMock.mock.calls[1]![0]).toEqual(["merge", "--abort"]);
+    expect(gitMock.mock.calls[1]![1]).toBe("/worktree");
+  });
+
+  it("returns false without aborting when no merge is in progress", async () => {
+    mockGitSequence([
+      { error: Object.assign(new Error("exit 1"), { code: 1 }) },
+    ]);
+
+    const aborted = await ops.abortInProgressMerge("/worktree");
+    expect(aborted).toBe(false);
+    expect(gitMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates a failure from git merge --abort", async () => {
+    mockGitSequence([
+      { stdout: "abc123\n" },
+      { error: new Error("fatal: could not abort") },
+    ]);
+
+    await expect(ops.abortInProgressMerge("/worktree")).rejects.toThrow(
+      "could not abort",
+    );
+  });
+});

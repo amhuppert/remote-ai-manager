@@ -5,6 +5,10 @@ import {
   codexReasoningEffortSchema,
   effortLevelSchema,
 } from "@/lib/agent-backends/schemas";
+import {
+  conflictDecisionInputSchema,
+  conflictEntrySchema,
+} from "@/lib/jobs/schemas";
 import { agentBackendSchema } from "@/lib/shared/schemas";
 import { workflowCharterSchema } from "./charter-schemas";
 
@@ -855,6 +859,10 @@ export type GraphWorkflowExecutionJoinStatus = z.infer<
 const graphWorkflowExecutionJoinConflictDetailSchema = z.object({
   files: z.array(z.string().trim().min(1)).default([]),
   message: z.string().nullable().default(null),
+  // Per-file conflict analysis from the merge machine's resolver, persisted so
+  // a join_failure halt can show the operator what conflicted and why the
+  // automatic resolution failed, not just a file list.
+  analysis: z.array(conflictEntrySchema).nullable().default(null),
 });
 export const graphWorkflowExecutionJoinStateSchema = z.object({
   joinId: graphWorkflowExecutionJoinIdSchema,
@@ -871,6 +879,13 @@ export const graphWorkflowExecutionJoinStateSchema = z.object({
   status: graphWorkflowExecutionJoinStatusSchema,
   errorMessage: z.string().nullable().default(null),
   conflicts: graphWorkflowExecutionJoinConflictDetailSchema
+    .nullable()
+    .default(null),
+  // Operator guidance attached when a failed join is reset for retry; consumed
+  // as per-file decisions by the next conflict-resolution attempt and cleared
+  // when the join concludes.
+  conflictGuidance: z
+    .array(conflictDecisionInputSchema)
     .nullable()
     .default(null),
   createdAt: z.string(),

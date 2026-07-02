@@ -380,7 +380,21 @@ function buildMaximalExecution(): unknown {
         mergedSourceLaneIds: ["lane-2"],
         status: "running",
         errorMessage: "retrying merge",
-        conflicts: { files: ["foo.ts"], message: "conflict in foo.ts" },
+        conflicts: {
+          files: ["foo.ts"],
+          message: "conflict in foo.ts",
+          analysis: [
+            {
+              file: "foo.ts",
+              description: "both sides edited the parser",
+              resolution: "keep both hunks",
+              rationale: "changes are logically independent",
+            },
+          ],
+        },
+        conflictGuidance: [
+          { file: "foo.ts", decision: "rejected", feedback: "keep both hunks" },
+        ],
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-02T04:00:00Z",
         completedAt: "2026-01-02T05:00:00Z",

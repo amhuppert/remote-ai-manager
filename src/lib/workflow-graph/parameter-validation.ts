@@ -137,7 +137,6 @@ type CharterFieldKey =
   | "conventions"
   | "nonGoals"
   | "vocabulary"
-  | "ownershipMap"
   | "testStrategy"
   | "knownAmbiguities"
   | "source.label"
@@ -150,7 +149,6 @@ const CHARTER_FIELD_KEYS: readonly CharterFieldKey[] = [
   "conventions",
   "nonGoals",
   "vocabulary",
-  "ownershipMap",
   "testStrategy",
   "knownAmbiguities",
   "source.label",
@@ -282,14 +280,6 @@ function buildScannedFieldAccessors(
       "charter.vocabulary",
       (def) => def.charter,
       (charter) => charter.vocabulary,
-    ),
-    stringFieldAccessor(
-      "charter.ownershipMap",
-      (def) => def.charter,
-      (charter) => charter.ownershipMap,
-      (charter, value) => {
-        charter.ownershipMap = value;
-      },
     ),
     stringFieldAccessor(
       "charter.testStrategy",

@@ -12,7 +12,6 @@ function charter(overrides: Partial<WorkflowCharter> = {}): WorkflowCharter {
     conventions: ["Follow {{inputs.feature}} conventions"],
     nonGoals: ["No {{inputs.feature}} rewrite"],
     vocabulary: ["{{inputs.feature}}: meaning"],
-    ownershipMap: "alice owns {{inputs.feature}}",
     testStrategy: "Test {{inputs.feature}} thoroughly",
     knownAmbiguities: ["scope of {{inputs.feature}}"],
     sourcesOfTruth: [
@@ -90,7 +89,6 @@ describe("substituteContent", () => {
       expect(c.conventions).toEqual(["Follow auth conventions"]);
       expect(c.nonGoals).toEqual(["No auth rewrite"]);
       expect(c.vocabulary).toEqual(["auth: meaning"]);
-      expect(c.ownershipMap).toBe("alice owns auth");
       expect(c.testStrategy).toBe("Test auth thoroughly");
       expect(c.knownAmbiguities).toEqual(["scope of auth"]);
 
@@ -430,7 +428,6 @@ describe("mapScannedFields is pinned to forEachScannedField", () => {
         conventions: ["SENTINEL_conventions"],
         nonGoals: ["SENTINEL_nonGoals"],
         vocabulary: ["SENTINEL_vocabulary"],
-        ownershipMap: "SENTINEL_ownershipMap",
         testStrategy: "SENTINEL_testStrategy",
         knownAmbiguities: ["SENTINEL_knownAmbiguities"],
         sourcesOfTruth: [

@@ -13,6 +13,7 @@ import {
   planContextJoin,
   planFinalPublishJoin,
   remainingSourceLanes,
+  resetJoinForRetry,
 } from "./lane-join";
 import { createWorkflowExecution } from "./test-fixtures";
 
@@ -50,6 +51,7 @@ function makeJoin(
     status: "pending",
     errorMessage: null,
     conflicts: null,
+    conflictGuidance: null,
     createdAt: t0,
     updatedAt: t0,
     completedAt: null,
@@ -304,6 +306,7 @@ describe("planContextJoin", () => {
           status: "succeeded",
           errorMessage: null,
           conflicts: null,
+          conflictGuidance: null,
           createdAt: t0,
           updatedAt: t1,
           completedAt: t1,
@@ -554,6 +557,7 @@ describe("planFinalPublishJoin", () => {
           status: "succeeded",
           errorMessage: null,
           conflicts: null,
+          conflictGuidance: null,
           createdAt: t0,
           updatedAt: t1,
           completedAt: t1,
@@ -605,6 +609,7 @@ describe("planFinalPublishJoin", () => {
           status: "succeeded",
           errorMessage: null,
           conflicts: null,
+          conflictGuidance: null,
           createdAt: t0,
           updatedAt: t1,
           completedAt: t1,
@@ -651,6 +656,7 @@ describe("planFinalPublishJoin", () => {
           status: "succeeded",
           errorMessage: null,
           conflicts: null,
+          conflictGuidance: null,
           createdAt: t0,
           updatedAt: t1,
           completedAt: t1,
@@ -665,6 +671,7 @@ describe("planFinalPublishJoin", () => {
           status: "succeeded",
           errorMessage: null,
           conflicts: null,
+          conflictGuidance: null,
           createdAt: t0,
           updatedAt: t1,
           completedAt: t1,
@@ -873,11 +880,114 @@ describe("appendPendingJoin / applyJoinProgress", () => {
     const next = applyJoinProgress(seeded, "join-1", t1, {
       status: "failed",
       errorMessage: "merge conflict",
-      conflicts: { files: ["src/foo.ts"], message: "conflict" },
+      conflicts: {
+        files: ["src/foo.ts"],
+        message: "conflict",
+        analysis: [
+          {
+            file: "src/foo.ts",
+            description: "both sides changed the loader",
+            resolution: "combine",
+            rationale: "independent hunks",
+          },
+        ],
+      },
     });
     expect(next.joins["join-1"]?.status).toBe("failed");
     expect(next.joins["join-1"]?.errorMessage).toBe("merge conflict");
     expect(next.joins["join-1"]?.conflicts?.files).toEqual(["src/foo.ts"]);
+    expect(next.joins["join-1"]?.conflicts?.analysis?.[0]?.file).toBe(
+      "src/foo.ts",
+    );
+  });
+
+  it("applyJoinProgress clears conflictGuidance when the patch sets it to null", () => {
+    const base = createWorkflowExecution();
+    const seeded = appendPendingJoin(
+      base,
+      makeJoin({
+        joinId: "join-1",
+        targetLaneId: "lane-a",
+        sourceLaneIds: ["lane-a", "lane-b"],
+        conflictGuidance: [
+          { file: "src/foo.ts", decision: "rejected", feedback: "keep both" },
+        ],
+      }),
+    );
+    const next = applyJoinProgress(seeded, "join-1", t1, {
+      status: "succeeded",
+      conflictGuidance: null,
+    });
+    expect(next.joins["join-1"]?.conflictGuidance).toBeNull();
+  });
+});
+
+describe("resetJoinForRetry", () => {
+  function seededFailedJoin(status: "failed" | "conflicts") {
+    const base = createWorkflowExecution();
+    return appendPendingJoin(
+      base,
+      makeJoin({
+        joinId: "join-1",
+        targetLaneId: "lane-a",
+        sourceLaneIds: ["lane-a", "lane-b", "lane-c"],
+        mergedSourceLaneIds: ["lane-b"],
+        status,
+        errorMessage: "resolution failed",
+        conflicts: {
+          files: ["src/foo.ts"],
+          message: "conflict",
+          analysis: null,
+        },
+        completedAt: t0,
+      }),
+    );
+  }
+
+  it("resets a conflicts join to pending, preserving merged-lane progress", () => {
+    const next = resetJoinForRetry(seededFailedJoin("conflicts"), "join-1", t1);
+    const join = next.joins["join-1"]!;
+    expect(join.status).toBe("pending");
+    expect(join.mergedSourceLaneIds).toEqual(["lane-b"]);
+    expect(join.errorMessage).toBeNull();
+    expect(join.conflicts).toBeNull();
+    expect(join.completedAt).toBeNull();
+    expect(join.updatedAt).toBe(t1);
+  });
+
+  it("attaches operator guidance for the next resolution attempt", () => {
+    const guidance = [
+      {
+        file: "src/foo.ts",
+        decision: "rejected" as const,
+        feedback: "keep both",
+      },
+    ];
+    const next = resetJoinForRetry(
+      seededFailedJoin("failed"),
+      "join-1",
+      t1,
+      guidance,
+    );
+    expect(next.joins["join-1"]?.conflictGuidance).toEqual(guidance);
+  });
+
+  it("leaves succeeded and in-flight joins untouched", () => {
+    const base = createWorkflowExecution();
+    for (const status of ["pending", "running", "succeeded"] as const) {
+      const seeded = appendPendingJoin(
+        base,
+        makeJoin({
+          joinId: "join-1",
+          targetLaneId: "lane-a",
+          sourceLaneIds: ["lane-a", "lane-b"],
+          status,
+        }),
+      );
+      const next = resetJoinForRetry(seeded, "join-1", t1);
+      expect(next.joins["join-1"]?.status).toBe(status);
+      expect(next.joins["join-1"]?.updatedAt).toBe(t0);
+    }
   });
 });
 

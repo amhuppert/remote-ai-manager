@@ -47,7 +47,6 @@ export const workflowCharterSchema = z
     conventions: z.array(z.string()).optional(),
     nonGoals: z.array(z.string()).optional(),
     vocabulary: z.array(z.string()).optional(),
-    ownershipMap: z.string().optional(),
     testStrategy: z.string().optional(),
     knownAmbiguities: z.array(z.string()).optional(),
     sourcesOfTruth: z.array(sourceOfTruthSchema).min(1),

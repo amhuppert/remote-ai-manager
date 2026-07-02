@@ -47,6 +47,7 @@ function makeJoin(
     status: "succeeded",
     errorMessage: null,
     conflicts: null,
+    conflictGuidance: null,
     createdAt: timestamp,
     updatedAt: timestamp,
     completedAt: timestamp,

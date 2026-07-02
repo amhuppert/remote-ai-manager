@@ -129,7 +129,6 @@ export function renderCharterMarkdown(charter: WorkflowCharter): string {
   const sections: Array<string | null> = [
     "# Workflow Charter",
     `## Mission\n${charter.mission}`,
-    renderProseSection("Ownership map", charter.ownershipMap),
     renderBulletSection("Conventions", charter.conventions),
     renderBulletSection("Non-goals", charter.nonGoals),
     renderBulletSection("Vocabulary", charter.vocabulary),

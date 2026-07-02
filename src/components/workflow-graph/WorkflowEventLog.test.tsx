@@ -291,6 +291,7 @@ describe("WorkflowEventLog rendering of lane/join events", () => {
           conflicts: {
             files: ["src/foo.ts"],
             message: "merge conflicts in src/foo.ts",
+            analysis: null,
           },
         },
       },

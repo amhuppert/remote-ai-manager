@@ -47,6 +47,7 @@ export interface ApplyJoinProgressPatch {
   addMergedSourceLaneId?: string;
   errorMessage?: string | null;
   conflicts?: GraphWorkflowExecutionJoinState["conflicts"];
+  conflictGuidance?: GraphWorkflowExecutionJoinState["conflictGuidance"];
 }
 
 /**
@@ -156,6 +157,7 @@ export function planContextJoin(
     status: "pending",
     errorMessage: null,
     conflicts: null,
+    conflictGuidance: null,
     createdAt: timestamp,
     updatedAt: timestamp,
     completedAt: null,
@@ -226,6 +228,7 @@ export function planFinalPublishJoin(
     status: "pending",
     errorMessage: null,
     conflicts: null,
+    conflictGuidance: null,
     createdAt: timestamp,
     updatedAt: timestamp,
     completedAt: null,
@@ -320,8 +323,54 @@ export function applyJoinProgress(
             : join.errorMessage,
         conflicts:
           patch.conflicts !== undefined ? patch.conflicts : join.conflicts,
+        conflictGuidance:
+          patch.conflictGuidance !== undefined
+            ? patch.conflictGuidance
+            : join.conflictGuidance,
         updatedAt: now,
         completedAt,
+      },
+    },
+  };
+}
+
+/**
+ * Reset a failed/conflicts join back to `pending` so the loop re-runs it,
+ * preserving per-lane merge progress (`mergedSourceLaneIds`). Optional
+ * operator guidance is attached for the next conflict-resolution attempt.
+ * Joins in any other status are returned unchanged — resume treats the reset
+ * as a manual retry decision that only applies to concluded failures.
+ */
+export function resetJoinForRetry(
+  execution: GraphWorkflowExecution,
+  joinId: string,
+  now: string,
+  conflictGuidance?: GraphWorkflowExecutionJoinState["conflictGuidance"],
+): GraphWorkflowExecution {
+  const join = execution.joins[joinId];
+  if (!join) {
+    throw new Error(
+      `resetJoinForRetry: join ${JSON.stringify(joinId)} not found`,
+    );
+  }
+  if (join.status !== "failed" && join.status !== "conflicts") {
+    return execution;
+  }
+  return {
+    ...execution,
+    joins: {
+      ...execution.joins,
+      [joinId]: {
+        ...join,
+        status: "pending",
+        errorMessage: null,
+        conflicts: null,
+        conflictGuidance:
+          conflictGuidance !== undefined
+            ? conflictGuidance
+            : join.conflictGuidance,
+        updatedAt: now,
+        completedAt: null,
       },
     },
   };

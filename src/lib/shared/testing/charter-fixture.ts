@@ -21,7 +21,6 @@ export function makeTestCharter(
     ],
     nonGoals: ["Backward compatibility with pre-charter records"],
     vocabulary: ["charter: the workflow-global source-of-truth brief"],
-    ownershipMap: "schemas owned by the platform team",
     testStrategy: "TDD red-green-refactor with round-trip durability contracts",
     knownAmbiguities: ["scope of the AeroTrainer floor/round case"],
     sourcesOfTruth: [

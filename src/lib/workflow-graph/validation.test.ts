@@ -357,6 +357,7 @@ describe("workflow-graph validation", () => {
           status: "succeeded",
           errorMessage: null,
           conflicts: null,
+          conflictGuidance: null,
           createdAt: "2026-03-27T12:00:00.000Z",
           updatedAt: "2026-03-27T12:00:00.000Z",
           completedAt: "2026-03-27T12:00:00.000Z",

@@ -16,6 +16,7 @@ import {
   collaborationStopResponseSchema,
 } from "@/lib/collaboration/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
+import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
 import type {
   WorkflowDefinitionRecord,
   WorkflowRuntimeEditRequest,
@@ -193,6 +194,12 @@ export function usePauseGraphWorkflowMutation(
   });
 }
 
+export interface ResumeGraphWorkflowVariables {
+  /** Per-file operator guidance for the next conflict-resolution attempt of a
+   *  failed join being retried by this resume. */
+  conflictGuidance?: ConflictDecisionInput[];
+}
+
 export function useResumeGraphWorkflowMutation(
   projectName: string,
   sessionName: string,
@@ -200,11 +207,19 @@ export function useResumeGraphWorkflowMutation(
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: () =>
+    mutationFn: (variables?: ResumeGraphWorkflowVariables) =>
       mutationFetch(
         `/api/projects/${encodeURIComponent(projectName)}/sessions/${encodeURIComponent(sessionName)}/graph-workflow/resume`,
         "resume-graph-workflow",
-        { method: "POST" },
+        variables?.conflictGuidance && variables.conflictGuidance.length > 0
+          ? {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                conflictGuidance: variables.conflictGuidance,
+              }),
+            }
+          : { method: "POST" },
       ),
     onSuccess: () => {
       void queryClient.invalidateQueries({

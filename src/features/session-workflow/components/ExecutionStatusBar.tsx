@@ -4,7 +4,9 @@ import { useMemo } from "react";
 import { cn } from "@/lib/ui/cn";
 import { Spinner } from "@/components/ui/Spinner";
 import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
 import ContextHaltCard from "@/components/workflow-graph/ContextHaltCard";
+import JoinConflictRecoveryCard from "@/components/workflow-graph/JoinConflictRecoveryCard";
 
 export type ExecutionControlAction = "pause" | "resume" | "abort" | "clear";
 
@@ -38,7 +40,7 @@ import {
 interface ExecutionStatusBarProps {
   execution: GraphWorkflowExecution;
   onPause: () => void;
-  onResume: () => void;
+  onResume: (conflictGuidance?: ConflictDecisionInput[]) => void;
   onAbort: () => void;
   onClear: () => void;
   isMutating: boolean;
@@ -190,7 +192,7 @@ export default function ExecutionStatusBar({
         {showResume && (
           <button
             className={cn(wbBtn, wbBtnXs, wbBtnPrimary, execControlBtn)}
-            onClick={onResume}
+            onClick={() => onResume()}
             disabled={isMutating}
             aria-busy={pendingAction === "resume" || undefined}
             type="button"
@@ -245,6 +247,20 @@ export default function ExecutionStatusBar({
           variant="banner"
         />
       )}
+      {haltReason?.type === "join_failure" &&
+        haltReason.conflictFiles.length > 0 && (
+          <JoinConflictRecoveryCard
+            conflictFiles={haltReason.conflictFiles}
+            analysis={
+              execution.joins[haltReason.joinId]?.conflicts?.analysis ?? null
+            }
+            onRetry={(guidance) =>
+              onResume(guidance.length > 0 ? guidance : undefined)
+            }
+            isRetrying={pendingAction === "resume"}
+            disabled={isMutating}
+          />
+        )}
     </div>
   );
 }

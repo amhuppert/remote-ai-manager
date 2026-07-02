@@ -166,7 +166,13 @@ export default function ConnectedGraphWorkflowPanel({
       archivedExecutions={[]}
       layout={seedDefinitionQuery.data?.item.layout ?? null}
       onPause={() => pauseMutation.mutate()}
-      onResume={() => resumeMutation.mutate()}
+      onResume={(conflictGuidance) =>
+        resumeMutation.mutate(
+          conflictGuidance && conflictGuidance.length > 0
+            ? { conflictGuidance }
+            : undefined,
+        )
+      }
       onAbort={() => abortMutation.mutate()}
       onClear={() => clearMutation.mutate()}
       onAddTask={handleAddTask}

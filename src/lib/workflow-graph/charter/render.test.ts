@@ -54,7 +54,6 @@ function makeCharter(
     conventions: ["Prefer pure functions", "No I/O in renderers"],
     nonGoals: ["Do not change unrelated rounding utilities"],
     vocabulary: ["floor: round toward negative infinity"],
-    ownershipMap: "Renderer owned by the charter module.",
     testStrategy: "Unit-test pure functions directly.",
     knownAmbiguities: ["Tie-breaking at .5 is intentionally bankers'."],
     sourcesOfTruth: [rank1Source, rank2Source, externalSource],
@@ -202,7 +201,6 @@ describe("renderCharterMarkdown", () => {
     expect(markdown).toContain("Prefer pure functions");
     expect(markdown).toContain("Do not change unrelated rounding utilities");
     expect(markdown).toContain("floor: round toward negative infinity");
-    expect(markdown).toContain("Renderer owned by the charter module.");
     expect(markdown).toContain("Unit-test pure functions directly.");
     expect(markdown).toContain("Tie-breaking at .5 is intentionally bankers'.");
   });

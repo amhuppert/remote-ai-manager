@@ -2305,6 +2305,7 @@ describe("execution loop", () => {
             conflicts: {
               files: ["shared.ts"],
               message: "merge conflict in shared.ts",
+              analysis: null,
             },
           }),
         );
@@ -2407,6 +2408,7 @@ describe("execution loop", () => {
           status: "succeeded",
           errorMessage: null,
           conflicts: null,
+          conflictGuidance: null,
           createdAt: "2026-03-27T11:56:00.000Z",
           updatedAt: "2026-03-27T11:57:00.000Z",
           completedAt: "2026-03-27T11:57:00.000Z",

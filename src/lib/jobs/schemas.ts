@@ -109,7 +109,7 @@ export const conflictEntrySchema = z.object({
 });
 export type ConflictEntry = z.infer<typeof conflictEntrySchema>;
 
-const conflictDecisionInputSchema = z.object({
+export const conflictDecisionInputSchema = z.object({
   file: z.string(),
   decision: z.enum(["approved", "rejected", "pending"]),
   feedback: z.string().optional(),

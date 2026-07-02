@@ -276,6 +276,21 @@ export function createWorktreeOperations(client: GitClient = defaultGitClient) {
     return cachedVersion;
   }
 
+  /** Abort an unconcluded merge (MERGE_HEAD present) in the given worktree.
+   *  Returns whether an abort happened. A worktree with no merge in progress
+   *  is left untouched — including one where an operator manually resolved
+   *  and committed the merge. */
+  async function abortInProgressMerge(worktreePath: string): Promise<boolean> {
+    try {
+      await git(worktreePath, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]);
+    } catch {
+      return false;
+    }
+    await git(worktreePath, ["merge", "--abort"]);
+    logger.info("git.abortInProgressMerge.aborted", { worktreePath });
+    return true;
+  }
+
   /** Merge the target branch into the current feature branch in the given worktree.
    *  On conflict the worktree is left in conflict state (merge is NOT aborted). */
   async function mergeTargetIntoFeature(
@@ -615,6 +630,7 @@ export function createWorktreeOperations(client: GitClient = defaultGitClient) {
   }
 
   return {
+    abortInProgressMerge,
     mergeTargetIntoFeature,
     discoverTargetCheckout,
     prepareSquashMerge,
@@ -628,6 +644,7 @@ export function createWorktreeOperations(client: GitClient = defaultGitClient) {
 
 const defaultOps = createWorktreeOperations();
 
+export const abortInProgressMerge = defaultOps.abortInProgressMerge;
 export const mergeTargetIntoFeature = defaultOps.mergeTargetIntoFeature;
 export const discoverTargetCheckout = defaultOps.discoverTargetCheckout;
 export const prepareSquashMerge = defaultOps.prepareSquashMerge;

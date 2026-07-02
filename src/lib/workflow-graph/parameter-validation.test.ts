@@ -901,7 +901,6 @@ describe("SUBSTITUTION_FIELD_SET drift guard", () => {
       "conventions",
       "nonGoals",
       "vocabulary",
-      "ownershipMap",
       "testStrategy",
       "knownAmbiguities",
       "source.id",
@@ -919,7 +918,6 @@ describe("SUBSTITUTION_FIELD_SET drift guard", () => {
       conventions: [sentinelFor("conventions")],
       nonGoals: [sentinelFor("nonGoals")],
       vocabulary: [sentinelFor("vocabulary")],
-      ownershipMap: sentinelFor("ownershipMap"),
       testStrategy: sentinelFor("testStrategy"),
       knownAmbiguities: [sentinelFor("knownAmbiguities")],
       sourcesOfTruth: [
@@ -997,7 +995,6 @@ describe("SUBSTITUTION_FIELD_SET drift guard", () => {
       "conventions",
       "nonGoals",
       "vocabulary",
-      "ownershipMap",
       "testStrategy",
       "knownAmbiguities",
       "source.label",
@@ -1048,7 +1045,6 @@ describe("forEachScannedField visits exactly the registered surface", () => {
         conventions: ["Use TDD"],
         nonGoals: ["No rewrite"],
         vocabulary: ["term: meaning"],
-        ownershipMap: "alice owns auth",
         testStrategy: "unit + integration",
         knownAmbiguities: ["scope of X"],
         sourcesOfTruth: [

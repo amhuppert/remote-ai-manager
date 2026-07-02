@@ -171,18 +171,14 @@ describe("graph workflow execution event publisher", () => {
       "graph-workflow-circuit-breaker",
       "graph-workflow-shared-documents-updated",
     ]);
-    expect(publishedExecution.map((entry) => entry.event.type)).toEqual(
-      [
-        "graph-workflow-status",
-        "graph-workflow-context-status",
-        "graph-workflow-task-status",
-        "graph-workflow-circuit-breaker",
-        "graph-workflow-shared-documents-updated",
-      ],
-    );
-    expect(publishedExecution[0]?.occurredAt).toBe(
-      "2026-03-28T10:00:00.000Z",
-    );
+    expect(publishedExecution.map((entry) => entry.event.type)).toEqual([
+      "graph-workflow-status",
+      "graph-workflow-context-status",
+      "graph-workflow-task-status",
+      "graph-workflow-circuit-breaker",
+      "graph-workflow-shared-documents-updated",
+    ]);
+    expect(publishedExecution[0]?.occurredAt).toBe("2026-03-28T10:00:00.000Z");
   });
 
   it("publishes validation result events and records them in execution history", () => {
@@ -780,9 +776,7 @@ describe("graph workflow execution event publisher", () => {
       lastCommittingContextId: null,
     });
     expect(
-      published.some(
-        (h) => h.event.type === "graph-workflow-lane-status",
-      ),
+      published.some((h) => h.event.type === "graph-workflow-lane-status"),
     ).toBe(true);
   });
 
@@ -908,6 +902,7 @@ describe("graph workflow execution event publisher", () => {
           status: "pending",
           errorMessage: null,
           conflicts: null,
+          conflictGuidance: null,
           createdAt: "2026-04-02T08:00:00.000Z",
           updatedAt: "2026-04-02T08:00:00.000Z",
           completedAt: null,
@@ -941,9 +936,7 @@ describe("graph workflow execution event publisher", () => {
       conflicts: null,
     });
     expect(
-      published.some(
-        (h) => h.event.type === "graph-workflow-join-status",
-      ),
+      published.some((h) => h.event.type === "graph-workflow-join-status"),
     ).toBe(true);
   });
 
@@ -964,6 +957,7 @@ describe("graph workflow execution event publisher", () => {
       status: "pending" as const,
       errorMessage: null,
       conflicts: null,
+      conflictGuidance: null,
       createdAt: "2026-04-02T07:59:00.000Z",
       updatedAt: "2026-04-02T07:59:00.000Z",
       completedAt: null,
@@ -1019,6 +1013,7 @@ describe("graph workflow execution event publisher", () => {
       status: "running" as const,
       errorMessage: null,
       conflicts: null,
+      conflictGuidance: null,
       createdAt: "2026-04-02T07:59:00.000Z",
       updatedAt: "2026-04-02T07:59:00.000Z",
       completedAt: null,
@@ -1034,7 +1029,11 @@ describe("graph workflow execution event publisher", () => {
           ...baseJoin,
           status: "conflicts",
           errorMessage: "merge conflicts",
-          conflicts: { files: ["src/foo.ts"], message: "merge conflicts" },
+          conflicts: {
+            files: ["src/foo.ts"],
+            message: "merge conflicts",
+            analysis: null,
+          },
           updatedAt: "2026-04-02T08:00:00.000Z",
           completedAt: "2026-04-02T08:00:00.000Z",
         },
@@ -1078,6 +1077,7 @@ describe("graph workflow execution event publisher", () => {
       status: "running" as const,
       errorMessage: null,
       conflicts: null,
+      conflictGuidance: null,
       createdAt: "2026-04-02T07:59:00.000Z",
       updatedAt: "2026-04-02T07:59:00.000Z",
       completedAt: null,
@@ -1138,9 +1138,7 @@ describe("graph workflow execution event publisher", () => {
       requestedAt: "2026-06-10T08:59:00.000Z",
     });
     expect(updatedExecution).toHaveLength(1);
-    expect(updatedExecution[0]?.occurredAt).toBe(
-      "2026-06-10T09:00:00.000Z",
-    );
+    expect(updatedExecution[0]?.occurredAt).toBe("2026-06-10T09:00:00.000Z");
     expect(updatedExecution[0]?.event).toMatchObject({
       type: "graph-workflow-approval-pending",
       contextId: "context-plan",
@@ -1191,9 +1189,7 @@ describe("graph workflow execution event publisher", () => {
       decidedAt: "2026-06-10T09:29:00.000Z",
     });
     expect(updatedExecution).toHaveLength(1);
-    expect(updatedExecution[0]?.occurredAt).toBe(
-      "2026-06-10T09:30:00.000Z",
-    );
+    expect(updatedExecution[0]?.occurredAt).toBe("2026-06-10T09:30:00.000Z");
     expect(updatedExecution[0]?.event).toMatchObject({
       type: "graph-workflow-approval-resolved",
       decision: "approved",
@@ -1267,6 +1263,7 @@ describe("graph workflow execution event publisher", () => {
           status: "running",
           errorMessage: null,
           conflicts: null,
+          conflictGuidance: null,
           createdAt: "2026-04-02T07:59:00.000Z",
           updatedAt: "2026-04-02T08:00:00.000Z",
           completedAt: null,
@@ -1281,6 +1278,7 @@ describe("graph workflow execution event publisher", () => {
           status: "pending",
           errorMessage: null,
           conflicts: null,
+          conflictGuidance: null,
           createdAt: "2026-04-02T07:59:00.000Z",
           updatedAt: "2026-04-02T08:00:00.000Z",
           completedAt: null,
@@ -1295,6 +1293,7 @@ describe("graph workflow execution event publisher", () => {
           status: "succeeded",
           errorMessage: null,
           conflicts: null,
+          conflictGuidance: null,
           createdAt: "2026-04-02T07:59:00.000Z",
           updatedAt: "2026-04-02T08:00:00.000Z",
           completedAt: "2026-04-02T08:00:00.000Z",
@@ -1360,9 +1359,7 @@ describe("graph workflow execution event publisher", () => {
     });
 
     expect(updatedExecution).toHaveLength(1);
-    expect(updatedExecution[0]?.occurredAt).toBe(
-      "2026-06-14T10:00:00.000Z",
-    );
+    expect(updatedExecution[0]?.occurredAt).toBe("2026-06-14T10:00:00.000Z");
     expect(updatedExecution[0]?.event).toMatchObject({
       type: "graph-workflow-charter-registered",
       executionId: execution.id,

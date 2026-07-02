@@ -81,6 +81,7 @@ function makeJoin(
     status: "pending",
     errorMessage: null,
     conflicts: null,
+    conflictGuidance: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     completedAt: null,

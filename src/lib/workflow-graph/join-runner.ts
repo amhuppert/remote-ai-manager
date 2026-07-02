@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger } from "@/lib/logging";
+import { abortInProgressMerge as defaultAbortInProgressMerge } from "@/lib/git/worktree";
+import type { ConflictEntry } from "@/lib/jobs/schemas";
 import type { GraphMergeRunner } from "./graph-merge-runner";
 import type { PerSessionMergeMutex } from "./per-session-merge-mutex";
 import type { SessionGitLock } from "./session-git-lock";
@@ -42,6 +44,9 @@ export interface JoinRunnerDeps {
   mergeRunner: GraphMergeRunner;
   sessionGitLock: SessionGitLock;
   mergeMutex: PerSessionMergeMutex;
+  /** Aborts an unconcluded `git merge` (MERGE_HEAD present); returns whether
+   *  an abort happened. Defaults to the real git helper. */
+  abortInProgressMerge?(worktreePath: string): Promise<boolean>;
   createJobId?(): string;
   now?(): string;
 }
@@ -49,6 +54,8 @@ export interface JoinRunnerDeps {
 export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
   const createJobId = deps.createJobId ?? (() => randomUUID());
   const now = deps.now ?? (() => new Date().toISOString());
+  const abortInProgressMerge =
+    deps.abortInProgressMerge ?? defaultAbortInProgressMerge;
 
   return {
     async run(input): Promise<JoinRunResult> {
@@ -104,7 +111,10 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
         const remaining = remainingSourceLanes(currentJoin);
         if (remaining.length === 0) {
           execution = await mutateActive((e) =>
-            applyJoinProgress(e, joinId, now(), { status: "succeeded" }),
+            applyJoinProgress(e, joinId, now(), {
+              status: "succeeded",
+              conflictGuidance: null,
+            }),
           );
           logger.info("graph-workflow.join.completed", {
             joinId,
@@ -146,6 +156,23 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
           | "discarded";
         let mergeError: string | null = null;
         let mergeConflictFiles: string[] = [];
+        let mergeConflictAnalysis: ConflictEntry[] | null = null;
+
+        const sourceWorktreePath = sourceLane.worktreePath;
+        const runMerge = () =>
+          deps.mergeRunner.run({
+            jobId: createJobId(),
+            projectPath,
+            projectName,
+            sessionName,
+            contextId: currentJoin.contextId ?? currentJoin.joinId,
+            branchName: sourceLane.branchName,
+            featureWorktreePath: sourceWorktreePath,
+            targetBranch,
+            targetWorktreePath,
+            message: `Graph workflow join ${currentJoin.kind} ${currentJoin.joinId}: ${sourceLaneId} -> ${currentJoin.targetLaneId}`,
+            decisions: currentJoin.conflictGuidance ?? undefined,
+          });
 
         try {
           const output = await deps.mergeMutex.withMergeMutex(
@@ -153,24 +180,43 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
             () =>
               deps.sessionGitLock.withSessionGitLock(
                 { projectPath, sessionName },
-                () =>
-                  deps.mergeRunner.run({
-                    jobId: createJobId(),
-                    projectPath,
-                    projectName,
-                    sessionName,
-                    contextId: currentJoin.contextId ?? currentJoin.joinId,
-                    branchName: sourceLane.branchName,
-                    featureWorktreePath: sourceLane.worktreePath!,
-                    targetBranch,
-                    targetWorktreePath,
-                    message: `Graph workflow join ${currentJoin.kind} ${currentJoin.joinId}: ${sourceLaneId} -> ${currentJoin.targetLaneId}`,
-                  }),
+                async () => {
+                  // Self-healing preflight: a previously failed resolution
+                  // leaves the source worktree mid-merge, and git refuses to
+                  // start a new merge over one. An operator who resolved
+                  // manually has committed, so nothing is aborted for them.
+                  const staleAborted =
+                    await abortInProgressMerge(sourceWorktreePath);
+                  if (staleAborted) {
+                    logger.info("graph-workflow.join.stale_merge_aborted", {
+                      joinId,
+                      sourceLaneId,
+                      sourceWorktreePath,
+                    });
+                  }
+
+                  const first = await runMerge();
+                  if (first.status !== "conflicts") return first;
+
+                  // One clean retry before surfacing the conflict: failed
+                  // resolutions are frequently transient (structured-output
+                  // parse failures, an agent giving up mid-run) and retrying
+                  // on top of a half-resolved tree is worse than starting
+                  // over.
+                  logger.info("graph-workflow.join.conflict_retry", {
+                    joinId,
+                    sourceLaneId,
+                    conflictFiles: first.conflictFiles.length,
+                  });
+                  await abortInProgressMerge(sourceWorktreePath);
+                  return runMerge();
+                },
               ),
           );
           mergeStatus = output.status;
           mergeError = output.error;
           mergeConflictFiles = output.conflictFiles;
+          mergeConflictAnalysis = output.conflictAnalysis;
         } catch (err) {
           mergeStatus = "failed";
           mergeError = getErrorMessage(err);
@@ -220,8 +266,13 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
             errorMessage: message,
             conflicts:
               mergeConflictFiles.length > 0
-                ? { files: mergeConflictFiles, message }
+                ? {
+                    files: mergeConflictFiles,
+                    message,
+                    analysis: mergeConflictAnalysis,
+                  }
                 : null,
+            conflictGuidance: null,
           }),
         );
         logger.error("graph-workflow.join.source_merge_failed", {

@@ -1666,6 +1666,7 @@ describe("graph workflow manager", () => {
             status: "running",
             errorMessage: null,
             conflicts: null,
+            conflictGuidance: null,
             createdAt: "2026-03-27T15:00:00.000Z",
             updatedAt: "2026-03-27T15:00:30.000Z",
             completedAt: null,
@@ -1721,6 +1722,7 @@ describe("graph workflow manager", () => {
             status: "succeeded",
             errorMessage: null,
             conflicts: null,
+            conflictGuidance: null,
             createdAt: "2026-03-27T15:00:00.000Z",
             updatedAt: "2026-03-27T15:01:00.000Z",
             completedAt: "2026-03-27T15:01:00.000Z",
@@ -1735,6 +1737,7 @@ describe("graph workflow manager", () => {
             status: "failed",
             errorMessage: "merge tool exited 1",
             conflicts: null,
+            conflictGuidance: null,
             createdAt: "2026-03-27T15:00:00.000Z",
             updatedAt: "2026-03-27T15:02:00.000Z",
             completedAt: "2026-03-27T15:02:00.000Z",
@@ -1877,6 +1880,7 @@ describe("graph workflow manager", () => {
             status: "running",
             errorMessage: null,
             conflicts: null,
+            conflictGuidance: null,
             createdAt: "2026-03-27T15:00:00.000Z",
             updatedAt: "2026-03-27T15:00:30.000Z",
             completedAt: null,
@@ -2171,6 +2175,120 @@ describe("graph workflow manager", () => {
     expect(execution.contextStates["context-implement"]).toMatchObject({
       status: "ready",
       consecutiveFailureCount: 0,
+    });
+  });
+
+  it("resume resets a failed join to pending, attaching operator conflict guidance", async () => {
+    const baseExecution = createWorkflowExecution();
+    const repository = createRepository(
+      createWorkflowExecution({
+        ...baseExecution,
+        status: "halted",
+        activeContextIds: [],
+        completedAt: "2026-03-27T15:30:00.000Z",
+        joins: {
+          "join-1": {
+            joinId: "join-1",
+            kind: "final_publish",
+            contextId: null,
+            targetLaneId: "session-lane",
+            sourceLaneIds: ["lane-a", "lane-b"],
+            mergedSourceLaneIds: ["lane-a"],
+            status: "conflicts",
+            errorMessage: "resolution failed",
+            conflicts: {
+              files: ["src/foo.ts"],
+              message: "resolution failed",
+              analysis: null,
+            },
+            conflictGuidance: null,
+            createdAt: "2026-03-27T15:00:00.000Z",
+            updatedAt: "2026-03-27T15:20:00.000Z",
+            completedAt: "2026-03-27T15:20:00.000Z",
+          },
+        },
+      }),
+    );
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    const guidance = [
+      {
+        file: "src/foo.ts",
+        decision: "rejected" as const,
+        feedback: "keep both hunks",
+      },
+    ];
+    const execution = await manager.resume("/repo", "session-1", {
+      conflictGuidance: guidance,
+    });
+
+    expect(execution.status).toBe("running");
+    expect(execution.joins["join-1"]).toMatchObject({
+      status: "pending",
+      errorMessage: null,
+      conflicts: null,
+      completedAt: null,
+      conflictGuidance: guidance,
+      // Per-lane progress survives the reset so already-merged lanes are skipped.
+      mergedSourceLaneIds: ["lane-a"],
+    });
+  });
+
+  it("resume without guidance still resets failed joins and leaves succeeded joins untouched", async () => {
+    const baseExecution = createWorkflowExecution();
+    const succeededJoin = {
+      joinId: "join-ok",
+      kind: "context_merge" as const,
+      contextId: null,
+      targetLaneId: "lane-a",
+      sourceLaneIds: ["lane-a", "lane-c"],
+      mergedSourceLaneIds: ["lane-c"],
+      status: "succeeded" as const,
+      errorMessage: null,
+      conflicts: null,
+      conflictGuidance: null,
+      createdAt: "2026-03-27T14:00:00.000Z",
+      updatedAt: "2026-03-27T14:10:00.000Z",
+      completedAt: "2026-03-27T14:10:00.000Z",
+    };
+    const repository = createRepository(
+      createWorkflowExecution({
+        ...baseExecution,
+        status: "halted",
+        activeContextIds: [],
+        joins: {
+          "join-ok": succeededJoin,
+          "join-bad": {
+            ...succeededJoin,
+            joinId: "join-bad",
+            status: "failed",
+            errorMessage: "merge failed",
+            mergedSourceLaneIds: [],
+          },
+        },
+      }),
+    );
+
+    const manager = createGraphWorkflowManager({
+      executionRepository: repository,
+      async loadDefinition() {
+        return null;
+      },
+    });
+
+    const execution = await manager.resume("/repo", "session-1");
+
+    expect(execution.joins["join-ok"]).toEqual(succeededJoin);
+    expect(execution.joins["join-bad"]).toMatchObject({
+      status: "pending",
+      errorMessage: null,
+      conflictGuidance: null,
     });
   });
 
@@ -4041,6 +4159,7 @@ describe("graph workflow manager", () => {
               status: "succeeded",
               errorMessage: null,
               conflicts: null,
+              conflictGuidance: null,
               createdAt: "2026-03-27T15:00:00.000Z",
               updatedAt: "2026-03-27T15:00:00.000Z",
               completedAt: "2026-03-27T15:00:00.000Z",

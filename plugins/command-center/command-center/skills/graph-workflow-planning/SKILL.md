@@ -70,7 +70,7 @@ Good acceptance criteria:
 
 - Name concrete state transitions, emitted data, files, APIs, or user-visible behavior.
 - Include important negative cases and unsupported/gated behavior.
-- Fit entirely inside the context's ownership.
+- Fit entirely inside the context's scope.
 - Give the validator enough specificity to pass or reopen a task without inventing new edge cases.
 
 Do not write acceptance criteria that:
@@ -118,21 +118,28 @@ If the validator would need the whole design to judge a narrow context, either a
 
 ## Parallelization Guidance
 
+Parallel contexts run in isolated git worktrees, one branch per context, so they cannot interfere with each other mid-flight. Branches are merged automatically at join points and at final publish, and merge conflicts are **resolved automatically** by an LLM resolver (the same machinery as Smart Merge), with the project's pre-merge validation running after every join merge. Do not plan as if all merge conflicts must be avoided.
+
+Plan for aligned intent, not file disjointness:
+
+- Two contexts needing to touch the same file does **not** by itself preclude running them in parallel. Logically independent edits to a shared file merge cleanly or resolve straightforwardly.
+- Do not serialize contexts merely to avoid merge conflicts, and do not contort context boundaries to keep write surfaces disjoint.
+- What parallel contexts must share is intent: contracts, conventions, and vocabulary declared up front — in the charter or a short foundation context — so their changes compose.
+
 Parallelize when all of these are true:
 
-- Contexts have disjoint write surfaces or a stable shared contract.
+- Contexts make logically independent changes, aligned by shared contracts, even if their file sets overlap.
 - No context needs another context's implementation details to make good decisions.
 - Validation can be judged locally for each context.
-- Merge risk is low enough that parallel branches will not repeatedly reopen each other.
 
-Stay sequential when:
+Stay sequential when contexts are semantically coupled — when running them in parallel would mean two agents independently designing the same behavior:
 
-- Contexts touch the same state machine, runtime lifecycle, adapter contract, or persistence schema.
+- Contexts change the same state machine, runtime lifecycle, adapter contract, or persistence schema in ways that must compose behaviorally. Automatic resolution fixes textual conflicts; it cannot make two independently designed changes to one design surface coherent.
 - A backend support decision is still unverified.
 - One context's implementation would be useful foundation context for another agent, even without a hard dependency.
 - Diagnostics, retries, and status semantics span several contexts and need a single authoritative vocabulary.
 
-Conservative parallelization is better than a graph that looks fast but causes repeated validator loops.
+A conflict the resolver cannot handle halts the workflow at the join, so heavy overlap on a coupled surface still carries risk; prefer a short foundation context that lands the shared contract first, then parallelize freely on top of it.
 
 ## Common Failure Modes
 

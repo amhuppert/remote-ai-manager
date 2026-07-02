@@ -719,6 +719,7 @@ describe("graph workflow execution route handlers", () => {
               status: "running",
               errorMessage: null,
               conflicts: null,
+              conflictGuidance: null,
               createdAt: "2026-04-02T08:00:00.000Z",
               updatedAt: "2026-04-02T08:00:00.000Z",
               completedAt: null,
@@ -787,6 +788,7 @@ describe("graph workflow execution route handlers", () => {
               status: "running",
               errorMessage: null,
               conflicts: null,
+              conflictGuidance: null,
               createdAt: "2026-04-02T09:00:00.000Z",
               updatedAt: "2026-04-02T09:00:00.000Z",
               completedAt: null,
@@ -1119,8 +1121,53 @@ describe("graph workflow execution route handlers", () => {
     expect(abortResponse.status).toBe(200);
 
     expect(pauseExecution).toHaveBeenCalledWith("/repo", "session-1");
-    expect(resumeExecution).toHaveBeenCalledWith("/repo", "session-1");
+    expect(resumeExecution).toHaveBeenCalledWith(
+      "/repo",
+      "session-1",
+      undefined,
+    );
     expect(abortExecution).toHaveBeenCalledWith("/repo", "session-1");
+  });
+
+  it("threads conflict guidance from the resume body to the workflow manager", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+    normalizeExecutionAfterRestart.mockResolvedValue(null);
+    resumeExecution.mockResolvedValue(
+      createWorkflowExecution({ status: "running" }),
+    );
+
+    const guidance = [
+      { file: "src/foo.ts", decision: "rejected", feedback: "keep both" },
+    ];
+    const response = await handlers.RESUME(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/resume",
+        "POST",
+        { conflictGuidance: guidance },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+    expect(response.status).toBe(200);
+    expect(resumeExecution).toHaveBeenCalledWith("/repo", "session-1", {
+      conflictGuidance: guidance,
+    });
+  });
+
+  it("rejects a malformed resume body with 400", async () => {
+    resolveProjectPath.mockResolvedValue("/repo");
+    getSession.mockResolvedValue(makeSession());
+
+    const response = await handlers.RESUME(
+      makeRequest(
+        "/api/projects/repo/sessions/session-1/graph-workflow/resume",
+        "POST",
+        { conflictGuidance: [{ file: "x", decision: "bogus" }] },
+      ),
+      makeContext({ name: "repo", session: "session-1" }),
+    );
+    expect(response.status).toBe(400);
+    expect(resumeExecution).not.toHaveBeenCalled();
   });
 
   it("normalizes stale running executions before resuming them", async () => {
@@ -1180,7 +1227,11 @@ describe("graph workflow execution route handlers", () => {
       "/repo",
       "session-1",
     );
-    expect(resumeExecution).toHaveBeenCalledWith("/repo", "session-1");
+    expect(resumeExecution).toHaveBeenCalledWith(
+      "/repo",
+      "session-1",
+      undefined,
+    );
     expect(kickOffExecutionLoop).toHaveBeenCalledWith({
       projectPath: "/repo",
       projectName: "repo",

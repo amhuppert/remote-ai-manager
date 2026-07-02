@@ -1,5 +1,6 @@
 import { createActor, toPromise } from "xstate";
 import { createLogger } from "@/lib/logging";
+import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
 import {
   mergeMachine,
   type MergeMachineType,
@@ -19,6 +20,9 @@ export interface GraphMergeRunnerInput {
   targetBranch: string;
   targetWorktreePath: string;
   message: string;
+  /** Operator guidance for conflict resolution, threaded into the machine's
+   *  resolver as per-file decisions. */
+  decisions?: ConflictDecisionInput[];
 }
 
 export interface GraphMergeRunner {
@@ -63,6 +67,7 @@ export function createGraphWorkflowMergeRunner(
           branchName: input.branchName,
           message: input.message,
           autoResolve: true,
+          decisions: input.decisions,
           targetBranch: input.targetBranch,
           targetWorktreePath: input.targetWorktreePath,
           finalizeSessionOnPublish: false,

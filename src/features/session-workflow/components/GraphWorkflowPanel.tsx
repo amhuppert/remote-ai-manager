@@ -10,6 +10,7 @@ import type {
   GraphWorkflowExecutionEvent,
   GraphWorkflowVisualLayout,
 } from "@/lib/workflows/schemas";
+import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
 import type { ExecutionMobilePanel } from "../SessionWorkflowPage";
 import ExecutionStatusBar, {
   type ExecutionControlAction,
@@ -27,7 +28,7 @@ interface GraphWorkflowPanelProps {
   archivedExecutions: GraphWorkflowExecution[];
   layout: GraphWorkflowVisualLayout | null;
   onPause(): void;
-  onResume(): void;
+  onResume(conflictGuidance?: ConflictDecisionInput[]): void;
   onAbort(): void;
   onClear(): void;
   onAddTask(contextId: string, title: string, instructions: string): void;

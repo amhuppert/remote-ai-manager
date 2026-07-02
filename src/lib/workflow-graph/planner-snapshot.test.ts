@@ -153,7 +153,6 @@ describe("planner workflow generation — fixture snapshot", () => {
             "nonGoals": [
               "Backward compatibility with pre-charter records",
             ],
-            "ownershipMap": "schemas owned by the platform team",
             "sourcesOfTruth": [
               {
                 "accessPolicy": "worktree-relative",

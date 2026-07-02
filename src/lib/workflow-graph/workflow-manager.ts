@@ -24,6 +24,8 @@ import {
 } from "@/lib/workflow-graph/parallel-worktrees";
 import type { SessionState } from "@/lib/sessions/schemas";
 import type { DirtyPath } from "@/lib/workflow-graph/errors";
+import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
+import { resetJoinForRetry } from "@/lib/workflow-graph/lane-join";
 import { readWorktreeDirtyPaths } from "@/lib/git/worktree";
 import {
   validateLaunchInputs,
@@ -204,6 +206,12 @@ export class WorkflowPrerequisitesUnmetError extends Error {
 export interface GraphWorkflowRetryableIterationErrorInput {
   contextId: string;
   errorMessage: string;
+}
+
+export interface GraphWorkflowResumeOptions {
+  /** Per-file operator guidance attached to every failed join reset by this
+   *  resume; consumed by the next conflict-resolution attempt. */
+  conflictGuidance?: ConflictDecisionInput[];
 }
 
 export type GraphWorkflowManagerEvent =
@@ -842,10 +850,12 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
   async function resume(
     projectPath: string,
     sessionName: string,
+    options?: GraphWorkflowResumeOptions,
   ): Promise<GraphWorkflowExecution> {
     let previousStatus: GraphWorkflowStatus | null = null;
     let hasInterrupted = false;
     let mergeRetryContextIds: string[] = [];
+    let resetJoinIds: string[] = [];
 
     const nextExecution = await deps.executionRepository.mutateActive(
       projectPath,
@@ -859,6 +869,25 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
         }
 
         previousStatus = execution.status;
+
+        // Resume is a manual retry decision: concluded-failed joins go back to
+        // pending (per-lane merge progress survives) so the loop re-runs them,
+        // carrying any operator conflict guidance into the next resolution.
+        const joinResetAt = new Date().toISOString();
+        const joinIdsToReset = Object.values(execution.joins ?? {})
+          .filter(
+            (join) => join.status === "failed" || join.status === "conflicts",
+          )
+          .map((join) => join.joinId);
+        for (const joinId of joinIdsToReset) {
+          execution = resetJoinForRetry(
+            execution,
+            joinId,
+            joinResetAt,
+            options?.conflictGuidance,
+          );
+        }
+        resetJoinIds = joinIdsToReset;
         execution.status = "running";
         execution.completedAt = null;
         execution.haltReason = null;
@@ -918,6 +947,17 @@ export function createGraphWorkflowManager(deps: GraphWorkflowManagerDeps) {
       logger.info("graph-workflow.resume.merge_retry_scheduled", {
         executionId: nextExecution.id,
         retryContextIds: mergeRetryContextIds,
+      });
+    }
+    if (resetJoinIds.length > 0) {
+      execLogger.lifecycle("resume.join_retry_scheduled", {
+        resetJoinIds,
+        hasConflictGuidance: (options?.conflictGuidance?.length ?? 0) > 0,
+      });
+      logger.info("graph-workflow.resume.join_retry_scheduled", {
+        executionId: nextExecution.id,
+        resetJoinIds,
+        hasConflictGuidance: (options?.conflictGuidance?.length ?? 0) > 0,
       });
     }
     logger.info("graph-workflow.execution.resumed", {
