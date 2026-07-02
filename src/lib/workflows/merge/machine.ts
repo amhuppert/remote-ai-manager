@@ -189,6 +189,7 @@ export const mergeMachine = setup({
     conflictFiles: [],
     conflictAnalysis: null,
     decisions: input.decisions ?? null,
+    resolutionContext: input.resolutionContext ?? null,
     phase: null,
     error: null,
     mergeHash: null,
@@ -328,6 +329,8 @@ export const mergeMachine = setup({
           worktreePath: context.worktreePath,
           projectPath: context.projectPath,
           sessionName: context.sessionName,
+          resolutionContext: context.resolutionContext ?? undefined,
+          targetBranch: context.targetBranch,
         }),
         onDone: [
           {
@@ -352,6 +355,8 @@ export const mergeMachine = setup({
           projectPath: context.projectPath,
           sessionName: context.sessionName,
           decisions: context.decisions ?? undefined,
+          resolutionContext: context.resolutionContext ?? undefined,
+          targetBranch: context.targetBranch,
         }),
         onDone: [
           {

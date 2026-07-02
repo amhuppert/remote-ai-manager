@@ -13,7 +13,7 @@ export interface GenerationContext {
 }
 
 export type ResolvedGeneratedMessage =
-  | { ok: true; message: string }
+  | { ok: true; message: string; resolutionContext?: string }
   | { ok: false; reason: string };
 
 export function buildGenerationPrompt(ctx: GenerationContext): string {
@@ -41,6 +41,13 @@ export function buildGenerationPrompt(ctx: GenerationContext): string {
     "",
     "Respond with the structured output containing the commit message: a concise summary line, optionally followed by a blank line and a short body.",
   );
+
+  if (ctx.command === "merge") {
+    lines.push(
+      "",
+      "Also fill the `resolutionContext` field: notes for an agent that may later resolve merge conflicts between this branch and the target. From the conversation context, summarize what changed and why, the key design decisions, and any invariants a conflict resolver must preserve when reconciling these changes with other work.",
+    );
+  }
 
   return lines.join("\n");
 }
@@ -72,7 +79,10 @@ export function resolveGeneratedMessage(
   if (message === "") {
     return { ok: false, reason: "structured output message is empty" };
   }
-  return { ok: true, message };
+  const resolutionContext = parsed.data.resolutionContext?.trim();
+  return resolutionContext
+    ? { ok: true, message, resolutionContext }
+    : { ok: true, message };
 }
 
 export function defaultMessage(ctx: GenerationContext): string {

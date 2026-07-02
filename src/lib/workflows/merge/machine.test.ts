@@ -721,6 +721,77 @@ describe("mergeMachine", () => {
     });
   });
 
+  describe("resolution context threading", () => {
+    it("passes resolutionContext from input to the resolveConflicts actor", async () => {
+      let capturedInput: ResolveConflictsInput | null = null;
+
+      const machine = createTestMachine({
+        mergeMain: mockMergeMain(async () => ({
+          status: "conflicts",
+          conflictFiles: ["src/index.ts"],
+        })),
+        resolveConflicts: mockResolveConflicts(async (input) => {
+          capturedInput = input;
+          return { status: "resolved", conflicts: [] };
+        }),
+      });
+      const actor = createActor(machine, {
+        input: {
+          ...defaultInput,
+          resolutionContext: "The session renamed SessionStore to SessionRepo.",
+        },
+      });
+      actor.start();
+
+      await toPromise(actor);
+
+      expect(capturedInput).not.toBeNull();
+      expect(capturedInput!.resolutionContext).toBe(
+        "The session renamed SessionStore to SessionRepo.",
+      );
+      expect(capturedInput!.targetBranch).toBe("main");
+    });
+
+    it("passes resolutionContext to the analyzeConflicts actor when autoResolve is off", async () => {
+      let capturedInput: AnalyzeConflictsInput | null = null;
+
+      const machine = createTestMachine({
+        mergeMain: mockMergeMain(async () => ({
+          status: "conflicts",
+          conflictFiles: ["src/index.ts"],
+        })),
+        analyzeConflicts: mockAnalyzeConflicts(async (input) => {
+          capturedInput = input;
+          return { status: "analyzed", conflicts: [] };
+        }),
+      });
+      const actor = createActor(machine, {
+        input: {
+          ...defaultInput,
+          autoResolve: false,
+          resolutionContext: "The session migrated config reads to Zod v4.",
+        },
+      });
+      actor.start();
+
+      await toPromise(actor);
+
+      expect(capturedInput).not.toBeNull();
+      expect(capturedInput!.resolutionContext).toBe(
+        "The session migrated config reads to Zod v4.",
+      );
+      expect(capturedInput!.targetBranch).toBe("main");
+    });
+
+    it("defaults resolutionContext to null in context when omitted", () => {
+      const machine = createTestMachine();
+      const actor = createActor(machine, { input: defaultInput });
+      actor.start();
+
+      expect(actor.getSnapshot().context.resolutionContext).toBeNull();
+    });
+  });
+
   describe("fixValidation receives project context", () => {
     it("passes projectPath, sessionName, and branchName to fixValidation actor", async () => {
       let capturedInput: FixValidationInput | null = null;

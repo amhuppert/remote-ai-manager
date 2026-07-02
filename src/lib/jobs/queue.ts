@@ -18,6 +18,7 @@ import type { BroadcastFn } from "../events/broadcaster";
 import { publishSessionStatus } from "../workflows/primitives/default-session-status-bus";
 import { captureTraceContext, createLogger, runAsTrace } from "../logging";
 import { createNotification } from "../notifications/repo";
+import { recordMergeIntent } from "../merge-intents/repo";
 import {
   createJobRecord,
   updateJobRecord,
@@ -412,6 +413,29 @@ function subscribeMergeActor(
         );
       }
 
+      // Attach the intent brief to the landed commit so future merges can
+      // explain this commit to their conflict resolvers. Non-throwing.
+      if (
+        output.status === "completed" &&
+        output.mergeHash &&
+        ctx.resolutionContext
+      ) {
+        try {
+          recordMergeIntent({
+            projectPath: ctx.projectPath,
+            commitSha: output.mergeHash,
+            intent: ctx.resolutionContext,
+            source: "session-merge",
+          });
+        } catch (err) {
+          logger.error("background-jobs.record_merge_intent_failed", {
+            jobId: job.jobId,
+            mergeHash: output.mergeHash,
+            error: getErrorMessage(err),
+          });
+        }
+      }
+
       broadcastJobStatus(job, broadcast);
       release();
     },
@@ -504,6 +528,8 @@ export interface DispatchMergeParams {
   preparedSha?: string;
   expectedTargetSha?: string;
   parkedRef?: string;
+  /** Agent-written intent notes for a conflict-resolution turn. */
+  resolutionContext?: string;
 }
 
 export function dispatchMergeJob(
@@ -538,6 +564,7 @@ function dispatchMergeJobImpl(
     preparedSha,
     expectedTargetSha,
     parkedRef,
+    resolutionContext,
   } = params;
 
   const prepared = prepareDispatch({
@@ -553,6 +580,9 @@ function dispatchMergeJobImpl(
   if (!prepared.ok) return prepared;
 
   const { job, release } = prepared.value;
+  if (resolutionContext) {
+    job.resolutionContext = resolutionContext;
+  }
 
   logger.info("merge.start", {
     jobId: job.jobId,
@@ -580,6 +610,7 @@ function dispatchMergeJobImpl(
     ...(preparedSha && { preparedSha }),
     ...(expectedTargetSha && { expectedTargetSha }),
     ...(parkedRef && { parkedRef }),
+    ...(resolutionContext && { resolutionContext }),
   };
 
   const actor = createActor(
@@ -702,6 +733,7 @@ export function dispatchResolveConflictsJob(params: {
   decisions?: ConflictDecisionInput[];
   targetBranch?: string;
   targetWorktreePath?: string;
+  resolutionContext?: string;
   broadcast?: BroadcastFn;
   acquireSessionLock?: AcquireSessionLockFn;
   machine?: MergeMachineType;
@@ -723,6 +755,7 @@ function dispatchResolveConflictsJobImpl(params: {
   decisions?: ConflictDecisionInput[];
   targetBranch?: string;
   targetWorktreePath?: string;
+  resolutionContext?: string;
   broadcast?: BroadcastFn;
   acquireSessionLock?: AcquireSessionLockFn;
   machine?: MergeMachineType;
@@ -737,6 +770,7 @@ function dispatchResolveConflictsJobImpl(params: {
     decisions,
     targetBranch,
     targetWorktreePath,
+    resolutionContext,
     broadcast = defaultJobBroadcast,
     acquireSessionLock,
     machine = mergeMachine,
@@ -755,10 +789,14 @@ function dispatchResolveConflictsJobImpl(params: {
   if (!prepared.ok) return prepared;
 
   const { job, release } = prepared.value;
+  if (resolutionContext) {
+    job.resolutionContext = resolutionContext;
+  }
 
   logger.info("resolve-conflicts.start", {
     jobId: job.jobId,
     sessionName,
+    resolutionContextLength: resolutionContext?.length ?? 0,
   });
 
   // Create the merge machine with resolve-conflicts routing
@@ -775,6 +813,7 @@ function dispatchResolveConflictsJobImpl(params: {
     decisions,
     targetBranch,
     targetWorktreePath,
+    ...(resolutionContext && { resolutionContext }),
   };
 
   const actor = createActor(

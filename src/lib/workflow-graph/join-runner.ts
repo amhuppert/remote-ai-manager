@@ -7,6 +7,7 @@ import type { GraphMergeRunner } from "./graph-merge-runner";
 import type { PerSessionMergeMutex } from "./per-session-merge-mutex";
 import type { SessionGitLock } from "./session-git-lock";
 import { applyJoinProgress, remainingSourceLanes } from "./lane-join";
+import { buildJoinResolutionContext } from "./join-resolution-context";
 import type {
   GraphWorkflowExecution,
   GraphWorkflowExecutionJoinState,
@@ -159,6 +160,9 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
         let mergeConflictAnalysis: ConflictEntry[] | null = null;
 
         const sourceWorktreePath = sourceLane.worktreePath;
+        const resolutionContext =
+          buildJoinResolutionContext(execution, currentJoin, sourceLaneId) ??
+          undefined;
         const runMerge = () =>
           deps.mergeRunner.run({
             jobId: createJobId(),
@@ -172,6 +176,7 @@ export function createJoinRunner(deps: JoinRunnerDeps): JoinRunner {
             targetWorktreePath,
             message: `Graph workflow join ${currentJoin.kind} ${currentJoin.joinId}: ${sourceLaneId} -> ${currentJoin.targetLaneId}`,
             decisions: currentJoin.conflictGuidance ?? undefined,
+            resolutionContext,
           });
 
         try {

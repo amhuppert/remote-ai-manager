@@ -53,6 +53,8 @@ export interface DispatchMergeParams {
   autoResolve: boolean;
   targetBranch?: string;
   targetWorktreePath?: string;
+  /** Agent-written intent notes for a later conflict-resolution turn. */
+  resolutionContext?: string;
 }
 
 export interface ConversationCommandDeps {
@@ -203,7 +205,11 @@ export function createConversationCommandService(
     ctx: GenerationContext,
     reason: string,
     generationDurationMs: number | null,
-  ): Promise<{ message: string; usedFallback: true }> {
+  ): Promise<{
+    message: string;
+    resolutionContext?: string;
+    usedFallback: true;
+  }> {
     const fallback = defaultMessage(ctx);
     logger.warn("command.generation_fallback", {
       command: ctx.command,
@@ -224,7 +230,11 @@ export function createConversationCommandService(
   async function generateMessage(
     input: RunCommandInput,
     ctx: GenerationContext,
-  ): Promise<{ message: string; usedFallback: boolean }> {
+  ): Promise<{
+    message: string;
+    resolutionContext?: string;
+    usedFallback: boolean;
+  }> {
     const startedAt = performance.now();
     let resolved: ReturnType<typeof resolveGeneratedMessage>;
     try {
@@ -257,7 +267,11 @@ export function createConversationCommandService(
     }
 
     if (resolved.ok) {
-      return { message: resolved.message, usedFallback: false };
+      return {
+        message: resolved.message,
+        resolutionContext: resolved.resolutionContext,
+        usedFallback: false,
+      };
     }
 
     return engageFallback(
@@ -328,7 +342,7 @@ export function createConversationCommandService(
       changeSummary: changeSummary.ok ? changeSummary.value : "",
     };
 
-    const { message, usedFallback } = changeSummary.ok
+    const { message, resolutionContext, usedFallback } = changeSummary.ok
       ? await generateMessage(input, ctx)
       : await engageFallback(input, ctx, changeSummary.reason, null);
 
@@ -344,6 +358,7 @@ export function createConversationCommandService(
             autoResolve: true,
             targetBranch: target?.targetBranch,
             targetWorktreePath: target?.targetWorktreePath ?? undefined,
+            resolutionContext,
           })
         : deps.dispatchCommitJob({
             projectPath: input.projectPath,

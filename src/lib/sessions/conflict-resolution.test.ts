@@ -229,6 +229,126 @@ ${JSON.stringify({ conflicts: SAMPLE_ENTRIES }, null, 2)}
     expect(result.status).toBe("failed");
   });
 
+  it("includes the resolution context section in the prompt when provided", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
+    const deps = createTestDeps({ executeWorkflowTaskRun });
+    const { resolveConflicts } = createConflictResolver(deps);
+
+    await resolveConflicts({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      resolutionContext:
+        "Renamed SessionStore to SessionRepo across the codebase; keep the new name everywhere.",
+    });
+
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input.prompt).toContain("Context about the changes being merged");
+    expect(input.prompt).toContain(
+      "Renamed SessionStore to SessionRepo across the codebase",
+    );
+  });
+
+  it("omits the resolution context section when not provided", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
+    const deps = createTestDeps({ executeWorkflowTaskRun });
+    const { resolveConflicts } = createConflictResolver(deps);
+
+    await resolveConflicts({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+    });
+
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input.prompt).not.toContain(
+      "Context about the changes being merged",
+    );
+  });
+
+  it("appends the incoming-changes section to the prompt when targetBranch is provided", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
+    const buildIncomingChangesSection = vi
+      .fn()
+      .mockResolvedValue(
+        "Incoming commits from `main`:\n- aaaa111 Merge csm/other into main\n  Intent: reworked config loader",
+      );
+    const deps = createTestDeps({
+      executeWorkflowTaskRun,
+      buildIncomingChangesSection,
+    });
+    const { resolveConflicts } = createConflictResolver(deps);
+
+    await resolveConflicts({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      targetBranch: "main",
+    });
+
+    expect(buildIncomingChangesSection).toHaveBeenCalledWith({
+      projectPath: PROJECT_PATH,
+      worktreePath: "/tmp/worktree",
+      targetBranch: "main",
+    });
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input.prompt).toContain("Incoming commits from `main`");
+    expect(input.prompt).toContain("reworked config loader");
+  });
+
+  it("leaves the prompt untouched when the incoming-changes section is null", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
+    const buildIncomingChangesSection = vi.fn().mockResolvedValue(null);
+    const deps = createTestDeps({
+      executeWorkflowTaskRun,
+      buildIncomingChangesSection,
+    });
+    const { resolveConflicts } = createConflictResolver(deps);
+
+    await resolveConflicts({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      targetBranch: "main",
+    });
+
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input.prompt).not.toContain("Incoming commits");
+  });
+
+  it("skips the incoming-changes lookup when no targetBranch is provided", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
+    const buildIncomingChangesSection = vi.fn().mockResolvedValue("section");
+    const deps = createTestDeps({
+      executeWorkflowTaskRun,
+      buildIncomingChangesSection,
+    });
+    const { resolveConflicts } = createConflictResolver(deps);
+
+    await resolveConflicts({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+    });
+
+    expect(buildIncomingChangesSection).not.toHaveBeenCalled();
+  });
+
   it("includes per-file decisions in the prompt when provided", async () => {
     const executeWorkflowTaskRun = vi
       .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
@@ -286,6 +406,53 @@ describe("analyzeConflicts (executeWorkflowTaskRun)", () => {
     expect(instructions).toContain("DO NOT");
     expect(instructions).not.toContain("Edit each file");
     expect(instructions).not.toContain("Stage each resolved file");
+  });
+
+  it("appends the incoming-changes section to the analysis prompt when targetBranch is provided", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
+    const buildIncomingChangesSection = vi
+      .fn()
+      .mockResolvedValue("Incoming commits from `main`:\n- aaaa111 subject");
+    const deps = createTestDeps({
+      executeWorkflowTaskRun,
+      buildIncomingChangesSection,
+    });
+    const { analyzeConflicts } = createConflictResolver(deps);
+
+    await analyzeConflicts({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      targetBranch: "main",
+    });
+
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input.prompt).toContain("Incoming commits from `main`");
+  });
+
+  it("includes the resolution context section in the analysis prompt when provided", async () => {
+    const executeWorkflowTaskRun = vi
+      .fn<(input: ExecuteWorkflowTaskRunInput) => Promise<TaskRunResult>>()
+      .mockResolvedValue(structuredOk({ conflicts: SAMPLE_ENTRIES }));
+    const deps = createTestDeps({ executeWorkflowTaskRun });
+    const { analyzeConflicts } = createConflictResolver(deps);
+
+    await analyzeConflicts({
+      worktreePath: "/tmp/worktree",
+      projectPath: PROJECT_PATH,
+      sessionName: SESSION_NAME,
+      conversationId: CONVERSATION_ID,
+      resolutionContext: "The session migrated all config reads to Zod v4.",
+    });
+
+    const [input] = executeWorkflowTaskRun.mock.calls[0]!;
+    expect(input.prompt).toContain("Context about the changes being merged");
+    expect(input.prompt).toContain(
+      "The session migrated all config reads to Zod v4.",
+    );
   });
 
   it("returns analyzed status with conflicts on success", async () => {

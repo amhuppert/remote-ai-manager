@@ -415,6 +415,15 @@ const SCHEMA_DDL = `
 
   CREATE INDEX IF NOT EXISTS idx_session_alignment_decision_proposals_batch
     ON session_alignment_decision_proposals(project_path, session_name, batch_id);
+
+  CREATE TABLE IF NOT EXISTS merge_intents (
+    project_path TEXT NOT NULL,
+    commit_sha   TEXT NOT NULL,
+    intent       TEXT NOT NULL,
+    source       TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    PRIMARY KEY (project_path, commit_sha)
+  );
 `;
 
 class SchemaVersionConflictError extends Error {

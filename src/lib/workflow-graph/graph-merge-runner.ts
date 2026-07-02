@@ -1,6 +1,8 @@
 import { createActor, toPromise } from "xstate";
 import { createLogger } from "@/lib/logging";
 import type { ConflictDecisionInput } from "@/lib/jobs/schemas";
+import { recordMergeIntent as defaultRecordMergeIntent } from "@/lib/merge-intents/repo";
+import type { RecordMergeIntentInput } from "@/lib/merge-intents/repo";
 import {
   mergeMachine,
   type MergeMachineType,
@@ -23,6 +25,9 @@ export interface GraphMergeRunnerInput {
   /** Operator guidance for conflict resolution, threaded into the machine's
    *  resolver as per-file decisions. */
   decisions?: ConflictDecisionInput[];
+  /** Lane-derived intent notes for the conflict resolver (what each side of
+   *  the merge was building and why), assembled at join time. */
+  resolutionContext?: string;
 }
 
 export interface GraphMergeRunner {
@@ -38,12 +43,15 @@ export interface GraphMergeRunnerDeps {
    * Merge.
    */
   buildMachine?: () => MergeMachineType;
+  /** Persists the intent brief against the landed squash commit. */
+  recordMergeIntent?(input: RecordMergeIntentInput): void;
 }
 
 export function createGraphWorkflowMergeRunner(
   deps: GraphMergeRunnerDeps = {},
 ): GraphMergeRunner {
   const buildMachine = deps.buildMachine ?? (() => mergeMachine);
+  const recordMergeIntent = deps.recordMergeIntent ?? defaultRecordMergeIntent;
 
   return {
     async run(input: GraphMergeRunnerInput): Promise<MergeOutput> {
@@ -68,6 +76,7 @@ export function createGraphWorkflowMergeRunner(
           message: input.message,
           autoResolve: true,
           decisions: input.decisions,
+          resolutionContext: input.resolutionContext,
           targetBranch: input.targetBranch,
           targetWorktreePath: input.targetWorktreePath,
           finalizeSessionOnPublish: false,
@@ -83,6 +92,30 @@ export function createGraphWorkflowMergeRunner(
         mergeHash: output.mergeHash,
         conflictFiles: output.conflictFiles.length,
       });
+
+      // Attach the lane-derived intent brief to the landed squash commit so
+      // later merges that pull this commit in can explain it to their
+      // conflict resolvers. Non-throwing.
+      if (
+        output.status === "completed" &&
+        output.mergeHash &&
+        input.resolutionContext
+      ) {
+        try {
+          recordMergeIntent({
+            projectPath: input.projectPath,
+            commitSha: output.mergeHash,
+            intent: input.resolutionContext,
+            source: "graph-join",
+          });
+        } catch (err) {
+          logger.error("graph_merge_record_intent_failed", {
+            jobId: input.jobId,
+            mergeHash: output.mergeHash,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
 
       return output;
     },

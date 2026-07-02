@@ -415,6 +415,10 @@ export const resolveSessionConflicts = withTracing(
     );
     const mergeMessage = `Merge ${session.branchName} into ${targetBranch}`;
 
+    // The conflicts-terminal merge job (still in the registry) carries the
+    // intent notes generated at /merge time; reuse them for the retry.
+    const priorJob = getJob(projectPath, sessionName);
+
     const result = dispatchResolveConflictsJob({
       projectPath,
       projectName: name,
@@ -425,6 +429,7 @@ export const resolveSessionConflicts = withTracing(
       decisions: body.decisions,
       targetBranch,
       targetWorktreePath: targetWorktreePath ?? undefined,
+      resolutionContext: priorJob?.resolutionContext,
     });
 
     if (!result.ok) {
@@ -588,6 +593,7 @@ export const landSession = withTracing(
       preparedSha,
       expectedTargetSha,
       parkedRef,
+      resolutionContext: existingJob.resolutionContext,
     });
 
     if (!result.ok) {

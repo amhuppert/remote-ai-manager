@@ -12,6 +12,8 @@ export type ParsedConversationCommand = z.infer<
 
 export const commitMessageOutputSchema = z.object({
   message: z.string(),
+  /** Merge only: intent notes handed to a later conflict-resolution agent. */
+  resolutionContext: z.string().optional(),
 });
 
 export type CommitMessageOutput = z.infer<typeof commitMessageOutputSchema>;
@@ -21,6 +23,7 @@ export const COMMIT_MESSAGE_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
   properties: {
     message: { type: "string" },
+    resolutionContext: { type: "string" },
   },
   required: ["message"],
   additionalProperties: false,

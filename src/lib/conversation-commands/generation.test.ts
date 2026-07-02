@@ -60,6 +60,15 @@ describe("commitMessageOutputSchema", () => {
     ).toBe(true);
   });
 
+  it("accepts an optional resolutionContext string alongside the message", () => {
+    expect(
+      commitMessageOutputSchema.safeParse({
+        message: "Fix login",
+        resolutionContext: "Reworked the redirect flow to use the session id.",
+      }).success,
+    ).toBe(true);
+  });
+
   it("rejects payloads without a string message", () => {
     expect(commitMessageOutputSchema.safeParse({ message: 42 }).success).toBe(
       false,
@@ -69,10 +78,13 @@ describe("commitMessageOutputSchema", () => {
 });
 
 describe("COMMIT_MESSAGE_JSON_SCHEMA", () => {
-  it("describes a required message string", () => {
+  it("describes a required message string and an optional resolutionContext", () => {
     expect(COMMIT_MESSAGE_JSON_SCHEMA).toMatchObject({
       type: "object",
-      properties: { message: { type: "string" } },
+      properties: {
+        message: { type: "string" },
+        resolutionContext: { type: "string" },
+      },
       required: ["message"],
       additionalProperties: false,
     });
@@ -108,6 +120,17 @@ describe("buildGenerationPrompt", () => {
     expect(prompt.toLowerCase()).toContain("only task");
     expect(prompt.toLowerCase()).toContain("commit message");
   });
+
+  it("asks for resolutionContext notes on a merge", () => {
+    const prompt = buildGenerationPrompt(mergeContext);
+    expect(prompt).toContain("resolutionContext");
+    expect(prompt.toLowerCase()).toContain("conflict");
+  });
+
+  it("does not ask for resolutionContext on a standalone commit", () => {
+    const prompt = buildGenerationPrompt(commitContext);
+    expect(prompt).not.toContain("resolutionContext");
+  });
 });
 
 describe("resolveGeneratedMessage", () => {
@@ -116,6 +139,31 @@ describe("resolveGeneratedMessage", () => {
       structuredResult({ message: "  Fix login redirect loop  " }),
     );
     expect(result).toEqual({ ok: true, message: "Fix login redirect loop" });
+  });
+
+  it("returns the trimmed resolutionContext when the structured result carries one", () => {
+    const result = resolveGeneratedMessage(
+      structuredResult({
+        message: "Fix login",
+        resolutionContext: "  Reworked the redirect flow.  ",
+      }),
+    );
+    expect(result).toEqual({
+      ok: true,
+      message: "Fix login",
+      resolutionContext: "Reworked the redirect flow.",
+    });
+  });
+
+  it("omits resolutionContext when it is absent or blank", () => {
+    expect(
+      resolveGeneratedMessage(structuredResult({ message: "Fix login" })),
+    ).toEqual({ ok: true, message: "Fix login" });
+    expect(
+      resolveGeneratedMessage(
+        structuredResult({ message: "Fix login", resolutionContext: "   " }),
+      ),
+    ).toEqual({ ok: true, message: "Fix login" });
   });
 
   it("rejects a structured result whose message is empty after trimming", () => {

@@ -42,6 +42,10 @@ export const backgroundJobSchema = registerTrustedSchema(
     preparedSha: z.string().optional(),
     expectedTargetSha: z.string().optional(),
     refreshWarning: z.string().optional(),
+    // Agent-written intent notes for the conflict resolver. Kept on the
+    // in-memory job (like parkedRef) so a resolve-conflicts retry after a
+    // conflicts terminal can reuse it; not part of the persisted JobRecord.
+    resolutionContext: z.string().optional(),
   }),
   "backgroundJobSchema",
 );

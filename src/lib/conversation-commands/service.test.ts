@@ -322,6 +322,53 @@ describe("createConversationCommandService eligible path", () => {
     expect(deps.dispatchCommitJob).not.toHaveBeenCalled();
   });
 
+  it("threads the generated resolutionContext into the merge dispatch", async () => {
+    const deps = makeDeps({
+      executeWorkflowTaskRun: vi.fn(async () => ({
+        kind: "structured" as const,
+        structuredOutput: {
+          message: "Add eligibility checks",
+          resolutionContext:
+            "Session reworked eligibility gating; keep the new guard order.",
+        },
+        text: "",
+        usage: emptyUsage,
+        backendRef: null,
+      })),
+    });
+    const service = createConversationCommandService(deps);
+
+    await service.run(makeInput({ parsed: { command: "merge", hint: "" } }));
+
+    expect(deps.dispatchMergeJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "Add eligibility checks",
+        resolutionContext:
+          "Session reworked eligibility gating; keep the new guard order.",
+      }),
+    );
+  });
+
+  it("dispatches the merge without resolutionContext when generation falls back", async () => {
+    const deps = makeDeps({
+      executeWorkflowTaskRun: vi.fn(async () => ({
+        kind: "error" as const,
+        error: "backend unreachable",
+        aborted: false,
+        usage: emptyUsage,
+        backendRef: null,
+      })),
+    });
+    const service = createConversationCommandService(deps);
+
+    await service.run(makeInput({ parsed: { command: "merge", hint: "" } }));
+
+    expect(deps.dispatchMergeJob).toHaveBeenCalledTimes(1);
+    const params = vi.mocked(deps.dispatchMergeJob).mock.calls[0]?.[0];
+    expect(params?.message).toBe("Merge csm/my-session into main");
+    expect(params?.resolutionContext).toBeUndefined();
+  });
+
   it("runs the generation turn in the same conversation with the structured-output contract, hint, and change summary", async () => {
     const deps = makeDeps({
       collectChangeSummary: vi.fn(async () => " M src/api/routes.ts"),

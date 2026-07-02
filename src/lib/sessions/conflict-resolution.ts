@@ -9,6 +9,8 @@ import type {
   ExecuteWorkflowTaskRunInput,
   TaskRunResult,
 } from "@/lib/workflows/conversation/execute-workflow-task-run";
+import { buildIncomingChangesSection as defaultBuildIncomingChangesSection } from "@/lib/merge-intents/incoming-changes";
+import type { IncomingChangesParams } from "@/lib/merge-intents/incoming-changes";
 
 const logger = createLogger("conflict-resolution");
 
@@ -53,6 +55,14 @@ export interface ConflictResolutionDeps {
   executeWorkflowTaskRun?(
     input: ExecuteWorkflowTaskRunInput,
   ): Promise<TaskRunResult>;
+  /**
+   * Describes the commits arriving from the target branch (the other side of
+   * the conflicts), annotated with recorded merge intents. Best-effort: null
+   * means no section is appended.
+   */
+  buildIncomingChangesSection?(
+    params: IncomingChangesParams,
+  ): Promise<string | null>;
 }
 
 const defaultDeps: ConflictResolutionDeps = {
@@ -77,6 +87,13 @@ export interface ResolveConflictsParams {
   sessionName: string;
   conversationId: string;
   decisions?: ConflictDecisionInput[];
+  /** Intent notes about the changes on each side of the merge, written by the
+   *  agents that implemented them; injected into the prompt so the resolver
+   *  understands intent instead of inferring it from conflict markers alone. */
+  resolutionContext?: string;
+  /** Branch being merged in; enables the incoming-changes lookup that
+   *  describes the other side of the conflicts to the resolver. */
+  targetBranch?: string;
 }
 
 export interface AnalyzeConflictsParams {
@@ -84,6 +101,10 @@ export interface AnalyzeConflictsParams {
   projectPath: string;
   sessionName: string;
   conversationId: string;
+  /** See {@link ResolveConflictsParams.resolutionContext}. */
+  resolutionContext?: string;
+  /** See {@link ResolveConflictsParams.targetBranch}. */
+  targetBranch?: string;
 }
 
 // ============================================================
@@ -118,6 +139,46 @@ Follow these steps precisely:
 IMPORTANT:
 - DO NOT edit any files. DO NOT remove conflict markers. DO NOT run git add. This is analysis only.
 - Analyze ALL conflicted files before producing the structured output.`;
+
+// ============================================================
+// Resolution Context Prompt Builder
+// ============================================================
+
+function buildResolutionContextSection(resolutionContext: string): string {
+  return [
+    "",
+    "## Context about the changes being merged",
+    "",
+    "These notes were written by the agents who implemented the changes on each side of this merge. Use them to understand the intent behind each side when deciding how to resolve every conflict:",
+    "",
+    resolutionContext,
+  ].join("\n");
+}
+
+/**
+ * Fetch the incoming-changes section (the other side of the conflicts) and
+ * render it as a prompt suffix. Empty string when there is no target branch
+ * or nothing to describe.
+ */
+async function lookupIncomingChangesSection(
+  params: {
+    projectPath: string;
+    worktreePath: string;
+    targetBranch: string | undefined;
+  },
+  deps: ConflictResolutionDeps,
+): Promise<string> {
+  if (!params.targetBranch) return "";
+  const buildIncomingChangesSection =
+    deps.buildIncomingChangesSection ?? defaultBuildIncomingChangesSection;
+  const section = await buildIncomingChangesSection({
+    projectPath: params.projectPath,
+    worktreePath: params.worktreePath,
+    targetBranch: params.targetBranch,
+  });
+  if (!section) return "";
+  return `\n\n## Incoming changes on the other side of the merge\n\n${section}`;
+}
 
 // ============================================================
 // Decision Prompt Builder
@@ -297,8 +358,15 @@ async function resolveConflictsImpl(
   params: ResolveConflictsParams,
   deps: ConflictResolutionDeps,
 ): Promise<ConflictResolutionResult> {
-  const { worktreePath, decisions, projectPath, sessionName, conversationId } =
-    params;
+  const {
+    worktreePath,
+    decisions,
+    projectPath,
+    sessionName,
+    conversationId,
+    resolutionContext,
+    targetBranch,
+  } = params;
   const { readConfig } = deps;
   const executeWorkflowTaskRun =
     deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
@@ -308,6 +376,8 @@ async function resolveConflictsImpl(
     projectPath,
     sessionName,
     conversationId,
+    resolutionContextLength: resolutionContext?.length ?? 0,
+    targetBranch: targetBranch ?? null,
   });
 
   let config;
@@ -322,6 +392,15 @@ async function resolveConflictsImpl(
 
   let prompt =
     "Resolve all merge conflicts in this worktree. Follow the instructions in your system prompt precisely.";
+
+  if (resolutionContext) {
+    prompt += buildResolutionContextSection(resolutionContext);
+  }
+
+  prompt += await lookupIncomingChangesSection(
+    { projectPath, worktreePath, targetBranch },
+    deps,
+  );
 
   if (decisions && decisions.length > 0) {
     prompt += buildDecisionsPrompt(decisions);
@@ -449,7 +528,14 @@ async function analyzeConflictsImpl(
   params: AnalyzeConflictsParams,
   deps: ConflictResolutionDeps,
 ): Promise<ConflictAnalysisResult> {
-  const { worktreePath, projectPath, sessionName, conversationId } = params;
+  const {
+    worktreePath,
+    projectPath,
+    sessionName,
+    conversationId,
+    resolutionContext,
+    targetBranch,
+  } = params;
   const { readConfig } = deps;
   const executeWorkflowTaskRun =
     deps.executeWorkflowTaskRun ?? defaultExecuteWorkflowTaskRun;
@@ -459,6 +545,8 @@ async function analyzeConflictsImpl(
     projectPath,
     sessionName,
     conversationId,
+    resolutionContextLength: resolutionContext?.length ?? 0,
+    targetBranch: targetBranch ?? null,
   });
 
   let config;
@@ -471,8 +559,17 @@ async function analyzeConflictsImpl(
     return { status: "failed", error: errorMsg };
   }
 
-  const prompt =
+  let prompt =
     "Analyze all merge conflicts in this worktree. Follow the instructions in your system prompt precisely. Do NOT edit any files.";
+
+  if (resolutionContext) {
+    prompt += buildResolutionContextSection(resolutionContext);
+  }
+
+  prompt += await lookupIncomingChangesSection(
+    { projectPath, worktreePath, targetBranch },
+    deps,
+  );
 
   try {
     const result = await executeWorkflowTaskRun({

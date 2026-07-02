@@ -89,6 +89,8 @@ export interface ResolveConflictsInput {
   projectPath: string;
   sessionName: string;
   decisions?: ConflictDecisionInput[];
+  resolutionContext?: string;
+  targetBranch?: string;
 }
 export interface ResolveConflictsOutput {
   status: "resolved" | "failed";
@@ -100,6 +102,8 @@ export interface AnalyzeConflictsInput {
   worktreePath: string;
   projectPath: string;
   sessionName: string;
+  resolutionContext?: string;
+  targetBranch?: string;
 }
 export interface AnalyzeConflictsOutput {
   status: "analyzed" | "failed";
@@ -259,6 +263,8 @@ export const resolveConflictsActor = fromPromise<
     sessionName: input.sessionName,
     conversationId,
     decisions: input.decisions,
+    resolutionContext: input.resolutionContext,
+    targetBranch: input.targetBranch,
   });
   return {
     status: result.status,
@@ -284,6 +290,8 @@ export const analyzeConflictsActor = fromPromise<
     projectPath: input.projectPath,
     sessionName: input.sessionName,
     conversationId,
+    resolutionContext: input.resolutionContext,
+    targetBranch: input.targetBranch,
   });
   return {
     status: result.status,

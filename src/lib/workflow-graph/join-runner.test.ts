@@ -155,6 +155,91 @@ function setupExecutionWithJoin(
 }
 
 describe("join-runner", () => {
+  it("passes an assembled resolutionContext describing both lanes to the merge runner", async () => {
+    const execution = setupExecutionWithJoin(
+      makeJoin({
+        joinId: "join-1",
+        targetLaneId: "lane-a",
+        sourceLaneIds: ["lane-a", "lane-b"],
+      }),
+      {
+        "lane-a": makeLane({
+          laneId: "lane-a",
+          branchName: "csm/lane-a",
+          worktreePath: "/tmp/lane-a",
+          includedContextIds: ["context-implement"],
+        }),
+        "lane-b": makeLane({
+          laneId: "lane-b",
+          branchName: "csm/lane-b",
+          worktreePath: "/tmp/lane-b",
+          includedContextIds: ["context-verify"],
+        }),
+      },
+    );
+    execution.taskStates = {
+      "task-implement-1": {
+        taskId: "task-implement-1",
+        contextId: "context-implement",
+        order: 1,
+        status: "completed",
+        summary: "Implemented the feature behind the settings flag.",
+        startedAt: t0,
+        completedAt: t0,
+        lastConversationId: null,
+        failureMessage: null,
+        failureHistory: [],
+      },
+      "task-verify-1": {
+        taskId: "task-verify-1",
+        contextId: "context-verify",
+        order: 1,
+        status: "completed",
+        summary: "Added integration checks for the new flow.",
+        startedAt: t0,
+        completedAt: t0,
+        lastConversationId: null,
+        failureMessage: null,
+        failureHistory: [],
+      },
+    };
+
+    const observed: GraphMergeRunnerInput[] = [];
+    const mergeRunner = fakeMergeRunner(
+      new Map([["csm/lane-b", completed("hash-b")]]),
+      observed,
+    );
+    const persist = createInMemoryPersist(execution);
+    const runner = createJoinRunner({
+      mergeRunner,
+      sessionGitLock: createSessionGitLock({
+        acquireSessionLock: () => () => {},
+      }),
+      mergeMutex: createPerSessionMergeMutex(),
+      createJobId: () => "job-x",
+      now: () => t0,
+    });
+
+    const result = await runner.run({
+      projectPath: "/repo",
+      projectName: "repo",
+      sessionName: "session",
+      joinId: "join-1",
+      mutateActive: persist.mutateActive,
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(observed).toHaveLength(1);
+    const brief = observed[0]?.resolutionContext;
+    expect(brief).toBeDefined();
+    // Ours = source lane (the worktree the merge runs in)
+    expect(brief).toContain("Added integration checks for the new flow.");
+    // Theirs = target lane
+    expect(brief).toContain(
+      "Implemented the feature behind the settings flag.",
+    );
+  });
+
   it("merges each remaining source lane into target and marks join succeeded", async () => {
     const execution = setupExecutionWithJoin(
       makeJoin({

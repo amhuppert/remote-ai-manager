@@ -56,6 +56,14 @@ export interface MergeContext extends BaseWorkflowContext {
   /** User decisions for conflict resolution (when provided). */
   decisions: ConflictDecisionInput[] | null;
 
+  /**
+   * Intent notes about the changes on each side of the merge, written by the
+   * agents that implemented them. Injected into the conflict resolver's and
+   * analyzer's prompts so they understand intent instead of inferring it from
+   * conflict markers alone.
+   */
+  resolutionContext: string | null;
+
   /** Current phase for SSE broadcast. */
   phase: MergePhase | null;
 
@@ -134,6 +142,8 @@ export interface MergeInput {
   autoResolve: boolean;
   jobType?: "merge" | "commit" | "resolve-conflicts";
   decisions?: ConflictDecisionInput[];
+  /** See {@link MergeContext.resolutionContext}. */
+  resolutionContext?: string;
   validationTimeoutMs?: number;
   maxFixAttempts?: number;
   targetBranch?: string;

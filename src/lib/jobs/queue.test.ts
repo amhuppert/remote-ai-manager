@@ -45,6 +45,7 @@ import type { JobStatusEvent } from "@/lib/jobs/schemas";
 
 vi.mock("../notifications/repo");
 vi.mock("./repo");
+vi.mock("../merge-intents/repo");
 
 // ============================================================
 // Actor mock fns — injected via mergeMachine.provide()
@@ -1180,6 +1181,127 @@ describe("background-jobs", () => {
         BASE_MERGE_PARAMS.sessionName,
       );
       expect(job?.targetBranch).toBeUndefined();
+    });
+
+    it("dispatchMergeJob threads resolutionContext to the resolveConflicts actor and keeps it on the terminal job", async () => {
+      mockMergeMain.mockResolvedValue({
+        status: "conflicts",
+        conflictFiles: ["src/a.ts"],
+      });
+      mockResolveConflictsActor.mockResolvedValue({
+        status: "failed",
+        conflicts: [],
+      });
+
+      const result = dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        autoResolve: true,
+        resolutionContext: "Session renamed SessionStore to SessionRepo.",
+      });
+      expect(result.ok).toBe(true);
+
+      await settle();
+
+      expect(mockResolveConflictsActor).toHaveBeenCalledWith(
+        expect.objectContaining({
+          resolutionContext: "Session renamed SessionStore to SessionRepo.",
+        }),
+      );
+
+      // The conflicts-terminal job keeps the context so a later
+      // resolve-conflicts retry can reuse it.
+      const job = getJob(
+        BASE_MERGE_PARAMS.projectPath,
+        BASE_MERGE_PARAMS.sessionName,
+      );
+      expect(job?.status).toBe("conflicts");
+      expect(job?.resolutionContext).toBe(
+        "Session renamed SessionStore to SessionRepo.",
+      );
+    });
+
+    it("dispatchResolveConflictsJob threads resolutionContext to the resolveConflicts actor", async () => {
+      mockResolveConflictsActor.mockResolvedValue({
+        status: "resolved",
+        conflicts: [],
+      });
+      mockCommitChangesActor.mockResolvedValue({ hash: "h" });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "m",
+      });
+
+      dispatchResolveConflictsJob({
+        ...BASE_RESOLVE_PARAMS,
+        resolutionContext: "Session migrated config reads to Zod v4.",
+      });
+      await settle();
+
+      expect(mockResolveConflictsActor).toHaveBeenCalledWith(
+        expect.objectContaining({
+          resolutionContext: "Session migrated config reads to Zod v4.",
+        }),
+      );
+    });
+
+    it("records the merge intent against the landed commit when a merge with resolutionContext completes", async () => {
+      const { recordMergeIntent: mockRecordMergeIntent } =
+        await import("../merge-intents/repo");
+      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "landed-sha",
+      });
+
+      dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        resolutionContext: "Session renamed SessionStore to SessionRepo.",
+      });
+      await settle();
+
+      expect(mockRecordMergeIntent).toHaveBeenCalledWith({
+        projectPath: BASE_MERGE_PARAMS.projectPath,
+        commitSha: "landed-sha",
+        intent: "Session renamed SessionStore to SessionRepo.",
+        source: "session-merge",
+      });
+    });
+
+    it("does not record a merge intent when the merge completes without resolutionContext", async () => {
+      const { recordMergeIntent: mockRecordMergeIntent } =
+        await import("../merge-intents/repo");
+      mockMergeMain.mockResolvedValue({ status: "clean", conflictFiles: [] });
+      mockPublishActor.mockResolvedValue({
+        status: "completed" as const,
+        mergeHash: "landed-sha",
+      });
+
+      dispatchMergeJob(BASE_MERGE_PARAMS);
+      await settle();
+
+      expect(mockRecordMergeIntent).not.toHaveBeenCalled();
+    });
+
+    it("does not record a merge intent when the merge ends in conflicts", async () => {
+      const { recordMergeIntent: mockRecordMergeIntent } =
+        await import("../merge-intents/repo");
+      mockMergeMain.mockResolvedValue({
+        status: "conflicts",
+        conflictFiles: ["src/a.ts"],
+      });
+      mockResolveConflictsActor.mockResolvedValue({
+        status: "failed",
+        conflicts: [],
+      });
+
+      dispatchMergeJob({
+        ...BASE_MERGE_PARAMS,
+        autoResolve: true,
+        resolutionContext: "Some intent.",
+      });
+      await settle();
+
+      expect(mockRecordMergeIntent).not.toHaveBeenCalled();
     });
 
     it("notification message includes target branch for merge completion", async () => {
