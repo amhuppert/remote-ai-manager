@@ -30,8 +30,16 @@ const TAB_STRIP_HOST_CLASS =
   "conversation-tab-strip-host relative shrink-0 max-768:[.session-detail-layout[data-tab-strip=true]>&]:row-[1/2] max-768:[.session-detail-layout[data-finished=true][data-tab-strip=true]>&]:row-[2/3]";
 const DOCKED_STAGE_CLASS =
   "conversation-docked-stage relative flex min-h-0 min-w-0 flex-col max-768:[.session-detail-layout>&]:row-[2/3] max-768:[.session-detail-layout[data-finished=true]>&]:row-[3/4] max-768:[.session-detail-layout[data-tab-strip=true]>&]:row-[3/4] max-768:[.session-detail-layout[data-finished=true][data-tab-strip=true]>&]:row-[4/5]";
+// The single mobile column uses `minmax(0,1fr)`, not a bare `1fr`. A bare `1fr`
+// track resolves its minimum to `auto` (content-based), so a grid item whose
+// automatic minimum size isn't clamped to zero — e.g. `.sidebar-diff-panel`,
+// which uses `overflow: clip` rather than a scroll container — sizes the track
+// to its widest unwrappable content (a code block or table in a rendered
+// document). That blows the column past the viewport, and since the app shell
+// clips horizontally the overflow is unreachable. `minmax(0,1fr)` pins the
+// minimum to zero so the column stays viewport-width and the markdown wraps.
 const CONTENT_AREA_CLASS =
-  "session-content-area grid min-h-0 flex-1 gap-0 transition-[grid-template-columns] duration-[250ms] ease-[ease] data-[layout=default]:grid-cols-[minmax(0,1fr)_420px] data-[layout=split]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] data-[layout=conversation]:grid-cols-[minmax(0,1fr)] data-[layout=diff]:grid-cols-[minmax(0,1fr)] data-[layout=panes]:grid-cols-[minmax(0,1fr)] max-768:data-[layout=default]:grid-cols-[1fr] max-768:data-[layout=split]:grid-cols-[1fr] max-768:data-[layout=diff]:grid-cols-[1fr] max-768:data-[layout=conversation]:grid-cols-[1fr]";
+  "session-content-area grid min-h-0 flex-1 gap-0 transition-[grid-template-columns] duration-[250ms] ease-[ease] data-[layout=default]:grid-cols-[minmax(0,1fr)_420px] data-[layout=split]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] data-[layout=conversation]:grid-cols-[minmax(0,1fr)] data-[layout=diff]:grid-cols-[minmax(0,1fr)] data-[layout=panes]:grid-cols-[minmax(0,1fr)] max-768:data-[layout=default]:grid-cols-[minmax(0,1fr)] max-768:data-[layout=split]:grid-cols-[minmax(0,1fr)] max-768:data-[layout=diff]:grid-cols-[minmax(0,1fr)] max-768:data-[layout=conversation]:grid-cols-[minmax(0,1fr)]";
 const PROMPT_SLOT_CLASS =
   "min-w-0 shrink-0 border-x-0 border-b-0 border-t border-solid border-border-default bg-bg-base";
 
