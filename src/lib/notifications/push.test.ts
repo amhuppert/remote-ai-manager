@@ -278,6 +278,25 @@ describe("sendPushNotification", () => {
     const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("https://ntfy.sh/");
   });
+
+  it("falls back to the default ntfy server when serverUrl is absent", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
+    const config = makeConfig();
+    delete (config as Partial<PushNotificationConfig>).serverUrl;
+    const event: PushEvent = {
+      trigger: "job-completed",
+      title: "Test",
+      message: "Test",
+      projectName: "proj",
+      sessionName: "sess",
+    };
+
+    await expect(sendPushNotification(config, event)).resolves.toBeUndefined();
+
+    expect(mockFetch).toHaveBeenCalledOnce();
+    const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://ntfy.sh/");
+  });
 });
 
 describe("sendAgentNotification", () => {
@@ -350,5 +369,29 @@ describe("sendAgentNotification", () => {
     await expect(
       sendAgentNotification(config, "Test", "Body", "robot", "proj", "sess"),
     ).resolves.toBeUndefined();
+  });
+
+  it("falls back to the default ntfy server when serverUrl is absent", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200 });
+    // The config loader strips schema defaults not written to disk, so a
+    // persisted push config can reach the sender without serverUrl despite the
+    // non-optional type. It must publish to the ntfy.sh default, not crash.
+    const config = makeConfig();
+    delete (config as Partial<PushNotificationConfig>).serverUrl;
+
+    await expect(
+      sendAgentNotification(
+        config,
+        "Build Done",
+        "ok",
+        "robot",
+        "proj",
+        "sess",
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(mockFetch).toHaveBeenCalledOnce();
+    const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://ntfy.sh/");
   });
 });

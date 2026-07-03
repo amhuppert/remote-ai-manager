@@ -73,6 +73,22 @@ export function formatPushMessage(event: PushEvent): FormattedPush {
   };
 }
 
+const DEFAULT_PUSH_SERVER_URL = "https://ntfy.sh";
+
+/**
+ * Build the ntfy publish URL from the configured server URL. The config loader
+ * strips schema defaults not present on disk (intersectKeys), so `serverUrl`
+ * can be missing at runtime despite its non-optional type — fall back to the
+ * schema's ntfy.sh default rather than dereferencing undefined.
+ */
+function pushPublishUrl(serverUrl: string | undefined): string {
+  const base =
+    serverUrl && serverUrl.trim().length > 0
+      ? serverUrl
+      : DEFAULT_PUSH_SERVER_URL;
+  return `${base.replace(/\/+$/, "")}/`;
+}
+
 export async function sendPushNotification(
   config: PushNotificationConfig | undefined,
   event: PushEvent,
@@ -85,7 +101,7 @@ export async function sendPushNotification(
   // ntfy JSON publish: POST to root URL, not the topic URL — putting title/tags
   // in the JSON body avoids HTTP header byte-string limits (Latin-1 only),
   // which previously broke any title containing characters like em-dash.
-  const url = `${cfg.serverUrl.replace(/\/+$/, "")}/`;
+  const url = pushPublishUrl(cfg.serverUrl);
 
   try {
     const response = await fetch(url, {
@@ -133,7 +149,7 @@ export async function sendAgentNotification(
   projectName: string,
   sessionName: string,
 ): Promise<void> {
-  const url = `${config.serverUrl.replace(/\/+$/, "")}/`;
+  const url = pushPublishUrl(config.serverUrl);
   const formattedTitle = `[${projectName}] ${title}`;
 
   try {

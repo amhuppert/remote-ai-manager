@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   _resetInstanceTokenCacheForTesting,
   bearerTokenFromHeader,
@@ -43,6 +43,21 @@ describe("ensureInstanceToken", () => {
 
     const token = await ensureInstanceToken(dir);
     expect(getCachedInstanceToken()).toBe(token);
+  });
+
+  it("exposes the cached token to a separately-loaded module instance", async () => {
+    // Instrumentation provisions the token in one module graph; session-env
+    // construction reads it (synchronously, without touching disk) in the
+    // route-handler graph. A module-local cache is invisible across that split,
+    // so the token must live in process-global state. Simulate the second graph
+    // with a module registry reset + re-import.
+    _resetInstanceTokenCacheForTesting();
+    const token = await ensureInstanceToken(dir);
+
+    vi.resetModules();
+    const freshInstance = await import("./token");
+
+    expect(freshInstance.getCachedInstanceToken()).toBe(token);
   });
 
   it("creates the config dir when missing", async () => {

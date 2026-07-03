@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   _resetServerBaseUrlForTesting,
   getServerBaseUrl,
@@ -31,5 +31,19 @@ describe("recordServerBaseUrl / getServerBaseUrl", () => {
   it("returns the recorded URL after boot", () => {
     recordServerBaseUrl({ PORT: "3200" });
     expect(getServerBaseUrl()).toBe("http://127.0.0.1:3200");
+  });
+
+  it("makes the URL recorded at boot visible to a separately-loaded module instance", async () => {
+    // Next.js bundles instrumentation (which records the URL) separately from
+    // the route-handler runtime (which reads it to build spawned-session env).
+    // A module-local variable is invisible across that split; the recorded URL
+    // must live in process-global state. Simulate the second graph with a
+    // module registry reset + re-import.
+    recordServerBaseUrl({ PORT: "3200" });
+
+    vi.resetModules();
+    const freshInstance = await import("./server-url");
+
+    expect(freshInstance.getServerBaseUrl()).toBe("http://127.0.0.1:3200");
   });
 });

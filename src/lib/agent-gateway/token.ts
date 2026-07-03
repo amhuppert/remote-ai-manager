@@ -4,12 +4,21 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import { getConfigDirPath } from "@/lib/config/loader";
 import { createLogger } from "@/lib/logging";
+import {
+  deleteGlobalValue,
+  getGlobalValue,
+  setGlobalValue,
+} from "@/lib/shared/global-singleton";
 
 const log = createLogger("agent-gateway");
 
 const TOKEN_FILE = "api-token";
 
-let cachedInstanceToken: string | null = null;
+// Stored on globalThis, not a module-local variable: instrumentation provisions
+// the token in one Next.js bundle graph, and session-env construction reads it
+// (synchronously) in the route-handler graph — a module-local cache is null
+// across that split.
+const INSTANCE_TOKEN_KEY = "__cc_instance_token";
 
 /**
  * Ensure the instance token exists at <configDir>/api-token (mode 0600) and
@@ -22,7 +31,7 @@ export async function ensureInstanceToken(configDir: string): Promise<string> {
 
   const existing = await readTokenFile(tokenPath);
   if (existing !== null) {
-    cachedInstanceToken = existing;
+    setGlobalValue(INSTANCE_TOKEN_KEY, existing);
     return existing;
   }
 
@@ -30,17 +39,17 @@ export async function ensureInstanceToken(configDir: string): Promise<string> {
   const token = randomBytes(32).toString("hex");
   await writeFile(tokenPath, `${token}\n`, { encoding: "utf-8", mode: 0o600 });
   log.info("agent-gateway.token_generated", { tokenPath });
-  cachedInstanceToken = token;
+  setGlobalValue(INSTANCE_TOKEN_KEY, token);
   return token;
 }
 
 /** The token provisioned at startup, or null if startup has not run. */
 export function getCachedInstanceToken(): string | null {
-  return cachedInstanceToken;
+  return getGlobalValue<string>(INSTANCE_TOKEN_KEY) ?? null;
 }
 
 export function _resetInstanceTokenCacheForTesting(): void {
-  cachedInstanceToken = null;
+  deleteGlobalValue(INSTANCE_TOKEN_KEY);
 }
 
 async function readTokenFile(tokenPath: string): Promise<string | null> {
