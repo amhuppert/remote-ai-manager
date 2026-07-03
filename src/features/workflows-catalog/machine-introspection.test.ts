@@ -39,10 +39,9 @@ describe("introspectMachine", () => {
       "executing",
       "executing.dispatching",
       "executing.conversationTurn",
-      "executing.conversationTurn.running",
-      "executing.conversationTurn.waitingForInput",
       "executing.taskRun",
       "finalizingTurn",
+      "waitingForInput",
       "debug",
       "debug.hypothesizing",
       "debug.awaitingReproduction",
@@ -74,10 +73,10 @@ describe("introspectMachine", () => {
 
   it("conversation: parentId is set on nested states", () => {
     const result = introspectMachine(conversationMachine);
-    const running = result.states.find(
-      (s) => s.id === "executing.conversationTurn.running",
+    const conversationTurn = result.states.find(
+      (s) => s.id === "executing.conversationTurn",
     );
-    expect(running?.parentId).toBe("executing.conversationTurn");
+    expect(conversationTurn?.parentId).toBe("executing");
     const hypothesizing = result.states.find(
       (s) => s.id === "debug.hypothesizing",
     );
@@ -86,13 +85,16 @@ describe("introspectMachine", () => {
 
   it("conversation: absolute target '#conversation.x' resolves to 'x'", () => {
     const result = introspectMachine(conversationMachine);
-    const running = result.states.find(
-      (s) => s.id === "executing.conversationTurn.running",
+    const conversationTurn = result.states.find(
+      (s) => s.id === "executing.conversationTurn",
     );
-    // Inherits parent on/SUBMIT_PROMPT? No — running only has ASK_QUESTION.
     expect(
-      running?.events.find((e) => e.event === "ASK_QUESTION")?.target,
-    ).toBe("executing.conversationTurn.waitingForInput");
+      conversationTurn?.events.find((e) => e.event === "onDone")?.target,
+    ).toBe("finalizingTurn");
+    // ASK_QUESTION is an internal transition — no target.
+    expect(
+      conversationTurn?.events.find((e) => e.event === "ASK_QUESTION")?.target,
+    ).toBeUndefined();
   });
 
   it("smart-merge: kind classification (transient vs atomic vs final)", () => {

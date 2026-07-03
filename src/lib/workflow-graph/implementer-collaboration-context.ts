@@ -6,7 +6,7 @@ import type {
   WorkflowConfigOverride,
 } from "@/lib/workflows/schemas";
 import { resolveCollaborationConfigWithProvenance } from "./resolve-config";
-import type { GraphWorkflowCollaborationContextBlock } from "./tool-server";
+import type { GraphWorkflowCollaborationContextBlock } from "./lane-tool-service";
 
 export interface ImplementerCollaborationContextInput {
   projectPath: string;

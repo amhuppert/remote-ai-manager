@@ -28,7 +28,10 @@ import type {
   DocumentFeedbackPayload,
   MessageContentBlock,
 } from "@/lib/conversations/message-content-schemas";
-import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
+import type {
+  PendingQueuedMessage,
+  QueuedMessageMetadata,
+} from "@/lib/conversations/message-queue-schemas";
 import type { ImagePayload } from "@/lib/images/schemas";
 import type { AgentBackendId } from "@/lib/shared/schemas";
 import { getErrorMessage } from "@/lib/shared/errors";
@@ -80,8 +83,12 @@ interface ConversationKey {
 
 export interface QueueMessageDeps {
   enqueue(
-    input: ConversationKey & { content: MessageContentBlock[] },
-  ): Promise<PendingQueuedMessage>;
+    input: ConversationKey & {
+      content: MessageContentBlock[];
+      metadata?: QueuedMessageMetadata;
+      consumePendingQuestionId?: string;
+    },
+  ): Promise<PendingQueuedMessage | null>;
   claimLiveDelivery(
     input: ConversationKey & { id: string },
   ): Promise<PendingQueuedMessage | null>;
@@ -130,6 +137,15 @@ export interface QueueMessageParams {
   images?: ImagePayload[];
   documentFeedback?: DocumentFeedbackPayload;
   backend: AgentBackendId;
+  /** Provenance tag persisted on the queue row (e.g. question answers) so the
+   *  UI can render a structured card instead of the raw text. */
+  metadata?: QueuedMessageMetadata;
+  /**
+   * Consume the pending question batch with this id in the same durable write
+   * as the enqueue (docs/design/cc-cli/03 §3). When the marker is already
+   * gone, nothing is enqueued and `queueMessage` returns null.
+   */
+  consumePendingQuestionId?: string;
   /** Optional dependency overrides for testing. */
   deps?: Partial<QueueMessageDeps>;
 }
@@ -192,8 +208,14 @@ async function buildDeliveredTranscriptBlocks(
 }
 
 export async function queueMessage(
+  params: QueueMessageParams & { consumePendingQuestionId: string },
+): Promise<QueueMessageResult | null>;
+export async function queueMessage(
   params: QueueMessageParams,
-): Promise<QueueMessageResult> {
+): Promise<QueueMessageResult>;
+export async function queueMessage(
+  params: QueueMessageParams,
+): Promise<QueueMessageResult | null> {
   const {
     projectPath,
     sessionName,
@@ -202,6 +224,8 @@ export async function queueMessage(
     images,
     documentFeedback,
     backend,
+    metadata,
+    consumePendingQuestionId,
     deps: depsOverride,
   } = params;
 
@@ -229,7 +253,22 @@ export async function queueMessage(
     sessionName,
     conversationId,
     content,
+    ...(metadata ? { metadata } : {}),
+    ...(consumePendingQuestionId !== undefined
+      ? { consumePendingQuestionId }
+      : {}),
   });
+  if (!entry) {
+    return null;
+  }
+
+  // Question answers arrive as the NEXT user message (docs/design/cc-cli/03
+  // §3, §5): never delivered into the still-running asking turn, even for
+  // backends with in-turn delivery. The row stays pending until the actor's
+  // next-turn drain claims it after the asking turn finalizes.
+  if (consumePendingQuestionId !== undefined) {
+    return { entry, deliveryTiming: "next_turn" };
+  }
 
   // Conversation commands must never be delivered into a running turn: the
   // row stays pending so the next-turn drain routes it to the command service

@@ -14,7 +14,6 @@ import type {
   ConversationRole,
   ForkedFrom,
   AskQuestionItem,
-  AskQuestionAnswer,
   MessageContentBlock,
   TranscriptMessageOrigin,
 } from "@/lib/conversations/schemas";
@@ -206,11 +205,10 @@ export type ConversationEvent =
   | { type: "RESOURCES_FAILED"; error: string }
   | { type: "BACKEND_INIT"; backendRef: AgentSessionRef }
   | { type: "ASK_QUESTION"; questionId: string; questions: AskQuestionItem[] }
-  | {
-      type: "ANSWER";
-      questionId: string;
-      answers: Record<string, AskQuestionAnswer>;
-    }
+  // Sent by the answer route when a pending question is consumed (answered)
+  // while the asking turn is still running, so finalizingTurn's guard sees
+  // null and settles to idle instead of waitingForInput.
+  | { type: "CLEAR_PENDING_QUESTION" }
   | { type: "PROMPT_COMPLETED"; result: PromptActorResult }
   | { type: "PROMPT_FAILED"; error: string }
   | { type: "ABORT_TURN"; reason: "timeout" | "user" | "shutdown" }

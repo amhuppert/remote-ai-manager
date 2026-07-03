@@ -12,13 +12,13 @@ import {
   workflowGeneratedDraftSchema,
   workflowSemanticDefinitionSchema,
 } from "@/lib/workflows/schemas";
-import { buildWorkflowDraftPortableMcp as defaultBuildWorkflowDraftPortableMcp } from "@/lib/mcp-gateway/portable-config";
+import { buildWorkflowDraftPortableMcp as defaultBuildWorkflowDraftPortableMcp } from "@/lib/workflows/workflow-draft/portable-config";
 import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import {
   consumePlannerDraft as defaultConsumePlannerDraft,
   createPlannerDraftSubmission as defaultCreatePlannerDraftSubmission,
   deletePlannerDraft as defaultDeletePlannerDraft,
-} from "@/lib/mcp-gateway/planner-draft-registry";
+} from "@/lib/workflows/workflow-draft/registry";
 import { executeWorkflowTaskRun as defaultExecuteWorkflowTaskRun } from "@/lib/workflows/conversation/execute-workflow-task-run";
 import type {
   ExecuteWorkflowTaskRunInput,

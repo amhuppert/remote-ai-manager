@@ -300,6 +300,21 @@ const SCHEMA_DDL = `
 
   CREATE INDEX IF NOT EXISTS idx_job_records_status ON job_records(status);
 
+  CREATE TABLE IF NOT EXISTS codex_run_records (
+    run_id              TEXT PRIMARY KEY,
+    project_name        TEXT NOT NULL,
+    session_name        TEXT NOT NULL,
+    status              TEXT NOT NULL,
+    started_at          TEXT NOT NULL,
+    completed_at        TEXT,
+    summary             TEXT,
+    reference_documents TEXT,
+    error_message       TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_codex_run_records_session
+    ON codex_run_records(project_name, session_name);
+
   CREATE TABLE IF NOT EXISTS graph_workflow_events (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     project_path  TEXT NOT NULL,

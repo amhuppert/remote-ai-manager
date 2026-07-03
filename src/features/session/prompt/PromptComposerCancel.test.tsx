@@ -26,6 +26,7 @@ function makeQueueEntry(
     deliveryAttemptId: null,
     attemptCount: 0,
     error: null,
+    metadata: null,
     ...overrides,
   };
 }

@@ -1,0 +1,442 @@
+import os from "node:os";
+import { describe, expect, it } from "vitest";
+import { createWorkflowDefinitionRouteHandlers } from "@/lib/workflows/definition-route-handlers";
+import { createGraphWorkflowValidateHandlers } from "@/lib/workflow-graph/validate-route-handlers";
+import { createTemplateLibraryRouteHandlers } from "@/lib/workflow-graph/template-library-route-handlers";
+import {
+  createGraphWorkflowExecutionRouteHandlers,
+  type GraphWorkflowExecutionRouteDeps,
+} from "@/lib/workflow-graph/execution-route-handlers";
+import { createTemplateLibraryService } from "@/lib/workflow-graph/template-library-service";
+import type { TemplateLibraryStorage } from "@/lib/workflow-graph/template-library-service";
+import type {
+  WorkflowDefinitionSummary,
+  WorkflowScope,
+} from "@/lib/workflow-graph/storage";
+import type { GraphWorkflowExecution } from "@/lib/workflows/schemas";
+import type { SessionState } from "@/lib/sessions/schemas";
+import {
+  createWorkflowDefinition,
+  createWorkflowExecution,
+  createWorkflowLayout,
+} from "@/lib/workflow-graph/test-fixtures";
+import { runCli } from "../core";
+import type { CliEnv, CliHost } from "../shared";
+
+/**
+ * Contract layer per doc 01 §8: the real CLI core driving the real workflow
+ * route handlers in-process (no HTTP). Proves the CLI parses the routes' actual
+ * response shapes — the `{ items }` definition list, the tier-tagged template
+ * merge, and the full `GraphWorkflowExecution` payload the status/start routes
+ * emit (including the structured, non-string `haltReason`).
+ */
+
+const PROJECT_PATH = "/repos/cc";
+const WORKTREE = `${PROJECT_PATH}/.worktrees/sess`;
+
+function summary(
+  overrides: Partial<WorkflowDefinitionSummary> = {},
+): WorkflowDefinitionSummary {
+  return {
+    id: "wf-1",
+    name: "Auth Setup",
+    description: "OAuth2 workflow",
+    revision: 3,
+    createdAt: "2026-03-30T00:00:00.000Z",
+    updatedAt: "2026-03-30T01:00:00.000Z",
+    parameters: [],
+    prerequisites: [],
+    ...overrides,
+  };
+}
+
+function makeSession(): SessionState {
+  return {
+    sessionName: "sess",
+    worktreePath: WORKTREE,
+    branchName: "csm/sess",
+    createdAt: "2026-03-27T12:00:00.000Z",
+    lastActivityAt: "2026-03-27T12:00:00.000Z",
+    archived: false,
+    finished: false,
+    conversations: [],
+    source: "cc",
+    creationMode: "normal",
+    tddEnabled: true,
+    targetBranch: "main",
+    parentSessionName: null,
+    graphWorkflowExecution: null,
+    referenceDocuments: [],
+  };
+}
+
+/** Storage double the real template library merges across tiers. */
+const templateStorage: TemplateLibraryStorage = {
+  async list(scope: WorkflowScope) {
+    return scope.kind === "global"
+      ? [summary({ id: "g-1", name: "Global One" })]
+      : [summary({ id: "p-1", name: "Project One" })];
+  },
+  async get() {
+    return null;
+  },
+};
+
+function notUsed(): never {
+  throw new Error("route not exercised in this contract test");
+}
+
+function makeExecutionDeps(
+  overrides: Partial<GraphWorkflowExecutionRouteDeps>,
+): GraphWorkflowExecutionRouteDeps {
+  return {
+    resolveProjectPath: async () => PROJECT_PATH,
+    getSession: async () => makeSession(),
+    normalizeExecutionAfterRestart: async () => null,
+    startExecution: notUsed,
+    pauseExecution: notUsed,
+    resumeExecution: notUsed,
+    abortExecution: notUsed,
+    resetExecutionContext: notUsed,
+    archiveExecution: notUsed,
+    kickOffExecutionLoop: async () => {},
+    getActiveExecution: async () => null,
+    recordPendingHaltReason: notUsed,
+    drainAndHalt: notUsed,
+    recordApprovalDecision: notUsed,
+    listArchivedExecutions: async () => [],
+    ...overrides,
+  };
+}
+
+function routeHost(
+  execution: GraphWorkflowExecution | null,
+  files: Record<string, string> = {},
+): CliHost {
+  const definitionHandlers = createWorkflowDefinitionRouteHandlers({
+    resolveProjectPath: async () => PROJECT_PATH,
+    readConfig: notUsed,
+    listDefinitions: async () => [summary()],
+    getDefinition: notUsed,
+    // Echo a summary so the CLI parses the real 201 `{ item }` shape (id/name
+    // for the start hint); the create-path Zod + structural validation the
+    // handler runs before this is exercised for real by the invalid-plan case.
+    createDefinition: async () => summary({ id: "wf-new", name: "Auth Setup" }),
+    updateDefinition: async (_projectPath, workflowId) =>
+      summary({ id: workflowId, name: "Auth Setup", revision: 4 }),
+    deleteDefinition: async (_projectPath, workflowId) => workflowId === "wf-1",
+  });
+  const validateHandlers = createGraphWorkflowValidateHandlers({
+    auth: {
+      async requireToken() {
+        return null;
+      },
+    },
+    resolveProjectPath: async () => PROJECT_PATH,
+    getSession: async () => ({ sessionName: "sess" }),
+  });
+  const templateHandlers = createTemplateLibraryRouteHandlers({
+    resolveProjectPath: async () => PROJECT_PATH,
+    readConfig: notUsed,
+    list: (projectPath) =>
+      createTemplateLibraryService({ storage: templateStorage }).list(
+        projectPath,
+      ),
+    listGlobal: notUsed,
+    createGlobal: notUsed,
+    getGlobal: notUsed,
+    updateGlobal: notUsed,
+    deleteGlobal: notUsed,
+  });
+  const executionHandlers = createGraphWorkflowExecutionRouteHandlers(
+    makeExecutionDeps({
+      getActiveExecution: async () => execution,
+      startExecution: async () => {
+        if (!execution) throw new Error("no execution fixture");
+        return execution;
+      },
+    }),
+  );
+
+  return {
+    async fetch(url, init) {
+      const parsed = new URL(url);
+      const segments = parsed.pathname.split("/").filter(Boolean);
+      // segments: api projects <name> (workflows|workflow-templates|sessions ...)
+      const name = decodeURIComponent(segments[2] ?? "");
+      const resource = segments[3];
+      const request = new Request(url, {
+        method: init.method,
+        headers: init.headers,
+        body: init.body,
+      });
+
+      if (resource === "workflows") {
+        const workflowId = decodeURIComponent(segments[4] ?? "");
+        if (init.method === "DELETE") {
+          return definitionHandlers.DELETE(request, {
+            params: Promise.resolve({ name, workflowId }),
+          });
+        }
+        if (init.method === "POST") {
+          return definitionHandlers.CREATE(request, {
+            params: Promise.resolve({ name }),
+          });
+        }
+        if (init.method === "PUT") {
+          return definitionHandlers.UPDATE(request, {
+            params: Promise.resolve({ name, workflowId }),
+          });
+        }
+        return definitionHandlers.LIST(request, {
+          params: Promise.resolve({ name }),
+        });
+      }
+
+      if (resource === "workflow-templates") {
+        return templateHandlers.LIST_TEMPLATES(request, {
+          params: Promise.resolve({ name }),
+        });
+      }
+
+      if (resource === "sessions") {
+        const session = decodeURIComponent(segments[4] ?? "");
+        const action = segments[6]; // graph-workflow[/execution|/validate]
+        if (action === "execution") {
+          return executionHandlers.EXECUTION(request, {
+            params: Promise.resolve({ name, session }),
+          });
+        }
+        if (action === "validate") {
+          return validateHandlers.POST(request, {
+            params: Promise.resolve({ name, session }),
+          });
+        }
+        if (init.method === "POST") {
+          return executionHandlers.START(request, {
+            params: Promise.resolve({ name, session }),
+          });
+        }
+      }
+
+      throw new Error(`unhandled ${init.method} ${parsed.pathname}`);
+    },
+    async readTextFile(filePath) {
+      return files[filePath] ?? null;
+    },
+    async sleep() {},
+    platform: os.platform(),
+    homedir: os.homedir(),
+  };
+}
+
+const env: CliEnv = {
+  CC_SERVER_URL: "http://127.0.0.1:4999",
+  CC_API_TOKEN: "t",
+  CC_PROJECT: "cc",
+  CC_SESSION: "sess",
+};
+
+describe("cctl workflow against the real workflow route handlers", () => {
+  it("list parses the definition route's { items } shape", async () => {
+    const result = await runCli(
+      ["workflow", "list", "--json"],
+      env,
+      routeHost(null),
+    );
+    expect(result.exitCode).toBe(0);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.workflows[0].id).toBe("wf-1");
+    expect(envelope.workflows[0].name).toBe("Auth Setup");
+  });
+
+  it("templates lists BOTH tiers via the real cross-tier merge", async () => {
+    const result = await runCli(
+      ["workflow", "templates"],
+      env,
+      routeHost(null),
+    );
+    expect(result.exitCode).toBe(0);
+    // The real template library merged global + project storage, tier-tagged.
+    expect(result.stdout).toContain("global  g-1");
+    expect(result.stdout).toContain("project  p-1");
+  });
+
+  it("templates --tier project filters to the project tier only", async () => {
+    const result = await runCli(
+      ["workflow", "templates", "--tier", "project"],
+      env,
+      routeHost(null),
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("p-1");
+    expect(result.stdout).not.toContain("g-1");
+  });
+
+  it("delete maps to the real DELETE route", async () => {
+    const result = await runCli(
+      ["workflow", "delete", "wf-1"],
+      env,
+      routeHost(null),
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("deleted wf-1");
+  });
+
+  it("delete exits 2 for an unknown workflow (real 404)", async () => {
+    const result = await runCli(
+      ["workflow", "delete", "nope"],
+      env,
+      routeHost(null),
+    );
+    expect(result.exitCode).toBe(2);
+  });
+
+  it("status parses the full execution route incl. a structured haltReason", async () => {
+    const execution = createWorkflowExecution({
+      id: "execution-active",
+      status: "halted",
+      haltReason: {
+        type: "max_iterations",
+        contextId: "context-plan",
+        iterationCount: 7,
+      },
+    });
+    const result = await runCli(
+      ["workflow", "status"],
+      env,
+      routeHost(execution),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("execution-active");
+    // A row per definition context, with completed/total task counts.
+    expect(result.stdout).toContain("context-plan");
+    expect(result.stdout).toContain("0/1");
+    // The structured (non-string) haltReason rendered as its short type label.
+    expect(result.stdout).toContain("halted: max_iterations");
+  });
+
+  it("status reports no active execution when the route returns null", async () => {
+    const result = await runCli(["workflow", "status"], env, routeHost(null));
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toLowerCase()).toContain("no active graph workflow");
+  });
+
+  it("start parses summarizeExecution and prints the run id + hint", async () => {
+    const execution = createWorkflowExecution({
+      id: "execution-active",
+      status: "running",
+    });
+    const result = await runCli(
+      ["workflow", "start", "wf-1"],
+      env,
+      routeHost(execution),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("execution-active");
+    expect(
+      result.stdout
+        .trimEnd()
+        .endsWith("track progress with 'cctl workflow status'"),
+    ).toBe(true);
+  });
+});
+
+describe("cctl workflow author flow against the real create-path validation", () => {
+  const PLAN = "/tmp/plan.json";
+
+  function validPlan(): string {
+    return JSON.stringify({
+      name: "Auth Setup",
+      description: "OAuth2 workflow",
+      definition: createWorkflowDefinition(),
+      layout: createWorkflowLayout(),
+    });
+  }
+
+  /** The fixture graph plus a back-edge that closes a dependency cycle. */
+  function cyclicPlan(): string {
+    const definition = createWorkflowDefinition();
+    return JSON.stringify({
+      name: "Auth Setup",
+      description: "OAuth2 workflow",
+      definition: {
+        ...definition,
+        edges: [
+          ...definition.edges,
+          {
+            id: "edge-verify-plan",
+            sourceContextId: "context-verify",
+            targetContextId: "context-plan",
+          },
+        ],
+      },
+      layout: createWorkflowLayout(),
+    });
+  }
+
+  it("validate → { ok } for a well-formed plan via the real validate handler", async () => {
+    const result = await runCli(
+      ["workflow", "validate", "--file", PLAN],
+      env,
+      routeHost(null, { [PLAN]: validPlan() }),
+    );
+    expect(result.exitCode).toBe(0);
+    expect(
+      result.stdout
+        .trimEnd()
+        .endsWith(
+          `valid — create it with 'cctl workflow create --file ${PLAN}'`,
+        ),
+    ).toBe(true);
+  });
+
+  it("validate exits 2 with JSON-path issues for a cyclic graph", async () => {
+    const result = await runCli(
+      ["workflow", "validate", "--file", PLAN],
+      env,
+      routeHost(null, { [PLAN]: cyclicPlan() }),
+    );
+    expect(result.exitCode).toBe(2);
+    // The real structural validator flags the cycle; the CLI renders its path.
+    expect(result.stderr).toContain("definition.edges");
+  });
+
+  it("create posts through the real create-path validation and prints the start hint", async () => {
+    const result = await runCli(
+      ["workflow", "create", "--file", PLAN],
+      env,
+      routeHost(null, { [PLAN]: validPlan() }),
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("wf-new");
+    expect(
+      result.stdout
+        .trimEnd()
+        .endsWith("start it with 'cctl workflow start wf-new'"),
+    ).toBe(true);
+  });
+
+  it("create exits 2 when the real create-path validation rejects a cyclic graph", async () => {
+    const result = await runCli(
+      ["workflow", "create", "--file", PLAN],
+      env,
+      routeHost(null, { [PLAN]: cyclicPlan() }),
+    );
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("Invalid request");
+  });
+
+  it("replace maps to the real PUT route and reports the new revision", async () => {
+    const result = await runCli(
+      ["workflow", "replace", "wf-1", "--file", PLAN],
+      env,
+      routeHost(null, { [PLAN]: validPlan() }),
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("revision: 4");
+    expect(result.stdout).not.toContain("hint:");
+  });
+});

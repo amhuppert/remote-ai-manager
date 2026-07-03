@@ -56,6 +56,7 @@ function makePendingEntry(
     deliveryAttemptId: null,
     attemptCount: 0,
     error: null,
+    metadata: null,
     ...overrides,
   };
 }
@@ -71,6 +72,7 @@ function makeView(entry: PendingQueuedMessage): QueuedMessageView {
     cancelledAt: entry.cancelledAt,
     failedAt: entry.failedAt,
     error: entry.error,
+    metadata: entry.metadata,
   };
 }
 

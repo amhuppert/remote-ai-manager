@@ -177,6 +177,30 @@ export type ProposeDecisionsRequest = z.infer<
   typeof proposeDecisionsRequestSchema
 >;
 
+/**
+ * Agent-facing charter submission body (`cctl charter write`). The URL carries
+ * project + session; `conversationId` identifies the authoring conversation
+ * (the MCP tool got it from its closure context). `content` mirrors
+ * `write_session_charter`'s input.
+ */
+export const submitCharterRequestSchema = z.object({
+  conversationId: z.string().min(1),
+  content: z.string().min(1),
+});
+export type SubmitCharterRequest = z.infer<typeof submitCharterRequestSchema>;
+
+/**
+ * Agent-facing decisions submission body (`cctl decisions propose`). Mirrors
+ * `propose_decisions`' input plus the authoring `conversationId`.
+ */
+export const submitDecisionsRequestSchema = z.object({
+  conversationId: z.string().min(1),
+  decisions: z.array(proposedDecisionSchema).min(1),
+});
+export type SubmitDecisionsRequest = z.infer<
+  typeof submitDecisionsRequestSchema
+>;
+
 /** Per-decision resolution: approve, or reject with optional feedback. */
 export const decisionResolutionSchema = z.object({
   proposalId: z.string().min(1),

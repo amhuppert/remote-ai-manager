@@ -3,15 +3,14 @@
  *
  * Production runtime path:
  *
- *   SDK MCP transport (serializes individual tool_use requests one at a time)
- *     → `wrapMcpHandlerWithHaltCheck(getPendingHaltReason, handler, getPendingToolBlock)`
+ *   Lane HTTP endpoint (`lane-route-handlers.ts`)
+ *     → `resolveLaneHaltReason(getPendingHaltReason, getPendingToolBlock)`
  *
- * The MCP transport already serializes each tool_use as a separate request to
- * the registered MCP handler, so the dispatch loop is in the transport layer,
- * not in this module. `wrapMcpHandlerWithHaltCheck` supplies pre-dispatch
- * halt and non-terminal blocker inspection at the runtime boundary where
- * production tool handlers are invoked — see `tool-server.ts` for every
- * registered handler being wrapped this way.
+ * Each lane tool call arrives as a separate HTTP request, so the dispatch loop
+ * is in the transport layer, not in this module. `resolveLaneHaltReason`
+ * supplies pre-dispatch halt and non-terminal blocker inspection at the runtime
+ * boundary where the lane endpoints run real work — a pending halt or
+ * collaboration block yields a 409 with the exact reason text an agent observes.
  *
  * `createTurnDispatcher` in this file is a TEST HARNESS that reproduces the
  * contract behavior in isolation: it walks a synthetic `tool_use[]` list
@@ -161,59 +160,23 @@ export function createTurnDispatcher(deps: TurnDispatcherDeps): TurnDispatcher {
 }
 
 /**
- * Production-path pre-dispatch guard for MCP tool handlers.
- *
- * This is the runtime enforcement of the Same-Turn Tool Dispatch Contract
- * (see file header). It is applied per-handler at registration time in
- * `tool-server.ts` so every registered tool inspects terminal halt state and
- * non-terminal collaboration blockers before doing real work. The MCP
- * transport already serializes sibling tool_use blocks one at a time, so the
- * per-handler pre-dispatch check is sufficient to prevent additional tool
- * mutations after a halt or collaboration request has been recorded. After
- * the turn ends, the iteration orchestrator observes the same persisted state
- * and either unwinds for a halt or waits for collaboration completion.
- *
- * The synthetic `tool_result` content uses the exact text format produced by
- * `buildHaltMessage` (`"iteration halted: <haltReason.type>"`) so the
- * production path and the `createTurnDispatcher` test harness are guaranteed
- * to emit byte-identical halt messages — the same prefix the agent sees in
- * the test integration paths.
+ * Pre-dispatch halt resolution shared by the lane HTTP endpoints (doc 02 §4:
+ * "the new endpoints perform the same check first"). Returns the exact reason
+ * text an agent observes today — a terminal halt (`buildHaltMessage`) takes
+ * precedence over a non-terminal collaboration blocker
+ * (`buildPendingToolBlockMessage`) — or null when the turn may proceed.
  */
-export type McpHandlerResult = {
-  content: Array<{ type: "text"; text: string }>;
-  isError?: boolean;
-};
-
-export function wrapMcpHandlerWithHaltCheck<I>(
+export async function resolveLaneHaltReason(
   getPendingHaltReason: GetPendingHaltReasonFn,
-  handler: (input: I) => Promise<McpHandlerResult>,
   getPendingToolBlock?: GetPendingToolBlockFn,
-): (input: I) => Promise<McpHandlerResult> {
-  return async (input) => {
-    const haltReason = await getPendingHaltReason();
-    if (haltReason) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: buildHaltMessage(haltReason),
-          },
-        ],
-        isError: true,
-      };
-    }
-    const block = await getPendingToolBlock?.();
-    if (block) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: buildPendingToolBlockMessage(block),
-          },
-        ],
-        isError: true,
-      };
-    }
-    return handler(input);
-  };
+): Promise<string | null> {
+  const haltReason = await getPendingHaltReason();
+  if (haltReason) {
+    return buildHaltMessage(haltReason);
+  }
+  const block = await getPendingToolBlock?.();
+  if (block) {
+    return buildPendingToolBlockMessage(block);
+  }
+  return null;
 }

@@ -65,6 +65,7 @@ import type {
 import { QUERY_SESSION_ERROR_CODES } from "@/lib/agent-backends/claude/query-session-errors";
 import { computeEffectiveConfigHash } from "@/lib/mcp/runtime-apply";
 import { ALIGN_SUGGESTION_INSTRUCTIONS } from "@/lib/session-alignment/render";
+import { CC_CLI_INSTRUCTIONS } from "@/lib/prompt/sdk-driver";
 import type { AlignmentInjection } from "@/lib/session-alignment/render";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import type { SessionState } from "@/lib/sessions/schemas";
@@ -182,7 +183,7 @@ function createMockDeps(
       }) => ({
         servers: [
           {
-            id: "cc-session-tools",
+            id: "gateway-alpha",
             transport: "streamable-http" as const,
             url: `http://localhost:3000/api/projects/${args.projectName}/sessions/${args.sessionName}/mcp`,
           },
@@ -1466,7 +1467,7 @@ describe("executePromptForMachine", () => {
       // Neither runtime ever delivered a turn.
       expect(reusedSendTurn).not.toHaveBeenCalled();
       expect(freshSendTurn).not.toHaveBeenCalled();
-      expect(result.error).toContain("cc-session-tools unrecoverable");
+      expect(result.error).toContain("runtime unrecoverable");
     });
   });
 
@@ -1944,7 +1945,7 @@ describe("executePromptForMachine", () => {
         portableMcp: {
           servers: [
             {
-              id: "cc-graph-workflow",
+              id: "transient-tool",
               transport: "streamable-http",
               url: "http://127.0.0.1:3000/api/projects/project/sessions/session/mcp/graph-workflow/execution-1/contexts/context-1",
             },
@@ -1963,7 +1964,7 @@ describe("executePromptForMachine", () => {
       portableMcp?: { servers: Array<{ id: string }> };
     };
     expect(tooling.portableMcp?.servers.map((server) => server.id)).toEqual(
-      expect.arrayContaining(["cc-session-tools", "cc-graph-workflow"]),
+      expect.arrayContaining(["gateway-alpha", "transient-tool"]),
     );
   });
 
@@ -1971,7 +1972,7 @@ describe("executePromptForMachine", () => {
     const transient = {
       servers: [
         {
-          id: "cc-graph-workflow",
+          id: "transient-tool",
           transport: "streamable-http" as const,
           url: "http://127.0.0.1:3000/graph",
         },
@@ -2014,7 +2015,7 @@ describe("executePromptForMachine", () => {
     const composed = {
       servers: [
         {
-          id: "cc-session-tools",
+          id: "gateway-alpha",
           transport: "streamable-http" as const,
           url: "http://localhost:3000/api/projects/repo/sessions/sess/mcp",
         },
@@ -2165,7 +2166,7 @@ describe("executePromptForMachine", () => {
     const composed = {
       servers: [
         {
-          id: "cc-session-tools",
+          id: "gateway-alpha",
           transport: "streamable-http" as const,
           url: "http://localhost:3000/api/projects/repo/sessions/test-session/mcp",
         },
@@ -2273,7 +2274,7 @@ describe("executePromptForMachine", () => {
     };
     expect(tooling.portableMcp?.servers).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: "cc-session-tools" }),
+        expect.objectContaining({ id: "gateway-alpha" }),
       ]),
     );
   });
@@ -3913,6 +3914,23 @@ describe("executePromptForMachine alignment injection", () => {
       input.projectPath,
       input.sessionName,
     );
+  });
+
+  it("injects the one-line cctl CLI nudge into every session's instructions", async () => {
+    mockDeps = createMockDeps({
+      getSessionState: vi.fn(async () => makeSessionState()),
+      getActiveAlignmentInjection: vi.fn(async () => null),
+    });
+    setActorDeps(mockDeps);
+
+    const input = makeExecutePromptInput();
+    registerFreshRuntime(input);
+
+    await executePromptForMachine(input);
+
+    const instructions = capturedSessionInstructions();
+    expect(instructions).toContain(CC_CLI_INSTRUCTIONS);
+    expect(CC_CLI_INSTRUCTIONS).not.toContain("\n");
   });
 
   it("injects the /align suggestion when a normal session has no active charter", async () => {

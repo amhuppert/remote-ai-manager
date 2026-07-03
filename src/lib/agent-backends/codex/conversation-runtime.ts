@@ -42,6 +42,10 @@ import type { CodexRuntimeCapabilityConfig } from "@/lib/agent-capabilities/code
 // Default dep implementations (used at runtime, injected in tests)
 import { Codex } from "@openai/codex-sdk";
 import { buildChildEnv } from "@/lib/shared/child-env";
+import { buildSessionEnvContract } from "@/lib/agent-gateway/session-env";
+import { getCachedInstanceToken } from "@/lib/agent-gateway/token";
+import { getServerBaseUrl } from "@/lib/agent-gateway/server-url";
+import { getConfigDirPath } from "@/lib/config/loader";
 import { toStringEnv } from "./shared";
 import { translatePortableMcpToCodex } from "./mcp-translation";
 import {
@@ -72,7 +76,13 @@ export interface CodexThreadLike {
 export interface CodexConversationRuntimeDeps {
   createCodex(options: CodexOptions): CodexClientLike;
   buildChildEnv(): NodeJS.ProcessEnv;
-  toStringEnv(env: NodeJS.ProcessEnv): Record<string, string>;
+  toStringEnv(env: Record<string, string | undefined>): Record<string, string>;
+  /** Server base URL recorded at boot; null when startup has not resolved one. */
+  getServerUrl(): string | null;
+  /** Instance token; null when startup failed to provision one. */
+  getApiToken(): string | null;
+  /** Config dir whose `bin/` is prepended to PATH so `cctl` resolves. */
+  getConfigDir(): string;
   translatePortableMcpToCodex(
     config: PortableMcpConfig,
   ): PortableMcpToCodexResult;
@@ -87,6 +97,9 @@ const defaultDeps: CodexConversationRuntimeDeps = {
   createCodex: (options) => new Codex(options) as unknown as CodexClientLike,
   buildChildEnv,
   toStringEnv,
+  getServerUrl: getServerBaseUrl,
+  getApiToken: getCachedInstanceToken,
+  getConfigDir: getConfigDirPath,
   translatePortableMcpToCodex,
   listNativeCodexMcpServers,
   now: () => Date.now(),
@@ -116,6 +129,16 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
   private readonly sessionInstructions: string[];
   private readonly worktreePath: string;
   private readonly conversationId: string;
+  private readonly projectName: string;
+  private readonly sessionName: string;
+  /**
+   * Graph-workflow lane identity, present only for implementer-lane
+   * conversations so the injected env carries CC_WORKFLOW_EXECUTION_ID /
+   * CC_WORKFLOW_CONTEXT_ID for `cctl workflow …`. Undefined for every non-lane
+   * conversation (both set together or not at all).
+   */
+  private readonly workflowExecutionId: string | undefined;
+  private readonly workflowContextId: string | undefined;
   private readonly deps: CodexConversationRuntimeDeps;
 
   constructor(
@@ -132,6 +155,10 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
     this.sessionInstructions = input.sessionInstructions;
     this.worktreePath = input.worktreePath;
     this.conversationId = input.conversationId;
+    this.projectName = input.projectName;
+    this.sessionName = input.sessionName;
+    this.workflowExecutionId = input.workflowExecutionId;
+    this.workflowContextId = input.workflowContextId;
     this.modelId = input.modelId;
     this.reasoningEffort = input.reasoningEffort;
     this.outputFormat = input.outputFormat;
@@ -411,10 +438,28 @@ export class CodexConversationRuntime implements ConversationBackendRuntime {
   }
 
   private async buildCodexOptions(): Promise<CodexOptions> {
-    const env = this.deps.toStringEnv({
-      ...this.deps.buildChildEnv(),
-      CLAUDECODE: "",
-    });
+    // Thread the same cctl env contract every spawned session gets (doc 01 §2):
+    // identity + server coordinates + PATH prepend, plus the graph-workflow lane
+    // identity when this is an implementer lane, so `cctl workflow …` resolves
+    // its execution/context from env without flags. Rebuilt per turn because the
+    // runtime reconstructs its Codex client each turn.
+    const env = this.deps.toStringEnv(
+      buildSessionEnvContract({
+        baseEnv: { ...this.deps.buildChildEnv(), CLAUDECODE: "" },
+        serverUrl: this.deps.getServerUrl(),
+        apiToken: this.deps.getApiToken(),
+        project: this.projectName,
+        session: this.sessionName,
+        conversationId: this.conversationId,
+        configDir: this.deps.getConfigDir(),
+        ...(this.workflowExecutionId !== undefined
+          ? { workflowExecutionId: this.workflowExecutionId }
+          : {}),
+        ...(this.workflowContextId !== undefined
+          ? { workflowContextId: this.workflowContextId }
+          : {}),
+      }),
+    );
 
     const options: CodexOptions = { env };
     const configMerged: Record<string, unknown> = {};

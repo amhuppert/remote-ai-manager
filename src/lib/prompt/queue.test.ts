@@ -27,6 +27,7 @@ function makePendingEntry(
     deliveryAttemptId: null,
     attemptCount: 0,
     error: null,
+    metadata: null,
     ...overrides,
   };
 }
@@ -232,6 +233,27 @@ describe("queueMessage in_turn", () => {
     claimLiveDeliveryMock.mockResolvedValue(
       makePendingEntry({ status: "delivering", deliveryAttemptId: "att-9" }),
     );
+  });
+
+  it("an answer row (consumePendingQuestionId) is never live-delivered — answers arrive as the next turn", async () => {
+    // The backend capability says in_turn and a live runtime exists — a typed
+    // message would be delivered into the running turn. An answer must not be
+    // (docs/design/cc-cli/03 §5): it stays pending for the next-turn drain.
+    const queueUserInputMock = vi.fn();
+    getRuntimeMock.mockReturnValue({ queueUserInput: queueUserInputMock });
+
+    const result = await queueMessage({
+      ...baseParams,
+      text: '<cc-question-answers batch="q_b1">{}</cc-question-answers>',
+      backend: "claude",
+      consumePendingQuestionId: "q_b1",
+      deps,
+    });
+
+    expect(result?.deliveryTiming).toBe("next_turn");
+    expect(claimLiveDeliveryMock).not.toHaveBeenCalled();
+    expect(queueUserInputMock).not.toHaveBeenCalled();
+    expect(appendTranscriptEntryMock).not.toHaveBeenCalled();
   });
 
   it("confirms delivery: claim -> queueUserInput -> append (once) -> markDelivered", async () => {

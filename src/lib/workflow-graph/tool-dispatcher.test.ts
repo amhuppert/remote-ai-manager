@@ -13,7 +13,6 @@ import { IterationHaltedError } from "./iteration-orchestrator";
 import {
   buildHaltMessage,
   createTurnDispatcher,
-  wrapMcpHandlerWithHaltCheck,
   type ToolUseBlock,
 } from "./tool-dispatcher";
 import type { GraphWorkflowHaltReason } from "@/lib/workflows/schemas";
@@ -230,61 +229,5 @@ describe("createTurnDispatcher", () => {
         expected,
       );
     });
-  });
-});
-
-describe("wrapMcpHandlerWithHaltCheck (production halt enforcement)", () => {
-  it("invokes the underlying handler when no halt is pending and returns its result unchanged", async () => {
-    const handler = vi.fn(async () => ({
-      content: [{ type: "text" as const, text: "handler ran" }],
-    }));
-    const wrapped = wrapMcpHandlerWithHaltCheck(async () => null, handler);
-
-    const result = await wrapped({ taskSlug: "do-it", summary: "done" });
-
-    expect(handler).toHaveBeenCalledTimes(1);
-    expect(handler).toHaveBeenCalledWith({
-      taskSlug: "do-it",
-      summary: "done",
-    });
-    expect(result.content[0]?.text).toBe("handler ran");
-    expect(result.isError).toBeUndefined();
-  });
-
-  it("short-circuits with isError=true and the canonical halt message when pendingHaltReason is set, never invoking the handler", async () => {
-    const handler = vi.fn();
-    const wrapped = wrapMcpHandlerWithHaltCheck(
-      async () => HALT_REASON,
-      handler,
-    );
-
-    const result = await wrapped({ taskSlug: "do-it", summary: "done" });
-
-    expect(handler).not.toHaveBeenCalled();
-    expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toBe(
-      "iteration halted: collaboration_failure",
-    );
-    expect(result.content[0]?.text).toBe(buildHaltMessage(HALT_REASON));
-  });
-
-  it("re-checks pendingHaltReason on every invocation so a halt set between turns is observed without restarting the server", async () => {
-    let haltRef: GraphWorkflowHaltReason | null = null;
-    const handler = vi.fn(async () => ({
-      content: [{ type: "text" as const, text: "ok" }],
-    }));
-    const wrapped = wrapMcpHandlerWithHaltCheck(async () => haltRef, handler);
-
-    const before = await wrapped({});
-    expect(before.isError).toBeUndefined();
-    expect(handler).toHaveBeenCalledTimes(1);
-
-    haltRef = HALT_REASON;
-    const after = await wrapped({});
-    expect(after.isError).toBe(true);
-    expect(after.content[0]?.text).toBe(
-      "iteration halted: collaboration_failure",
-    );
-    expect(handler).toHaveBeenCalledTimes(1);
   });
 });

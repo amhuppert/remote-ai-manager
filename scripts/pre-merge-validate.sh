@@ -14,6 +14,11 @@ set -euo pipefail
 # Enable AI-optimized output for tools that detect this (e.g., vitest.config.ts)
 export CLAUDECODE=1
 
+# build-info.generated.ts is gitignored and normally produced by postinstall/dev/build;
+# a fresh validation worktree may have run none of those, so generate it before
+# tsc/vitest resolve the module.
+bun run build:info >/dev/null
+
 # Resolve where this branch diverged from its merge target so we only lint/format/
 # test what it actually introduces or changes. TARGET_BRANCH is supplied by CC's
 # merge workflow; default to main for standalone runs.

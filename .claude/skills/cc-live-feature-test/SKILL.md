@@ -16,12 +16,12 @@ Unit and integration tests in CC frequently pass against **fakes** (in-memory st
 
 ## Step 0 — Safety: confirm you are NOT pointed at the production DB
 
-`ensure_dev_server`'s **default behavior must create local configuration state in the current worktree** — i.e. start the dev server with `CC_CONFIG_DIR` resolving to `<worktree>/.config`, giving an isolated `command-center.db`, logs, and transcripts. Verify this before doing anything that mutates state.
+`cctl dev ensure`'s **default behavior must create local configuration state in the current worktree** — i.e. start the dev server with `CC_CONFIG_DIR` resolving to `<worktree>/.config`, giving an isolated `command-center.db`, logs, and transcripts. Verify this before doing anything that mutates state.
 
 - Production config dirs (DO NOT TEST AGAINST THESE):
   - macOS: `~/Library/Application Support/cc`
   - Linux: `$XDG_CONFIG_HOME/cc` or `~/.config/cc`
-- Call `get_dev_servers` and inspect the server `command` / `recentOutput`. Confirm it includes a worktree-local override, e.g. `CC_CONFIG_DIR=$PWD/.config`, and that the resolved path is **inside the current worktree**.
+- Run `cctl dev list --json` and inspect the server `command` / `recentOutput`. Confirm it includes a worktree-local override, e.g. `CC_CONFIG_DIR=$PWD/.config`, and that the resolved path is **inside the current worktree**.
 
 ```bash
 WT="$(git rev-parse --show-toplevel)"
@@ -33,11 +33,11 @@ ls -la "$WT/.config/command-center.db"
 echo "production (must NOT be the target): $HOME/Library/Application Support/cc/command-center.db"
 ```
 
-If `ensure_dev_server` did NOT produce a worktree-local `.config` (no `CC_CONFIG_DIR` override, or it points outside the worktree, or it resolves to a production path), **STOP and surface it** — both because live testing would corrupt production data, and because that default behavior is itself a defect worth reporting. Do not proceed until the target is a worktree-local DB.
+If `cctl dev ensure` did NOT produce a worktree-local `.config` (no `CC_CONFIG_DIR` override, or it points outside the worktree, or it resolves to a production path), **STOP and surface it** — both because live testing would corrupt production data, and because that default behavior is itself a defect worth reporting. Do not proceed until the target is a worktree-local DB.
 
 ## Step 1 — Environment setup
 
-1. **Get the URL with `ensure_dev_server`.** Never assume a port (3000/3002/6006): every worktree gets its own. Use the returned `localUrl`/`remoteUrl`. `get_dev_servers` also gives `logFilePath` (the dev server's stdout/stderr — useful for startup/runtime errors and the HTTP access log).
+1. **Get the URL with `cctl dev ensure`.** Never assume a port (3000/3002/6006): every worktree gets its own. Use the printed `localUrl`/`remoteUrl`. `cctl dev list --json` also gives `logFilePath` (the dev server's stdout/stderr — useful for startup/runtime errors and the HTTP access log).
 2. **Locate the durable state** (all under the worktree-local config dir from Step 0):
    - SQLite DB: `<config>/command-center.db` (e.g. `sqlite3 <config>/command-center.db ".tables"`)
    - NDJSON logs: `<config>/logs/...` — use the **`debug-logs` skill** for structure, locations, `traceId` tracing, and query recipes. Don't re-derive log layout here.

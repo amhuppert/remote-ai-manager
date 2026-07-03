@@ -8,7 +8,6 @@ import type {
   McpServerConfig,
   Settings,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { MessageContentBlock } from "@/lib/conversations/schemas";
 import type {
@@ -36,25 +35,20 @@ import {
   type BackgroundWaitOutcome,
   type QuerySession,
   type QuerySessionOptions,
-  type SdkMcpStreamClosedInfo,
   type TurnResult,
 } from "./query-session";
 import { getWaitableInFlightTaskIds } from "./background-task-tracker";
 import {
-  createSessionToolsSupervisor,
-  type SessionToolsSupervisor,
-} from "./session-tools-supervisor";
-import {
   isUndeliveredQuerySessionError,
   isSessionDiedMidTurnError,
 } from "./query-session-errors";
-import {
-  conversationRuntimeKey,
-  hasActiveQuestionResolver,
-} from "@/lib/workflows/conversation/runtime-state";
 import { buildClaudePromptBlocks } from "./build-prompt-blocks";
 import { createCanUseTool } from "./native-tooling";
 import { buildChildEnv } from "@/lib/shared/child-env";
+import { buildSessionEnvContract } from "@/lib/agent-gateway/session-env";
+import { getCachedInstanceToken } from "@/lib/agent-gateway/token";
+import { getServerBaseUrl } from "@/lib/agent-gateway/server-url";
+import { getConfigDirPath } from "@/lib/config/loader";
 import { createLogger } from "@/lib/logging";
 import {
   claudeModelSchema,
@@ -63,17 +57,10 @@ import {
 import { type McpDiscoveredTool } from "@/lib/mcp/schemas";
 import { translatePortableMcpToClaude } from "../mcp-translation";
 import { createPortableMcpFilterLookup } from "@/lib/mcp/portable-mcp-filter";
-import {
-  createSessionMcpServer,
-  type SessionMcpServerParams,
-} from "@/lib/mcp-gateway/session-server";
 import { composeClaudeAgentCanUseTool } from "@/lib/agent-capabilities/claude-agent-suppression";
 import { backendCapabilities } from "@/lib/agent-backends/capabilities-descriptor";
 
 const logger = createLogger("claude:conversation-runtime");
-const sessionToolsLogger = createLogger("claude:session-tools-supervisor");
-
-const CC_SESSION_TOOLS_SERVER_NAME = "cc-session-tools";
 
 /**
  * Default hard ceiling for the background-task wait barrier. Decoupled from the
@@ -81,14 +68,6 @@ const CC_SESSION_TOOLS_SERVER_NAME = "cc-session-tools";
  * a long-running build/test can settle without the wait timing out prematurely.
  */
 const DEFAULT_BACKGROUND_TASK_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
-
-export interface ClaudeFactoryDeps {
-  createSessionMcpServer(params: SessionMcpServerParams): Promise<McpServer>;
-}
-
-const defaultClaudeFactoryDeps: ClaudeFactoryDeps = {
-  createSessionMcpServer,
-};
 
 const KNOWN_CLAUDE_MODELS = claudeModelSchema.options;
 const KNOWN_EFFORT_LEVELS = claudeEffortLevelSchema.options;
@@ -114,11 +93,6 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
   private readonly onPortableMcpApplied: (
     config: PortableMcpConfig | null,
   ) => void;
-  private sessionToolsInstance: McpServer;
-  private readonly recreateSessionToolsServer: () => Promise<McpServer>;
-  private lastAppliedTranslatedServers: Record<string, McpServerConfig> = {};
-  private readonly sessionTools: SessionToolsSupervisor;
-  private readonly _isQuestionPending: () => boolean;
   private readonly onCapabilityConfigApplied: (
     config: ClaudeRuntimeCapabilityConfig,
   ) => Promise<void>;
@@ -141,22 +115,6 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
       onCapabilityConfigApplied?: (
         config: ClaudeRuntimeCapabilityConfig,
       ) => Promise<void>;
-      sessionToolsInstance: McpServer;
-      /**
-       * Factory closure that builds a fresh `cc-session-tools` `McpServer`
-       * instance with the same project/session/conversation scoping the
-       * runtime was created with. Used by `replaceSessionToolsInstance` to
-       * recover from a broken in-process transport.
-       */
-      recreateSessionToolsServer: () => Promise<McpServer>;
-      /**
-       * True iff a turn is blocked on a validly pending AskUserQuestion
-       * resolver for this conversation. Injected (rather than read directly)
-       * so the runtime stays decoupled from the conversation runtime-state
-       * registry and the session-tools supervisor can honor the
-       * pending-question guard.
-       */
-      isQuestionPending: () => boolean;
     },
   ) {
     this.querySession = querySession;
@@ -167,29 +125,6 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
     this.onPortableMcpApplied = opts.onPortableMcpApplied ?? (() => {});
     this.onCapabilityConfigApplied =
       opts.onCapabilityConfigApplied ?? (async () => {});
-    this.sessionToolsInstance = opts.sessionToolsInstance;
-    this.recreateSessionToolsServer = opts.recreateSessionToolsServer;
-    this._isQuestionPending = opts.isQuestionPending;
-
-    this.sessionTools = createSessionToolsSupervisor({
-      conversationId: querySession.conversationId,
-      // The two-phase remove-then-add rebind is the only correct repair for a
-      // broken in-process sdk server; the supervisor never replays the config.
-      rebind: async () => {
-        const outcome = await this.replaceSessionToolsInstance();
-        if (outcome === "skipped-dead") {
-          throw new Error("cc-session-tools rebind skipped: runtime is dead");
-        }
-      },
-      isQuestionPending: () => this._isQuestionPending(),
-      isDead: () =>
-        this._status === "dead" || this.querySession.status === "dead",
-      // The supervisor never tears the runtime down itself; it asks the query
-      // session to kill the live turn so the actor recreates a resumed runtime.
-      escalateToKill: (reason) => this.querySession.forceTerminate(reason),
-      now: () => Date.now(),
-      logger: sessionToolsLogger,
-    });
 
     logger.info("claude-runtime.created", {
       conversationId: querySession.conversationId,
@@ -199,31 +134,6 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
 
   get isTurnActive(): boolean {
     return this.querySession.isTurnActive;
-  }
-
-  /**
-   * INVARIANT: every `setMcpServers` payload must include the current
-   * session-tools entry. The SDK diffs sdk-type servers by name — omitting
-   * the name actively DISCONNECTS the in-process server, after which every
-   * cc-session-tools tool call fails with "Stream closed".
-   */
-  private mergeSessionToolsServer(
-    base: Record<string, McpServerConfig>,
-  ): Record<string, McpServerConfig> {
-    return {
-      ...base,
-      [CC_SESSION_TOOLS_SERVER_NAME]: {
-        type: "sdk",
-        name: CC_SESSION_TOOLS_SERVER_NAME,
-        instance: this.sessionToolsInstance,
-      },
-    };
-  }
-
-  async init(translated: Record<string, McpServerConfig>): Promise<void> {
-    const merged = this.mergeSessionToolsServer(translated);
-    await this.querySession.setMcpServers(merged);
-    this.lastAppliedTranslatedServers = translated;
   }
 
   get status(): "alive" | "dead" {
@@ -238,23 +148,12 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
   }
 
   /**
-   * Pre-turn readiness contract. For a reused runtime the supervisor forces a
-   * fresh `cc-session-tools` rebind before the prompt is delivered (the
-   * disconnect window is safe — no tool call is in flight), so the observed
-   * "Stream closed" failure cannot occur on a reused turn without a successful
-   * rebind first. Returns `recreate-runtime` when the binding is unrecoverable,
-   * asking the actor to recreate (resume-preserving). Mid-turn robustness is
-   * best-effort and handled reactively (`handleSdkMcpStreamClosed`) — CC does
-   * not control the agent loop, so a transport that breaks mid-turn after a
-   * successful pre-turn rebind cannot be guaranteed.
+   * Pre-turn readiness contract. External MCP servers reach the SDK statically
+   * at runtime creation, so a reused turn has no in-process rebind to perform —
+   * the runtime is always ready.
    */
   async prepareForTurnStart(): Promise<ReadyResult> {
-    return this.sessionTools.ensureReady("turn_start");
-  }
-
-  /** True iff a turn is blocked on a validly pending AskUserQuestion. */
-  isQuestionPending(): boolean {
-    return this._isQuestionPending();
+    return { status: "ready" };
   }
 
   /**
@@ -495,128 +394,24 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
       };
     }
 
-    if (this.querySession.isTurnActive) {
-      logger.info("claude-runtime.mcp_deferred", {
-        conversationId: this.querySession.conversationId,
-      });
-      return {
-        disposition: "deferred_to_next_turn",
-        droppedServerIds: rejectedServers,
-        droppedFields: rejectedFields,
-        errors: errorsByServer,
-      };
-    }
+    // The live SDK server set is fixed at runtime creation (static
+    // `mcpServers`), so a changed server list only takes effect on the next
+    // runtime. The tool-level enable/disable filter, however, is read live
+    // through `onPortableMcpApplied`, so tool policy changes apply immediately
+    // to `canUseTool`.
+    this.onPortableMcpApplied(config);
 
-    try {
-      const result = await this.querySession.setMcpServers(
-        this.mergeSessionToolsServer(servers),
-      );
-
-      this.lastAppliedTranslatedServers = servers;
-      this.onPortableMcpApplied(config);
-
-      logger.info("claude-runtime.mcp_applied", {
-        conversationId: this.querySession.conversationId,
-        added: result.added,
-        removed: result.removed,
-        errors: result.errors,
-      });
-
-      return {
-        disposition: "applied_now",
-        droppedServerIds: rejectedServers,
-        droppedFields: rejectedFields,
-        errors: { ...errorsByServer, ...result.errors },
-      };
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      logger.error("claude-runtime.mcp_apply_error", {
-        conversationId: this.querySession.conversationId,
-        error: errorMsg,
-      });
-
-      return {
-        disposition: "rejected",
-        droppedServerIds: [],
-        droppedFields: [],
-        errors: { _setMcpServers: errorMsg },
-      };
-    }
-  }
-
-  /**
-   * Build a fresh `cc-session-tools` MCP server instance and re-bind it via
-   * the query session's two-phase `replaceSdkServer` (the SDK diffs sdk-type
-   * servers by name only, so a same-name single-call swap is a silent no-op
-   * — the name must be dropped and re-added). The non-sdk server portion of
-   * both phase payloads is replayed from `lastAppliedTranslatedServers`.
-   *
-   * Works mid-turn — the re-bind is a control-channel operation and the only
-   * caller is stream-closed recovery, which by definition fires during a
-   * turn. On failure the new instance is closed and the field is left
-   * pointing at the old one so later apply payloads don't carry a
-   * half-bound server; the error propagates to the caller.
-   */
-  async replaceSessionToolsInstance(): Promise<"replaced" | "skipped-dead"> {
-    const conversationId = this.querySession.conversationId;
-
-    if (this._status === "dead" || this.querySession.status === "dead") {
-      return "skipped-dead";
-    }
-
-    const newInstance = await this.recreateSessionToolsServer();
-
-    try {
-      await this.querySession.replaceSdkServer(
-        CC_SESSION_TOOLS_SERVER_NAME,
-        newInstance,
-        this.lastAppliedTranslatedServers,
-      );
-    } catch (err) {
-      logger.error("claude-runtime.session_tools_replace_failed", {
-        conversationId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      void newInstance.close().catch((closeErr: unknown) => {
-        logger.warn(
-          "claude-runtime.session_tools_replace_orphan_close_failed",
-          {
-            conversationId,
-            error:
-              closeErr instanceof Error ? closeErr.message : String(closeErr),
-          },
-        );
-      });
-      throw err;
-    }
-
-    const previous = this.sessionToolsInstance;
-    this.sessionToolsInstance = newInstance;
-    void previous.close().catch((err: unknown) => {
-      logger.warn("claude-runtime.session_tools_replace_old_close_failed", {
-        conversationId,
-        error: err instanceof Error ? err.message : String(err),
-      });
+    logger.info("claude-runtime.mcp_applied", {
+      conversationId: this.querySession.conversationId,
+      serverCount: Object.keys(servers).length,
     });
 
-    logger.info("claude-runtime.session_tools_replaced", { conversationId });
-    return "replaced";
-  }
-
-  /**
-   * Reactive entry for a broken in-process MCP transport, fired by the query
-   * session when a `cc-session-tools` tool call comes back with the
-   * SDK-synthesized "Stream closed" error. Routed into the supervisor's
-   * turn-scoped state machine (rebind once; a failed rebind or a second close
-   * this turn kills/recreates the runtime). The reactive rebind cannot save
-   * the already-failed call — the SDK already returned "Stream closed" for it —
-   * it repairs the binding so the agent's retry/next call succeeds. Stream-
-   * closed signals for any other server are ignored here (the query session's
-   * generic threshold is their backstop).
-   */
-  handleSdkMcpStreamClosed(info: SdkMcpStreamClosedInfo): void {
-    if (info.serverName !== CC_SESSION_TOOLS_SERVER_NAME) return;
-    this.sessionTools.onStreamClosed(info);
+    return {
+      disposition: "deferred_to_next_turn",
+      droppedServerIds: rejectedServers,
+      droppedFields: rejectedFields,
+      errors: errorsByServer,
+    };
   }
 
   /**
@@ -711,13 +506,6 @@ class ClaudeConversationRuntime implements ConversationBackendRuntime {
     logger.info("claude-runtime.close", { conversationId });
 
     this.querySession.close();
-
-    void this.sessionToolsInstance.close().catch((err: unknown) => {
-      logger.warn("claude-runtime.session_tools_close_failed", {
-        conversationId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
   }
 }
 
@@ -801,7 +589,6 @@ const claudeConversationBackendFactory = {
 
   async createRuntime(
     input: ConversationBackendCreateInput,
-    deps: ClaudeFactoryDeps = defaultClaudeFactoryDeps,
   ): Promise<ConversationBackendRuntime> {
     const mcpScopeConversationId =
       input.mcpScopeConversationId ?? input.conversationId;
@@ -814,23 +601,10 @@ const claudeConversationBackendFactory = {
       modelId: input.modelId,
     });
 
-    const recreateSessionToolsServer = (): Promise<McpServer> =>
-      deps.createSessionMcpServer({
-        name: input.projectName,
-        session: input.sessionName,
-        conversationId: mcpScopeConversationId,
-        // For a graph-workflow lane, input.worktreePath is the lane worktree
-        // (sessionName stays the parent), so lane dev servers are spawned in
-        // and keyed by their own worktree.
-        worktreePath: input.worktreePath,
-      });
-
-    const sessionToolsInstance = await recreateSessionToolsServer();
-
     // Mutable portable-config holder — reflects the resolver's current
     // effective output. Updated by applyPortableMcpConfig on successful apply.
-    // The filter lookup reads from it live, so setMcpServers-driven changes
-    // take effect in canUseTool without rebuilding the callback.
+    // The filter lookup reads from it live, so tool-policy changes take effect
+    // in canUseTool without rebuilding the callback.
     let currentPortableConfig: PortableMcpConfig | null =
       input.tooling.portableMcp ?? null;
 
@@ -882,20 +656,9 @@ const claudeConversationBackendFactory = {
         ? input.persistedRef.sessionId
         : undefined;
 
-    // Build MCP servers config from tooling overrides.
-    //
-    // The SDK's static-Options init path (XP6 in cli.js) connects servers and
-    // lists tools but does NOT iterate `tools[].permission_policy` on
-    // HTTP/SSE configs. Only the dynamic `mcp_set_servers` handler (fX5)
-    // extracts those policies into the session's `alwaysDenyRules`/
-    // `alwaysAllowRules` — and those rules are checked before the
-    // `bypassPermissions` short-circuit, which is how native per-tool denies
-    // are enforced for HTTP servers.
-    //
-    // Pass an empty `mcpServers` to the SDK initially and immediately call
-    // `setMcpServers` after creation so the dynamic path runs once at start.
-    // Without this, conversation-level disabledTools on HTTP servers leak
-    // through (root cause of context7 `resolve-library-id` not being denied).
+    // Build the external MCP servers config from tooling overrides and pass it
+    // to the SDK statically at creation. External (non-CC) MCP servers are the
+    // only servers CC binds now — there is no in-process CC server to merge.
     let translatedServers: Record<string, McpServerConfig> = {};
     if (input.tooling.portableMcp) {
       const { servers } = translatePortableMcpToClaude(
@@ -907,10 +670,6 @@ const claudeConversationBackendFactory = {
     const externalTurnHandler = input.onExternalTurnEvent
       ? buildExternalTurnHandler(input.onExternalTurnEvent)
       : undefined;
-
-    // Late-bound: the runtime is constructed after the query session, so the
-    // pump's stream-closed events route through this holder once it's set.
-    let streamClosedRecoveryTarget: ClaudeConversationRuntime | null = null;
 
     const sessionOptions: QuerySessionOptions = {
       conversationId: input.conversationId,
@@ -927,20 +686,29 @@ const claudeConversationBackendFactory = {
       },
       resume: resumeSessionId,
       forkSession: undefined,
-      mcpServers: {},
+      mcpServers: translatedServers,
       canUseTool: canUseTool as never,
-      env: buildChildEnv() as Record<string, string>,
+      env: buildSessionEnvContract({
+        baseEnv: buildChildEnv(),
+        serverUrl: getServerBaseUrl(),
+        apiToken: getCachedInstanceToken(),
+        project: input.projectName,
+        session: input.sessionName,
+        conversationId: input.conversationId,
+        configDir: getConfigDirPath(),
+        ...(input.workflowExecutionId !== undefined
+          ? { workflowExecutionId: input.workflowExecutionId }
+          : {}),
+        ...(input.workflowContextId !== undefined
+          ? { workflowContextId: input.workflowContextId }
+          : {}),
+      }) as Record<string, string>,
       maxTurns: undefined,
       plugins: [],
       settingSources: ["user", "project", "local"],
       disallowedTools: ["AskUserQuestion"],
       outputFormat: input.outputFormat,
       externalTurnHandler,
-      onSdkMcpStreamClosed: (info) =>
-        streamClosedRecoveryTarget?.handleSdkMcpStreamClosed(info),
-      // The supervisor owns cc-session-tools recovery + the kill decision, so
-      // its stream-closed results are excluded from the generic N=3 threshold.
-      supervisedMcpServerName: CC_SESSION_TOOLS_SERVER_NAME,
       ...(initialSettings ? { settings: initialSettings } : {}),
     };
 
@@ -967,21 +735,7 @@ const claudeConversationBackendFactory = {
           skillOverrideCount: Object.keys(config.skillOverrides).length,
         });
       },
-      sessionToolsInstance,
-      recreateSessionToolsServer,
-      // Built with the same (projectPath, sessionName, mcpScopeConversationId)
-      // the AskUserQuestion tool keys its runtime-state on, so the supervisor's
-      // pending-question guard reads the resolver the tool installs.
-      isQuestionPending: () =>
-        hasActiveQuestionResolver(
-          conversationRuntimeKey(
-            input.projectPath,
-            input.sessionName,
-            mcpScopeConversationId,
-          ),
-        ),
     });
-    streamClosedRecoveryTarget = runtime;
 
     if (input.tooling.claudeCapabilityConfig) {
       logger.info("claude-runtime.initial_capability_config", {
@@ -997,29 +751,10 @@ const claudeConversationBackendFactory = {
       });
     }
 
-    try {
-      await runtime.init(translatedServers);
-      logger.info("claude-runtime.initial_mcp_set", {
-        conversationId: input.conversationId,
-        serverCount: Object.keys(translatedServers).length + 1,
-      });
-    } catch (err) {
-      logger.error("claude-runtime.initial_mcp_set_failed", {
-        conversationId: input.conversationId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      try {
-        await sessionToolsInstance.close();
-      } catch {
-        // swallow secondary failure
-      }
-      try {
-        querySession.close();
-      } catch {
-        // swallow secondary failure
-      }
-      throw err;
-    }
+    logger.info("claude-runtime.initial_mcp_set", {
+      conversationId: input.conversationId,
+      serverCount: Object.keys(translatedServers).length,
+    });
 
     return runtime;
   },

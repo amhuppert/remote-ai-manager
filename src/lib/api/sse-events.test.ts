@@ -18,6 +18,7 @@ const sampleQueuedMessageView: QueuedMessageView = {
   cancelledAt: null,
   failedAt: null,
   error: null,
+  metadata: null,
 };
 
 describe("SSEEvent union — queue events", () => {

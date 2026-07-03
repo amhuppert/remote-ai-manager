@@ -6,8 +6,6 @@ import {
   cleanupConversationRuntime,
   hasConversationRuntime,
   getRegisteredConversationKeys,
-  rejectActiveQuestionResolver,
-  hasActiveQuestionResolver,
   _resetForTesting,
   type ConversationRuntimeState,
 } from "./runtime-state";
@@ -95,70 +93,6 @@ describe("conversation runtime-state", () => {
 
     it("returns false when not registered", () => {
       expect(hasConversationRuntime("missing")).toBe(false);
-    });
-  });
-
-  describe("rejectActiveQuestionResolver", () => {
-    it("rejects the resolver, clears it, and returns true", async () => {
-      const key = conversationRuntimeKey("/repo", "sess-1", "conv-1");
-      let captured: unknown;
-      const promise = new Promise<unknown>((resolve, reject) => {
-        registerConversationRuntime(key, {
-          abortController: new AbortController(),
-          activeQuestionResolver: {
-            resolve: () => {},
-            reject: (err) => {
-              captured = err;
-              reject(err);
-            },
-          },
-        });
-        void resolve;
-      });
-
-      const result = rejectActiveQuestionResolver(key, "Prompt aborted");
-
-      expect(result).toBe(true);
-      await expect(promise).rejects.toBeDefined();
-      expect((captured as Error).message).toBe("Prompt aborted");
-      expect(
-        getConversationRuntime(key)?.activeQuestionResolver,
-      ).toBeUndefined();
-    });
-
-    it("returns false when there is no active resolver", () => {
-      const key = conversationRuntimeKey("/repo", "sess-1", "conv-1");
-      registerConversationRuntime(key, {
-        abortController: new AbortController(),
-      });
-      expect(rejectActiveQuestionResolver(key, "abort")).toBe(false);
-    });
-
-    it("returns false for unknown key", () => {
-      expect(rejectActiveQuestionResolver("nope", "abort")).toBe(false);
-    });
-  });
-
-  describe("hasActiveQuestionResolver", () => {
-    it("returns true while a resolver is installed and false after it is cleared", () => {
-      const key = conversationRuntimeKey("/repo", "sess-1", "conv-1");
-      registerConversationRuntime(key, {
-        abortController: new AbortController(),
-        activeQuestionResolver: { resolve: () => {}, reject: () => {} },
-      });
-      expect(hasActiveQuestionResolver(key)).toBe(true);
-
-      getConversationRuntime(key)!.activeQuestionResolver = undefined;
-      expect(hasActiveQuestionResolver(key)).toBe(false);
-    });
-
-    it("returns false when the conversation has no resolver or is unknown", () => {
-      const key = conversationRuntimeKey("/repo", "sess-1", "conv-1");
-      registerConversationRuntime(key, {
-        abortController: new AbortController(),
-      });
-      expect(hasActiveQuestionResolver(key)).toBe(false);
-      expect(hasActiveQuestionResolver("missing")).toBe(false);
     });
   });
 

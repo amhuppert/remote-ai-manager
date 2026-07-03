@@ -172,14 +172,11 @@ export interface ConversationBackendRuntime {
   notifyTurnStarting?(): void;
   /**
    * Pre-turn readiness contract, awaited by the caller AFTER the pre-turn
-   * pipeline and BEFORE the prompt is delivered. For a reused Claude runtime
-   * this forces a fresh `cc-session-tools` in-process MCP rebind so the
-   * observed "Stream closed" failure cannot occur on a reused turn without a
-   * successful rebind first; the disconnect window is safe because no tool
-   * call is in flight yet. Returns `recreate-runtime` when the binding cannot
-   * be repaired, asking the caller to recreate the runtime. Backends without
-   * an in-process MCP transport (Codex) do not implement it, so the caller
-   * treats an absent method as `{ status: "ready" }`.
+   * pipeline and BEFORE the prompt is delivered. A runtime that cannot be made
+   * ready returns `recreate-runtime`, asking the caller to recreate it
+   * (resume-preserving); otherwise `{ status: "ready" }`. Backends that need no
+   * special pre-turn preparation do not implement it, so the caller treats an
+   * absent method as `{ status: "ready" }`.
    */
   prepareForTurnStart?(): Promise<ReadyResult>;
   queueUserInput?(input: ConversationQueuedUserInput): Promise<void>;
@@ -243,6 +240,14 @@ export interface ConversationBackendCreateInput {
   alignmentVersion?: number | null;
   sessionInstructions: string[];
   tooling: ConversationToolingOverrides;
+  /**
+   * Graph-workflow lane identity for implementer-lane conversations. Threaded
+   * into the session env (CC_WORKFLOW_EXECUTION_ID / CC_WORKFLOW_CONTEXT_ID) so
+   * `cctl workflow …` resolves its execution/context without flags. Omitted for
+   * every non-lane conversation.
+   */
+  workflowExecutionId?: string;
+  workflowContextId?: string;
   /**
    * Optional callback invoked by the backend runtime when SDK messages arrive
    * between caller-initiated turns — e.g. Claude Code's background-task

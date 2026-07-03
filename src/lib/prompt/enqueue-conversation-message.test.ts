@@ -35,6 +35,7 @@ function makePendingEntry(): PendingQueuedMessage {
     deliveryAttemptId: null,
     attemptCount: 0,
     error: null,
+    metadata: null,
   };
 }
 

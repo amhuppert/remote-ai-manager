@@ -9,7 +9,7 @@ This project has two MCP servers configured in `.mcp.json` that provide real-tim
 
 ## Prerequisites
 
-The Next.js dev server must be running (`bun run dev`) for runtime tools to function. The `/_next/mcp` endpoint is built into Next.js 16+.
+The Next.js dev server must be running for runtime tools to function — run `cctl dev ensure` to start it (or confirm it's up) and obtain the session-scoped URL for your worktree; never assume a default port like 3000. The `/_next/mcp` endpoint is built into Next.js 16+ and is served under that URL.
 
 ## Available MCP Servers
 
@@ -110,8 +110,8 @@ At the start of a development session where MCP tools will be used, call `init` 
 ## Troubleshooting
 
 If tools return connection errors:
-- Verify the dev server is running: `bun run dev`
-- Confirm the server is accessible at `http://localhost:3000/_next/mcp`
+- Verify the dev server is running: `cctl dev ensure` (starts it if needed and prints the session-scoped URL)
+- Confirm the server is accessible at `<localUrl>/_next/mcp` — use the `localUrl` from `cctl dev ensure` / `cctl dev list`, not an assumed port like 3000
 - Restart the dev server if it was started before MCP configuration
 - Restart the MCP client (Claude Code) to reload `.mcp.json`
 

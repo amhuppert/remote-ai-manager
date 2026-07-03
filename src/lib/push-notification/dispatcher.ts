@@ -1,4 +1,8 @@
-import { sendPushNotification, type PushEvent } from "../notifications/push";
+import {
+  sendPushNotification,
+  sendAgentNotification,
+  type PushEvent,
+} from "../notifications/push";
 import { assertNever } from "../shared/assert-never";
 import { createLogger } from "../logging";
 import { readConfig } from "../config/loader";
@@ -34,6 +38,80 @@ async function getPushConfig(): Promise<PushNotificationConfig | undefined> {
     logger.warn("push-dispatcher.config_read_error");
     return undefined;
   }
+}
+
+// ============================================================
+// Agent-initiated push (the `cctl notify` / send_notification path)
+// ============================================================
+
+export interface AgentNotificationRequest {
+  projectName: string;
+  sessionName: string;
+  title: string;
+  message: string;
+  /** info → default "robot" tag; attention → "warning" tag. */
+  urgency?: "info" | "attention";
+}
+
+export type AgentNotificationOutcome =
+  | { delivered: true }
+  | { delivered: false; reason: string };
+
+export interface AgentNotificationDispatchDeps {
+  readPushConfig(): Promise<PushNotificationConfig | undefined>;
+  sendAgentNotification(
+    config: PushNotificationConfig,
+    title: string,
+    message: string,
+    tags: string,
+    projectName: string,
+    sessionName: string,
+  ): Promise<void>;
+}
+
+const defaultAgentNotificationDispatchDeps: AgentNotificationDispatchDeps = {
+  readPushConfig: getPushConfig,
+  sendAgentNotification,
+};
+
+const URGENCY_TAG: Record<
+  NonNullable<AgentNotificationRequest["urgency"]>,
+  string
+> = {
+  info: "robot",
+  attention: "warning",
+};
+
+/**
+ * Deliver an agent-initiated push. Unlike the fire-and-forget `dispatchPushFor*`
+ * helpers this is awaited and returns an outcome, so the notify endpoint can
+ * report an unconfigured-push precondition back to the caller. It bypasses the
+ * per-trigger config gate (the agent's explicit intent is the gate) but still
+ * requires push to be enabled with a topic — matching the former
+ * send_notification tool.
+ */
+export async function dispatchAgentNotification(
+  request: AgentNotificationRequest,
+  deps: AgentNotificationDispatchDeps = defaultAgentNotificationDispatchDeps,
+): Promise<AgentNotificationOutcome> {
+  const config = await deps.readPushConfig();
+  if (!config || config.enabled !== true || config.topic.trim().length === 0) {
+    return {
+      delivered: false,
+      reason: "Push notifications are not configured",
+    };
+  }
+
+  const tag = URGENCY_TAG[request.urgency ?? "info"];
+  await deps.sendAgentNotification(
+    config,
+    request.title,
+    request.message,
+    tag,
+    request.projectName,
+    request.sessionName,
+  );
+  return { delivered: true };
 }
 
 // ============================================================

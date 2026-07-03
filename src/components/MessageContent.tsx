@@ -5,6 +5,7 @@ import type {
   MessageContentBlock,
   ToolResultMetrics,
 } from "@/lib/conversations/schemas";
+import type { QueuedMessageMetadata } from "@/lib/conversations/message-queue-schemas";
 import {
   formatToolUse,
   type FormattedToolUse,
@@ -15,8 +16,10 @@ import ThinkingBlock from "./ThinkingBlock";
 import DebugStructuredCard from "./DebugStructuredCard";
 import DocumentFeedbackCard from "./conversation/DocumentFeedbackCard";
 import MarkdownFileCard from "./conversation/MarkdownFileCard";
+import QuestionAnswersCard from "./conversation/QuestionAnswersCard";
 import CommandIndicator from "./CommandIndicator";
 import { extractMarkdownFileRefs } from "@/lib/documents/markdown-file-refs";
+import { splitQuestionAnswersBlock } from "@/lib/conversations/question-answers-block";
 import { MessageTextWithRefs } from "@/features/session/conversation/MessageTextWithRefs";
 
 /** Minimum consecutive tool_use blocks required to form a collapsed group */
@@ -159,11 +162,19 @@ interface Props {
   content: MessageContentBlock[];
   /** Session worktree path — used to display tool file paths as relative when nested. */
   worktreePath?: string;
+  /**
+   * Provenance tag of the queue row this message renders from. Omitted for
+   * delivered transcript rows (no queue provenance survives delivery); `null`
+   * for a queue row the user typed. For queue rows the tag — not the raw text
+   * — decides structured rendering (docs/design/cc-cli/03 §3).
+   */
+  queuedMetadata?: QueuedMessageMetadata | null;
 }
 
 export default memo(function MessageContent({
   content,
   worktreePath,
+  queuedMetadata,
 }: Props): React.JSX.Element {
   const grouped = useMemo(() => groupContentBlocks(content), [content]);
   const resultLookup = useMemo(() => buildToolResultLookup(content), [content]);
@@ -188,6 +199,31 @@ export default memo(function MessageContent({
         const { block, index: i } = item;
 
         if (block.type === "text") {
+          // An answer message carries the delimited <cc-question-answers>
+          // block — render it as an answer card, with any coalesced prose
+          // around it as ordinary text. A queue row renders the card only
+          // when its provenance metadata marks it as answers; a delivered
+          // transcript row (no queue provenance) falls back to the persisted
+          // block itself.
+          const isAnswerMessage =
+            queuedMetadata === undefined ||
+            queuedMetadata?.kind === "question_answers";
+          const answerSplit = isAnswerMessage
+            ? splitQuestionAnswersBlock(block.text)
+            : null;
+          if (answerSplit) {
+            return (
+              <div key={i}>
+                {answerSplit.before && (
+                  <MessageTextWithRefs text={answerSplit.before} />
+                )}
+                <QuestionAnswersCard block={answerSplit.block} />
+                {answerSplit.after && (
+                  <MessageTextWithRefs text={answerSplit.after} />
+                )}
+              </div>
+            );
+          }
           return <MessageTextWithRefs key={i} text={block.text} />;
         }
         if (block.type === "thinking") {

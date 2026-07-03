@@ -23,7 +23,10 @@ vi.mock("@/lib/logging", () => ({
 }));
 
 import type { ConversationState } from "@/lib/conversations/schemas";
-import { conversationStateSchema } from "@/lib/conversations/schemas";
+import {
+  askQuestionItemSchema,
+  conversationStateSchema,
+} from "@/lib/conversations/schemas";
 import type { MessageContentBlock } from "@/lib/conversations/message-content-schemas";
 import type {
   PendingQueuedMessage,
@@ -76,6 +79,7 @@ function makeEntry(
     deliveryAttemptId: overrides.deliveryAttemptId ?? null,
     attemptCount: overrides.attemptCount ?? 0,
     error: overrides.error ?? null,
+    metadata: overrides.metadata ?? null,
   };
 }
 
@@ -100,6 +104,7 @@ describe("createPendingEntry", () => {
       deliveryAttemptId: null,
       attemptCount: 0,
       error: null,
+      metadata: null,
     });
     // Output is a valid persisted queue row.
     expect(() => pendingQueuedMessageSchema.parse(entry)).not.toThrow();
@@ -159,6 +164,7 @@ describe("toQueuedMessageView", () => {
       cancelledAt: null,
       failedAt: null,
       error: null,
+      metadata: null,
     });
     expect(view).not.toHaveProperty("deliveryStartedAt");
     expect(view).not.toHaveProperty("deliveryAttemptId");
@@ -690,8 +696,8 @@ describe("messageQueueService.enqueue", () => {
       content: [textBlock("queued message")],
     });
 
-    expect(entry.id).toBe("id-1");
-    expect(entry.status).toBe("pending");
+    expect(entry?.id).toBe("id-1");
+    expect(entry?.status).toBe("pending");
 
     // Persisted into the backing conversation's pendingQueue.
     expect(store.conversation?.pendingQueue.map((e) => e.id)).toEqual(["id-1"]);
@@ -736,8 +742,70 @@ describe("messageQueueService.enqueue", () => {
       content: [textBlock("queued message")],
     });
 
-    expect(entry.status).toBe("pending");
+    expect(entry?.status).toBe("pending");
     expect(store.conversation?.pendingQueue.map((e) => e.id)).toEqual(["id-1"]);
+  });
+
+  it("consumePendingQuestionId: clears the marker and appends the row in one mutate", async () => {
+    const conversation = makeConversation();
+    conversation.pendingQuestionId = "q_b1";
+    conversation.pendingQuestions = [
+      askQuestionItemSchema.parse({
+        id: "approach",
+        question: "Which approach?",
+        options: [{ label: "A" }],
+      }),
+    ];
+    const store: FakeStore = { conversation };
+    const { deps, broadcasts } = makeDeps(store);
+    let mutateCalls = 0;
+    const countingDeps: MessageQueueServiceDeps = {
+      ...deps,
+      mutateConversation(projectPath, sessionName, conversationId, label, fn) {
+        mutateCalls += 1;
+        return deps.mutateConversation(
+          projectPath,
+          sessionName,
+          conversationId,
+          label,
+          fn,
+        );
+      },
+    };
+    const service = createMessageQueueService(countingDeps);
+
+    const entry = await service.enqueue({
+      projectPath: "/repos/my-project",
+      sessionName: "csm/feature",
+      conversationId: "conv-1",
+      content: [textBlock("answers")],
+      consumePendingQuestionId: "q_b1",
+    });
+
+    expect(entry?.id).toBe("id-1");
+    expect(mutateCalls).toBe(1);
+    expect(store.conversation?.pendingQuestionId).toBeNull();
+    expect(store.conversation?.pendingQuestions).toBeNull();
+    expect(store.conversation?.pendingQueue.map((e) => e.id)).toEqual(["id-1"]);
+    expect(broadcasts.map((e) => e.type)).toEqual(["message-queued"]);
+  });
+
+  it("consumePendingQuestionId: rejects (null, no row, no broadcast) when the marker is gone", async () => {
+    const store: FakeStore = { conversation: makeConversation() };
+    const { deps, broadcasts } = makeDeps(store);
+    const service = createMessageQueueService(deps);
+
+    const entry = await service.enqueue({
+      projectPath: "/repos/my-project",
+      sessionName: "csm/feature",
+      conversationId: "conv-1",
+      content: [textBlock("answers")],
+      consumePendingQuestionId: "q_b1",
+    });
+
+    expect(entry).toBeNull();
+    expect(store.conversation?.pendingQueue).toHaveLength(0);
+    expect(broadcasts).toHaveLength(0);
   });
 
   it("logs queue.enqueue with the message id and pending status", async () => {

@@ -71,7 +71,6 @@ const conversationFixture = fixture({
     "ABORT_TURN",
     "BACKEND_INIT",
     "ASK_QUESTION",
-    "ANSWER",
     "EXIT_DEBUG_MODE",
     "SET_DEBUG_RECORDING",
     "CLEAR_DEBUG_LOGS",

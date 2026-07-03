@@ -20,6 +20,16 @@ export type PendingQueuedMessageStatus = z.infer<
   typeof pendingQueuedMessageStatusSchema
 >;
 
+// Provenance tag on a queue row whose content is machine-built rather than
+// typed by the user. `question_answers` marks the delimited
+// <cc-question-answers> block the answer route enqueues, so the UI renders an
+// answer card instead of the raw text.
+export const queuedMessageMetadataSchema = z.object({
+  kind: z.literal("question_answers"),
+  questionBatchId: z.string(),
+});
+export type QueuedMessageMetadata = z.infer<typeof queuedMessageMetadataSchema>;
+
 // A durably-persisted queued message stored in `ConversationState.pendingQueue`.
 // The queue — not the JSONL transcript — is the source of truth for this entry
 // until delivery to the agent is confirmed. `deliveryAttemptId` guards against
@@ -37,6 +47,7 @@ export const pendingQueuedMessageSchema = z.object({
   deliveryAttemptId: z.string().nullable(),
   attemptCount: z.number().int().nonnegative(),
   error: z.string().nullable(),
+  metadata: queuedMessageMetadataSchema.nullable().default(null),
 });
 export type PendingQueuedMessage = z.infer<typeof pendingQueuedMessageSchema>;
 
@@ -54,6 +65,7 @@ export const queuedMessageViewSchema = z.object({
   cancelledAt: z.string().nullable(),
   failedAt: z.string().nullable(),
   error: z.string().nullable(),
+  metadata: queuedMessageMetadataSchema.nullable().default(null),
 });
 export type QueuedMessageView = z.infer<typeof queuedMessageViewSchema>;
 

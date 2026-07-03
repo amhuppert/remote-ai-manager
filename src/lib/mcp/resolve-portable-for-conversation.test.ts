@@ -8,7 +8,7 @@ import { createResolvePortableForConversation } from "./resolve-portable-for-con
 const TRANSIENT_PORTABLE: PortableMcpConfig = {
   servers: [
     {
-      id: "cc-graph-workflow",
+      id: "transient-tool",
       transport: "streamable-http",
       url: "https://example.test/graph",
       headers: {},
@@ -19,13 +19,13 @@ const TRANSIENT_PORTABLE: PortableMcpConfig = {
 const RESOLVED_PORTABLE: PortableMcpConfig = {
   servers: [
     {
-      id: "cc-graph-workflow",
+      id: "transient-tool",
       transport: "streamable-http",
       url: "https://example.test/graph",
       headers: {},
     },
     {
-      id: "cc-session-tools",
+      id: "gateway-alpha",
       transport: "streamable-http",
       url: "https://example.test/session",
       headers: {},
@@ -36,7 +36,7 @@ const RESOLVED_PORTABLE: PortableMcpConfig = {
 const FALLBACK_PORTABLE: PortableMcpConfig = {
   servers: [
     {
-      id: "cc-session-tools",
+      id: "gateway-alpha",
       transport: "streamable-http",
       url: "https://example.test/session",
       headers: {},

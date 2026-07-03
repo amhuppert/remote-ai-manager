@@ -1,0 +1,22 @@
+// cctl bundle entrypoint. All logic lives in the pure core (core.ts); this
+// file only adapts process argv/env/stdio and must stay this thin.
+import { readFile } from "node:fs/promises";
+import os from "node:os";
+import { runCli } from "./core";
+
+const result = await runCli(process.argv.slice(2), process.env, {
+  fetch: (url, init) => fetch(url, init),
+  async readTextFile(filePath) {
+    try {
+      return await readFile(filePath, "utf-8");
+    } catch {
+      return null;
+    }
+  },
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  platform: os.platform(),
+  homedir: os.homedir(),
+});
+if (result.stdout) process.stdout.write(result.stdout);
+if (result.stderr) process.stderr.write(result.stderr);
+process.exit(result.exitCode);

@@ -1,10 +1,11 @@
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
+import type { DisplayMessage } from "@/features/session/hooks/use-display-messages";
 export interface CollabEnvelope {
   workflowId: string;
 }
 
 export type ConversationRow =
-  | { kind: "message"; messageIndex: number; msg: TranscriptMessage }
+  | { kind: "message"; messageIndex: number; msg: DisplayMessage }
   | { kind: "collab"; workflowId: string };
 
 function hasCollabPrefix(text: string): boolean {
@@ -35,7 +36,7 @@ export function findCollabAnchorIndex(
 }
 
 export function buildConversationRows(
-  messages: readonly TranscriptMessage[],
+  messages: readonly DisplayMessage[],
   collab: CollabEnvelope | undefined,
   hiddenMessageIndex: number | null = null,
 ): ConversationRow[] {

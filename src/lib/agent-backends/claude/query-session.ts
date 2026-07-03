@@ -99,32 +99,6 @@ export interface BackgroundWaitOutcome {
 }
 
 type TurnEmit = (event: string, data: unknown) => void;
-type SetMcpServersResult = Awaited<ReturnType<Query["setMcpServers"]>>;
-export type McpMutationSource =
-  | "runtime"
-  | "replace_sdk_server_drop"
-  | "replace_sdk_server_add";
-
-/**
- * Details of a tool_result the SDK synthesized because its connection to an
- * MCP server was broken ("Stream closed"). `serverName` is parsed from the
- * `mcp__<server>__<tool>` tool name.
- */
-export interface SdkMcpStreamClosedInfo {
-  serverName: string;
-  toolName: string;
-  consecutiveCount: number;
-}
-
-export function shouldAlertMissingSupervisedServerMutation(input: {
-  source: McpMutationSource;
-  supervisedMcpServerName: string | undefined;
-  serverKeys: readonly string[];
-}): boolean {
-  if (input.supervisedMcpServerName === undefined) return false;
-  if (input.serverKeys.includes(input.supervisedMcpServerName)) return false;
-  return input.source !== "replace_sdk_server_drop";
-}
 
 export interface QuerySession {
   /** Current health status */
@@ -181,30 +155,6 @@ export interface QuerySession {
     options?: TurnOptions,
   ): Promise<TurnResult>;
 
-  /** Apply MCP servers and update the session-owned active MCP config. */
-  setMcpServers(
-    mcpServers: Record<string, unknown>,
-  ): Promise<SetMcpServersResult>;
-
-  /**
-   * Atomically re-bind an in-process (`type: "sdk"`) MCP server to a fresh
-   * instance. The SDK's `setMcpServers` diffs sdk servers by NAME only — a
-   * same-name instance swap in a single call is a silent no-op — so the only
-   * working rebind is two sequential calls: drop the name (SDK disconnects
-   * the old transport), then re-add it with the fresh instance. Both phases
-   * run in one serialized MCP mutation so no other config apply can
-   * interleave. The re-add result is verified: the name must appear in
-   * `added` and not in `errors`, otherwise this rejects.
-   *
-   * `baseServers` is the current non-sdk server map to carry through both
-   * phases (the sdk entry is stripped from the drop phase if present).
-   */
-  replaceSdkServer(
-    serverName: string,
-    instance: unknown,
-    baseServers: Record<string, unknown>,
-  ): Promise<SetMcpServersResult>;
-
   /**
    * Cancel the idle TTL timer because the caller is about to send a new turn.
    * Must be invoked at the moment the runtime is acquired for a new turn —
@@ -213,17 +163,6 @@ export interface QuerySession {
    * the timer close the subprocess mid-prep. No-op on a dead session.
    */
   notifyTurnStarting(): void;
-
-  /**
-   * Force-terminate the subprocess because in-process MCP recovery for a
-   * supervised server (`cc-session-tools`) is unrecoverable this turn. Kills
-   * the live turn with a tagged `SDK_PIPE_BROKEN` error and closes the
-   * subprocess, so the actor's get-or-create path builds a fresh (resumed)
-   * runtime on the next prompt. This is the session-tools supervisor's own
-   * kill decision and supersedes the generic consecutive-stream-closed
-   * threshold (which never fires for the supervised server). No-op if dead.
-   */
-  forceTerminate(reason: string): void;
 
   /** Terminate the subprocess and clean up all resources */
   close(): void;
@@ -251,9 +190,6 @@ export interface QuerySessionOptions {
   disallowedTools: string[];
   /** Idle TTL in ms — session is closed after this much inactivity (default: 5 min) */
   idleTtlMs?: number;
-  /** MCP keepalive interval in ms — pings MCP servers between turns to prevent
-   *  the SDK's transport inactivity timeout from closing the stream (default: 30s) */
-  mcpKeepaliveIntervalMs?: number;
   /** Structured output format — enforced by the SDK at generation time */
   outputFormat?: {
     type: "json_schema";
@@ -277,26 +213,6 @@ export interface QuerySessionOptions {
     emit: TurnEmit;
     onComplete: (result: TurnResult) => void;
   };
-  /**
-   * Fired when a tool_result arrives whose content is the SDK-synthesized
-   * "Stream closed" error for an MCP tool — the SDK's transport to that
-   * server is broken and the tool handler never ran. Fired only below the
-   * pipe-broken escalation threshold so a listener can attempt recovery
-   * (e.g. re-binding an in-process server via `replaceSdkServer`) before the
-   * session is killed. Must not throw; errors are swallowed and logged.
-   */
-  onSdkMcpStreamClosed?: (info: SdkMcpStreamClosedInfo) => void;
-  /**
-   * Name of the in-process MCP server whose recovery is owned by an external
-   * supervisor (`cc-session-tools`). A "Stream closed" tool_result for this
-   * server is routed to `onSdkMcpStreamClosed` but EXCLUDED from the generic
-   * consecutive-stream-closed pipe-broken threshold — the supervisor owns the
-   * rebind and the kill decision, so the generic N=3 escalation must never
-   * race it (the original incident). Stream-closed results for any other
-   * server still feed the generic threshold (the backstop for non-supervised
-   * servers, § honest external recovery).
-   */
-  supervisedMcpServerName?: string;
 }
 
 // ============================================================
@@ -353,14 +269,7 @@ interface BackgroundWaiter {
  */
 export function createQuerySession(options: QuerySessionOptions): QuerySession {
   const DEFAULT_IDLE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-  const DEFAULT_MCP_KEEPALIVE_MS = 30_000; // 30 seconds
-  const TOOL_RESULT_STREAM_CLOSED_THRESHOLD = 3;
-  // Hard ceiling on any mcpServerStatus() probe. A hung probe must not block
-  // the caller or (via keepaliveInFlight) permanently suppress future ticks.
-  const MCP_STATUS_TIMEOUT_MS = 2_000;
   const idleTtlMs = options.idleTtlMs ?? DEFAULT_IDLE_TTL_MS;
-  const mcpKeepaliveMs =
-    options.mcpKeepaliveIntervalMs ?? DEFAULT_MCP_KEEPALIVE_MS;
 
   let status: "alive" | "dead" = "alive";
   let pendingTurn: PendingTurn | null = null;
@@ -368,17 +277,8 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   let isFirstPrompt = true;
   let firstPromptResolve: ((msg: SDKUserMessage) => void) | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
-  let mcpKeepaliveTimer: ReturnType<typeof setInterval> | null = null;
   const stderrChunks: string[] = [];
   let awaitingSubsequentPromptDelivery = false;
-  let activeMcpServers: Record<string, unknown> = options.mcpServers;
-  let mcpMutationQueue: Promise<unknown> = Promise.resolve();
-  // Re-entrancy guard on the keepalive status probe. Without it, a slow probe
-  // lets the keepalive interval queue concurrent ticks. The probe is bounded
-  // (MCP_STATUS_TIMEOUT_MS) so the flag always clears — a hung probe can no
-  // longer permanently suppress future ticks.
-  let keepaliveInFlight = false;
-  let consecutiveStreamClosedCount = 0;
   let backgroundTaskState = emptyBackgroundTaskState();
   const backgroundWaiters = new Set<BackgroundWaiter>();
 
@@ -461,10 +361,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
     },
     awaitBackgroundTaskSettlement,
     sendPrompt,
-    setMcpServers,
-    replaceSdkServer,
     notifyTurnStarting,
-    forceTerminate,
     close,
   };
 
@@ -477,203 +374,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   // Start the background message pump
   void runPump();
 
-  syncMcpKeepaliveTimer();
-
   return session;
-
-  // ------------------------------------------------------------------
-  // MCP config ownership
-  // ------------------------------------------------------------------
-
-  function mcpServerCount(mcpServers: Record<string, unknown>): number {
-    return Object.keys(mcpServers).length;
-  }
-
-  /**
-   * Phase 0 instrumentation: record every live MCP mutation so the root-cause
-   * of in-process transport breakage can be settled empirically. Unexpected
-   * payloads that drop the supervised server name (`cc-session-tools`) would
-   * DISCONNECT the in-process server (the SDK diffs sdk servers by name), so
-   * they are flagged at error level for correlation with stream-closed events.
-   * The intentional drop phase of `replaceSdkServer` is telemetry only.
-   */
-  function logMcpMutation(
-    source: McpMutationSource,
-    serverKeys: string[],
-  ): void {
-    const supervised = options.supervisedMcpServerName;
-    const includesCcSessionTools =
-      supervised !== undefined && serverKeys.includes(supervised);
-    logger.info("query-session.mcp_mutation", {
-      conversationId: options.conversationId,
-      source,
-      serverKeys,
-      includesCcSessionTools,
-    });
-    if (
-      shouldAlertMissingSupervisedServerMutation({
-        source,
-        supervisedMcpServerName: supervised,
-        serverKeys,
-      })
-    ) {
-      logger.error("query-session.mcp_mutation_missing_supervised_server", {
-        conversationId: options.conversationId,
-        source,
-        serverKeys,
-        supervisedMcpServerName: supervised,
-      });
-    }
-  }
-
-  function hasActiveMcpServers(): boolean {
-    return mcpServerCount(activeMcpServers) > 0;
-  }
-
-  function clearMcpKeepaliveTimer(): void {
-    if (!mcpKeepaliveTimer) return;
-    clearInterval(mcpKeepaliveTimer);
-    mcpKeepaliveTimer = null;
-  }
-
-  function syncMcpKeepaliveTimer(): void {
-    const shouldRun =
-      status === "alive" && mcpKeepaliveMs > 0 && hasActiveMcpServers();
-
-    if (!shouldRun) {
-      clearMcpKeepaliveTimer();
-      return;
-    }
-
-    if (mcpKeepaliveTimer) return;
-
-    // The ping itself counts as transport activity, so it prevents the SDK's
-    // idle timeout from closing the stream even during long-running turns.
-    mcpKeepaliveTimer = setInterval(() => {
-      if (status !== "alive") return;
-      if (keepaliveInFlight) return;
-      keepaliveInFlight = true;
-      void mcpKeepaliveTick().finally(() => {
-        keepaliveInFlight = false;
-      });
-    }, mcpKeepaliveMs);
-  }
-
-  function enqueueMcpMutation<T>(operation: () => Promise<T>): Promise<T> {
-    const run = mcpMutationQueue.then(operation, operation);
-    mcpMutationQueue = run.catch(() => undefined);
-    return run;
-  }
-
-  async function applyMcpServers(
-    mcpServers: Record<string, unknown>,
-    source: McpMutationSource,
-  ): Promise<SetMcpServersResult> {
-    return enqueueMcpMutation(async () => {
-      if (status === "dead") {
-        throw new Error("QuerySession closed");
-      }
-
-      const serverKeys = Object.keys(mcpServers);
-      const serverCount = serverKeys.length;
-      logMcpMutation(source, serverKeys);
-      try {
-        const result = await q.setMcpServers(
-          mcpServers as Record<string, never>,
-        );
-        activeMcpServers = mcpServers;
-        syncMcpKeepaliveTimer();
-
-        logger.info("query-session.mcp_servers_updated", {
-          conversationId: options.conversationId,
-          source,
-          serverCount,
-          added: result.added,
-          removed: result.removed,
-          errors: result.errors,
-        });
-        if (Object.keys(result.errors).length > 0) {
-          logger.error("query-session.mcp_servers_connect_errors", {
-            conversationId: options.conversationId,
-            source,
-            errors: result.errors,
-          });
-        }
-
-        return result;
-      } catch (err) {
-        logger.error("query-session.mcp_servers_update_failed", {
-          conversationId: options.conversationId,
-          source,
-          serverCount,
-          error: err instanceof Error ? err.message : String(err),
-        });
-        throw err;
-      }
-    });
-  }
-
-  async function setMcpServers(
-    mcpServers: Record<string, unknown>,
-  ): Promise<SetMcpServersResult> {
-    return applyMcpServers(mcpServers, "runtime");
-  }
-
-  async function replaceSdkServer(
-    serverName: string,
-    instance: unknown,
-    baseServers: Record<string, unknown>,
-  ): Promise<SetMcpServersResult> {
-    return enqueueMcpMutation(async () => {
-      if (status === "dead") {
-        throw new Error("QuerySession closed");
-      }
-
-      const withoutServer = { ...baseServers };
-      delete withoutServer[serverName];
-      logMcpMutation("replace_sdk_server_drop", Object.keys(withoutServer));
-      await q.setMcpServers(withoutServer as Record<string, never>);
-
-      const merged = {
-        ...withoutServer,
-        [serverName]: { type: "sdk", name: serverName, instance },
-      };
-      logMcpMutation("replace_sdk_server_add", Object.keys(merged));
-      const result = await q.setMcpServers(merged as Record<string, never>);
-
-      const connectError = result.errors[serverName];
-      if (connectError !== undefined) {
-        logger.error("query-session.sdk_server_replace_failed", {
-          conversationId: options.conversationId,
-          serverName,
-          error: connectError,
-        });
-        throw new Error(
-          `SDK MCP server "${serverName}" failed to connect on re-bind: ${connectError}`,
-        );
-      }
-      if (!result.added.includes(serverName)) {
-        logger.error("query-session.sdk_server_replace_not_rebound", {
-          conversationId: options.conversationId,
-          serverName,
-          added: result.added,
-        });
-        throw new Error(
-          `SDK MCP server "${serverName}" was not re-bound: setMcpServers reported success without adding it`,
-        );
-      }
-
-      activeMcpServers = merged;
-      syncMcpKeepaliveTimer();
-
-      logger.info("query-session.sdk_server_replaced", {
-        conversationId: options.conversationId,
-        serverName,
-      });
-
-      return result;
-    });
-  }
 
   // ------------------------------------------------------------------
   // sendPrompt
@@ -688,8 +389,7 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
       throw createPromptNotDeliveredError();
     }
 
-    // Clear idle timer — a new prompt has arrived. Keepalive keeps ticking
-    // through the turn to prevent transport idle timeouts during long turns.
+    // Clear idle timer — a new prompt has arrived, so the session is no longer idle.
     if (idleTimer) {
       clearTimeout(idleTimer);
       idleTimer = null;
@@ -849,12 +549,11 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
   // ------------------------------------------------------------------
 
   function close(): void {
-    // Clear idle timer and MCP keepalive
+    // Clear idle timer
     if (idleTimer) {
       clearTimeout(idleTimer);
       idleTimer = null;
     }
-    clearMcpKeepaliveTimer();
 
     // Resolve any pending settlement waiters so a dead subprocess never hangs a
     // waiter. Report whatever has settled; never flag this as a timeout.
@@ -973,13 +672,6 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         throw createPromptNotDeliveredError();
       }
 
-      // Pre-turn MCP health probe. The supervised in-process server's real
-      // pre-turn guarantee is the actor-level forced rebind; this is a bounded
-      // backstop that fails fast (throws → undelivered → actor recreates a
-      // resumed runtime) rather than delivering the prompt into a runtime whose
-      // supervised transport is definitively failed. It never recovers in-query.
-      await assertPreTurnMcpHealthy();
-
       const userMessage = buildUserMessage(prompt);
       await q.streamInput(wrapAsIterable(userMessage));
       awaitingSubsequentPromptDelivery = false;
@@ -1009,195 +701,6 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
         // best-effort
       }
     }
-  }
-
-  // ------------------------------------------------------------------
-  // Pipe-broken escalation
-  // ------------------------------------------------------------------
-
-  function notifySdkMcpStreamClosed(
-    toolName: string | undefined,
-    consecutiveCount: number,
-  ): void {
-    if (!options.onSdkMcpStreamClosed || toolName === undefined) return;
-    const serverName = parseMcpServerName(toolName);
-    if (serverName === null) return;
-    try {
-      options.onSdkMcpStreamClosed({ serverName, toolName, consecutiveCount });
-    } catch (err) {
-      logger.warn("query-session.stream_closed_callback_failed", {
-        conversationId: options.conversationId,
-        toolName,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-
-  function escalatePipeBroken(
-    reason: "tool_result_pipe_broken",
-    count: number,
-  ): void {
-    if (status === "dead") return;
-    logger.error("query-session.pipe_broken", {
-      conversationId: options.conversationId,
-      reason,
-      count,
-    });
-    markDead(reason);
-    const taggedError = tagQuerySessionError(
-      new Error(
-        `SDK pipe broken: ${reason} after ${count} consecutive failures`,
-      ),
-      QUERY_SESSION_ERROR_CODES.sdkPipeBroken,
-    );
-    rejectPendingTurn(taggedError);
-    try {
-      q.close();
-    } catch {
-      // best-effort
-    }
-  }
-
-  function forceTerminate(reason: string): void {
-    if (status === "dead") return;
-    logger.error("query-session.force_terminate", {
-      conversationId: options.conversationId,
-      reason,
-    });
-    markDead("force_terminate");
-    const taggedError = tagQuerySessionError(
-      new Error(`Session force-terminated: ${reason}`),
-      QUERY_SESSION_ERROR_CODES.sdkPipeBroken,
-    );
-    rejectPendingTurn(taggedError);
-    try {
-      q.close();
-    } catch {
-      // best-effort
-    }
-  }
-
-  // ------------------------------------------------------------------
-  // MCP health — bounded, telemetry-grade probe (no in-query recovery)
-  // ------------------------------------------------------------------
-
-  function findFailedServers(
-    statuses: Awaited<ReturnType<typeof q.mcpServerStatus>>,
-  ): string[] {
-    return statuses.filter((s) => s.status === "failed").map((s) => s.name);
-  }
-
-  type StatusProbe =
-    | { kind: "ok"; statuses: Awaited<ReturnType<typeof q.mcpServerStatus>> }
-    | { kind: "timeout" }
-    | { kind: "error"; error: string };
-
-  /**
-   * Race `mcpServerStatus()` against a hard timeout so a hung probe always
-   * settles. This is the fix for the `keepaliveInFlight`-never-resets bug — the
-   * caller's `.finally` flag reset can only run if the probe completes.
-   * `mcpServerStatus()` is treated as a weak/telemetry signal, never recovery-
-   * grade: a `failed` entry is reported, never silently reconnected.
-   */
-  async function statusWithTimeout(timeoutMs: number): Promise<StatusProbe> {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const TIMEOUT = Symbol("status_timeout");
-    try {
-      const statuses = await Promise.race([
-        q.mcpServerStatus(),
-        new Promise<typeof TIMEOUT>((resolve) => {
-          timer = setTimeout(() => resolve(TIMEOUT), timeoutMs);
-        }),
-      ]);
-      if (statuses === TIMEOUT) return { kind: "timeout" };
-      return { kind: "ok", statuses };
-    } catch (err) {
-      return {
-        kind: "error",
-        error: err instanceof Error ? err.message : String(err),
-      };
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
-  }
-
-  /**
-   * Between-turn keepalive: the ping itself counts as transport activity (it
-   * prevents the SDK's idle timeout from closing the stream during long turns)
-   * and records health telemetry. v1 takes NO recovery action on a bare status
-   * failure — recovery for the supervised in-process server is owned by the
-   * external supervisor (pre-turn forced rebind + reactive state machine).
-   */
-  async function mcpKeepaliveTick(): Promise<void> {
-    const probe = await statusWithTimeout(MCP_STATUS_TIMEOUT_MS);
-    if (status !== "alive") return;
-    if (probe.kind === "timeout") {
-      logger.warn("query-session.mcp_status_timeout", {
-        conversationId: options.conversationId,
-        trigger: "keepalive",
-        timeoutMs: MCP_STATUS_TIMEOUT_MS,
-      });
-      return;
-    }
-    if (probe.kind === "error") {
-      logger.warn("query-session.mcp_keepalive_status_error", {
-        conversationId: options.conversationId,
-        error: probe.error,
-      });
-      return;
-    }
-    const failed = findFailedServers(probe.statuses);
-    if (failed.length > 0) {
-      logger.warn("query-session.mcp_keepalive_unhealthy", {
-        conversationId: options.conversationId,
-        failedServers: failed,
-      });
-    }
-  }
-
-  /**
-   * Pre-turn MCP health backstop. Bounded and weak: a timeout/probe-error never
-   * blocks delivery (the actor-level forced rebind is the real guarantee). Only
-   * a DEFINITIVE failed status for the supervised server fails fast — throw so
-   * `sendSubsequentPrompt` kills the session (tagged undelivered) and the actor
-   * recreates a resumed runtime, rather than delivering into a broken transport.
-   * Other failed servers are telemetry only; their backstop is the generic
-   * mid-turn stream-closed threshold (§ honest external recovery).
-   */
-  async function assertPreTurnMcpHealthy(): Promise<void> {
-    if (!hasActiveMcpServers()) return;
-    const probe = await statusWithTimeout(MCP_STATUS_TIMEOUT_MS);
-    if (status !== "alive") return;
-    if (probe.kind === "timeout") {
-      logger.warn("query-session.mcp_status_timeout", {
-        conversationId: options.conversationId,
-        trigger: "pre_turn",
-        timeoutMs: MCP_STATUS_TIMEOUT_MS,
-      });
-      return;
-    }
-    if (probe.kind === "error") {
-      logger.warn("query-session.mcp_pre_turn_status_error", {
-        conversationId: options.conversationId,
-        error: probe.error,
-      });
-      return;
-    }
-    const failed = findFailedServers(probe.statuses);
-    if (failed.length === 0) return;
-
-    const supervised = options.supervisedMcpServerName;
-    const supervisedFailed =
-      supervised !== undefined && failed.includes(supervised);
-    logger.warn("query-session.mcp_pre_turn_unhealthy", {
-      conversationId: options.conversationId,
-      failedServers: failed,
-      supervisedFailed,
-    });
-    if (!supervisedFailed) return;
-    throw new Error(
-      `Pre-turn MCP health check failed: supervised server "${supervised}" reported failed`,
-    );
   }
 
   // ------------------------------------------------------------------
@@ -1358,62 +861,6 @@ export function createQuerySession(options: QuerySessionOptions): QuerySession {
                 turn.toolNamesById,
               );
               turn.contentBlocks.push(resultBlock);
-              if (isStreamClosedToolResult(resultBlock)) {
-                const toolName = turn.toolNamesById.get(
-                  resultBlock.tool_use_id,
-                );
-                const serverName = toolName
-                  ? parseMcpServerName(toolName)
-                  : null;
-                const isSupervised =
-                  serverName !== null &&
-                  serverName === options.supervisedMcpServerName;
-
-                if (isSupervised) {
-                  // The supervised in-process server owns its own recovery and
-                  // kill decision via the external supervisor, so it is
-                  // EXCLUDED from the generic consecutive-stream-closed
-                  // threshold. Feeding it into that counter would let the
-                  // generic N=3 kill race the supervisor's rebind — the
-                  // original incident. Leave consecutiveStreamClosedCount
-                  // untouched (neither bump nor reset): it tracks only
-                  // non-supervised servers.
-                  logger.warn("query-session.stream_closed_tool_result", {
-                    conversationId: options.conversationId,
-                    toolUseId: resultBlock.tool_use_id,
-                    toolName,
-                    supervised: true,
-                    contentPreview: previewLogContent(resultBlock.content),
-                  });
-                  notifySdkMcpStreamClosed(toolName, 0);
-                  continue;
-                }
-
-                consecutiveStreamClosedCount += 1;
-                logger.warn("query-session.stream_closed_tool_result", {
-                  conversationId: options.conversationId,
-                  toolUseId: resultBlock.tool_use_id,
-                  toolName,
-                  consecutiveCount: consecutiveStreamClosedCount,
-                  contentPreview: previewLogContent(resultBlock.content),
-                });
-                if (
-                  consecutiveStreamClosedCount >=
-                  TOOL_RESULT_STREAM_CLOSED_THRESHOLD
-                ) {
-                  escalatePipeBroken(
-                    "tool_result_pipe_broken",
-                    consecutiveStreamClosedCount,
-                  );
-                  return;
-                }
-                notifySdkMcpStreamClosed(
-                  toolName,
-                  consecutiveStreamClosedCount,
-                );
-              } else {
-                consecutiveStreamClosedCount = 0;
-              }
             }
           }
         }
@@ -1570,11 +1017,6 @@ interface SdkToolResultBlock {
     | Array<{ type: string; text?: string; [k: string]: unknown }>;
 }
 
-type ToolResultContentBlock = Extract<
-  MessageContentBlock,
-  { type: "tool_result" }
->;
-
 function extractToolResultText(
   content: SdkToolResultBlock["content"],
 ): string | undefined {
@@ -1592,28 +1034,6 @@ function extractToolResultText(
     }
   }
   return textParts.length > 0 ? textParts.join("\n") : undefined;
-}
-
-/** Parse the server name out of an `mcp__<server>__<tool>` tool name. */
-function parseMcpServerName(toolName: string): string | null {
-  const match = /^mcp__(.+?)__/.exec(toolName);
-  return match?.[1] ?? null;
-}
-
-function isStreamClosedToolResult(
-  block: MessageContentBlock,
-): block is ToolResultContentBlock & { isError: true; content: string } {
-  return (
-    block.type === "tool_result" &&
-    block.isError === true &&
-    typeof block.content === "string" &&
-    block.content.includes("Stream closed")
-  );
-}
-
-function previewLogContent(content: unknown): string | undefined {
-  if (typeof content !== "string") return undefined;
-  return content.length > 500 ? content.slice(0, 500) : content;
 }
 
 function buildToolResultBlock(

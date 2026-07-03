@@ -17,7 +17,7 @@ import { createWorkflowCharterService } from "./charter/service";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 
-const TEST_DIR = path.join("/tmp", `cc-graph-workflow-${Date.now()}`);
+const TEST_DIR = path.join("/tmp", `workflow-storage-test-${Date.now()}`);
 
 const REPO_SCOPE: WorkflowScope = { kind: "project", projectPath: "/repo" };
 

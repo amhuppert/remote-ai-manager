@@ -293,6 +293,51 @@ describe("CodexTaskRunner", () => {
     expect(result.transcript).toBeUndefined();
   });
 
+  it("aborts the running thread when an external signal fires", async () => {
+    const external = new AbortController();
+    runMock.mockImplementation(
+      (_prompt: string, opts: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          opts.signal?.addEventListener("abort", () => {
+            const err = new Error("aborted");
+            err.name = "AbortError";
+            reject(err);
+          });
+        }),
+    );
+
+    const promise = runner.run(
+      makeRequest({ timeoutMs: 0, signal: external.signal }),
+    );
+    external.abort();
+    const result = await promise;
+
+    expect(result.timedOut).toBe(true);
+  });
+
+  it("aborts immediately when handed an already-aborted external signal", async () => {
+    const external = new AbortController();
+    external.abort();
+    runMock.mockImplementation(
+      (_prompt: string, opts: { signal?: AbortSignal }) =>
+        new Promise((resolve, reject) => {
+          if (opts.signal?.aborted) {
+            const err = new Error("aborted");
+            err.name = "AbortError";
+            reject(err);
+            return;
+          }
+          resolve({ finalResponse: "done" });
+        }),
+    );
+
+    const result = await runner.run(
+      makeRequest({ timeoutMs: 0, signal: external.signal }),
+    );
+
+    expect(result.timedOut).toBe(true);
+  });
+
   it("does not abort immediately when timeoutMs is 0 (no timeout)", async () => {
     // timeoutMs=0 means "no timeout" — the task should run to completion.
     // Use a real async delay so setTimeout(0) has a chance to fire first

@@ -200,7 +200,7 @@ describe("decision evolution flow (end-to-end through the real store and prompt 
     expect(afterResolve).toHaveLength(1);
     expect(afterResolve[0]).toContain("Adopt feature flags for risky changes.");
     expect(afterResolve[0]).toContain("Record every decision as an ADR.");
-    expect(afterResolve[0]).toContain("write_session_charter");
+    expect(afterResolve[0]).toContain("cctl charter write --file");
 
     // The agent's incorporation turn fills the auto-activate draft → it
     // activates without a separate approval gate (R5.5).

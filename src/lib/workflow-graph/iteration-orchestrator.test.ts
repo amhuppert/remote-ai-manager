@@ -799,7 +799,7 @@ describe("graph workflow iteration orchestrator", () => {
     const initialPrompt = calls[0]![0].prompt;
     const followUp1Prompt = calls[1]![0].prompt;
     expect(followUp1Prompt).not.toBe(initialPrompt);
-    expect(followUp1Prompt).toContain("complete_task");
+    expect(followUp1Prompt).toContain("cctl workflow task complete");
     // Task completed after follow-ups
     expect(result.execution.taskStates["task-plan-1"]).toMatchObject({
       status: "completed",
@@ -994,7 +994,7 @@ describe("graph workflow iteration orchestrator", () => {
     expect(initialPrompt).toContain("Read the relevant files.");
     expect(initialPrompt).toContain("Write plan");
     expect(initialPrompt).toContain("Document the plan.");
-    expect(initialPrompt).toContain("complete_task");
+    expect(initialPrompt).toContain("cctl workflow task complete");
   });
 
   it("includes validator-created task instructions in resumed follow-up prompts", async () => {

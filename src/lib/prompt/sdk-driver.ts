@@ -199,15 +199,24 @@ export const DEBUG_PHASE_CONTEXT: Record<string, string> = {
 
 /** Appended to every system prompt to orient the agent about its CC environment. */
 export const CC_CONTEXT =
-  "<command-center>You are running inside Command Center (CC), a web-based control plane for managing remote Claude Code sessions. Your session runs in an isolated git worktree with its own branch. CC provides a notification tool to send push notifications to the user's phone when warranted (e.g., long tasks complete, user asked to be notified). Stay within your worktree — CC manages merging, dev servers, and session lifecycle.\n\nDev servers: before driving Playwright, browser, visual, or Next.js MCP tools, call the `ensure_dev_server` MCP tool to obtain the correct localUrl/remoteUrl for THIS session's worktree. Never assume ports like 3000 or 6006 belong to you — parallel sessions live on different ports. Use `get_dev_servers` to inspect current status. Only ask the user to start a server from the UI if `ensure_dev_server` reports NO_DEV_SERVERS_CONFIGURED or an unrecoverable start failure.</command-center>";
+  "<command-center>You are running inside Command Center (CC), a web-based control plane for managing remote Claude Code sessions. Your session runs in an isolated git worktree with its own branch. CC provides the `cctl` CLI (on your PATH) for session actions — e.g. `cctl notify` to send push notifications to the user's phone when warranted (long tasks complete, user asked to be notified); see the `cc-cli` skill for the full command reference. Stay within your worktree — CC manages merging, dev servers, and session lifecycle.\n\nDev servers: before driving Playwright, browser, visual, or Next.js MCP tools, run `cctl dev ensure` to obtain the correct localUrl/remoteUrl for THIS session's worktree. Never assume ports like 3000 or 6006 belong to you — parallel sessions live on different ports. Use `cctl dev list` to inspect current status. Only ask the user to start a server from the UI if `cctl dev ensure` reports NO_DEV_SERVERS_CONFIGURED or an unrecoverable start failure.</command-center>";
 
 /**
  * Appended to every CC agent's system prompt (session and project
- * conversations alike) to surface the native AskUserQuestion tool and
- * encourage reaching for it instead of guessing on consequential choices.
+ * conversations alike) to encourage asking the user at real forks — via
+ * `cctl ask` — instead of guessing on consequential choices, and to pin the
+ * async protocol's end-turn discipline (docs/design/cc-cli/03 §7). Flag
+ * details and examples live in the cc-cli skill, loaded on demand.
  */
-export const ASK_USER_QUESTION_INSTRUCTIONS =
-  "<asking-questions>Command Center gives you a first-class AskUserQuestion tool — use it liberally. It renders your questions as a rich multiple-choice panel the user answers in a couple of clicks, so asking is far cheaper than guessing wrong on a consequential, hard-to-reverse, or genuinely ambiguous decision; default to asking at real forks instead of silently deciding for the user. Batch related questions into a single call. Per question you may add a `context` note (implications and trade-offs), mark a `recommended` option, attach per-option `tradeoff` { pro, con } hints, and set `required`/`allowNote`; the user can pick option(s) AND add a free-text note, and answers come back to you keyed by question id. Skip it for trivial, reversible, or easily-inferred choices — make a sensible call and keep moving. (The tool is disabled during autonomous/optimistic turns; use your best judgment there.)</asking-questions>";
+export const ASK_QUESTION_INSTRUCTIONS =
+  "<asking-questions>To ask the user a question, run `cctl ask` (see the cc-cli skill) — it renders your questions as a rich multiple-choice panel the user answers in a couple of clicks, so asking is far cheaper than guessing wrong on a consequential, hard-to-reverse, or genuinely ambiguous decision; default to asking at real forks instead of silently deciding for the user. Batch related questions into one call (a single batch pends at a time). Asking is ASYNC: after `cctl ask` succeeds, write a brief handoff note (what you asked, what you'll do with each possible answer) and END YOUR TURN — do not start new work. The answers arrive as a <cc-question-answers> block in your next user message; an answer with `skipped: true` means the user declined that question — proceed with best judgment. Skip asking for trivial, reversible, or easily-inferred choices — make a sensible call and keep moving. (Asking is denied for autonomous turns; use your best judgment there.)</asking-questions>";
+
+/**
+ * One-line nudge (docs/design/cc-cli/01 §7) pointing every CC agent at the
+ * cctl CLI; detail lives in the command-center:cc-cli skill, loaded on demand.
+ */
+export const CC_CLI_INSTRUCTIONS =
+  "Command Center actions (notifications, questions, documents, dev servers, workflows) go through the `cctl` CLI — see the cc-cli skill.";
 
 // ============================================================
 // Dependency Injection (simplified — facade only needs conversation CRUD)
@@ -256,6 +265,13 @@ export interface PromptDeps {
     sessionName: string,
     conversationId: string,
     tooling: ConversationToolingOverrides,
+  ): void;
+
+  setWorkflowContext?(
+    projectPath: string,
+    sessionName: string,
+    conversationId: string,
+    workflowContext: { executionId: string; contextId: string },
   ): void;
 
   setSkipConversationLock?(
@@ -368,6 +384,22 @@ async function getDefaultPromptDeps(): Promise<PromptDeps> {
         runtime.tooling = tooling;
       }
     },
+    setWorkflowContext: (
+      projectPath,
+      sessionName,
+      conversationId,
+      workflowContext,
+    ) => {
+      const key = runtimeState.conversationRuntimeKey(
+        projectPath,
+        sessionName,
+        conversationId,
+      );
+      const runtime = runtimeState.getConversationRuntime(key);
+      if (runtime) {
+        runtime.workflowContext = workflowContext;
+      }
+    },
     setSkipConversationLock: (
       projectPath,
       sessionName,
@@ -423,6 +455,13 @@ export interface PromptStreamOptions {
   effort?: string;
   backend?: AgentBackendId;
   tooling?: ConversationToolingOverrides;
+  /**
+   * Graph-workflow lane identity. Set only by the implementer runner; threaded
+   * onto the conversation runtime state and into the session env so `cctl
+   * workflow …` resolves its execution/context from env. Every other caller
+   * leaves it unset, so non-lane sessions carry neither var.
+   */
+  workflowContext?: { executionId: string; contextId: string };
   skipConversationLock?: boolean;
   // `outputFormat` is intentionally opt-in. Regular user-facing chat is
   // free-form markdown by design — forcing a JSON schema would prevent the
@@ -799,6 +838,17 @@ export async function executePromptStream(
       session.sessionName,
       conversationId,
       options.tooling,
+    );
+  }
+
+  // Register graph-workflow lane identity so it reaches the session env when the
+  // backend runtime is (re)created for this lane conversation.
+  if (options?.workflowContext) {
+    resolvedDeps.setWorkflowContext?.(
+      projectPath,
+      session.sessionName,
+      conversationId,
+      options.workflowContext,
     );
   }
 

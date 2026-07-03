@@ -47,6 +47,7 @@ interface ExecutePromptStreamFn {
       effort?: string;
       backend?: AgentBackendId;
       tooling?: { portableMcp?: PortableMcpConfig };
+      workflowContext?: { executionId: string; contextId: string };
       executionTarget?: ExecutionTarget;
       waitForBackgroundTasks?: boolean;
     },
@@ -63,6 +64,7 @@ export interface RunIterationInput {
   session: SessionState;
   prompt: string;
   conversationId: string;
+  executionId: string;
   contextId: string;
   backend: AgentBackendId;
   model: string;
@@ -112,6 +114,7 @@ export function createGraphWorkflowImplementerRunner(
       backend: AgentBackendId;
       effort: string;
       tooling: { portableMcp: PortableMcpConfig };
+      workflowContext: { executionId: string; contextId: string };
       executionTarget?: ExecutionTarget;
       waitForBackgroundTasks: boolean;
     } = {
@@ -120,6 +123,12 @@ export function createGraphWorkflowImplementerRunner(
       effort: input.reasoningEffort,
       tooling: {
         portableMcp: input.toolServer as PortableMcpConfig,
+      },
+      // Lane identity for the session env so `cctl workflow …` resolves its
+      // execution/context from env inside this implementer conversation.
+      workflowContext: {
+        executionId: input.executionId,
+        contextId: input.contextId,
       },
       // Deterministically opt this implementer turn into holding open for
       // in-flight waitable background tasks. No agent involvement (Req 6.3).

@@ -9,10 +9,6 @@
 import { createStateManager } from "@/lib/state-store";
 import { getRuntime } from "@/lib/agent-backends/runtime-registry";
 import { createLogger } from "@/lib/logging";
-import {
-  buildSessionToolsGatewayServers,
-  buildSessionToolsReservedIds,
-} from "@/lib/mcp-gateway/portable-config";
 import { getProjectDisplayName } from "@/lib/projects/resolver";
 import type { McpOverrides, McpToolInventoryResult } from "@/lib/mcp/schemas";
 import { createComposePortableMcpForConversation } from "./compose-for-conversation";
@@ -151,8 +147,6 @@ const composePortableForConversation = createComposePortableMcpForConversation({
   },
   discoverSources: discoverAllSources,
   globalConfigPath: () => getDefaultGlobalMcpDefinitionPath(),
-  buildGatewayServers: buildSessionToolsGatewayServers,
-  buildReservedGatewayIds: buildSessionToolsReservedIds,
 });
 
 const defaultResolvePortableForConversation =

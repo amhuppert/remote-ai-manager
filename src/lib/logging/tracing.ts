@@ -45,10 +45,17 @@ function isStreamingResponse(response: Response): boolean {
   return contentType.startsWith("text/event-stream");
 }
 
-type RouteHandler = (
-  request: Request,
-  context: { params: Promise<Record<string, string>> },
-) => Promise<Response>;
+/** Catch-all segments ([...slug]) resolve to string[]; plain segments to string. */
+type RouteParams = Record<string, string | string[]>;
+
+type RouteContext = { params: Promise<RouteParams> };
+
+/**
+ * Default for unannotated inline handlers: plain-segment routes only see
+ * string params, so their contextual type stays string-valued. Catch-all
+ * routes annotate their context and infer C from the annotation instead.
+ */
+type DefaultRouteContext = { params: Promise<Record<string, string>> };
 
 /**
  * Wrap a Next.js API route handler with tracing instrumentation.
@@ -61,7 +68,11 @@ type RouteHandler = (
  * - Adds X-Trace-Id and Server-Timing to response header
  * - Catches unhandled errors, logs with full context, re-throws
  */
-export function withTracing(handler: RouteHandler): RouteHandler {
+export function withTracing<
+  C extends RouteContext | undefined = DefaultRouteContext,
+>(
+  handler: (request: Request, context: C) => Promise<Response>,
+): (request: Request, context: C) => Promise<Response> {
   return async (request, context) => {
     const start = Date.now();
     const url = new URL(request.url);
@@ -75,14 +86,19 @@ export function withTracing(handler: RouteHandler): RouteHandler {
     let sessionName: string | undefined;
     let conversationId: string | undefined;
     try {
-      const params = await context.params;
-      projectName = params["name"];
-      sessionName = params["session"]
-        ? decodeURIComponent(params["session"])
-        : undefined;
-      conversationId = params["conversationId"]
-        ? decodeURIComponent(params["conversationId"])
-        : undefined;
+      const params: RouteParams = context ? await context.params : {};
+      const nameParam = params["name"];
+      projectName = typeof nameParam === "string" ? nameParam : undefined;
+      const sessionParam = params["session"];
+      sessionName =
+        typeof sessionParam === "string" && sessionParam !== ""
+          ? decodeURIComponent(sessionParam)
+          : undefined;
+      const conversationParam = params["conversationId"];
+      conversationId =
+        typeof conversationParam === "string" && conversationParam !== ""
+          ? decodeURIComponent(conversationParam)
+          : undefined;
     } catch {
       // No params or params resolution failed — not all routes have params
     }

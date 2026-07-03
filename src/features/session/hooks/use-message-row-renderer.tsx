@@ -46,6 +46,7 @@ export function useMessageRowRenderer({
       return (
         <MessageRow
           msg={msg}
+          queuedMetadata={msg.queued ? msg.queued.metadata : undefined}
           messageIndex={messageIndex}
           isLast={isLast}
           selectedBackend={selectedBackend}

@@ -11,11 +11,13 @@ import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
 import { createWorkflowExecution } from "./test-fixtures";
 import {
+  buildLaneIterationToolServer,
   createGraphWorkflowExecutionRouteHandlers,
   createGraphWorkflowRouteScriptValidatorService,
   launchGraphWorkflowExecution,
   type GraphWorkflowExecutionRouteDeps,
 } from "./execution-route-handlers";
+import type { PortableMcpConfig } from "@/lib/agent-backends/portable-mcp";
 import {
   WorkflowPrerequisitesUnmetError,
   WorkflowStartGuardError,
@@ -1990,6 +1992,7 @@ describe("implementer runner wiring (unified executePromptStream path)", () => {
           session: makeSession(),
           prompt: input.prompt,
           conversationId: input.conversationId,
+          executionId: input.executionId,
           contextId: input.contextId,
           backend: input.backend,
           model: input.model,
@@ -2067,6 +2070,7 @@ describe("implementer runner wiring (unified executePromptStream path)", () => {
           session: makeSession(),
           prompt: input.prompt,
           conversationId: input.conversationId,
+          executionId: input.executionId,
           contextId: input.contextId,
           backend: input.backend,
           model: input.model,
@@ -2266,5 +2270,23 @@ describe("launchGraphWorkflowExecution (production start+kickoff seam)", () => {
     ).rejects.toThrow('Workflow definition "nope" was not found');
 
     expect(kickOffExecutionLoop).not.toHaveBeenCalled();
+  });
+});
+
+describe("buildLaneIterationToolServer (Phase 3 lane MCP detachment)", () => {
+  it("attaches no in-process CC MCP server to new lane conversations", () => {
+    const toolServer = buildLaneIterationToolServer();
+    const config = toolServer.server as PortableMcpConfig;
+
+    // The lane tools are now the `cctl workflow …` verbs, so a freshly spawned
+    // lane conversation's transient tool server carries no server entries.
+    expect(config.servers).toEqual([]);
+  });
+
+  it("is a no-op when merged into a conversation's portable-MCP config", () => {
+    // Mirrors compose's mergeTransientLast contract: an empty transient adds
+    // nothing, so a lane spawn cannot re-introduce an in-process CC server.
+    const server = buildLaneIterationToolServer().server as PortableMcpConfig;
+    expect(server.servers.length).toBe(0);
   });
 });

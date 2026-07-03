@@ -182,16 +182,6 @@ export class ClaudeTaskRunner implements AgentTaskRunner {
           ...(outputFormat ? { outputFormat } : {}),
           mcpServers: mcpServers as Record<string, never>,
           abortController,
-          canUseTool: async (toolName: string) => {
-            if (toolName === "AskUserQuestion") {
-              return {
-                behavior: "deny" as const,
-                message:
-                  "Task runner operates autonomously — cannot ask questions.",
-              };
-            }
-            return { behavior: "allow" as const, updatedInput: {} };
-          },
           env: buildChildEnv() as Record<string, string>,
         },
       });

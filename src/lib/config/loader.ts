@@ -2,6 +2,7 @@ import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { resolveConfigDirFrom } from "./config-dir";
 import { rawGlobalConfigSchema } from "./schemas";
 import { intersectKeys, mergeConfigWithDefaults } from "./cascade";
 import type { GlobalConfig } from "@/lib/config/schemas";
@@ -21,23 +22,10 @@ import { createLogger } from "@/lib/logging";
  * set explicitly by the `dev` script and nowhere else.
  */
 export function resolveConfigDir(): string {
-  const override = process.env["CC_CONFIG_DIR"];
-  if (override) {
-    return override;
-  }
-
-  const dirName = process.env["CC_ENV"] === "dev" ? "cc-dev" : "cc";
-
-  const platform = os.platform();
-  if (platform === "darwin") {
-    return path.join(os.homedir(), "Library", "Application Support", dirName);
-  }
-  // Linux / other: use XDG_CONFIG_HOME or ~/.config
-  const xdg = process.env["XDG_CONFIG_HOME"];
-  if (xdg) {
-    return path.join(xdg, dirName);
-  }
-  return path.join(os.homedir(), ".config", dirName);
+  return resolveConfigDirFrom(process.env, {
+    platform: os.platform(),
+    homedir: os.homedir(),
+  });
 }
 
 const CONFIG_DIR = resolveConfigDir();

@@ -328,6 +328,9 @@ describe("CodexConversationRuntime", () => {
         }
         return result;
       }),
+      getServerUrl: vi.fn().mockReturnValue("http://127.0.0.1:3000"),
+      getApiToken: vi.fn().mockReturnValue("tok-abc"),
+      getConfigDir: vi.fn().mockReturnValue("/cfg"),
       translatePortableMcpToCodex: vi
         .fn()
         .mockReturnValue({ mcpServers: {}, droppedFields: [] }),
@@ -468,6 +471,96 @@ describe("CodexConversationRuntime", () => {
       expect(deps.toStringEnv).toHaveBeenCalledWith(
         expect.objectContaining({ CLAUDECODE: "" }),
       );
+    });
+  });
+
+  // --------------------------------------------------------
+  // sendTurn — cctl env contract
+  // --------------------------------------------------------
+
+  describe("sendTurn — cctl env contract", () => {
+    /** Read the env handed to the Codex SDK on the first createCodex call. */
+    function envOfFirstTurn(): Record<string, string> {
+      const codexCall = (deps.createCodex as ReturnType<typeof vi.fn>).mock
+        .calls[0]![0];
+      return codexCall.env as Record<string, string>;
+    }
+
+    it("injects the full cctl identity + server contract for a non-lane conversation", async () => {
+      setupThread(minimalSuccessEvents());
+      const runtime = new CodexConversationRuntime(
+        makeCreateInput({
+          projectName: "command-center",
+          sessionName: "my-session",
+          conversationId: "conv-123",
+        }),
+        deps,
+      );
+
+      await runtime.sendTurn(makeTurnInput());
+
+      const env = envOfFirstTurn();
+      expect(env.CC_PROJECT).toBe("command-center");
+      expect(env.CC_SESSION).toBe("my-session");
+      expect(env.CC_CONVERSATION_ID).toBe("conv-123");
+      expect(env.CC_SERVER_URL).toBe("http://127.0.0.1:3000");
+      expect(env.CC_API_TOKEN).toBe("tok-abc");
+      // configDir/bin prepended so `cctl` resolves on PATH.
+      expect(env.PATH).toContain("/cfg/bin");
+      // Non-lane conversation carries neither workflow identity var.
+      expect("CC_WORKFLOW_EXECUTION_ID" in env).toBe(false);
+      expect("CC_WORKFLOW_CONTEXT_ID" in env).toBe(false);
+    });
+
+    it("injects both lane identity vars for a graph-workflow lane conversation", async () => {
+      setupThread(minimalSuccessEvents());
+      const runtime = new CodexConversationRuntime(
+        makeCreateInput({
+          workflowExecutionId: "exec-9",
+          workflowContextId: "context-plan",
+        }),
+        deps,
+      );
+
+      await runtime.sendTurn(makeTurnInput());
+
+      const env = envOfFirstTurn();
+      expect(env.CC_WORKFLOW_EXECUTION_ID).toBe("exec-9");
+      expect(env.CC_WORKFLOW_CONTEXT_ID).toBe("context-plan");
+    });
+
+    it("omits CC_SERVER_URL / CC_API_TOKEN when the server has not resolved them", async () => {
+      deps.getServerUrl = vi.fn().mockReturnValue(null);
+      deps.getApiToken = vi.fn().mockReturnValue(null);
+      setupThread(minimalSuccessEvents());
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+
+      await runtime.sendTurn(makeTurnInput());
+
+      const env = envOfFirstTurn();
+      expect("CC_SERVER_URL" in env).toBe(false);
+      expect("CC_API_TOKEN" in env).toBe(false);
+    });
+
+    it("re-derives the contract every turn so a late-resolved server URL is picked up", async () => {
+      deps.getServerUrl = vi
+        .fn()
+        .mockReturnValueOnce(null)
+        .mockReturnValue("http://127.0.0.1:3000");
+
+      setupThread(minimalSuccessEvents());
+      const runtime = new CodexConversationRuntime(makeCreateInput(), deps);
+
+      await runtime.sendTurn(makeTurnInput());
+      setupThread(minimalSuccessEvents("thread-123"));
+      await runtime.sendTurn(makeTurnInput());
+
+      const createCodexCalls = (deps.createCodex as ReturnType<typeof vi.fn>)
+        .mock.calls;
+      const firstEnv = createCodexCalls[0]![0].env as Record<string, string>;
+      const secondEnv = createCodexCalls[1]![0].env as Record<string, string>;
+      expect("CC_SERVER_URL" in firstEnv).toBe(false);
+      expect(secondEnv.CC_SERVER_URL).toBe("http://127.0.0.1:3000");
     });
   });
 
@@ -1367,7 +1460,7 @@ describe("CodexConversationRuntime", () => {
     it("adds enabled=false entries for native Codex MCP servers not managed by Command Center", async () => {
       deps.translatePortableMcpToCodex = vi.fn().mockReturnValue({
         mcpServers: {
-          "cc-session-tools": { url: "http://localhost/mcp" },
+          "external-tools": { url: "http://localhost/mcp" },
           "next-devtools-project": { command: "npx", args: ["next"] },
         },
         droppedFields: [],
@@ -1381,7 +1474,7 @@ describe("CodexConversationRuntime", () => {
           },
         },
         {
-          name: "cc-session-tools",
+          name: "external-tools",
           configEntry: { url: "http://localhost/mcp" },
         },
         {
@@ -1400,7 +1493,7 @@ describe("CodexConversationRuntime", () => {
             portableMcp: {
               servers: [
                 {
-                  id: "cc-session-tools",
+                  id: "external-tools",
                   transport: "streamable-http",
                   url: "http://localhost/mcp",
                 },
@@ -1427,7 +1520,7 @@ describe("CodexConversationRuntime", () => {
         .calls[0]![0];
       expect(codexCall.config).toEqual({
         mcp_servers: {
-          "cc-session-tools": { url: "http://localhost/mcp" },
+          "external-tools": { url: "http://localhost/mcp" },
           "next-devtools-project": { command: "npx", args: ["next"] },
           playwright: {
             command: "npx",

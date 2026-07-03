@@ -229,6 +229,9 @@ const UTILITY_FIRST_PATHS = [
   `${path.sep}components${path.sep}conversation${path.sep}MarkdownFileCard.tsx`,
   `${path.sep}components${path.sep}conversation${path.sep}document-scope.tsx`,
   `${path.sep}components${path.sep}conversation${path.sep}DocumentFeedbackCard.tsx`,
+  // Async-ask answer card: the transcript renderer for <cc-question-answers>
+  // blocks, authored utility-first alongside DocumentFeedbackCard.
+  `${path.sep}components${path.sep}conversation${path.sep}QuestionAnswersCard.tsx`,
 ];
 
 function srcFiles(ext: string): string[] {

@@ -9,18 +9,24 @@ import {
   useSending,
 } from "@/stores/session-detail.store";
 import type { TranscriptMessage } from "@/lib/conversations/schemas";
-import type { PendingQueuedMessage } from "@/lib/conversations/message-queue-schemas";
+import type {
+  PendingQueuedMessage,
+  QueuedMessageMetadata,
+} from "@/lib/conversations/message-queue-schemas";
 
 /**
  * Display-time annotation on a transcript-shaped row that originates from the
  * pending queue rather than the delivered JSONL transcript. `id` is the durable
  * server queue id (used by the cancellation affordance); `tempId` identifies an
  * optimistic-only entry not yet durable; `status` drives pending styling.
+ * `metadata` is the durable row's provenance tag — the renderer keys structured
+ * cards (e.g. question answers) off it instead of sniffing the raw text.
  */
 export interface QueuedDisplayMeta {
   id: string | null;
   tempId?: string;
   status: "pending" | "delivering" | "accepted";
+  metadata: QueuedMessageMetadata | null;
 }
 
 /**
@@ -106,6 +112,7 @@ export function buildDisplayProjection({
       queued: {
         id: entry.id,
         status: entry.status === "delivering" ? "delivering" : "pending",
+        metadata: entry.metadata,
       },
     });
   }
@@ -124,6 +131,7 @@ export function buildDisplayProjection({
         id: entry.queueId,
         tempId: entry.tempId,
         status: entry.queueId ? "accepted" : "pending",
+        metadata: null,
       },
     });
   }

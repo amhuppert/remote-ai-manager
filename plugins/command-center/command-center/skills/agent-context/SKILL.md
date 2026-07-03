@@ -42,37 +42,27 @@ CC runs with `permissionMode: "bypassPermissions"`. You have full tool access wi
 
 If the session was created in **Focus mode**, your system prompt includes an `<objective>` tag with the user's stated goal. Prioritize work toward that objective.
 
-## MCP Tools
+## Session Tools — the `cctl` CLI
 
-CC injects custom MCP tools into your session. These are in-process servers — no network calls.
+CC provides a command-line tool, **`cctl`**, on your `PATH` for session actions: dev servers, notifications, reference documents, workflow authoring/lifecycle, codex runs, and session alignment. It talks to CC's token-gated HTTP API; your identity (project, session, conversation) is injected via environment variables, so you never pass those explicitly. Run `cctl doctor` to confirm connectivity. For the full command reference, invoke the **`cc-cli`** skill.
 
-### Dev-Server Tools
+### Dev-server commands
 
-These tools are scoped to your session worktree. Use them before driving any browser, Playwright, visual, or Next.js MCP tooling — never assume a port like 3000 or 6006 belongs to your worktree, because parallel sessions get different ports.
+Use these before driving any browser, Playwright, visual, or Next.js MCP tooling — never assume a port like 3000 or 6006 belongs to your worktree, because parallel sessions get different ports.
 
-| Tool | Purpose |
+| Command | Purpose |
 |---|---|
-| `get_dev_servers` | List configured dev servers and their reconciled runtime status (`status`, `port`, `localUrl`, `remoteUrl`, `ownedByThisSession`, `source`, `logFilePath`). |
-| `ensure_dev_server({ name?, wait?, timeout_ms? })` | Make sure a dev server is running for THIS session. Starts a stopped/errored server or waits for an already-starting one. Returns the `localUrl`, `remoteUrl`, and `logFilePath` to use. If an unmanaged process is already listening on the target port, the call fails with an `UNMANAGED_DEV_SERVER_DETECTED` error — surface that to the user via the UI rather than retrying blindly. |
-| `stop_dev_server({ name })` | Stop a named dev server. CC verifies worktree ownership before signalling so externally owned listeners are never killed. |
+| `cctl dev list [--json]` | List configured dev servers and their reconciled runtime status (`status`, `port`, `localUrl`, `remoteUrl`, `ownedByThisSession`, …). The `--json` output includes each server's log-file path. |
+| `cctl dev ensure [<serverName>]` | Make sure a dev server is running for THIS session. Starts a stopped/errored server or waits for a starting one, blocks until liveness (or a bounded timeout), and prints the `localUrl`/`remoteUrl` to use. Omit `<serverName>` when exactly one server is configured. |
+| `cctl dev stop <serverName>` | Stop a named dev server. CC verifies worktree ownership before signalling so externally owned listeners are never killed. |
 
-**Diagnosing dev-server problems:** Each running server has a `logFilePath` pointing to its interleaved stdout/stderr log on disk (truncated per spawn, line-prefixed `[OUT]`/`[ERR]`). When a server fails to start or behaves badly, read that file with the `Read` tool for the full output — it's authoritative and not size-limited like `recentOutput`.
+**Diagnosing dev-server problems:** each running server has a log file on disk (interleaved stdout/stderr, line-prefixed `[OUT]`/`[ERR]`); `cctl dev list --json` reports its path. When a server fails to start or misbehaves, read that file with the `Read` tool for the full, authoritative output.
 
 **How to use them:**
 
-1. Before any browser / Playwright / Next.js MCP / visual verification, call `ensure_dev_server` (omit `name` if exactly one server is configured).
-2. Read the returned `localUrl` (typical: `http://localhost:<port>`) or `remoteUrl` and use that exact URL — do not guess.
-3. Only fall back to asking the user to start a server from the UI when `ensure_dev_server` returns `NO_DEV_SERVERS_CONFIGURED` or an unrecoverable start failure.
-
-**Error codes you may receive (in `isError: true` responses):**
-
-| Code | Meaning |
-|---|---|
-| `AMBIGUOUS_DEV_SERVER` | Multiple servers are configured; re-call with `name`. The error payload includes `availableNames`. |
-| `NO_DEV_SERVERS_CONFIGURED` | Project has no `devServers` in `CommandCenter.json`. Ask the user to configure one. |
-| `UNKNOWN_DEV_SERVER` | The `name` you supplied isn't in `CommandCenter.json`. |
-| `DEV_SERVER_START_FAILED` | The server failed to start; `recentOutput` is in the payload. |
-| `DEV_SERVER_WAIT_TIMEOUT` | Server didn't reach running within `timeoutMs`. Inspect status with `get_dev_servers`. |
+1. Before any browser / Playwright / Next.js MCP / visual verification, run `cctl dev ensure` (omit the name if exactly one server is configured).
+2. Read the printed `localUrl` (typical: `http://localhost:<port>`) or `remoteUrl` and use that exact URL — do not guess.
+3. `cctl dev ensure` exits non-zero with a one-line reason on failure. When it reports `NO_DEV_SERVERS_CONFIGURED`, the project has no `devServers` in `CommandCenter.json` — ask the user to configure one (or start a server from the UI) rather than retrying blindly. If multiple servers are configured it will ask you to pass a `<serverName>`.
 
 ## Project Configuration
 
@@ -104,7 +94,7 @@ CC can launch dev servers for your session. Each entry has a `name` and `command
 
 Dev servers use the **`cc-assigned` port strategy**: CC scans the entry's configured port range, picks an owned-or-free port, injects it into the child process via `$CC_ASSIGNED_PORT` (and `$PORT`), and waits for TCP readiness. CC monitors liveness by polling the port every 5 seconds.
 
-**How agents interact with dev servers**: use the `ensure_dev_server` MCP tool (see *Dev-Server Tools* above) to get a server running for your session worktree on demand. The tool returns the correct `localUrl` and `remoteUrl` for your worktree's port — do not assume defaults like 3000 or 6006.
+**How agents interact with dev servers**: run `cctl dev ensure` (see *Dev-server commands* above) to get a server running for your session worktree on demand. It prints the correct `localUrl` and `remoteUrl` for your worktree's port — do not assume defaults like 3000 or 6006.
 
 **Common dev servers:**
 
@@ -113,7 +103,7 @@ Dev servers use the **`cc-assigned` port strategy**: CC scans the entry's config
 | `nextjs` | 3000+ | Next.js development server |
 | `storybook` | 6006+ | Storybook component explorer |
 
-Ports may differ from defaults when multiple sessions run in parallel — each worktree gets its own port. Always read the actual port from `ensure_dev_server` or `get_dev_servers`.
+Ports may differ from defaults when multiple sessions run in parallel — each worktree gets its own port. Always read the actual port from `cctl dev ensure` or `cctl dev list`.
 
 ## What CC Manages (Not Your Concern)
 
@@ -132,11 +122,11 @@ These happen automatically — no action needed from you:
 | Working directory | User's chosen directory | Isolated git worktree |
 | Permissions | User-configured | `bypassPermissions` (full access) |
 | Session persistence | Local `~/.claude/` | CC manages its own transcripts |
-| Dev servers | User starts manually | CC manages lifecycle and port allocation; agents call `ensure_dev_server` |
+| Dev servers | User starts manually | CC manages lifecycle and port allocation; agents run `cctl dev ensure` |
 | Merge to main | User runs git commands | CC's merge workflow with validation |
 
 ## Tips
 
 - **Check `CommandCenter.json`** in the repo root to understand what's configured for this project.
-- **Call `ensure_dev_server` before browser/Playwright/Next.js MCP work** — the returned `localUrl` is the only URL you should hit. A common port responding does not mean it belongs to your worktree.
+- **Run `cctl dev ensure` before browser/Playwright/Next.js MCP work** — the printed `localUrl` is the only URL you should hit. A common port responding does not mean it belongs to your worktree.
 - **Your branch is `csm/<session-name>`** — commits go here. CC handles merging to `main` when the user requests it.

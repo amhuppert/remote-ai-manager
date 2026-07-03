@@ -4,6 +4,14 @@ import { runMigrations } from "./lib/state-store/migrator";
 import { initialize as initNotificationDb } from "./lib/notifications/repo";
 import { setConfigReader } from "./lib/push-notification/dispatcher";
 import { readConfig, getConfigDirPath } from "./lib/config/loader";
+import { ensureInstanceToken } from "./lib/agent-gateway/token";
+import {
+  installCctl,
+  type InstallCctlResult,
+} from "./lib/agent-gateway/install-cli";
+import { recordServerBaseUrl } from "./lib/agent-gateway/server-url";
+import { BUILD_INFO } from "./lib/build-info";
+import path from "node:path";
 import { getErrorMessage } from "@/lib/shared/errors";
 import { createLogger, runAsTrace } from "./lib/logging";
 import { recoverActiveWorkflowEnvelopes } from "./lib/workflows/primitives/recover-workflow-envelopes";
@@ -20,6 +28,9 @@ export interface StartupDeps {
   setConfigReader: typeof setConfigReader;
   readConfig: typeof readConfig;
   recoverActiveWorkflowEnvelopes: typeof recoverActiveWorkflowEnvelopes;
+  ensureAgentToken(): Promise<string>;
+  installCli(): Promise<InstallCctlResult>;
+  recordServerBaseUrl(): string;
 }
 
 const defaultStartupDeps: StartupDeps = {
@@ -30,6 +41,14 @@ const defaultStartupDeps: StartupDeps = {
   setConfigReader,
   readConfig,
   recoverActiveWorkflowEnvelopes,
+  ensureAgentToken: () => ensureInstanceToken(getConfigDirPath()),
+  installCli: () =>
+    installCctl({
+      bundlePath: path.join(process.cwd(), "dist", "cctl", "cctl.mjs"),
+      configDir: getConfigDirPath(),
+      expectedBuildInfo: BUILD_INFO,
+    }),
+  recordServerBaseUrl: () => recordServerBaseUrl(),
 };
 
 export function createStartupRegistrar(
@@ -51,6 +70,36 @@ export function createStartupRegistrar(
       }
     } catch (err) {
       logger.error("startup.state_migrations_failed", {
+        error: getErrorMessage(err),
+      });
+    }
+
+    // The instance token gates all agent-facing endpoints and is injected into
+    // spawned sessions' env, so it must exist before any conversation runs.
+    try {
+      await deps.ensureAgentToken();
+    } catch (err) {
+      logger.error("startup.agent_token_failed", {
+        error: getErrorMessage(err),
+      });
+    }
+
+    // The base URL feeds CC_SERVER_URL in every spawned session's env; record
+    // it before conversations rehydrate so no session sees it unset.
+    try {
+      deps.recordServerBaseUrl();
+    } catch (err) {
+      logger.error("startup.server_url_failed", {
+        error: getErrorMessage(err),
+      });
+    }
+
+    // Publish this build's cctl bundle to <configDir>/bin. The server owns
+    // the binary: sessions must run exactly the running server's version.
+    try {
+      await deps.installCli();
+    } catch (err) {
+      logger.error("startup.cli_install_failed", {
         error: getErrorMessage(err),
       });
     }

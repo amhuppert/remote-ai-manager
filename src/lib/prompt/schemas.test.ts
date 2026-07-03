@@ -121,6 +121,7 @@ describe("queueEnqueueResponseSchema", () => {
     cancelledAt: null,
     failedAt: null,
     error: null,
+    metadata: null,
   };
 
   it("accepts a valid enqueue response", () => {

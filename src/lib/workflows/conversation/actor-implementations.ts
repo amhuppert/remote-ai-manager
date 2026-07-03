@@ -68,8 +68,9 @@ import {
   DEBUG_MODE_INSTRUCTIONS,
   DEBUG_PHASE_CONTEXT,
   CC_CONTEXT,
+  CC_CLI_INSTRUCTIONS,
   TDD_INSTRUCTIONS,
-  ASK_USER_QUESTION_INSTRUCTIONS,
+  ASK_QUESTION_INSTRUCTIONS,
 } from "@/lib/prompt/sdk-driver";
 import {
   isUndeliveredQuerySessionError,
@@ -475,7 +476,6 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     composeForConversationMod,
     globalStoreMod,
     discoveryMod,
-    gatewayPortableConfigMod,
     defaultDepsMod,
     capabilitiesDepsMod,
     messageQueueMod,
@@ -490,7 +490,7 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     import("@/lib/agent-backends/runtime-registry"),
     import("@/lib/shared/child-env"),
     import("@/lib/commands/service"),
-    import("@/lib/agent-backends/codex/codex-tool"),
+    import("@/lib/agent-backends/codex/codex-output"),
     import("@/lib/projects/resolver"),
     import("@/lib/debug-log/service"),
     import("@/lib/state-store"),
@@ -498,7 +498,6 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
     import("@/lib/mcp/compose-for-conversation"),
     import("@/lib/mcp/global-store"),
     import("@/lib/mcp/discovery"),
-    import("@/lib/mcp-gateway/portable-config"),
     import("@/lib/mcp/default-deps"),
     import("@/lib/agent-capabilities/default-deps"),
     import("@/lib/conversations/message-queue-service"),
@@ -533,10 +532,6 @@ async function loadProductionDeps(): Promise<ActorImplementationDeps> {
       discoverSources: (input) => discoveryMod.discoverAllSources(input),
       globalConfigPath: () =>
         globalStoreMod.getDefaultGlobalMcpDefinitionPath(),
-      buildGatewayServers:
-        gatewayPortableConfigMod.buildSessionToolsGatewayServers,
-      buildReservedGatewayIds:
-        gatewayPortableConfigMod.buildSessionToolsReservedIds,
     });
 
   return {
@@ -1621,9 +1616,12 @@ export async function executePromptForMachine(
     const ccContext = isProjectConversation ? PROJECT_CC_CONTEXT : CC_CONTEXT;
     const sessionInstructions = [
       ccContext,
-      // AskUserQuestion is registered for both session and project servers, so
-      // the encouragement applies to every CC agent.
-      ASK_USER_QUESTION_INSTRUCTIONS,
+      // `cctl ask` works for session and project conversations alike, so the
+      // ask-at-real-forks encouragement applies to every CC agent.
+      ASK_QUESTION_INSTRUCTIONS,
+      // cctl is on PATH for every CC agent (session env contract), so the
+      // CLI nudge applies to session and project conversations alike.
+      CC_CLI_INSTRUCTIONS,
       // Spawn-proposal convention is a project-conversation-only capability:
       // session agents cannot propose sibling sessions from a conversation.
       isProjectConversation ? PROJECT_SPAWN_INSTRUCTIONS : null,
@@ -1751,6 +1749,12 @@ export async function executePromptForMachine(
           ? { codexCapabilityConfig }
           : {}),
       },
+      ...(runtimeState.workflowContext
+        ? {
+            workflowExecutionId: runtimeState.workflowContext.executionId,
+            workflowContextId: runtimeState.workflowContext.contextId,
+          }
+        : {}),
       onExternalTurnEvent: externalTurnHandler,
     });
 
@@ -2046,13 +2050,13 @@ export async function executePromptForMachine(
         return backendRuntime;
       };
 
-    // Pre-turn readiness (the primary fix). For a reused Claude runtime this
-    // forces a fresh cc-session-tools rebind BEFORE the prompt is delivered —
-    // the disconnect window is safe because no tool call is in flight. On an
-    // unrecoverable binding, recreate the runtime (resume-preserving) and retry
-    // once; a second failure fails the prompt BEFORE `streamInput` rather than
-    // delivering it into a runtime whose session-tools transport is broken.
-    // Non-Claude backends omit `prepareForTurnStart`, so they are unaffected.
+    // Pre-turn readiness (the primary fix). For a reused runtime this lets the
+    // runtime refresh its transport BEFORE the prompt is delivered — the
+    // disconnect window is safe because no tool call is in flight. On an
+    // unrecoverable runtime, recreate it (resume-preserving) and retry once; a
+    // second failure fails the prompt BEFORE `streamInput` rather than
+    // delivering it into a broken runtime. Backends without
+    // `prepareForTurnStart` are unaffected.
     const ready = (await backendRuntime!.prepareForTurnStart?.()) ?? {
       status: "ready" as const,
     };
@@ -2074,7 +2078,7 @@ export async function executePromptForMachine(
         });
         throw tagQuerySessionError(
           new Error(
-            `Prompt not delivered: cc-session-tools unrecoverable (${retry.reason})`,
+            `Prompt not delivered: runtime unrecoverable (${retry.reason})`,
           ),
           QUERY_SESSION_ERROR_CODES.promptNotDelivered,
         );

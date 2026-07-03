@@ -152,7 +152,7 @@ describe("buildIterationPrompt", () => {
     expect(prompt).toContain("Build the feature");
   });
 
-  it("documents complete_task MCP tool", () => {
+  it("instructs the exact `cctl workflow task complete` invocation with taskId and summary", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),
       tasks: [makeTask()],
@@ -162,12 +162,15 @@ describe("buildIterationPrompt", () => {
     });
 
     expect(prompt).not.toContain("begin_task");
-    expect(prompt).toContain("complete_task");
-    expect(prompt).toContain("taskSlug");
-    expect(prompt).toContain("summary");
+    expect(prompt).toContain("cctl workflow task complete");
+    expect(prompt).toContain("<taskId>");
+    expect(prompt).toContain("--summary");
+    // The migration removes MCP tool names from the lane's only discovery surface.
+    expect(prompt).not.toContain("mcp__");
+    expect(prompt).not.toContain("complete_task");
   });
 
-  it("primes the Required Protocol to end the turn on a CONTEXT LIMIT REACHED result", () => {
+  it("primes the Required Protocol to end the turn on a CONTEXT LIMIT REACHED stop instruction", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),
       tasks: [makeTask()],
@@ -178,11 +181,11 @@ describe("buildIterationPrompt", () => {
 
     const protocol = prompt.slice(prompt.indexOf("## Required Protocol"));
     expect(protocol).toContain(
-      "If a complete_task result reports CONTEXT LIMIT REACHED, end your turn immediately — do not begin another task. The workflow continues the remaining tasks in a fresh conversation automatically.",
+      "If `cctl workflow task complete` prints a stop instruction (CONTEXT LIMIT REACHED …), end your turn immediately — do not begin another task. The workflow continues the remaining tasks in a fresh conversation automatically.",
     );
   });
 
-  it("notes on the complete_task tool reference that a stop instruction is mandatory", () => {
+  it("notes on the complete-task command that a printed stop instruction is mandatory", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),
       tasks: [makeTask()],
@@ -191,13 +194,11 @@ describe("buildIterationPrompt", () => {
       allowAgentTaskAdd: false,
     });
 
-    const toolRef = prompt.slice(prompt.indexOf("### complete_task"));
-    expect(toolRef).toContain(
-      "The result may instruct you to end your turn (context limit reached). Treat that instruction as mandatory.",
-    );
+    const commandRef = prompt.slice(prompt.indexOf("### Complete a task"));
+    expect(commandRef).toContain("that is mandatory: stop and end your turn");
   });
 
-  it("documents upsert_shared_document MCP tool", () => {
+  it("documents the `cctl workflow shared-doc upsert` command", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),
       tasks: [makeTask()],
@@ -206,10 +207,10 @@ describe("buildIterationPrompt", () => {
       allowAgentTaskAdd: false,
     });
 
-    expect(prompt).toContain("upsert_shared_document");
+    expect(prompt).toContain("cctl workflow shared-doc upsert");
   });
 
-  it("includes add_task documentation when allowAgentTaskAdd is true", () => {
+  it("includes `cctl workflow task add` when allowAgentTaskAdd is true", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),
       tasks: [makeTask()],
@@ -218,10 +219,10 @@ describe("buildIterationPrompt", () => {
       allowAgentTaskAdd: true,
     });
 
-    expect(prompt).toContain("add_task");
+    expect(prompt).toContain("cctl workflow task add");
   });
 
-  it("omits add_task documentation when allowAgentTaskAdd is false", () => {
+  it("omits `cctl workflow task add` when allowAgentTaskAdd is false", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),
       tasks: [makeTask()],
@@ -230,10 +231,10 @@ describe("buildIterationPrompt", () => {
       allowAgentTaskAdd: false,
     });
 
-    expect(prompt).not.toContain("add_task");
+    expect(prompt).not.toContain("cctl workflow task add");
   });
 
-  it("includes request_collaboration documentation with when-to-use guidance when allowAgentCollaboration is true", () => {
+  it("includes `cctl workflow collab request` with when-to-use guidance when allowAgentCollaboration is true", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),
       tasks: [makeTask()],
@@ -243,13 +244,13 @@ describe("buildIterationPrompt", () => {
       allowAgentCollaboration: true,
     });
 
-    expect(prompt).toContain("request_collaboration");
-    expect(prompt).toContain("brief");
+    expect(prompt).toContain("cctl workflow collab request");
+    expect(prompt).toContain("--brief");
     // Must convey WHEN to reach for it, not just what it does.
     expect(prompt).toMatch(/ambiguous|hard-to-reverse|high-impact|trade-off/i);
   });
 
-  it("omits request_collaboration documentation when allowAgentCollaboration is false", () => {
+  it("omits `cctl workflow collab request` when allowAgentCollaboration is false", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),
       tasks: [makeTask()],
@@ -259,10 +260,10 @@ describe("buildIterationPrompt", () => {
       allowAgentCollaboration: false,
     });
 
-    expect(prompt).not.toContain("request_collaboration");
+    expect(prompt).not.toContain("cctl workflow collab request");
   });
 
-  it("omits request_collaboration documentation when allowAgentCollaboration is omitted", () => {
+  it("omits `cctl workflow collab request` when allowAgentCollaboration is omitted", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),
       tasks: [makeTask()],
@@ -271,7 +272,7 @@ describe("buildIterationPrompt", () => {
       allowAgentTaskAdd: false,
     });
 
-    expect(prompt).not.toContain("request_collaboration");
+    expect(prompt).not.toContain("cctl workflow collab request");
   });
 
   it("instructs the agent to work through tasks in order", () => {
@@ -290,10 +291,10 @@ describe("buildIterationPrompt", () => {
     expect(prompt).toMatch(
       /work.+through.+tasks.+in.+order|take.+tasks.+in.+order|work.+through.+them/i,
     );
-    expect(prompt).toContain("complete_task");
+    expect(prompt).toContain("cctl workflow task complete");
   });
 
-  it("warns about consequences of not calling complete_task", () => {
+  it("warns about the consequences of not completing tasks", () => {
     const prompt = buildIterationPrompt({
       context: makeContext(),
       tasks: [makeTask()],
@@ -303,7 +304,7 @@ describe("buildIterationPrompt", () => {
     });
 
     expect(prompt).toMatch(
-      /not.+call.+complete_task|without.+complete_task|fail.+complete/i,
+      /do not run `cctl workflow task complete`|blocks all workflow progress|workflow will stall/i,
     );
   });
 
@@ -502,9 +503,9 @@ describe("buildIterationPrompt", () => {
       charter: makeCharter(),
     });
 
-    // 5.4: cite the governing source in the complete_task summary on conflict.
+    // 5.4: cite the governing source in the completion summary on conflict.
     expect(prompt).toMatch(/cite.+governing source/i);
-    expect(prompt).toMatch(/complete_task/);
+    expect(prompt).toMatch(/cctl workflow task complete/);
     // 6.3: outside-worktree sources are read-only and require explicit permission.
     expect(prompt).toMatch(/permission/i);
   });
@@ -593,6 +594,70 @@ describe("buildIterationPrompt", () => {
     expect(prompt).toContain("Missing rollback notes");
     expect(prompt).toContain("General Issues");
   });
+
+  it("names no MCP tools anywhere across the full input surface (doc 02 §4.3)", () => {
+    // The lane prompt is the lane agent's ONLY discovery surface, so the CLI
+    // migration must leave zero MCP tool references in it. Render the maximal
+    // surface — every optional tool section (task add, collaboration) plus
+    // failure history, acceptance criteria, and shared docs — and assert the
+    // legacy tool names and any `mcp__` gateway id are gone, replaced by the
+    // exact `cctl workflow …` invocations.
+    const prompt = buildIterationPrompt({
+      context: makeContext(),
+      tasks: [makeTask({ id: "task-1" }), makeTask({ id: "task-2", order: 2 })],
+      taskStates: {
+        "task-1": makeTaskState({
+          taskId: "task-1",
+          status: "interrupted",
+          failureHistory: [
+            { message: "prior failure", timestamp: "2026-03-27T16:05:00.000Z" },
+          ],
+        }),
+      },
+      sharedDocuments: [makeSharedDoc()],
+      allowAgentTaskAdd: true,
+      allowAgentCollaboration: true,
+      contextValidationAcceptanceCriteria: "All tasks complete.",
+      latestContextValidationFailure: makeLatestContextValidationFailure(),
+      charter: makeCharter(),
+    });
+
+    for (const name of [
+      "mcp__",
+      "complete_task",
+      "add_task",
+      "upsert_shared_document",
+      "request_collaboration",
+    ]) {
+      expect(prompt).not.toContain(name);
+    }
+    expect(prompt).toContain("cctl workflow task complete");
+    expect(prompt).toContain("cctl workflow task add");
+    expect(prompt).toContain("cctl workflow shared-doc upsert");
+    expect(prompt).toContain("cctl workflow collab request");
+  });
+
+  it("buildFollowUpPrompt names no MCP tools and instructs the cctl completion verb", () => {
+    const prompt = buildFollowUpPrompt({
+      remainingTasks: [makeTask({ id: "task-1" })],
+      taskStates: { "task-1": makeTaskState({ taskId: "task-1" }) },
+      attemptNumber: 1,
+      maxAttempts: 2,
+      latestContextValidationFailure: makeLatestContextValidationFailure(),
+      charter: makeCharter(),
+    });
+
+    for (const name of [
+      "mcp__",
+      "complete_task",
+      "add_task",
+      "upsert_shared_document",
+      "request_collaboration",
+    ]) {
+      expect(prompt).not.toContain(name);
+    }
+    expect(prompt).toContain("cctl workflow task complete");
+  });
 });
 
 describe("buildFollowUpPrompt", () => {
@@ -632,7 +697,7 @@ describe("buildFollowUpPrompt", () => {
     expect(prompt).toContain("Read files.");
     expect(prompt).toContain("Document plan.");
     expect(prompt).toContain("interrupted");
-    expect(prompt).toContain("complete_task");
+    expect(prompt).toContain("cctl workflow task complete");
   });
 
   it("includes the attempt number and max attempts", () => {

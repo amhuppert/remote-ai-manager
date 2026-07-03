@@ -36,6 +36,7 @@ function pending(
     deliveryAttemptId: null,
     attemptCount: 0,
     error: null,
+    metadata: null,
   };
 }
 
@@ -196,9 +197,38 @@ describe("buildDisplayProjection", () => {
     expect(result[0]).toBe(messages[0]);
     expect(result[1]).toBe(messages[1]);
     expect(result[2]?.content).toEqual([{ type: "text", text: "queued A" }]);
-    expect(result[2]?.queued).toEqual({ id: "a", status: "pending" });
+    expect(result[2]?.queued).toEqual({
+      id: "a",
+      status: "pending",
+      metadata: null,
+    });
     expect(result[3]?.content).toEqual([{ type: "text", text: "queued B" }]);
-    expect(result[3]?.queued).toEqual({ id: "b", status: "pending" });
+    expect(result[3]?.queued).toEqual({
+      id: "b",
+      status: "pending",
+      metadata: null,
+    });
+  });
+
+  it("carries the durable row's provenance metadata so the renderer can key structured cards off it", () => {
+    const answerRow: PendingQueuedMessage = {
+      ...pending("a", "<cc-question-answers …>"),
+      metadata: { kind: "question_answers", questionBatchId: "q_1" },
+    };
+    const result = buildDisplayProjection({
+      messages: [],
+      optimisticMessages: [],
+      messageCountBeforeSubmit: 0,
+      sending: false,
+      pendingQueue: [answerRow],
+      optimisticQueue: [],
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.queued?.metadata).toEqual({
+      kind: "question_answers",
+      questionBatchId: "q_1",
+    });
   });
 
   it("shows a delivered queued entry by its transcript row only, with no duplicate", () => {
@@ -248,7 +278,11 @@ describe("buildDisplayProjection", () => {
     );
     expect(sharedRows).toHaveLength(1);
     // Durable row wins: carries the server id, not the tempId.
-    expect(sharedRows[0]?.queued).toEqual({ id: "X", status: "pending" });
+    expect(sharedRows[0]?.queued).toEqual({
+      id: "X",
+      status: "pending",
+      metadata: null,
+    });
   });
 
   it("keeps an optimistic-only entry (no queueId, not durable) after durable pending rows", () => {
@@ -263,7 +297,11 @@ describe("buildDisplayProjection", () => {
     });
 
     expect(result).toHaveLength(3);
-    expect(result[1]?.queued).toEqual({ id: "a", status: "pending" });
+    expect(result[1]?.queued).toEqual({
+      id: "a",
+      status: "pending",
+      metadata: null,
+    });
     expect(result[2]?.content).toEqual([
       { type: "text", text: "optimistic only" },
     ]);
@@ -271,6 +309,7 @@ describe("buildDisplayProjection", () => {
       id: null,
       tempId: "temp-1",
       status: "pending",
+      metadata: null,
     });
   });
 
@@ -305,7 +344,11 @@ describe("buildDisplayProjection", () => {
     });
 
     expect(result).toHaveLength(1);
-    expect(result[0]?.queued).toEqual({ id: "a", status: "delivering" });
+    expect(result[0]?.queued).toEqual({
+      id: "a",
+      status: "delivering",
+      metadata: null,
+    });
   });
 
   it("excludes a failed optimistic queue entry", () => {

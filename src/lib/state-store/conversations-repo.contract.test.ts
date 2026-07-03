@@ -1407,6 +1407,10 @@ function buildMaximalConversation(): ConversationState {
         deliveryAttemptId: "attempt-maximal",
         attemptCount: 3,
         error: "transient delivery error that should round-trip",
+        metadata: {
+          kind: "question_answers",
+          questionBatchId: "q_maximal",
+        },
       },
     ],
     lastSeenAlignmentVersion: 7,
@@ -1464,6 +1468,7 @@ describe("conversations-repo pendingQueue durability", () => {
       deliveryAttemptId: null,
       attemptCount: 0,
       error: null,
+      metadata: null,
     };
 
     repo.upsert(

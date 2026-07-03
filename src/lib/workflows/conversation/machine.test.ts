@@ -155,6 +155,7 @@ function makeMockVerifyCleanup(output: Partial<VerifyCleanupOutput> = {}) {
 function makeTestMachine(overrides?: {
   prepareTurn?: any;
   executePrompt?: any;
+  runTaskRun?: any;
   verifyCleanup?: any;
   drainPendingQueue?: () => void;
 }) {
@@ -163,6 +164,7 @@ function makeTestMachine(overrides?: {
     actors: {
       prepareTurn: overrides?.prepareTurn ?? makeMockPrepareTurn(),
       executePrompt: overrides?.executePrompt ?? makeMockExecutePrompt(),
+      ...(overrides?.runTaskRun ? { runTaskRun: overrides.runTaskRun } : {}),
       verifyCleanup: overrides?.verifyCleanup ?? makeMockVerifyCleanup(),
     },
     actions: {
@@ -517,22 +519,40 @@ describe("conversationMachine", () => {
     });
   });
 
-  describe("AskUserQuestion flow", () => {
-    it("does not re-invoke executePrompt when transitioning through waitingForInput", async () => {
+  describe("AskUserQuestion async flow", () => {
+    /** Deferred executePrompt so a test can hold a turn open past ASK_QUESTION. */
+    function makeDeferredExecutePrompt() {
       let invocationCount = 0;
       let resolvePrompt: ((result: PromptActorResult) => void) | null = null;
+      const actorLogic = fromPromise<PromptActorResult, ExecutePromptInput>(
+        async () => {
+          invocationCount++;
+          return new Promise<PromptActorResult>((resolve) => {
+            resolvePrompt = resolve;
+          });
+        },
+      );
+      return {
+        actorLogic,
+        get invocationCount() {
+          return invocationCount;
+        },
+        resolve(result: PromptActorResult) {
+          resolvePrompt!(result);
+        },
+      };
+    }
 
+    /** Drive a fresh actor through prompt → ASK_QUESTION → turn end, landing
+     *  it in the top-level waitingForInput state. */
+    async function driveToWaitingForInput(
+      overrides?: Parameters<typeof makeTestMachine>[0],
+    ) {
+      const deferred = makeDeferredExecutePrompt();
       const machine = makeTestMachine({
-        executePrompt: fromPromise<PromptActorResult, ExecutePromptInput>(
-          async () => {
-            invocationCount++;
-            return new Promise<PromptActorResult>((resolve) => {
-              resolvePrompt = resolve;
-            });
-          },
-        ),
+        executePrompt: deferred.actorLogic,
+        ...overrides,
       });
-
       const actor = createActor(machine, { input: defaultInput });
       activeActors.push(actor);
       actor.start();
@@ -542,51 +562,127 @@ describe("conversationMachine", () => {
         promptText: "Hello",
         streamId: "s1",
       });
-
-      // Wait for executePrompt to be invoked
       await waitForState(actor, "executing");
       await new Promise((r) => setTimeout(r, 10));
-      expect(invocationCount).toBe(1);
 
-      // Simulate SDK's canUseTool sending ASK_QUESTION
+      actor.send({ type: "ASK_QUESTION", questionId: "q1", questions: [] });
+      deferred.resolve(successResult());
+      await waitForState(actor, "waitingForInput");
+      return { actor, deferred };
+    }
+
+    it("stays in executing when ASK_QUESTION arrives mid-turn (stream not torn down)", async () => {
+      const deferred = makeDeferredExecutePrompt();
+      const machine = makeTestMachine({ executePrompt: deferred.actorLogic });
+      const actor = createActor(machine, { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
+
       actor.send({
-        type: "ASK_QUESTION",
+        type: "SUBMIT_PROMPT",
+        promptText: "Hello",
+        streamId: "s1",
+      });
+      await waitForState(actor, "executing");
+      await new Promise((r) => setTimeout(r, 10));
+      expect(deferred.invocationCount).toBe(1);
+
+      actor.send({ type: "ASK_QUESTION", questionId: "q1", questions: [] });
+      await new Promise((r) => setTimeout(r, 10));
+
+      const snap = actor.getSnapshot();
+      // The turn keeps running: ASK_QUESTION only records the pending question.
+      expect(JSON.stringify(snap.value)).toContain("executing");
+      expect(snap.context.status).toBe("waiting_for_input");
+      expect(snap.context.pendingQuestion).toEqual({
         questionId: "q1",
         questions: [],
       });
+      expect(deferred.invocationCount).toBe(1);
+
+      deferred.resolve(successResult());
       await waitForState(actor, "waitingForInput");
-
-      // User answers — should NOT re-invoke executePrompt
-      actor.send({
-        type: "ANSWER",
-        questionId: "q1",
-        answers: { q1: { selected: ["yes"], note: null, skipped: false } },
-      });
-
-      // Give time for any potential re-invocation
-      await new Promise((r) => setTimeout(r, 50));
-      expect(invocationCount).toBe(1);
-
-      // Complete the prompt
-      resolvePrompt!(successResult());
-      await waitForState(actor, "idle");
-
-      expect(actor.getSnapshot().context.promptCount).toBe(1);
+      expect(deferred.invocationCount).toBe(1);
     });
 
-    it("handles ABORT_TURN while in waitingForInput", async () => {
-      let resolvePrompt: ((result: PromptActorResult) => void) | null = null;
+    it("finalizingTurn targets waitingForInput when a question pends, preserving status", async () => {
+      const { actor } = await driveToWaitingForInput();
 
-      const machine = makeTestMachine({
-        executePrompt: fromPromise<PromptActorResult, ExecutePromptInput>(
-          async () => {
-            return new Promise<PromptActorResult>((resolve) => {
-              resolvePrompt = resolve;
-            });
-          },
-        ),
+      const snap = actor.getSnapshot();
+      expect(snap.value).toBe("waitingForInput");
+      expect(snap.context.status).toBe("waiting_for_input");
+      expect(snap.context.pendingQuestion).toEqual({
+        questionId: "q1",
+        questions: [],
+      });
+      // The turn itself finalized: metadata settled, no active turn.
+      expect(snap.context.activeTurn).toBeNull();
+      expect(snap.context.promptCount).toBe(1);
+    });
+
+    it("finalizingTurn targets idle when no question pends", async () => {
+      const machine = makeTestMachine();
+      const actor = createActor(machine, { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
+
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Hello",
+        streamId: "s1",
+      });
+      await waitForState(actor, "idle");
+
+      const snap = actor.getSnapshot();
+      expect(snap.value).toBe("idle");
+      expect(snap.context.status).toBe("awaiting");
+      expect(snap.context.pendingQuestion).toBeNull();
+    });
+
+    it("drains the pending queue on waitingForInput entry, like idle", async () => {
+      const drainPendingQueue = vi.fn();
+      const { actor } = await driveToWaitingForInput({ drainPendingQueue });
+
+      expect(actor.getSnapshot().value).toBe("waitingForInput");
+      // Once for the initial idle entry, once for waitingForInput entry.
+      expect(drainPendingQueue).toHaveBeenCalledTimes(2);
+    });
+
+    it("claiming a conversation turn from waitingForInput clears pendingQuestion (supersede)", async () => {
+      const { actor, deferred } = await driveToWaitingForInput();
+
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "different topic",
+        streamId: "s2",
       });
 
+      expect(actor.getSnapshot().context.pendingQuestion).toBeNull();
+      await waitForState(actor, "executing");
+      await new Promise((r) => setTimeout(r, 10));
+      deferred.resolve(successResult());
+      await waitForState(actor, "idle");
+      const snap = actor.getSnapshot();
+      expect(snap.context.pendingQuestion).toBeNull();
+      expect(snap.context.promptCount).toBe(2);
+    });
+
+    it("claiming a task run from waitingForInput clears pendingQuestion", async () => {
+      const runTaskRun = fromPromise<PromptActorResult, unknown>(async () =>
+        successResult(),
+      );
+      const { actor } = await driveToWaitingForInput({ runTaskRun });
+
+      actor.send({ type: "SUBMIT_TASK_RUN", promptText: "workflow task" });
+
+      expect(actor.getSnapshot().context.pendingQuestion).toBeNull();
+      await waitForState(actor, "idle");
+      expect(actor.getSnapshot().context.pendingQuestion).toBeNull();
+    });
+
+    it("CLEAR_PENDING_QUESTION mid-turn consumes the question so finalize settles to idle", async () => {
+      const deferred = makeDeferredExecutePrompt();
+      const machine = makeTestMachine({ executePrompt: deferred.actorLogic });
       const actor = createActor(machine, { input: defaultInput });
       activeActors.push(actor);
       actor.start();
@@ -599,23 +695,111 @@ describe("conversationMachine", () => {
       await waitForState(actor, "executing");
       await new Promise((r) => setTimeout(r, 10));
 
-      actor.send({
-        type: "ASK_QUESTION",
-        questionId: "q1",
-        questions: [],
-      });
-      await waitForState(actor, "waitingForInput");
+      actor.send({ type: "ASK_QUESTION", questionId: "q1", questions: [] });
+      expect(actor.getSnapshot().context.status).toBe("waiting_for_input");
 
-      // Abort while waiting for input
+      // Answer consumed while the asking turn is still running: the route
+      // clears the machine's pending question so the finalize guard sees null.
+      actor.send({ type: "CLEAR_PENDING_QUESTION" });
+      const mid = actor.getSnapshot();
+      expect(mid.context.pendingQuestion).toBeNull();
+      expect(mid.context.status).toBe("running");
+
+      deferred.resolve(successResult());
+      await waitForState(actor, "idle");
+      expect(actor.getSnapshot().value).toBe("idle");
+    });
+
+    it("CLEAR_PENDING_QUESTION is refused when nothing pends", async () => {
+      const deferred = makeDeferredExecutePrompt();
+      const machine = makeTestMachine({ executePrompt: deferred.actorLogic });
+      const actor = createActor(machine, { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
+
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Hello",
+        streamId: "s1",
+      });
+      await waitForState(actor, "executing");
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(actor.getSnapshot().can({ type: "CLEAR_PENDING_QUESTION" })).toBe(
+        false,
+      );
+
+      deferred.resolve(successResult());
+      await waitForState(actor, "idle");
+    });
+
+    it("ABORT_TURN mid-turn after ASK_QUESTION clears pendingQuestion and settles to idle", async () => {
+      const deferred = makeDeferredExecutePrompt();
+      const machine = makeTestMachine({ executePrompt: deferred.actorLogic });
+      const actor = createActor(machine, { input: defaultInput });
+      activeActors.push(actor);
+      actor.start();
+
+      actor.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "Hello",
+        streamId: "s1",
+      });
+      await waitForState(actor, "executing");
+      await new Promise((r) => setTimeout(r, 10));
+
+      actor.send({ type: "ASK_QUESTION", questionId: "q1", questions: [] });
       actor.send({ type: "ABORT_TURN", reason: "user" });
       await waitForState(actor, "idle");
 
       const snap = actor.getSnapshot();
+      expect(snap.value).toBe("idle");
       expect(snap.context.lastError).toContain("Aborted");
       expect(snap.context.pendingQuestion).toBeNull();
 
-      // Clean up pending promise
-      resolvePrompt!(successResult());
+      deferred.resolve(successResult());
+    });
+
+    it("explicit stop in waitingForInput clears the question and settles to idle", async () => {
+      const { actor } = await driveToWaitingForInput();
+
+      actor.send({ type: "ABORT_TURN", reason: "user" });
+
+      const snap = actor.getSnapshot();
+      expect(snap.value).toBe("idle");
+      expect(snap.context.pendingQuestion).toBeNull();
+      expect(snap.context.status).toBe("awaiting");
+    });
+
+    it("wakes in waitingForInput with the question intact after snapshot restore", async () => {
+      const { actor } = await driveToWaitingForInput();
+      const persisted = actor.getPersistedSnapshot();
+      actor.stop();
+
+      const machine = makeTestMachine();
+      const restored = createActor(machine, {
+        input: defaultInput,
+        snapshot: persisted as ReturnType<(typeof machine)["resolveState"]>,
+      });
+      activeActors.push(restored);
+      restored.start();
+
+      const snap = restored.getSnapshot();
+      expect(snap.value).toBe("waitingForInput");
+      expect(snap.context.status).toBe("waiting_for_input");
+      expect(snap.context.pendingQuestion).toEqual({
+        questionId: "q1",
+        questions: [],
+      });
+
+      // The restored actor still accepts a turn claim (answer or supersede).
+      restored.send({
+        type: "SUBMIT_PROMPT",
+        promptText: "the answer",
+        streamId: "s3",
+      });
+      expect(restored.getSnapshot().context.pendingQuestion).toBeNull();
+      await waitForState(restored, "idle");
     });
   });
 

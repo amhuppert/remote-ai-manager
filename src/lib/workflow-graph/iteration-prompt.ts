@@ -11,9 +11,19 @@ import type {
   GraphWorkflowTaskState,
 } from "@/lib/workflows/schemas";
 
+/**
+ * The command that advances the workflow. `<taskId>` is the task's id from the
+ * task list; the summary rides `--summary`. Referenced throughout the lane
+ * prompt so every mention stays in sync with the CLI surface (doc 02 §4.3 — the
+ * prompt is the lane agent's only discovery surface, so it names the exact
+ * invocation, not an MCP tool).
+ */
+const COMPLETE_TASK_COMMAND =
+  'cctl workflow task complete <taskId> --summary "<what you changed and how you verified it>"';
+
 function buildCharterSection(charter: WorkflowCharter): string {
   return renderCharterPromptSection(charter, [
-    "When resolving a source conflict or ambiguity while completing a task, cite the governing source-of-truth entry in your `complete_task` summary.",
+    "When resolving a source conflict or ambiguity while completing a task, cite the governing source-of-truth entry in your `cctl workflow task complete` summary.",
     "Sources marked outside the worktree are read-only: never read, write, or verify them; out-of-worktree access requires explicit human permission.",
   ]);
 }
@@ -71,7 +81,7 @@ function buildTaskLines(
         );
       }
       lines.push(
-        `  Address ALL issues from previous attempts before calling complete_task again.`,
+        `  Address ALL issues from previous attempts before running \`cctl workflow task complete\` again.`,
       );
     } else if (failureMessage) {
       // Backward compat: fall back to single failureMessage
@@ -81,7 +91,7 @@ function buildTaskLines(
         `  A previous attempt to complete this task was rejected by validation:`,
         `  ${failureMessage}`,
         "",
-        `  Address the issues above before calling complete_task again.`,
+        `  Address the issues above before running \`cctl workflow task complete\` again.`,
       );
     }
     return lines.join("\n");
@@ -186,7 +196,7 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
       "## Workflow Lifecycle",
       "You are an agent running one iteration of a graph workflow execution.",
       "The workflow is a DAG of execution contexts, each containing ordered tasks.",
-      "Your job is to work through the tasks below in order, calling `complete_task` for each one as you finish it.",
+      "Your job is to work through the tasks below in order, running `cctl workflow task complete` for each one as you finish it.",
     ].join("\n"),
   );
 
@@ -217,7 +227,7 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
       [
         "## Acceptance Criteria",
         "When every task in this execution context is marked complete, a context validator will review the whole context against these exact acceptance criteria.",
-        "If the validator reopens any tasks, address the feedback and call `complete_task` again for those reopened tasks.",
+        "If the validator reopens any tasks, address the feedback and run `cctl workflow task complete` again for those reopened tasks.",
         "",
         input.contextValidationAcceptanceCriteria,
       ].join("\n"),
@@ -230,53 +240,53 @@ export function buildIterationPrompt(input: BuildIterationPromptInput): string {
       "## Required Protocol",
       "Follow these steps exactly:",
       "1. Work through the tasks in order, completing each one before moving to the next.",
-      "2. Call `complete_task` with the task's slug and a summary after finishing each task.",
-      "3. If a complete_task result reports CONTEXT LIMIT REACHED, end your turn immediately — do not begin another task. The workflow continues the remaining tasks in a fresh conversation automatically.",
+      `2. Run \`${COMPLETE_TASK_COMMAND}\` after finishing each task, using the task's id from the list above.`,
+      "3. If `cctl workflow task complete` prints a stop instruction (CONTEXT LIMIT REACHED …), end your turn immediately — do not begin another task. The workflow continues the remaining tasks in a fresh conversation automatically.",
       "",
-      "IMPORTANT: If you do not call `complete_task`, the task remains open and blocks all workflow progress. The workflow will stall and require manual intervention.",
+      "IMPORTANT: If you do not run `cctl workflow task complete`, the task remains open and blocks all workflow progress. The workflow will stall and require manual intervention.",
     ].join("\n"),
   );
 
-  // MCP tool reference
+  // Command reference — the lane agent's only discovery surface (doc 02 §4.3),
+  // so it names the exact `cctl` invocations, not MCP tools. Run them in the
+  // shell; they resolve this execution + context from the environment.
   const toolDocs: string[] = [
-    "## MCP Tools Reference",
+    "## Command Center CLI (`cctl`)",
+    "Advance and interact with the workflow by running these `cctl` commands in your shell. They resolve this execution and context automatically from the environment — you never pass identity flags.",
     "",
-    "### complete_task",
-    "Mark a task as complete. You MUST call this after finishing each task.",
-    "The result may instruct you to end your turn (context limit reached). Treat that instruction as mandatory.",
-    "Parameters:",
-    "- `taskSlug` (string, required): The task ID of the task to complete.",
-    "- `summary` (string, required): What you changed and how you verified it. Include files modified, tests added or run, and notable decisions.",
+    "### Complete a task",
+    "```",
+    COMPLETE_TASK_COMMAND,
+    "```",
+    "Run this after finishing each task — it is the only way to advance the workflow. `<taskId>` is the task's id from the list above (e.g. `task-plan-1`); the summary should cover files modified, tests added or run, and notable decisions.",
+    'On success it reports how many tasks remain in this context. If it instead prints a stop instruction ("CONTEXT LIMIT REACHED … End your turn now …"), that is mandatory: stop and end your turn with a brief handoff note — the workflow resumes the remaining tasks in a fresh conversation automatically. If the run has been halted the command exits non-zero and prints the reason; stop and end your turn.',
     "",
-    "### upsert_shared_document",
-    "Register or update a shared document for agents in later workflow iterations.",
-    "Parameters:",
-    "- `relativePath` (string, required): Path relative to worktree root.",
-    "- `description` (string, required): What the document contains.",
-    "- `readWhen` (string, required): When a future agent should read this document.",
+    "### Register a shared document",
+    "```",
+    "cctl workflow shared-doc upsert <relativePath> --file <doc.json>",
+    "```",
+    'Register or update a shared document for agents in later workflow iterations. `<relativePath>` is the document\'s path relative to the worktree root; `<doc.json>` is a JSON object `{ "description": "<what it contains>", "readWhen": "<when a future agent should read it>" }` you author with the Write tool.',
   ];
 
   if (input.allowAgentTaskAdd) {
     toolDocs.push(
       "",
-      "### add_task",
-      "Append a new task to this execution context when you discover necessary work not covered by existing tasks.",
-      "Parameters:",
-      "- `title` (string, required): Short, descriptive name.",
-      "- `instructions` (string, required): Self-contained instructions for the executing agent.",
-      "- `slug` (string, optional): Kebab-case identifier. Auto-generated from title if omitted.",
+      "### Add a task",
+      "```",
+      'cctl workflow task add --title "<short name>" --instructions "<self-contained instructions>" [--slug <kebab-case-id>]',
+      "```",
+      "Append a new task to this execution context when you discover necessary work not covered by the existing tasks. `--instructions` must be self-contained for the agent that runs it; `--slug` is optional (auto-generated from the title when omitted).",
     );
   }
 
   if (input.allowAgentCollaboration) {
     toolDocs.push(
       "",
-      "### request_collaboration",
-      "Request a structured second opinion from another agent on a consequential design decision.",
-      "Use this when you hit a genuinely ambiguous, high-impact, or hard-to-reverse trade-off where an independent perspective would materially de-risk the choice — not for routine decisions you can resolve yourself.",
-      "Command Center runs the collaboration in the background and returns a workflowId immediately; stop work on this turn and wait for the follow-up that delivers the outcome.",
-      "Parameters:",
-      "- `brief` (string, required): The question or decision for the collaboration partner. State the problem and the context they need clearly; do not include your preferred solution.",
+      "### Request a collaboration",
+      "```",
+      'cctl workflow collab request --brief "<the question or decision, with the context the partner needs>"',
+      "```",
+      "Request a structured second opinion from another agent on a consequential design decision. Use this only when you hit a genuinely ambiguous, high-impact, or hard-to-reverse trade-off where an independent perspective would materially de-risk the choice — not for routine decisions you can resolve yourself. State the problem and the context clearly in `--brief`; do not include your preferred solution. Command Center runs the collaboration asynchronously and returns a workflow id immediately — stop work on this turn and wait for the follow-up that delivers the outcome.",
     );
   }
 
@@ -340,9 +350,9 @@ export function buildFollowUpPrompt(input: BuildFollowUpPromptInput): string {
 
   sections.push(
     ["## Remaining Tasks", ...taskLines].join("\n"),
-    `Please continue working through them in order, calling \`complete_task\` for each.`,
+    `Please continue working through them in order, running \`cctl workflow task complete\` for each.`,
     `This is follow-up attempt ${input.attemptNumber} of ${input.maxAttempts}.`,
-    "The workflow cannot progress until tasks are completed via the complete_task MCP tool. Without it, the workflow will stall.",
+    "The workflow cannot progress until tasks are completed via `cctl workflow task complete`. Without it, the workflow will stall.",
   );
 
   return sections.join("\n\n");

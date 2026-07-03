@@ -86,6 +86,7 @@ describe("graph workflow implementer runner", () => {
       session: makeSession(),
       prompt: "Inspect the codebase",
       conversationId: "conversation-1",
+      executionId: "execution-1",
       contextId: "context-plan",
       backend: "claude",
       model: "opus",
@@ -93,7 +94,7 @@ describe("graph workflow implementer runner", () => {
       toolServer: {
         servers: [
           {
-            id: "cc-graph-workflow",
+            id: "transient-tool",
             transport: "streamable-http",
             url: "http://127.0.0.1:3000/api/projects/project/sessions/session/mcp/graph-workflow/execution-1/contexts/context-plan",
           },
@@ -113,11 +114,15 @@ describe("graph workflow implementer runner", () => {
         autonomous: true,
         backend: "claude",
         effort: "high",
+        workflowContext: {
+          executionId: "execution-1",
+          contextId: "context-plan",
+        },
         tooling: {
           portableMcp: {
             servers: [
               {
-                id: "cc-graph-workflow",
+                id: "transient-tool",
                 transport: "streamable-http",
                 url: "http://127.0.0.1:3000/api/projects/project/sessions/session/mcp/graph-workflow/execution-1/contexts/context-plan",
               },
@@ -159,6 +164,7 @@ describe("graph workflow implementer runner", () => {
       session: makeSession(),
       prompt: "Implement feature",
       conversationId: "conversation-codex",
+      executionId: "execution-1",
       contextId: "context-impl",
       backend: "codex",
       model: "codex-mini",
@@ -166,7 +172,7 @@ describe("graph workflow implementer runner", () => {
       toolServer: {
         servers: [
           {
-            id: "cc-graph-workflow",
+            id: "transient-tool",
             transport: "streamable-http",
             url: "http://127.0.0.1:3000/mcp",
           },
@@ -223,6 +229,7 @@ describe("graph workflow implementer runner", () => {
       session: makeSession(),
       prompt: "Inspect the codebase",
       conversationId: "conversation-1",
+      executionId: "execution-1",
       contextId: "context-plan",
       backend: "claude",
       model: "opus",
@@ -264,6 +271,7 @@ describe("graph workflow implementer runner", () => {
       session: makeSession(),
       prompt: "Inspect the codebase",
       conversationId: "conversation-1",
+      executionId: "execution-1",
       contextId: "context-plan",
       backend: "claude",
       model: "opus",
@@ -303,6 +311,7 @@ describe("graph workflow implementer runner", () => {
       session: makeSession(),
       prompt: "Inspect the codebase",
       conversationId: "conversation-1",
+      executionId: "execution-1",
       contextId: "context-plan",
       backend: "claude",
       model: "opus",
@@ -352,6 +361,7 @@ describe("graph workflow implementer runner", () => {
       session: makeSession(),
       prompt: "Implement feature",
       conversationId: "conversation-1",
+      executionId: "execution-1",
       contextId: "context-plan",
       backend: "claude",
       model: "opus",
@@ -388,6 +398,7 @@ describe("graph workflow implementer runner", () => {
       session: makeSession(),
       prompt: "Implement feature",
       conversationId: "conversation-1",
+      executionId: "execution-1",
       contextId: "context-plan",
       backend: "claude",
       model: "opus",
@@ -420,6 +431,7 @@ describe("graph workflow implementer runner", () => {
         session: makeSession(),
         prompt: "Implement feature",
         conversationId: "conversation-1",
+        executionId: "execution-1",
         contextId: "context-plan",
         backend: "claude",
         model: "opus",
@@ -454,6 +466,7 @@ describe("graph workflow implementer runner", () => {
         session: makeSession(),
         prompt: "Implement feature",
         conversationId: "conversation-1",
+        executionId: "execution-1",
         contextId: "context-plan",
         backend: "claude",
         model: "opus",

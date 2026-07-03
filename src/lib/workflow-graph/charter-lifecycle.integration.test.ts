@@ -17,7 +17,6 @@ import { computeCharterHash } from "./charter/render";
 import { createWorkflowCharterService } from "./charter/service";
 import { createGraphWorkflowExecutionEventPublisher } from "./execution-events";
 import { createGraphWorkflowExecutionRepository } from "./execution-repository";
-import { registerPlannerTools, type PlannerToolDeps } from "./planner-tools";
 import { createWorkflowStorageService } from "./storage";
 import { createWorkflowDefinition } from "./test-fixtures";
 import {
@@ -28,13 +27,9 @@ import {
 /**
  * Charter lifecycle INTEGRATION suite (task 5.3).
  *
- * The three observables are exercised end-to-end through the REAL services
- * with DI seams only (no `vi.mock` of internal modules):
+ * The observables are exercised end-to-end through the REAL services with DI
+ * seams only (no `vi.mock` of internal modules):
  *
- * - Acceptance: the real `registerPlannerTools` create/replace handlers over a
- *   real `createWorkflowStorageService` (real persist to a temp dir) reject a
- *   charter-less or invalid-charter definition AND leave the store empty, while
- *   a valid charter persists and reloads (1.4, 2.2).
  * - Migration: the real `runLegacyWorkflowPurgeMigration` (invoked by
  *   `openStateDb`) over a real temp-path SQLite DB nulls embedded executions and
  *   empties the workflow store as observed through the real storage service,
@@ -43,219 +38,18 @@ import {
  *   service + real event publisher (capturing broadcast) records and broadcasts
  *   a charter-registered event carrying the charter hash (7.1, 7.3).
  *
- * Complements — does not duplicate — the per-task tests (3.1 execution-repo,
- * 3.2 planner-tools, 3.3 state-db.charter-purge): this suite wires the real
- * services together rather than re-asserting their unit/contract behaviors.
+ * Charter acceptance (create/replace rejecting a charter-less or invalid-charter
+ * definition) is now enforced at the plan-validation layer and covered by
+ * `plan-validation.test.ts`.
  */
 
 type Db = InstanceType<typeof Database>;
-type ToolHandler = (args: unknown) => Promise<unknown>;
-type ToolResult = { content: Array<{ text: string }>; isError?: boolean };
 
 const PROJECT_PATH = "/repo/example";
-
-const MOCK_CONFIG: GlobalConfig = {
-  baseDir: "/projects",
-  ignorePatterns: [],
-  claudeTimeoutMs: 3_600_000,
-  defaultModel: "opus",
-  defaultAgentBackend: "claude",
-};
 
 function newTempDir(prefix: string): string {
   return mkdtempSync(path.join(os.tmpdir(), prefix));
 }
-
-// ---------------------------------------------------------------------------
-// Acceptance: real planner handlers over the real workflow storage service.
-// ---------------------------------------------------------------------------
-
-function createCapturingServer(captured: Map<string, ToolHandler>) {
-  return {
-    registerTool(name: string, _config: unknown, handler: ToolHandler): void {
-      captured.set(name, handler);
-    },
-  };
-}
-
-/**
- * Wire the real planner tools to a REAL workflow storage service rooted at a
- * fresh temp config dir, so create/replace exercise the genuine persist path.
- * A captured-handler map plus a `publishCharterUpdated` spy are the only seams.
- */
-function setupAcceptance() {
-  const configDir = newTempDir("cc-charter-accept-");
-  const storage = createWorkflowStorageService({
-    resolveConfigDir: () => configDir,
-  });
-  const captured = new Map<string, ToolHandler>();
-  const charterUpdates: Array<{ definitionId: string; charterHash: string }> =
-    [];
-
-  const deps: PlannerToolDeps = {
-    readConfig: async () => MOCK_CONFIG,
-    listWorkflows: (projectPath) =>
-      storage.list({ kind: "project", projectPath }),
-    getWorkflow: (scope, workflowId) => storage.get(scope, workflowId),
-    createWorkflow: (scope, draft) => storage.create(scope, draft),
-    updateWorkflow: (scope, workflowId, draft) =>
-      storage.update(scope, workflowId, draft),
-    deleteWorkflow: (projectPath, workflowId) =>
-      storage.delete({ kind: "project", projectPath }, workflowId),
-    getActiveExecution: async () => null,
-    publishCharterUpdated: (input) => {
-      charterUpdates.push({
-        definitionId: input.definitionId,
-        charterHash: input.charterHash,
-      });
-      return [];
-    },
-  };
-
-  registerPlannerTools(
-    createCapturingServer(captured) as never,
-    { projectPath: PROJECT_PATH, sessionName: "session-1" },
-    deps,
-  );
-
-  const handler = (name: string): ToolHandler => {
-    const fn = captured.get(name);
-    if (!fn) throw new Error(`tool ${name} not registered`);
-    return fn;
-  };
-
-  return { storage, handler, charterUpdates };
-}
-
-const VALID_CONTEXTS = [
-  {
-    id: "auth-setup",
-    title: "Authentication Setup",
-    acceptanceCriteria: "OAuth2 middleware is in place and verified.",
-  },
-];
-const VALID_TASKS = [
-  {
-    id: "create-auth-middleware",
-    contextId: "auth-setup",
-    title: "Create auth middleware",
-    instructions: "Create middleware that validates bearer tokens.",
-  },
-];
-
-function validCreateArgs(charter: unknown) {
-  return {
-    name: "Add OAuth2",
-    description: "Add OAuth2 support",
-    charter,
-    executionContexts: VALID_CONTEXTS,
-    tasks: VALID_TASKS,
-    edges: [],
-  };
-}
-
-const DUP_RANK_CHARTER = {
-  mission: "Deliver",
-  sourcesOfTruth: [
-    {
-      rank: 1,
-      id: "design-doc",
-      label: "Design",
-      type: "document" as const,
-      locator: "design.md",
-      description: "primary",
-      accessPolicy: "worktree-relative" as const,
-    },
-    {
-      rank: 1,
-      id: "acceptance-criteria",
-      label: "AC",
-      type: "spec" as const,
-      locator: "ac",
-      description: "secondary",
-      accessPolicy: "worktree-relative" as const,
-    },
-  ],
-};
-
-describe("charter lifecycle integration — Acceptance", () => {
-  it("rejects create with no charter (charter_missing) and persists nothing", async () => {
-    const { storage, handler } = setupAcceptance();
-    const args = validCreateArgs(makeTestCharter());
-    const { charter: _charter, ...noCharter } = args;
-
-    const result = (await handler("create_graph_workflow")(
-      noCharter,
-    )) as ToolResult;
-
-    expect(result.isError).toBe(true);
-    expect(result.content[0]?.text ?? "").toContain("charter_missing");
-    // The real store is empty — nothing was persisted.
-    expect(
-      await storage.list({ kind: "project", projectPath: PROJECT_PATH }),
-    ).toEqual([]);
-  });
-
-  it("rejects create with a duplicate-rank charter (charter_invalid naming the entry) and persists nothing", async () => {
-    const { storage, handler } = setupAcceptance();
-
-    const result = (await handler("create_graph_workflow")(
-      validCreateArgs(DUP_RANK_CHARTER),
-    )) as ToolResult;
-
-    expect(result.isError).toBe(true);
-    const text = result.content[0]?.text ?? "";
-    expect(text).toContain("charter_invalid");
-    expect(text).toContain("acceptance-criteria");
-    expect(
-      await storage.list({ kind: "project", projectPath: PROJECT_PATH }),
-    ).toEqual([]);
-  });
-
-  it("rejects replace with no charter (charter_missing) and persists nothing", async () => {
-    const { storage, handler } = setupAcceptance();
-    const args = { workflowId: "wf-x", ...validCreateArgs(makeTestCharter()) };
-    const { charter: _charter, ...noCharter } = args;
-
-    const result = (await handler("replace_graph_workflow")(
-      noCharter,
-    )) as ToolResult;
-
-    expect(result.isError).toBe(true);
-    expect(result.content[0]?.text ?? "").toContain("charter_missing");
-    expect(
-      await storage.list({ kind: "project", projectPath: PROJECT_PATH }),
-    ).toEqual([]);
-  });
-
-  it("persists and reloads a charter-bearing definition through the real store", async () => {
-    const { storage, handler } = setupAcceptance();
-    const charter = makeTestCharter({ mission: "Persist me through SQLite" });
-
-    const result = (await handler("create_graph_workflow")(
-      validCreateArgs(charter),
-    )) as ToolResult;
-
-    expect(result.isError).toBeUndefined();
-
-    const summaries = await storage.list({
-      kind: "project",
-      projectPath: PROJECT_PATH,
-    });
-    expect(summaries).toHaveLength(1);
-
-    const reloaded = await storage.get(
-      { kind: "project", projectPath: PROJECT_PATH },
-      summaries[0]!.id,
-    );
-    expect(reloaded).not.toBeNull();
-    // The charter survived persist -> reload byte-for-byte (3.1 tie).
-    expect(reloaded?.definition.charter).toEqual(charter);
-    expect(computeCharterHash(reloaded!.definition.charter)).toBe(
-      computeCharterHash(charter),
-    );
-  });
-});
 
 // ---------------------------------------------------------------------------
 // Migration: real openStateDb purge observed through the real storage service.

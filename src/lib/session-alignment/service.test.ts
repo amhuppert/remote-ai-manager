@@ -810,7 +810,7 @@ describe("resolveProposals", () => {
     expect(incorporation).toBeDefined();
     expect(incorporation?.conversationId).toBe(CONVERSATION_ID);
     expect(incorporation?.message).toContain("Write ADRs");
-    expect(incorporation?.message).toContain("write_session_charter");
+    expect(incorporation?.message).toContain("cctl charter write --file");
   });
 
   it("on reject-with-feedback, changes no charter, logs nothing, and routes the feedback back", async () => {

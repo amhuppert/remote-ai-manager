@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { readConfig } from "@/lib/config/loader";
 import { resolveProjectPath as defaultResolveProjectPath } from "@/lib/projects/resolver";
 import type { ApiError } from "@/lib/api/errors";
@@ -10,18 +9,11 @@ import {
   type WorkflowDefinitionDraft,
   type WorkflowDefinitionSummary,
 } from "@/lib/workflow-graph/storage";
-import {
-  workflowSemanticDefinitionSchema,
-  graphWorkflowVisualLayoutSchema,
-} from "@/lib/workflows/schemas";
 import { resolveWorkflowDefinition } from "@/lib/workflow-graph/resolve-config";
-
-const workflowDefinitionMutationSchema = z.object({
-  name: z.string().trim().min(1),
-  description: z.string().trim().min(1).nullable().optional(),
-  definition: workflowSemanticDefinitionSchema,
-  layout: graphWorkflowVisualLayoutSchema,
-});
+import {
+  validateWorkflowPlan,
+  type WorkflowPlanIssue,
+} from "./plan-validation";
 
 type RouteContext = {
   params: Promise<Record<string, string>>;
@@ -64,6 +56,12 @@ const defaultDeps: WorkflowDefinitionRouteDeps = {
     defaultStorage.delete({ kind: "project", projectPath }, workflowId),
 };
 
+/** Preserve the legacy `Invalid request: <path>: <message>; …` 400 body. */
+function invalidRequestBody(issues: WorkflowPlanIssue[]): ApiError {
+  const detail = issues.map((i) => `${i.path}: ${i.message}`).join("; ");
+  return { error: `Invalid request: ${detail}` };
+}
+
 async function resolveProjectOr404(
   deps: WorkflowDefinitionRouteDeps,
   name: string,
@@ -105,34 +103,27 @@ export function createWorkflowDefinitionRouteHandlers(
       return projectPath;
     }
 
-    let body: WorkflowDefinitionDraft;
+    let rawBody: unknown;
     try {
-      const parsed = workflowDefinitionMutationSchema.parse(
-        await request.json(),
-      );
-      body = {
-        name: parsed.name,
-        description: parsed.description ?? null,
-        definition: parsed.definition,
-        layout: parsed.layout,
-      };
-    } catch (error) {
-      const detail =
-        error instanceof z.ZodError
-          ? error.issues
-              .map((i) => `${i.path.join(".")}: ${i.message}`)
-              .join("; ")
-          : "name, definition, and layout are required";
+      rawBody = await request.json();
+    } catch {
       return NextResponse.json(
         {
-          error: `Invalid request: ${detail}`,
+          error: "Invalid request: name, definition, and layout are required",
         } satisfies ApiError,
         { status: 400 },
       );
     }
 
+    const validation = validateWorkflowPlan(rawBody);
+    if (!validation.ok) {
+      return NextResponse.json(invalidRequestBody(validation.issues), {
+        status: 400,
+      });
+    }
+
     try {
-      const item = await deps.createDefinition(projectPath, body);
+      const item = await deps.createDefinition(projectPath, validation.draft);
       return NextResponse.json({ item }, { status: 201 });
     } catch (error) {
       const message =
@@ -177,34 +168,31 @@ export function createWorkflowDefinitionRouteHandlers(
       return projectPath;
     }
 
-    let body: WorkflowDefinitionDraft;
+    let rawBody: unknown;
     try {
-      const parsed = workflowDefinitionMutationSchema.parse(
-        await request.json(),
-      );
-      body = {
-        name: parsed.name,
-        description: parsed.description ?? null,
-        definition: parsed.definition,
-        layout: parsed.layout,
-      };
-    } catch (error) {
-      const detail =
-        error instanceof z.ZodError
-          ? error.issues
-              .map((i) => `${i.path.join(".")}: ${i.message}`)
-              .join("; ")
-          : "name, definition, and layout are required";
+      rawBody = await request.json();
+    } catch {
       return NextResponse.json(
         {
-          error: `Invalid request: ${detail}`,
+          error: "Invalid request: name, definition, and layout are required",
         } satisfies ApiError,
         { status: 400 },
       );
     }
 
+    const validation = validateWorkflowPlan(rawBody);
+    if (!validation.ok) {
+      return NextResponse.json(invalidRequestBody(validation.issues), {
+        status: 400,
+      });
+    }
+
     try {
-      const item = await deps.updateDefinition(projectPath, workflowId, body);
+      const item = await deps.updateDefinition(
+        projectPath,
+        workflowId,
+        validation.draft,
+      );
       return NextResponse.json({ item });
     } catch (error) {
       const message =

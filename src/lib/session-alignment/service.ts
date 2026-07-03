@@ -923,7 +923,7 @@ function composeAuthoringPrompt(
       body,
       ...guidanceLines,
       "",
-      "Call `write_session_charter` with the revised charter when ready. The result is a draft pending the user's approval; the active charter is unchanged until then.",
+      'When the revised charter is ready, save it to a JSON file (`{ "content": "<charter markdown>" }`) and submit it with `cctl charter write --file <file>.json`. The result is a draft pending the user\'s approval; the active charter is unchanged until then.',
     ].join("\n");
   }
 
@@ -934,7 +934,7 @@ function composeAuthoringPrompt(
     body,
     ...guidanceLines,
     "",
-    "Call `write_session_charter` with the charter content when ready. The result is a draft pending the user's approval.",
+    'When the charter is ready, save it to a JSON file (`{ "content": "<charter markdown>" }`) and submit it with `cctl charter write --file <file>.json`. The result is a draft pending the user\'s approval.',
   ].join("\n");
 }
 
@@ -970,7 +970,7 @@ function composeIncorporationMessage(
     );
   }
   lines.push(
-    "Call `write_session_charter` with the updated charter. It activates automatically — no separate approval is needed.",
+    'When the updated charter is ready, save it to a JSON file (`{ "content": "<charter markdown>" }`) and submit it with `cctl charter write --file <file>.json`. It activates automatically — no separate approval is needed.',
   );
   return lines.join("\n");
 }

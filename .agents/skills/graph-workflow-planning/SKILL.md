@@ -1,11 +1,11 @@
 ---
 name: graph-workflow-planning
-description: Use when creating, revising, or diagnosing graph workflow plans, especially before calling create_graph_workflow or replace_graph_workflow, decomposing work into execution contexts, writing acceptance criteria, aligning implementers and validators, deciding dependencies, or recovering from repeated validation failures.
+description: Use when creating, revising, or diagnosing graph workflow plans, especially before authoring a plan.json for cctl workflow validate/create/replace, decomposing work into execution contexts, writing acceptance criteria, aligning implementers and validators, deciding dependencies, or recovering from repeated validation failures.
 ---
 
 # Graph Workflow Planning
 
-This skill is the source of truth for planning graph workflows. Use it before calling `create_graph_workflow` or `replace_graph_workflow`, and when a graph workflow keeps failing validation.
+This skill is the source of truth for planning graph workflows. Use it before authoring a workflow `plan.json` for `cctl workflow validate`/`create`/`replace`, and when a graph workflow keeps failing validation. The planning methodology below is unchanged by how the plan is submitted; see [Authoring and Submitting the Plan](#authoring-and-submitting-the-plan) for the file shape and CLI flow.
 
 ## Workflow Model
 
@@ -164,9 +164,52 @@ The final context should:
 - Check that gated or unavailable behavior is honestly represented.
 - Use `scriptValidator` only if the whole workflow should be in a valid state at that point.
 
-## Before Tool Invocation
+## Authoring and Submitting the Plan
 
-Before calling `create_graph_workflow` or `replace_graph_workflow`, confirm:
+Author the workflow as a `plan.json` file with the Write tool, then submit it with the `cctl` CLI. Never paste a whole workflow graph as inline tool arguments — a file you can iterate on is the interface.
+
+### plan.json shape
+
+A plan is a JSON object the validate, create, and replace endpoints all accept:
+
+```json
+{
+  "name": "Add OAuth2 Support",
+  "description": "What this workflow achieves (optional).",
+  "definition": {
+    "charter": { "mission": "…", "sourcesOfTruth": [ /* ranked entries */ ] },
+    "parameters": [],
+    "executionContexts": [
+      { "id": "auth-setup", "title": "Authentication Setup", "acceptanceCriteria": "…" }
+    ],
+    "tasks": [
+      { "id": "create-user-schema", "contextId": "auth-setup", "order": 1, "title": "…", "instructions": "…" }
+    ],
+    "edges": [
+      { "id": "edge-setup-to-wire", "sourceContextId": "auth-setup", "targetContextId": "wire-routes" }
+    ]
+  },
+  "layout": { "workflowId": "plan", "contextPositions": {} }
+}
+```
+
+- `definition.charter` is required: a non-empty `mission` plus a ranked `sourcesOfTruth` list (each entry: `rank`, `id`, `label`, `type`, `locator`, `description`, `accessPolicy`) declaring the source-of-truth precedence hierarchy.
+- Each task needs an explicit `order` (1-based, per context, in the sequence tasks should run inside that context) and a unique `id`. Each edge needs a unique `id`.
+- `schemaVersion`, `workflowConfig`, `parameters`, `prerequisites`, and every optional per-context/per-task field default when omitted — keep the payload minimal (see [Defaults and Payloads](#defaults-and-payloads)).
+- `layout` is required, but positional detail is not: `{ "workflowId": "plan", "contextPositions": {} }` is enough. The builder arranges nodes and the real workflow id is assigned on create.
+- Author a global cross-project template (`{{inputs.<name>}}`-parameterized) through the Templates UI, not this project-scoped create flow.
+
+### Submit flow
+
+Run these from the session (the CLI reads its project/session identity from the environment):
+
+1. `cctl workflow validate --file plan.json` — runs the exact create-path checks (schema parse + dependency cycles, unknown context refs, prerequisite sanity) and persists nothing. On issues it exits non-zero and prints one issue per line with its JSON path (e.g. `definition.tasks.2.contextId: …`). Fix the file and re-run until it prints the create hint.
+2. `cctl workflow create --file plan.json` — saves the definition and prints its id. The user reviews and edits it in the visual builder before starting.
+3. `cctl workflow start <id>` — starts execution.
+
+To revise a definition after user feedback, edit `plan.json` and run `cctl workflow replace <id> --file plan.json` (submit the complete graph; the previous definition is fully overwritten). Re-validate first. If a running execution already exists, replacing the saved definition may not mutate that active execution — tell the user when a fresh execution or reset is needed.
+
+### Before submitting, confirm
 
 - The `graph-workflow-planning` skill was used.
 - No known design contradictions remain unresolved.
@@ -175,3 +218,4 @@ Before calling `create_graph_workflow` or `replace_graph_workflow`, confirm:
 - Any enabled `scriptValidator` runs only after contexts expected to leave the codebase valid.
 - Essential context is included in task instructions or produced as an upstream shared artifact.
 - Parallel branches are truly independent or have an explicit foundation edge.
+- `cctl workflow validate` passes on the final `plan.json`.

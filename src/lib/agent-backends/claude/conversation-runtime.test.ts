@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 const queryMock = vi.hoisted(() => vi.fn());
 
@@ -10,10 +9,7 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
 
 vi.mock("@/lib/shared/sdk-env", () => ({}));
 
-import {
-  claudeConversationBackendFactory,
-  type ClaudeFactoryDeps,
-} from "./conversation-runtime";
+import { claudeConversationBackendFactory } from "./conversation-runtime";
 import { CLAUDE_AGENT_SUPPRESSION_STRATEGY } from "@/lib/agent-capabilities/claude-agent-suppression";
 import { backendCapabilities } from "../capabilities-descriptor";
 import type { ConversationBackendEvent } from "../conversation";
@@ -22,43 +18,9 @@ import {
   QUERY_SESSION_ERROR_CODES,
   tagQuerySessionError,
 } from "./query-session-errors";
-import {
-  conversationRuntimeKey,
-  registerConversationRuntime,
-  cleanupConversationRuntime,
-} from "@/lib/workflows/conversation/runtime-state";
-
-function createFakeMcpServer(): {
-  instance: McpServer;
-  closeSpy: ReturnType<typeof vi.fn>;
-} {
-  const closeSpy = vi.fn().mockResolvedValue(undefined);
-  const instance = { close: closeSpy } as unknown as McpServer;
-  return { instance, closeSpy };
-}
-
-function depsWithFakeServer(): {
-  deps: ClaudeFactoryDeps;
-  instance: McpServer;
-  closeSpy: ReturnType<typeof vi.fn>;
-  createSpy: ReturnType<typeof vi.fn>;
-} {
-  const { instance, closeSpy } = createFakeMcpServer();
-  const createSpy = vi.fn().mockResolvedValue(instance);
-  return {
-    deps: { createSessionMcpServer: createSpy },
-    instance,
-    closeSpy,
-    createSpy,
-  };
-}
 
 const createRuntimeWithFakeDeps: typeof claudeConversationBackendFactory.createRuntime =
-  (input) =>
-    claudeConversationBackendFactory.createRuntime(
-      input,
-      depsWithFakeServer().deps,
-    );
+  (input) => claudeConversationBackendFactory.createRuntime(input);
 
 function createControllableMockQuery() {
   const messages: SDKMessage[] = [];
@@ -80,9 +42,6 @@ function createControllableMockQuery() {
     supportedCommands: vi.fn().mockResolvedValue([]),
     supportedAgents: vi.fn().mockResolvedValue([]),
     mcpServerStatus: vi.fn().mockResolvedValue([]),
-    setMcpServers: vi
-      .fn()
-      .mockResolvedValue({ added: [], removed: [], errors: {} }),
     applyFlagSettings: vi.fn().mockResolvedValue(undefined),
     reloadPlugins: vi.fn().mockResolvedValue(undefined),
     next() {
@@ -438,8 +397,24 @@ describe("ClaudeConversationRuntime — capability runtime discovery", () => {
   });
 });
 
-describe("ClaudeConversationRuntime — applyPortableMcpConfig live updates", () => {
-  it("applies live via setMcpServers when runtime is idle (disposition: applied_now)", async () => {
+describe("ClaudeConversationRuntime — applyPortableMcpConfig", () => {
+  function captureCanUseTool(): (
+    toolName: string,
+    toolInput: Record<string, unknown>,
+  ) => Promise<unknown> {
+    const firstCall = queryMock.mock.calls[0]!;
+    const arg = firstCall[0] as {
+      options: {
+        canUseTool: (
+          toolName: string,
+          toolInput: Record<string, unknown>,
+        ) => Promise<unknown>;
+      };
+    };
+    return arg.options.canUseTool;
+  }
+
+  it("defers the server-set change to the next runtime but applies the tool filter live", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
@@ -451,35 +426,48 @@ describe("ClaudeConversationRuntime — applyPortableMcpConfig live updates", ()
       worktreePath: "/project/.worktrees/sess",
       persistedRef: null,
       sessionInstructions: [],
-      tooling: {},
+      tooling: {
+        portableMcp: {
+          servers: [{ id: "srv", transport: "stdio", command: "node" }],
+        },
+      },
+    });
+
+    const canUseTool = captureCanUseTool();
+    expect(await canUseTool("mcp__srv__tool_a", {})).toEqual({
+      behavior: "allow",
+      updatedInput: {},
     });
 
     const result = await runtime.applyPortableMcpConfig!({
       servers: [
         {
-          id: "idle-stdio",
+          id: "srv",
           transport: "stdio",
           command: "node",
+          disabledTools: ["tool_a"],
         },
       ],
     });
 
-    expect(result.disposition).toBe("applied_now");
-    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(2);
-    const passed = (mock.query.setMcpServers as ReturnType<typeof vi.fn>).mock
-      .calls[1]![0] as Record<string, unknown>;
-    expect(passed).toHaveProperty("idle-stdio");
-    expect(passed).toHaveProperty("cc-session-tools");
+    // The live SDK server set is fixed at creation, so a changed server list
+    // takes effect only on the next runtime; the tool-level filter is live.
+    expect(result.disposition).toBe("deferred_to_next_turn");
+    expect(await canUseTool("mcp__srv__tool_a", {})).toEqual({
+      behavior: "deny",
+      message: "Tool disabled by MCP configuration",
+      interrupt: false,
+    });
 
     runtime.close();
   });
 
-  it("defers when a caller-initiated turn is running and does not call setMcpServers", async () => {
+  it("rejects when every server in the config fails translation", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
     const runtime = await createRuntimeWithFakeDeps({
-      conversationId: "conv-busy",
+      conversationId: "conv-reject",
       projectPath: "/project",
       projectName: "proj",
       sessionName: "sess",
@@ -489,47 +477,16 @@ describe("ClaudeConversationRuntime — applyPortableMcpConfig live updates", ()
       tooling: {},
     });
 
-    // Kick off a turn but never push a result: it stays running.
-    const turnPromise = runtime.sendTurn({
-      promptText: "hello",
-      imageRefs: [],
-      sessionInstructions: [],
-      autonomous: false,
-      signal: new AbortController().signal,
-      onEvent: () => {},
-    });
-
-    // Give the event loop a tick so currentTurnOptions is set.
-    await Promise.resolve();
-
+    // `cwd` is an unsupported field for a Claude stdio server, so the only
+    // server in the config is dropped, leaving nothing to apply → rejected.
     const result = await runtime.applyPortableMcpConfig!({
       servers: [
-        {
-          id: "busy-stdio",
-          transport: "stdio",
-          command: "node",
-        },
+        { id: "broken", transport: "stdio", command: "node", cwd: "/tmp" },
       ],
     });
 
-    expect(result.disposition).toBe("deferred_to_next_turn");
-    // Initial setMcpServers from createRuntime is the only call; the deferred
-    // apply does not invoke setMcpServers again.
-    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(1);
-
-    // Drain the turn so the test doesn't leak a pending promise.
-    mock.pushMessage({
-      type: "result",
-      subtype: "success",
-      session_id: "sess-1",
-      uuid: "u1",
-      total_cost_usd: 0,
-      duration_ms: 0,
-      num_turns: 0,
-      result: "",
-      is_error: false,
-    } as unknown as SDKMessage);
-    await turnPromise;
+    expect(result.disposition).toBe("rejected");
+    expect(result.droppedServerIds).toContain("broken");
 
     runtime.close();
   });
@@ -740,7 +697,7 @@ describe("ClaudeConversationRuntime — canUseTool MCP filter wiring", () => {
     runtime.close();
   });
 
-  it("does not update the filter when applyPortableMcpConfig is deferred", async () => {
+  it("updates the tool filter live even while a turn is active (server-set deferred, filter live)", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
@@ -781,11 +738,16 @@ describe("ClaudeConversationRuntime — canUseTool MCP filter wiring", () => {
         },
       ],
     });
+    // The server-set change lands on the next runtime, but the tool-level
+    // enable/disable filter is read live — the new deny is in effect at once.
     expect(result.disposition).toBe("deferred_to_next_turn");
 
-    // Filter still reflects the original (non-deferred) config.
     const during = await canUseTool("mcp__srv__tool_a", {});
-    expect(during).toEqual({ behavior: "allow", updatedInput: {} });
+    expect(during).toEqual({
+      behavior: "deny",
+      message: "Tool disabled by MCP configuration",
+      interrupt: false,
+    });
 
     mock.pushMessage({
       type: "result",
@@ -804,8 +766,16 @@ describe("ClaudeConversationRuntime — canUseTool MCP filter wiring", () => {
   });
 });
 
-describe("ClaudeConversationRuntime — initial MCP policy extraction", () => {
-  it("invokes setMcpServers during createRuntime so HTTP tool policies are extracted into alwaysDenyRules at session start", async () => {
+describe("ClaudeConversationRuntime — static external MCP passthrough", () => {
+  function captureStaticMcpServers(): Record<string, unknown> {
+    const firstCall = queryMock.mock.calls[0]!;
+    const arg = firstCall[0] as {
+      options: { mcpServers?: Record<string, unknown> };
+    };
+    return arg.options.mcpServers ?? {};
+  }
+
+  it("passes translated external servers (with HTTP tool policies) to the SDK via the static mcpServers option at creation", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
@@ -831,10 +801,10 @@ describe("ClaudeConversationRuntime — initial MCP policy extraction", () => {
       },
     });
 
-    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(1);
-    const payload = (mock.query.setMcpServers as ReturnType<typeof vi.fn>).mock
-      .calls[0]![0] as Record<string, unknown>;
-    expect(payload).toMatchObject({
+    // External servers reach the SDK statically, at creation, with their
+    // per-tool policies already translated — no live server-set mutation.
+    const mcpServers = captureStaticMcpServers();
+    expect(mcpServers).toMatchObject({
       context7: {
         type: "http",
         url: "https://mcp.context7.com/mcp",
@@ -843,173 +813,26 @@ describe("ClaudeConversationRuntime — initial MCP policy extraction", () => {
         ],
       },
     });
+    // No CC in-process server is bound; only the external server is present.
+    expect(Object.keys(mcpServers)).toEqual(["context7"]);
   });
 
-  it("invokes setMcpServers exactly once even when the portable config carries no user servers, with cc-session-tools as the only entry", async () => {
+  it("passes an empty static mcpServers when the portable config carries no servers", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
 
-    const { deps, instance } = depsWithFakeServer();
-
-    await claudeConversationBackendFactory.createRuntime(
-      {
-        conversationId: "conv-init-empty",
-        projectPath: "/project",
-        projectName: "proj",
-        sessionName: "sess",
-        worktreePath: "/project/.worktrees/sess",
-        persistedRef: null,
-        sessionInstructions: [],
-        tooling: {},
-      },
-      deps,
-    );
-
-    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(1);
-    const payload = (mock.query.setMcpServers as ReturnType<typeof vi.fn>).mock
-      .calls[0]![0] as Record<
-      string,
-      { type?: string; name?: string; instance?: McpServer }
-    >;
-    expect(Object.keys(payload)).toEqual(["cc-session-tools"]);
-    const entry = payload["cc-session-tools"]!;
-    expect(entry.type).toBe("sdk");
-    expect(entry.name).toBe("cc-session-tools");
-    expect(entry.instance).toBe(instance);
-  });
-});
-
-describe("ClaudeConversationRuntime — cc-session-tools sdk entry", () => {
-  it("merges the cc-session-tools sdk entry with user servers on initial setMcpServers", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const { deps, instance } = depsWithFakeServer();
-
-    await claudeConversationBackendFactory.createRuntime(
-      {
-        conversationId: "conv-merge-init",
-        projectPath: "/project",
-        projectName: "proj",
-        sessionName: "sess",
-        worktreePath: "/project/.worktrees/sess",
-        persistedRef: null,
-        sessionInstructions: [],
-        tooling: {
-          portableMcp: {
-            servers: [{ id: "user-srv", transport: "stdio", command: "node" }],
-          },
-        },
-      },
-      deps,
-    );
-
-    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(1);
-    const payload = (mock.query.setMcpServers as ReturnType<typeof vi.fn>).mock
-      .calls[0]![0] as Record<
-      string,
-      { type?: string; name?: string; instance?: McpServer }
-    >;
-    expect(Object.keys(payload).sort()).toEqual([
-      "cc-session-tools",
-      "user-srv",
-    ]);
-    const entry = payload["cc-session-tools"]!;
-    expect(entry.type).toBe("sdk");
-    expect(entry.name).toBe("cc-session-tools");
-    expect(entry.instance).toBe(instance);
-  });
-
-  it("re-merges cc-session-tools on subsequent applyPortableMcpConfig calls", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const { deps, instance } = depsWithFakeServer();
-
-    const runtime = await claudeConversationBackendFactory.createRuntime(
-      {
-        conversationId: "conv-merge-apply",
-        projectPath: "/project",
-        projectName: "proj",
-        sessionName: "sess",
-        worktreePath: "/project/.worktrees/sess",
-        persistedRef: null,
-        sessionInstructions: [],
-        tooling: {},
-      },
-      deps,
-    );
-
-    await runtime.applyPortableMcpConfig!({
-      servers: [{ id: "applied-srv", transport: "stdio", command: "node" }],
+    await createRuntimeWithFakeDeps({
+      conversationId: "conv-init-empty",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
+      sessionInstructions: [],
+      tooling: {},
     });
 
-    expect(mock.query.setMcpServers).toHaveBeenCalledTimes(2);
-    const payload = (mock.query.setMcpServers as ReturnType<typeof vi.fn>).mock
-      .calls[1]![0] as Record<
-      string,
-      { type?: string; name?: string; instance?: McpServer }
-    >;
-    expect(Object.keys(payload).sort()).toEqual([
-      "applied-srv",
-      "cc-session-tools",
-    ]);
-    expect(payload["cc-session-tools"]?.instance).toBe(instance);
-  });
-
-  it("closes the cc-session-tools instance and the QuerySession when initial setMcpServers rejects", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-    const setRejection = new Error("setMcpServers failed");
-    (
-      mock.query.setMcpServers as ReturnType<typeof vi.fn>
-    ).mockRejectedValueOnce(setRejection);
-
-    const { deps, closeSpy: instanceClose } = depsWithFakeServer();
-
-    await expect(
-      claudeConversationBackendFactory.createRuntime(
-        {
-          conversationId: "conv-init-fail",
-          projectPath: "/project",
-          projectName: "proj",
-          sessionName: "sess",
-          worktreePath: "/project/.worktrees/sess",
-          persistedRef: null,
-          sessionInstructions: [],
-          tooling: {},
-        },
-        deps,
-      ),
-    ).rejects.toBe(setRejection);
-
-    expect(instanceClose).toHaveBeenCalledTimes(1);
-    expect(mock.query.close).toHaveBeenCalled();
-  });
-
-  it("closes the cc-session-tools instance when runtime.close() is called", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const { deps, closeSpy: instanceClose } = depsWithFakeServer();
-
-    const runtime = await claudeConversationBackendFactory.createRuntime(
-      {
-        conversationId: "conv-close",
-        projectPath: "/project",
-        projectName: "proj",
-        sessionName: "sess",
-        worktreePath: "/project/.worktrees/sess",
-        persistedRef: null,
-        sessionInstructions: [],
-        tooling: {},
-      },
-      deps,
-    );
-
-    runtime.close();
-    await Promise.resolve();
-    expect(instanceClose).toHaveBeenCalledTimes(1);
+    expect(captureStaticMcpServers()).toEqual({});
   });
 });
 
@@ -1278,597 +1101,31 @@ describe("ClaudeConversationRuntime — retryable error propagation", () => {
   });
 });
 
-describe("ClaudeConversationRuntime — session-tools instance replacement", () => {
-  function depsWithSequence(...instances: McpServer[]): {
-    deps: ClaudeFactoryDeps;
-    createSpy: ReturnType<typeof vi.fn>;
-  } {
-    const createSpy = vi.fn();
-    for (const inst of instances) {
-      createSpy.mockResolvedValueOnce(inst);
-    }
-    return { deps: { createSessionMcpServer: createSpy }, createSpy };
-  }
-
-  type RuntimeWithReplace = Awaited<
-    ReturnType<typeof claudeConversationBackendFactory.createRuntime>
-  > & {
-    replaceSessionToolsInstance(): Promise<"replaced" | "skipped-dead">;
-  };
-
-  /**
-   * Replays the real SDK's `setMcpServers` semantics (decompiled from
-   * sdk.mjs): `type: "sdk"` servers are diffed by NAME only — a name present
-   * on both sides keeps the PREVIOUSLY connected instance and silently drops
-   * the incoming one. Connect happens only for new names, disconnect only
-   * for removed names.
-   */
-  function installNameDiffSetMcpServers(
-    mock: ReturnType<typeof createControllableMockQuery>,
-  ): { connected: Map<string, unknown> } {
-    const connected = new Map<string, unknown>();
-    (mock.query.setMcpServers as ReturnType<typeof vi.fn>).mockImplementation(
-      async (
-        servers: Record<string, { type?: string; instance?: unknown }>,
-      ) => {
-        const incoming = new Map<string, unknown>();
-        for (const [name, cfg] of Object.entries(servers)) {
-          if (cfg?.type === "sdk" && "instance" in cfg) {
-            incoming.set(name, cfg.instance);
-          }
-        }
-        const added: string[] = [];
-        const removed: string[] = [];
-        for (const name of [...connected.keys()]) {
-          if (!incoming.has(name)) {
-            connected.delete(name);
-            removed.push(name);
-          }
-        }
-        for (const [name, instance] of incoming) {
-          if (!connected.has(name)) {
-            connected.set(name, instance);
-            added.push(name);
-          }
-        }
-        return { added, removed, errors: {} };
-      },
-    );
-    return { connected };
-  }
-
-  async function createRuntime(
-    deps: ClaudeFactoryDeps,
-    conversationId: string,
-    tooling: Record<string, unknown> = {},
-  ): Promise<RuntimeWithReplace> {
-    const runtime = await claudeConversationBackendFactory.createRuntime(
-      {
-        conversationId,
-        projectPath: "/project",
-        projectName: "proj",
-        sessionName: "sess",
-        worktreePath: "/project/.worktrees/sess",
-        persistedRef: null,
-        sessionInstructions: [],
-        tooling,
-      },
-      deps,
-    );
-    return runtime as RuntimeWithReplace;
-  }
-
-  it("actually re-binds under real SDK name-diff semantics where a same-name single-call swap is a silent no-op", async () => {
+describe("ClaudeConversationRuntime — prepareForTurnStart", () => {
+  it("reports ready without any live MCP rebind — external servers are static", async () => {
     const mock = createControllableMockQuery();
     queryMock.mockReturnValue(mock.query);
-    const { connected } = installNameDiffSetMcpServers(mock);
 
-    const first = createFakeMcpServer();
-    const second = createFakeMcpServer();
-    const { deps, createSpy } = depsWithSequence(
-      first.instance,
-      second.instance,
-    );
-
-    const runtime = await createRuntime(deps, "conv-replace-rebind");
-    expect(connected.get("cc-session-tools")).toBe(first.instance);
-
-    // Proof of the original bug: a single same-name setMcpServers call does
-    // NOT swap the instance under real SDK semantics.
-    await runtime.applyPortableMcpConfig!({ servers: [] });
-    expect(connected.get("cc-session-tools")).toBe(first.instance);
-
-    const outcome = await runtime.replaceSessionToolsInstance();
-
-    expect(outcome).toBe("replaced");
-    expect(createSpy).toHaveBeenCalledTimes(2);
-    expect(connected.get("cc-session-tools")).toBe(second.instance);
-
-    await new Promise((r) => setTimeout(r, 0));
-    expect(first.closeSpy).toHaveBeenCalledTimes(1);
-    expect(second.closeSpy).not.toHaveBeenCalled();
-
-    runtime.close();
-    await Promise.resolve();
-    expect(second.closeSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it("carries the latest-applied portable config through both phases", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-    installNameDiffSetMcpServers(mock);
-
-    const first = createFakeMcpServer();
-    const second = createFakeMcpServer();
-    const { deps } = depsWithSequence(first.instance, second.instance);
-
-    const runtime = await createRuntime(deps, "conv-replace-merge", {
-      portableMcp: {
-        servers: [{ id: "user-srv", transport: "stdio", command: "node" }],
-      },
-    });
-
-    await runtime.applyPortableMcpConfig!({
-      servers: [{ id: "applied-srv", transport: "stdio", command: "node" }],
-    });
-
-    const callsBefore = (mock.query.setMcpServers as ReturnType<typeof vi.fn>)
-      .mock.calls.length;
-
-    await runtime.replaceSessionToolsInstance();
-
-    const calls = (mock.query.setMcpServers as ReturnType<typeof vi.fn>).mock
-      .calls;
-    expect(calls.length).toBe(callsBefore + 2);
-    const phaseA = calls[callsBefore]![0] as Record<string, unknown>;
-    const phaseB = calls[callsBefore + 1]![0] as Record<string, unknown>;
-    expect(Object.keys(phaseA)).toEqual(["applied-srv"]);
-    expect(Object.keys(phaseB).sort()).toEqual([
-      "applied-srv",
-      "cc-session-tools",
-    ]);
-
-    runtime.close();
-  });
-
-  it("replaces the instance even while a turn is active (mid-turn recovery)", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-    const { connected } = installNameDiffSetMcpServers(mock);
-
-    const first = createFakeMcpServer();
-    const second = createFakeMcpServer();
-    const { deps } = depsWithSequence(first.instance, second.instance);
-
-    const runtime = await createRuntime(deps, "conv-replace-midturn");
-
-    const turnPromise = runtime.sendTurn({
-      promptText: "hi",
-      imageRefs: [],
+    const runtime = await createRuntimeWithFakeDeps({
+      conversationId: "conv-prepare",
+      projectPath: "/project",
+      projectName: "proj",
+      sessionName: "sess",
+      worktreePath: "/project/.worktrees/sess",
+      persistedRef: null,
       sessionInstructions: [],
-      autonomous: false,
-      signal: new AbortController().signal,
-      onEvent: () => {},
-    });
-    await Promise.resolve();
-
-    const outcome = await runtime.replaceSessionToolsInstance();
-    expect(outcome).toBe("replaced");
-    expect(connected.get("cc-session-tools")).toBe(second.instance);
-
-    mock.pushMessage({
-      type: "result",
-      subtype: "success",
-      session_id: "sess-1",
-      uuid: "u1",
-      total_cost_usd: 0,
-      duration_ms: 0,
-      num_turns: 0,
-      result: "",
-      is_error: false,
-    } as unknown as SDKMessage);
-    await turnPromise;
-
-    runtime.close();
-  });
-
-  it("skips when the runtime is dead", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-    installNameDiffSetMcpServers(mock);
-
-    const first = createFakeMcpServer();
-    const { deps, createSpy } = depsWithSequence(first.instance);
-
-    const runtime = await createRuntime(deps, "conv-replace-dead");
-    runtime.close();
-    await Promise.resolve();
-
-    const outcome = await runtime.replaceSessionToolsInstance();
-
-    expect(outcome).toBe("skipped-dead");
-    expect(createSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it("closes the new instance and keeps the old one bound when the re-bind rejects", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-
-    const first = createFakeMcpServer();
-    const second = createFakeMcpServer();
-    const { deps } = depsWithSequence(first.instance, second.instance);
-
-    const runtime = await createRuntime(deps, "conv-replace-fail");
-
-    (
-      mock.query.setMcpServers as ReturnType<typeof vi.fn>
-    ).mockRejectedValueOnce(new Error("setMcpServers boom"));
-
-    await expect(runtime.replaceSessionToolsInstance()).rejects.toThrow(
-      "setMcpServers boom",
-    );
-
-    await new Promise((r) => setTimeout(r, 0));
-    expect(second.closeSpy).toHaveBeenCalledTimes(1);
-    expect(first.closeSpy).not.toHaveBeenCalled();
-
-    // The runtime still merges the OLD instance into later applies.
-    await runtime.applyPortableMcpConfig!({ servers: [] });
-    const calls = (mock.query.setMcpServers as ReturnType<typeof vi.fn>).mock
-      .calls;
-    const lastPayload = calls[calls.length - 1]![0] as Record<
-      string,
-      { instance?: unknown }
-    >;
-    expect(lastPayload["cc-session-tools"]?.instance).toBe(first.instance);
-
-    runtime.close();
-    await Promise.resolve();
-    expect(first.closeSpy).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("ClaudeConversationRuntime — session-tools supervisor (pre-turn + reactive)", () => {
-  function depsWithSequence(...instances: McpServer[]): {
-    deps: ClaudeFactoryDeps;
-    createSpy: ReturnType<typeof vi.fn>;
-  } {
-    const createSpy = vi.fn();
-    for (const inst of instances) {
-      createSpy.mockResolvedValueOnce(inst);
-    }
-    return { deps: { createSessionMcpServer: createSpy }, createSpy };
-  }
-
-  function pushMcpToolUse(
-    mock: ReturnType<typeof createControllableMockQuery>,
-    toolUseId: string,
-    toolName: string,
-  ) {
-    mock.pushMessage({
-      type: "assistant",
-      session_id: "sess-1",
-      uuid: `a-${toolUseId}`,
-      message: {
-        content: [
-          { type: "tool_use", id: toolUseId, name: toolName, input: {} },
-        ],
-      },
-    } as unknown as SDKMessage);
-  }
-
-  function pushStreamClosedResult(
-    mock: ReturnType<typeof createControllableMockQuery>,
-    toolUseId: string,
-  ) {
-    mock.pushMessage({
-      type: "user",
-      session_id: "sess-1",
-      uuid: `u-${toolUseId}`,
-      message: {
-        role: "user",
-        content: [
-          {
-            type: "tool_result",
-            tool_use_id: toolUseId,
-            content: "Stream closed",
-            is_error: true,
-          },
-        ],
-      },
-      parent_tool_use_id: null,
-    } as unknown as SDKMessage);
-  }
-
-  function finishTurn(mock: ReturnType<typeof createControllableMockQuery>) {
-    mock.pushMessage({
-      type: "result",
-      subtype: "success",
-      session_id: "sess-1",
-      uuid: "u-result",
-      total_cost_usd: 0,
-      duration_ms: 0,
-      num_turns: 0,
-      result: "",
-      is_error: false,
-    } as unknown as SDKMessage);
-  }
-
-  /**
-   * Replays the real SDK name-diff semantics — see the sibling describe
-   * block. Recovery must perform a working two-phase rebind under them.
-   */
-  function installNameDiffSetMcpServers(
-    mock: ReturnType<typeof createControllableMockQuery>,
-  ): { connected: Map<string, unknown> } {
-    const connected = new Map<string, unknown>();
-    (mock.query.setMcpServers as ReturnType<typeof vi.fn>).mockImplementation(
-      async (
-        servers: Record<string, { type?: string; instance?: unknown }>,
-      ) => {
-        const incoming = new Map<string, unknown>();
-        for (const [name, cfg] of Object.entries(servers)) {
-          if (cfg?.type === "sdk" && "instance" in cfg) {
-            incoming.set(name, cfg.instance);
-          }
-        }
-        const added: string[] = [];
-        const removed: string[] = [];
-        for (const name of [...connected.keys()]) {
-          if (!incoming.has(name)) {
-            connected.delete(name);
-            removed.push(name);
-          }
-        }
-        for (const [name, instance] of incoming) {
-          if (!connected.has(name)) {
-            connected.set(name, instance);
-            added.push(name);
-          }
-        }
-        return { added, removed, errors: {} };
-      },
-    );
-    return { connected };
-  }
-
-  async function startTurnedRuntime(
-    deps: ClaudeFactoryDeps,
-    conversationId: string,
-  ) {
-    const runtime = await claudeConversationBackendFactory.createRuntime(
-      {
-        conversationId,
-        projectPath: "/project",
-        projectName: "proj",
-        sessionName: "sess",
-        worktreePath: "/project/.worktrees/sess",
-        persistedRef: null,
-        sessionInstructions: [],
-        tooling: {},
-      },
-      deps,
-    );
-    const turnPromise = runtime.sendTurn({
-      promptText: "hi",
-      imageRefs: [],
-      sessionInstructions: [],
-      autonomous: false,
-      signal: new AbortController().signal,
-      onEvent: () => {},
-    });
-    await Promise.resolve();
-    return { runtime, turnPromise };
-  }
-
-  it("re-binds a fresh session-tools instance when a cc-session-tools tool call returns Stream closed", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-    const { connected } = installNameDiffSetMcpServers(mock);
-
-    const first = createFakeMcpServer();
-    const second = createFakeMcpServer();
-    const { deps, createSpy } = depsWithSequence(
-      first.instance,
-      second.instance,
-    );
-
-    const { runtime, turnPromise } = await startTurnedRuntime(
-      deps,
-      "conv-recovery",
-    );
-
-    pushMcpToolUse(mock, "t1", "mcp__cc-session-tools__AskUserQuestion");
-    pushStreamClosedResult(mock, "t1");
-    await new Promise((r) => setTimeout(r, 20));
-
-    expect(createSpy).toHaveBeenCalledTimes(2);
-    expect(connected.get("cc-session-tools")).toBe(second.instance);
-    await new Promise((r) => setTimeout(r, 0));
-    expect(first.closeSpy).toHaveBeenCalledTimes(1);
-
-    finishTurn(mock);
-    await turnPromise;
-    runtime.close();
-  });
-
-  it("ignores stream-closed results from servers the runtime does not own", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-    installNameDiffSetMcpServers(mock);
-
-    const first = createFakeMcpServer();
-    const { deps, createSpy } = depsWithSequence(first.instance);
-
-    const { runtime, turnPromise } = await startTurnedRuntime(
-      deps,
-      "conv-recovery-other",
-    );
-
-    pushMcpToolUse(mock, "t1", "mcp__some-external__lookup");
-    pushStreamClosedResult(mock, "t1");
-    await new Promise((r) => setTimeout(r, 20));
-
-    expect(createSpy).toHaveBeenCalledTimes(1);
-
-    finishTurn(mock);
-    await turnPromise;
-    runtime.close();
-  });
-
-  it("kills the runtime on a second cc-session-tools close in the same turn (2-strike, not generic N=3)", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-    installNameDiffSetMcpServers(mock);
-
-    const first = createFakeMcpServer();
-    const second = createFakeMcpServer();
-    const third = createFakeMcpServer();
-    const { deps, createSpy } = depsWithSequence(
-      first.instance,
-      second.instance,
-      third.instance,
-    );
-
-    const { runtime, turnPromise } = await startTurnedRuntime(
-      deps,
-      "conv-recovery-2strike",
-    );
-
-    // First close: one rebind (init create + one recovery create).
-    pushMcpToolUse(mock, "t1", "mcp__cc-session-tools__AskUserQuestion");
-    pushStreamClosedResult(mock, "t1");
-    await new Promise((r) => setTimeout(r, 20));
-    expect(createSpy).toHaveBeenCalledTimes(2);
-
-    // Second close this turn: the supervisor escalates to a kill rather than a
-    // third create — the runtime is force-terminated and the turn ends in error.
-    pushMcpToolUse(mock, "t2", "mcp__cc-session-tools__AskUserQuestion");
-    pushStreamClosedResult(mock, "t2");
-    await new Promise((r) => setTimeout(r, 20));
-
-    const result = await turnPromise;
-    expect(createSpy).toHaveBeenCalledTimes(2);
-    expect(result.error).not.toBeNull();
-    expect(runtime.status).toBe("dead");
-
-    runtime.close();
-  });
-
-  it("forces a cc-session-tools rebind before a reused turn but not on the first turn (primary fix)", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-    const { connected } = installNameDiffSetMcpServers(mock);
-
-    const first = createFakeMcpServer();
-    const second = createFakeMcpServer();
-    const { deps, createSpy } = depsWithSequence(
-      first.instance,
-      second.instance,
-    );
-
-    const runtime = await claudeConversationBackendFactory.createRuntime(
-      {
-        conversationId: "conv-preturn",
-        projectPath: "/project",
-        projectName: "proj",
-        sessionName: "sess",
-        worktreePath: "/project/.worktrees/sess",
-        persistedRef: null,
-        sessionInstructions: [],
-        tooling: {},
-      },
-      deps,
-    );
-    expect(createSpy).toHaveBeenCalledTimes(1); // initial bind only
-
-    // First turn: the initial bind is fresh — no rebind.
-    const firstReady = await runtime.prepareForTurnStart!();
-    expect(firstReady).toEqual({ status: "ready" });
-    expect(createSpy).toHaveBeenCalledTimes(1);
-
-    // Reused turn: forced two-phase rebind before the prompt is delivered.
-    const reusedReady = await runtime.prepareForTurnStart!();
-    expect(reusedReady).toEqual({ status: "ready" });
-    expect(createSpy).toHaveBeenCalledTimes(2);
-    expect(connected.get("cc-session-tools")).toBe(second.instance);
-
-    runtime.close();
-  });
-
-  it("returns recreate-runtime when the reused-turn rebind cannot reconnect", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-    // Default setMcpServers mock never reports the server in `added`, so the
-    // two-phase rebind's re-add verification fails.
-
-    const first = createFakeMcpServer();
-    const second = createFakeMcpServer();
-    const { deps } = depsWithSequence(first.instance, second.instance);
-
-    const runtime = await claudeConversationBackendFactory.createRuntime(
-      {
-        conversationId: "conv-preturn-fail",
-        projectPath: "/project",
-        projectName: "proj",
-        sessionName: "sess",
-        worktreePath: "/project/.worktrees/sess",
-        persistedRef: null,
-        sessionInstructions: [],
-        tooling: {},
-      },
-      deps,
-    );
-
-    await runtime.prepareForTurnStart!(); // consume the first-turn skip
-    const result = await runtime.prepareForTurnStart!();
-
-    expect(result.status).toBe("recreate-runtime");
-    runtime.close();
-  });
-
-  it("does not rebind on a reused turn while a question is validly pending", async () => {
-    const mock = createControllableMockQuery();
-    queryMock.mockReturnValue(mock.query);
-    installNameDiffSetMcpServers(mock);
-
-    const first = createFakeMcpServer();
-    const second = createFakeMcpServer();
-    const { deps, createSpy } = depsWithSequence(
-      first.instance,
-      second.instance,
-    );
-
-    const conversationId = "conv-question-pending";
-    const runtime = await claudeConversationBackendFactory.createRuntime(
-      {
-        conversationId,
-        projectPath: "/project",
-        projectName: "proj",
-        sessionName: "sess",
-        worktreePath: "/project/.worktrees/sess",
-        persistedRef: null,
-        sessionInstructions: [],
-        tooling: {},
-      },
-      deps,
-    );
-
-    await runtime.prepareForTurnStart!(); // consume the first-turn skip
-
-    // Install a pending question resolver under the same key the AskUserQuestion
-    // tool keys its runtime-state on.
-    const key = conversationRuntimeKey("/project", "sess", conversationId);
-    registerConversationRuntime(key, {
-      abortController: new AbortController(),
-      activeQuestionResolver: { resolve: () => {}, reject: () => {} },
+      tooling: {},
     });
 
-    const ready = await runtime.prepareForTurnStart!();
-    expect(ready).toEqual({ status: "ready" });
-    expect(createSpy).toHaveBeenCalledTimes(1); // guard suppressed the rebind
+    // Even across repeated (reused-turn) calls there is no in-process server to
+    // rebind, so the runtime is always ready.
+    await expect(runtime.prepareForTurnStart!()).resolves.toEqual({
+      status: "ready",
+    });
+    await expect(runtime.prepareForTurnStart!()).resolves.toEqual({
+      status: "ready",
+    });
 
-    cleanupConversationRuntime(key);
     runtime.close();
   });
 });

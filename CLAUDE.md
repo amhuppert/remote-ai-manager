@@ -83,7 +83,7 @@ This project also has two Next.js MCP servers configured in `.mcp.json`, reserve
 - **next-devtools**: Application-layer diagnostics (build/runtime errors, routes, server actions, server logs) via `/_next/mcp`.
 - **chrome-devtools**: CDP-specific work — `performance_*` traces/insights, `take_memory_snapshot`, `lighthouse_audit`, and other DevTools Protocol features Playwright doesn't expose directly.
 
-Generic browser automation (navigation, clicks, snapshots, UI verification, network inspection) goes through Playwright per the browser-automation skill — not chrome-devtools MCP. The dev server (`bun run dev`) must be running for any of these. See the `nextjs-mcp` skill for the application-layer tool reference.
+Generic browser automation (navigation, clicks, snapshots, UI verification, network inspection) goes through Playwright per the browser-automation skill — not chrome-devtools MCP. A dev server must be running for any of these — run `cctl dev ensure` to start it (or confirm it's up) and obtain the session-scoped `localUrl`/`remoteUrl` for your worktree; never assume a default port like 3000 or 6006. See the `nextjs-mcp` skill for the application-layer tool reference.
 
 ## UI Design Rules
 

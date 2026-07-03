@@ -10,7 +10,7 @@ Measure per-component render events in this app's dev build, then diff before vs
 
 ## Prerequisites
 
-- Dev server running: `bun run dev` (default port 3000).
+- Dev server running: `cctl dev ensure` (starts it if needed and prints the session-scoped `localUrl` — use that, not an assumed port like 3000).
 - The `ReactScanInstrumentation` component is already wired in `src/app/layout.tsx`. It is dev-only — it does nothing in production builds.
 - `playwright-cli` available (see the `playwright-cli` skill).
 
@@ -150,7 +150,7 @@ Single runs vary; **run 3 times and take the median** per flow.
 - **Initial mount noise.** The first 100–500ms after `playwright-cli open` records every mount in the tree. Always `__reactScanReset()` *after* the page settles, immediately before the flow.
 - **Toolbar is off.** The visual react-scan overlay is hidden in this instrumentation on purpose (it interferes with screenshots/snapshots and accessibility tree). For visual inspection during human debugging, run `npx react-scan@latest http://localhost:3000` in a side terminal — it injects a separate instance into a fresh browser.
 - **Anonymous components** appear as `"Anonymous"` or `"Unknown"`. Set `displayName` or use a named function declaration to disambiguate.
-- **Production builds skip instrumentation.** The component is gated on `process.env.NODE_ENV === "development"` and never sets the window globals in prod. If `window.__reactScanReport` is `undefined`, you're on a prod build — switch to `bun run dev`.
+- **Production builds skip instrumentation.** The component is gated on `process.env.NODE_ENV === "development"` and never sets the window globals in prod. If `window.__reactScanReport` is `undefined`, you're on a prod build — switch to the dev build (`cctl dev ensure`).
 - **HMR.** Hot reloads do not re-initialise react-scan (guarded by the `__reactScanReport !== undefined` check). If `__reactScanReset` is missing after a code change, do a full `playwright-cli reload`.
 - **Phase as string.** The buffer stores `phase` as `"mount" | "update" | "unmount"` even though react-scan internally uses a numeric enum. Don't compare against numbers.
 - **Don't trust totalMs across runs.** Commit-time attribution varies with CPU load; use it as a relative signal within one run, not absolute.

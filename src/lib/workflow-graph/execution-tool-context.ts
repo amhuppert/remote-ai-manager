@@ -7,7 +7,7 @@ import { getExecutionLogger } from "./execution-logger";
 import type { ExecutionTarget } from "./execution-target-resolver";
 import type { AgentAddedTask } from "./runtime-edits";
 import type { SharedDocumentUpsertInput } from "./shared-documents";
-import type { GraphWorkflowCollaborationContextBlock } from "./tool-server";
+import type { GraphWorkflowCollaborationContextBlock } from "./lane-tool-service";
 
 const logger = createLogger("graph-workflow-execution-tool-context");
 
@@ -47,7 +47,7 @@ export interface GraphWorkflowExecutionToolContextDeps {
 
 /**
  * The mid-turn context-limit decision surfaced by `completeTask`. Non-null only
- * when the implementer lane was scheduled to rotate; `tool-server` composes the
+ * when the implementer lane was scheduled to rotate; `lane-tool-service` composes the
  * cooperative stop instruction from it. `contextTokens` is the occupancy the
  * decision used (live reading, else the lane's persisted fallback), and
  * `source` records which of those it came from.

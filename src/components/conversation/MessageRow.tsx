@@ -11,6 +11,7 @@ import type {
   ConversationState,
   TranscriptMessage,
 } from "@/lib/conversations/schemas";
+import type { QueuedMessageMetadata } from "@/lib/conversations/message-queue-schemas";
 
 // `message`, the role modifier, `message-content`, and `message-iteration-badge`
 // are retained as structural / generated-content / test hooks — external slices
@@ -33,6 +34,11 @@ export const messageRoleClass =
 
 export interface MessageRowProps {
   msg: TranscriptMessage;
+  /**
+   * Provenance tag of the queue row this message renders from — see the
+   * `queuedMetadata` prop on `MessageContent`. Omit for transcript rows.
+   */
+  queuedMetadata?: QueuedMessageMetadata | null;
   messageIndex: number;
   isLast: boolean;
   selectedBackend: AgentBackendId;
@@ -56,6 +62,7 @@ export interface MessageRowProps {
 
 const MessageRow = memo(function MessageRow({
   msg,
+  queuedMetadata,
   messageIndex,
   isLast,
   selectedBackend,
@@ -124,7 +131,11 @@ const MessageRow = memo(function MessageRow({
         )}
       </div>
       <div className="message-content">
-        <MessageContent content={msg.content} worktreePath={worktreePath} />
+        <MessageContent
+          content={msg.content}
+          worktreePath={worktreePath}
+          queuedMetadata={queuedMetadata}
+        />
       </div>
       {isLast && !isUserMsg && lastMessageExtras && (
         <DebugActionCard

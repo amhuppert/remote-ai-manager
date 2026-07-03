@@ -10,6 +10,7 @@ import { usePendingPromptPersistence } from "@/features/session/hooks/use-pendin
 import { useTddToggleMutation } from "@/lib/sessions/mutations";
 import { useSessionPageHandlers } from "@/features/session/hooks/use-session-page-handlers";
 import { useSessionLifecycle } from "@/features/session/hooks/use-session-lifecycle";
+import { canStopTurn } from "@/features/session/hooks/turn-activity";
 import { computeContextFillPercent } from "@/lib/conversations/context-fill";
 import { useSendPrompt } from "@/hooks/use-send-prompt";
 import { useAbortPrompt } from "@/hooks/use-abort-prompt";
@@ -118,11 +119,9 @@ export default function ConversationWorkspace({
     () => session?.conversations.find((c) => c.id === conversationId),
     [session?.conversations, conversationId],
   );
-  const isBusy =
-    store.sending ||
-    sessionStatus === "running" ||
-    sessionStatus === "waiting_for_input" ||
-    !!store.pendingQuestions;
+  // waiting_for_input is NOT busy: no turn is running while a question pends
+  // (async ask, docs/design/cc-cli/03 §4.3) — the user may act freely.
+  const isBusy = store.sending || sessionStatus === "running";
   const contextPercent = computeContextFillPercent(
     activeConversation?.contextTokens ?? null,
     activeConversation?.contextWindowMax ?? null,
@@ -243,16 +242,14 @@ export default function ConversationWorkspace({
     clearQuestions: store.clearQuestions,
   });
 
-  const conversationRunning =
-    activeConversation?.status === "running" ||
-    activeConversation?.status === "waiting_for_input";
   // Suppress Stop when the active turn is workflow-driven (e.g. smart-merge's
   // validation-fix task_run) so users can't abort background work from the
   // conversation header — that button only stops the panel's user turn.
-  const conversationDrivenByWorkflow =
-    activeConversation?.activeTurnSource === "workflow";
-  const canStop =
-    (store.sending || conversationRunning) && !conversationDrivenByWorkflow;
+  const canStop = canStopTurn({
+    sending: store.sending,
+    status: activeConversation?.status,
+    drivenByWorkflow: activeConversation?.activeTurnSource === "workflow",
+  });
   const handleStopPrompt = useCallback(() => {
     if (store.sending) abortClient();
     void abortPrompt();

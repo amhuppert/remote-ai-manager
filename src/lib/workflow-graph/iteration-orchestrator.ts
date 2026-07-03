@@ -1897,18 +1897,17 @@ export function createGraphWorkflowIterationOrchestrator(
 
       // Same-Turn Tool Dispatch Contract (design §Same-Turn Tool Dispatch
       // Contract, R5.3, R5.4). This helper is the orchestrator-level
-      // enforcement that pairs with the production per-handler wrapper
-      // `wrapMcpHandlerWithHaltCheck` (tool-dispatcher.ts) registered in
-      // `tool-server.ts`. The contract is two-part:
+      // enforcement that pairs with the lane HTTP endpoints' pre-dispatch check
+      // `resolveLaneHaltReason` (tool-dispatcher.ts) run by
+      // `lane-route-handlers.ts`. The contract is two-part:
       //
-      //   1. Within a turn the MCP transport serializes sibling tool_use
-      //      blocks one request at a time. Each wrapped handler checks
-      //      `pendingHaltReason` and pending collaboration state BEFORE doing
-      //      real work. A pending halt returns the canonical
-      //      `"iteration halted: <type>"` message; a pending collaboration
-      //      returns a non-terminal tool error so sibling tool calls in the
-      //      same turn cannot mutate workflow state while the collaboration
-      //      is running.
+      //   1. Within a turn each lane tool call arrives as a separate HTTP
+      //      request. Every endpoint checks `pendingHaltReason` and pending
+      //      collaboration state BEFORE doing real work. A pending halt returns
+      //      the canonical `"iteration halted: <type>"` message; a pending
+      //      collaboration returns a non-terminal error so sibling tool calls
+      //      in the same turn cannot mutate workflow state while the
+      //      collaboration is running.
       //
       //   2. After every agent turn the orchestrator inspects
       //      `pendingHaltReason` and, if set, terminates the iteration with

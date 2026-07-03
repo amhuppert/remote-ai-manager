@@ -29,7 +29,7 @@ import {
   ModelEffortValidationError,
   ConversationCommandDispatcherUnavailableError,
   DEBUG_MODE_INSTRUCTIONS,
-  ASK_USER_QUESTION_INSTRUCTIONS,
+  ASK_QUESTION_INSTRUCTIONS,
   hasCollabPrefix,
   stripCollabPrefix,
   type PromptDeps,
@@ -237,19 +237,27 @@ describe("DEBUG_MODE_INSTRUCTIONS", () => {
   });
 });
 
-describe("ASK_USER_QUESTION_INSTRUCTIONS", () => {
+describe("ASK_QUESTION_INSTRUCTIONS", () => {
   it("is a single well-formed <asking-questions> block", () => {
-    expect(
-      ASK_USER_QUESTION_INSTRUCTIONS.startsWith("<asking-questions>"),
-    ).toBe(true);
-    expect(ASK_USER_QUESTION_INSTRUCTIONS.endsWith("</asking-questions>")).toBe(
+    expect(ASK_QUESTION_INSTRUCTIONS.startsWith("<asking-questions>")).toBe(
+      true,
+    );
+    expect(ASK_QUESTION_INSTRUCTIONS.endsWith("</asking-questions>")).toBe(
       true,
     );
   });
 
-  it("names the tool and encourages reaching for it", () => {
-    expect(ASK_USER_QUESTION_INSTRUCTIONS).toContain("AskUserQuestion");
-    expect(ASK_USER_QUESTION_INSTRUCTIONS).toMatch(/use it liberally|ask/i);
+  it("teaches the async cctl ask protocol, not a deleted in-process tool", () => {
+    expect(ASK_QUESTION_INSTRUCTIONS).toContain("cctl ask");
+    expect(ASK_QUESTION_INSTRUCTIONS).not.toContain("AskUserQuestion");
+  });
+
+  it("teaches end-turn discipline and the answer lifecycle (doc 03 §7)", () => {
+    expect(ASK_QUESTION_INSTRUCTIONS).toMatch(/end your turn/i);
+    expect(ASK_QUESTION_INSTRUCTIONS).toMatch(/handoff note/i);
+    expect(ASK_QUESTION_INSTRUCTIONS).toMatch(/next user message/i);
+    expect(ASK_QUESTION_INSTRUCTIONS).toContain("skipped");
+    expect(ASK_QUESTION_INSTRUCTIONS).toMatch(/batch related questions/i);
   });
 });
 
@@ -577,7 +585,7 @@ describe("executePromptStream (facade)", () => {
           portableMcp: {
             servers: [
               {
-                id: "cc-graph-workflow",
+                id: "transient-tool",
                 transport: "streamable-http",
                 url: "http://127.0.0.1:3000/api/projects/repo/sessions/test-session/mcp/graph-workflow/execution-1/contexts/context-1",
               },
@@ -595,7 +603,7 @@ describe("executePromptStream (facade)", () => {
         portableMcp: {
           servers: [
             {
-              id: "cc-graph-workflow",
+              id: "transient-tool",
               transport: "streamable-http",
               url: "http://127.0.0.1:3000/api/projects/repo/sessions/test-session/mcp/graph-workflow/execution-1/contexts/context-1",
             },

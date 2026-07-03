@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createRequestCollaborationHandler,
   type RequestCollaborationHandlerContext,
-} from "./tool-server";
+} from "./lane-tool-service";
 import {
   createTurnDispatcher,
   type PendingToolBlock,

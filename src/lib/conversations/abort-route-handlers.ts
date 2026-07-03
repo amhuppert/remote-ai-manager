@@ -1,21 +1,16 @@
 /**
  * Route handler for aborting a running conversation prompt.
  *
- * Rejects any pending AskUserQuestion resolvers, signals the AbortController
- * to stop SDK execution, and sends an ABORT_TURN event for a clean state
- * transition in the conversation machine.
+ * Signals the AbortController to stop SDK execution and sends an ABORT_TURN
+ * event for a clean state transition in the conversation machine (which also
+ * clears any pending question).
  */
 
 import { NextResponse } from "next/server";
 import { resolveProjectPath } from "@/lib/projects/resolver";
 import { getSession } from "@/lib/state-store";
 import { abortConversation as abortConversationRegistry } from "@/lib/conversations/abort-registry";
-import { rejectQuestionsForConversation } from "@/lib/conversations/question-registry";
 import { sendConversationEvent } from "@/lib/workflows/conversation/manager";
-import {
-  conversationRuntimeKey,
-  rejectActiveQuestionResolver,
-} from "@/lib/workflows/conversation/runtime-state";
 import { createLogger, withTracing } from "@/lib/logging";
 import type { ApiError } from "@/lib/api/errors";
 
@@ -54,15 +49,6 @@ export const abortConversation = withTracing(async (_request, { params }) => {
       { status: 404 },
     );
   }
-
-  // Reject any pending AskUserQuestion for this conversation (legacy registry).
-  rejectQuestionsForConversation(conversationId, "Prompt aborted by user");
-
-  // Reject the runtime-scoped resolver used by the MCP AskUserQuestion tool.
-  rejectActiveQuestionResolver(
-    conversationRuntimeKey(projectPath, sessionName, conversationId),
-    "Prompt aborted by user",
-  );
 
   // Signal the AbortController to stop SDK execution
   const aborted = abortConversationRegistry(conversationId);

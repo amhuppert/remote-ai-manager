@@ -1060,8 +1060,14 @@ export function hasLiveConversationActor(
   );
 }
 
-function isActorIdle(actor: ConversationActorRef): boolean {
-  return actor.getSnapshot().value === "idle";
+/**
+ * Settled = no turn is running and no invoked actor is live. `waitingForInput`
+ * counts: the asking turn already finalized, only the pending question remains,
+ * so the actor is as safe to drain against or stop/recreate as an idle one.
+ */
+function isActorSettled(actor: ConversationActorRef): boolean {
+  const value = actor.getSnapshot().value;
+  return value === "idle" || value === "waitingForInput";
 }
 
 /**
@@ -1108,7 +1114,7 @@ export async function ensureConversationActor(
     if (currentWorktreePath === requestedWorktreePath) {
       return existing;
     }
-    if (!isActorIdle(existing)) {
+    if (!isActorSettled(existing)) {
       logger.error("conversation-manager.execution_target_mismatch_running", {
         conversationId,
         sessionName,
@@ -1189,7 +1195,7 @@ export async function ensureConversationActorAndDrain(
     sessionName,
     conversationId,
   );
-  const explicitDrain = Boolean(existing) && isActorIdle(actor);
+  const explicitDrain = Boolean(existing) && isActorSettled(actor);
   logger.info("conversation-manager.ensure_and_drain", {
     sessionName,
     conversationId,
@@ -1415,6 +1421,18 @@ export async function rehydrateOneConversationActor(
     }
 
     actor.start();
+
+    // A restored actor does not re-enter its state, so entry-action drains
+    // never fire for it. Drain explicitly when it woke settled (idle or
+    // waitingForInput) so rows enqueued before the restart — e.g. an answer
+    // POSTed moments before the crash — deliver without waiting for new input.
+    if (isActorSettled(actor)) {
+      void drainConversationQueue(
+        actor,
+        actor.getSnapshot().context,
+        getConversationQueueDeps(),
+      );
+    }
 
     logger.info("conversation-manager.rehydrated", {
       conversationId: conversation.id,

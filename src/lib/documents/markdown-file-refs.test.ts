@@ -66,7 +66,7 @@ describe("extractMarkdownFileRefs — native edits", () => {
 describe("extractMarkdownFileRefs — registered documents", () => {
   it("detects an MCP-namespaced register_document", () => {
     const refs = extractMarkdownFileRefs([
-      toolUse("mcp__cc-session-tools__register_document", {
+      toolUse("mcp__external-tools__register_document", {
         file_path: "memory-bank/plan.md",
       }),
     ]);
@@ -89,7 +89,7 @@ describe("extractMarkdownFileRefs — registered documents", () => {
   it("ignores register_document on a non-markdown file", () => {
     expect(
       extractMarkdownFileRefs([
-        toolUse("mcp__cc-session-tools__register_document", {
+        toolUse("mcp__external-tools__register_document", {
           file_path: "diagram.png",
         }),
       ]),
@@ -100,11 +100,7 @@ describe("extractMarkdownFileRefs — registered documents", () => {
 describe("extractMarkdownFileRefs — run_codex paired results", () => {
   it("emits a registered ref for each .md in the paired tool_result referenceDocuments", () => {
     const blocks: MessageContentBlock[] = [
-      toolUse(
-        "mcp__cc-session-tools__run_codex",
-        { task: "analyze" },
-        "codex-1",
-      ),
+      toolUse("mcp__external-tools__run_codex", { task: "analyze" }, "codex-1"),
       toolResult(
         "codex-1",
         JSON.stringify({
@@ -144,7 +140,7 @@ describe("extractMarkdownFileRefs — de-duplication", () => {
     const refs = extractMarkdownFileRefs([
       toolUse("Write", { file_path: "design.md" }),
       toolUse("Edit", { file_path: "design.md" }),
-      toolUse("mcp__cc-session-tools__register_document", {
+      toolUse("mcp__external-tools__register_document", {
         file_path: "design.md",
       }),
     ]);

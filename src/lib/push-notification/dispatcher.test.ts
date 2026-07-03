@@ -14,6 +14,7 @@ import * as pushMod from "../notifications/push";
 
 vi.mock("../notifications/push", () => ({
   sendPushNotification: vi.fn(),
+  sendAgentNotification: vi.fn(),
 }));
 
 const sendPushNotification = vi.mocked(pushMod.sendPushNotification);

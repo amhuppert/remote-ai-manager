@@ -14,6 +14,7 @@ import type { MessageContentBlock } from "@/lib/conversations/message-content-sc
 import { pendingQueuedMessageSchema } from "@/lib/conversations/message-queue-schemas";
 import type {
   PendingQueuedMessage,
+  QueuedMessageMetadata,
   QueuedMessageView,
 } from "@/lib/conversations/message-queue-schemas";
 
@@ -27,6 +28,19 @@ interface ConversationKey {
 
 interface EnqueueQueuedMessageInput extends ConversationKey {
   content: MessageContentBlock[];
+  metadata?: QueuedMessageMetadata;
+}
+
+interface ConsumingEnqueueQueuedMessageInput extends EnqueueQueuedMessageInput {
+  /**
+   * The enqueue commits only if `conversation.pendingQuestionId` still equals
+   * this id, clearing `pendingQuestionId`/`pendingQuestions` in the SAME
+   * durable write as the row append (docs/design/cc-cli/03 §3 — consuming the
+   * pending question and submitting the answer are atomic, so a crash can
+   * never strand a consumed marker without its queued answer). Enqueue
+   * returns null (no row, no broadcast) when the marker is already gone.
+   */
+  consumePendingQuestionId: string;
 }
 
 /**
@@ -38,6 +52,7 @@ export function createPendingEntry(args: {
   id: string;
   content: MessageContentBlock[];
   now: string;
+  metadata?: QueuedMessageMetadata;
 }): PendingQueuedMessage {
   return {
     id: args.id,
@@ -52,6 +67,7 @@ export function createPendingEntry(args: {
     deliveryAttemptId: null,
     attemptCount: 0,
     error: null,
+    metadata: args.metadata ?? null,
   };
 }
 
@@ -108,6 +124,7 @@ export function toQueuedMessageView(
     cancelledAt: entry.cancelledAt,
     failedAt: entry.failedAt,
     error: entry.error,
+    metadata: entry.metadata,
   };
 }
 
@@ -434,6 +451,9 @@ export interface MessageQueueServiceDeps {
 }
 
 export interface MessageQueueService {
+  enqueue(
+    input: ConsumingEnqueueQueuedMessageInput,
+  ): Promise<PendingQueuedMessage | null>;
   enqueue(input: EnqueueQueuedMessageInput): Promise<PendingQueuedMessage>;
   listActive(input: ConversationKey): Promise<PendingQueuedMessage[]>;
   claimLiveDelivery(
@@ -469,27 +489,61 @@ export function createMessageQueueService(
   deps: MessageQueueServiceDeps,
 ): MessageQueueService {
   async function enqueue(
+    input: ConsumingEnqueueQueuedMessageInput,
+  ): Promise<PendingQueuedMessage | null>;
+  async function enqueue(
     input: EnqueueQueuedMessageInput,
-  ): Promise<PendingQueuedMessage> {
-    const { projectPath, sessionName, conversationId, content } = input;
+  ): Promise<PendingQueuedMessage>;
+  async function enqueue(
+    input: EnqueueQueuedMessageInput & { consumePendingQuestionId?: string },
+  ): Promise<PendingQueuedMessage | null> {
+    const {
+      projectPath,
+      sessionName,
+      conversationId,
+      content,
+      metadata,
+      consumePendingQuestionId,
+    } = input;
     const id = deps.newId();
     const now = deps.now();
-    const entry = createPendingEntry({ id, content, now });
+    const entry = createPendingEntry({ id, content, now, metadata });
 
-    await deps.mutateConversation(
+    // The store's serialized write queue makes the check-consume-append
+    // race-free: a concurrent duplicate sees `committed: false`.
+    const committed = await deps.mutateConversation(
       projectPath,
       sessionName,
       conversationId,
       "enqueueQueuedMessage",
       (conversation) => {
+        if (consumePendingQuestionId !== undefined) {
+          if (conversation.pendingQuestionId !== consumePendingQuestionId) {
+            return false;
+          }
+          conversation.pendingQuestionId = null;
+          conversation.pendingQuestions = null;
+        }
         conversation.pendingQueue = appendPendingEntry(
           conversation.pendingQueue,
           entry,
         );
+        return true;
       },
     );
 
     const projectName = deps.getProjectDisplayName(projectPath);
+
+    if (!committed) {
+      logger.info("queue.enqueue_rejected", {
+        projectName,
+        sessionName,
+        conversationId,
+        messageIds: [id],
+        consumePendingQuestionId,
+      });
+      return null;
+    }
 
     try {
       deps.broadcast({

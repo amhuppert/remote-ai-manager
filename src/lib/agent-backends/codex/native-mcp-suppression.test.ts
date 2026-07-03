@@ -63,7 +63,7 @@ describe("buildCodexMcpServersConfig", () => {
   it("disables unmanaged native servers with a complete transport entry so Codex can load the config", () => {
     const config = buildCodexMcpServersConfig({
       managedMcpServers: {
-        "cc-session-tools": { url: "http://localhost/mcp" },
+        "external-tools": { url: "http://localhost/mcp" },
       },
       nativeServers: [
         // Plugin-provided server (no [mcp_servers.github] table in config.toml):
@@ -77,7 +77,7 @@ describe("buildCodexMcpServersConfig", () => {
           },
         },
         {
-          name: "cc-session-tools",
+          name: "external-tools",
           configEntry: { url: "http://localhost/mcp" },
         },
         {
@@ -91,7 +91,7 @@ describe("buildCodexMcpServersConfig", () => {
     });
 
     expect(config).toEqual({
-      "cc-session-tools": { url: "http://localhost/mcp" },
+      "external-tools": { url: "http://localhost/mcp" },
       github: {
         url: "https://api.githubcopilot.com/mcp/",
         bearer_token_env_var: "GITHUB_PAT_TOKEN",

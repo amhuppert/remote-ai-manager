@@ -235,6 +235,42 @@ describe("withTracing", () => {
     expect(observed?.sessionName).toBe("s");
   });
 
+  it("accepts a catch-all route handler (string[] param) and still extracts the string params", async () => {
+    let received:
+      | { name: string; session: string; docPath: string[] }
+      | undefined;
+    const handler = async (
+      _request: Request,
+      context: {
+        params: Promise<{ name: string; session: string; docPath: string[] }>;
+      },
+    ): Promise<Response> => {
+      received = await context.params;
+      return new Response("ok");
+    };
+    const wrapped = withTracing(handler);
+
+    const req = makeRequest(
+      "http://localhost:3000/api/projects/p/sessions/s/graph-workflow/shared-documents/a/b.md",
+      { method: "PUT", headers: { "x-trace-id": "catchall-trace" } },
+    );
+
+    const response = await wrapped(req, {
+      params: Promise.resolve({
+        name: "p",
+        session: "s",
+        docPath: ["a", "b.md"],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(received?.docPath).toEqual(["a", "b.md"]);
+    const lines = readLogLines();
+    const startLog = lines.find((l) => l["message"] === "request.start");
+    expect(startLog?.["projectName"]).toBe("p");
+    expect(startLog?.["sessionName"]).toBe("s");
+  });
+
   it("handles routes without params gracefully", async () => {
     const handler = vi.fn(async () => new Response("ok"));
     const wrapped = withTracing(handler);

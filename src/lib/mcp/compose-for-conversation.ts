@@ -101,13 +101,6 @@ export interface ComposePortableMcpDeps {
     worktreePath?: string;
   }): Promise<McpSourceDiscoveryResult>;
   globalConfigPath(): string;
-  buildGatewayServers(
-    backend: AgentBackendId,
-    projectName: string,
-    sessionName: string,
-    conversationId: string,
-  ): readonly PortableMcpServerConfig[];
-  buildReservedGatewayIds(backend: AgentBackendId): readonly string[];
 }
 
 export interface ComposePortableMcpArgs {
@@ -162,14 +155,8 @@ export function createComposePortableMcpForConversation(
         : {}),
     };
 
-    const gatewayServers = deps.buildGatewayServers(
-      args.backend,
-      args.projectName,
-      args.sessionName,
-      args.conversationId,
-    );
-
-    const reservedGatewayIds = deps.buildReservedGatewayIds(args.backend);
+    const gatewayServers: readonly PortableMcpServerConfig[] = [];
+    const reservedGatewayIds: readonly string[] = [];
 
     const { portable } = composePortableForConversation({
       overrideChain,

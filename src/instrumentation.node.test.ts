@@ -28,6 +28,10 @@ describe("createStartupRegistrar", () => {
           "readConfig should not be called during startup wiring",
         );
       },
+      ensureAgentToken: async () => "test-token",
+      installCli: async () =>
+        ({ installed: false, reason: "bundle_missing" }) as const,
+      recordServerBaseUrl: () => "http://127.0.0.1:3000",
       recoverActiveWorkflowEnvelopes: async () => {
         calls.push("envelope-recovery");
         return {
@@ -65,6 +69,10 @@ describe("createStartupRegistrar", () => {
       initNotificationDb: () => {},
       setConfigReader: () => {},
       readConfig: async () => ({}) as never,
+      ensureAgentToken: async () => "test-token",
+      installCli: async () =>
+        ({ installed: false, reason: "bundle_missing" }) as const,
+      recordServerBaseUrl: () => "http://127.0.0.1:3000",
       recoverActiveWorkflowEnvelopes: async () => {
         traces["recover"] = getTraceContext();
         return {
@@ -104,6 +112,10 @@ describe("createStartupRegistrar", () => {
           "readConfig should not be called during startup wiring",
         );
       },
+      ensureAgentToken: async () => "test-token",
+      installCli: async () =>
+        ({ installed: false, reason: "bundle_missing" }) as const,
+      recordServerBaseUrl: () => "http://127.0.0.1:3000",
       recoverActiveWorkflowEnvelopes: async () => {
         calls.push("envelope-recovery-failed");
         throw new Error("simulated recovery failure");
@@ -113,5 +125,85 @@ describe("createStartupRegistrar", () => {
     await expect(register()).resolves.not.toThrow();
     expect(calls).toContain("envelope-recovery-failed");
     expect(calls).toContain("notifications");
+  });
+
+  it("ensures the agent token after migrations and before conversations rehydrate", async () => {
+    const calls: string[] = [];
+    const register = createStartupRegistrar({
+      loadConversationManager: async () => ({
+        rehydrateConversationActors: async () => {
+          calls.push("rehydrate");
+          return 0;
+        },
+      }),
+      runStateMigrations: async () => {
+        calls.push("migrations");
+        return [];
+      },
+      initNotificationDb: () => {},
+      setConfigReader: () => {},
+      readConfig: async () => ({}) as never,
+      ensureAgentToken: async () => {
+        calls.push("token");
+        return "test-token";
+      },
+      installCli: async () => {
+        calls.push("install");
+        return { installed: false, reason: "bundle_missing" } as const;
+      },
+      recordServerBaseUrl: () => {
+        calls.push("record-url");
+        return "http://127.0.0.1:3000";
+      },
+      recoverActiveWorkflowEnvelopes: async () => ({
+        scanned: 0,
+        failed: 0,
+        preservedPaused: 0,
+        preservedRunning: 0,
+        movedToPaused: 0,
+      }),
+    });
+
+    await register();
+
+    expect(calls.indexOf("migrations")).toBeLessThan(calls.indexOf("token"));
+    expect(calls.indexOf("token")).toBeLessThan(calls.indexOf("rehydrate"));
+    expect(calls.indexOf("record-url")).toBeLessThan(
+      calls.indexOf("rehydrate"),
+    );
+    expect(calls.indexOf("install")).toBeLessThan(calls.indexOf("rehydrate"));
+  });
+
+  it("survives a failing token step without breaking startup", async () => {
+    const calls: string[] = [];
+    const register = createStartupRegistrar({
+      loadConversationManager: async () => ({
+        rehydrateConversationActors: async () => {
+          calls.push("rehydrate");
+          return 0;
+        },
+      }),
+      runStateMigrations: async () => [],
+      initNotificationDb: () => {},
+      setConfigReader: () => {},
+      readConfig: async () => ({}) as never,
+      ensureAgentToken: async () => {
+        throw new Error("disk full");
+      },
+      installCli: async () => {
+        throw new Error("install exploded");
+      },
+      recordServerBaseUrl: () => "http://127.0.0.1:3000",
+      recoverActiveWorkflowEnvelopes: async () => ({
+        scanned: 0,
+        failed: 0,
+        preservedPaused: 0,
+        preservedRunning: 0,
+        movedToPaused: 0,
+      }),
+    });
+
+    await expect(register()).resolves.not.toThrow();
+    expect(calls).toContain("rehydrate");
   });
 });

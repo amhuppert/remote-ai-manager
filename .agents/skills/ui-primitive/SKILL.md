@@ -141,7 +141,7 @@ Cover every state/variant: default, each variant, selection (radio/checkbox), di
 This is required, not optional. The Storybook a11y vitest project is disabled in AI/headless runs, so drive the **running Storybook with Playwright** instead.
 
 1. **Get this worktree's Storybook URL** — never assume a port:
-   `mcp__cc-session-tools__ensure_dev_server({ name: "storybook" })` → use the returned `localUrl`.
+   run `cctl dev ensure storybook` → use the printed `localUrl`.
 2. Open a story iframe for clean screenshots: `http://localhost:<port>/iframe.html?id=<title-kebab>--<story-kebab>&viewMode=story` (e.g. `ui-dropdownmenu--selection`).
 3. **Exercise it as a user:** Tab to the trigger, Enter/Space/Arrow to open, Arrow/Home/End to navigate, type-ahead, Escape to close (verify focus returns to trigger), hover, click, select. Use `browser_press_key`, `browser_click`, `browser_hover`. Screenshot and `Read` the PNG to judge appearance. (Element-targeted screenshots **crop outlines** that sit outside the box — use a viewport screenshot to see focus rings.)
 4. **Introspect with `browser_evaluate`** — confirm real behavior, not just looks:

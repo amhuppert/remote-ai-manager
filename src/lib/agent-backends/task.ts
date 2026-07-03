@@ -22,6 +22,12 @@ export interface AgentTaskRequest {
   webSearchMode?: "disabled" | "cached" | "live";
   additionalDirectories?: string[];
   skipGitRepoCheck?: boolean;
+  /**
+   * External cancellation signal. When it aborts, the run is torn down through
+   * the same AbortController path a timeout uses (the result reports
+   * `timedOut`). Lets a job-shaped caller cancel a live run.
+   */
+  signal?: AbortSignal;
 }
 
 export interface AgentTaskResult {

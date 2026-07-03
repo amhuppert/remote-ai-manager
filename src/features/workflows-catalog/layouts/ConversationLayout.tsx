@@ -26,12 +26,13 @@ const DEBUG_W = 260;
 /**
  * Conversation — the most spatially complex of the five. Three logical zones:
  *   • Spine (left): idle → acquiringResources → executing → finalizingTurn
+ *     → waitingForInput (when a registered question survives the turn)
  *   • externalExecuting branches off idle to the right of the spine
  *   • Debug compound (right): six phases stacked vertically
  *
- * finalizingTurn fans out to five visual destinations (idle + four debug
- * targets); the eight individual `always` transitions are consolidated by
- * shared target so guard text remains readable.
+ * finalizingTurn fans out to six visual destinations (idle + waitingForInput
+ * + four debug targets); the individual `always` transitions are consolidated
+ * by shared target so guard text remains readable.
  */
 export default function ConversationLayout({
   selectedStateId,
@@ -41,12 +42,13 @@ export default function ConversationLayout({
   const idle = box(80, 100, SPINE_W, NODE_H);
   const acquiring = box(80, 360, SPINE_W, NODE_H);
 
-  // executing compound wraps running + waitingForInput
+  // executing compound branches on activeTurn.kind
   const executingGroup = box(60, 520, 440, 220);
-  const running = box(90, 620, 180, NODE_H);
-  const waiting = box(290, 620, 200, NODE_H);
+  const convTurn = box(90, 620, 200, NODE_H);
+  const taskRun = box(310, 620, 180, NODE_H);
 
   const finalizing = box(80, 800, 400, TRANSIENT_H);
+  const waiting = box(80, 920, SPINE_W + 60, NODE_H);
 
   // externalExecuting branches off the spine
   const external = box(400, 100, SPINE_W, NODE_H);
@@ -141,29 +143,6 @@ export default function ConversationLayout({
       labelOffset: { x: 110, y: 0 },
     },
 
-    // executing internals
-    {
-      id: "running-waiting",
-      from: rightAnchor(running),
-      to: leftAnchor(waiting),
-      routing: "straight",
-      label: "ASK_QUESTION",
-      fromStateId: "executing.running",
-      toStateId: "executing.waitingForInput",
-      labelOffset: { x: 0, y: -85 },
-    },
-    {
-      id: "waiting-running",
-      from: { x: waiting.x, y: waiting.y + waiting.height - 18 },
-      to: { x: running.x + running.width, y: running.y + running.height - 18 },
-      routing: "curve",
-      bow: "v",
-      label: "ANSWER",
-      fromStateId: "executing.waitingForInput",
-      toStateId: "executing.running",
-      labelOffset: { x: 0, y: 50 },
-    },
-
     // executing → finalizingTurn (compound-level)
     {
       id: "executing-finalizing",
@@ -230,6 +209,34 @@ export default function ConversationLayout({
       label: "MARK_FIX_VERIFIED",
       fromStateId: "debug.awaitingVerification",
       toStateId: "debug.cleanupInstrumentation",
+    },
+
+    // finalizingTurn → waitingForInput (a registered question survived the turn)
+    {
+      id: "finalizing-waiting",
+      from: bottomAnchor(finalizing),
+      to: topAnchor(waiting),
+      routing: "straight",
+      label: "always",
+      guard: "pendingQuestion != null",
+      dashed: true,
+      fromStateId: "finalizingTurn",
+      toStateId: "waitingForInput",
+    },
+
+    // waitingForInput → acquiringResources (answer or superseding prompt
+    // claims the next turn; the pending question is cleared at claim)
+    {
+      id: "waiting-acquiring",
+      from: leftAnchor(waiting),
+      to: { x: acquiring.x, y: acquiring.y + acquiring.height - 12 },
+      routing: "curve",
+      bow: "h",
+      control: { x: 8, y: (waiting.y + acquiring.y) / 2 },
+      label: "SUBMIT_PROMPT",
+      fromStateId: "waitingForInput",
+      toStateId: "acquiringResources",
+      labelOffset: { x: 70, y: 40 },
     },
 
     // finalizingTurn → idle (default + cleanup consolidated)
@@ -350,33 +357,34 @@ export default function ConversationLayout({
         width={executingGroup.width}
         height={executingGroup.height}
         label="executing"
-        hint="compound · invokes executePrompt"
+        hint="compound · branches on activeTurn.kind"
         stateId="executing"
         onClickHeader={onSelectState}
         selected={selectedStateId === "executing"}
       >
         <StateNode
-          id="executing.running"
-          label="running"
+          id="executing.conversationTurn"
+          label="conversationTurn"
           kind="atomic"
           status="initial"
-          x={running.x}
-          y={running.y}
-          width={running.width}
-          height={running.height}
-          selected={selectedStateId === "executing.running"}
+          x={convTurn.x}
+          y={convTurn.y}
+          width={convTurn.width}
+          height={convTurn.height}
+          invokes={["executePrompt"]}
+          selected={selectedStateId === "executing.conversationTurn"}
           onClick={onSelectState}
         />
         <StateNode
-          id="executing.waitingForInput"
-          label="waitingForInput"
+          id="executing.taskRun"
+          label="taskRun"
           kind="atomic"
-          status="warning"
-          x={waiting.x}
-          y={waiting.y}
-          width={waiting.width}
-          height={waiting.height}
-          selected={selectedStateId === "executing.waitingForInput"}
+          x={taskRun.x}
+          y={taskRun.y}
+          width={taskRun.width}
+          height={taskRun.height}
+          invokes={["runTaskRun"]}
+          selected={selectedStateId === "executing.taskRun"}
           onClick={onSelectState}
         />
       </CompoundGroup>
@@ -389,6 +397,18 @@ export default function ConversationLayout({
         width={finalizing.width}
         height={finalizing.height}
         selected={selectedStateId === "finalizingTurn"}
+        onClick={onSelectState}
+      />
+      <StateNode
+        id="waitingForInput"
+        label="waitingForInput"
+        kind="atomic"
+        status="warning"
+        x={waiting.x}
+        y={waiting.y}
+        width={waiting.width}
+        height={waiting.height}
+        selected={selectedStateId === "waitingForInput"}
         onClick={onSelectState}
       />
       <CompoundGroup

@@ -281,6 +281,15 @@ export class CodexTaskRunner implements AgentTaskRunner {
           }, input.timeoutMs)
         : null;
 
+    // Fold an external cancellation signal into the same abort path so a
+    // job-shaped caller can cancel a live run.
+    const externalSignal = input.signal;
+    const onExternalAbort = () => abortController.abort();
+    if (externalSignal) {
+      if (externalSignal.aborted) abortController.abort();
+      else externalSignal.addEventListener("abort", onExternalAbort);
+    }
+
     let threadId: string | null = null;
     let text: string | null = null;
     let structuredOutput: unknown;
@@ -354,6 +363,7 @@ export class CodexTaskRunner implements AgentTaskRunner {
       }
     } finally {
       if (timeoutHandle !== null) clearTimeout(timeoutHandle);
+      externalSignal?.removeEventListener("abort", onExternalAbort);
     }
 
     const backendRef = threadId

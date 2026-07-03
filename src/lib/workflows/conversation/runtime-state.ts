@@ -13,7 +13,6 @@
 
 import type { ConversationBackendRuntime } from "@/lib/agent-backends/conversation";
 import type { ConversationToolingOverrides } from "@/lib/agent-backends/types";
-import type { AskQuestionAnswer } from "@/lib/conversations/schemas";
 
 export interface ConversationRuntimeState {
   /** AbortController for cancelling in-flight SDK queries. */
@@ -31,12 +30,6 @@ export interface ConversationRuntimeState {
   /** SSE stream emit callback for the current HTTP prompt-stream response. */
   streamEmit?: (event: string, data: unknown) => void;
 
-  /** Deferred resolver for pending AskUserQuestion. */
-  activeQuestionResolver?: {
-    resolve: (answers: Record<string, AskQuestionAnswer>) => void;
-    reject: (reason: unknown) => void;
-  };
-
   /** Timeout handle for prompt execution timeout. */
   timeoutHandle?: ReturnType<typeof setTimeout>;
 
@@ -46,11 +39,15 @@ export interface ConversationRuntimeState {
   /** Per-conversation tooling overrides injected by callers (e.g., graph workflow execution tools). Applied to backend runtime on creation. */
   tooling?: ConversationToolingOverrides;
 
+  /** Graph-workflow lane identity injected by the workflow engine for implementer-lane conversations. Threaded into the session env on backend runtime creation so cctl lane commands resolve their execution/context from env. */
+  workflowContext?: { executionId: string; contextId: string };
+
   /** When true, prepareTurnForMachine skips conversation lock acquisition. Used by validator agents whose runtime lifetime is owned by a parent conversation. */
   skipConversationLock?: boolean;
 
-  /** When true, the current turn was started in autonomous mode; the
-   * AskUserQuestion MCP tool returns a denial result instead of blocking. */
+  /** When true, the current turn was started in autonomous mode; interactive
+   * ceremonies that need a human in the loop (e.g. session-alignment draft
+   * authoring) are denied for the turn. */
   currentTurnAutonomous?: boolean;
 
   /** Stable id of the visible user message that produced the current turn. */
@@ -113,32 +110,6 @@ export function hasConversationRuntime(key: string): boolean {
 /** Get all registered conversation runtime keys (for diagnostics). */
 export function getRegisteredConversationKeys(): string[] {
   return [...getRegistry().keys()];
-}
-
-/**
- * Whether a conversation currently has a pending AskUserQuestion resolver
- * installed (a turn is blocked waiting for a human answer). Read by the
- * session-tools supervisor's pending-question guard so proactive recovery
- * never orphans a validly pending question.
- */
-export function hasActiveQuestionResolver(key: string): boolean {
-  return getRegistry().get(key)?.activeQuestionResolver !== undefined;
-}
-
-/**
- * Reject the active question resolver for a conversation, if one is installed.
- * Returns true when a pending resolver was rejected and cleared.
- */
-export function rejectActiveQuestionResolver(
-  key: string,
-  reason: string,
-): boolean {
-  const state = getRegistry().get(key);
-  const resolver = state?.activeQuestionResolver;
-  if (!state || !resolver) return false;
-  state.activeQuestionResolver = undefined;
-  resolver.reject(new Error(reason));
-  return true;
 }
 
 /** Reset state for testing — do not use in production. */

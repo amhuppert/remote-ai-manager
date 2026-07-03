@@ -121,6 +121,9 @@ export default function PaneConversationBody({
           renderMessage={({ row, isLast }) => (
             <MessageRow
               msg={row.msg}
+              queuedMetadata={
+                row.msg.queued ? row.msg.queued.metadata : undefined
+              }
               messageIndex={row.messageIndex}
               isLast={isLast}
               selectedBackend={selectedBackend}

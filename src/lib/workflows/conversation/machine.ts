@@ -12,18 +12,23 @@
  *  │ ENTER_DEBUG_MODE                           │ (prepareTurn done)
  *  v                                            v
  * debug (compound)                 executing (compound, invokes executePrompt)
- *  ├─ hypothesizing                 ├─ running ◄─── ANSWER ───┐
- *  ├─ awaitingReproduction          │    │                     │
- *  ├─ analyzingEvidence             │    │ ASK_QUESTION        │
- *  ├─ awaitingVerification          │    v                     │
- *  └─ cleanupInstrumentation        └─ waitingForInput ────────┘
+ *  ├─ hypothesizing                 │  ASK_QUESTION (internal: records the
+ *  ├─ analyzingEvidence             │  pending question; the stream keeps
+ *  ├─ awaitingReproduction          │  running until the agent ends its turn)
+ *  ├─ awaitingVerification          │
+ *  └─ cleanupInstrumentation        │
  *                                 PROMPT_COMPLETED / PROMPT_FAILED / ABORT_TURN
  *                                             │
  *                                             v
  *                                       finalizingTurn
  *                                             │
- *                                             v
- *                                      idle / debug.*
+ *                    ┌────────────────────────┼──────────────┐
+ *                    v                        v              v
+ *            waitingForInput               idle           debug.*
+ *          (pendingQuestion set;        (default)
+ *           drains queue on entry;
+ *           any turn claim clears
+ *           the question)
  */
 
 import { setup, assign, and, type ActorRefFrom } from "xstate";
@@ -32,10 +37,12 @@ import type {
   ConversationEvent,
   ConversationInput,
   ConversationOutput,
+  ConversationTurnActive,
   PrepareTurnInput,
   ExecutePromptInput,
   PromptActorResult,
   RunTaskRunInput,
+  TaskRunActive,
   VerifyCleanupInput,
 } from "./types";
 import {
@@ -70,6 +77,58 @@ function accumulateTotals(
     totalTurns: (current.totalTurns ?? 0) + (result.numTurns ?? 0),
     contextTokens: result.contextTokens ?? current.contextTokens,
     contextWindowMax: result.contextWindow ?? current.contextWindowMax,
+  };
+}
+
+/** Build the ActiveTurn for a SUBMIT_PROMPT claim. Shared by every state that
+ *  can claim a conversation turn (idle, waitingForInput, debug.*). */
+function conversationTurnFromEvent(
+  context: ConversationContext,
+  event: Extract<ConversationEvent, { type: "SUBMIT_PROMPT" }>,
+): ConversationTurnActive {
+  return {
+    kind: "conversation_turn",
+    promptText: event.promptText,
+    images: event.images ?? [],
+    backend: event.backend ?? context.agentBackend,
+    modelId: event.modelId ?? null,
+    effort: event.effort ?? null,
+    autonomous: event.autonomous ?? false,
+    startedAt: new Date().toISOString(),
+    streamId: event.streamId,
+    outputFormat: event.outputFormat,
+    ...(event.waitForBackgroundTasks ? { waitForBackgroundTasks: true } : {}),
+    ...(event.queuedDelivery ? { queuedDelivery: event.queuedDelivery } : {}),
+    ...(event.documentFeedback
+      ? { documentFeedback: event.documentFeedback }
+      : {}),
+  };
+}
+
+/** Build the ActiveTurn for a SUBMIT_TASK_RUN claim. */
+function taskRunFromEvent(
+  context: ConversationContext,
+  event: Extract<ConversationEvent, { type: "SUBMIT_TASK_RUN" }>,
+): TaskRunActive {
+  return {
+    kind: "task_run",
+    promptText: event.promptText,
+    backend: event.backend ?? context.agentBackend,
+    modelId: event.modelId ?? null,
+    effort: event.effort ?? null,
+    startedAt: new Date().toISOString(),
+    ...(event.outputFormat !== undefined
+      ? { outputFormat: event.outputFormat }
+      : {}),
+    ...(event.systemInstructions !== undefined
+      ? { systemInstructions: event.systemInstructions }
+      : {}),
+    ...(event.tooling !== undefined ? { tooling: event.tooling } : {}),
+    ...(event.timeoutMs !== undefined ? { timeoutMs: event.timeoutMs } : {}),
+    ...(event.skipStructuredOutputGate !== undefined
+      ? { skipStructuredOutputGate: event.skipStructuredOutputGate }
+      : {}),
+    ...(event.origin !== undefined ? { origin: event.origin } : {}),
   };
 }
 
@@ -236,57 +295,18 @@ export const conversationMachine = setup({
         SUBMIT_PROMPT: {
           target: "acquiringResources",
           actions: assign({
-            activeTurn: ({ context, event }) => ({
-              kind: "conversation_turn" as const,
-              promptText: event.promptText,
-              images: event.images ?? [],
-              backend: event.backend ?? context.agentBackend,
-              modelId: event.modelId ?? null,
-              effort: event.effort ?? null,
-              autonomous: event.autonomous ?? false,
-              startedAt: new Date().toISOString(),
-              streamId: event.streamId,
-              outputFormat: event.outputFormat,
-              ...(event.waitForBackgroundTasks
-                ? { waitForBackgroundTasks: true }
-                : {}),
-              ...(event.queuedDelivery
-                ? { queuedDelivery: event.queuedDelivery }
-                : {}),
-              ...(event.documentFeedback
-                ? { documentFeedback: event.documentFeedback }
-                : {}),
-            }),
+            activeTurn: ({ context, event }) =>
+              conversationTurnFromEvent(context, event),
+            pendingQuestion: null,
             lastError: null,
           }),
         },
         SUBMIT_TASK_RUN: {
           target: "acquiringResources",
           actions: assign({
-            activeTurn: ({ context, event }) => ({
-              kind: "task_run" as const,
-              promptText: event.promptText,
-              backend: event.backend ?? context.agentBackend,
-              modelId: event.modelId ?? null,
-              effort: event.effort ?? null,
-              startedAt: new Date().toISOString(),
-              ...(event.outputFormat !== undefined
-                ? { outputFormat: event.outputFormat }
-                : {}),
-              ...(event.systemInstructions !== undefined
-                ? { systemInstructions: event.systemInstructions }
-                : {}),
-              ...(event.tooling !== undefined
-                ? { tooling: event.tooling }
-                : {}),
-              ...(event.timeoutMs !== undefined
-                ? { timeoutMs: event.timeoutMs }
-                : {}),
-              ...(event.skipStructuredOutputGate !== undefined
-                ? { skipStructuredOutputGate: event.skipStructuredOutputGate }
-                : {}),
-              ...(event.origin !== undefined ? { origin: event.origin } : {}),
-            }),
+            activeTurn: ({ context, event }) =>
+              taskRunFromEvent(context, event),
+            pendingQuestion: null,
             lastError: null,
           }),
         },
@@ -388,11 +408,13 @@ export const conversationMachine = setup({
 
     // ========================================================
     // EXECUTING — compound state that branches on activeTurn.kind:
-    //   - conversation_turn → invokes the streaming `executePrompt` actor;
-    //     keeps the running ↔ waitingForInput compound so ASK_QUESTION/ANSWER
-    //     transitions don't tear down the long-lived stream.
+    //   - conversation_turn → invokes the streaming `executePrompt` actor.
+    //     ASK_QUESTION is an internal transition: it records the pending
+    //     question without tearing down the long-lived stream; the agent is
+    //     expected to end its turn, and finalizingTurn then routes to the
+    //     top-level waitingForInput state.
     //   - task_run → invokes the single-shot `runTaskRun` actor; no
-    //     mid-turn ask-user, so there are no nested substates.
+    //     mid-turn ask-user.
     // The discriminator is `kind` only — `outputFormat` is consumed by both
     // branches (Debug Mode uses it on the streaming path) and must not gate
     // dispatch selection.
@@ -429,6 +451,21 @@ export const conversationMachine = setup({
             pendingQuestion: null,
           }),
         },
+        // The pending question was consumed (answered) mid-turn; the turn keeps
+        // running and finalizingTurn will settle to idle instead of
+        // waitingForInput.
+        CLEAR_PENDING_QUESTION: {
+          guard: ({ context }) => context.pendingQuestion != null,
+          actions: [
+            assign({
+              status: "running" as const,
+              pendingQuestion: null,
+            }),
+            "syncDerivedFields",
+            "broadcastConversationStatus",
+            "persistSnapshot",
+          ],
+        },
       },
 
       states: {
@@ -446,7 +483,27 @@ export const conversationMachine = setup({
         },
 
         conversationTurn: {
-          initial: "running",
+          on: {
+            // Internal transition: the stream invoke stays alive. The ASK
+            // side effects (persist, SSE, push) all fire here; the turn keeps
+            // running until the agent ends it.
+            ASK_QUESTION: {
+              actions: [
+                assign({
+                  status: "waiting_for_input" as const,
+                  pendingQuestion: ({ event }) => ({
+                    questionId: event.questionId,
+                    questions: event.questions,
+                  }),
+                }),
+                "syncDerivedFields",
+                "broadcastConversationStatus",
+                "broadcastAskQuestion",
+                "dispatchPushNotification",
+                "persistSnapshot",
+              ],
+            },
+          },
 
           invoke: {
             src: "executePrompt",
@@ -521,48 +578,6 @@ export const conversationMachine = setup({
               actions: assign({
                 lastError: ({ event }) => extractError(event.error),
               }),
-            },
-          },
-
-          states: {
-            running: {
-              on: {
-                ASK_QUESTION: {
-                  target: "waitingForInput",
-                  actions: [
-                    assign({
-                      status: "waiting_for_input" as const,
-                      pendingQuestion: ({ event }) => ({
-                        questionId: event.questionId,
-                        questions: event.questions,
-                      }),
-                    }),
-                    "syncDerivedFields",
-                    "broadcastConversationStatus",
-                    "broadcastAskQuestion",
-                    "dispatchPushNotification",
-                    "persistSnapshot",
-                  ],
-                },
-              },
-            },
-
-            waitingForInput: {
-              on: {
-                ANSWER: {
-                  target: "running",
-                  actions: [
-                    assign({
-                      status: "running" as const,
-                      pendingQuestion: null,
-                    }),
-                    "syncDerivedFields",
-                    "broadcastConversationStatus",
-                    "markReadOnUserTurnStart",
-                    "persistSnapshot",
-                  ],
-                },
-              },
             },
           },
         },
@@ -895,7 +910,39 @@ export const conversationMachine = setup({
             "persistSnapshot",
           ],
         },
-        // Default: not in debug mode
+        // A question survived the turn: the agent registered it (cctl ask)
+        // and ended its turn. Settle turn metadata but keep the pending
+        // question and its waiting_for_input status — the answer arrives as
+        // the next queued user message. No dispatchPushNotification here: the
+        // ASK_QUESTION transition already pushed "needs your input" and this
+        // transition must not re-fire a conflicting status push.
+        {
+          guard: ({ context }) => context.pendingQuestion != null,
+          target: "waitingForInput",
+          actions: [
+            assign(({ context }) => {
+              const result = context.lastResult;
+              return {
+                promptCount:
+                  context.activeTurn != null || result != null
+                    ? context.promptCount + 1
+                    : context.promptCount,
+                totals: result
+                  ? accumulateTotals(context.totals, result)
+                  : context.totals,
+                activeTurn: null,
+                status: "waiting_for_input" as const,
+                lastActivityAt: new Date().toISOString(),
+              };
+            }),
+            "syncDerivedFields",
+            "releaseResources",
+            "broadcastConversationStatus",
+            "markUnreadOnFinish",
+            "persistSnapshot",
+          ],
+        },
+        // Default: not in debug mode, no pending question
         {
           target: "idle",
           actions: [
@@ -924,6 +971,54 @@ export const conversationMachine = setup({
           ],
         },
       ],
+    },
+
+    // ========================================================
+    // WAITING FOR INPUT — no turn is running; a question pends.
+    // Entered from finalizingTurn when the asking turn ended with its
+    // question unanswered. Draining here keeps queued user messages (an
+    // answer or a redirect) from stalling; claiming ANY turn clears the
+    // pending question — the answer consumed it, or a fresh user prompt
+    // supersedes it and the panel dismisses via the status SSE.
+    // ========================================================
+    waitingForInput: {
+      entry: [{ type: "drainPendingQueue" }],
+      on: {
+        SUBMIT_PROMPT: {
+          target: "acquiringResources",
+          actions: assign({
+            activeTurn: ({ context, event }) =>
+              conversationTurnFromEvent(context, event),
+            pendingQuestion: null,
+            lastError: null,
+          }),
+        },
+        SUBMIT_TASK_RUN: {
+          target: "acquiringResources",
+          actions: assign({
+            activeTurn: ({ context, event }) =>
+              taskRunFromEvent(context, event),
+            pendingQuestion: null,
+            lastError: null,
+          }),
+        },
+        // An explicit user "stop" has no turn to abort here; it clears the
+        // pending question — after a stop the next input comes from the user
+        // anyway, so the question is moot.
+        ABORT_TURN: {
+          target: "idle",
+          actions: [
+            assign({
+              pendingQuestion: null,
+              status: "awaiting" as const,
+              lastActivityAt: () => new Date().toISOString(),
+            }),
+            "syncDerivedFields",
+            "broadcastConversationStatus",
+            "persistSnapshot",
+          ],
+        },
+      },
     },
 
     // ========================================================
@@ -968,27 +1063,9 @@ export const conversationMachine = setup({
         SUBMIT_PROMPT: {
           target: "#conversation.acquiringResources",
           actions: assign({
-            activeTurn: ({ event, context }) => ({
-              kind: "conversation_turn" as const,
-              promptText: event.promptText,
-              images: event.images ?? [],
-              backend: event.backend ?? context.agentBackend,
-              modelId: event.modelId ?? null,
-              effort: event.effort ?? null,
-              autonomous: event.autonomous ?? false,
-              startedAt: new Date().toISOString(),
-              streamId: event.streamId,
-              outputFormat: event.outputFormat,
-              ...(event.waitForBackgroundTasks
-                ? { waitForBackgroundTasks: true }
-                : {}),
-              ...(event.queuedDelivery
-                ? { queuedDelivery: event.queuedDelivery }
-                : {}),
-              ...(event.documentFeedback
-                ? { documentFeedback: event.documentFeedback }
-                : {}),
-            }),
+            activeTurn: ({ context, event }) =>
+              conversationTurnFromEvent(context, event),
+            pendingQuestion: null,
             lastError: null,
           }),
         },

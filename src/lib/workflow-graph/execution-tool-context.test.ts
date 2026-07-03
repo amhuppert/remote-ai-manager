@@ -12,7 +12,7 @@ import type { ExecutionTarget } from "./execution-target-resolver";
 import { createGraphWorkflowRuntimeEditService } from "./runtime-edits";
 import { createGraphWorkflowSharedDocumentRegistryService } from "./shared-documents";
 import { createWorkflowExecution } from "./test-fixtures";
-import type { GraphWorkflowCollaborationContextBlock } from "./tool-server";
+import type { GraphWorkflowCollaborationContextBlock } from "./lane-tool-service";
 
 interface FakeStore {
   current: GraphWorkflowExecution;

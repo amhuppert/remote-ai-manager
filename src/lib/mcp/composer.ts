@@ -49,9 +49,9 @@ export interface McpComposeInput {
   gatewayServers: readonly PortableMcpServerConfig[];
   /** Gateway ids to reserve even when no gateway server is emitted for them.
    *
-   * Backends that bind a gateway in-process (e.g. Claude consuming
-   * `cc-session-tools` as an `'sdk'` instance) emit no portable entry for that
-   * id but must still prevent a user-configured server from colliding with it.
+   * A backend that binds a gateway in-process (consuming a gateway server as
+   * an `'sdk'` instance) emits no portable entry for that id but must still
+   * prevent a user-configured server from colliding with it.
    * The composer reserves the union of `reservedGatewayIds` and the ids of any
    * emitted gateway servers. */
   reservedGatewayIds: readonly string[];

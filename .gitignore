@@ -10,6 +10,7 @@ out/
 # build
 dist/
 build/
+src/lib/build-info/build-info.generated.ts
 
 # env files
 .env

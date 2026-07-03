@@ -3,12 +3,12 @@ import { withTracing } from "@/lib/logging";
 import {
   hasPlannerDraftSubmission,
   submitPlannerDraft,
-} from "@/lib/mcp-gateway/planner-draft-registry";
-import { registerPlannerDraftTools } from "@/lib/mcp-gateway/planner-draft-server";
+} from "@/lib/workflows/workflow-draft/registry";
+import { registerPlannerDraftTools } from "@/lib/workflows/workflow-draft/server";
 import {
   McpRouteError,
   createMcpRouteHandlers,
-} from "@/lib/mcp-gateway/route-handler";
+} from "@/lib/workflows/workflow-draft/route-handler";
 import { createWorkflowDefinitionRouteHandlers } from "@/lib/workflows/definition-route-handlers";
 import { createWorkflowGenerateRouteHandlers } from "@/lib/workflows/generate-route-handlers";
 import { createTemplateLibraryRouteHandlers } from "@/lib/workflow-graph/template-library-route-handlers";

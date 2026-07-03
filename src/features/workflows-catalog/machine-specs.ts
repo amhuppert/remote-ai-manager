@@ -129,7 +129,7 @@ const conversationMetadata: MachineMetadata = {
     },
     executing: {
       description:
-        "Compound state: branches on activeTurn.kind. Streaming conversation_turn invokes executePrompt and stays alive across ASK_QUESTION/ANSWER pauses; single-shot task_run invokes runTaskRun once and returns one final TranscriptMessage.",
+        "Compound state: branches on activeTurn.kind. Streaming conversation_turn invokes executePrompt; ASK_QUESTION records a pending question without pausing the stream. Single-shot task_run invokes runTaskRun once and returns one final TranscriptMessage.",
       events: [
         {
           event: "PROMPT_COMPLETED",
@@ -144,6 +144,11 @@ const conversationMetadata: MachineMetadata = {
           event: "BACKEND_INIT",
           description: "Internal: store backend session ref.",
         },
+        {
+          event: "CLEAR_PENDING_QUESTION",
+          description:
+            "Answer consumed the pending question mid-turn; the turn keeps running and finalizes to idle.",
+        },
       ],
     },
     "executing.dispatching": {
@@ -153,26 +158,12 @@ const conversationMetadata: MachineMetadata = {
     },
     "executing.conversationTurn": {
       description:
-        "Streaming conversation branch: the executePrompt invoke stays alive across running ↔ waitingForInput transitions so the SDK can pause for AskUserQuestion answers without restarting the stream.",
-    },
-    "executing.conversationTurn.running": {
-      status: "initial",
-      description: "SDK is producing output.",
+        "Streaming conversation branch: invokes executePrompt. ASK_QUESTION is an internal transition — it records the pending question (persist + SSE + push) while the stream keeps running; the agent then ends its turn and finalizingTurn routes to waitingForInput.",
       events: [
         {
           event: "ASK_QUESTION",
-          description: "SDK called the AskUserQuestion tool.",
-        },
-      ],
-    },
-    "executing.conversationTurn.waitingForInput": {
-      status: "warning",
-      description:
-        "Holding the SDK in a paused state until the user answers the pending question.",
-      events: [
-        {
-          event: "ANSWER",
-          description: "User submitted an answer; resume.",
+          description:
+            "Agent registered a question batch; the turn keeps running until the agent ends it.",
         },
       ],
     },
@@ -232,8 +223,38 @@ const conversationMetadata: MachineMetadata = {
         },
         {
           event: "always",
+          target: "waitingForInput",
+          description:
+            "A registered question survived the turn — settle turn metadata and wait for the user's answer.",
+          guardLabel: "pendingQuestion != null",
+        },
+        {
+          event: "always",
           target: "idle",
-          description: "Default: not in debug mode → return to idle.",
+          description:
+            "Default: not in debug mode, no pending question → return to idle.",
+        },
+      ],
+    },
+    waitingForInput: {
+      status: "warning",
+      description:
+        "No turn is running; a question pends. Drains the message queue on entry so an answer (or a redirecting user message) starts the next turn; claiming any turn clears the pending question.",
+      events: [
+        {
+          event: "SUBMIT_PROMPT",
+          description:
+            "Answer or superseding user message arrives — claim a turn, clear the question.",
+        },
+        {
+          event: "SUBMIT_TASK_RUN",
+          description:
+            "Workflow task claims the conversation — clears the question.",
+        },
+        {
+          event: "ABORT_TURN",
+          description:
+            "Explicit stop: nothing to abort, clears the pending question.",
         },
       ],
     },
@@ -333,7 +354,7 @@ const conversationMetadata: MachineMetadata = {
     prepareTurn:
       "Acquires the session lock and a query-semaphore slot, ensures the transcript file exists, and returns the resolved transcript path.",
     executePrompt:
-      "Streams a turn through the agent backend (Claude Agent SDK or Codex). Stays alive across ASK_QUESTION/ANSWER pauses by virtue of being invoked on the executing.conversationTurn compound state.",
+      "Streams a turn through the agent backend (Claude Agent SDK or Codex). ASK_QUESTION does not interrupt it — the invoke lives until the turn ends.",
     runTaskRun:
       "Executes a single-shot task_run turn via the shared AgentCall task-runner path. Non-streaming counterpart to executePrompt: awaits the full AgentCallResult, persists exactly one final assistant TranscriptMessage, broadcasts message-appended once, and surfaces a parsed structuredOutput when outputSchema is present.",
     verifyCleanup:

@@ -1,10 +1,24 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   collectRehydrationCandidates,
+  getConversationActor,
   rehydrateConversationActors,
+  setConversationQueueDeps,
+  setMachineFactory,
+  _resetConversationQueueDepsForTesting,
   _resetForTesting,
+  _resetMachineFactoryForTesting,
+  type ConversationQueueDeps,
   type RehydrateConversationActorsDeps,
 } from "./manager";
+import { conversationMachine } from "./machine";
+import type {
+  ConversationInput,
+  ExecutePromptInput,
+  PrepareTurnInput,
+  PrepareTurnOutput,
+  PromptActorResult,
+} from "./types";
 import { PROJECT_CONVERSATION_SESSION_SENTINEL } from "@/lib/conversations/project-conversation-scope";
 import {
   conversationStateSchema,
@@ -12,7 +26,12 @@ import {
 } from "@/lib/conversations/schemas";
 import { sessionStateSchema } from "@/lib/sessions/schemas";
 import { managerStateSchema, type ManagerState } from "@/lib/projects/schemas";
-import type { Snapshot } from "xstate";
+import {
+  createActor,
+  fromPromise,
+  type AnyActorRef,
+  type Snapshot,
+} from "xstate";
 
 const ts = "2025-01-01T00:00:00.000Z";
 
@@ -55,6 +74,8 @@ const emptyState = (): ManagerState =>
 
 afterEach(() => {
   _resetForTesting();
+  _resetMachineFactoryForTesting();
+  _resetConversationQueueDepsForTesting();
 });
 
 describe("collectRehydrationCandidates", () => {
@@ -133,5 +154,174 @@ describe("rehydrateConversationActors (project conversations)", () => {
     );
     expect(count).toBe(0);
     expect(validate).not.toHaveBeenCalled();
+  });
+});
+
+describe("waitingForInput rehydration contract", () => {
+  // The turn must stay open until ASK_QUESTION lands, so executePrompt
+  // resolves only when the test releases it.
+  let releaseTurn: (() => void) | null = null;
+
+  const stubbedMachine = () =>
+    conversationMachine.provide({
+      actors: {
+        prepareTurn: fromPromise<PrepareTurnOutput, PrepareTurnInput>(
+          async () => ({ transcriptPath: "/tmp/t.jsonl" }),
+        ),
+        executePrompt: fromPromise<PromptActorResult, ExecutePromptInput>(
+          () =>
+            new Promise((resolve) => {
+              releaseTurn = () => resolve(promptResult());
+            }),
+        ),
+      },
+      actions: {
+        persistSnapshot: () => {},
+        syncDerivedFields: () => {},
+        broadcastConversationStatus: () => {},
+        broadcastAskQuestion: () => {},
+        broadcastDebugModeStatus: () => {},
+        releaseResources: () => {},
+        dispatchPushNotification: () => {},
+        markUnreadOnFinish: () => {},
+        markReadOnUserTurnStart: () => {},
+        drainPendingQueue: () => {},
+      },
+    });
+
+  function promptResult(): PromptActorResult {
+    return {
+      backendRef: null,
+      costUsd: null,
+      durationMs: null,
+      numTurns: 1,
+      contextTokens: null,
+      contextWindow: null,
+      inputTokens: null,
+      outputTokens: null,
+      cachedInputTokens: null,
+      contentBlocks: [],
+      aborted: false,
+      compacted: false,
+      error: null,
+      structuredOutput: undefined,
+    };
+  }
+
+  const actorInput: ConversationInput = {
+    projectPath: "/repo",
+    projectName: "demo",
+    sessionName: "feat",
+    worktreePath: "/repo/.worktrees/feat",
+    conversationId: "c-wfi",
+    createdAt: ts,
+    forkedFrom: null,
+    role: null,
+    transcriptPath: null,
+    agentBackend: "claude",
+    backendRef: null,
+    promptCount: 0,
+  };
+
+  const claimNextTurnBatch = vi.fn(async () => null);
+  const noopQueueDeps: ConversationQueueDeps = {
+    claimNextTurnBatch,
+    markPending: async () => {},
+    markDelivered: async () => {},
+    markFailed: async () => {},
+    recoverAbandonedDeliveries: async () => 0,
+    runConversationCommand: async () => {
+      throw new Error("not used");
+    },
+  };
+
+  /** Drive a throwaway actor into waitingForInput and capture its persisted
+   *  snapshot — the exact payload persistSnapshot would have written. */
+  async function captureWaitingForInputSnapshot(): Promise<unknown> {
+    const actor = createActor(stubbedMachine(), { input: actorInput });
+    actor.start();
+    actor.send({ type: "SUBMIT_PROMPT", promptText: "hi", streamId: "s1" });
+    await waitForValue(actor, (v) => JSON.stringify(v).includes("executing"));
+    await new Promise((r) => setTimeout(r, 10));
+    actor.send({ type: "ASK_QUESTION", questionId: "q-9", questions: [] });
+    releaseTurn!();
+    await waitForValue(actor, (v) => v === "waitingForInput");
+    const persisted = actor.getPersistedSnapshot();
+    actor.stop();
+    return persisted;
+  }
+
+  function waitForValue(
+    actor: AnyActorRef,
+    predicate: (value: unknown) => boolean,
+    timeoutMs = 3000,
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () =>
+          reject(
+            new Error(
+              `Timed out; current: ${JSON.stringify(actor.getSnapshot().value)}`,
+            ),
+          ),
+        timeoutMs,
+      );
+      if (predicate(actor.getSnapshot().value)) {
+        clearTimeout(timer);
+        resolve();
+        return;
+      }
+      const sub = actor.subscribe((s) => {
+        if (predicate(s.value)) {
+          clearTimeout(timer);
+          sub.unsubscribe();
+          resolve();
+        }
+      });
+    });
+  }
+
+  it("a conversation persisted in waitingForInput wakes in waitingForInput after restart", async () => {
+    const persisted = await captureWaitingForInputSnapshot();
+    setMachineFactory(stubbedMachine);
+    setConversationQueueDeps(noopQueueDeps);
+
+    const conversation = conv({
+      id: "c-wfi",
+      status: "waiting_for_input",
+      machineSnapshot: persisted as ConversationState["machineSnapshot"],
+    });
+    const deps: RehydrateConversationActorsDeps = {
+      readState: async () => stateWith([conversation]),
+      listAllProjectConversations: async () => [],
+      getProjectDisplayName: () => "demo",
+      validateRestoredSnapshot: (raw) => raw as Snapshot<unknown>,
+    };
+
+    const count = await rehydrateConversationActors(deps);
+    expect(count).toBe(1);
+
+    const actor = getConversationActor("/repo", "feat", "c-wfi");
+    expect(actor).toBeDefined();
+    const snap = actor!.getSnapshot();
+    expect(snap.value).toBe("waitingForInput");
+    expect(snap.context.pendingQuestion).toEqual({
+      questionId: "q-9",
+      questions: [],
+    });
+    // The woken actor accepts the answer/supersede turn claim.
+    expect(
+      snap.can({ type: "SUBMIT_PROMPT", promptText: "answer", streamId: "s2" }),
+    ).toBe(true);
+
+    // Restored actors never re-fire entry drains; the rehydrator must drain
+    // explicitly so rows enqueued before the restart deliver.
+    await vi.waitFor(() => {
+      expect(claimNextTurnBatch).toHaveBeenCalledWith({
+        projectPath: "/repo",
+        sessionName: "feat",
+        conversationId: "c-wfi",
+      });
+    });
   });
 });

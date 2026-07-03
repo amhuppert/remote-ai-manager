@@ -274,22 +274,19 @@ describe("composeRuntimeMcpConfig gateway protection (task 7.2)", () => {
     const result = composeRuntimeMcpConfig({
       discovered: [mkDefinition({ serverKey: "user-a", nativeId: "user-a" })],
       effective: new Map(),
-      gatewayServers: [
-        gateway("cc-session-tools"),
-        gateway("cc-graph-workflow"),
-      ],
+      gatewayServers: [gateway("gateway-alpha"), gateway("gateway-beta")],
       reservedGatewayIds: [],
     });
 
     expect(result.portable.servers.map((s) => s.id)).toEqual([
       "user-a",
-      "cc-session-tools",
-      "cc-graph-workflow",
+      "gateway-alpha",
+      "gateway-beta",
     ]);
   });
 
   it("preserves gateway entries verbatim", () => {
-    const gw = gateway("cc-session-tools");
+    const gw = gateway("gateway-alpha");
     const result = composeRuntimeMcpConfig({
       discovered: [],
       effective: new Map(),
@@ -301,12 +298,12 @@ describe("composeRuntimeMcpConfig gateway protection (task 7.2)", () => {
   });
 
   it("drops a user-configured server whose id collides with a gateway id and keeps the gateway", () => {
-    const gw = gateway("cc-session-tools", "/gw-path");
+    const gw = gateway("gateway-alpha", "/gw-path");
     const result = composeRuntimeMcpConfig({
       discovered: [
         mkDefinition({
           serverKey: "user-collision",
-          nativeId: "cc-session-tools",
+          nativeId: "gateway-alpha",
         }),
         mkDefinition({ serverKey: "keeper", nativeId: "keeper" }),
       ],
@@ -316,43 +313,35 @@ describe("composeRuntimeMcpConfig gateway protection (task 7.2)", () => {
     });
 
     const ids = result.portable.servers.map((s) => s.id);
-    expect(ids).toEqual(["keeper", "cc-session-tools"]);
+    expect(ids).toEqual(["keeper", "gateway-alpha"]);
     const gatewayEntry = result.portable.servers.find(
-      (s) => s.id === "cc-session-tools",
+      (s) => s.id === "gateway-alpha",
     );
     expect(gatewayEntry).toBe(gw);
-    expect(result.collidedGatewayIds).toEqual(["cc-session-tools"]);
+    expect(result.collidedGatewayIds).toEqual(["gateway-alpha"]);
   });
 
   it("marks gateway ids as reserved so no UI surface can expose a toggle for them", () => {
     const result = composeRuntimeMcpConfig({
       discovered: [],
       effective: new Map(),
-      gatewayServers: [
-        gateway("cc-session-tools"),
-        gateway("cc-graph-workflow"),
-      ],
+      gatewayServers: [gateway("gateway-alpha"), gateway("gateway-beta")],
       reservedGatewayIds: [],
     });
 
-    expect(result.reservedServerIds).toEqual([
-      "cc-session-tools",
-      "cc-graph-workflow",
-    ]);
+    expect(result.reservedServerIds).toEqual(["gateway-alpha", "gateway-beta"]);
   });
 
   it("always appends gateway servers even when no user-configured servers are present", () => {
     const result = composeRuntimeMcpConfig({
       discovered: [],
       effective: new Map(),
-      gatewayServers: [gateway("cc-session-tools")],
+      gatewayServers: [gateway("gateway-alpha")],
       reservedGatewayIds: [],
     });
 
-    expect(result.portable.servers.map((s) => s.id)).toEqual([
-      "cc-session-tools",
-    ]);
-    expect(result.reservedServerIds).toEqual(["cc-session-tools"]);
+    expect(result.portable.servers.map((s) => s.id)).toEqual(["gateway-alpha"]);
+    expect(result.reservedServerIds).toEqual(["gateway-alpha"]);
   });
 
   it("reserves explicit gateway ids even when no gateway server is emitted, dropping a colliding user-configured server", () => {
@@ -360,16 +349,16 @@ describe("composeRuntimeMcpConfig gateway protection (task 7.2)", () => {
       discovered: [
         mkDefinition({
           serverKey: "user-collision",
-          nativeId: "cc-session-tools",
+          nativeId: "gateway-alpha",
         }),
         mkDefinition({ serverKey: "keeper", nativeId: "keeper" }),
       ],
       effective: new Map(),
       gatewayServers: [],
-      reservedGatewayIds: ["cc-session-tools"],
+      reservedGatewayIds: ["gateway-alpha"],
     });
 
     expect(result.portable.servers.map((s) => s.id)).toEqual(["keeper"]);
-    expect(result.collidedGatewayIds).toEqual(["cc-session-tools"]);
+    expect(result.collidedGatewayIds).toEqual(["gateway-alpha"]);
   });
 });

@@ -27,7 +27,7 @@ const NATIVE_EDIT_ORIGINS: Record<string, "write" | "edit"> = {
 /**
  * Strip the `mcp__<server>__` prefix from a tool name, returning the bare tool.
  * The transcript stores the full MCP name (e.g.
- * `mcp__cc-session-tools__register_document`); bare names pass through unchanged.
+ * `mcp__playwright__browser_click`); bare names pass through unchanged.
  */
 function normalizeToolName(name: string): string {
   if (!name.startsWith("mcp__")) return name;

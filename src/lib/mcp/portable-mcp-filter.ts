@@ -4,9 +4,9 @@
  * Adapts the resolver's final `PortableMcpConfig` (the translated, cascade
  * resolved output emitted to a backend) into the `McpFilterLookup` contract
  * consumed by Claude's `canUseTool` permission callback. The lookup is live —
- * it reads from a caller-supplied getter on every call, so a runtime that
- * mutates its current portable config (e.g. via `setMcpServers`) reflects the
- * change in subsequent permission checks without recreating the callback.
+ * it reads from a caller-supplied getter on every call, so a runtime whose
+ * current portable config changes reflects the change in subsequent permission
+ * checks without recreating the callback.
  *
  * Denial reasons mirror the spec:
  * - `server-disabled` — `enabled === false` on the emitted entry

@@ -731,7 +731,7 @@ describe("ConversationWorkspace", () => {
       expect(getStopButtons().length).toBeGreaterThan(0);
     });
 
-    it("renders the Stop button when conversation is waiting_for_input", () => {
+    it("does NOT offer a turn-abort in waiting_for_input — no turn is running (async ask)", () => {
       testSession = {
         ...baseSession,
         conversations: [
@@ -739,7 +739,7 @@ describe("ConversationWorkspace", () => {
         ],
       };
       renderPage();
-      expect(getStopButtons().length).toBeGreaterThan(0);
+      expect(getStopButtons()).toHaveLength(0);
     });
 
     it("does not render the Stop button when conversation is idle", () => {

@@ -46,13 +46,13 @@ import {
 } from "./script-validator-runner";
 import { createWorkflowStorageService } from "./storage";
 import { scopeForTier } from "./template-library-service";
-import { buildGraphWorkflowPortableMcp } from "@/lib/mcp-gateway/portable-config";
 import {
   createGraphWorkflowExecutionLoop,
   isExecutionLoopActive,
 } from "@/lib/workflow-graph/execution-loop";
 import {
   createGraphWorkflowIterationOrchestrator,
+  type GraphWorkflowIterationToolServer,
   type IterationOrchestratorScriptValidatorInput,
 } from "@/lib/workflow-graph/iteration-orchestrator";
 import {
@@ -271,6 +271,20 @@ const sharedDocumentMaterializer = createWorkflowDocumentMaterializer({
   store: createSharedDocumentStore(),
 });
 
+/**
+ * The transient MCP tool server attached to a graph-workflow lane iteration.
+ * Empty by design: the four lane tools (task complete/add, shared-doc upsert,
+ * collab request) moved to the token-gated `cctl workflow …` verbs the lane
+ * prompt instructs (docs/design/cc-cli/02 §4), so NEW lane conversations attach
+ * no in-process CC MCP server — its empty `servers` list is a no-op in the
+ * conversation's portable-MCP compose. Exported as a named seam so a unit test
+ * can pin "new lane spawns get no in-process CC server entry" without
+ * reaching into the orchestrator wiring.
+ */
+export function buildLaneIterationToolServer(): GraphWorkflowIterationToolServer {
+  return { server: { servers: [] } };
+}
+
 const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
   executionRepository: workflowManager,
   findLatestContextValidationEvent: (executionId, contextId) =>
@@ -285,14 +299,7 @@ const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
   signalHalt: createGraphWorkflowSignalHaltHandler(workflowManager),
   materializeWorkflowDocuments: (input) =>
     sharedDocumentMaterializer.materialize(input).then(() => undefined),
-  createToolServer: (input) => ({
-    server: buildGraphWorkflowPortableMcp(
-      input.projectName,
-      input.sessionName,
-      input.executionId,
-      input.contextId,
-    ),
-  }),
+  createToolServer: () => buildLaneIterationToolServer(),
   runAgentIteration: async (input) => {
     const session = await defaultGetSession(
       input.projectPath,
@@ -307,6 +314,7 @@ const iterationOrchestrator = createGraphWorkflowIterationOrchestrator({
       session,
       prompt: input.prompt,
       conversationId: input.conversationId,
+      executionId: input.executionId,
       contextId: input.contextId,
       backend: input.backend,
       model: input.model,
